@@ -235,6 +235,64 @@ test('channel 37–40 joins solar plexus to the heart and resolves either order'
   assert.equal(getChannel('40-37'), channel);
 });
 
+test('throat, sacral and root retain matching 112 by 106 rectangular bounds', () => {
+  for (const id of ['throat', 'sacral', 'root']) {
+    const points = getCenter(id).points.split(/\s+/).map(point => point.split(',').map(Number));
+    const xs = [...new Set(points.map(([x]) => x))].sort((a, b) => a - b);
+    const ys = [...new Set(points.map(([, y]) => y))].sort((a, b) => a - b);
+    assert.equal(points.length, 4, `${id} has four corners`);
+    assert.equal(xs.length, 2, `${id} has vertical sides`);
+    assert.equal(ys.length, 2, `${id} has horizontal sides`);
+    assert.deepEqual(new Set(points.map(point => point.join(','))), new Set(xs.flatMap(x => ys.map(y => `${x},${y}`))), `${id} includes every corner`);
+    assert.equal(xs[1] - xs[0], 112, `${id} width`);
+    assert.equal(ys[1] - ys[0], 106, `${id} height`);
+    assert.equal((xs[0] + xs[1]) / 2, 320, `${id} stays on the central axis`);
+  }
+});
+
+test('upper outer channels stay narrow and mirror one another around the central axis', () => {
+  const left = getChannel('17-62').curve;
+  const right = getChannel('11-56').curve;
+  assert.equal(left.length, 4);
+  assert.equal(right.length, 4);
+  for (const [index, [x, y]] of left.entries()) {
+    assert.equal(x + right[index][0], 640, `control point ${index} mirrors across x=320`);
+    assert.equal(y, right[index][1], `control point ${index} has matching height`);
+  }
+  for (const [id, curve] of [['17-62', left], ['11-56', right]]) {
+    const xs = curve.map(([x]) => x);
+    assert.ok(Math.max(...xs) - Math.min(...xs) <= 12, `${id} horizontal span remains near vertical`);
+    assert.ok(xs.every(x => x >= 284 && x <= 356), `${id} stays in the narrow upper corridor`);
+    assert.ok(curve.every((point, index) => index === 0 || point[1] > curve[index - 1][1]), `${id} progresses downward without folding`);
+    const gates = getChannel(id).gates.map(getGate);
+    assert.deepEqual(curve[0], [gates[0].x, gates[0].y], `${id} starts at its gate`);
+    assert.deepEqual(curve[3], [gates[1].x, gates[1].y], `${id} ends at its gate`);
+  }
+});
+
+test('defined centers use their traditional color family and undefined centers stay white', () => {
+  const expected = {
+    head: '#edcd4c', ajna: '#79a367', throat: '#b58a60', g: '#edcd4c',
+    heart: '#da514b', spleen: '#b58a60', solar: '#b58a60', sacral: '#da514b', root: '#b58a60'
+  };
+  for (const chart of [
+    {},
+    { personality: GATES.map(gate => gate.id), design: [] },
+    { personality: [], design: GATES.map(gate => gate.id) },
+    { personality: [37], design: [40] }
+  ]) {
+    const markup = renderBodygraph(chart);
+    const defined = getDefinition(chart).centers;
+    const groups = [...markup.matchAll(/<g\s+data-type="center"\s+data-id="([^"]+)"[^>]*>([\s\S]*?)<\/g>/g)];
+    assert.equal(groups.length, 9);
+    for (const [, id, content] of groups) {
+      const fill = content.match(/<polygon\s+class="bg-center-shape"[^>]*\sfill="([^"]+)"/);
+      assert.ok(fill, `${id} has a center fill`);
+      assert.equal(fill[1], defined.has(id) ? expected[id] : '#ffffff', `${id} fill follows center definition`);
+    }
+  }
+});
+
 test('a hanging gate alone does not define a channel or a center', () => {
   assert.equal(getDefinition().channels.length, 0);
   assert.equal(getDefinition().centers.size, 0);

@@ -1,10 +1,12 @@
 import { CENTERS, GATES, CHANNELS, getGate, getChannel, getDefinition } from './graph-data.js';
 
 const PALETTE = {
-  ink: '#242b33', design: '#b5444d', outline: '#b9c4ce', paper: '#f8fafc',
+  ink: '#202020', design: '#c32d35', outline: '#c6c2b9', paper: '#ffffff',
   accent: '#3b72b8', halo: '#c4d9f1',
-  head: '#e3eaf1', ajna: '#d1dfea', throat: '#d7e1eb', g: '#c6d7e5',
-  heart: '#d2dce7', spleen: '#d2dfe9', solar: '#c9dbe9', sacral: '#c9d8e6', root: '#d3dde6',
+  // Traditional center families, with flat colors rather than decorative fills.
+  // Reference: jovianarchive.com/blogs/human-design-basics/the-9-centers-in-human-design
+  head: '#edcd4c', ajna: '#79a367', throat: '#b58a60', g: '#edcd4c',
+  heart: '#da514b', spleen: '#b58a60', solar: '#b58a60', sacral: '#da514b', root: '#b58a60',
 };
 
 const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
@@ -196,8 +198,8 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
     if (center.id === 'spleen') labels = ['Селезёночный'];
     return `<g ${attrs('center', center.id, `${center.name} центр, ${defined ? 'определён' : 'не определён'}`, selected)} data-defined="${defined}" opacity="${opacity}">
       ${selected ? `<polygon points="${center.points}" fill="none" stroke="${PALETTE.halo}" stroke-width="12" stroke-linejoin="round" pointer-events="none"/>` : ''}
-      <polygon class="bg-center-shape" points="${center.points}" fill="${defined ? PALETTE[center.id] : PALETTE.paper}" stroke="${selected ? PALETTE.accent : '#98a8b8'}" stroke-width="${selected ? '2.5' : '1.6'}" stroke-linejoin="round"/>
-      ${options.showLabels === true ? `<text x="${center.labelX}" y="${center.labelY}" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="${['spleen', 'solar'].includes(center.id) ? 7.5 : 8.5}" font-weight="500" letter-spacing=".1" fill="#526376" pointer-events="none">${labels.map((label, index) => `<tspan x="${center.labelX}" dy="${index ? 9 : 0}">${escape(label)}</tspan>`).join('')}</text>` : ''}
+      <polygon class="bg-center-shape" points="${center.points}" fill="${defined ? PALETTE[center.id] : PALETTE.paper}" stroke="${selected ? PALETTE.accent : defined ? '#84715b' : '#b4b0a7'}" stroke-width="${selected ? '2.5' : '1.25'}" stroke-linejoin="round"/>
+      ${options.showLabels === true ? `<text x="${center.labelX}" y="${center.labelY}" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="${['spleen', 'solar'].includes(center.id) ? 7.5 : 8.5}" font-weight="500" letter-spacing=".1" fill="#171513" pointer-events="none">${labels.map((label, index) => `<tspan x="${center.labelX}" dy="${index ? 9 : 0}">${escape(label)}</tspan>`).join('')}</text>` : ''}
     </g>`;
   }).join('');
 
@@ -213,7 +215,7 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
       <circle r="12.5" fill="transparent" pointer-events="${interactive ? 'all' : 'none'}"/>
       ${selected || related ? `<circle r="${selected ? 14 : 11.7}" fill="${PALETTE.halo}" stroke="${selected ? PALETTE.accent : PALETTE.halo}" stroke-width="${selected ? 1.7 : 1}" pointer-events="none"/>` : ''}
       <circle class="bg-gate-disc" r="9.5" fill="${active ? fill : 'transparent'}" stroke="${active ? fill.startsWith('url') ? PALETTE.ink : fill : 'none'}" stroke-width=".8" pointer-events="none"/>
-      <text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="11" font-weight="${active ? '650' : '500'}" fill="${active ? '#ffffff' : '#5b6c7e'}" pointer-events="none">${gate.id}</text>
+      <text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="11" font-weight="${active ? '650' : '500'}" fill="${active ? '#ffffff' : '#171513'}" pointer-events="none">${gate.id}</text>
     </g>`;
   }).join('');
 
