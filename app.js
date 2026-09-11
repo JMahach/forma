@@ -1,13 +1,15 @@
 import { CENTERS, GATES, CHANNELS, DEMO_CHART } from './graph-data.js';
 import { renderBodygraph } from './bodygraph.js';
 import { attachGestures, validView } from './gestures.js';
-import { parseGates, readCharts, writeCharts, encodeChart, decodeChart, VIEW_KEY } from './storage.js';
+import { parseGates, readCharts, writeCharts, encodeChart, decodeChart, VIEW_KEY, readTrash, moveChartToTrash, restoreLastChart } from './storage.js';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 let savedCharts = [], views = {}, storageAvailable = true;
 try { savedCharts = readCharts(localStorage); views = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); if (!views || Array.isArray(views) || typeof views !== 'object') views = {}; } catch { storageAvailable = false; }
+let deletedCharts = [], deletingId = null;
+try { deletedCharts = readTrash(localStorage, savedCharts); } catch { /* The normal library remains usable. */ }
 let selectedChartId = savedCharts.some(c => c.id === 'current-transit') ? 'current-transit' : 'demo';
 let selection = null, filter = 'all', editingId = null, toastTimer, viewTimer;
 let calculationMode = 'calculated', selectedCity = null, cityResults = [], activeCityIndex = -1;
@@ -126,6 +128,7 @@ const gestures = attachGestures($('bodygraph'), $('viewport'), {
 
 function renderLibrary() {
   $('libraryCount').textContent = savedCharts.length + 1;
+  $('restoreChartButton').hidden = !deletedCharts.length;
   $('chartList').innerHTML = [demo, ...savedCharts].map(c => `<button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar ${c.id === 'demo' ? 'is-demo' : ''}">${c.id === 'demo' ? 'Д' : c.source === 'transit' ? '◷' : esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${c.id === 'demo' ? 'Демонстрационная карта' : esc(c.name)}</span><span class="chart-caption">${esc(c.source === 'transit' ? localMoment(c.utc) : c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span>${c.id === selectedChartId ? '<span class="chart-selected-dot"></span>' : ''}</button>`).join('');
 }
 function renderGraph() {
@@ -190,6 +193,7 @@ function updatePage() {
   $('chartBadge').title = [c.engine, c.ephemeris].filter(Boolean).join(' · ');
   $('modeLabel').textContent = sourceNames[c.source] || 'Ручной';
   $('editButton').hidden = c.source === 'transit';
+  $('deleteChartButton').hidden = c.id === 'demo' || c.id === 'current-transit';
   $('activeCount').textContent = active.size;
   $('channelCount').textContent = CHANNELS.filter(channel => channel.gates.every(id => active.has(id))).length;
   renderLibrary(); renderGraph(); renderDetails();
@@ -230,6 +234,31 @@ $('detailContent').addEventListener('click', e => { const button = e.target.clos
 $('newChartButton').addEventListener('click', () => openForm());
 $('quickNewChart').addEventListener('click', () => openForm());
 $('editButton').addEventListener('click', () => openForm(true));
+$('deleteChartButton').addEventListener('click', () => {
+  deletingId = chart().id;
+  $('deleteChartName').textContent = `«${chart().name}»`;
+  $('deleteChartError').textContent = '';
+  $('deleteChartDialog').showModal();
+  $('cancelDeleteChart').focus();
+});
+$('cancelDeleteChart').addEventListener('click', () => $('deleteChartDialog').close());
+$('confirmDeleteChart').addEventListener('click', () => {
+  try {
+    const result = moveChartToTrash(localStorage, savedCharts, deletingId);
+    savedCharts = result.charts; deletedCharts = result.trash;
+    $('deleteChartDialog').close();
+    if (selectedChartId === deletingId) changeChart(savedCharts.find(c => c.id !== 'current-transit')?.id || savedCharts[0]?.id || 'demo');
+    else updatePage();
+    toast('Карта удалена. В меню можно восстановить её.');
+  } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
+});
+$('restoreChartButton').addEventListener('click', () => {
+  try {
+    const result = restoreLastChart(localStorage, savedCharts);
+    savedCharts = result.charts; deletedCharts = result.trash;
+    changeChart(result.restored.id); toast('Карта восстановлена');
+  } catch (error) { toast(error.message || 'Не удалось восстановить карту.'); }
+});
 for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm);
 $('chartDialog').addEventListener('cancel', () => { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); });
 $('chartForm').addEventListener('submit', async e => {

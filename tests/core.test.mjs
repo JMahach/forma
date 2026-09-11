@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseGates, validateChart, encodeChart, decodeChart,
-  readCharts, writeCharts, STORAGE_KEY
+  readCharts, writeCharts, STORAGE_KEY, TRASH_KEY, readTrash, moveChartToTrash, restoreLastChart
 } from '../storage.js';
 import { zoomAt, validView, fitView } from '../gestures.js';
 import {
@@ -24,6 +24,43 @@ const exampleChart = (extra = {}) => ({
   createdAt: '2026-09-12T10:00:00.000Z',
   updatedAt: '2026-09-12T10:00:00.000Z',
   ...extra
+});
+
+test('deletion preserves a recoverable copy across reload and restores only the selected card', () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const charts = [validateChart(exampleChart()), validateChart(exampleChart({ id: 'other', name: 'Другая' }))];
+  writeCharts(storage, charts);
+  const removed = moveChartToTrash(storage, charts, 'chart-test');
+  assert.deepEqual(removed.charts.map(c => c.id), ['other']);
+  assert.deepEqual(readTrash(storage, readCharts(storage)), [charts[0]]);
+  const restored = restoreLastChart(storage, readCharts(storage));
+  assert.deepEqual(restored.charts, [charts[1], charts[0]]);
+  assert.deepEqual(readTrash(storage, readCharts(storage)), []);
+  assert.throws(() => moveChartToTrash(storage, charts, 'missing'));
+  assert.throws(() => moveChartToTrash(storage, [exampleChart({ id: 'current-transit' })], 'current-transit'));
+});
+
+test('a failed deletion never removes the only copy and a failed trash cleanup never duplicates restoration', () => {
+  const values = new Map();
+  let failKey = null;
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => { if (key === failKey) throw new Error('full'); values.set(key, value); } };
+  const charts = [validateChart(exampleChart())];
+  writeCharts(storage, charts);
+  failKey = TRASH_KEY;
+  assert.throws(() => moveChartToTrash(storage, charts, 'chart-test'));
+  assert.deepEqual(readCharts(storage), charts);
+  failKey = STORAGE_KEY;
+  assert.throws(() => moveChartToTrash(storage, charts, 'chart-test'));
+  assert.deepEqual(readCharts(storage), charts);
+  assert.deepEqual(readTrash(storage, charts), []);
+  failKey = null;
+  moveChartToTrash(storage, charts, 'chart-test');
+  failKey = TRASH_KEY;
+  restoreLastChart(storage, []);
+  assert.deepEqual(readCharts(storage), charts);
+  assert.deepEqual(readTrash(storage, charts), []);
+  assert.throws(() => restoreLastChart(storage, charts));
 });
 
 test('gate input accepts supported separators and sorts unique gate numbers', () => {

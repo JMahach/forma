@@ -1,5 +1,6 @@
 export const STORAGE_KEY = 'liniya.charts.v1';
 export const VIEW_KEY = 'liniya.views.v1';
+export const TRASH_KEY = 'liniya.trash.v1';
 
 export function parseGates(value) {
   if (!String(value).trim()) return [];
@@ -65,14 +66,42 @@ export function decodeChart(text) {
   return validateChart(data.chart);
 }
 
-export function readCharts(storage) {
-  const value = storage.getItem(STORAGE_KEY);
+export function readCharts(storage, key = STORAGE_KEY) {
+  const value = storage.getItem(key);
   if (!value) return [];
   const data = JSON.parse(value);
   if (!Array.isArray(data) || data.length > 500) throw new Error('Не удалось прочитать сохранённую библиотеку.');
   return data.map(validateChart).filter(chart => chart.id);
 }
 
-export function writeCharts(storage, charts) {
-  storage.setItem(STORAGE_KEY, JSON.stringify(charts));
+export function writeCharts(storage, charts, key = STORAGE_KEY) {
+  storage.setItem(key, JSON.stringify(charts));
+}
+
+export function readTrash(storage, charts) {
+  const ids = new Set(charts.map(c => c.id));
+  return readCharts(storage, TRASH_KEY).filter(c => !ids.has(c.id));
+}
+
+export function moveChartToTrash(storage, charts, id) {
+  const target = charts.find(c => c.id === id);
+  if (!target || id === 'demo' || id === 'current-transit') throw new Error('Эта карта не удаляется.');
+  const trash = [...readTrash(storage, charts), target];
+  if (trash.length > 500) throw new Error('Сначала восстановите удалённые карты.');
+  const next = charts.filter(c => c.id !== id);
+  // Save the recoverable copy before touching the visible library.
+  writeCharts(storage, trash, TRASH_KEY);
+  writeCharts(storage, next);
+  return { charts: next, trash };
+}
+
+export function restoreLastChart(storage, charts) {
+  const trash = readTrash(storage, charts), target = trash.at(-1);
+  if (!target) throw new Error('Нет удалённых карт.');
+  if (charts.length >= 500) throw new Error('В библиотеке уже 500 карт.');
+  const next = [...charts, target];
+  writeCharts(storage, next);
+  // A failed cleanup is safe: readTrash ignores copies already restored.
+  try { writeCharts(storage, trash.slice(0, -1), TRASH_KEY); } catch { /* Keep the recoverable copy. */ }
+  return { charts: next, trash: trash.slice(0, -1), restored: target };
 }

@@ -18,7 +18,7 @@
         <div class="sidebar-heading"><span class="eyebrow">МОИ КАРТЫ <span class="library-count" id="libraryCount">1</span></span><button class="icon-button mobile-library-button" id="closeLibrary" aria-label="Закрыть библиотеку">×</button></div>
         <button class="new-chart-button" id="newChartButton"><span>＋</span> Новая карта</button>
         <div class="chart-list" id="chartList"></div>
-        <div class="sidebar-footer"><button class="text-button" id="editButton">Редактировать карту <span aria-hidden="true">↗</span></button><button class="text-button" id="exportButton">Экспорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="importButton">Импорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="helpButton">Как пользоваться <span aria-hidden="true">?</span></button><p>Карты сохраняются в этом браузере.</p><input id="importInput" type="file" accept="application/json,.json" hidden></div>
+        <div class="sidebar-footer"><button class="text-button" id="editButton">Редактировать карту <span aria-hidden="true">↗</span></button><button class="text-button danger-text" id="deleteChartButton" hidden>Удалить карту <span aria-hidden="true">−</span></button><button class="text-button" id="restoreChartButton" hidden>Вернуть удалённую карту <span aria-hidden="true">↶</span></button><button class="text-button" id="exportButton">Экспорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="importButton">Импорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="helpButton">Как пользоваться <span aria-hidden="true">?</span></button><p>Карты сохраняются в этом браузере.</p><input id="importInput" type="file" accept="application/json,.json" hidden></div>
       </aside>
       <main class="studio">
         <header class="studio-header">
@@ -66,6 +66,15 @@
         <p class="form-error" id="formError" role="alert"></p>
         <div class="dialog-actions"><button class="secondary-button" type="button" id="cancelDialog">Отмена</button><button class="primary-button" id="saveChartButton" type="submit">Рассчитать и сохранить</button></div>
       </form>
+    </div>
+  </dialog>
+  <dialog id="deleteChartDialog" aria-labelledby="deleteChartTitle" aria-describedby="deleteChartDescription">
+    <div class="dialog-content">
+      <div class="dialog-header"><h2 id="deleteChartTitle">Удалить карту?</h2></div>
+      <p id="deleteChartName" class="delete-chart-name"></p>
+      <p id="deleteChartDescription" class="form-note">Её можно будет вернуть через пункт «Вернуть удалённую карту» в меню.</p>
+      <p id="deleteChartError" class="form-error" role="alert"></p>
+      <div class="dialog-actions"><button class="secondary-button" id="cancelDeleteChart">Оставить</button><button class="primary-button danger-button" id="confirmDeleteChart">Удалить</button></div>
     </div>
   </dialog>
   <dialog id="helpDialog" aria-labelledby="helpTitle"><div class="dialog-content"><div class="dialog-header"><h2 id="helpTitle">Как пользоваться</h2><button class="icon-button" id="closeHelp" aria-label="Закрыть подсказки">×</button></div><p>При открытии сайта показан текущий момент. Положения планет пересчитываются каждую секунду, пока эта карта видна. При переходе к другой карте, открытии формы рождения или скрытии вкладки обновление приостанавливается.</p><p>В левом меню — библиотека, новая карта, импорт и экспорт. Для расчёта нужны дата, местное время рождения и город из списка.</p><p>Приближайте схему двумя пальцами, колёсиком или кнопками «＋» и «−». Перетаскивайте свободное пространство. Нажатие на ворота или центр открывает детали и не меняет масштаб.</p><p>Карты хранятся в этом браузере. Экспортируйте важные записи для резервной копии или переноса.</p><p class="form-note">Описания относятся к системе Human Design. Демонстрационная карта — учебный пример.</p><button class="primary-button" id="helpDone">Понятно</button></div></dialog>
