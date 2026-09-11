@@ -1,4 +1,4 @@
-import { CENTERS, GATES, CHANNELS, DEMO_CHART } from './graph-data.js';
+import { CENTERS, GATES, CHANNELS } from './graph-data.js';
 import { renderBodygraph } from './bodygraph.js';
 import { attachGestures, validView } from './gestures.js';
 import { parseGates, readCharts, writeCharts, encodeChart, decodeChart, VIEW_KEY, readTrash, moveChartToTrash, restoreLastChart } from './storage.js';
@@ -10,20 +10,21 @@ let savedCharts = [], views = {}, storageAvailable = true;
 try { savedCharts = readCharts(localStorage); views = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); if (!views || Array.isArray(views) || typeof views !== 'object') views = {}; } catch { storageAvailable = false; }
 let deletedCharts = [], deletingId = null;
 try { deletedCharts = readTrash(localStorage, savedCharts); } catch { /* The normal library remains usable. */ }
-let selectedChartId = savedCharts.some(c => c.id === 'current-transit') ? 'current-transit' : 'demo';
+let selectedChartId = 'current-transit';
 let selection = null, filter = 'all', editingId = null, toastTimer, viewTimer;
 let calculationMode = 'calculated', selectedCity = null, cityResults = [], activeCityIndex = -1;
 let cityTimer, cityController, citySequence = 0, calculationController, formBusy = false;
 let liveBusy = false, liveWanted = true, liveError = false, lastLiveSave = 0;
-const demo = { ...DEMO_CHART, id: 'demo', source: 'demo' };
-const chart = () => selectedChartId === 'demo' ? demo : savedCharts.find(c => c.id === selectedChartId) || demo;
+const emptyMoment = { id: 'current-transit', name: 'Текущий момент', source: 'transit', personality: [], design: [], utc: '' };
+const chart = () => savedCharts.find(c => c.id === selectedChartId) || emptyMoment;
+const canManage = c => c && c.id !== 'current-transit' && c.source !== 'transit';
 const findGate = id => GATES.find(g => String(g.id) === String(id));
 const findCenter = id => CENTERS.find(c => String(c.id) === String(id));
 const activeGates = () => new Set([...chart().personality, ...chart().design]);
 const connected = id => CHANNELS.filter(c => c.gates.some(n => String(n) === String(id)));
 const integrationGates = new Set([10, 20, 34, 57]);
 const integrationChannels = CHANNELS.filter(channel => channel.gates.every(gate => integrationGates.has(gate)));
-const sourceNames = { demo: 'Учебный пример', calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Текущий момент' };
+const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Текущий момент' };
 const localMoment = value => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }).format(date) : '';
@@ -127,11 +128,12 @@ const gestures = attachGestures($('bodygraph'), $('viewport'), {
 });
 
 function renderLibrary() {
-  $('libraryCount').textContent = savedCharts.length + 1;
+  $('libraryCount').textContent = savedCharts.length;
   $('restoreChartButton').hidden = !deletedCharts.length;
-  $('chartList').innerHTML = [demo, ...savedCharts].map(c => `<button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar ${c.id === 'demo' ? 'is-demo' : ''}">${c.id === 'demo' ? 'Д' : c.source === 'transit' ? '◷' : esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${c.id === 'demo' ? 'Демонстрационная карта' : esc(c.name)}</span><span class="chart-caption">${esc(c.source === 'transit' ? localMoment(c.utc) : c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span>${c.id === selectedChartId ? '<span class="chart-selected-dot"></span>' : ''}</button>`).join('');
+  $('chartList').innerHTML = savedCharts.map(c => `<div class="chart-row ${canManage(c) ? 'has-actions' : ''}" data-active="${c.id === selectedChartId}"><button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar">${c.source === 'transit' ? '◷' : esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${esc(c.name)}</span><span class="chart-caption">${esc(c.source === 'transit' ? localMoment(c.utc) : c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span></button>${canManage(c) ? `<details class="chart-actions"><summary aria-label="Действия с картой «${esc(c.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(c.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(c.id)}">Удалить</button></div></details>` : ''}</div>`).join('');
 }
 function renderGraph() {
+  if (!savedCharts.some(c => c.id === selectedChartId)) { $('viewport').innerHTML = ''; return; }
   const focused = document.activeElement?.closest?.('#viewport [data-type]');
   const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id } : null;
   $('viewport').innerHTML = renderBodygraph(chart(), selection, { dimInactive: filter === 'active', activeOnly: filter === 'active' });
@@ -187,13 +189,13 @@ function choose(value) {
 }
 function updatePage() {
   const c = chart(), active = activeGates();
-  $('chartTitle').textContent = c.id === 'demo' ? 'Бодиграф' : c.name;
-  $('chartSubtitle').textContent = c.id === 'demo' ? '' : c.source === 'transit' ? localMoment(c.utc) : [c.birthDate ? formatDateInput(c.birthDate) : '', c.birthTime, c.birthPlace].filter(Boolean).join(' · ');
-  $('chartBadge').textContent = sourceNames[c.source] || 'Ручные активации';
-  $('chartBadge').title = [c.engine, c.ephemeris].filter(Boolean).join(' · ');
+  $('chartTitle').textContent = c.name;
+  $('currentChartActions').hidden = !canManage(c);
+  $('currentChartActions').open = false;
+  $('currentChartActions').querySelectorAll('[data-chart-action]').forEach(button => { button.dataset.actionChartId = c.id; });
+  $('chartSubtitle').textContent = c.source === 'transit' ? localMoment(c.utc) : [c.birthDate ? formatDateInput(c.birthDate) : '', c.birthTime, c.birthPlace].filter(Boolean).join(' · ');
   $('modeLabel').textContent = sourceNames[c.source] || 'Ручной';
-  $('editButton').hidden = c.source === 'transit';
-  $('deleteChartButton').hidden = c.id === 'demo' || c.id === 'current-transit';
+  $('exportButton').disabled = !savedCharts.some(item => item.id === selectedChartId);
   $('activeCount').textContent = active.size;
   $('channelCount').textContent = CHANNELS.filter(channel => channel.gates.every(id => active.has(id))).length;
   renderLibrary(); renderGraph(); renderDetails();
@@ -209,12 +211,14 @@ function changeChart(id) {
   closeLibrary(); $('details').classList.remove('is-open');
 }
 function closeLibrary() { $('library').classList.remove('open'); $('libraryBackdrop').hidden = true; }
-function openForm(edit = false) {
+function openForm(edit = false, id = selectedChartId) {
+  const c = savedCharts.find(item => item.id === id) || chart();
+  if (edit && !canManage(c)) return;
   calculationController?.abort(); clearTimeout(cityTimer); cityController?.abort(); citySequence += 1;
   $('chartForm').reset(); $('formError').textContent = ''; setFormBusy(false); selectedCity = null; cityResults = []; closeCityResults();
   $('cityStatus').classList.remove('is-error');
-  const c = chart(); editingId = edit && c.id !== 'demo' && c.source !== 'transit' ? c.id : null;
-  $('dialogTitle').textContent = edit ? c.id === 'demo' ? 'Сохранить свою копию' : 'Редактировать карту' : 'Новая карта';
+  editingId = edit ? c.id : null;
+  $('dialogTitle').textContent = edit ? 'Редактировать карту' : 'Новая карта';
   if (edit) {
     for (const name of ['name', 'birthPlace', 'note']) $('chartForm').elements[name].value = c[name] || '';
     $('birthDate').value = formatDateInput(c.birthDate || ''); $('birthTime').value = formatTimeInput(c.birthTime || '');
@@ -229,25 +233,47 @@ function openForm(edit = false) {
   closeLibrary();
   $('chartDialog').showModal();
 }
-$('chartList').addEventListener('click', e => { const button = e.target.closest('[data-chart-id]'); if (button) changeChart(button.dataset.chartId); });
+document.addEventListener('click', e => {
+  const action = e.target.closest('[data-chart-action]');
+  if (action) {
+    const c = savedCharts.find(item => item.id === action.dataset.actionChartId);
+    if (!canManage(c)) return;
+    action.closest('details').open = false;
+    if (action.dataset.chartAction === 'edit') openForm(true, c.id);
+    else openDeleteChart(c);
+    return;
+  }
+  const button = e.target.closest('[data-chart-id]'); if (button) changeChart(button.dataset.chartId);
+});
+document.addEventListener('toggle', e => {
+  if (!e.target.matches?.('.chart-actions[open]')) return;
+  document.querySelectorAll('.chart-actions[open]').forEach(item => { if (item !== e.target) item.open = false; });
+  if (e.target.id === 'currentChartActions') {
+    const rect = e.target.querySelector('summary').getBoundingClientRect();
+    const menu = e.target.querySelector('.chart-action-menu');
+    menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - 202))}px`;
+    menu.style.top = `${rect.bottom + 5}px`;
+  }
+}, true);
+document.addEventListener('pointerdown', e => document.querySelectorAll('.chart-actions[open]').forEach(item => { if (!item.contains(e.target)) item.open = false; }));
 $('detailContent').addEventListener('click', e => { const button = e.target.closest('[data-detail-type]'); if (button) choose({ type: button.dataset.detailType, id: button.dataset.detailId }); });
 $('newChartButton').addEventListener('click', () => openForm());
 $('quickNewChart').addEventListener('click', () => openForm());
-$('editButton').addEventListener('click', () => openForm(true));
-$('deleteChartButton').addEventListener('click', () => {
-  deletingId = chart().id;
-  $('deleteChartName').textContent = `«${chart().name}»`;
+function openDeleteChart(c) {
+  if (!canManage(c)) return;
+  deletingId = c.id;
+  $('deleteChartName').textContent = `«${c.name}»`;
   $('deleteChartError').textContent = '';
   $('deleteChartDialog').showModal();
   $('cancelDeleteChart').focus();
-});
+}
 $('cancelDeleteChart').addEventListener('click', () => $('deleteChartDialog').close());
 $('confirmDeleteChart').addEventListener('click', () => {
   try {
     const result = moveChartToTrash(localStorage, savedCharts, deletingId);
     savedCharts = result.charts; deletedCharts = result.trash;
     $('deleteChartDialog').close();
-    if (selectedChartId === deletingId) changeChart(savedCharts.find(c => c.id !== 'current-transit')?.id || savedCharts[0]?.id || 'demo');
+    if (selectedChartId === deletingId) changeChart(savedCharts.find(c => c.id !== 'current-transit')?.id || 'current-transit');
     else updatePage();
     toast('Карта удалена. В меню можно восстановить её.');
   } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
@@ -351,7 +377,8 @@ async function refreshCurrentMoment(open = false) {
     if (liveWanted && selectedChartId !== c.id) changeChart(c.id);
     else if (selectedChartId === c.id) {
       $('chartSubtitle').textContent = localMoment(c.utc);
-      $('chartBadge').textContent = 'Прямой эфир';
+      $('exportButton').disabled = false;
+      if (!previous) renderLibrary();
       if (!previous || JSON.stringify(previous.personality) !== JSON.stringify(c.personality)) {
         const active = new Set([...c.personality, ...c.design]);
         $('activeCount').textContent = active.size;
@@ -360,11 +387,12 @@ async function refreshCurrentMoment(open = false) {
       }
     }
     if (liveError) toast('Живой расчёт восстановлен');
+    button.title = 'Рассчитать положение планет на текущий момент';
     liveError = false;
   } catch (error) {
     if (!liveError || open) toast(error.name === 'AbortError' ? 'Живой расчёт не ответил. Повторная попытка выполняется автоматически.' : error.message);
     liveError = true;
-    if (selectedChartId === 'current-transit' || liveWanted && selectedChartId === 'demo') $('chartBadge').textContent = 'Обновление недоступно';
+    if (selectedChartId === 'current-transit') $('nowButton').title = 'Обновление недоступно. Нажмите, чтобы повторить.';
   } finally { clearTimeout(deadline); liveBusy = false; button.removeAttribute('aria-busy'); }
 }
 $('nowButton').addEventListener('click', () => refreshCurrentMoment(true));
@@ -399,7 +427,12 @@ document.querySelectorAll('[data-view]').forEach(button => button.addEventListen
 }));
 $('helpButton').addEventListener('click', () => $('helpDialog').showModal());
 for (const id of ['closeHelp', 'helpDone']) $(id).addEventListener('click', () => $('helpDialog').close());
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeLibrary(); $('details').classList.remove('is-open'); } });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const menu = document.querySelector('.chart-actions[open]');
+  if (menu) { menu.open = false; menu.querySelector('summary').focus(); e.preventDefault(); return; }
+  closeLibrary(); $('details').classList.remove('is-open');
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { try { localStorage.setItem(VIEW_KEY, JSON.stringify(views)); if (storageAvailable) writeCharts(localStorage, savedCharts); } catch { /* Best effort persistence. */ } }
   else refreshCurrentMoment();
@@ -407,7 +440,4 @@ document.addEventListener('visibilitychange', () => {
 updatePage();
 if (validView(initialView)) gestures.setView(initialView);
 if (!storageAvailable) toast('Хранилище браузера недоступно. Сохраняйте карты через экспорт.');
-if (selectedChartId !== 'current-transit') {
-  $('viewport').innerHTML = ''; $('chartTitle').textContent = 'Текущий момент'; $('chartSubtitle').textContent = ''; $('chartBadge').textContent = 'Расчёт…';
-}
 refreshCurrentMoment(true);

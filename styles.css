@@ -752,6 +752,26 @@ dialog { width: min(560px, calc(100vw - 24px)); }
 .dialog-actions .danger-button { background: #a34545; border-color: #a34545; color: #fff; }
 .delete-chart-name { font-size: 1.125rem; line-height: 1.5; overflow-wrap: anywhere; margin-bottom: 12px; }
 .sidebar-footer { flex-shrink: 0; }
+.chart-row { position: relative; margin-bottom: 7px; border-radius: 8px; }
+.chart-row[data-active='true'] { background: #f0f2f6; }
+.library .chart-row .chart-card { margin: 0; }
+.library .chart-row.has-actions .chart-card { padding-right: 54px; }
+.chart-row .chart-card::after { display: none; }
+.chart-actions summary { position: absolute; right: 5px; top: 16px; width: 44px; height: 44px; display: grid; place-items: center; list-style: none; border-radius: 7px; color: #626b77; cursor: pointer; font-size: 25px; line-height: 1; }
+.chart-actions summary::-webkit-details-marker { display: none; }
+.chart-actions summary:hover, .chart-actions[open] summary { background: #e6e9ef; color: #20242b; }
+.chart-actions summary:focus-visible { outline: 2px solid #566b89; outline-offset: 1px; }
+.chart-action-menu { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 5px 8px 8px; }
+.chart-action-menu button { min-height: 44px; padding: 8px; border-radius: 6px; font-size: .875rem; background: #f5f6f8; color: #36404d; }
+.chart-action-menu button:hover { background: #e6e9ef; }
+.chart-action-menu .danger-text { color: #a34545; }
+.chart-title-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.chart-title-row h1 { min-width: 0; }
+.header-actions { position: relative; flex: 0 0 auto; pointer-events: auto; }
+.header-actions summary { position: static; width: 44px; height: 32px; }
+.header-actions .chart-action-menu { position: fixed; z-index: 30; width: 190px; grid-template-columns: 1fr; padding: 5px; border: 1px solid #e3e7ed; border-radius: 9px; background: #fff; box-shadow: 0 8px 28px #18283d16; }
+.header-actions .chart-action-menu button { text-align: left; padding: 10px 12px; background: #fff; }
+.header-actions .chart-action-menu button:hover { background: #f0f2f6; }
 
 @media (max-width: 699px) {
   .studio-header { top: 69px; left: 18px; right: 18px; }
