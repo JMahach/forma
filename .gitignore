@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+*.log
+coverage/
+.env
+private-charts/
+.venv/
+__pycache__/
+.pytest_cache/

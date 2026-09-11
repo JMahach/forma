@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>Бодиграф</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-leading"><button class="icon-button menu-button" id="openLibrary" aria-label="Меню" title="Меню"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 6h14M3 10h14M3 14h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+      <div class="topbar-actions"><button class="text-button now-button" id="nowButton" title="Рассчитать положение планет на текущий момент">Сейчас <span aria-hidden="true">↻</span></button><button class="icon-button" id="quickNewChart" aria-label="Рассчитать новую карту" title="Новая карта">＋</button></div>
+    </header>
+    <div class="workspace">
+      <aside class="library" id="library" aria-label="Библиотека карт">
+        <div class="sidebar-heading"><span class="eyebrow">МОИ КАРТЫ <span class="library-count" id="libraryCount">1</span></span><button class="icon-button mobile-library-button" id="closeLibrary" aria-label="Закрыть библиотеку">×</button></div>
+        <button class="new-chart-button" id="newChartButton"><span>＋</span> Новая карта</button>
+        <div class="chart-list" id="chartList"></div>
+        <div class="sidebar-footer"><button class="text-button" id="editButton">Редактировать карту <span aria-hidden="true">↗</span></button><button class="text-button" id="exportButton">Экспорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="importButton">Импорт карты <span aria-hidden="true">↗</span></button><button class="text-button" id="helpButton">Как пользоваться <span aria-hidden="true">?</span></button><p>Карты сохраняются в этом браузере.</p><input id="importInput" type="file" accept="application/json,.json" hidden></div>
+      </aside>
+      <main class="studio">
+        <header class="studio-header">
+          <div class="chart-heading"><h1 id="chartTitle">Бодиграф</h1><p class="subtitle" id="chartSubtitle"></p></div>
+        </header>
+        <div class="view-switch" role="group" aria-label="Режим просмотра"><button class="active" data-view="all" aria-pressed="true">Вся схема</button><button data-view="active" aria-pressed="false">Активации</button><span class="view-switch-note">Нажмите на ворота или центр</span></div>
+        <section class="canvas-wrap" id="canvasWrap" aria-label="Интерактивный бодиграф">
+          <div class="canvas-topline"><span class="demo-badge" id="chartBadge"><span></span> ДЕМО-КАРТА</span><span class="canvas-hint">Место для исследования</span></div>
+          <svg id="bodygraph" viewBox="0 0 640 820" xmlns="http://www.w3.org/2000/svg" aria-label="Бодиграф. Выбирайте ворота, центры или каналы" role="group"><g id="viewport"></g></svg>
+          <div class="canvas-controls" aria-label="Масштаб"><button class="icon-button" id="zoomOut" aria-label="Уменьшить">−</button><span class="zoom-value" id="zoomValue" aria-live="off">100%</span><button class="icon-button" id="zoomIn" aria-label="Увеличить">＋</button><span class="control-divider"></span><button class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема">⤢</button></div>
+          <div class="canvas-bottomline"><div class="legend"><span><i class="legend-dot personality"></i>Личность</span><span><i class="legend-dot design"></i>Дизайн</span></div><span class="gesture-hint">Приближайте · перемещайте · исследуйте</span></div>
+        </section>
+        <footer class="chart-footer"><div class="metadata-item"><span>РЕЖИМ</span><strong id="modeLabel">Демонстрационный</strong></div><div class="metadata-item"><span>АКТИВНЫХ ВОРОТ</span><strong id="activeCount">—</strong></div><div class="metadata-item"><span>СВЯЗЕЙ</span><strong id="channelCount">—</strong></div><button class="text-button" id="exampleButton">Исследовать 37—40 <span>↗</span></button></footer>
+      </main>
+      <aside class="details" id="details" aria-label="Информация о выбранном элементе">
+        <div class="detail-topbar"><span class="eyebrow">ДЕТАЛИ КАРТЫ</span><button class="icon-button" id="closeDetails" aria-label="Снять выделение">×</button></div>
+        <div class="detail-content" id="detailContent"></div>
+        <div class="detail-footer"><span class="status-dot"></span> Изучайте в своём темпе</div>
+      </aside>
+    </div>
+  </div>
+  <div class="mobile-backdrop" id="libraryBackdrop" hidden></div>
+  <dialog id="chartDialog" aria-labelledby="dialogTitle">
+    <div class="dialog-content">
+      <div class="dialog-header"><div><span class="eyebrow">ЛИЧНАЯ КАРТА</span><h2 id="dialogTitle">Новая карта</h2></div><button class="icon-button" id="closeDialog" aria-label="Закрыть">×</button></div>
+      <form id="chartForm" novalidate>
+        <div class="calculation-mode" role="group" aria-label="Способ создания карты"><button type="button" data-calculation-mode="calculated" class="active" aria-pressed="true">По данным рождения</button><button type="button" data-calculation-mode="manual" aria-pressed="false">Ввести вручную</button></div>
+        <div class="field"><label for="chartName">Имя карты</label><input id="chartName" name="name" required maxlength="80" autocomplete="off" placeholder="Например, Анна"></div>
+        <div class="form-grid">
+          <div class="field"><label for="birthDate">Дата рождения</label><input id="birthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="off" placeholder="ДД.ММ.ГГГГ" aria-describedby="dateHint"></div>
+          <div class="field"><label for="birthTime">Местное время рождения</label><input id="birthTime" name="birthTime" type="text" inputmode="numeric" autocomplete="off" placeholder="ЧЧ:ММ" aria-describedby="dateHint"></div>
+        </div>
+        <p class="field-hint" id="dateHint">Можно вводить только цифры — точки и двоеточие появятся сами.</p>
+        <div class="field city-field" id="cityField">
+          <label for="birthPlace">Город рождения</label>
+          <div class="city-input-wrap"><input id="birthPlace" name="birthPlace" maxlength="120" placeholder="Начните вводить город" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cityResults" aria-describedby="cityStatus"><ul class="city-results" id="cityResults" role="listbox" aria-label="Найденные города" hidden></ul></div>
+          <p class="city-status" id="cityStatus" role="status">Выберите город из списка — часовой пояс определится автоматически.</p>
+        </div>
+        <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage"><option value="">Выберите вариант</option></select></div>
+        <div id="manualFields" hidden>
+          <div class="form-grid"><div class="field"><label for="personalityGates">Личность · чёрные ворота</label><input id="personalityGates" name="personality" inputmode="text" placeholder="37, 22, 12" aria-describedby="gateHint"></div><div class="field"><label for="designGates">Дизайн · красные ворота</label><input id="designGates" name="design" inputmode="text" placeholder="40, 36, 35" aria-describedby="gateHint"></div></div>
+          <p class="field-hint" id="gateHint">Номера от 1 до 64 через запятую. Это ручной ввод, без расчёта по дате.</p>
+        </div>
+        <details class="form-extras"><summary>Добавить заметку</summary><div class="field"><label class="visually-hidden" for="chartNote">Заметка</label><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div></details>
+        <p class="form-error" id="formError" role="alert"></p>
+        <div class="dialog-actions"><button class="secondary-button" type="button" id="cancelDialog">Отмена</button><button class="primary-button" id="saveChartButton" type="submit">Рассчитать и сохранить</button></div>
+      </form>
+    </div>
+  </dialog>
+  <dialog id="helpDialog" aria-labelledby="helpTitle"><div class="dialog-content"><div class="dialog-header"><h2 id="helpTitle">Как пользоваться</h2><button class="icon-button" id="closeHelp" aria-label="Закрыть подсказки">×</button></div><p>При открытии сайта показан текущий момент. Положения планет пересчитываются каждую секунду, пока эта карта видна. При переходе к другой карте, открытии формы рождения или скрытии вкладки обновление приостанавливается.</p><p>В левом меню — библиотека, новая карта, импорт и экспорт. Для расчёта нужны дата, местное время рождения и город из списка.</p><p>Приближайте схему двумя пальцами, колёсиком или кнопками «＋» и «−». Перетаскивайте свободное пространство. Нажатие на ворота или центр открывает детали и не меняет масштаб.</p><p>Карты хранятся в этом браузере. Экспортируйте важные записи для резервной копии или переноса.</p><p class="form-note">Описания относятся к системе Human Design. Демонстрационная карта — учебный пример.</p><button class="primary-button" id="helpDone">Понятно</button></div></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
