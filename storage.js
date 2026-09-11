@@ -78,30 +78,14 @@ export function writeCharts(storage, charts, key = STORAGE_KEY) {
   storage.setItem(key, JSON.stringify(charts));
 }
 
-export function readTrash(storage, charts) {
-  const ids = new Set(charts.map(c => c.id));
-  return readCharts(storage, TRASH_KEY).filter(c => !ids.has(c.id));
-}
-
-export function moveChartToTrash(storage, charts, id) {
+export function deleteChart(storage, charts, id) {
   const target = charts.find(c => c.id === id);
-  if (!target || id === 'demo' || id === 'current-transit') throw new Error('Эта карта не удаляется.');
-  const trash = [...readTrash(storage, charts), target];
-  if (trash.length > 500) throw new Error('Сначала восстановите удалённые карты.');
+  if (!target || id === 'demo' || id === 'current-transit' || target.source === 'transit') throw new Error('Эта карта не удаляется.');
+  // Older releases may have retained a copy of this same record. Remove only
+  // the confirmed target; never purge unrelated historical records on load.
+  const legacy = readCharts(storage, TRASH_KEY);
+  if (legacy.some(c => c.id === id)) writeCharts(storage, legacy.filter(c => c.id !== id), TRASH_KEY);
   const next = charts.filter(c => c.id !== id);
-  // Save the recoverable copy before touching the visible library.
-  writeCharts(storage, trash, TRASH_KEY);
   writeCharts(storage, next);
-  return { charts: next, trash };
-}
-
-export function restoreLastChart(storage, charts) {
-  const trash = readTrash(storage, charts), target = trash.at(-1);
-  if (!target) throw new Error('Нет удалённых карт.');
-  if (charts.length >= 500) throw new Error('В библиотеке уже 500 карт.');
-  const next = [...charts, target];
-  writeCharts(storage, next);
-  // A failed cleanup is safe: readTrash ignores copies already restored.
-  try { writeCharts(storage, trash.slice(0, -1), TRASH_KEY); } catch { /* Keep the recoverable copy. */ }
-  return { charts: next, trash: trash.slice(0, -1), restored: target };
+  return next;
 }

@@ -1,15 +1,14 @@
 import { CENTERS, GATES, CHANNELS } from './graph-data.js';
 import { renderBodygraph } from './bodygraph.js';
 import { attachGestures, validView } from './gestures.js';
-import { parseGates, readCharts, writeCharts, encodeChart, decodeChart, VIEW_KEY, readTrash, moveChartToTrash, restoreLastChart } from './storage.js';
+import { parseGates, readCharts, writeCharts, VIEW_KEY, deleteChart } from './storage.js';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 let savedCharts = [], views = {}, storageAvailable = true;
 try { savedCharts = readCharts(localStorage); views = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); if (!views || Array.isArray(views) || typeof views !== 'object') views = {}; } catch { storageAvailable = false; }
-let deletedCharts = [], deletingId = null;
-try { deletedCharts = readTrash(localStorage, savedCharts); } catch { /* The normal library remains usable. */ }
+let deletingId = null;
 let selectedChartId = 'current-transit';
 let selection = null, filter = 'all', editingId = null, toastTimer, viewTimer;
 let calculationMode = 'calculated', selectedCity = null, cityResults = [], activeCityIndex = -1;
@@ -115,7 +114,7 @@ function closeForm() { calculationController?.abort(); cityController?.abort(); 
 function toast(message) { $('toast').textContent = message; $('toast').classList.add('visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 4500); }
 function persistCharts(next) {
   try { if (!storageAvailable) throw new Error(); writeCharts(localStorage, next); savedCharts = next; return true; }
-  catch { toast('Не удалось сохранить в браузере. Экспортируйте карту в файл.'); return false; }
+  catch { toast('Не удалось сохранить карту в браузере.'); return false; }
 }
 function saveView() {
   clearTimeout(viewTimer);
@@ -129,7 +128,6 @@ const gestures = attachGestures($('bodygraph'), $('viewport'), {
 
 function renderLibrary() {
   $('libraryCount').textContent = savedCharts.length;
-  $('restoreChartButton').hidden = !deletedCharts.length;
   $('chartList').innerHTML = savedCharts.map(c => `<div class="chart-row ${canManage(c) ? 'has-actions' : ''}" data-active="${c.id === selectedChartId}"><button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar">${c.source === 'transit' ? '◷' : esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${esc(c.name)}</span><span class="chart-caption">${esc(c.source === 'transit' ? localMoment(c.utc) : c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span></button>${canManage(c) ? `<details class="chart-actions"><summary aria-label="Действия с картой «${esc(c.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(c.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(c.id)}">Удалить</button></div></details>` : ''}</div>`).join('');
 }
 function renderGraph() {
@@ -195,7 +193,6 @@ function updatePage() {
   $('currentChartActions').querySelectorAll('[data-chart-action]').forEach(button => { button.dataset.actionChartId = c.id; });
   $('chartSubtitle').textContent = c.source === 'transit' ? localMoment(c.utc) : [c.birthDate ? formatDateInput(c.birthDate) : '', c.birthTime, c.birthPlace].filter(Boolean).join(' · ');
   $('modeLabel').textContent = sourceNames[c.source] || 'Ручной';
-  $('exportButton').disabled = !savedCharts.some(item => item.id === selectedChartId);
   $('activeCount').textContent = active.size;
   $('channelCount').textContent = CHANNELS.filter(channel => channel.gates.every(id => active.has(id))).length;
   renderLibrary(); renderGraph(); renderDetails();
@@ -270,20 +267,13 @@ function openDeleteChart(c) {
 $('cancelDeleteChart').addEventListener('click', () => $('deleteChartDialog').close());
 $('confirmDeleteChart').addEventListener('click', () => {
   try {
-    const result = moveChartToTrash(localStorage, savedCharts, deletingId);
-    savedCharts = result.charts; deletedCharts = result.trash;
+    savedCharts = deleteChart(localStorage, savedCharts, deletingId);
     $('deleteChartDialog').close();
     if (selectedChartId === deletingId) changeChart(savedCharts.find(c => c.id !== 'current-transit')?.id || 'current-transit');
     else updatePage();
-    toast('Карта удалена. В меню можно восстановить её.');
+    delete views[deletingId]; saveView(); deletingId = null;
+    toast('Карта удалена');
   } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
-});
-$('restoreChartButton').addEventListener('click', () => {
-  try {
-    const result = restoreLastChart(localStorage, savedCharts);
-    savedCharts = result.charts; deletedCharts = result.trash;
-    changeChart(result.restored.id); toast('Карта восстановлена');
-  } catch (error) { toast(error.message || 'Не удалось восстановить карту.'); }
 });
 for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm);
 $('chartDialog').addEventListener('cancel', () => { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); });
@@ -315,7 +305,7 @@ $('chartForm').addEventListener('submit', async e => {
     if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
     const persisted = persistCharts(next);
     if (!persisted) savedCharts = next;
-    $('chartDialog').close(); changeChart(c.id); toast(persisted ? calculationMode === 'calculated' ? 'Карта рассчитана и сохранена' : 'Карта сохранена на этом устройстве' : 'Карта открыта, но не сохранена. Сделайте экспорт.');
+    $('chartDialog').close(); changeChart(c.id); toast(persisted ? calculationMode === 'calculated' ? 'Карта рассчитана и сохранена' : 'Карта сохранена на этом устройстве' : 'Карта открыта, но не сохранена в браузере.');
   } catch (error) {
     if (error.name === 'AbortError') return;
     if (error.code === 'ambiguous_time' && Array.isArray(error.choices)) {
@@ -377,7 +367,6 @@ async function refreshCurrentMoment(open = false) {
     if (liveWanted && selectedChartId !== c.id) changeChart(c.id);
     else if (selectedChartId === c.id) {
       $('chartSubtitle').textContent = localMoment(c.utc);
-      $('exportButton').disabled = false;
       if (!previous) renderLibrary();
       if (!previous || JSON.stringify(previous.personality) !== JSON.stringify(c.personality)) {
         const active = new Set([...c.personality, ...c.design]);
@@ -397,23 +386,6 @@ async function refreshCurrentMoment(open = false) {
 }
 $('nowButton').addEventListener('click', () => refreshCurrentMoment(true));
 setInterval(() => refreshCurrentMoment(), 1000);
-$('exportButton').addEventListener('click', () => {
-  const blob = new Blob([encodeChart(chart())], { type: 'application/json' });
-  const url = URL.createObjectURL(blob), a = document.createElement('a');
-  a.href = url; a.download = `bodygraph-${chart().name.replace(/[^\p{L}\p{N}_-]/gu, '-').slice(0, 60)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('Файл карты подготовлен');
-});
-$('importButton').addEventListener('click', () => $('importInput').click());
-$('importInput').addEventListener('change', async e => {
-  const file = e.target.files[0]; if (!file) return;
-  try {
-    if (file.size > 100000) throw new Error('Выберите экспорт одной карты размером до 100 КБ.');
-    const c = { ...decodeChart(await file.text()), id: crypto.randomUUID(), updatedAt: new Date().toISOString() };
-    if (savedCharts.length >= 500) throw new Error('В библиотеке уже 500 карт.');
-    const next = [...savedCharts, c], persisted = persistCharts(next); if (!persisted) savedCharts = next;
-    changeChart(c.id); toast(persisted ? 'Карта импортирована' : 'Карта открыта только на время этой сессии');
-  } catch (error) { toast(error.message); }
-  e.target.value = '';
-});
 $('zoomIn').addEventListener('click', () => gestures.zoom(1.25));
 $('zoomOut').addEventListener('click', () => gestures.zoom(0.8));
 $('fitButton').addEventListener('click', () => gestures.reset());
@@ -439,5 +411,5 @@ document.addEventListener('visibilitychange', () => {
 });
 updatePage();
 if (validView(initialView)) gestures.setView(initialView);
-if (!storageAvailable) toast('Хранилище браузера недоступно. Сохраняйте карты через экспорт.');
+if (!storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
 refreshCurrentMoment(true);
