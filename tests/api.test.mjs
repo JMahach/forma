@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 
 // Explicit opt-in: the normal offline test suite must not require a running server.
 // Start the application separately, then run RUN_API_TESTS=1 npm test.
@@ -18,6 +19,54 @@ async function request(path, options = {}) {
 
 const post = (value, headers = {}) => request('/api/calculate', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(value)
+});
+
+apiTest('the browser can load the selection state module and its dependency', async () => {
+  const module = await request('/src/selection/selection-state.js');
+  assert.equal(module.status, 200);
+  assert.match(module.headers.get('content-type'), /javascript/);
+  assert.match(module.body, /export function createSelectionState\(/);
+  assert.match(module.body, /from '\.\.\/bodygraph\/graph-data\.js'/);
+  const graph = await request('/src/bodygraph/graph-data.js');
+  assert.equal(graph.status, 200);
+  assert.match(graph.headers.get('content-type'), /javascript/);
+});
+
+apiTest('the page loads the complete frontend module graph through public source URLs', async () => {
+  const page = await request('/');
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /html/);
+  const entryPoints = [...page.body.matchAll(/<script\b([^>]*)>/g)]
+    .filter(([, attributes]) => /\btype=["']module["']/.test(attributes))
+    .map(([, attributes]) => attributes.match(/\bsrc=["']([^"']+)["']/)?.[1]);
+  assert.deepEqual(entryPoints, ['/src/app.js']);
+  const pending = entryPoints.map(path => new URL(path, base)), visited = new Set();
+  while (pending.length) {
+    const url = pending.pop();
+    assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');
+    assert.ok(url.pathname.startsWith('/src/'), `${url.pathname} uses the public source boundary`);
+    if (visited.has(url.pathname)) continue;
+    visited.add(url.pathname);
+    const module = await request(url);
+    assert.equal(module.status, 200, url.pathname);
+    assert.match(module.headers.get('content-type'), /javascript/, url.pathname);
+    const patterns = [
+      /^\s*import\s+(?:[^'";]+?\s+from\s+)?['"]([^'"]+)['"]/gm,
+      /^\s*export\s+(?:\*|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/gm,
+      /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    ];
+    for (const pattern of patterns) {
+      for (const [, dependency] of module.body.matchAll(pattern)) pending.push(new URL(dependency, url));
+    }
+  }
+  const sourceModules = (directory = new URL('../src/', import.meta.url), prefix = '/src/') =>
+    readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+      ? sourceModules(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
+      : entry.name.endsWith('.js') ? [`${prefix}${entry.name}`] : []);
+  assert.deepEqual([...visited].sort(), sourceModules().sort(), 'every frontend module is reachable and publicly loadable');
+  const styles = await request('/styles.css');
+  assert.equal(styles.status, 200);
+  assert.match(styles.headers.get('content-type'), /css/);
 });
 
 apiTest('city API finds Moscow by Russian name and returns identity and timezone', async () => {
@@ -126,8 +175,14 @@ apiTest('valid city identity overrides a forged timezone and arbitrary display n
   assert.doesNotMatch(chart.birthPlace, /<script>/);
 });
 
-apiTest('private city database and repository files are not publicly served', async () => {
-  for (const path of ['/data/cities.json', '/.git/config', '/calculator.py', '/.venv/pyvenv.cfg']) {
+apiTest('private server, data, tests and environment files are not publicly served', async () => {
+  for (const path of [
+    '/server/server.mjs', '/server/calculator.py', '/server/',
+    '/data/cities.json', '/data/', '/.git/config', '/calculator.py',
+    '/tests/api.test.mjs', '/tests/fixtures/selection-before-refactor.js', '/tests/previews/activation-preview.mjs', '/tests/',
+    '/.venv/pyvenv.cfg', '/.venv/', '/scripts/prepare-cities.py',
+    '/app.js', '/bodygraph.js', '/selection-state.js', '/graph-data.js',
+  ]) {
     const response = await request(path);
     assert.equal(response.status, 404, path);
   }

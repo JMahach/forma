@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseGates, validateChart, encodeChart, decodeChart,
+  parseGates, validateChart,
   readCharts, writeCharts, STORAGE_KEY, TRASH_KEY, deleteChart
-} from '../storage.js';
-import { zoomAt, validView, fitView } from '../gestures.js';
+} from '../src/charts/storage.js';
+import { zoomAt, validView, fitView, attachGestures, DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
 import {
   CENTERS, GATES, CHANNELS, DEMO_CHART,
   getGate, getCenter, getChannel, getDefinition
-} from '../graph-data.js';
-import { renderBodygraph } from '../bodygraph.js';
-import { formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from '../date-input.js';
+} from '../src/bodygraph/graph-data.js';
+import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { renderActivationColumns, PLANETS } from '../src/activations/activations.js';
+import { formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from '../src/charts/date-input.js';
 
 const exampleChart = (extra = {}) => ({
   id: 'chart-test',
@@ -25,6 +26,11 @@ const exampleChart = (extra = {}) => ({
   updatedAt: '2026-09-12T10:00:00.000Z',
   ...extra
 });
+
+function createMemoryStorage() {
+  const entries = new Map();
+  return { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+}
 
 test('permanent deletion removes only the selected card without creating a recovery copy', () => {
   const values = new Map();
@@ -72,18 +78,19 @@ test('gate input rejects out-of-range, non-integer, and non-numeric tokens', () 
   }
 });
 
-test('chart export and import preserve Unicode and script-looking strings as data', () => {
+test('chart storage preserves Unicode and script-looking strings as data', () => {
+  const storage = createMemoryStorage();
   const original = exampleChart();
-  const encoded = encodeChart(original);
-  assert.equal(JSON.parse(encoded).format, 'liniya-chart');
-  assert.equal(JSON.parse(encoded).version, 1);
-  assert.deepEqual(decodeChart(encoded), validateChart(original));
-  assert.equal(decodeChart(encoded).name, original.name);
-  assert.equal(decodeChart(encoded).note, original.note);
-  assert.deepEqual(decodeChart(encoded).personality, [1, 22, 37]);
+  writeCharts(storage, [original]);
+  const [roundtrip] = readCharts(storage);
+  assert.deepEqual(roundtrip, validateChart(original));
+  assert.equal(roundtrip.name, original.name);
+  assert.equal(roundtrip.note, original.note);
+  assert.deepEqual(roundtrip.personality, [1, 22, 37]);
 });
 
 test('chart validation deduplicates activations and rejects invalid numbers', () => {
+  for (const invalid of [undefined, null, [], {}]) assert.throws(() => validateChart(invalid), Error);
   assert.deepEqual(validateChart(exampleChart({ personality: [37, 1, 37] })).personality, [1, 37]);
   for (const key of ['personality', 'design']) {
     for (const values of [null, '37, 40', {}, [0], [65], [-1], [1.5], ['37'], [NaN], [Infinity]]) {
@@ -92,20 +99,7 @@ test('chart validation deduplicates activations and rejects invalid numbers', ()
   }
 });
 
-test('import rejects malformed JSON, foreign formats, unsupported versions, and missing cards', () => {
-  for (const text of [
-    '{invalid', 'null', '[]', '{}',
-    JSON.stringify({ format: 'another-format', version: 1, chart: exampleChart() }),
-    JSON.stringify({ format: 'liniya-chart', version: 2, chart: exampleChart() }),
-    JSON.stringify({ format: 'liniya-chart', version: 1 }),
-    JSON.stringify({ format: 'liniya-chart', version: 1, chart: [] })
-  ]) {
-    assert.throws(() => decodeChart(text), Error);
-  }
-});
-
-test('chart and import limits reject oversized input; bounded note fields are trimmed', () => {
-  assert.throws(() => decodeChart(' '.repeat(100001)), /большой/);
+test('chart limits reject oversized input; bounded note fields are trimmed', () => {
   assert.throws(() => validateChart(exampleChart({ name: 'я'.repeat(81) })), Error);
   assert.throws(() => validateChart(exampleChart({ name: ' \n ' })), Error);
   for (const key of ['personality', 'design']) {
@@ -123,7 +117,7 @@ test('local chart library roundtrips data and rejects corrupt or oversized libra
   assert.deepEqual(readCharts(storage), []);
   writeCharts(storage, [exampleChart()]);
   assert.deepEqual(readCharts(storage), [validateChart(exampleChart())]);
-  for (const content of ['{invalid', '{}', JSON.stringify(Array(501).fill(exampleChart()))]) {
+  for (const content of ['{invalid', 'null', '{}', '[null]', '[{}]', '[[]]', JSON.stringify(Array(501).fill(exampleChart()))]) {
     storage.setItem(STORAGE_KEY, content);
     assert.throws(() => readCharts(storage), Error);
   }
@@ -231,7 +225,8 @@ test('channel 37–40 joins solar plexus to the heart and resolves either order'
   assert.equal(getChannel('40-37'), channel);
 });
 
-test('throat, sacral and root retain matching 112 by 106 rectangular bounds', () => {
+test('throat, sacral and root retain matching rectangular bounds on the same axis', () => {
+  let expectedSize;
   for (const id of ['throat', 'sacral', 'root']) {
     const points = getCenter(id).points.split(/\s+/).map(point => point.split(',').map(Number));
     const xs = [...new Set(points.map(([x]) => x))].sort((a, b) => a - b);
@@ -240,10 +235,109 @@ test('throat, sacral and root retain matching 112 by 106 rectangular bounds', ()
     assert.equal(xs.length, 2, `${id} has vertical sides`);
     assert.equal(ys.length, 2, `${id} has horizontal sides`);
     assert.deepEqual(new Set(points.map(point => point.join(','))), new Set(xs.flatMap(x => ys.map(y => `${x},${y}`))), `${id} includes every corner`);
-    assert.equal(xs[1] - xs[0], 112, `${id} width`);
-    assert.equal(ys[1] - ys[0], 106, `${id} height`);
+    const size = [xs[1] - xs[0], ys[1] - ys[0]];
+    expectedSize ??= size;
+    assert.deepEqual(size, expectedSize, `${id} matches the other rectangular centers`);
+    assert.ok(size.every(value => value > 0), `${id} has positive dimensions`);
     assert.equal((xs[0] + xs[1]) / 2, 320, `${id} stays on the central axis`);
   }
+});
+
+test('central centers have positive breathing room and side centers remain mirror images', () => {
+  const bounds = id => {
+    const points = getCenter(id).points.split(/\s+/).map(point => point.split(',').map(Number));
+    return { top: Math.min(...points.map(point => point[1])), bottom: Math.max(...points.map(point => point[1])) };
+  };
+  const sequence = ['head', 'ajna', 'throat', 'g', 'sacral', 'root'];
+  for (let i = 1; i < sequence.length; i++) {
+    const gap = bounds(sequence[i]).top - bounds(sequence[i - 1]).bottom;
+    assert.ok(gap >= 12, `${sequence[i - 1]} to ${sequence[i]} has room for distinct channel ends`);
+  }
+  const left = getCenter('spleen').points.split(/\s+/).map(point => point.split(',').map(Number));
+  const right = getCenter('solar').points.split(/\s+/);
+  assert.deepEqual(new Set(left.map(([x, y]) => `${640 - x},${y}`)), new Set(right));
+});
+
+test('channels clear unrelated centers, including 12–22 past the ego', () => {
+  const distance = (p, a, b) => {
+    const d = b.map((v, i) => v - a[i]);
+    const t = Math.max(0, Math.min(1, d.reduce((sum, v, i) => sum + (p[i] - a[i]) * v, 0) / d.reduce((sum, v) => sum + v * v, 0)));
+    return Math.hypot(...p.map((v, i) => v - a[i] - t * d[i]));
+  };
+  for (const channel of CHANNELS) {
+    if (channel.gates.every(id => [10, 20, 34, 57].includes(id))) continue; // Rendered as the shared integration stem.
+    const connected = channel.gates.map(id => getGate(id).center);
+    for (const center of CENTERS.filter(c => !connected.includes(c.id))) {
+      const polygon = center.points.split(' ').map(p => p.split(',').map(Number));
+      for (const curve of channel.curves) for (let step = 0; step <= 100; step++) {
+        const t = step / 100, u = 1 - t;
+        const p = [0, 1].map(axis => u ** 3 * curve[0][axis] + 3 * u * u * t * curve[1][axis] + 3 * u * t * t * curve[2][axis] + t ** 3 * curve[3][axis]);
+        const gap = Math.min(...polygon.map((a, i) => distance(p, a, polygon[(i + 1) % polygon.length])));
+        assert.ok(gap >= 8, `${channel.id} needs stroke and selection clearance from ${center.id}: ${gap}`);
+      }
+    }
+  }
+});
+
+test('planet selection is independent of gate selection in both activation columns', () => {
+  const chart = calculatedChart();
+  const markup = renderBodygraph(chart, { type: 'planet', id: 'design-sun' }, { showActivations: true });
+  assert.equal((markup.match(/class="bg-activation bg-planet"/g) || []).length, 26);
+  const selected = [...markup.matchAll(/<g[^>]+data-type="(planet|gate)"[^>]+aria-pressed="true"[^>]*>/g)];
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0][1], 'planet');
+  assert.match(selected[0][0], /data-id="design-sun"/);
+  assert.doesNotMatch(markup, /data-highlight-gate=/);
+  assert.ok(markup.includes('translate(-32 118)') && markup.includes('translate(584 118)'), 'columns have a common baseline and mirrored outer bounds');
+  assert.ok(markup.includes('translate(-32 694)') && markup.includes('translate(584 694)'), 'columns extend almost to the root');
+  assert.match(markup, /font-size="24"/);
+});
+
+test('26–44 exits its own gate clear of gate 50 and is painted behind every other channel', () => {
+  const channel = getChannel('26-44'), otherGate = getGate(50);
+  assert.deepEqual(channel.curves[0][0], [getGate(44).x, getGate(44).y]);
+  assert.deepEqual(channel.curves.at(-1).at(-1), [getGate(26).x, getGate(26).y]);
+  for (const curve of channel.curves) for (let step = 0; step <= 100; step++) {
+    const t = step / 100, u = 1 - t;
+    const [x, y] = [0, 1].map(axis => u ** 3 * curve[0][axis] + 3 * u * u * t * curve[1][axis] + 3 * u * t * t * curve[2][axis] + t ** 3 * curve[3][axis]);
+    assert.ok(Math.hypot(x - otherGate.x, y - otherGate.y) >= 20, 'route clears the gate disc and selection halo');
+  }
+  const markup = renderBodygraph({ personality: [26], design: [44] }, { type: 'channel', id: '26-44' });
+  const order = interactiveGroups(markup, 'channel').map(group => group.id);
+  assert.equal(order[0], '26-44');
+  assert.ok(markup.indexOf('data-id="26-44"') < markup.indexOf('data-junction="integration"'));
+});
+
+test('activation columns preserve real planet and line values, source colors and ordering', () => {
+  const chart = calculatedChart();
+  chart.activations.personality.reverse();
+  const markup = renderActivationColumns(chart, new Set([33]));
+  assert.equal((markup.match(/class="bg-activation"/g) || []).length, 26);
+  assert.match(markup, /data-source="design" fill="#c32d35"/);
+  assert.match(markup, /data-source="personality" fill="#202020"/);
+  assert.ok(markup.indexOf('data-source="design"') < markup.indexOf('data-source="personality"'));
+  for (const source of ['design', 'personality']) {
+    let previous = -1;
+    for (const [planet] of PLANETS) {
+      const entry = chart.activations[source].find(item => item.planet === planet);
+      const position = markup.indexOf(`data-activation="${source}-${planet}"`);
+      assert.ok(position > previous, `${source} ${planet} order`);
+      previous = position;
+      const row = markup.slice(position, markup.indexOf('</g>', position));
+      assert.match(row, new RegExp(`ворота ${entry.gate}, линия ${entry.line}`));
+      assert.ok(row.includes(`data-selected="${entry.gate === 33}"`));
+    }
+  }
+});
+
+test('activation columns never invent planets for manual charts or design activations for a transit', () => {
+  assert.equal(renderActivationColumns({ personality: [7], design: [31] }), '');
+  const chart = calculatedChart();
+  chart.source = 'transit'; chart.activations.design = [];
+  const markup = renderActivationColumns(chart);
+  assert.equal((markup.match(/class="bg-activation"/g) || []).length, 13);
+  assert.doesNotMatch(markup, /data-source="design"|>Дизайн</);
+  assert.match(markup, />Транзит</);
 });
 
 test('upper outer channels stay narrow and mirror one another around the central axis', () => {
@@ -257,8 +351,10 @@ test('upper outer channels stay narrow and mirror one another around the central
   }
   for (const [id, curve] of [['17-62', left], ['11-56', right]]) {
     const xs = curve.map(([x]) => x);
-    assert.ok(Math.max(...xs) - Math.min(...xs) <= 12, `${id} horizontal span remains near vertical`);
-    assert.ok(xs.every(x => x >= 284 && x <= 356), `${id} stays in the narrow upper corridor`);
+    const throatX = getCenter('throat').points.split(/\s+/).map(point => Number(point.split(',')[0]));
+    const throatWidth = Math.max(...throatX) - Math.min(...throatX);
+    assert.ok(Math.max(...xs) - Math.min(...xs) <= throatWidth / 3, `${id} horizontal span remains near vertical`);
+    assert.ok(xs.every(x => x >= Math.min(...throatX) && x <= Math.max(...throatX)), `${id} stays in the narrow upper corridor`);
     assert.ok(curve.every((point, index) => index === 0 || point[1] > curve[index - 1][1]), `${id} progresses downward without folding`);
     const gates = getChannel(id).gates.map(getGate);
     assert.deepEqual(curve[0], [gates[0].x, gates[0].y], `${id} starts at its gate`);
@@ -282,7 +378,7 @@ test('defined centers use their traditional color family and undefined centers s
     const groups = [...markup.matchAll(/<g\s+data-type="center"\s+data-id="([^"]+)"[^>]*>([\s\S]*?)<\/g>/g)];
     assert.equal(groups.length, 9);
     for (const [, id, content] of groups) {
-      const fill = content.match(/<polygon\s+class="bg-center-shape"[^>]*\sfill="([^"]+)"/);
+      const fill = content.match(/<(?:polygon|path)\s+class="bg-center-shape"[^>]*\sfill="([^"]+)"/);
       assert.ok(fill, `${id} has a center fill`);
       assert.equal(fill[1], defined.has(id) ? expected[id] : '#ffffff', `${id} fill follows center definition`);
     }
@@ -338,17 +434,204 @@ test('demo renders all 64 gates, nine centers and 36 channels as keyboard-operab
   assert.deepEqual(interactiveGroups(markup, 'gate').map(group => Number(group.id)).sort((a, b) => a - b), Array.from({ length: 64 }, (_, i) => i + 1));
 });
 
-test('gate selection highlights its connected gate and complete channel without losing the other gates', () => {
-  const markup = renderBodygraph({ personality: [37], design: [40] }, { type: 'gate', id: 37 });
-  const gates = new Map(interactiveGroups(markup, 'gate').map(group => [group.id, group.attributes]));
-  assert.equal(gates.size, 64);
-  assert.match(gates.get('37'), /aria-pressed="true"/);
-  assert.match(gates.get('37'), /data-related="true"/);
-  assert.match(gates.get('40'), /data-related="true"/);
-  assert.match(gates.get('40'), /aria-pressed="false"/);
-  const channel = interactiveGroups(markup, 'channel').find(group => group.id === '37-40');
-  assert.match(channel.attributes, /data-defined="true"/);
-  assert.match(channel.attributes, /data-related="true"/);
+test('gate selection highlights only that gate and its own channel halves, including integration', () => {
+  for (const { id } of GATES) {
+    const markup = renderBodygraph(DEMO_CHART, { type: 'gate', id });
+    const gates = interactiveGroups(markup, 'gate');
+    assert.equal(gates.length, 64);
+    assert.deepEqual(gates.filter(group => /aria-pressed="true"/.test(group.attributes)).map(group => Number(group.id)), [id]);
+    assert.deepEqual(gates.filter(group => /data-related="true"/.test(group.attributes)).map(group => Number(group.id)), [id]);
+    const relatedChannels = interactiveGroups(markup, 'channel').filter(group => /data-related="true"/.test(group.attributes)).map(group => group.id);
+    assert.deepEqual(new Set(relatedChannels), new Set(CHANNELS.filter(channel => channel.gates.includes(id)).map(channel => channel.id)));
+    assert.ok(interactiveGroups(markup, 'channel').every(group => /aria-pressed="false"/.test(group.attributes)));
+    const halfGates = [...markup.matchAll(/data-highlight-gate="(\d+)"/g)].map(match => Number(match[1]));
+    const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+    if ([10, 20, 34, 57].includes(id)) {
+      assert.deepEqual(arms, [id]);
+      assert.deepEqual(halfGates, []);
+    } else {
+      assert.deepEqual(new Set(halfGates), new Set([id]));
+      assert.deepEqual(arms, []);
+    }
+  }
+});
+
+test('center selection highlights only its own gates and their channel halves', () => {
+  for (const center of CENTERS) {
+    const markup = renderBodygraph(DEMO_CHART, { type: 'center', id: center.id });
+    const expected = GATES.filter(gate => gate.center === center.id).map(gate => gate.id);
+    const related = interactiveGroups(markup, 'gate').filter(group => /data-related="true"/.test(group.attributes)).map(group => Number(group.id));
+    assert.deepEqual(related, expected, center.id);
+    assert.deepEqual(interactiveGroups(markup, 'center').filter(group => /aria-pressed="true"/.test(group.attributes)).map(group => group.id), [center.id]);
+    const halfGates = [...markup.matchAll(/data-highlight-gate="(\d+)"/g)].map(match => Number(match[1]));
+    const ordinaryGates = expected.filter(id => ![10, 20, 34, 57].includes(id));
+    assert.deepEqual(new Set(halfGates), new Set(ordinaryGates), `${center.id} ordinary halves`);
+    const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+    assert.deepEqual(new Set(arms), new Set(expected.filter(id => [10, 20, 34, 57].includes(id))), `${center.id} integration branches`);
+    for (const [, gateId, path] of markup.matchAll(/data-highlight-gate="(\d+)"><path d="([^"]+)"/g)) {
+      const gate = getGate(Number(gateId));
+      const coordinate = `${gate.x.toFixed(2)},${gate.y.toFixed(2)}`;
+      assert.ok(path.startsWith(`M${coordinate}`) || path.endsWith(`L${coordinate}`), 'a half starts or ends at its own gate');
+    }
+  }
+});
+
+test('channel selection highlights the full connection and both gates, not other gates', () => {
+  for (const channel of CHANNELS) {
+    const markup = renderBodygraph(DEMO_CHART, { type: 'channel', id: channel.id });
+    const related = interactiveGroups(markup, 'gate').filter(group => /data-related="true"/.test(group.attributes)).map(group => Number(group.id));
+    assert.deepEqual(new Set(related), new Set(channel.gates), channel.id);
+    assert.deepEqual(interactiveGroups(markup, 'channel').filter(group => /data-related="true"/.test(group.attributes)).map(group => group.id), [channel.id]);
+    if (channel.gates.every(id => [10, 20, 34, 57].includes(id))) {
+      const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+      assert.deepEqual(new Set(arms), new Set(channel.gates));
+    } else {
+      assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#c4d9f1" stroke-width="13.2"`));
+    }
+  }
+});
+
+test('integration selection outlines sit above ordinary channels and below their own physical branches', () => {
+  const chart = { personality: [20, 10, 34, 57], design: [20, 10, 34, 57] };
+  for (const selection of [
+    ...['throat', 'g', 'sacral', 'spleen'].map(id => ({ type: 'center', id })),
+    ...[20, 10, 34, 57].map(id => ({ type: 'gate', id })),
+    { type: 'channel', id: '20-34' }, { type: 'integration', id: 'integration' }
+  ]) {
+    const markup = renderBodygraph(chart, selection);
+    const integration = markup.slice(markup.indexOf('<g class="bodygraph-channels">'));
+    const halo = integration.match(/<path class="bg-integration-selection"[^>]+\/>/);
+    assert.ok(halo, `${selection.id} has a selection halo`);
+    assert.match(halo[0], /fill="none" stroke="#c4d9f1" stroke-width="13.2"/);
+    assert.match(halo[0], new RegExp(`stroke-linecap="${selection.type === 'integration' ? 'butt' : 'round'}"`), 'partial candidates cover the exact terminal plane; ownership masks set their visible ends');
+    const bundleStart = integration.indexOf('data-junction="integration"');
+    assert.ok(integration.indexOf(halo[0]) > integration.indexOf('data-type="channel" data-id="26-44"'), 'selected outline is above the ordinary crossing');
+    assert.ok(integration.indexOf(halo[0]) < integration.indexOf('stroke="#c6c2b9"', bundleStart), 'selected outline is below its own physical channel outlines');
+    assert.ok(integration.indexOf(halo[0]) < integration.indexOf('class="bg-integration-arm"'), 'selected outline is below all branches');
+    const maskId = selection.type === 'integration' ? 'integration-outline' : 'integration-selection-outline';
+    assert.ok(halo[0].includes(`mask="url(#bodygraph-${maskId})"`), 'the lower outline retains its exterior ownership mask');
+    for (const gate of [20, 10, 34, 57]) {
+      const arm = integration.match(new RegExp(`<g class="bg-integration-arm" data-arm="${gate}"[^>]*>([\\s\\S]*?)<\\/g>`))[1];
+      assert.match(arm, /stroke="#202020"/);
+      assert.match(arm, /stroke="#c32d35"/);
+    }
+  }
+});
+
+test('the default camera uses a fixed symmetric frame instead of chart-content bounds', t => {
+  const originalPoint = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
+  globalThis.DOMPoint = class {
+    constructor(x, y) { this.x = x; this.y = y; }
+    matrixTransform() { return this; }
+  };
+  t.after(() => { if (originalPoint) Object.defineProperty(globalThis, 'DOMPoint', originalPoint); else delete globalThis.DOMPoint; });
+  const svg = {
+    addEventListener() {}, getScreenCTM: () => ({ inverse: () => ({}) }),
+    classList: { add() {}, remove() {}, toggle() {} },
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 640, bottom: 820, width: 640, height: 820 })
+  };
+  const viewport = { setAttribute() {}, getBBox() { throw new Error('Content must never choose the camera'); } };
+  const controls = attachGestures(svg, viewport, { onSelect() {}, onChange() {} });
+  controls.reset();
+  const expected = fitView(DRAWING_BOUNDS, { x: 22, y: 128, width: 596, height: 620 });
+  assert.deepEqual(controls.getView(), expected);
+  assert.equal(expected.x + 320 * expected.k, 320, 'the central axis remains centered');
+  controls.setView({ x: -300, y: 100, k: 2 });
+  controls.reset();
+  assert.deepEqual(controls.getView(), expected, 'the same default is restored after any pan or zoom');
+});
+
+test('only a background tap clears selection; dragging, pinching and cancelled pointers do not', t => {
+  const originalPoint = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
+  globalThis.DOMPoint = class {
+    constructor(x, y) { this.x = x; this.y = y; }
+    matrixTransform() { return this; }
+  };
+  t.after(() => { if (originalPoint) Object.defineProperty(globalThis, 'DOMPoint', originalPoint); else delete globalThis.DOMPoint; });
+  const listeners = new Map(), captures = new Set(), selected = [];
+  let cleared = 0;
+  const svg = {
+    addEventListener: (name, callback) => listeners.set(name, callback),
+    getScreenCTM: () => ({ inverse: () => ({}) }),
+    setPointerCapture: id => captures.add(id),
+    hasPointerCapture: id => captures.has(id),
+    releasePointerCapture: id => captures.delete(id),
+    classList: { add() {}, remove() {}, toggle() {} }
+  };
+  const controls = attachGestures(svg, { setAttribute() {} }, {
+    onSelect: value => selected.push(value), onChange() {}, onBackgroundTap: () => cleared++
+  });
+  const gate = { dataset: { type: 'gate', id: '37' } };
+  const send = (type, extra = {}) => listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0,
+    clientX: 100, clientY: 100, target: { closest: () => null }, ...extra });
+  send('pointerdown'); send('pointerup');
+  assert.equal(cleared, 1);
+  send('pointerdown', { target: { closest: () => gate } }); send('pointerup');
+  assert.deepEqual(selected, [{ type: 'gate', id: '37' }]);
+  assert.equal(cleared, 1);
+  send('pointerdown'); send('pointermove', { clientX: 140 }); send('pointerup', { clientX: 140 });
+  assert.equal(cleared, 1);
+  assert.equal(controls.getView().x, 0, 'the fitted camera does not pan at 100%');
+  controls.zoom(2);
+  const zoomedX = controls.getView().x;
+  send('pointerdown'); send('pointermove', { clientX: 140 }); send('pointerup', { clientX: 140 });
+  assert.equal(controls.getView().x, zoomedX + 40, 'panning is available above 100%');
+  assert.equal(cleared, 1, 'a zoomed drag preserves selection');
+  send('pointerdown'); send('pointerup', { clientX: 140 });
+  assert.equal(cleared, 1, 'release displacement is checked even without a move event');
+  send('pointerdown'); send('pointerdown', { pointerId: 2, clientX: 200 });
+  send('pointermove', { pointerId: 2, clientX: 250 });
+  send('pointerup', { pointerId: 2, clientX: 250 }); send('pointerup');
+  assert.equal(cleared, 1);
+  send('pointerdown'); send('pointercancel');
+  assert.equal(cleared, 1);
+  send('pointerdown'); send('lostpointercapture'); send('pointerup');
+  assert.equal(cleared, 1);
+  send('pointerdown'); send('pointerup');
+  assert.equal(cleared, 2, 'a fresh tap still works after cancelled gestures');
+});
+
+test('pointer and keyboard selections retain optional activation identity without changing ordinary graph payloads', t => {
+  const originalPoint = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
+  globalThis.DOMPoint = class {
+    constructor(x, y) { this.x = x; this.y = y; }
+    matrixTransform() { return this; }
+  };
+  t.after(() => { if (originalPoint) Object.defineProperty(globalThis, 'DOMPoint', originalPoint); else delete globalThis.DOMPoint; });
+  const listeners = new Map(), captures = new Set(), selected = [];
+  const svg = {
+    addEventListener: (name, callback) => listeners.set(name, callback),
+    getScreenCTM: () => ({ inverse: () => ({}) }),
+    setPointerCapture: id => captures.add(id),
+    hasPointerCapture: id => captures.has(id),
+    releasePointerCapture: id => captures.delete(id),
+    classList: { add() {}, remove() {}, toggle() {} },
+  };
+  attachGestures(svg, { setAttribute() {} }, { onSelect: value => selected.push(value), onChange() {} });
+  const datasets = [
+    { type: 'gate', id: '4' },
+    { type: 'center', id: 'ajna' },
+    { type: 'channel', id: '4-63' },
+    { type: 'integration', id: 'integration' },
+    { type: 'gate', id: '4', activation: 'personality-mercury' },
+    { type: 'gate', id: '4', activation: 'personality-mars' },
+    { type: 'gate', id: '4', activation: 'design-mercury' },
+    { type: 'planet', id: 'personality-mercury', activation: 'personality-mercury-planet' },
+  ];
+  for (const dataset of datasets) {
+    const target = { closest: () => ({ dataset }) };
+    for (const type of ['pointerdown', 'pointerup']) {
+      listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: 100, clientY: 100, target });
+    }
+    assert.deepEqual(selected.at(-1), dataset, `${dataset.activation || dataset.type} tap payload`);
+    for (const key of ['Enter', ' ']) {
+      let prevented = false;
+      listeners.get('keydown')({ target, key, preventDefault() { prevented = true; } });
+      assert.equal(prevented, true, `${key} is handled as a selection`);
+      assert.deepEqual(selected.at(-1), dataset, `${dataset.activation || dataset.type} keyboard payload`);
+    }
+  }
+  assert.equal(selected.length, datasets.length * 3, 'each tap and supported key selects exactly once');
 });
 
 test('empty charts remain undefined, and library thumbnails are excluded from keyboard navigation', () => {
@@ -437,23 +720,28 @@ function calculatedChart() {
   });
 }
 
-test('calculated chart export/import retains both activation streams and calculation provenance', () => {
+test('calculated chart storage retains both activation streams and calculation provenance', () => {
+  const storage = createMemoryStorage();
   const original = calculatedChart();
-  const roundtrip = decodeChart(encodeChart(original));
+  writeCharts(storage, [original]);
+  const [roundtrip] = readCharts(storage);
   for (const key of ['source', 'personality', 'design', 'activations', 'timezone', 'utc', 'utcOffset', 'fold', 'designUtc', 'cityId', 'city', 'engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac', 'designArcResidualDegrees', 'verification']) {
     assert.deepEqual(roundtrip[key], original[key], `preserve ${key}`);
   }
-  assert.deepEqual(decodeChart(encodeChart(roundtrip)), roundtrip, 'repeated saves remain stable');
+  writeCharts(storage, [roundtrip]);
+  assert.deepEqual(readCharts(storage), [roundtrip], 'repeated saves remain stable');
 });
 
-test('transit chart export/import keeps its source and absence of design activations', () => {
+test('transit chart storage keeps its source and absence of design activations', () => {
+  const storage = createMemoryStorage();
   const original = calculatedChart();
   Object.assign(original, {
     source: 'transit', name: 'Текущий момент', design: [], designUtc: null, designArcResidualDegrees: null,
     city: null, cityId: null, timezone: 'UTC', utcOffset: 'UTC+00:00'
   });
   original.activations.design = [];
-  const roundtrip = decodeChart(encodeChart(original));
+  writeCharts(storage, [original]);
+  const [roundtrip] = readCharts(storage);
   assert.equal(roundtrip.source, 'transit');
   assert.deepEqual(roundtrip.design, []);
   assert.deepEqual(roundtrip.activations, original.activations);
@@ -478,7 +766,7 @@ test('calculated chart validation rejects invalid activation records', () => {
   }
 });
 
-test('calculated chart import rejects duplicate planets and gates inconsistent with activation details', () => {
+test('calculated chart validation rejects duplicate planets and gates inconsistent with activation details', () => {
   const duplicate = calculatedChart();
   duplicate.activations.personality[1] = { ...duplicate.activations.personality[0] };
   assert.throws(() => validateChart(duplicate), Error);

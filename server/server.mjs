@@ -4,11 +4,35 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const root = path.dirname(fileURLToPath(import.meta.url));
+const serverRoot = path.dirname(fileURLToPath(import.meta.url));
+const root = path.dirname(serverRoot);
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || '127.0.0.1';
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8' };
-const allowed = new Set(['index.html', 'app.js', 'storage.js', 'gestures.js', 'graph-data.js', 'bodygraph.js', 'date-input.js', 'styles.css', 'favicon.svg']);
+const allowed = new Map([
+  ['index.html', 'public/index.html'],
+  ['styles.css', 'public/styles.css'],
+  ['favicon.svg', 'public/favicon.svg'],
+  ...[
+    'src/app.js',
+    'src/bodygraph/bodygraph.js',
+    'src/bodygraph/graph-data.js',
+    'src/bodygraph/integration-geometry.js',
+    'src/bodygraph/gestures.js',
+    'src/selection/selection-state.js',
+    'src/selection/hover-preview.js',
+    'src/activations/activations.js',
+    'src/activations/activation-details.js',
+    'src/activations/activation-popover.js',
+    'src/activations/variables.js',
+    'src/activations/variable-arrows.js',
+    'src/activations/line-fixing.js',
+    'src/activations/line-fixing-data.js',
+    'src/charts/storage.js',
+    'src/charts/date-input.js',
+    'src/library/knowledge.js',
+  ].map(filename => [filename, filename]),
+]);
 const normalize = text => String(text).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ё/g, 'е').trim();
 const cities = JSON.parse(await fs.readFile(path.join(root, 'data/cities.json'), 'utf8'));
 const cityIndex = new Map(cities.map(city => [String(city.id), city]));
@@ -42,7 +66,7 @@ async function calculate(input) {
   runningCalculations += 1;
   try {
     return await new Promise(resolve => {
-      const worker = spawn(path.join(root, '.venv/bin/python'), [path.join(root, 'calculator.py')], { cwd: root, stdio: ['pipe', 'pipe', 'ignore'] });
+      const worker = spawn(path.join(root, '.venv/bin/python'), [path.join(serverRoot, 'calculator.py')], { cwd: root, stdio: ['pipe', 'pipe', 'ignore'] });
       let output = '', settled = false;
       const finish = value => { if (settled) return; settled = true; clearTimeout(timeout); resolve(value); };
       const unavailable = { error: 'engine_unavailable', message: 'Локальный движок расчёта недоступен. Проверьте установку зависимостей.' };
@@ -91,7 +115,7 @@ http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
     const filename = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
     if (!allowed.has(filename)) { res.writeHead(404); res.end('Not found'); return; }
-    const data = await fs.readFile(path.join(root, filename));
+    const data = await fs.readFile(path.join(root, allowed.get(filename)));
     res.writeHead(200, { 'Content-Type': types[path.extname(filename)] || 'text/plain', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
     res.end(req.method === 'HEAD' ? undefined : data);
   } catch { if (!res.headersSent) json(res, 400, { error: 'invalid_request', message: 'Не удалось обработать запрос.' }); else res.end(); }

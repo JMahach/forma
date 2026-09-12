@@ -4,7 +4,7 @@ import pathlib
 import sys
 import zipfile
 
-root = pathlib.Path(__file__).parent
+root = pathlib.Path(__file__).resolve().parents[1]
 archive, regions_path = map(pathlib.Path, sys.argv[1:3])
 regions = {}
 for line in regions_path.read_text(encoding='utf-8').splitlines():

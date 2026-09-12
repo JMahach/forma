@@ -9,7 +9,7 @@ import zoneinfo
 import swisseph as swe
 import tzdata
 
-ROOT = pathlib.Path(__file__).parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 # Use the pinned package, not whichever database the operating system happens to have.
 zoneinfo.reset_tzpath([])
 swe.set_ephe_path(str(ROOT / 'data' / 'ephe'))
@@ -119,7 +119,7 @@ def calculate(request):
     city, offset, fold = None, 'UTC+00:00', 0
     if mode == 'transit':
         moment = dt.datetime.now(UTC).replace(microsecond=0)
-        name, date, time, place, timezone = 'Текущий момент', moment.strftime('%Y-%m-%d'), moment.strftime('%H:%M'), '', 'UTC'
+        name, date, time, place, timezone = 'Транзит', moment.strftime('%Y-%m-%d'), moment.strftime('%H:%M'), '', 'UTC'
     elif mode == 'natal':
         city = request.get('city')
         if not isinstance(city, dict) or not city.get('timezone'):

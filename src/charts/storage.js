@@ -1,5 +1,4 @@
 export const STORAGE_KEY = 'liniya.charts.v1';
-export const VIEW_KEY = 'liniya.views.v1';
 export const TRASH_KEY = 'liniya.trash.v1';
 
 export function parseGates(value) {
@@ -52,18 +51,6 @@ export function validateChart(raw) {
     }
   }
   return result;
-}
-
-export function encodeChart(chart) {
-  return JSON.stringify({ format: 'liniya-chart', version: 1, chart: validateChart(chart) }, null, 2);
-}
-
-export function decodeChart(text) {
-  if (text.length > 100000) throw new Error('Файл слишком большой. Выберите экспорт одной карты.');
-  let data;
-  try { data = JSON.parse(text); } catch { throw new Error('Не удалось прочитать JSON-файл.'); }
-  if (!data || typeof data !== 'object' || Array.isArray(data) || data.format !== 'liniya-chart' || data.version !== 1) throw new Error('Нужен файл карты, экспортированный из этого приложения.');
-  return validateChart(data.chart);
 }
 
 export function readCharts(storage, key = STORAGE_KEY) {

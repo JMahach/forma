@@ -1,29 +1,28 @@
-import { CENTERS, GATES, CHANNELS } from './graph-data.js';
-import { renderBodygraph } from './bodygraph.js';
-import { attachGestures, validView } from './gestures.js';
-import { parseGates, readCharts, writeCharts, VIEW_KEY, deleteChart } from './storage.js';
-import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
+import { renderBodygraph } from './bodygraph/bodygraph.js';
+import { alignPersonalityHeading } from './activations/activations.js';
+import { createSelectionState } from './selection/selection-state.js';
+import { attachKnowledge } from './library/knowledge.js';
+import { attachActivationPopover } from './activations/activation-popover.js';
+import { attachHoverPreview } from './selection/hover-preview.js';
+import { attachGestures } from './bodygraph/gestures.js';
+import { parseGates, readCharts, writeCharts, deleteChart } from './charts/storage.js';
+import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './charts/date-input.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-let savedCharts = [], views = {}, storageAvailable = true;
-try { savedCharts = readCharts(localStorage); views = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}'); if (!views || Array.isArray(views) || typeof views !== 'object') views = {}; } catch { storageAvailable = false; }
+let savedCharts = [], storageAvailable = true;
+try { savedCharts = readCharts(localStorage); } catch { storageAvailable = false; }
 let deletingId = null;
 let selectedChartId = 'current-transit';
-let selection = null, filter = 'all', editingId = null, toastTimer, viewTimer;
+const selectionState = createSelectionState();
+let hoverPreview = null, editingId = null, toastTimer;
 let calculationMode = 'calculated', selectedCity = null, cityResults = [], activeCityIndex = -1;
 let cityTimer, cityController, citySequence = 0, calculationController, formBusy = false;
 let liveBusy = false, liveWanted = true, liveError = false, lastLiveSave = 0;
-const emptyMoment = { id: 'current-transit', name: 'Текущий момент', source: 'transit', personality: [], design: [], utc: '' };
+const emptyMoment = { id: 'current-transit', name: 'Транзит', source: 'transit', personality: [], design: [], utc: '' };
 const chart = () => savedCharts.find(c => c.id === selectedChartId) || emptyMoment;
 const canManage = c => c && c.id !== 'current-transit' && c.source !== 'transit';
-const findGate = id => GATES.find(g => String(g.id) === String(id));
-const findCenter = id => CENTERS.find(c => String(c.id) === String(id));
-const activeGates = () => new Set([...chart().personality, ...chart().design]);
-const connected = id => CHANNELS.filter(c => c.gates.some(n => String(n) === String(id)));
-const integrationGates = new Set([10, 20, 34, 57]);
-const integrationChannels = CHANNELS.filter(channel => channel.gates.every(gate => integrationGates.has(gate)));
-const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Текущий момент' };
+const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Транзит' };
 const localMoment = value => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }).format(date) : '';
@@ -116,98 +115,80 @@ function persistCharts(next) {
   try { if (!storageAvailable) throw new Error(); writeCharts(localStorage, next); savedCharts = next; return true; }
   catch { toast('Не удалось сохранить карту в браузере.'); return false; }
 }
-function saveView() {
-  clearTimeout(viewTimer);
-  viewTimer = setTimeout(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(views)); } catch { /* Drawing remains usable if storage is full. */ } }, 180);
-}
-const initialView = views[selectedChartId];
+const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
 const gestures = attachGestures($('bodygraph'), $('viewport'), {
   onSelect: choose,
-  onChange: view => { $('zoomValue').textContent = `${Math.round(view.k * 100)}%`; views[selectedChartId] = view; saveView(); }
+  onBackgroundTap: clearSelection,
+  onChange: (view, fitted) => {
+    const home = view.k <= fitted.k * (1 + 1e-9);
+    $('zoomValue').textContent = `${home ? 100 : Math.max(101, Math.round(view.k / fitted.k * 100))}%`;
+    $('zoomOut').disabled = home;
+    hoverPreview?.clear();
+    activationPopover.reposition();
+  }
 });
+hoverPreview = attachHoverPreview($('bodygraph'), { onPreview: () => renderGraph() });
+const knowledge = attachKnowledge($('knowledgeDialog'), choose);
+$('openKnowledge').addEventListener('click', () => { closeLibrary(); knowledge.show(selectionState.primary); });
 
 function renderLibrary() {
-  $('libraryCount').textContent = savedCharts.length;
-  $('chartList').innerHTML = savedCharts.map(c => `<div class="chart-row ${canManage(c) ? 'has-actions' : ''}" data-active="${c.id === selectedChartId}"><button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar">${c.source === 'transit' ? '◷' : esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${esc(c.name)}</span><span class="chart-caption">${esc(c.source === 'transit' ? localMoment(c.utc) : c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span></button>${canManage(c) ? `<details class="chart-actions"><summary aria-label="Действия с картой «${esc(c.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(c.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(c.id)}">Удалить</button></div></details>` : ''}</div>`).join('');
+  const personalCharts = savedCharts.filter(canManage);
+  $('libraryCount').textContent = personalCharts.length;
+  $('nowButton').setAttribute('aria-pressed', String(selectedChartId === 'current-transit'));
+  $('chartList').innerHTML = personalCharts.map(c => `<div class="chart-row has-actions" data-active="${c.id === selectedChartId}"><button class="chart-card" data-chart-id="${esc(c.id)}" data-active="${c.id === selectedChartId}" aria-pressed="${c.id === selectedChartId}"><span class="chart-avatar">${esc(c.name.slice(0, 1).toUpperCase())}</span><span class="chart-copy"><span class="chart-name">${esc(c.name)}</span><span class="chart-caption">${esc(c.birthDate ? [formatDateInput(c.birthDate), c.birthTime].filter(Boolean).join(' · ') : sourceNames[c.source] || 'Ручные активации')}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(c.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(c.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(c.id)}">Удалить</button></div></details></div>`).join('');
 }
 function renderGraph() {
-  if (!savedCharts.some(c => c.id === selectedChartId)) { $('viewport').innerHTML = ''; return; }
+  if (!savedCharts.some(c => c.id === selectedChartId)) { $('viewport').innerHTML = ''; activationPopover.close(); return; }
   const focused = document.activeElement?.closest?.('#viewport [data-type]');
-  const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id } : null;
-  $('viewport').innerHTML = renderBodygraph(chart(), selection, { dimInactive: filter === 'active', activeOnly: filter === 'active' });
-  $('bodygraph').dataset.filter = filter;
-  if (focusTarget) $('viewport').querySelector(`[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
-}
-function activationLabel(id) {
-  const p = chart().personality.includes(Number(id)), d = chart().design.includes(Number(id));
-  if (chart().source === 'transit') return p ? 'Активны в текущем моменте' : 'Не активны в текущем моменте';
-  return p && d ? 'Личность + дизайн' : p ? 'Личность · чёрная активация' : d ? 'Дизайн · красная активация' : 'Не активированы в этой карте';
-}
-function connectionCard(channel, currentGate) {
-  const [a, b] = channel.gates;
-  return `<button class="connection-card" data-detail-type="channel" data-detail-id="${esc(channel.id)}"><span class="connection-route"><span class="connection-node ${Number(currentGate) === a ? 'current' : ''}">${a}</span><span class="connection-line"><i></i><i></i><i></i></span><span class="connection-node ${Number(currentGate) === b ? 'current' : ''}">${b}</span><span class="connection-arrow">↗</span></span><span class="connection-title">${esc(channel.name || `Канал ${a}—${b}`)}</span><span class="connection-caption">${activeGates().has(a) && activeGates().has(b) ? 'Канал определён' : 'Исследовать связь'}</span></button>`;
-}
-function detailButton(type, id, text) { return `<button class="center-chip" data-detail-type="${type}" data-detail-id="${esc(id)}">${esc(text)} <span>↗</span></button>`; }
-function renderDetails() {
-  const scrollPosition = $('detailContent').scrollTop;
-  let content;
-  if (!selection) {
-    content = '';
-  } else if (selection.type === 'gate') {
-    const g = findGate(selection.id);
-    if (!g) { selection = null; return renderDetails(); }
-    const center = findCenter(g.center);
-    const descriptions = {
-      37: 'В Human Design эти ворота связывают с дружбой, близостью и поддержкой внутри сообщества. В паре с воротами 40 внимание обращается к договорённостям и взаимному обмену.',
-      40: 'В Human Design эти ворота связывают с самостоятельностью, трудом и потребностью в отдыхе. Связь с воротами 37 предлагает исследовать баланс личных границ и поддержки сообщества.'
-    };
-    content = `<div class="detail-kicker"><span class="eyebrow">ВОРОТА</span><span class="detail-label">${esc(activationLabel(g.id))}</span></div><div class="detail-number">${g.id}<span>↗</span></div><h2 class="detail-title">${esc(g.name || `Ворота ${g.id}`)}</h2>${detailButton('center', g.center, center?.name || g.center)}<p class="detail-description">${esc(descriptions[g.id] || g.summary || 'Выберите связанную пару, чтобы исследовать структуру карты. Подробное описание появится после подключения вашей базы знаний.')}</p><div class="detail-section"><span class="eyebrow">${connected(g.id).length > 1 ? 'СВЯЗИ В КАРТЕ' : 'СВЯЗЬ В КАРТЕ'}</span>${connected(g.id).map(c => connectionCard(c, g.id)).join('')}</div><div class="detail-note"><span>НАБЛЮДЕНИЕ</span><p>${g.id === 37 || g.id === 40 ? 'Что каждый участник получает и что готов давать в этих отношениях?' : 'Что вы замечаете в этой теме на собственном опыте?'}</p></div>`;
-  } else if (selection.type === 'integration') {
-    const active = activeGates();
-    content = `<div class="detail-kicker"><span class="eyebrow">СВЯЗИ МЕЖДУ ЦЕНТРАМИ</span></div><h2 class="detail-title">Интеграция</h2><p class="detail-description">Четыре ворота, шесть связей. Выберите пару, чтобы рассмотреть её на схеме.</p><div class="integration-gates">${[20, 10, 57, 34].map(id => `<button class="gate-chip ${active.has(id) ? 'is-active' : ''}" data-detail-type="gate" data-detail-id="${id}">${id}</button>`).join('')}</div><div class="integration-channel-list">${integrationChannels.map(channel => `<button class="integration-channel" data-detail-type="channel" data-detail-id="${channel.id}"><span class="integration-pair">${channel.gates.join('—')}</span><span>${esc(channel.name)}</span><i class="integration-state ${channel.gates.every(id => active.has(id)) ? 'is-defined' : ''}" aria-label="${channel.gates.every(id => active.has(id)) ? 'Определён' : 'Не определён'}"></i></button>`).join('')}</div>`;
-  } else if (selection.type === 'center') {
-    const c = findCenter(selection.id);
-    if (!c) { selection = null; return renderDetails(); }
-    const active = activeGates();
-    const isDefined = CHANNELS.some(channel => channel.gates.every(g => active.has(g)) && channel.gates.some(g => findGate(g)?.center === c.id));
-    const gates = GATES.filter(g => g.center === c.id);
-    content = `<div class="detail-kicker"><span class="eyebrow">ЦЕНТР</span><span class="detail-label">${isDefined ? 'Определён' : 'Не определён'}</span></div><div class="center-detail-art">◇</div><h2 class="detail-title">${esc(c.name)}</h2><p class="detail-description">${isDefined ? 'В этой карте центр соединён с другим центром полностью активированным каналом.' : 'В этой карте у центра нет полностью активированного канала. Отдельные ворота могут быть активны.'}</p><div class="detail-section"><span class="eyebrow">ВОРОТА ЦЕНТРА</span><div class="gate-grid">${gates.map(g => `<button class="gate-chip ${active.has(g.id) ? 'is-active' : ''}" data-detail-type="gate" data-detail-id="${g.id}" aria-label="Ворота ${g.id}">${g.id}</button>`).join('')}</div></div><div class="detail-note"><span>ПРОСТРАНСТВО ЗНАНИЙ</span><p>Подробные материалы по центру можно будет добавить из вашей библиотеки.</p></div>`;
-  } else {
-    const c = CHANNELS.find(c => c.id === selection.id);
-    if (!c) { selection = null; return renderDetails(); }
-    const active = activeGates(), [a, b] = c.gates;
-    content = `<div class="detail-kicker"><span class="eyebrow">КАНАЛ</span><span class="detail-label">${c.gates.every(g => active.has(g)) ? 'Определён' : 'Не определён'}</span></div><div class="detail-number channel-number">${a}<span>—</span>${b}</div><h2 class="detail-title">${esc(c.name || 'Связь двух центров')}</h2><p class="detail-description">${a === 37 && b === 40 || a === 40 && b === 37 ? 'В системе Human Design эту связь называют каналом Сообщества. Она объединяет темы близости, договорённостей и взаимной поддержки.' : 'Канал соединяет два центра. Для полного определения в карте должны быть активны оба его конца.'}</p><div class="detail-section"><span class="eyebrow">РАССМОТРЕТЬ ВОРОТА</span>${c.gates.map(id => { const g = findGate(id); return `<button class="linked-gate" data-detail-type="gate" data-detail-id="${id}"><span class="linked-gate-number">${id}</span><span>${esc(g?.name || `Ворота ${id}`)}<small>${esc(findCenter(g?.center)?.name || '')}</small></span><span>↗</span></button>`; }).join('')}</div><div class="detail-note"><span>КАК ЧИТАТЬ СХЕМУ</span><p>Чёрным отмечена личность, красным — дизайн. Разные цвета могут вместе образовать полный канал.</p></div>`;
-  }
-  $('detailContent').innerHTML = content;
-  $('detailContent').scrollTop = scrollPosition;
+  const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation } : null;
+  $('viewport').innerHTML = renderBodygraph(chart(), selectionState.primary, { showActivations: true, selections: selectionState.items, previewSelection: hoverPreview?.currentSelection });
+  alignPersonalityHeading($('viewport'));
+  if (focusTarget) $('viewport').querySelector(focusTarget.activation ? `[data-activation="${focusTarget.activation}"]` : `.bg-interactive[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
+  activationPopover.refresh(chart());
 }
 function choose(value) {
-  selection = { type: value.type, id: value.type === 'gate' ? Number(value.id) : value.id };
-  renderGraph(); renderDetails(); $('details').classList.add('is-open'); $('detailContent').scrollTop = 0;
+  activationPopover.close();
+  const { popoverActivation } = selectionState.choose(value);
+  renderGraph();
+  if (popoverActivation) activationPopover.show(chart(), popoverActivation);
 }
 function updatePage() {
-  const c = chart(), active = activeGates();
-  $('chartTitle').textContent = c.name;
+  const c = chart();
+  $('chartTitle').textContent = c.id === 'current-transit' || c.source === 'transit' ? 'Транзит' : c.name;
   $('currentChartActions').hidden = !canManage(c);
   $('currentChartActions').open = false;
   $('currentChartActions').querySelectorAll('[data-chart-action]').forEach(button => { button.dataset.actionChartId = c.id; });
   $('chartSubtitle').textContent = c.source === 'transit' ? localMoment(c.utc) : [c.birthDate ? formatDateInput(c.birthDate) : '', c.birthTime, c.birthPlace].filter(Boolean).join(' · ');
-  $('modeLabel').textContent = sourceNames[c.source] || 'Ручной';
-  $('activeCount').textContent = active.size;
-  $('channelCount').textContent = CHANNELS.filter(channel => channel.gates.every(id => active.has(id))).length;
-  renderLibrary(); renderGraph(); renderDetails();
+  renderLibrary(); renderGraph();
 }
 function changeChart(id) {
-  views[selectedChartId] = gestures.getView();
+  activationPopover.close();
+  hoverPreview?.clear({ notify: false });
   selectedChartId = id;
   liveWanted = id === 'current-transit';
-  const restored = views[id];
-  selection = null;
-  updatePage(); gestures.setView(restored);
-  try { localStorage.setItem('liniya.last', id); } catch { /* No persistence required for selection. */ }
-  closeLibrary(); $('details').classList.remove('is-open');
+  selectionState.clear();
+  // Chart content changes; the shared camera does not.
+  updatePage();
+  closeLibrary();
 }
-function closeLibrary() { $('library').classList.remove('open'); $('libraryBackdrop').hidden = true; }
+function openLibrary() {
+  activationPopover.close();
+  hoverPreview?.clear();
+  renderLibrary();
+  $('library').inert = false;
+  $('library').classList.add('open');
+  $('libraryBackdrop').hidden = false;
+  $('openLibrary').setAttribute('aria-expanded', 'true');
+  $('nowButton').focus({ preventScroll: true });
+}
+function closeLibrary() {
+  const restoreFocus = $('library').contains(document.activeElement);
+  $('library').classList.remove('open');
+  $('library').inert = true;
+  $('libraryBackdrop').hidden = true;
+  $('openLibrary').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) $('openLibrary').focus({ preventScroll: true });
+}
 function openForm(edit = false, id = selectedChartId) {
   const c = savedCharts.find(item => item.id === id) || chart();
   if (edit && !canManage(c)) return;
@@ -253,9 +234,7 @@ document.addEventListener('toggle', e => {
   }
 }, true);
 document.addEventListener('pointerdown', e => document.querySelectorAll('.chart-actions[open]').forEach(item => { if (!item.contains(e.target)) item.open = false; }));
-$('detailContent').addEventListener('click', e => { const button = e.target.closest('[data-detail-type]'); if (button) choose({ type: button.dataset.detailType, id: button.dataset.detailId }); });
 $('newChartButton').addEventListener('click', () => openForm());
-$('quickNewChart').addEventListener('click', () => openForm());
 function openDeleteChart(c) {
   if (!canManage(c)) return;
   deletingId = c.id;
@@ -271,7 +250,7 @@ $('confirmDeleteChart').addEventListener('click', () => {
     $('deleteChartDialog').close();
     if (selectedChartId === deletingId) changeChart(savedCharts.find(c => c.id !== 'current-transit')?.id || 'current-transit');
     else updatePage();
-    delete views[deletingId]; saveView(); deletingId = null;
+    deletingId = null;
     toast('Карта удалена');
   } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
 });
@@ -356,9 +335,9 @@ async function refreshCurrentMoment(open = false) {
   if (open) { liveWanted = true; button.setAttribute('aria-busy', 'true'); }
   try {
     const data = await requestJSON('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'transit' }), signal: controller.signal });
-    if (!data.chart || !Array.isArray(data.chart.personality) || !Array.isArray(data.chart.design) || !data.chart.utc) throw new Error('Сервер вернул неполный расчёт текущего момента.');
+    if (!data.chart || !Array.isArray(data.chart.personality) || !Array.isArray(data.chart.design) || !data.chart.utc) throw new Error('Сервер вернул неполный расчёт транзита.');
     const previous = savedCharts.find(item => item.id === 'current-transit');
-    const c = { ...data.chart, id: 'current-transit', name: 'Текущий момент', source: 'transit', createdAt: previous?.createdAt || new Date().toISOString() };
+    const c = { ...data.chart, id: 'current-transit', name: 'Транзит', source: 'transit', createdAt: previous?.createdAt || new Date().toISOString() };
     const next = previous ? savedCharts.map(item => item.id === c.id ? c : item) : [...savedCharts, c];
     if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
     // Keep each live second in memory; persist at most twice a minute.
@@ -368,15 +347,13 @@ async function refreshCurrentMoment(open = false) {
     else if (selectedChartId === c.id) {
       $('chartSubtitle').textContent = localMoment(c.utc);
       if (!previous) renderLibrary();
-      if (!previous || JSON.stringify(previous.personality) !== JSON.stringify(c.personality)) {
-        const active = new Set([...c.personality, ...c.design]);
-        $('activeCount').textContent = active.size;
-        $('channelCount').textContent = CHANNELS.filter(channel => channel.gates.every(id => active.has(id))).length;
-        renderGraph(); renderDetails();
+      if (!previous || JSON.stringify(previous.activations?.personality.map(a => [a.gate, a.line])) !== JSON.stringify(c.activations?.personality.map(a => [a.gate, a.line])) || JSON.stringify(previous.personality) !== JSON.stringify(c.personality)) {
+        renderGraph();
       }
+      activationPopover.refresh(c);
     }
     if (liveError) toast('Живой расчёт восстановлен');
-    button.title = 'Рассчитать положение планет на текущий момент';
+    button.title = 'Транзит';
     liveError = false;
   } catch (error) {
     if (!liveError || open) toast(error.name === 'AbortError' ? 'Живой расчёт не ответил. Повторная попытка выполняется автоматически.' : error.message);
@@ -384,32 +361,35 @@ async function refreshCurrentMoment(open = false) {
     if (selectedChartId === 'current-transit') $('nowButton').title = 'Обновление недоступно. Нажмите, чтобы повторить.';
   } finally { clearTimeout(deadline); liveBusy = false; button.removeAttribute('aria-busy'); }
 }
-$('nowButton').addEventListener('click', () => refreshCurrentMoment(true));
+$('nowButton').addEventListener('click', () => {
+  closeLibrary();
+  if (savedCharts.some(c => c.id === 'current-transit')) changeChart('current-transit');
+  refreshCurrentMoment(true);
+});
 setInterval(() => refreshCurrentMoment(), 1000);
 $('zoomIn').addEventListener('click', () => gestures.zoom(1.25));
 $('zoomOut').addEventListener('click', () => gestures.zoom(0.8));
 $('fitButton').addEventListener('click', () => gestures.reset());
-$('exampleButton').addEventListener('click', () => choose({ type: 'gate', id: 37 }));
-$('closeDetails').addEventListener('click', () => { selection = null; renderGraph(); renderDetails(); $('details').classList.remove('is-open'); });
-$('openLibrary').addEventListener('click', () => { renderLibrary(); $('library').classList.add('open'); $('libraryBackdrop').hidden = false; });
-$('closeLibrary').addEventListener('click', closeLibrary);
+function clearSelection() {
+  activationPopover.close();
+  hoverPreview?.clear({ notify: false });
+  selectionState.clear();
+  renderGraph();
+}
+$('openLibrary').addEventListener('click', openLibrary);
 $('libraryBackdrop').addEventListener('click', closeLibrary);
-document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
-  filter = button.dataset.view; document.querySelectorAll('[data-view]').forEach(item => { item.classList.toggle('active', item === button); item.setAttribute('aria-pressed', item === button ? 'true' : 'false'); }); renderGraph();
-}));
-$('helpButton').addEventListener('click', () => $('helpDialog').showModal());
-for (const id of ['closeHelp', 'helpDone']) $(id).addEventListener('click', () => $('helpDialog').close());
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
   const menu = document.querySelector('.chart-actions[open]');
   if (menu) { menu.open = false; menu.querySelector('summary').focus(); e.preventDefault(); return; }
-  closeLibrary(); $('details').classList.remove('is-open');
+  closeLibrary();
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') { try { localStorage.setItem(VIEW_KEY, JSON.stringify(views)); if (storageAvailable) writeCharts(localStorage, savedCharts); } catch { /* Best effort persistence. */ } }
+  if (document.visibilityState === 'hidden') { try { if (storageAvailable) writeCharts(localStorage, savedCharts); } catch { /* Best effort persistence. */ } }
   else refreshCurrentMoment();
 });
 updatePage();
-if (validView(initialView)) gestures.setView(initialView);
+gestures.reset();
+new ResizeObserver(() => gestures.resize()).observe($('bodygraph'));
 if (!storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
 refreshCurrentMoment(true);

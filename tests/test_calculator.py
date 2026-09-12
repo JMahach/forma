@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-import calculator as calc
+from server import calculator as calc
 
 
 class HistoricalTimezoneTests(unittest.TestCase):
