@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createContext, runInContext } from 'node:vm';
+import { createGraphController } from '../src/bodygraph/graph-controller.js';
 import { alignPersonalityHeading } from '../src/activations/activations.js';
 
 // Independent affine matrices reproduce SVG's multiply/inverse contract without
@@ -193,10 +192,8 @@ test('fresh font metrics and replacement charts are measured again instead of re
 });
 
 test('actual renderGraph aligns each newly inserted chart before refreshing its unchanged popover', () => {
-  const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-  const renderSource = app.match(/^function renderGraph\([^)]*\) \{[\s\S]*?^\}/m)?.[0];
-  assert.ok(renderSource);
   const charts = [{ id: 'first' }, { id: 'second' }], calls = [];
+  let selectedId = 'first';
   let active, markup = '';
   const viewport = {
     get innerHTML() { return markup; },
@@ -207,21 +204,18 @@ test('actual renderGraph aligns each newly inserted chart before refreshing its 
     },
     querySelector(selector) { assert.ok(active, 'alignment must follow insertion'); return active.root.querySelector(selector); },
   };
-  const context = createContext({
-    savedCharts: charts, selectedChartId: 'first', selectionState: { primary: null, items: [] },
-    hoverPreview: { currentSelection: null }, document: { activeElement: null },
-    chart: () => charts.find(chart => chart.id === context.selectedChartId),
-    renderBodygraph: chart => chart.id, alignPersonalityHeading,
-    $: id => { assert.equal(id, 'viewport'); return viewport; },
+  const controller = createGraphController({
+    selectionState: { primary: null, items: [] }, viewport,
+    getChart: () => charts.find(chart => chart.id === selectedId),
+    renderChart: chart => chart.id, alignHeading: alignPersonalityHeading,
     activationPopover: {
       refresh(chart) { assertAligned(active, chart.id === 'first' ? 661.875 : 647.75); calls.push('refresh:' + chart.id); },
       close() { calls.push('close'); },
     },
   });
-  runInContext(renderSource + '\nglobalThis.render = renderGraph;', context);
-  context.render();
-  context.render();
-  context.selectedChartId = 'second';
-  context.render();
+  controller.render();
+  controller.render();
+  selectedId = 'second';
+  controller.render();
   assert.deepEqual(calls, ['insert:first', 'refresh:first', 'insert:first', 'refresh:first', 'insert:second', 'refresh:second']);
 });

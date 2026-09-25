@@ -78,7 +78,7 @@ test('selection and hover keep fixing symbols unchanged', () => {
 });
 
 test('both fixing modules are available through the production server', () => {
-  const server = readFileSync(new URL('../server/server.mjs', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../server/public-files.mjs', import.meta.url), 'utf8');
   assert.match(server, /'src\/activations\/line-fixing\.js'/);
   assert.match(server, /'src\/activations\/line-fixing-data\.js'/);
 });

@@ -1,5 +1,4 @@
-const GATE_WIDTH = 5.625;
-const LINE_WIDTH = GATE_WIDTH / 6;
+import { GATE_WIDTH, LINE_WIDTH, GATE_LONGITUDE_START } from '../domain/gate-wheel.js';
 // Longitude subtraction can lose one floating-point unit around a full circle.
 const BOUNDARY_EPSILON = Number.EPSILON * 360;
 
@@ -13,7 +12,7 @@ export function activationDetails(entry) {
       || !Number.isInteger(entry.gate) || entry.gate < 1 || entry.gate > 64
       || !Number.isInteger(entry.line) || entry.line < 1 || entry.line > 6) return null;
 
-  const remainder = (entry.longitude - 302) % 360;
+  const remainder = (entry.longitude - GATE_LONGITUDE_START) % 360;
   const position = remainder < 0 ? remainder + 360 : remainder;
   const gateIndex = Math.floor(position / GATE_WIDTH);
   const gateOffset = position - gateIndex * GATE_WIDTH;

@@ -1,0 +1,47 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #302e2b; background: #fdfcf9; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header, main, footer { width: min(1080px, calc(100% - 64px)); margin-inline: auto; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 30px 0; border-bottom: 1px solid #dedbd3; }
+header a { color: inherit; font-size: 27px; font-weight: 650; letter-spacing: -1.5px; text-decoration: none; }
+header span { font-size: 12px; color: #77716a; }
+.intro { padding: 64px 0 42px; max-width: 640px; }
+.eyebrow { font-size: 10px; letter-spacing: 1.8px; color: #82766a; line-height: 1.8; }
+h1 { font-size: clamp(52px, 8vw, 90px); font-weight: 450; line-height: 1; letter-spacing: -4px; margin: 23px 0; }
+h1 em { font-family: Georgia, serif; font-weight: 400; color: #8c7564; }
+.lead { max-width: 500px; font-size: 17px; line-height: 1.7; color: #71695f; }
+.story { display: grid; grid-template-columns: 1.15fr 1fr; gap: 76px; align-items: start; padding: 24px 0 40px; }
+.diagram { position: sticky; top: 24px; }
+.diagram-heading { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+button { font: inherit; color: inherit; cursor: pointer; }
+#view-toggle { padding: 9px 12px; border: 1px solid #dfd9cf; border-radius: 24px; background: transparent; font-size: 12px; }
+button:focus-visible, a:focus-visible { outline: 2px solid #699ac0; outline-offset: 4px; }
+#love-chart { width: 100%; height: 400px; display: block; margin-top: 20px; }
+#love-chart [data-type="gate"][data-focus="true"] .bg-gate-highlight { stroke: #8bb5d7; stroke-width: 3; }
+.caption { max-width: 350px; margin: 8px auto; font-size: 12px; color: #837d75; line-height: 1.7; text-align: center; }
+h2 { font-weight: 500; font-size: 24px; letter-spacing: -.6px; margin: 8px 0 16px; }
+.reading > p:not(.eyebrow), .note p { font-size: 14px; line-height: 1.8; color: #71695f; }
+.gate-list { margin-top: 26px; }
+.gate-list button { display: flex; align-items: center; gap: 18px; width: 100%; border: 0; border-bottom: 1px solid #e6e0d8; background: transparent; padding: 16px 4px; text-align: left; font-size: 14px; }
+.gate-list button[aria-pressed="true"] { color: #292622; border-bottom-color: #8e7b69; }
+.number { font-size: 20px; color: #998575; width: 28px; font-variant-numeric: tabular-nums; }
+.arrow { margin-left: auto; opacity: .3; }
+[aria-pressed="true"] .arrow { opacity: 1; }
+.gate-detail { min-height: 142px; padding-top: 18px; }
+h3 { font-size: 14px; font-weight: 550; }
+.gate-detail p { font-size: 14px; line-height: 1.8; color: #71695f; margin-bottom: 0; }
+.note { display: flex; gap: 24px; max-width: 750px; margin: 20px auto 64px; padding-top: 30px; border-top: 1px solid #dedbd3; }
+.sun { font-size: 34px; color: #998575; }
+.note h2 { font-size: 21px; }
+.note h2:not(:first-child) { margin-top: 30px; }
+.seasons { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; margin: 20px 0; }
+.seasons span { display: flex; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid #e6e0d8; font-size: 12px; }
+.seasons b { color: #998575; font-weight: 500; }
+.note details { border-block: 1px solid #e6e0d8; padding: 16px 0; margin: 24px 0; }
+.note summary { cursor: pointer; font-size: 14px; }
+.note summary:focus-visible { outline: 2px solid #699ac0; outline-offset: 4px; }
+@media (max-width: 480px) { .seasons { grid-template-columns: 1fr; } }
+footer { border-top: 1px solid #dedbd3; padding: 24px 0 30px; color: #8b847c; font-size: 11px; line-height: 1.8; }
+footer p { max-width: 780px; }
+footer a { color: inherit; display: inline-block; margin-right: 24px; text-underline-offset: 4px; }
+@media (max-width: 720px) { header, main, footer { width: calc(100% - 36px); } header span { font-size: 10px; } .intro { padding-top: 36px; } h1 { letter-spacing: -2px; } .story { grid-template-columns: 1fr; gap: 32px; } .diagram { position: static; } #love-chart { height: 340px; } .reading { max-width: 480px; } .note { margin-bottom: 40px; gap: 16px; } }

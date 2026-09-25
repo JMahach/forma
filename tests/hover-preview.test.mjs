@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createContext, runInContext } from 'node:vm';
+import { createGraphController } from '../src/bodygraph/graph-controller.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
 import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
 import { alignPersonalityHeading } from '../src/activations/activations.js';
-import { createSelectionState } from '../src/selection/selection-state.js';
+import { createSummarySelectionState as createSelectionState } from '../src/selection/summary-selection-state.js';
+import { buildChartSummary } from '../src/charts/chart-summary-data.js';
 import { CENTERS, GATES } from '../src/bodygraph/graph-data.js';
 import { STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
 
@@ -377,12 +377,6 @@ test('an explicit cross-node channel or whole integration contributes its stem e
 
 function graphHarness(t, selection, selectedActivation = null) {
   const hover = hoverHarness(t), chart = { ...chartFixture(), id: 'hover-chart' };
-  const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-  const sources = ['renderGraph', 'choose'].map(name => {
-    const source = app.match(new RegExp(`^function ${name}\\([^)]*\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0];
-    assert.ok(source, `${name} is available to test without bootstrapping the app`);
-    return source;
-  });
   const viewport = { innerHTML: '', querySelector() { return null; } };
   const popupCalls = { show: 0, close: 0, refresh: 0 };
   const activationPopover = {
@@ -393,21 +387,238 @@ function graphHarness(t, selection, selectedActivation = null) {
   };
   const selectionState = createSelectionState();
   if (selection) selectionState.choose({ ...selection, ...(selectedActivation ? { activation: selectedActivation } : {}) });
-  const context = createContext({
+  const summaryUpdates = [];
+  const nextChart = { id: 'next-chart', source: 'manual', personality: [1], design: [8] };
+  const context = {
     selectionState,
     get selection() { return selectionState.primary; },
     get selectedActivation() { return selectionState.activation; },
     get selectedItems() { return selectionState.items; },
-    savedCharts: [chart], selectedChartId: chart.id, chart: () => chart,
-    hoverPreview: hover.controller, activationPopover, renderBodygraph, alignPersonalityHeading,
-    document: { activeElement: null },
-    $: id => { assert.equal(id, 'viewport', 'preview only redraws the graph'); return viewport; },
+    savedCharts: [chart, nextChart], selectedChartId: chart.id, liveWanted: false,
+    chart: () => context.savedCharts.find(item => item.id === context.selectedChartId),
+  };
+  const controller = createGraphController({
+    selectionState, getChart: context.chart, viewport, activationPopover,
+    hasChart: () => context.savedCharts.some(item => item.id === context.selectedChartId),
+    getHoverPreview: () => hover.controller,
+    getSummary: () => ({ update(value, state) { summaryUpdates.push({ chart: value, items: state.items, filter: state.filter }); }, layout() {} }),
+    renderChart: renderBodygraph, alignHeading: alignPersonalityHeading,
+    onChartChange(id) {
+      context.selectedChartId = id;
+      context.liveWanted = id === 'current-transit';
+      controller.render();
+    },
   });
-  runInContext(`${sources.join('\n')}\nglobalThis.render = renderGraph; globalThis.select = choose;`, context);
+  Object.assign(context, { render: controller.render, select: controller.choose, selectSummary: controller.chooseSummary, clear: controller.clear, change: controller.changeChart });
   hover.setPreviewHandler(() => context.render());
   context.render();
-  return { hover, chart, viewport, popupCalls, activationPopover, context };
+  return { hover, chart, nextChart, viewport, popupCalls, activationPopover, summaryUpdates, context };
 }
+
+const plainSelection = harness => JSON.parse(JSON.stringify(harness.context.selectedItems));
+const summaryGroups = harness => harness.context.selectionState.activationFilter?.groups.map(({ line, source }) => ({ line, source })) || [];
+const summaryRows = (harness, line, source, options = {}) => {
+  const row = buildChartSummary(harness.context.chart()).lines.find(item => item.line === line);
+  harness.context.selectSummary(row.gates[source], { line, source }, options);
+};
+
+test('actual summary line selection replaces a prior selection and repeat clears the entire group', t => {
+  const harness = graphHarness(t, { type: 'gate', id: 37 }, 'personality-mars');
+  harness.hover.move(harness.hover.target('gate', 29));
+  summaryRows(harness, 4, 'design');
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 20 }, { type: 'gate', id: 41 }]);
+  assert.deepEqual(summaryGroups(harness), [{ line: 4, source: 'design' }]);
+  assert.equal(harness.context.selectedActivation, null);
+  assert.equal(harness.activationPopover.currentId, null);
+  assert.equal(harness.popupCalls.show, 0, 'choosing a line group opens no planetary popover');
+  assert.equal(harness.hover.controller.currentSelection, null, 'the previous pointer preview is cleared');
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).gates, new Set(['20', '41']));
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set(['design-sun', 'design-mercury']));
+  assert.equal(harness.summaryUpdates.at(-1).filter, harness.context.selectionState.activationFilter);
+  summaryRows(harness, 4, 'design');
+  assert.deepEqual(plainSelection(harness), []);
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).gates, new Set());
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set());
+  assert.equal(harness.summaryUpdates.at(-1).filter, null);
+});
+
+test('switching summary line or source preserves a new group even when its unique gates are identical', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  const initial = plainSelection(harness);
+  summaryRows(harness, 2, 'personality');
+  assert.deepEqual(plainSelection(harness), initial, 'the two line groups happen to own the same unique gates');
+  assert.deepEqual(summaryGroups(harness), [{ line: 2, source: 'personality' }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set(['personality-mercury', 'personality-moon']));
+  summaryRows(harness, 4, 'all');
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 20 }, { type: 'gate', id: 29 }, { type: 'gate', id: 41 }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set(['design-sun', 'design-mercury', 'personality-jupiter']));
+});
+
+test('actual gate click clears the summary row filter and resumes normal numeric selection', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  harness.context.select({ type: 'gate', id: '20', activation: 'personality-earth' });
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 20, activation: 'personality-earth' }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['design-moon', 'design-mercury', 'personality-earth', 'personality-moon']));
+  assert.equal(harness.activationPopover.currentId, 'personality-earth');
+  assert.equal(harness.popupCalls.show, 1);
+  assert.equal(harness.summaryUpdates.at(-1).filter, null);
+});
+
+test('actual Shift gate click retains the summary group and adds ordinary gate copies independently', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  harness.context.select({ type: 'gate', id: '29', additive: true });
+  assert.deepEqual(summaryGroups(harness), [{ line: 4, source: 'design' }]);
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 20 }, { type: 'gate', id: 41 }, { type: 'gate', id: 29 }]);
+  assert.equal(harness.activationPopover.currentId, null);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['design-sun', 'design-mercury', 'design-mars', 'personality-jupiter']));
+});
+
+test('actual Shift line groups preserve overlapping ordinary centers, channels and gates through independent toggles', t => {
+  const harness = graphHarness(t, { type: 'center', id: 'throat' });
+  harness.context.select({ type: 'channel', id: '37-40', additive: true });
+  harness.context.select({ type: 'gate', id: 54, additive: true });
+  const ordinary = plainSelection(harness), baseline = harness.viewport.innerHTML;
+  summaryRows(harness, 4, 'design', { additive: true });
+  summaryRows(harness, 2, 'personality', { additive: true });
+  assert.deepEqual(plainSelection(harness), [...ordinary, { type: 'gate', id: 20 }, { type: 'gate', id: 41 }]);
+  assert.deepEqual(summaryGroups(harness), [{ line: 4, source: 'design' }, { line: 2, source: 'personality' }]);
+  const selected = visibleHighlights(harness.viewport.innerHTML);
+  assert.equal(selected.centers.has('throat'), true);
+  assert.equal(selected.channels.has('37-40'), true);
+  assert.equal(selected.gates.has('54'), true);
+  assert.deepEqual(selected.numericCopies,
+    new Set(['personality-earth', 'personality-moon', 'design-moon', 'design-mercury', 'personality-mars', 'design-sun', 'personality-mercury']));
+  summaryRows(harness, 4, 'design', { additive: true });
+  assert.deepEqual(plainSelection(harness), [...ordinary, { type: 'gate', id: 20 }, { type: 'gate', id: 41 }]);
+  assert.deepEqual(summaryGroups(harness), [{ line: 2, source: 'personality' }]);
+  assert.equal(visibleHighlights(harness.viewport.innerHTML).numericCopies.has('design-sun'), false);
+  assert.equal(visibleHighlights(harness.viewport.innerHTML).numericCopies.has('personality-mercury'), true);
+  summaryRows(harness, 2, 'personality', { additive: true });
+  assert.deepEqual(plainSelection(harness), ordinary);
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.equal(harness.viewport.innerHTML, baseline, 'removing both line groups restores the complete ordinary selection');
+});
+
+test('actual Shift gate subtraction removes a gate shared by several line groups without losing their other gates', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  summaryRows(harness, 2, 'personality', { additive: true });
+  harness.context.select({ type: 'gate', id: 20, additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 41 }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['design-sun', 'personality-mercury']));
+  assert.deepEqual(harness.context.selectionState.activationFilter.groups.map(group => [...group.gates]), [[41], [41]]);
+  harness.context.render();
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 41 }], 'refresh does not reinsert a deliberately removed gate');
+  summaryRows(harness, 4, 'design', { additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 41 }, { type: 'gate', id: 20 }], 'Shift on the unpressed partial count fills its missing gate');
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['design-sun', 'design-mercury', 'personality-mercury']));
+  assert.deepEqual(harness.context.selectionState.activationFilter.groups.map(group => [...group.gates]), [[20, 41], [41]], 'restoring one group preserves the other partial group');
+  summaryRows(harness, 4, 'design', { additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 41 }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set(['personality-mercury']));
+});
+
+test('actual Shift center after a summary group adds and removes only the ordinary center scope', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  const baseline = harness.viewport.innerHTML;
+  harness.context.select({ type: 'center', id: 'throat', additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 20 }, { type: 'gate', id: 41 }, { type: 'center', id: 'throat' }]);
+  assert.deepEqual(summaryGroups(harness), [{ line: 4, source: 'design' }]);
+  assert.equal(visibleHighlights(harness.viewport.innerHTML).centers.has('throat'), true);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['design-sun', 'design-mercury', 'design-moon', 'personality-earth', 'personality-moon']));
+  harness.context.select({ type: 'center', id: 'throat', additive: true });
+  assert.equal(harness.viewport.innerHTML, baseline, 'removing the center restores every original line-group highlight');
+});
+
+test('actual all-source group overlaps a source group and an ordinary numeric gate without taking ownership away', t => {
+  const harness = graphHarness(t, { type: 'gate', id: 41 }, 'personality-mercury');
+  summaryRows(harness, 4, 'design', { additive: true });
+  const baseline = harness.viewport.innerHTML;
+  summaryRows(harness, 4, 'all', { additive: true });
+  assert.deepEqual(new Set(plainSelection(harness).map(item => item.id)), new Set([41, 20, 29]));
+  assert.equal(visibleHighlights(harness.viewport.innerHTML).numericCopies.has('personality-jupiter'), true);
+  summaryRows(harness, 4, 'all', { additive: true });
+  assert.equal(harness.viewport.innerHTML, baseline);
+  summaryRows(harness, 4, 'design', { additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 41, activation: 'personality-mercury' }]);
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+    new Set(['personality-sun', 'personality-mercury', 'design-sun']));
+  assert.equal(harness.activationPopover.currentId, null, 'removing groups does not reopen a previously closed popover');
+});
+
+test('actual live chart refresh replaces group gates while retaining ordinary selections and the chosen filters', t => {
+  const harness = graphHarness(t, { type: 'gate', id: 54 });
+  summaryRows(harness, 4, 'design', { additive: true });
+  harness.chart.design = [19, 20, 29, 40, 41];
+  harness.chart.activations.design.find(item => item.planet === 'sun').line = 5;
+  harness.chart.activations.design.find(item => item.planet === 'earth').line = 4;
+  harness.context.render();
+  assert.deepEqual(new Set(plainSelection(harness).map(item => item.id)), new Set([54, 19, 20]));
+  assert.deepEqual(summaryGroups(harness), [{ line: 4, source: 'design' }]);
+  assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies, new Set(['design-earth', 'design-mercury']));
+  summaryRows(harness, 4, 'design', { additive: true });
+  assert.deepEqual(plainSelection(harness), [{ type: 'gate', id: 54 }]);
+});
+
+test('actual hover preserves summary line and source while temporarily adding the hovered numeric copies', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  const filter = harness.context.selectionState.activationFilter, committed = plainSelection(harness), baseline = harness.viewport.innerHTML;
+  for (const gate of [29, 20]) {
+    harness.hover.move(harness.hover.target('gate', gate));
+    assert.equal(harness.context.selectionState.activationFilter, filter);
+    assert.deepEqual(plainSelection(harness), committed);
+    assert.deepEqual(pressed(harness.viewport.innerHTML), pressed(baseline));
+    const previewCopies = gate === 29 ? ['personality-jupiter', 'design-mars']
+      : ['design-moon', 'design-mercury', 'personality-earth', 'personality-moon'];
+    assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).numericCopies,
+      new Set(['design-sun', 'design-mercury', ...previewCopies]));
+    assert.equal(harness.popupCalls.show, 0);
+    harness.hover.send('svg', 'pointerleave');
+    assert.equal(harness.viewport.innerHTML, baseline);
+    assert.equal(harness.context.selectionState.activationFilter, filter);
+  }
+});
+
+test('actual background clear resets summary filtering, committed gates and hover together', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  harness.hover.move(harness.hover.target('gate', 29));
+  harness.context.clear();
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.deepEqual(plainSelection(harness), []);
+  assert.equal(harness.hover.controller.currentSelection, null);
+  assert.equal(harness.activationPopover.currentId, null);
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, null, { showActivations: true, showBackdrop: true }));
+  assert.equal(harness.summaryUpdates.at(-1).filter, null);
+});
+
+test('actual chart change clears the summary filter before rendering the new chart', t => {
+  const harness = graphHarness(t, null);
+  summaryRows(harness, 4, 'design');
+  harness.hover.move(harness.hover.target('gate', 29));
+  harness.context.change(harness.nextChart.id);
+  assert.equal(harness.context.selectedChartId, harness.nextChart.id);
+  assert.equal(harness.context.selectionState.activationFilter, null);
+  assert.deepEqual(plainSelection(harness), []);
+  assert.equal(harness.hover.controller.currentSelection, null);
+  assert.equal(harness.activationPopover.currentId, null);
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.nextChart, null, { showActivations: true, showBackdrop: true }));
+  assert.equal(harness.summaryUpdates.at(-1).chart, harness.nextChart);
+  assert.equal(harness.summaryUpdates.at(-1).filter, null);
+});
 
 test('actual hover redraws preserve the pinned selection and popup state, then restore pinned paint on leave', t => {
   const harness = graphHarness(t, Object.freeze({ type: 'gate', id: 37 }), 'personality-mars');
@@ -420,7 +631,7 @@ test('actual hover redraws preserve the pinned selection and popup state, then r
     assert.equal(harness.activationPopover.currentId, 'personality-mars', 'hover never replaces an open activation popup');
     assert.equal(harness.popupCalls.show, 0);
     assert.equal(harness.popupCalls.close, 0);
-    assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, pinned, { showActivations: true, previewSelection: { type, id } }));
+    assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, pinned, { showActivations: true, showBackdrop: true, previewSelection: { type, id } }));
   }
   harness.hover.send('svg', 'pointerleave');
   assert.equal(harness.viewport.innerHTML, baseline);
@@ -446,12 +657,12 @@ test('clicking an additive gate or center preview replaces the pinned selection 
   assert.equal(harness.activationPopover.currentId, 'design-mars');
   assert.deepEqual(visibleHighlights(harness.viewport.innerHTML).centers, new Set(), 'clicking replaces the old center rather than accumulating selections');
   harness.hover.send('svg', 'pointerleave');
-  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, { type: 'gate', id: 29 }, { showActivations: true }));
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, { type: 'gate', id: 29 }, { showActivations: true, showBackdrop: true }));
   harness.hover.move(harness.hover.target('center', 'throat'));
   assert.equal(visibleHighlights(harness.viewport.innerHTML).gates.has('29'), true, 'a later center hover adds to the newly pinned gate');
   harness.context.select({ type: 'center', id: 'throat' });
   harness.hover.send('svg', 'pointerleave');
-  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, pinned, { showActivations: true }), 'clicking the center replaces the gate and leaving retains only that center');
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, pinned, { showActivations: true, showBackdrop: true }), 'clicking the center replaces the gate and leaving retains only that center');
   assert.equal(harness.activationPopover.currentId, null);
 });
 
@@ -537,7 +748,7 @@ for (const [first, second] of [
     harness.context.select({ ...second, additive: true });
     harness.context.select({ ...first, additive: true });
     assert.deepEqual(JSON.parse(JSON.stringify(harness.context.selectedItems)), [second], 'the other item can be removed independently as well');
-    assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, second, { showActivations: true }));
+    assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, second, { showActivations: true, showBackdrop: true }));
     assert.equal(harness.activationPopover.currentId, null);
     assert.equal(harness.popupCalls.show, 0);
   });
@@ -639,11 +850,11 @@ test('hover alone opens no popup; click pins, second exact click unpins, and lea
   assert.equal(harness.context.selectedActivation, null);
   assert.equal(harness.activationPopover.currentId, null);
   assert.equal(harness.popupCalls.show, 1);
-  assert.equal(withoutPressed(harness.viewport.innerHTML), withoutPressed(renderBodygraph(harness.chart, { type: 'gate', id: 41 }, { showActivations: true })), 'the pointer still provides its temporary highlight after unpinning');
+  assert.equal(withoutPressed(harness.viewport.innerHTML), withoutPressed(renderBodygraph(harness.chart, { type: 'gate', id: 41 }, { showActivations: true, showBackdrop: true })), 'the pointer still provides its temporary highlight after unpinning');
   harness.hover.send('svg', 'pointerleave');
-  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, null, { showActivations: true }));
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, null, { showActivations: true, showBackdrop: true }));
   harness.hover.move(harness.hover.target('center', 'throat'));
   harness.context.select({ type: 'center', id: 'throat' });
   harness.hover.send('svg', 'pointerleave');
-  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, { type: 'center', id: 'throat' }, { showActivations: true }), 'leaving after pinning a center retains its full click highlight');
+  assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, { type: 'center', id: 'throat' }, { showActivations: true, showBackdrop: true }), 'leaving after pinning a center retains its full click highlight');
 });

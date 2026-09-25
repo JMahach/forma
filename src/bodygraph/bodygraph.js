@@ -1,7 +1,16 @@
-import { CENTERS, GATES, CHANNELS, getGate, getChannel, getDefinition } from './graph-data.js';
+import { CENTERS, GATES, CHANNELS, getChannel } from './graph-data.js';
 import { renderActivationColumns } from '../activations/activations.js';
 import { renderVariableArrows } from '../activations/variable-arrows.js';
-import { INTEGRATION_IDS, INTEGRATION_ARMS as ARM_GEOMETRY, STEM_POINTS, sampleBezier } from './integration-geometry.js';
+import { renderMandala } from './mandala.js';
+import { renderMandalaUnderlay } from './mandala-underlay.js';
+import { renderChartBackdrop } from './chart-backdrop.js';
+import { INTEGRATION_IDS, STEM_POINTS } from './integration-geometry.js';
+import {
+  pointString, roundedCenter, splitAtHalfLength, offsetPoints, channelHalves, paintOrder,
+  INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH, INTEGRATION_INNER_SIDE,
+  INTEGRATION_OUTER_SIDE, integrationOuterOwnership, integrationEndPlanes, integrationRoute,
+} from './drawing-geometry.js';
+import { createRenderState } from './render-state.js';
 
 const PALETTE = {
   ink: '#202020', design: '#c32d35', outline: '#c6c2b9', paper: '#ffffff',
@@ -24,93 +33,6 @@ const CHANNEL_WIDTH = Object.freeze({
 const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[character]));
-
-const pointString = (points) => points.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
-
-// Small true corner radii soften the silhouette without distorting the polygons
-// or moving the gate anchors. Geometry remains independent of activation data.
-function roundedCenter(points, radius = 6) {
-  const vertices = points.split(' ').map(pair => pair.split(',').map(Number));
-  const toward = (from, to) => {
-    const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
-    const distance = Math.min(radius, length / 4);
-    return from.map((value, axis) => value + (to[axis] - value) / length * distance);
-  };
-  return vertices.map((vertex, index) => {
-    const entry = toward(vertex, vertices[(index + vertices.length - 1) % vertices.length]);
-    const exit = toward(vertex, vertices[(index + 1) % vertices.length]);
-    return `${index ? 'L' : 'M'} ${entry.join(' ')} Q ${vertex.join(' ')} ${exit.join(' ')}`;
-  }).join(' ') + ' Z';
-}
-
-function splitAtHalfLength(points) {
-  const distinct = items => items.filter((point, index) => !index
-    || Math.hypot(point[0] - items[index - 1][0], point[1] - items[index - 1][1]) > 1e-7);
-  const lengths = points.slice(1).map((point, index) => Math.hypot(point[0] - points[index][0], point[1] - points[index][1]));
-  const midpoint = lengths.reduce((sum, length) => sum + length, 0) / 2;
-  let distance = 0;
-  for (let index = 0; index < lengths.length; index += 1) {
-    if (distance + lengths[index] >= midpoint) {
-      const fraction = lengths[index] ? (midpoint - distance) / lengths[index] : 0;
-      const middle = points[index].map((value, axis) => value + (points[index + 1][axis] - value) * fraction);
-      // An exact sampled midpoint must occur only once. Duplicate points create
-      // a zero-length normal and pinch the red/black lanes at their seam.
-      return [distinct([...points.slice(0, index + 1), middle]), distinct([middle, ...points.slice(index + 1)])];
-    }
-    distance += lengths[index];
-  }
-  return [points, points.slice(-1)];
-}
-
-function offsetPoints(points, offset) {
-  return points.map(([x, y], index) => {
-    const before = points[Math.max(0, index - 1)], after = points[Math.min(points.length - 1, index + 1)];
-    const dx = after[0] - before[0], dy = after[1] - before[1];
-    const length = Math.hypot(dx, dy) || 1;
-    return [x - dy / length * offset, y + dx / length * offset];
-  });
-}
-
-// Geometry is cached; selection changes do not resample 36 curves.
-const channelHalves = new Map(CHANNELS.map((channel) => [channel.id, splitAtHalfLength(
-  channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0))
-)]));
-// 26–44 crosses the central routes behind every other channel, including integration.
-const paintOrder = [CHANNELS.find(channel => channel.id === '26-44'), ...CHANNELS.filter(channel => channel.id !== '26-44')];
-
-// Integration is a shared anatomical stem with two spaced branch attachments.
-// There is no central dot, radial menu, or additional Center.
-const INTEGRATION_ARMS = ARM_GEOMETRY.map(arm => ({ ...arm, points: sampleBezier(arm.curve) }));
-const STEM_PATH = pointString(STEM_POINTS);
-const INTEGRATION_PATH = [...INTEGRATION_ARMS.map(({ path }) => path), STEM_PATH].join(' ');
-// Ownership is a side of the existing outer curve, not an expanded neighbor
-// stroke. Inner arms can meet the physical channel without leaking to its far side.
-const INTEGRATION_INNER_SIDE = `${getChannel('20-57').path} L ${getGate(57).x} 820 L 640 820 L 640 0 L ${getGate(20).x} 0 Z`;
-const INTEGRATION_OUTER_SIDE = `${getChannel('20-57').path} L ${getGate(57).x} 820 L 0 820 L 0 0 L ${getGate(20).x} 0 Z`;
-const integrationOuterOwnership = [20, 57].map(gate => {
-  const neighbor = INTEGRATION_ARMS.find(arm => arm.gate === (gate === 20 ? 10 : 34));
-  const boundary = gate === 20 ? 0 : 820;
-  // On the inner/right side, stop at the neighboring branch rather than
-  // reappearing beyond it. The outer/left side stays free until the paint cut.
-  return { gate, path: `${neighbor.path} L 0 ${neighbor.end[1]} L 0 ${boundary} L 640 ${boundary} L 640 ${neighbor.curve[0][1]} Z` };
-});
-const integrationEndPlanes = INTEGRATION_ARMS.filter(({ gate }) => gate === 20 || gate === 57).map(arm => {
-  // Match the actual, two-decimal sampled black/red paint, including its last
-  // segment normal. The authored cubic has a slightly different end tangent.
-  const [before, end] = arm.points.slice(-2).map(point => point.map(value => Number(value.toFixed(2))));
-  const dx = end[0] - before[0], dy = end[1] - before[1], length = Math.hypot(dx, dy);
-  const tangent = [dx / length, dy / length], normal = [-tangent[1], tangent[0]], extent = 2000;
-  const point = (side, back) => end.map((value, axis) => value + side * extent * normal[axis] - back * extent * tangent[axis]);
-  return { gate: arm.gate, polygon: [point(-1, 0), point(1, 0), point(1, 1), point(-1, 1)].map(p => p.map(value => value.toFixed(6)).join(',')).join(' ') };
-});
-
-function integrationRoute(gates) {
-  const first = INTEGRATION_ARMS.find(({ gate }) => gate === gates[0]);
-  const second = INTEGRATION_ARMS.find(({ gate }) => gate === gates[1]);
-  // Separate subpaths preserve the authored curves without inventing a rounded
-  // reversal join at a fork. Only routes crossing the node include its stem.
-  return [first.path, second.path, ...(first.end !== second.end ? [STEM_PATH] : [])].join(' ');
-}
 
 function integrationOutlineMask(id, gates = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates = [], activeParts = []) {
   const whole = gates.length === 4 && includeStem;
@@ -138,50 +60,19 @@ function integrationOutlineMask(id, gates = [20, 10, 34, 57], includeStem = true
  * chart.personality/design: gate-number arrays. No birth-date calculation occurs.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
  * options: { interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
- *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection }.
+ *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
+ *   activationFilter?: { line: number, source: 'design' | 'personality' | 'all' }
+ *     | { groups: Array<{ line: number, source: 'design' | 'personality' | 'all', gates?: number[] }>, unfilteredGates: number[] } }.
  * Preview paint is added to the pinned selection without changing pressed state.
  * The parent owns gestures, event delegation, and persisted view transforms.
  */
 export function renderBodygraph(chart = {}, selection = null, options = {}) {
-  const committedSelection = selection;
-  const committedSelections = (options.selections || [selection]).filter(Boolean);
-  // Hover adds a temporary layer. Only the committed selection owns pressed
-  // state; moving the pointer must never erase or broaden that selection.
-  const visualSelections = [...committedSelections, options.previewSelection].filter(Boolean);
-  const personality = new Set((chart.personality || []).map(Number));
-  const design = new Set((chart.design || []).map(Number));
-  const definition = getDefinition(chart);
-  const definedChannels = new Set(definition.channels.map(({ id }) => id));
-  const interactive = options.interactive !== false;
-  const prefix = String(options.idPrefix || 'bodygraph').replace(/[^a-zA-Z0-9_-]/g, '') || 'bodygraph';
-  const relatedChannels = new Set();
-  const relatedGates = new Set();
-  const halfGates = new Set();
-  const selectedGates = new Set();
-  const selectedCenters = new Set();
-  const selectedChannels = new Set();
-  const selectionGates = value => value?.type === 'gate' ? [Number(value.id)]
-    : value?.type === 'center' ? GATES.filter(gate => gate.center === value.id).map(gate => gate.id)
-      : value?.type === 'channel' ? getChannel(value.id)?.gates || []
-        : value?.type === 'integration' ? [10, 20, 34, 57] : [];
-  for (const value of visualSelections) {
-    const gates = selectionGates(value);
-    gates.forEach(id => relatedGates.add(id));
-    if (['gate', 'center'].includes(value.type)) gates.forEach(id => halfGates.add(id));
-    if (value.type === 'gate') selectedGates.add(Number(value.id));
-    if (value.type === 'center') selectedCenters.add(value.id);
-    if (value.type === 'channel') {
-      const channel = getChannel(value.id);
-      if (channel) selectedChannels.add(channel.id);
-    }
-  }
-
-  CHANNELS.forEach((channel) => {
-    const related = channel.gates.some(id => halfGates.has(id)) || selectedChannels.has(channel.id);
-    if (related) relatedChannels.add(channel.id);
-  });
-
-  const committedGates = new Set(committedSelections.flatMap(selectionGates));
+  const {
+    committedSelection, committedSelections, visualSelections,
+    personality, design, definition, definedChannels, interactive, prefix,
+    relatedChannels, relatedGates, halfGates, selectedGates, selectedCenters,
+    selectedChannels, committedGates, previewGates,
+  } = createRenderState(chart, selection, options);
   const attrs = (type, id, label, pressed) => {
     if (options.previewSelection || options.selections) pressed = committedSelections.some(value => type === value.type
       && String(id) === String(type === 'channel' ? getChannel(value.id)?.id : value.id));
@@ -311,7 +202,7 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
       <circle r="12.5" fill="transparent" pointer-events="${interactive ? 'all' : 'none'}"/>
       <circle class="bg-gate-disc" r="9.5" fill="${active ? fill : 'transparent'}" stroke="${active ? fill.startsWith('url') ? PALETTE.ink : fill : 'none'}" stroke-width=".8" pointer-events="none"/>
       <circle class="bg-gate-highlight" data-state="${selected ? 'selected' : related ? 'related' : 'idle'}" r="8.5" fill="${active ? 'none' : PALETTE.halo}" stroke="${PALETTE.halo}" stroke-width="2" opacity="${selected || related ? 1 : 0}" pointer-events="none"/>
-      <text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="11" font-weight="${active ? '650' : '500'}" fill="${active ? '#ffffff' : '#171513'}" pointer-events="none">${gate.id}</text>
+      <text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="9.9" font-weight="${active ? '650' : '500'}" fill="${active ? '#ffffff' : '#171513'}" pointer-events="none">${gate.id}</text>
     </g>`;
   }).join('');
 
@@ -344,10 +235,10 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
       .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     }
   </style>
-  <g class="bodygraph-drawing" ${interactive ? '' : 'pointer-events="none"'}>
-    ${options.showActivations ? renderActivationColumns(chart, relatedGates, selection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections }) + renderVariableArrows(chart) : ''}
-    <g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
+  ${options.showMandala ? renderMandala(chart, { interactive, selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null }) + '\n  ' : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
+    ${options.showActivations ? renderActivationColumns(chart, relatedGates, selection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + (options.showMandala ? '' : renderVariableArrows(chart)) : ''}
+    ${options.showMandala ? '<g class="mandala-core" transform="translate(320 398) scale(.84) translate(-320 -398)">\n    ' + renderMandalaUnderlay(prefix) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
-    <g class="bodygraph-gates">${gates}</g>
+    <g class="bodygraph-gates">${gates}</g>${options.showMandala ? '\n    </g>' : ''}
   </g>`;
 }

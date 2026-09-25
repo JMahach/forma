@@ -63,8 +63,24 @@ test('compact rings keep the existing touch target, activation disc and readable
       assert.equal(attribute(disc, 'stroke-width'), '.8');
       assert.ok(group.content.indexOf(disc) < group.content.indexOf(ring), 'the compact ring is visible over the activation disc');
       assert.ok(group.content.indexOf(ring) < group.content.indexOf('<text'), 'gate number stays above the ring');
-      assert.match(group.content, new RegExp(`<text[^>]*font-size="11"[^>]*>${group.id}<\\/text>`));
+      assert.match(group.content, new RegExp(`<text[^>]*font-size="9\\.9"[^>]*>${group.id}<\\/text>`));
     }
+  }
+});
+
+test('internal gate labels are ten percent smaller in both modes without shrinking hit targets or mandala numbers', () => {
+  for (const showMandala of [false, true]) {
+    const markup = renderBodygraph(allActive, null, { showMandala });
+    const groups = gateGroups(markup);
+    assert.equal(groups.length, 64);
+    for (const group of groups) {
+      const text = group.content.match(/<text\b[^>]*>/)[0];
+      assert.equal(Number(attribute(text, 'font-size')), 11 * .9);
+      assert.match(group.content, /<circle r="12\.5" fill="transparent" pointer-events="all"\/>/);
+    }
+    const ringLabels = [...markup.matchAll(/<text class="mandala-number"[^>]*>/g)];
+    assert.equal(ringLabels.length, showMandala ? 64 : 0);
+    for (const [tag] of ringLabels) assert.equal(attribute(tag, 'font-size'), '12');
   }
 });
 

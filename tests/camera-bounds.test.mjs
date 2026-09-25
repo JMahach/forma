@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createContext, runInContext } from 'node:vm';
+import { attachCameraControls, createCameraChangeHandler } from '../src/bodygraph/camera-controls.js';
 import { attachGestures, constrainView, DRAWING_BOUNDS, zoomAt } from '../src/bodygraph/gestures.js';
 
 const closeTo = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} ≈ ${expected}`);
@@ -260,17 +260,9 @@ test('bounded drags preserve selection semantics and a fresh background tap stil
 
 test('the real zoom button bindings use the same bounded controls', t => {
   const harness = cameraHarness(t), home = harness.fitted;
-  const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   const handlers = new Map();
-  const context = createContext({
-    gestures: harness.controls,
-    $: id => ({ addEventListener(type, callback) { assert.equal(type, 'click'); handlers.set(id, callback); } }),
-  });
-  for (const id of ['zoomIn', 'zoomOut', 'fitButton']) {
-    const listener = source.match(new RegExp(`^\\$\\('${id}'\\)\\.addEventListener\\('click',.*\\);$`, 'm'))?.[0];
-    assert.ok(listener, `${id} has its application binding`);
-    runInContext(listener, context);
-  }
+  const element = id => ({ addEventListener(type, callback) { assert.equal(type, 'click'); handlers.set(id, callback); } });
+  attachCameraControls({ zoomIn: element('zoomIn'), zoomOut: element('zoomOut'), fitButton: element('fitButton') }, harness.controls);
   handlers.get('zoomOut')();
   assert.deepEqual(harness.controls.getView(), home);
   handlers.get('zoomIn')();
@@ -321,27 +313,23 @@ test('panning and dragging cursors are enabled only above 100% and are cleared o
 });
 
 test('the real camera display disables zoom-out at Home and never labels a pannable view as 100%', () => {
-  const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-  const callback = source.match(/onChange:\s*(\(view,\s*fitted\)\s*=>\s*\{[\s\S]*?^  \})/m)?.[1];
-  assert.ok(callback, 'the application camera callback is available to test');
   const elements = new Map([['zoomValue', { textContent: '' }], ['zoomOut', { disabled: false }]]);
   let repositioned = 0;
-  const context = createContext({
-    $: id => { assert.ok(elements.has(id), `camera updates the expected ${id} control`); return elements.get(id); },
-    hoverPreview: { clear() {} },
+  const cameraChanged = createCameraChangeHandler({
+    zoomValue: elements.get('zoomValue'), zoomOut: elements.get('zoomOut'),
+    getHoverPreview: () => ({ clear() {} }),
     activationPopover: { reposition() { repositioned++; } },
   });
-  runInContext(`globalThis.cameraChanged = ${callback};`, context);
   let updates = 0;
   for (const k of [0.65, 0.9, 1.5]) {
     const fitted = { x: 30, y: 70, k };
     for (const [ratio, label, disabled] of [[1, '100%', true], [1 + 5e-10, '100%', true], [1.0001, '101%', false], [1.25, '125%', false], [2, '200%', false]]) {
-      context.cameraChanged({ ...fitted, k: k * ratio }, fitted);
+      cameraChanged({ ...fitted, k: k * ratio }, fitted);
       assert.equal(elements.get('zoomValue').textContent, label);
       assert.equal(elements.get('zoomOut').disabled, disabled);
       updates++;
     }
-    context.cameraChanged(fitted, fitted);
+    cameraChanged(fitted, fitted);
     assert.equal(elements.get('zoomValue').textContent, '100%');
     assert.equal(elements.get('zoomOut').disabled, true, 'reset restores the disabled state after zooming');
     updates++;

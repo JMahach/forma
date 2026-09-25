@@ -9,12 +9,12 @@ export function zoomAt(view, point, factor, { min = 0.65, max = 4.5 } = {}) {
   return { x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio, k };
 }
 
-export function validView(value) {
-  return value && ['x', 'y', 'k'].every(key => Number.isFinite(value[key])) && value.k >= 0.65 && value.k <= 4.5 && Math.abs(value.x) <= 5000 && Math.abs(value.y) <= 6000;
+export function validView(value, { min = 0.65, max = 4.5 } = {}) {
+  return value && ['x', 'y', 'k'].every(key => Number.isFinite(value[key])) && value.k >= min && value.k <= max && Math.abs(value.x) <= 5000 && Math.abs(value.y) <= 6000;
 }
 
-export function fitView(bounds, area) {
-  const k = clamp(Math.min(area.width / bounds.width, area.height / bounds.height), 0.65, 4.5);
+export function fitView(bounds, area, { min = 0.65, max = 4.5 } = {}) {
+  const k = clamp(Math.min(area.width / bounds.width, area.height / bounds.height), min, max);
   return { k, x: area.x + area.width / 2 - (bounds.x + bounds.width / 2) * k, y: area.y + area.height / 2 - (bounds.y + bounds.height / 2) * k };
 }
 
@@ -34,14 +34,15 @@ export function constrainView(view, fitted, bounds = DRAWING_BOUNDS) {
   };
 }
 
-export function attachGestures(svg, viewport, { onSelect, onChange, onBackgroundTap = () => {} }) {
+export function attachGestures(svg, viewport, { onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, fitInsets = null, resolveSelection = () => null }) {
   let view = { x: 0, y: 0, k: 1 };
   let fittedView = { ...view };
+  const activeFrame = () => getFrame() ?? { bounds: DRAWING_BOUNDS, minScale: 0.65 };
   const pointers = new Map();
-  let moved = false, pinched = false, initialTarget = null, initialClient = null, initialAdditive = false;
-  const selectTarget = (target, additive = false) => onSelect({ type: target.dataset.type, id: target.dataset.id,
-    ...(target.dataset.activation ? { activation: target.dataset.activation } : {}),
-    ...(additive ? { additive: true } : {}) });
+  let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialAdditive = false;
+  const selectionFor = (target, event) => resolveSelection(target, event) || ({ type: target.dataset.type, id: target.dataset.id,
+    ...(target.dataset.activation ? { activation: target.dataset.activation } : {}) });
+  const selectTarget = (target, additive = false, event) => onSelect({ ...selectionFor(target, event), ...(additive ? { additive: true } : {}) });
   const point = (event) => {
     const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
     return { x: p.x, y: p.y };
@@ -53,17 +54,27 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
   }
   const zoom = (anchor, factor) => zoomAt(view, anchor, factor, { min: fittedView.k, max: 4.5 });
   function apply() {
-    view = constrainView(view, fittedView);
+    view = constrainView(view, fittedView, activeFrame().bounds);
     updateCursor();
     viewport.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`);
     onChange({ ...view }, { ...fittedView });
   }
   function defaultView() {
     const rect = svg.getBoundingClientRect(), matrix = svg.getScreenCTM().inverse();
-    const side = rect.width < 700 ? 22 : 64;
-    const top = new DOMPoint(rect.left + side, rect.top + (rect.width < 700 ? 128 : 86)).matrixTransform(matrix);
-    const bottom = new DOMPoint(rect.right - side, rect.bottom - 72).matrixTransform(matrix);
-    return fitView(DRAWING_BOUNDS, { x: top.x, y: top.y, width: Math.max(100, bottom.x - top.x), height: Math.max(100, bottom.y - top.y) });
+    const insets = typeof fitInsets === 'function' ? fitInsets() : fitInsets;
+    const { bounds, minScale } = activeFrame(), flexible = Boolean(insets) || minScale < 0.65;
+    // The normal chart retains its established frame. Wider optional frames can
+    // shrink further, including on short landscape screens, without page scroll.
+    // The studio supplies responsive safe areas without clipping the canvas.
+    // Keep historical defaults for standalone diagrams and preview harnesses.
+    const side = Math.min(insets?.side ?? (rect.width < 700 ? 22 : 64), flexible ? rect.width / 4 : Infinity);
+    const topInset = Math.min(insets?.top ?? (rect.width < 700 ? 128 : 86), flexible ? rect.height * (insets ? 0.49 : 0.3) : Infinity);
+    const bottomInset = Math.min(insets?.bottom ?? 72, flexible ? rect.height * (insets ? 0.49 : 0.2) : Infinity);
+    const top = new DOMPoint(rect.left + side, rect.top + topInset).matrixTransform(matrix);
+    const bottom = new DOMPoint(rect.right - side, rect.bottom - bottomInset).matrixTransform(matrix);
+    const area = { x: top.x, y: top.y, width: Math.max(flexible ? 1 : 100, bottom.x - top.x), height: Math.max(flexible ? 1 : 100, bottom.y - top.y) };
+    const min = flexible ? Math.min(minScale, area.width / bounds.width, area.height / bounds.height) : minScale;
+    return fitView(bounds, area, { min });
   }
   function fit() {
     fittedView = defaultView();
@@ -76,6 +87,9 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (!pointers.size) {
       moved = false; pinched = false; initialTarget = event.target.closest('[data-type]'); initialClient = { x: event.clientX, y: event.clientY };
+      // Resolve while the pressed SVG target still exists. Hover redraws may
+      // replace it before pointerup; a tap must keep its original exact angle.
+      initialSelection = initialTarget ? selectionFor(initialTarget, event) : null;
       // The first press owns both the target and modifier for this gesture.
       initialAdditive = Boolean(event.shiftKey);
     }
@@ -111,7 +125,7 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
     if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
     updateCursor();
     if (tap) {
-      if (initialTarget) selectTarget(initialTarget, initialAdditive);
+      if (initialSelection) onSelect({ ...initialSelection, ...(initialAdditive ? { additive: true } : {}) });
       else onBackgroundTap();
     }
   }
@@ -125,7 +139,7 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
   }, { passive: false });
   svg.addEventListener('keydown', event => {
     const target = event.target.closest('[data-type]');
-    if (target && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectTarget(target, Boolean(event.shiftKey)); }
+    if (target && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectTarget(target, Boolean(event.shiftKey), event); }
     if (event.target === svg && ['+', '-', '0'].includes(event.key)) { event.preventDefault(); controls.zoom(event.key === '+' ? 1.25 : event.key === '-' ? 0.8 : 1); if (event.key === '0') controls.reset(); }
   });
   const controls = {
@@ -138,7 +152,8 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
       apply();
     },
     getView() { return { ...view }; },
-    setView(value) { if (validView(value)) { view = { ...value }; apply(); } else fit(); }
+    getFittedView() { return { ...fittedView }; },
+    setView(value) { if (validView(value, { min: Math.min(activeFrame().minScale, fittedView.k) })) { view = { ...value }; apply(); } else fit(); }
   };
   apply();
   return controls;

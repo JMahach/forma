@@ -209,13 +209,17 @@ const unchangedHashes = {
   red: 'fa3fc055238d3fc7473281b19ce0d8d961bd8642c7882036cd914515e1fbe444',
   dual: '04d11eb99d1ab8900cd13b7739a22f54ea869009e525c23d63022655e3d1bd6b',
 };
+// The later, user-requested 10% gate-label reduction is independent of width.
+// Normalize only that typography change when comparing this historical oracle;
+// gate-highlight.test.mjs independently requires the new 9.9 label size.
+const originalGateFont = markup => markup.replace(/font-size="9\.9"/g, 'font-size="11"');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center', id: 'throat' },
     { type: 'channel', id: '37-40' }, { type: 'integration', id: 'integration' }];
   for (const [mode, chart] of Object.entries(charts)) {
     const markup = renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' });
     const unchanged = {
-      gatesAndCenters: markup.slice(markup.indexOf('<g class="bodygraph-centers">')),
+      gatesAndCenters: originalGateFont(markup.slice(markup.indexOf('<g class="bodygraph-centers">'))),
       clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g),
       style: markup.match(/<style>[\s\S]*?<\/style>/)[0],
       pointerTargets: paths(markup).filter(tag => attribute(tag, 'stroke') === 'transparent'
@@ -268,7 +272,7 @@ async function rendererAtScale(scale) {
 test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {
   const renderReverted = await rendererAtScale(1);
   for (const { name, args, hash } of rollbackCases) {
-    assert.equal(createHash('sha256').update(renderReverted(...args)).digest('hex'), hash, name);
+    assert.equal(createHash('sha256').update(originalGateFont(renderReverted(...args))).digest('hex'), hash, name);
   }
 });
 

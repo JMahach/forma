@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
   <title>Бодиграф</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=forma-2">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -14,6 +15,7 @@
     </header>
     <div class="workspace">
       <aside class="library" id="library" aria-label="Главное меню" inert>
+        <div class="site-brand" aria-label="Форма"><svg width="36" height="45" viewBox="0 0 28 35" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-linejoin="round"><path d="M14 1 26 14 14 34 2 14 14 1Z" stroke-width="1.5"/><path d="M14 1v33M2 14h24M2 14l12 9 12-9" stroke-width="1.2"/></g></svg><span>форма<span class="brand-period">.</span></span></div>
         <nav class="main-navigation" id="mainNavigation" aria-label="Разделы">
             <button class="menu-item" id="nowButton" aria-pressed="true" title="Транзит"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5V10l3 1.8" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Транзит</span></button>
           <button class="menu-item" id="openKnowledge" aria-label="Библиотека знаний"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 5.5C7.5 3.5 4.5 3.5 2.5 4.5v11c2-1 5-1 7.5 1 2.5-2 5.5-2 7.5-1v-11c-2-1-5-1-7.5 1Zm0 0v11" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Библиотека</span></button>
@@ -26,17 +28,38 @@
         <div class="sidebar-footer"><p>Карты сохраняются в этом браузере.</p></div>
       </aside>
       <main class="studio">
-        <header class="studio-header">
-          <div class="chart-heading"><div class="chart-title-row"><h1 id="chartTitle">Бодиграф</h1><details class="chart-actions header-actions" id="currentChartActions" hidden><summary aria-label="Действия с открытой картой" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit">Редактировать</button><button class="danger-text" data-chart-action="delete">Удалить</button></div></details></div><p class="subtitle" id="chartSubtitle"></p></div>
+        <div class="chart-tools" aria-label="Вид схемы">
+          <button type="button" class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема" hidden><svg width="21" height="21" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 9 7-6 7 6M5 7.3V17h10V7.3M8 17v-5h4v5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" class="icon-button" id="chartDayToggle" aria-label="День рождения по минутам" title="День рождения по минутам" aria-expanded="false" aria-controls="chartDayControls" hidden><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" class="mandala-switch" id="mandalaSwitch" role="switch" aria-checked="false" aria-label="Мандала" aria-controls="bodygraph"><span class="mandala-switch-track" aria-hidden="true"><span></span></span><span>Мандала</span></button>
+          <button type="button" class="icon-button summary-switch" id="summarySwitch" aria-label="О карте" title="О карте" aria-expanded="false" aria-controls="chartSummary"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 3.5h13.5v17H6.2a2.7 2.7 0 0 1 0-5.4h12.3M5 3.5v12.2M11 3.5v7l2.5-1.8 2.5 1.8v-7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </div>
+        <header class="studio-header" id="chartHeader">
+          <div class="chart-heading"><div class="chart-title-row"><h1 id="chartTitle">Бодиграф</h1></div><p class="subtitle" id="chartSubtitle"></p></div>
         </header>
+        <aside class="chart-summary" id="chartSummary" aria-labelledby="chartSummaryTitle" aria-hidden="true" inert>
+          <header class="summary-heading"><h2 id="chartSummaryTitle">О карте</h2><div class="summary-overview" id="summaryOverview"></div></header>
+          <label class="summary-search"><span class="visually-hidden">Поиск по сводке</span><input id="summarySearch" type="search" placeholder="Найти в карте" autocomplete="off"></label>
+          <div class="summary-content" id="chartSummaryContent"></div>
+        </aside>
         <section class="canvas-wrap" id="canvasWrap" aria-label="Интерактивный бодиграф">
-          <svg id="bodygraph" viewBox="0 0 640 820" xmlns="http://www.w3.org/2000/svg" aria-label="Бодиграф. Выбирайте ворота, центры или каналы" role="group"><g id="viewport"></g></svg>
-          <div class="canvas-controls" aria-label="Масштаб"><button class="icon-button" id="zoomOut" aria-label="Уменьшить">−</button><span class="zoom-value" id="zoomValue" aria-live="off">100%</span><button class="icon-button" id="zoomIn" aria-label="Увеличить">＋</button><span class="control-divider"></span><button class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 9 7-6 7 6M5 7.3V17h10V7.3M8 17v-5h4v5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+          <svg id="bodygraph" viewBox="0 0 640 820" xmlns="http://www.w3.org/2000/svg" aria-label="Бодиграф. Выбирайте ворота, центры или каналы" role="group" tabindex="0"><g id="viewport"></g></svg>
         </section>
+        <div class="day-controls transit-controls" id="transitControls" role="group" aria-label="Транзит сегодня" hidden>
+          <div class="transit-controls-heading"><span id="transitDate">Сегодня</span><time id="transitMoment">—</time><button type="button" id="transitNow" aria-pressed="true">Сейчас</button></div>
+          <label class="visually-hidden" for="transitTime">Время транзита в течение дня</label><input id="transitTime" type="range" min="0" max="1439" step="1" value="0" disabled>
+          <p class="transit-status" id="transitStatus" role="status"></p>
+        </div>
+        <div class="day-controls chart-day-controls" id="chartDayControls" role="group" aria-label="День рождения по минутам" hidden>
+          <div class="transit-controls-heading"><span id="chartDayDate">День рождения</span><time id="chartDayMoment">—</time><button type="button" id="chartDayReset" title="Вернуться к сохранённому времени">Исходное</button></div>
+          <label class="visually-hidden" for="chartDayTime">Время рождения в течение дня</label><input id="chartDayTime" type="range" min="0" max="1439" step="1" value="0" disabled>
+          <p class="transit-status" id="chartDayStatus" role="status"></p>
+        </div>
       </main>
     </div>
   </div>
   <div class="mobile-backdrop" id="libraryBackdrop" hidden></div>
+  <div class="summary-backdrop" id="summaryBackdrop" hidden></div>
   <dialog id="chartDialog" aria-labelledby="dialogTitle">
     <div class="dialog-content">
       <div class="dialog-header"><div><span class="eyebrow">ЛИЧНАЯ КАРТА</span><h2 id="dialogTitle">Новая карта</h2></div><button class="icon-button" id="closeDialog" aria-label="Закрыть">×</button></div>

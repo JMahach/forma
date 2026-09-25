@@ -40,7 +40,11 @@ apiTest('the page loads the complete frontend module graph through public source
     .filter(([, attributes]) => /\btype=["']module["']/.test(attributes))
     .map(([, attributes]) => attributes.match(/\bsrc=["']([^"']+)["']/)?.[1]);
   assert.deepEqual(entryPoints, ['/src/app.js']);
-  const pending = entryPoints.map(path => new URL(path, base)), visited = new Set();
+  const story = await request('/love');
+  assert.equal(story.status, 200);
+  assert.match(story.headers.get('content-type'), /html/);
+  assert.match(story.body, /src="\/src\/stories\/vessel-of-love.js"/);
+  const pending = [...entryPoints, '/src/stories/vessel-of-love.js'].map(path => new URL(path, base)), visited = new Set();
   while (pending.length) {
     const url = pending.pop();
     assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');

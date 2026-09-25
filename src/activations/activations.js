@@ -50,9 +50,11 @@ export function alignPersonalityHeading(root) {
 
 // Planetary values come exclusively from the saved calculation, never from
 // the gate arrays of a manually entered chart.
-export function renderActivationColumns(chart, selectedGates = new Set(), selection = null, { pressedGates = selectedGates, pressedSelection = selection, selections = [selection].filter(Boolean), pressedSelections = [pressedSelection].filter(Boolean) } = {}) {
+export function renderActivationColumns(chart, selectedGates = new Set(), selection = null, { pressedGates = selectedGates, pressedSelection = selection, selections = [selection].filter(Boolean), pressedSelections = [pressedSelection].filter(Boolean), activationFilter = null, previewGates = new Set() } = {}) {
   if (!chart.activations) return '';
   const fixings = calculateLineFixings(chart);
+  const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
+  const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
   const columns = ['design', 'personality'].map(source => {
     const entries = chart.activations[source];
     if (!Array.isArray(entries) || !entries.length) return '';
@@ -62,7 +64,14 @@ export function renderActivationColumns(chart, selectedGates = new Set(), select
     const rows = PLANETS.map(([planet, symbol, name], index) => {
       const entry = entries.find(item => item.planet === planet);
       if (!entry || !Number.isInteger(entry.gate) || entry.gate < 1 || entry.gate > 64 || !Number.isInteger(entry.line) || entry.line < 1 || entry.line > 6) return '';
-      const selected = selectedGates.has(entry.gate);
+      // A summary line selects exact activation rows; graph selections still
+      // operate on unique gates. Hover adds its usual gate copies temporarily.
+      const matchesFilter = !activationFilter || unfilteredGates.has(entry.gate)
+        || filteredGroups.some(group => entry.line === group.line
+          && (group.source === 'all' || group.source === source)
+          && (!group.gates || group.gates.includes(entry.gate)));
+      const selected = selectedGates.has(entry.gate) && matchesFilter || previewGates.has(entry.gate);
+      const pressed = pressedGates.has(entry.gate) && matchesFilter;
       const fixing = fixings.get(`${source}-${planet}`)?.state;
       const fixingLabel = FIXING_LABELS[fixing];
       const planetSelected = selections.some(value => value.type === 'planet' && value.id === `${source}-${planet}`);
@@ -72,7 +81,7 @@ export function renderActivationColumns(chart, selectedGates = new Set(), select
           <rect x="-8" y="-20" width="32" height="40" rx="5" fill="${planetSelected ? '#eaf0f8' : 'transparent'}"/>
           <text class="planet-symbol" x="8" y="0" text-anchor="middle" dominant-baseline="central" font-size="26" pointer-events="none">${symbol}</text>
         </g>
-        <g class="bg-activation" data-type="gate" data-id="${entry.gate}" data-activation="${source}-${planet}" data-selected="${selected}" tabindex="0" role="button" aria-label="${label}, ${name}: ворота ${entry.gate}, линия ${entry.line}${fixingLabel ? `, ${fixingLabel.toLowerCase()}` : ''}" aria-pressed="${pressedGates.has(entry.gate)}">
+        <g class="bg-activation" data-type="gate" data-id="${entry.gate}" data-activation="${source}-${planet}" data-selected="${selected}" tabindex="0" role="button" aria-label="${label}, ${name}: ворота ${entry.gate}, линия ${entry.line}${fixingLabel ? `, ${fixingLabel.toLowerCase()}` : ''}" aria-pressed="${pressed}">
           <title>Ворота ${entry.gate} · линия ${entry.line}${fixingLabel ? ` · ${fixingLabel}` : ''}</title>
           <rect x="28" y="-20" width="68" height="40" rx="5" fill="${selected ? '#eaf0f8' : 'transparent'}"/>
           <text x="34" y="0" dominant-baseline="central" font-size="24" font-weight="500" pointer-events="none">${entry.gate}<tspan font-weight="400" opacity=".7">.${entry.line}</tspan></text>

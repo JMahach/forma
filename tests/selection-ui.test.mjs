@@ -1,23 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createContext, runInContext } from 'node:vm';
 import { CENTERS, GATES } from '../src/bodygraph/graph-data.js';
 import { createSelectionState } from '../src/selection/selection-state.js';
+import { createGraphController } from '../src/bodygraph/graph-controller.js';
 
 const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 
-// Execute the real interaction function without app bootstrap, storage, timers,
-// a browser, or access to real saved charts. The top-level function boundary is
-// deliberately checked: refactors must update this harness, not silently skip it.
+// Exercise the public controller with real selection state and isolated UI
+// boundaries. No source extraction, app bootstrap, storage or real charts.
 function selectionHarness() {
-  const source = appSource.match(/^function choose\(value\) \{[\s\S]*?^\}/m)?.[0];
-  assert.ok(source, 'app.js exposes the top-level choose(value) interaction function');
-  const cleanupSources = ['clearSelection', 'changeChart'].map(name => {
-    const definition = appSource.match(new RegExp(`^function ${name}\\([^)]*\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0];
-    assert.ok(definition, `${name} is available for selection cleanup checks`);
-    return definition;
-  });
   const panels = new Map(), opened = [], calls = { graph: 0, details: 0, camera: 0, popupClosed: 0, popupShows: [], events: [], hoverClears: [], updates: 0, libraryCloses: 0 };
   const currentChart = {
     id: 'activation-chart', source: 'calculated', personality: [4], design: [4],
@@ -31,6 +23,7 @@ function selectionHarness() {
     get currentId() { return currentActivation; },
     close() { currentActivation = null; calls.popupClosed++; calls.events.push('close'); },
     show(chart, id) { currentActivation = id; calls.popupShows.push({ chart, id }); calls.events.push(`show:${id}`); },
+    refresh() {},
   };
   const panel = id => {
     if (!panels.has(id)) {
@@ -60,28 +53,31 @@ function selectionHarness() {
     return panels.get(id);
   };
   const selectionState = createSelectionState();
-  const context = createContext({
+  let selectedChartId = currentChart.id, liveWanted = false;
+  const controller = createGraphController({
+    selectionState, getChart: () => currentChart, viewport: panel('viewport'),
+    activationPopover,
+    getHoverPreview: () => ({ clear(options) { calls.hoverClears.push(options); } }),
+    renderChart() { calls.graph++; calls.events.push('graph'); return ''; },
+    alignHeading() {},
+    onChartChange(id) {
+      selectedChartId = id;
+      liveWanted = id === 'current-transit';
+      calls.updates++;
+      calls.libraryCloses++;
+    },
+  });
+  const context = {
     selectionState,
     get selection() { return selectionState.primary; },
     get selectedActivation() { return selectionState.activation; },
     get selectedItems() { return selectionState.items; },
-    selectedChartId: currentChart.id,
-    liveWanted: false,
-    $: panel,
-    chart: () => currentChart,
-    activationPopover,
-    hoverPreview: { clear(options) { calls.hoverClears.push(options); } },
-    renderGraph() { calls.graph++; calls.events.push('graph'); },
-    updatePage() { calls.updates++; },
-    closeLibrary() { calls.libraryCloses++; },
-    renderDetails() { calls.details++; },
-    gestures: {
-      reset() { calls.camera++; }, setView() { calls.camera++; }, zoom() { calls.camera++; },
-      getView() { return { x: 28, y: -53, k: 1.7 }; },
-    },
-    knowledge: { show() { opened.push('knowledge.show()'); } },
-  });
-  runInContext(`${source}\n${cleanupSources.join('\n')}\nglobalThis.invokeSelection = choose; globalThis.clearSelected = clearSelection; globalThis.selectChart = changeChart;`, context);
+    get selectedChartId() { return selectedChartId; },
+    get liveWanted() { return liveWanted; },
+    invokeSelection: controller.choose,
+    clearSelected: controller.clear,
+    selectChart: controller.changeChart,
+  };
   return { context, calls, opened, panels, currentChart, activationPopover };
 }
 
@@ -384,5 +380,8 @@ test('ordinary graph and planet selections dismiss an open activation popup with
 });
 
 test('pointer and keyboard graph selections use the tested choose callback', () => {
-  assert.match(appSource, /attachGestures\(\$\('bodygraph'\),\s*\$\('viewport'\),\s*\{\s*onSelect:\s*choose\s*,/);
+  const options = appSource.match(/attachGestures\(\$\('bodygraph'\),\s*\$\('viewport'\),\s*\{([\s\S]*?)\n\}\);/)?.[1];
+  assert.ok(options, 'the application attaches gestures to the drawing');
+  assert.match(options, /\bonSelect:\s*graph\.choose\s*,/);
+  assert.match(options, /\bonBackgroundTap:\s*graph\.clear\s*,/);
 });

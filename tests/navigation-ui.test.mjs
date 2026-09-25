@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createContext, runInContext } from 'node:vm';
+import { chartTitle } from '../src/charts/chart-display.js';
+import { attachChartLibrary, renderChartLibrary } from '../src/charts/chart-library.js';
+import { attachTransitNavigation } from '../src/charts/live-transit.js';
+import { attachCameraControls } from '../src/bodygraph/camera-controls.js';
 
-const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+const bootstrapSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+const appSource = [bootstrapSource, ...[
+  'charts/chart-display.js', 'charts/chart-library.js', 'charts/birth-form.js',
+  'charts/live-transit.js', 'bodygraph/graph-controller.js', 'bodygraph/camera-controls.js',
+].map(path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8'))].join('\n');
 const pageSource = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
 test('transit is consistently named without renaming saved personal charts', () => {
@@ -11,8 +18,7 @@ test('transit is consistently named without renaming saved personal charts', () 
   assert.match(button, /<span>Транзит<\/span>/);
   assert.match(button, /title="Транзит"/);
   assert.doesNotMatch(pageSource + appSource, /Текущий момент/);
-  const assignment = appSource.match(/^\s*\$\('chartTitle'\)\.textContent = .*;$/m)?.[0];
-  assert.ok(assignment);
+  assert.match(bootstrapSource, /\$\('chartTitle'\)\.textContent\s*=\s*chartTitle\(/, 'the application uses the public title policy');
   for (const [c, expected] of [
     [{ id: 'current-transit', name: 'Текущий момент', source: 'transit' }, 'Транзит'],
     [{ id: 'current-transit', name: 'Legacy moment' }, 'Транзит'],
@@ -21,14 +27,12 @@ test('transit is consistently named without renaming saved personal charts', () 
     [{ id: 'manual', name: 'Текущий момент', source: 'manual' }, 'Текущий момент'],
   ]) {
     Object.freeze(c);
-    const title = { textContent: '' };
-    runInContext(assignment, createContext({ c, $: id => { assert.equal(id, 'chartTitle'); return title; } }));
-    assert.equal(title.textContent, expected);
+    assert.equal(chartTitle(c), expected);
   }
 });
 
 test('removed legacy panels leave no DOM nodes, event bindings, or renderer calls', () => {
-  for (const id of ['details', 'detailContent', 'closeDetails', 'modeLabel', 'activeCount', 'channelCount', 'exampleButton']) {
+  for (const id of ['details', 'detailContent', 'closeDetails', 'modeLabel', 'activeCount', 'channelCount', 'exampleButton', 'currentChartActions']) {
     assert.ok(!pageSource.includes(`id="${id}"`), `${id} is removed, not merely hidden`);
     assert.ok(!appSource.includes(`$('${id}')`), `${id} has no dangling binding`);
   }
@@ -81,32 +85,37 @@ test('the sidebar has no close cross and is inaccessible until the menu is opene
   assert.match(pageSource, /<button\b[^>]*id="openLibrary"[^>]*aria-controls="library"[^>]*aria-expanded="false"/);
 });
 
+test('the menu is reachable above the open right drawer backdrop but remains below its own left drawer', () => {
+  const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const zIndex = pattern => Number(styles.match(pattern)?.[1]);
+  const normalMenu = zIndex(/^\.topbar \{[^}]*z-index:\s*(\d+)/m);
+  const rightBackdrop = zIndex(/^\.summary-backdrop \{[^}]*z-index:\s*(\d+)/m);
+  const raisedMenu = zIndex(/^\.app-shell:has\(\.chart-summary\.open\) \.topbar \{[^}]*z-index:\s*(\d+)/m);
+  const leftDrawer = zIndex(/^\.library \{[^}]*z-index:\s*(\d+)/m);
+  assert.ok(normalMenu < rightBackdrop, 'normal menu keeps its original stacking level');
+  assert.ok(raisedMenu > rightBackdrop, 'the actual Menu click reaches its handler while About is open');
+  assert.ok(raisedMenu < leftDrawer, 'opening the left library covers its own Menu button as before');
+});
+
 function menuHarness() {
-  const sources = ['openLibrary', 'closeLibrary'].map(name => {
-    const source = appSource.match(new RegExp(`^function ${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0];
-    assert.ok(source, `${name} is a top-level function`);
-    return source;
-  });
-  const listeners = ['openLibrary', 'libraryBackdrop'].map(id => {
-    const source = appSource.match(new RegExp(`^\\$\\('${id}'\\)\\.addEventListener\\('click',.*\\);$`, 'm'))?.[0];
-    assert.ok(source, `${id} click handler is connected`);
-    return source;
-  });
-  const keyboard = appSource.match(/^document\.addEventListener\('keydown', e => \{[\s\S]*?^\}\);/m)?.[0];
-  assert.ok(keyboard, 'document keyboard handler is connected');
   const elements = new Map(), handlers = new Map();
   let renders = 0, popupCloses = 0;
   const document = {
     activeElement: null,
+    getElementById(id) { return element(id); },
     querySelector() { return null; },
+    querySelectorAll() { return []; },
     addEventListener(type, handler) { handlers.set(type, handler); },
   };
   const sidebarChildren = new Set(['nowButton', 'openKnowledge', 'newChartButton', 'chartList']);
   const element = id => {
     if (!elements.has(id)) {
       const classes = new Set(), attributes = new Map();
+      let markup = '';
       elements.set(id, {
         id, inert: id === 'library', hidden: id === 'libraryBackdrop',
+        get innerHTML() { return markup; },
+        set innerHTML(value) { markup = String(value); if (id === 'chartList') renders++; },
         contains(node) { return node === this || id === 'library' && sidebarChildren.has(node?.id); },
         focus() { document.activeElement = this; },
         setAttribute(name, value) { attributes.set(name, String(value)); },
@@ -121,13 +130,16 @@ function menuHarness() {
     }
     return elements.get(id);
   };
-  const context = createContext({
-    document, $: element,
-    renderLibrary() { renders++; },
-    hoverPreview: { clear() {} },
-    activationPopover: { close() { popupCloses++; } },
+  const library = attachChartLibrary({
+    document,
+    store: { charts: [], selectedId: 'current-transit', remove() { assert.fail('opening a menu must not delete a chart'); } },
+    onSelect() { assert.fail('opening a menu does not select a chart'); },
+    onEdit() { assert.fail('opening a menu does not edit a chart'); },
+    onNew() { assert.fail('opening a menu does not create a chart'); },
+    beforeOpen() { popupCloses++; },
+    toast() {},
   });
-  runInContext([...sources, ...listeners, keyboard, 'globalThis.closeMenu = closeLibrary;'].join('\n'), context);
+  const context = { closeMenu: library.close };
   const click = id => handlers.get(`${id}:click`)();
   const key = value => handlers.get('keydown')({ key: value, preventDefault() {} });
   return { element, document, context, click, key, get renders() { return renders; }, get popupCloses() { return popupCloses; } };
@@ -173,12 +185,6 @@ test('closing the menu does not steal focus already moved outside the drawer', (
 // Run the real renderer with synthetic fixtures only. No application bootstrap,
 // storage, network calls, timers, or real browser charts are involved.
 function libraryHarness(savedCharts, selectedChartId = 'current-transit') {
-  const renderer = appSource.match(/^function renderLibrary\(\) \{[\s\S]*?^\}/m)?.[0];
-  const canManage = appSource.match(/^const canManage = .*;$/m)?.[0];
-  const esc = appSource.match(/^const esc = .*;$/m)?.[0];
-  assert.ok(renderer, 'the top-level renderLibrary renderer exists');
-  assert.ok(canManage, 'the real chart management policy is used');
-  assert.ok(esc, 'the real HTML-escaping helper is used');
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) {
@@ -198,13 +204,12 @@ function libraryHarness(savedCharts, selectedChartId = 'current-transit') {
     }
     return elements.get(id);
   };
-  const context = createContext({
-    savedCharts, selectedChartId, $: element,
-    sourceNames: { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Текущий момент' },
-    formatDateInput: value => value,
-    localMoment: value => value,
-  });
-  runInContext(`${esc}\n${canManage}\n${renderer}\nglobalThis.render = renderLibrary;`, context);
+  const context = {
+    savedCharts, selectedChartId,
+    render() {
+      renderChartLibrary({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton') }, context.savedCharts, context.selectedChartId);
+    },
+  };
   context.render();
   return { context, element };
 }
@@ -255,23 +260,20 @@ test('current moment is active independently of the saved list, including before
   }
 });
 
-test('current-moment navigation closes the menu, selects a cached live chart immediately, and refreshes it', () => {
-  const listener = appSource.match(/^\$\('nowButton'\)\.addEventListener\('click',[\s\S]*?(?=^setInterval\()/m)?.[0];
-  assert.ok(listener, 'the current-moment click listener is present');
+test('current-moment navigation selects the transit view immediately even before its first day packet arrives', () => {
+  assert.match(bootstrapSource, /attachTransitNavigation\(\$\('nowButton'\)/, 'the application connects the public transit navigation adapter');
   for (const cached of [false, true]) {
     const calls = [];
     let handler;
-    const context = createContext({
-      savedCharts: cached ? [{ id: 'current-transit', name: 'Текущий момент', source: 'transit' }] : [],
-      $: id => ({ addEventListener(type, callback) { assert.equal(id, 'nowButton'); assert.equal(type, 'click'); handler = callback; } }),
+    const button = { addEventListener(type, callback) { assert.equal(type, 'click'); handler = callback; } };
+    attachTransitNavigation(button, {
       closeLibrary() { calls.push('close'); },
-      changeChart(id) { calls.push(`select:${id}`); },
-      refreshCurrentMoment(open) { calls.push(`refresh:${open}`); },
+      onSelect(id) { calls.push(`select:${id}`); },
+      refresh(open) { calls.push(`refresh:${open}`); },
     });
-    runInContext(listener, context);
     assert.equal(typeof handler, 'function');
     handler();
-    assert.deepEqual(calls, cached ? ['close', 'select:current-transit', 'refresh:true'] : ['close', 'refresh:true']);
+    assert.deepEqual(calls, ['close', 'select:current-transit', 'refresh:true']);
   }
 });
 
@@ -283,14 +285,13 @@ test('the fit control uses a decorative home icon and retains its accessible lab
   assert.match(fitButton, /<svg\b[^>]*viewBox="0 0 20 20"[^>]*aria-hidden="true"/);
   assert.match(fitButton, /<path\b[^>]*stroke="currentColor"/);
   assert.doesNotMatch(fitButton, /⤢/, 'the previous expand-arrows glyph is removed');
-  const listener = appSource.match(/^\$\('fitButton'\)\.addEventListener\('click',.*\);$/m)?.[0];
-  assert.ok(listener, 'fit button keeps a click listener');
-  let handler, resets = 0;
-  const context = createContext({
-    $: id => ({ addEventListener(type, callback) { assert.equal(id, 'fitButton'); assert.equal(type, 'click'); handler = callback; } }),
-    gestures: { reset() { resets++; } },
+  assert.match(bootstrapSource, /attachCameraControls\(/, 'the application connects the public camera control adapter');
+  const handlers = new Map();
+  let resets = 0;
+  const element = id => ({ addEventListener(type, handler) { assert.equal(type, 'click'); handlers.set(id, handler); } });
+  attachCameraControls({ zoomIn: element('zoomIn'), zoomOut: element('zoomOut'), fitButton: element('fitButton') }, {
+    reset() { resets++; }, zoom() { assert.fail('the home button must reset, not increment the zoom'); },
   });
-  runInContext(listener, context);
-  handler();
+  handlers.get('fitButton')();
   assert.equal(resets, 1, 'home icon still restores the fitted camera view');
 });
