@@ -21,7 +21,14 @@ export function createLiveTransit({
   let status = 'idle', error = '', activeLoad = null, sequence = 0, failures = 0, nextRetry = 0;
   let timer = null, running = false;
 
-  const state = () => ({ wanted, live, timeline, index, status, error, current });
+  const state = () => {
+    const utc = now();
+    // The reference follows the real clock even while the selected minute is
+    // paused. Never paint yesterday's endpoint while a new day is unavailable.
+    const referenceIndex = status === 'ready' && days && timeline && utc >= timeline.startUtc && utc < timeline.endUtc
+      ? timelineIndexAt(timeline, utc) : null;
+    return { wanted, live, timeline, index, referenceIndex, status, error, current };
+  };
   const notify = () => onStateChange(state());
   const visible = () => wanted && !document.hidden && !isFormOpen();
   const keyOf = day => day && `${day.date}@${day.timeZone}`;

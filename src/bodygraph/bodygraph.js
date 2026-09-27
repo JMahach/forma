@@ -1,7 +1,7 @@
 import { CENTERS, GATES, CHANNELS, getChannel } from './graph-data.js';
 import { renderActivationColumns } from '../activations/activations.js';
 import { renderVariableArrows } from '../activations/variable-arrows.js';
-import { renderMandala } from './mandala.js';
+import { renderMandala, MANDALA_SCENE_SCALE } from './mandala.js';
 import { renderMandalaUnderlay } from './mandala-underlay.js';
 import { renderChartBackdrop } from './chart-backdrop.js';
 import { INTEGRATION_IDS, STEM_POINTS } from './integration-geometry.js';
@@ -59,7 +59,7 @@ function integrationOutlineMask(id, gates = [20, 10, 34, 57], includeStem = true
  * SVG inner markup, for a parent SVG with viewBox="0 0 640 820".
  * chart.personality/design: gate-number arrays. No birth-date calculation occurs.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
- * options: { interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
+ * options: { interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean, showLotus?: boolean,
  *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
  *   activationFilter?: { line: number, source: 'design' | 'personality' | 'all' }
  *     | { groups: Array<{ line: number, source: 'design' | 'personality' | 'all', gates?: number[] }>, unfilteredGates: number[] } }.
@@ -235,9 +235,9 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
       .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     }
   </style>
-  ${options.showMandala ? renderMandala(chart, { interactive, selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null }) + '\n  ' : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
+  ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="translate(320 398) scale(${MANDALA_SCENE_SCALE}) translate(-320 -398)">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
     ${options.showActivations ? renderActivationColumns(chart, relatedGates, selection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + (options.showMandala ? '' : renderVariableArrows(chart)) : ''}
-    ${options.showMandala ? '<g class="mandala-core" transform="translate(320 398) scale(.84) translate(-320 -398)">\n    ' + renderMandalaUnderlay(prefix) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
+    ${options.showMandala ? '<g class="mandala-core">\n    ' + renderMandalaUnderlay(prefix, { lotus: options.showLotus }) : options.showBackdrop ? renderChartBackdrop(prefix, { lotus: options.showLotus }) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
     <g class="bodygraph-gates">${gates}</g>${options.showMandala ? '\n    </g>' : ''}
   </g>`;

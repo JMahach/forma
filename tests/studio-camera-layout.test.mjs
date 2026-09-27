@@ -11,7 +11,7 @@ const insets = Object.freeze({ side: 20, top: 12, bottom: 12 });
 
 // Model the SVG's real centered viewBox transform. Pixel insets must remain
 // correct when the canvas has a different aspect ratio from its viewBox.
-function harness(t, width, height, mandala = false, initialInsets = insets) {
+function harness(t, width, height, mandala = false, initialInsets = insets, sharedHome = false) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
   globalThis.DOMPoint = class {
     constructor(x, y) { this.x = x; this.y = y; }
@@ -41,10 +41,12 @@ function harness(t, width, height, mandala = false, initialInsets = insets) {
       return { scrollPaddingLeft: `${safeInsets.side}px`, scrollPaddingTop: `${safeInsets.top}px`, scrollPaddingBottom: `${safeInsets.bottom}px` };
     }),
     getFrame: () => mode ? MANDALA_FRAME : null,
+    getHomeFrame: sharedHome ? () => ({ bounds: DRAWING_BOUNDS, minScale: .65 }) : null,
     onSelect(value) { calls.select++; selection.choose(value); },
     onBackgroundTap() { calls.clear++; selection.clear(); },
     onChange: createCameraChangeHandler({
       heading, fitButton,
+      getMandala: () => sharedHome ? { enabled: mode } : null,
       getHoverPreview: () => ({ clear() { calls.preview++; } }),
       activationPopover: { reposition() { calls.popover++; } },
       getSummary: () => ({ layout() { calls.summary++; } }),
@@ -96,7 +98,7 @@ function assertCenteredAndContained(h) {
 }
 
 for (const [width, height, edge] of [[1440, 900, 100], [900, 800, 120], [390, 844, 120], [844, 390, 80], [390, 400, 120]]) {
-  test(`Home fits and centers the drawing outside the chrome in a ${width}×${height} full viewport`, t => {
+  test(`standalone frame fitting remains centered in a ${width}×${height} canvas`, t => {
     const h = harness(t, width, height, false, { side: 20, top: edge, bottom: edge });
     assertCenteredAndContained(h);
     h.setMandala(true);
@@ -105,6 +107,7 @@ for (const [width, height, edge] of [[1440, 900, 100], [900, 800, 120], [390, 84
     assertCenteredAndContained(h);
   });
 }
+
 
 test('the canvas reader obtains newly resolved CSS inset values on each call', () => {
   const canvas = {}, measured = [];
@@ -193,7 +196,7 @@ for (const mandala of [false, true]) {
   });
 }
 
-test('heading and Home visibility use relative fit scale and tolerate floating-point noise', () => {
+test('heading and Home visibility compare the whole desired camera and tolerate floating-point noise', () => {
   const heading = { hidden: true }, fitButton = { hidden: false };
   const onChange = createCameraChangeHandler({ heading, fitButton, activationPopover: { reposition() {} } });
   for (const k of [0.1, 0.65, 1.2]) {
@@ -204,6 +207,11 @@ test('heading and Home visibility use relative fit scale and tolerate floating-p
     onChange({ ...fitted, k: k * 1.01 }, fitted);
     assert.equal(heading.hidden, true, 'a genuine one-percent zoom hides it at any fitted scale');
     assert.equal(fitButton.hidden, false, 'a genuine zoom reveals Home even below scale 1');
+    for (const view of [{ ...fitted, k: k * .8 }, { ...fitted, x: fitted.x + 1 }, { ...fitted, y: fitted.y - 1 }]) {
+      onChange(view, fitted);
+      assert.equal(heading.hidden, true, 'a retained camera away from Home keeps the title hidden');
+      assert.equal(fitButton.hidden, false, 'a smaller or shifted camera still offers the current Home');
+    }
   }
 });
 
@@ -216,29 +224,117 @@ test('panning and resizing at fitted scale do not reveal Home', t => {
   assert.equal(h.fitButton.hidden, true, 'a new fitted scale still counts as Home');
 });
 
-test('mandala toggles hide Home at the new fit and restore it with saved chart zoom', t => {
-  const h = harness(t, 1200, 800, false, { side: 20, top: 100, bottom: 100 });
+test('studio modes share one Home baseline while mandala always hides the heading', t => {
+  const h = harness(t, 1200, 800, false, { side: 20, top: 100, bottom: 100 }, true);
   const toggle = h.attachMandalaToggle();
+  const chartHome = h.controls.getView();
+  toggle();
+  assert.deepEqual(h.controls.getView(), chartHome, 'opening the ring does not zoom the chart out');
+  assert.deepEqual(h.controls.getFittedView(), chartHome, 'the body baseline remains Home with the ring visible');
+  assert.equal(h.fitButton.hidden, true, 'a toggle alone cannot reveal Home');
+  assert.equal(h.heading.hidden, true, 'mandala hides the title even at Home');
+  toggle();
+  assert.deepEqual(h.controls.getView(), chartHome);
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, false, 'the unchanged normal Home restores its title');
   h.controls.zoom(1.25);
+  const zoomedChart = h.controls.getView();
   assert.equal(h.fitButton.hidden, false);
   toggle();
-  assert.equal(h.fitButton.hidden, true, 'opening the fitted mandala hides Home');
+  assert.deepEqual(h.controls.getView(), zoomedChart, 'a zoomed chart also stays in place');
+  assert.equal(h.fitButton.hidden, false);
   h.controls.zoom(1.2);
-  assert.equal(h.fitButton.hidden, false, 'mandala zoom reveals Home');
-  h.resize(390, 844);
+  const latest = h.controls.getView();
   toggle();
-  assert.equal(h.fitButton.hidden, false, 'returning restores the zoomed chart and its Home button');
+  assert.deepEqual(h.controls.getView(), latest, 'closing retains the latest zoom rather than the pre-open view');
+  h.send('wheel', { deltaY: 0 });
+  assert.deepEqual(h.controls.getView(), latest, 'the next input keeps that retained view');
+  toggle();
   h.controls.reset();
+  assert.deepEqual(h.controls.getView(), chartHome, 'Home restores the same body scale with the ring enabled');
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, true, 'Home never reveals the heading in mandala');
   toggle();
+  assert.deepEqual(h.controls.getView(), chartHome);
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, false);
+  h.resize(390, 844);
+  const rotated = h.controls.getView();
+  assert.deepEqual(rotated, h.controls.getFittedView(), 'the shared baseline remains Home after rotation');
+  toggle();
+  assert.deepEqual(h.controls.getView(), rotated, 'rotation followed by a toggle retains the new live camera');
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, true);
+  toggle();
+  assert.deepEqual(h.controls.getView(), rotated);
+  assert.equal(h.fitButton.hidden, true);
+  const finalChartHome = h.controls.getView();
+  for (let i = 0; i < 10; i++) { toggle(); toggle(); }
+  assert.deepEqual(h.controls.getView(), finalChartHome, 'repeated toggles do not accumulate camera drift');
   assert.equal(h.fitButton.hidden, true);
   toggle();
-  assert.equal(h.fitButton.hidden, true, 'a previously fitted chart stays fitted after a mandala visit');
+  h.controls.zoom(.0001);
+  const minimum = h.controls.getView();
+  assert.deepEqual(minimum, h.controls.getFittedView(), 'studio zoom-out stops at the shared Home even with expanded navigation');
+  assert.equal(h.fitButton.hidden, true, 'the minimum studio view remains Home');
+  assert.equal(h.heading.hidden, true);
+  toggle();
+  h.send('wheel', { deltaY: 0 });
+  assert.deepEqual(h.controls.getView(), minimum, 'hiding the ring retains the shared minimum exactly');
+  assert.equal(h.fitButton.hidden, true);
+  h.controls.reset();
+  assert.deepEqual(h.controls.getView(), finalChartHome);
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, false);
 });
+
+test('shared Home survives resizing in mandala while moved cameras retain their navigation zoom', t => {
+  const safe = { side: 20, top: 100, bottom: 100 };
+  const h = harness(t, 1200, 800, false, safe, true), toggle = h.attachMandalaToggle();
+  toggle();
+  h.resize(390, 844);
+  assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, true);
+  h.controls.zoom(1.5);
+  const moved = h.controls.getView();
+  h.resize(844, 390);
+  const rotated = h.controls.getView();
+  assert.notDeepEqual(rotated, h.controls.getFittedView(), 'resizing a zoomed view cannot reset it to Home');
+  assert.notEqual(rotated.k, moved.k);
+  assert.equal(h.fitButton.hidden, false);
+  toggle();
+  assert.deepEqual(h.controls.getView(), rotated, 'closing after a resize keeps the latest moved camera');
+  assert.equal(h.fitButton.hidden, false);
+  h.controls.reset();
+  assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
+  assert.equal(h.fitButton.hidden, true);
+  assert.equal(h.heading.hidden, false);
+});
+
+test('shared Home does not narrow an existing mandala pan when the ring is hidden', t => {
+  const h = harness(t, 1200, 800, false, { side: 20, top: 100, bottom: 100 }, true);
+  const toggle = h.attachMandalaToggle();
+  for (const [dx, dy] of [[10000, 0], [-10000, 0], [0, 10000], [0, -10000]]) {
+    h.controls.reset(); toggle(); h.controls.zoom(2);
+    const center = { clientX: h.rect.left + h.rect.width / 2, clientY: h.rect.top + h.rect.height / 2 };
+    h.send('pointerdown', center);
+    h.send('pointermove', { clientX: center.clientX + dx, clientY: center.clientY + dy });
+    h.send('pointerup', { clientX: center.clientX + dx, clientY: center.clientY + dy });
+    const edge = h.controls.getView();
+    toggle(); h.controls.zoom(1); h.send('wheel', { deltaY: 0 });
+    assert.deepEqual(h.controls.getView(), edge, 'the shared Home target cannot clamp a retained outer pan');
+    assert.equal(h.fitButton.hidden, false);
+  }
+});
+
 
 test('the application supplies the studio canvas insets and keeps only the Home button', () => {
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(/fitInsets:\s*createCanvasInsetsReader\(\$\('canvasWrap'\)\)/.test(app), 'the application measures its responsive chrome without shrinking the viewport');
+  assert.match(app, /const readCanvasInsets = createCanvasInsetsReader\(\$\('canvasWrap'\)\)/, 'the application measures its canvas chrome');
+  assert.match(app, /fitInsets:\s*\(\)\s*=>\s*layout\.insets\(readCanvasInsets\(\)\)/, 'phone safe areas and desktop insets feed the same camera');
+  assert.match(app, /getHomeFrame:\s*\(\)\s*=>\s*mandalaMode\?\.homeFrame/, 'the mode supplies the responsive Home baseline');
   assert.match(app, /createCameraChangeHandler\(\{\s*heading:\s*\$\('chartHeader'\)/, 'the real camera controls fixed-heading visibility');
   assert.match(app, /createCameraChangeHandler\(\{[^}]*fitButton:\s*\$\('fitButton'\)/, 'the real camera controls Home visibility');
   assert.match(page, /<header\b[^>]*id="chartHeader"/, 'one header owns both name and date visibility');

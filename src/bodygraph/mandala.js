@@ -4,6 +4,9 @@ export const MANDALA_GEOMETRY = Object.freeze({
   centerX: 320, centerY: 398, outerRadius: 373.8, innerRadius: 340.2,
   labelRadius: 357, rayRadius: 331.8,
 });
+// Keep the established ring-to-body proportions without shrinking the body on
+// toggle. Only the decorative wheel receives the inverse of the old .84 scale.
+export const MANDALA_SCENE_SCALE = 1 / .84;
 
 const PALETTE = Object.freeze({
   paper: '#eee8dc', rim: '#a59c8d', light: '#ffffff', empty: '#8e897e',

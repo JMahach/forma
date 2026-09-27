@@ -1,10 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-3.5 0 35 35" fill="none">
-  <style>
-    svg { color: #49443d; }
-    @media (prefers-color-scheme: dark) { svg { color: #e7dcc9; } }
-  </style>
-  <g stroke="currentColor" stroke-linejoin="round" stroke-linecap="round">
-    <path d="M14 1 26 14 14 34 2 14 14 1Z" stroke-width="1.8"/>
-    <path d="M14 1v33M2 14h24M2 14l12 9 12-9" stroke-width="1.5"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-100 -20 840 840" fill="#b77b55">
+  <path d="M 320 30 C 280 30 252 74 252 124 C 252 184 207 249 162 338 C 117 427 80 509 80 596 C 80 613 80 631 80 648 C 80 696 198 770 320 770 C 442 770 560 696 560 648 C 560 631 560 613 560 596 C 560 509 523 427 478 338 C 433 249 388 184 388 124 C 388 74 360 30 320 30 Z" stroke="#8f5d40" stroke-width="48" stroke-linejoin="round"/>
 </svg>

@@ -1,6 +1,7 @@
 import { createChartDayClient } from '../transit/chart-day-client.js';
 import { chartAtMinute, chartDayMinute, chartDayIndexAt } from '../transit/chart-day-packet.js';
 import { formatDateInput } from './date-input.js';
+import { attachDayRange } from './day-range.js';
 
 export const canExploreChartDay = chart => Boolean(chart?.source === 'calculated'
   && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
@@ -91,7 +92,7 @@ export function createChartDayExplorer({
   };
 }
 
-export function attachChartDayExplorer({ toggle, panel, range, date, time, status, resetButton, ...options }) {
+export function attachChartDayExplorer({ toggle, panel, range, date, time, status, resetButton, marker = null, ...options }) {
   function update(state) {
     toggle.hidden = !state.available;
     toggle.setAttribute('aria-expanded', String(state.opened));
@@ -100,9 +101,10 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     panel.hidden = !state.opened;
     panel.setAttribute('aria-busy', String(state.status === 'loading'));
     panel.dataset.original = String(state.exactOriginal);
+    panel.dataset.status = state.status;
     range.disabled = state.status !== 'ready';
     resetButton.disabled = state.status === 'loading' || state.exactOriginal && state.status !== 'error';
-    resetButton.textContent = state.status === 'error' ? 'Повторить' : 'Исходное';
+    resetButton.textContent = state.status === 'error' ? 'Повторить' : 'К рождению';
     resetButton.title = state.status === 'error' ? 'Повторить загрузку дня рождения' : 'Вернуться к сохранённому времени рождения';
     resetButton.setAttribute('aria-pressed', String(state.exactOriginal));
     status.textContent = state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '';
@@ -111,6 +113,11 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     if (state.day) {
       range.min = '0'; range.max = String(state.day.samples - 1); range.step = '1'; range.value = String(state.index);
     } else { range.min = '0'; range.max = '1439'; range.value = '0'; }
+    // Saved UTC identifies the original fold, independently of the preview.
+    dayRange.updateReference({ value: state.day && Number.isFinite(Date.parse(state.original?.utc))
+      ? chartDayIndexAt(state.day, state.original.utc) : null,
+      visible: state.opened && state.status === 'ready' && Boolean(state.day),
+      label: 'Вернуться к сохранённому времени рождения', active: state.exactOriginal });
     const offset = chart?.utcOffset || '';
     const clock = state.exactOriginal ? savedClock(chart) : chart?.birthTime || '';
     const zone = chart?.timezone || state.day?.timezone || '';
@@ -123,8 +130,8 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     options.onStateChange?.(state);
   }
   const explorer = createChartDayExplorer({ ...options, onStateChange: update });
+  const dayRange = attachDayRange({ range, marker, onScrub: value => explorer.scrub(value), onReference: () => explorer.reset() });
   toggle.addEventListener('click', () => explorer.toggle());
-  range.addEventListener('input', () => explorer.scrub(Number(range.value)));
   resetButton.addEventListener('click', () => explorer.state.status === 'error' ? explorer.retry() : explorer.reset());
   update(explorer.state);
   return explorer;

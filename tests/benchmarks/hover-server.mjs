@@ -3,6 +3,10 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { readPreviewResource } from '../previews/preview-server.mjs';
+import { MANDALA_FRAME } from '../../src/bodygraph/mandala-mode.js';
+
+const { x, y, width, height } = MANDALA_FRAME.bounds;
+const wheelViewBox = `${x} ${y} ${width} ${height}`;
 
 const page = `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Мандала — замер отрисовки</title><link rel="stylesheet" href="/styles.css">
@@ -11,7 +15,7 @@ body{overflow:auto;font:14px system-ui;background:#fff}header{padding:12px;displ
 #stage{height:620px;position:relative}section{position:absolute;inset:0}section[hidden]{display:none}svg{width:100%;height:570px;display:block}
 pre{white-space:pre-wrap;padding:12px;font:12px monospace}#status{min-width:250px}
 </style><header><strong>Синтетическая карта · без сервера расчёта</strong><button id="verify">Проверить совпадение</button><button id="measure">Сравнить нагрузку</button><span id="status">Готово к проверке</span></header>
-<div id="stage"><section id="baseline"><svg viewBox="-192 10.2 1024 775.6"><g class="viewport"></g></svg></section><section id="partial" hidden><svg viewBox="-192 10.2 1024 775.6"><g class="viewport"></g></svg></section></div>
+<div id="stage"><section id="baseline"><svg viewBox="${wheelViewBox}"><g class="viewport"></g></svg></section><section id="partial" hidden><svg viewBox="${wheelViewBox}"><g class="viewport"></g></svg></section></div>
 <pre id="results" aria-live="polite">Замеры ещё не выполнены.</pre><script type="module" src="/benchmark.js"></script></html>`;
 
 createServer(async (req, res) => {

@@ -33,7 +33,9 @@ class Matrix {
 function headingHarness(options = {}) {
   const model = {
     label: 'Личность', text: '12.2', bounds: { x: 34.65625, y: -9.5, width: 43.21875, height: 18 },
-    camera: new Matrix(), valueLocal: new Matrix(1, 0, 0, 1, 584, 118),
+    camera: new Matrix(), columnLocal: new Matrix(),
+    blockLocal: new Matrix(1.09, 0, 0, 1.09, 428 * (1 - 1.09), 76 * (1 - 1.09) - 15.75),
+    valueLocal: new Matrix(1, 0, 0, 1, 584, 118),
     headingRightBearing: 0, missing: [], ...options,
   };
   const writes = [], queries = [], measurements = [];
@@ -50,7 +52,8 @@ function headingHarness(options = {}) {
     };
   }
   const heading = node('heading', { class: 'activation-heading', x: '582', y: '76', 'font-size': '16', 'font-weight': '500' }, model.label);
-  heading.getCTM = () => model.camera;
+  const contentMatrix = () => model.camera.multiply(model.columnLocal).multiply(model.blockLocal);
+  heading.getCTM = () => model.missing.includes('headingMatrix') ? null : contentMatrix();
   heading.getBBox = () => {
     measurements.push('heading');
     const x = Number(heading.attrs.x);
@@ -61,7 +64,7 @@ function headingHarness(options = {}) {
   const rule = node('rule', { class: 'activation-header-rule', d: 'M 582 88 h 74', stroke: '#202020', 'stroke-opacity': '.18', 'stroke-width': '1', fill: 'none' });
   const number = node('number', { x: '34', y: '0', 'font-size': '24', 'font-weight': '500', 'pointer-events': 'none' }, model.text);
   number.getBBox = () => { measurements.push('number'); return { ...model.bounds }; };
-  number.getCTM = () => model.missing.includes('valueMatrix') ? null : model.camera.multiply(model.valueLocal);
+  number.getCTM = () => model.missing.includes('valueMatrix') ? null : contentMatrix().multiply(model.valueLocal);
   const protectedNodes = [number,
     node('lineTspan', { 'font-weight': '400', opacity: '.7' }, '.2'),
     node('numericButton', { 'data-activation': 'personality-sun', 'data-type': 'gate', 'data-id': '12', tabindex: '0', role: 'button', 'aria-pressed': 'true' }),
@@ -76,7 +79,7 @@ function headingHarness(options = {}) {
     node('popover', { 'data-anchor': 'personality-sun', open: 'true' }),
   ];
   const column = node('column', { 'data-source': 'personality', fill: '#202020' });
-  column.getCTM = () => model.missing.includes('columnMatrix') ? null : model.camera;
+  column.getCTM = () => model.camera.multiply(model.columnLocal);
   column.querySelector = selector => {
     queries.push(['column', selector]);
     const targets = new Map([
@@ -147,20 +150,39 @@ test('alignment compensates the heading ink bearing and repeated calls do not dr
   }
 });
 
+test('the enlarged and raised column aligns once, independently of camera and mandala travel', () => {
+  for (const camera of [new Matrix(), new Matrix(.45, 0, 0, .45, 170, -40), new Matrix(3.2, 0, 0, 3.2, -900, 210)]) {
+    for (const offset of [14, 128, 228]) {
+      const harness = headingHarness({ camera, columnLocal: new Matrix(1, 0, 0, 1, offset, 0) });
+      harness.column.getCTM = () => assert.fail('alignment must use the scaled heading coordinates, not the outer column');
+      alignPersonalityHeading(harness.root);
+      assertAligned(harness, 661.875);
+      const headingEdge = harness.heading.getCTM().transformPoint({ x: 661.875, y: 76 });
+      const bounds = harness.number.getBBox();
+      const numberEdge = harness.number.getCTM().transformPoint({ x: bounds.x + bounds.width, y: bounds.y });
+      assert.ok(Math.abs(headingEdge.x - numberEdge.x) < 1e-9, 'the visible edges stay aligned after one shared scale');
+      const first = harness.snapshot();
+      alignPersonalityHeading(harness.root);
+      assert.deepEqual(harness.snapshot(), first, 'an additional measurement never compounds the scale');
+    }
+  }
+});
+
 test('only the Personality heading anchor and its underline endpoint may change', () => {
   const harness = headingHarness(), before = harness.snapshot();
   alignPersonalityHeading(harness.root);
   const after = harness.snapshot();
   const protectedState = rows => rows.filter(node => !['heading', 'rule'].includes(node.name));
   assert.deepEqual(protectedState(after), protectedState(before), 'numbers, planets, fixing, popover and all other headings stay untouched');
-  assert.deepEqual(harness.heading.attrs, { ...before.find(node => node.name === 'heading').attrs, x: '661.875', 'text-anchor': 'end' });
-  assert.deepEqual(harness.rule.attrs, { ...before.find(node => node.name === 'rule').attrs, d: 'M 582 88 H 661.875' });
+  assert.deepEqual(harness.heading.attrs, { ...before.find(node => node.name === 'heading').attrs, x: harness.heading.attrs.x, 'text-anchor': 'end' });
+  assert.deepEqual(harness.rule.attrs, { ...before.find(node => node.name === 'rule').attrs, d: harness.rule.attrs.d });
+  assertAligned(harness, 661.875); // Matrix inversion may add a final floating-point digit.
 });
 
 test('transit, missing columns, missing Sun and unavailable SVG measurements preserve the fallback unchanged', () => {
   const cases = [
     { label: 'Транзит' }, { label: 'Дизайн' }, { label: '' },
-    ...['column', 'heading', 'rule', 'value', 'columnMatrix', 'valueMatrix'].map(key => ({ missing: [key] })),
+    ...['column', 'heading', 'rule', 'value', 'headingMatrix', 'valueMatrix'].map(key => ({ missing: [key] })),
     ...[0, -1, NaN, Infinity].map(width => ({ bounds: { x: 34, y: -9, width, height: 18 } })),
     { bounds: { x: NaN, y: -9, width: 40, height: 18 } },
     { valueLocal: new Matrix(1, 0, 0, 1, 400, 118) },

@@ -57,11 +57,14 @@ test('scrubbing is entirely local, pauses live, and Now resumes without selectin
   await h.live.refresh(true);
   assert.deepEqual(h.requests, ['2026-09-23', '2026-09-24']);
   h.live.scrub(0);
+  const reference = h.live.state.referenceIndex;
   assert.equal(h.live.state.live, false);
   assert.equal(h.live.current.utc, '2026-09-23T18:15:00Z');
   h.utc += 5 * 60_000;
   await h.live.refresh();
   assert.equal(h.live.current.utc, '2026-09-23T18:15:00Z');
+  assert.equal(h.live.state.referenceIndex, reference + 5, 'the real clock advances independently of the scrubbed minute');
+  assert.equal(h.live.state.index, 0);
   for (const index of [500, 800, 1100, 1439, 0]) h.live.scrub(index);
   assert.equal(h.requests.length, 2, 'every slider position reuses the same two packets');
   assert.ok(h.events.every(event => ['moment', 'render'].includes(event[0])));
@@ -118,6 +121,7 @@ test('day errors retain the prior chart, back off automatic retries and allow ex
   await h.live.refresh();
   assert.equal(h.live.current, previous);
   assert.equal(h.live.state.status, 'error');
+  assert.equal(h.live.state.referenceIndex, null);
   assert.deepEqual(h.messages, ['Day unavailable']);
   await h.live.refresh();
   h.utc += 29_999;
@@ -151,6 +155,7 @@ test('late previous-day loads cannot replace the current local day', async () =>
   const resolvers = new Map();
   const h = harness({ getDay: date => new Promise(resolve => { resolvers.set(date, resolve); }) });
   const first = h.live.refresh(true);
+  assert.equal(h.live.state.referenceIndex, null, 'a loading day has no reference marker');
   h.utc = '2026-09-25T00:00:00Z';
   const second = h.live.refresh();
   resolvers.get('2026-09-25')(day('2026-09-25'));
@@ -159,6 +164,47 @@ test('late previous-day loads cannot replace the current local day', async () =>
   await first;
   assert.equal(h.live.current.utc, '2026-09-25T00:00:00Z');
   assert.equal(h.live.state.timeline.date, '2026-09-25');
+  assert.equal(h.live.state.referenceIndex, 0, 'late data cannot restore yesterday’s marker');
+});
+
+test('the existing minute schedule advances the reference while paused without a redraw or extra request', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness({ utc: '2026-09-24T12:00:20Z' });
+  assert.equal(h.live.state.referenceIndex, null);
+  await h.live.start();
+  t.after(() => h.live.stop());
+  h.live.scrub(100);
+  const selected = h.live.current;
+  h.events.length = 0; h.states.length = 0;
+  assert.equal(h.live.state.referenceIndex, 720);
+  h.utc += 40_025;
+  t.mock.timers.tick(40_025);
+  await settle();
+  assert.equal(h.live.current, selected);
+  assert.equal(h.live.state.index, 100);
+  assert.equal(h.states.at(-1).referenceIndex, 721);
+  assert.equal(h.states.at(-1).live, false);
+  assert.deepEqual(h.events, [], 'a reference marker does not redraw the bodygraph');
+  assert.equal(h.requests.length, 1, 'the existing cached day and minute timer suffice');
+});
+
+test('reference uses the actual short or long local day and disappears when that loaded day becomes stale', async () => {
+  for (const [utc, minutes] of [['2026-03-08T05:00:00Z', 1380], ['2026-11-01T04:00:00Z', 1500]]) {
+    const h = harness({ utc, zone: 'America/New_York' });
+    await h.live.refresh(true);
+    const loaded = h.live.state.timeline;
+    assert.equal(loaded.minutes, minutes);
+    assert.equal(h.live.state.referenceIndex, 0);
+    h.live.scrub(100);
+    const selected = h.live.current, requestCount = h.requests.length;
+    h.utc = loaded.endUtc - 1;
+    await h.live.refresh();
+    assert.equal(h.live.state.referenceIndex, minutes - 1);
+    assert.equal(h.live.current, selected);
+    h.utc = loaded.endUtc;
+    assert.equal(h.live.state.referenceIndex, null, 'state never clamps the next day’s now to yesterday’s final tick');
+    assert.equal(h.requests.length, requestCount, 'reading reference state cannot initiate a day load');
+  }
 });
 
 test('the running clock waits for the next minute boundary and uses no per-second network polling', async t => {

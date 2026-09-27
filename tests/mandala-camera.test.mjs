@@ -47,6 +47,7 @@ function harness(t, width = 390, height = 844, enabled = true) {
   return { controls, send, selections, projected, captures, svg,
     get rect() { return { ...rect }; }, get backgroundTaps() { return backgroundTaps; },
     mode(value) { mode = value; controls.reset(); },
+    refreshMode(value) { mode = value; controls.refreshFrame(); },
     resize(nextWidth, nextHeight) { rect = { ...rect, width: nextWidth, height: nextHeight }; controls.resize(); },
   };
 }
@@ -64,7 +65,7 @@ test('optional fitting and validation limits leave the normal camera defaults un
   const area = { x: 0, y: 0, width: 200, height: 250 };
   assert.equal(fitView(MANDALA_BOUNDS, area).k, 0.65);
   const wide = fitView(MANDALA_BOUNDS, area, { min: 0.1 });
-  assert.equal(wide.k, 200 / 1024);
+  assert.equal(wide.k, 200 / MANDALA_BOUNDS.width);
   assert.equal(validView(wide), false);
   assert.equal(validView(wide, { min: 0.1 }), true);
   assert.equal(validView({ ...wide, k: NaN }, { min: 0.1 }), false);
@@ -93,34 +94,97 @@ for (const [width, height] of [[320, 568], [390, 844], [844, 390], [568, 320], [
   });
 }
 
-test('normal camera can be restored exactly after a mandala visit with unchanged screen size', t => {
-  const h = harness(t, 1280, 960, false);
-  h.controls.zoom(1.5);
-  const saved = h.controls.getView(), savedFit = h.controls.getFittedView();
-  h.mode(true);
-  assertFullyVisible(h);
-  h.controls.zoom(2);
-  h.mode(false);
-  assert.deepEqual(h.controls.getFittedView(), savedFit);
-  h.controls.setView(saved);
-  assert.deepEqual(h.controls.getView(), saved);
-  const copy = h.controls.getFittedView();
-  copy.k = 99; copy.x = 99;
-  assert.deepEqual(h.controls.getFittedView(), savedFit, 'the snapshot does not expose mutable camera state');
+for (const [width, height] of [[1280, 960], [390, 844], [844, 390]]) {
+  test(`frame changes preserve the live camera and allow wider zoom-out on a ${width}×${height} screen`, t => {
+    const h = harness(t, width, height, false), chartHome = h.controls.getView();
+    h.refreshMode(true);
+    assert.deepEqual(h.controls.getView(), chartHome, 'showing the ring preserves chart Home exactly');
+    h.controls.zoom(0.0001);
+    assertFullyVisible(h);
+    const mandalaHome = h.controls.getView();
+    assert.deepEqual(mandalaHome, h.controls.getFittedView(), 'wheel zoom-out can reach the wider Home without a reset');
+    h.refreshMode(false);
+    assert.deepEqual(h.controls.getView(), mandalaHome, 'hiding the ring preserves its smaller camera');
+    assert.ok(mandalaHome.k < h.controls.getFittedView().k, 'the retained camera is below normal Home');
+    h.controls.zoom(1);
+    h.send('wheel', { deltaY: 0 });
+    h.controls.setView(mandalaHome);
+    assert.deepEqual(h.controls.getView(), mandalaHome, 'zero input and restoring the live snapshot cannot snap to normal Home');
+    h.controls.zoom(1.001);
+    closeTo(h.controls.getView().k, mandalaHome.k * 1.001);
+    assert.ok(h.controls.getView().k < h.controls.getFittedView().k, 'a small zoom remains below normal Home');
+    const current = h.controls.getView();
+    for (let i = 0; i < 10; i++) {
+      h.refreshMode(true); h.refreshMode(false); h.resize(width, height);
+      assert.deepEqual(h.controls.getView(), current, 'repeated toggles and unchanged resize do not accumulate drift');
+    }
+    const desired = h.controls.getFittedView(), copy = h.controls.getFittedView();
+    copy.x = 99; copy.k = 99;
+    assert.deepEqual(h.controls.getFittedView(), desired, 'Home snapshots do not expose mutable state');
+    h.controls.reset();
+    assert.deepEqual(h.controls.getView(), desired, 'explicit Home adopts the visible chart frame');
+    h.controls.zoom(0.001);
+    assert.deepEqual(h.controls.getView(), desired, 'normal Home restores its usual zoom floor');
+  });
+}
+
+test('hiding the ring keeps every extreme pan edge valid for the next zero or small gesture', t => {
+  const h = harness(t, 1280, 960);
+  for (const [dx, dy] of [[5000, 0], [-5000, 0], [0, 5000], [0, -5000]]) {
+    h.mode(true);
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 640 + dx, clientY: 480 + dy });
+    h.send('pointerup', { clientX: 640 + dx, clientY: 480 + dy });
+    const edge = h.controls.getView();
+    h.refreshMode(false);
+    h.send('wheel', { deltaY: 0 });
+    h.controls.zoom(1);
+    assert.deepEqual(h.controls.getView(), edge, 'the narrower drawing cannot clamp an existing extreme pan');
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 640 - Math.sign(dx) * 8, clientY: 480 - Math.sign(dy) * 8 });
+    h.send('pointerup', { clientX: 640 - Math.sign(dx) * 8, clientY: 480 - Math.sign(dy) * 8 });
+    const scale = Math.min(1280 / 640, 960 / 820);
+    closeTo(h.controls.getView().x, edge.x - Math.sign(dx) * 8 / scale);
+    closeTo(h.controls.getView().y, edge.y - Math.sign(dy) * 8 / scale);
+    closeTo(h.controls.getView().k, edge.k);
+  }
 });
 
-test('saved normal zoom can be restored relative to its new fitted frame after rotation in mandala mode', t => {
+test('showing the ring keeps a chart camera at every extreme pan edge and uses that live camera on return', t => {
   const h = harness(t, 1280, 960, false);
+  for (const [dx, dy] of [[5000, 0], [-5000, 0], [0, 5000], [0, -5000]]) {
+    h.mode(false);
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 640 + dx, clientY: 480 + dy });
+    h.send('pointerup', { clientX: 640 + dx, clientY: 480 + dy });
+    const chartEdge = h.controls.getView();
+    h.refreshMode(true);
+    h.controls.zoom(1);
+    assert.deepEqual(h.controls.getView(), chartEdge, 'opening never reclamps the panned chart');
+    h.controls.zoom(1.01);
+    const latest = h.controls.getView();
+    h.refreshMode(false);
+    assert.deepEqual(h.controls.getView(), latest, 'closing keeps movements made while the ring was visible');
+  }
+});
+
+test('resize uses the current navigation frame after hiding the ring and the next toggle keeps that camera', t => {
+  const h = harness(t, 1280, 960);
   h.controls.zoom(1.5);
-  const saved = h.controls.getView(), savedFit = h.controls.getFittedView();
-  h.mode(true);
+  const before = h.controls.getView(), beforeFit = h.controls.getFittedView();
+  h.refreshMode(false);
   h.resize(390, 844);
-  assertFullyVisible(h);
-  h.mode(false);
-  const next = h.controls.getFittedView(), ratio = next.k / savedFit.k;
-  h.controls.setView({ x: next.x + (saved.x - savedFit.x) * ratio,
-    y: next.y + (saved.y - savedFit.y) * ratio, k: saved.k * ratio });
-  closeTo(h.controls.getView().k / next.k, saved.k / savedFit.k);
+  const resized = h.controls.getView();
+  h.refreshMode(true);
+  const nextFit = h.controls.getFittedView(), ratio = nextFit.k / beforeFit.k;
+  assert.deepEqual(h.controls.getView(), resized, 'showing the ring after rotation does not restore an old camera');
+  closeTo(resized.k, before.k * ratio);
+  closeTo(resized.x, nextFit.x + (before.x - beforeFit.x) * ratio);
+  closeTo(resized.y, nextFit.y + (before.y - beforeFit.y) * ratio);
+  h.refreshMode(false);
+  assert.deepEqual(h.controls.getView(), resized);
 });
 
 test('expanded camera validates and restores sub-normal-scale views without resetting zoom', t => {

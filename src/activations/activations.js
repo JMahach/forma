@@ -1,4 +1,5 @@
 import { calculateLineFixings } from './line-fixing.js';
+import { activationBlockTransform } from './activation-layout.js';
 
 export const PLANETS = [
   ['sun', '☉', 'Солнце'], ['earth', '⊕', 'Земля'], ['moon', '☽', 'Луна'],
@@ -31,7 +32,7 @@ export function alignPersonalityHeading(root) {
   const rule = column?.querySelector('.activation-header-rule');
   const value = column?.querySelector('[data-activation="personality-sun"] > text');
   if (heading?.textContent !== 'Личность' || !rule || !value) return;
-  const columnMatrix = column.getCTM(), valueMatrix = value.getCTM();
+  const columnMatrix = heading.getCTM(), valueMatrix = value.getCTM();
   if (!columnMatrix || !valueMatrix) return;
   const bounds = value.getBBox();
   if (!Number.isFinite(bounds.width) || bounds.width <= 0) return;
@@ -90,9 +91,11 @@ export function renderActivationColumns(chart, selectedGates = new Set(), select
       </g>`;
     }).join('');
     return `<g class="activation-column" data-source="${source}" fill="${color}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
+      <g class="activation-block-content" transform="${activationBlockTransform(source)}">
       <text class="activation-heading" x="${x - 2}" y="76" font-size="16" font-weight="500">${label}</text>
       <path class="activation-header-rule" d="M ${x - 2} 88 h ${HEADING_WIDTHS[label]}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
       ${rows}
+      </g>
     </g>`;
   }).join('');
   return columns ? `<g class="activation-columns">${columns}</g>` : '';
