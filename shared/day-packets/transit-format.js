@@ -1,0 +1,26 @@
+import { validOrder } from './float64-codec.js';
+
+// Version the calculation AND binary contract together. Bump when ephemerides,
+// calculation flags or reconstruction rules change: HTTP/disk caches use it.
+export const TRANSIT_DAY_VERSION = '1';
+export const TRANSIT_PLANETS = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']);
+// Protocol column order is fixed; never derive it from the UI catalogue.
+export const TRANSIT_SAMPLES = 1440;
+export const TRANSIT_PAYLOAD_BYTES = TRANSIT_SAMPLES * TRANSIT_PLANETS.length * 8;
+export const TRANSIT_MAX_HEADER_BYTES = 4096;
+export const failTransitPacket = () => { throw new Error('Некорректный пакет дневного транзита.'); };
+export const validTransitValue = value => Number.isFinite(value) && value >= 0 && value < 360;
+
+export function validateTransitMetadata(header) {
+  if (!header || header.version !== TRANSIT_DAY_VERSION || header.samples !== TRANSIT_SAMPLES || header.stepSeconds !== 60
+    || !Array.isArray(header.orders) || header.orders.length !== TRANSIT_PLANETS.length || !header.orders.every(validOrder)
+    || typeof header.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(header.date)
+    || header.startUtc !== `${header.date}T00:00:00Z`) return failTransitPacket();
+  const parsed = new Date(header.startUtc);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== header.date) return failTransitPacket();
+  if (header.nodeModel !== 'true' || header.zodiac !== 'tropical-geocentric-apparent') return failTransitPacket();
+  for (const key of ['engine', 'ephemeris', 'timezoneDatabase']) {
+    if (typeof header[key] !== 'string' || !header[key] || header[key].length > 256) return failTransitPacket();
+  }
+  return header;
+}

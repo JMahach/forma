@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartHeadingLayout } from '../src/charts/chart-heading-layout.js';
+import { createChartHeadingLayout } from '../src/views/chart-heading-layout.js';
 
 function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity } = {}) {
   const observed = new Set();

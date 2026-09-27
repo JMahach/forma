@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mandalaPreviewFromPointer, mandalaPreviewFromFocus } from '../src/bodygraph/mandala-preview.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { renderMandala, mandalaPoint, MANDALA_GEOMETRY } from '../src/bodygraph/mandala.js';
+import { mandalaPreviewFromPointer, mandalaPreviewFromFocus } from '../src/scene/mandala-preview.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { renderMandala } from '../src/scene/mandala.js';
+import { mandalaPoint, MANDALA_GEOMETRY } from '../src/scene/geometry/mandala-geometry.js';
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
 

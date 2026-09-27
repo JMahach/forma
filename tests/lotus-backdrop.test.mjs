@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { renderChartBackdrop, CHART_BACKDROP_BOUNDS, CHART_SURFACE_RIM_WIDTH } from '../src/bodygraph/chart-backdrop.js';
-import { renderMandalaUnderlay } from '../src/bodygraph/mandala-underlay.js';
-import { LOTUS_BACKDROP_BOUNDS, LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/bodygraph/lotus-backdrop.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { renderChartBackdrop, CHART_SURFACE_RIM_WIDTH } from '../src/scene/backdrop.js';
+import { CHART_BACKDROP_BOUNDS } from '../src/scene/geometry/chart-backdrop.js';
+import { renderMandalaUnderlay } from '../src/scene/mandala-underlay.js';
+import { LOTUS_BACKDROP_BOUNDS, LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/scene/geometry/lotus-backdrop.js';
 
 const chart = Object.freeze({ personality: Object.freeze([61, 24, 20, 34]), design: Object.freeze([57, 10]) });
 

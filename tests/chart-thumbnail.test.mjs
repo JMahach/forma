@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderChartThumbnail } from '../src/charts/chart-thumbnail.js';
-import { CHART_SILHOUETTE_PATH, CHART_BACKDROP_BOUNDS, CHART_SURFACE_RIM_WIDTH } from '../src/bodygraph/chart-backdrop.js';
+import { renderChartThumbnail } from '../src/views/thumbnail.js';
+import { CHART_SILHOUETTE_PATH, CHART_BACKDROP_BOUNDS } from '../src/scene/geometry/chart-backdrop.js';
+import { CHART_SURFACE_RIM_WIDTH } from '../src/scene/backdrop.js';
 
 const decode = source => decodeURIComponent(source.slice('data:image/svg+xml,'.length));
 
@@ -9,7 +10,7 @@ test('thumbnail uses actual chart activations without interactive targets or col
   const svg = decode(renderChartThumbnail({ personality: [7, 31], design: [37, 40] }));
   assert.match(svg, /data-type="center" data-id="throat"[^>]*data-defined="true"/);
   assert.match(svg, /data-type="center" data-id="heart"[^>]*data-defined="true"/);
-  assert.match(svg, /\.bodygraph-gates \{ display: none; \}/);
+  assert.doesNotMatch(svg, /class="bodygraph-gates"|data-type="gate"/);
   assert.doesNotMatch(svg, /tabindex=|data-activation=|<script\b|<image\b/);
 });
 
@@ -29,7 +30,7 @@ test('saved-chart thumbnails reuse the complete silhouette behind the geometry',
   assert.ok(svg.indexOf('class="chart-backdrop"') < svg.indexOf('data-type="center"'));
   assert.match(svg, /id="thumbnail-chart-backdrop"/);
   assert.doesNotMatch(svg, /class="mandala-underlay"/);
-  assert.match(svg, /\.bodygraph-gates \{ display: none; \}/);
+  assert.doesNotMatch(svg, /class="bodygraph-gates"|data-type="gate"/);
   const [x, y, width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
   const bounds = CHART_BACKDROP_BOUNDS, rim = CHART_SURFACE_RIM_WIDTH / 2;
   assert.ok(x < bounds.x - rim && y < bounds.y - rim);

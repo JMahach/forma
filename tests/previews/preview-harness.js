@@ -1,19 +1,19 @@
-import { createGraphController } from '../../src/bodygraph/graph-controller.js';
+import { createGraphController } from '../../src/scene/updates.js';
 import { createSelectionState } from '../../src/selection/selection-state.js';
-import { attachActivationPopover } from '../../src/activations/activation-popover.js';
+import { attachActivationPopover } from '../../src/views/activation-popover.js';
 import { attachHoverPreview } from '../../src/selection/hover-preview.js';
-import { attachGestures } from '../../src/bodygraph/gestures.js';
+import { attachGestures } from '../../src/scene/gestures.js';
 
 // A synthetic chart and its own controllers; no application globals, storage,
 // calculation requests, or function extraction from app.js.
-export function mountPreview({ chart, controls }) {
+export function mountPreview({ chart, controls }, { renderChart = null } = {}) {
   const element = id => document.getElementById(id);
   const svg = element('preview'), viewport = element('viewport');
   const selectionState = createSelectionState();
   const activationPopover = attachActivationPopover(element('activationPopover'), svg);
   let hoverPreview = null;
   const graph = createGraphController({
-    selectionState, getChart: () => chart, viewport, activationPopover,
+    renderChart, selectionState, getChart: () => chart, viewport, activationPopover,
     getActiveElement: () => document.activeElement, getHoverPreview: () => hoverPreview,
   });
   const gestures = attachGestures(svg, viewport, {

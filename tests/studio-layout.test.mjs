@@ -1,14 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { computeStudioLayout, createStudioLayout, PHONE_LAYOUT_QUERY, STUDIO_FRAME, DAY_CONTROL_HEIGHT } from '../src/bodygraph/studio-layout.js';
-import { attachMandalaMode, MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
-import { attachGestures, DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
-import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE, renderMandala } from '../src/bodygraph/mandala.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { createCameraChangeHandler } from '../src/bodygraph/camera-controls.js';
-import { ACTIVATION_BLOCK_BOUNDS } from '../src/activations/activation-layout.js';
+import { computeStudioLayout, DAY_CONTROL_HEIGHT } from '../src/scene/layout.js';
+import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
+import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
+import { attachMandalaMode } from '../src/scene/modes/mandala.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/scene/geometry/mandala-geometry.js';
+import { renderMandala } from '../src/scene/mandala.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { createCameraChangeHandler } from '../src/views/camera-controls.js';
+import { ACTIVATION_BLOCK_BOUNDS } from '../src/scene/geometry/activation-layout.js';
 
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-7, `${message}: ${actual} != ${expected}`);
 const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.scale,
@@ -318,7 +324,7 @@ test('space-dependent columns retain every ring/body gate, exact core markup and
     activations: { personality: [{ planet: 'sun', gate: 20, line: 3 }], design: [{ planet: 'sun', gate: 57, line: 2 }] } };
   const viewport = { innerHTML: '', querySelector: () => null };
   const graph = createGraphController({
-    viewport, getChart: () => chart, getMandala: () => state,
+    viewport, renderChart: renderBodygraph, getChart: () => chart, getMandala: () => state,
     getShowActivations: () => !(state.enabled && !h.layout.showMandalaColumns),
     alignHeading() {}, activationPopover: { close() {}, refresh() {}, show() {} },
   });

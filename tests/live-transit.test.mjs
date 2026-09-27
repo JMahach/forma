@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLiveTransit } from '../src/charts/live-transit.js';
-import { createChartStore } from '../src/charts/chart-store.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { transitChartAt } from '../src/transit/day-packet.js';
+import { attachLiveTransit as createLiveTransit } from '../src/views/live-transit.js';
+import { createChartStore } from '../src/data/chart-store.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { transitChartAt } from '../src/domain/transit-day.js';
 
 const day = date => ({
   date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
@@ -246,7 +247,8 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
   const popoverCharts = [];
   let live;
   const graph = createGraphController({
-    getChart: () => live?.current || store.current, hasChart: () => true, viewport,
+    renderChart: renderBodygraph,
+    getChart: () => live?.current || store.get('current-transit'), hasChart: () => true, viewport,
     getMandala: () => ({ enabled: true }), alignHeading() {},
     activationPopover: { close() {}, show() {}, refresh(chart) { popoverCharts.push(chart); } },
   });

@@ -1,4 +1,4 @@
-import { GATES } from '../bodygraph/graph-data.js';
+import { GATES } from '../domain/topology.js';
 
 // Committed selection only. Hover, drawing, popover DOM and camera movement
 // stay with their existing adapters. Derived fields change atomically with

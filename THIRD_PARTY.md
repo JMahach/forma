@@ -43,7 +43,7 @@ Swiss Ephemeris предлагается по двум лицензионным 
 
 ### Фиксация линий: экзальтация и падение
 
-Числовые соответствия планет и линий в `src/activations/line-fixing-data.js` преобразованы из `_getStateFromStatesTable` проекта **SharpAstrology.HumanDesign 1.2.0**, Christian Reizner: [закреплённый исходник](https://github.com/CReizner/SharpAstrology.HumanDesign/blob/8b78031ce9a4244b8eb0a4ce37e612b8d6782570/Utility/HumanDesignUtility.cs). Коммит: `8b78031ce9a4244b8eb0a4ce37e612b8d6782570`, дата доступа: 12 сентября 2026 года. Лицензия **MIT**, Copyright (c) 2023 Christian Reizner; полный текст сохранён в `licenses/SharpAstrology.HumanDesign-MIT.txt`.
+Числовые соответствия планет и линий в `src/domain/line-fixing-data.js` преобразованы из `_getStateFromStatesTable` проекта **SharpAstrology.HumanDesign 1.2.0**, Christian Reizner: [закреплённый исходник](https://github.com/CReizner/SharpAstrology.HumanDesign/blob/8b78031ce9a4244b8eb0a4ce37e612b8d6782570/Utility/HumanDesignUtility.cs). Коммит: `8b78031ce9a4244b8eb0a4ce37e612b8d6782570`, дата доступа: 12 сентября 2026 года. Лицензия **MIT**, Copyright (c) 2023 Christian Reizner; полный текст сохранён в `licenses/SharpAstrology.HumanDesign-MIT.txt`.
 
 Таблица хранит 759 соответствий, а не тексты трактовок. Для всех 384 линий есть явная запись; отсутствующая в исходном перечислении 54.4 сохраняет пустые списки по его правилу `None`. Односторонние записи и две планеты экзальтации у 25.4 сохранены без догадок и дополнений. Пустая запись означает отсутствие обозначения по этой версии таблицы, а не подтверждённое универсальное свойство линии.
 

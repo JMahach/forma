@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CHANNELS } from '../src/bodygraph/graph-data.js';
-import { INTEGRATION_ARMS, INTEGRATION_IDS, STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CHANNELS } from '../src/scene/geometry/chart-geometry.js';
+import { INTEGRATION_ARMS, STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
+import { INTEGRATION_IDS } from '../src/domain/topology.js';
 
 const gate = id => ({ type: 'gate', id });
 const ids = [10, 20, 34, 57, 26, 44];

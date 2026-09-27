@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChartSummary } from '../src/charts/chart-summary-data.js';
-import { attachChartSummary, renderSummarySections } from '../src/charts/chart-summary-panel.js';
+import { buildChartSummary } from '../src/views/chart-summary-data.js';
+import { attachChartSummary, renderSummarySections } from '../src/views/chart-summary-panel.js';
 
 const chart = {
   id: 'test-chart', source: 'calculated', design: [20, 34], personality: [29, 46, 20],

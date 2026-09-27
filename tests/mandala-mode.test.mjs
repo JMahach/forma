@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachMandalaMode, MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
-import { DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
+import { attachMandalaMode } from '../src/scene/modes/mandala.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
 test('navigation includes enlarged column hit areas and fixing marks without changing its vertical range', () => {
   const { bounds } = MANDALA_FRAME;

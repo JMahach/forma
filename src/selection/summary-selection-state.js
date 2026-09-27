@@ -1,7 +1,7 @@
 import { createSelectionState } from './selection-state.js';
-import { GATES } from '../bodygraph/graph-data.js';
+import { GATES } from '../domain/topology.js';
 import { selectionKey as key, gatesForSelection as ownedGates } from './selection-targets.js';
-import { buildChartSummary } from '../charts/chart-summary-data.js';
+import { buildChartFacts } from '../domain/chart-facts.js';
 
 const validGates = values => [...new Set(values.filter(id => Number.isInteger(id) && id >= 1 && id <= 64))];
 const sameGroup = (first, second) => first.line === second.line && first.source === second.source;
@@ -90,7 +90,7 @@ export function createSummarySelectionState() {
 
   function refresh(chart) {
     if (!groups.length) return;
-    const summary = buildChartSummary(chart);
+    const summary = buildChartFacts(chart);
     let changed = false;
     for (const group of groups) {
       const gates = summary.lines[group.line - 1].gates[group.source].filter(id => !group.excluded.has(id));

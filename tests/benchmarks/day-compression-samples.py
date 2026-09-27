@@ -12,21 +12,23 @@ import time
 import zoneinfo
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
-from server import calculator as calc
+from server.python import calculator as calc
+from server.python import astronomy as astro
+from server.python import civil_time as civil
 
 
 def generate(date, timezone):
     day = dt.date.fromisoformat(date)
     zone = zoneinfo.ZoneInfo(timezone)
-    start = dt.datetime.combine(day, dt.time(), zone).astimezone(calc.UTC)
-    end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time(), zone).astimezone(calc.UTC)
+    start = dt.datetime.combine(day, dt.time(), zone).astimezone(civil.UTC)
+    end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time(), zone).astimezone(civil.UTC)
     # Benchmark fixtures deliberately have real, unambiguous local midnights.
     assert start.astimezone(zone).date() == day
     assert end.astimezone(zone).date() == day + dt.timedelta(days=1)
     count = int((end - start).total_seconds() // 60)
     assert count in (1380, 1410, 1440, 1470, 1500)
     city = dict(id='benchmark', name='Synthetic benchmark', timezone=timezone)
-    generated_at = calc.iso(dt.datetime.now(calc.UTC))
+    generated_at = civil.iso(dt.datetime.now(civil.UTC))
     natal, transit = [], []
     natal_seconds = transit_seconds = 0
     for minute in range(count):
@@ -36,15 +38,15 @@ def generate(date, timezone):
         chart = calc.calculate(dict(mode='natal', name='Benchmark', date=date,
                                     time=local.strftime('%H:%M'), city=city, fold=local.fold))['chart']
         natal_seconds += time.perf_counter() - before
-        assert chart['utc'] == calc.iso(moment)
+        assert chart['utc'] == civil.iso(moment)
         # These are package creation timestamps, not independent astronomical data.
         chart['createdAt'] = chart['updatedAt'] = generated_at
         natal.append(chart)
         before = time.perf_counter()
-        values = calc.activations(calc.julian_tt(moment))
+        values = astro.activations(astro.julian_tt(moment))
         transit_seconds += time.perf_counter() - before
-        transit.append(dict(utc=calc.iso(moment), activations=dict(personality=values, design=[])))
-    return dict(date=date, timezone=timezone, startUtc=calc.iso(start), stepSeconds=60,
+        transit.append(dict(utc=civil.iso(moment), activations=dict(personality=values, design=[])))
+    return dict(date=date, timezone=timezone, startUtc=civil.iso(start), stepSeconds=60,
                 samples=count, natalCalculationMs=natal_seconds * 1000,
                 transitCalculationMs=transit_seconds * 1000, natal=natal, transit=transit)
 

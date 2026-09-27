@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderActivationColumns } from '../src/activations/activations.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { renderActivationColumns } from '../src/scene/activation-columns.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 
 const chart = {
   personality: [8, 29, 1], design: [8, 29],

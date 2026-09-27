@@ -1,4 +1,4 @@
-import { renderBodygraph } from '../bodygraph/bodygraph.js';
+import { renderBodygraph } from '../scene/bodygraph-svg.js';
 
 // Educational illustration, not a calculated natal chart or a live transit.
 export const LOVE_GATES = Object.freeze([10, 15, 25, 46]);

@@ -1,11 +1,11 @@
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadCityCatalog } from './city-catalog.mjs';
-import { createCalculator } from './calculator-process.mjs';
-import { createRequestHandler } from './app.mjs';
-import { createTransitDays } from './transit-days.mjs';
-import { createChartDays } from './chart-days.mjs';
+import { loadCityCatalog } from './services/cities.mjs';
+import { createCalculator } from './services/calculate.mjs';
+import { createRequestHandler } from './http/app.mjs';
+import { createTransitDays } from './services/transit-days.mjs';
+import { createChartDays } from './services/natal-days.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT || 4173);

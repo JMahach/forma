@@ -6,7 +6,7 @@ import {
   normalizeLongitude, gatePositionAtLongitude,
 } from '../src/domain/gate-wheel.js';
 
-const calculator = readFileSync(new URL('../server/calculator.py', import.meta.url), 'utf8');
+const calculator = readFileSync(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
 const serverOrder = JSON.parse(calculator.match(/^GATE_WHEEL = (\[[^\n]+\])/m)[1]);
 const serverStart = Number(calculator.match(/position = \(lon - ([\d.]+)\) % 360/)[1]);
 const serverGateWidth = Number(calculator.match(/index = int\(position \/ ([\d.]+)\)/)[1]);

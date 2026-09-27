@@ -1,23 +1,24 @@
-import { attachKnowledge } from './library/knowledge.js';
-import { attachActivationPopover } from './activations/activation-popover.js';
+import { attachKnowledge } from './views/knowledge.js';
+import { attachActivationPopover } from './views/activation-popover.js';
 import { attachHoverPreview } from './selection/hover-preview.js';
-import { attachGestures } from './bodygraph/gestures.js';
-import { attachMandalaMode } from './bodygraph/mandala-mode.js';
-import { attachLotusMode } from './bodygraph/lotus-mode.js';
-import { createMandalaMotion } from './bodygraph/mandala-motion.js';
-import { createStudioLayout } from './bodygraph/studio-layout.js';
-import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from './bodygraph/mandala-preview.js';
-import { createGraphController } from './bodygraph/graph-controller.js';
-import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from './bodygraph/camera-controls.js';
-import { createChartStore } from './charts/chart-store.js';
-import { chartTitle, chartSubtitle } from './charts/chart-display.js';
-import { createChartHeadingLayout } from './charts/chart-heading-layout.js';
-import { attachChartLibrary } from './charts/chart-library.js';
-import { attachBirthForm } from './charts/birth-form.js';
-import { createLiveTransit, attachTransitNavigation } from './charts/live-transit.js';
-import { attachTransitControls } from './charts/transit-controls.js';
-import { attachChartDayExplorer } from './charts/chart-day-explorer.js';
-import { attachChartSummary } from './charts/chart-summary-panel.js';
+import { attachGestures } from './scene/gestures.js';
+import { attachMandalaMode } from './scene/modes/mandala.js';
+import { attachLotusMode } from './scene/modes/lotus.js';
+import { createMandalaMotion } from './scene/modes/mandala-motion.js';
+import { createStudioLayout } from './scene/studio-controller.js';
+import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from './scene/mandala-preview.js';
+import { createGraphController } from './scene/updates.js';
+import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from './views/camera-controls.js';
+import { createChartStore } from './data/chart-store.js';
+import { createChartSession } from './state/chart-session.js';
+import { chartTitle, chartSubtitle } from './views/chart-display.js';
+import { createChartHeadingLayout } from './views/chart-heading-layout.js';
+import { attachChartLibrary } from './views/library.js';
+import { attachBirthForm } from './views/birth-form.js';
+import { attachLiveTransit, attachTransitNavigation } from './views/live-transit.js';
+import { attachTransitControls } from './views/transit-controls.js';
+import { attachChartDayExplorer } from './views/natal-day-controls.js';
+import { attachChartSummary } from './views/chart-summary-panel.js';
 import { createToast } from './ui/toast.js';
 import { attachTelegramGestures } from './ui/telegram-gestures.js';
 
@@ -35,22 +36,18 @@ const headingLayout = createChartHeadingLayout({
 const readCanvasInsets = createCanvasInsetsReader($('canvasWrap'));
 let hoverPreview = null, chartSummary = null, mandalaMode = null, lotusMode = null, library = null, transit = null, transitControls = null, chartDay = null;
 const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
-const currentChart = () => store.selectedId === 'current-transit' ? transit?.current || store.current : chartDay?.current || store.current;
+const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
+const currentChart = () => session.current;
 
 const graph = createGraphController({
-  getChart: currentChart, hasChart: () => store.selectedId === 'current-transit' && Boolean(transit?.current) || store.has(store.selectedId),
+  getChart: currentChart, hasChart: () => session.hasCurrent,
   viewport: $('viewport'),
   getActiveElement: () => document.activeElement, activationPopover,
   getShowActivations: () => !(mandalaMode?.enabled && !layout.showMandalaColumns),
   getHoverPreview: () => hoverPreview, getSummary: () => chartSummary, getMandala: () => mandalaMode,
   getLotus: () => lotusMode,
   onChartChange(id) {
-    chartDay?.close();
-    store.select(id);
-    chartDay?.select(store.current);
-    transit?.setWanted(id === 'current-transit');
-    // Chart content changes; the shared camera does not.
-    updatePage();
+    session.select(id);
     library.close();
   },
 });
@@ -93,23 +90,22 @@ mandalaMode = attachMandalaMode({
 });
 lotusMode = attachLotusMode({ button: $('lotusSwitch'), render: graph.render });
 library = attachChartLibrary({
-  document, store, toast, onSelect: graph.changeChart, onUpdate: updatePage,
+  document, store, session, toast, onSelect: graph.changeChart, onUpdate: updatePage,
   onEdit: id => birthForm.open(true, id), onNew: () => birthForm.open(),
   beforeOpen: () => { chartSummary.close(); activationPopover.close(); hoverPreview?.clear(); },
 });
 const birthForm = attachBirthForm({
-  document, store, toast, onSave: graph.changeChart,
+  document, store, session, toast, onSave: graph.changeChart,
   beforeOpen: () => { chartDay?.close(); library.close(); chartSummary.close(); },
 });
 chartDay = attachChartDayExplorer({
   toggle: $('chartDayToggle'), panel: $('chartDayControls'), range: $('chartDayTime'), marker: $('chartDayReference'),
   date: $('chartDayDate'), time: $('chartDayMoment'), status: $('chartDayStatus'), resetButton: $('chartDayReset'),
-  onRender: () => { updateChartCaption(); graph.render(); },
+  onRender: session.refresh,
 });
-transit = createLiveTransit({
+transit = attachLiveTransit({
   document, button: $('nowButton'), toast, isFormOpen: () => birthForm.opened,
-  onRender: graph.render, onStateChange: state => transitControls?.update(state),
-  onMoment: updateChartCaption,
+  onRender: session.refresh, onStateChange: state => transitControls?.update(state),
 });
 transitControls = attachTransitControls({
   panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'), date: $('transitDate'), time: $('transitMoment'),
@@ -130,12 +126,12 @@ function updateChartCaption() {
 }
 
 function updatePage() {
-  chartDay?.select(store.current);
   updateChartCaption();
   library.render();
   graph.render();
 }
 
+chartDay.select(session.original);
 updatePage();
 gestures.reset();
 let phoneLayout = layout.phone;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachActivationPopover, placeActivationPopover } from '../src/activations/activation-popover.js';
-import { activationDetails } from '../src/activations/activation-details.js';
+import { attachActivationPopover, placeActivationPopover } from '../src/views/activation-popover.js';
+import { activationDetails } from '../src/views/activation-details.js';
 
 const rectAt = (left, top, width = 68, height = 40) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const panelSize = { width: 254, height: 147 };

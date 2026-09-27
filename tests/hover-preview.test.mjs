@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
+import { createGraphController } from '../src/scene/updates.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { alignPersonalityHeading } from '../src/activations/activations.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { alignPersonalityHeading } from '../src/scene/activation-columns.js';
 import { createSummarySelectionState as createSelectionState } from '../src/selection/summary-selection-state.js';
-import { buildChartSummary } from '../src/charts/chart-summary-data.js';
-import { CENTERS, GATES } from '../src/bodygraph/graph-data.js';
-import { STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
+import { buildChartSummary } from '../src/views/chart-summary-data.js';
+import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
+import { STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
 
 function hoverHarness(t) {
   const originals = new Map(['document', 'window'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));

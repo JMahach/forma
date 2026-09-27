@@ -1,3 +1,4 @@
+import { validateChartDayRequest } from '../server/http/natal-days.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
@@ -6,9 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
-import { createChartDays, generateChartDay, validateChartDayRequest, encodeChartDayPacket } from '../server/chart-days.mjs';
-import { decodeChartDay, chartAtMinute, chartDayMinute } from '../src/transit/chart-day-packet.js';
-import { createRequestHandler } from '../server/app.mjs';
+import { createChartDays, generateChartDay, encodeChartDayPacket } from '../server/services/natal-days.mjs';
+import { decodeChartDay } from '../shared/day-packets/decode.js';
+import { chartAtMinute, chartDayMinute } from '../src/domain/natal-day.js';
+import { createRequestHandler } from '../server/http/app.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cities = { find: id => id === 'trusted' ? { timezone: 'Europe/Moscow' } : null };
@@ -104,7 +106,7 @@ test('real historical and fold days survive production compression and reconstru
     const raw = await encodeChartDayPacket(source), decoded = decodeChartDay(raw);
     const bits = values => Buffer.from(new Float64Array(values).buffer).toString('hex');
     assert.deepEqual(decoded.columns.map(bits), source.columns.map(bits));
-    const script = `import json\nfrom server import calculator as c\nfrom server import chart_day as d\nminutes=d.local_minutes(${JSON.stringify(date)},${JSON.stringify(timezone)})\ncharts=[]\nfor i in ${JSON.stringify(indices)}:\n m,offset,fold,seconds=minutes[i]\n local=m+c.dt.timedelta(seconds=seconds)\n charts.append(c.calculate(dict(mode='natal',name='Reference',date=${JSON.stringify(date)},time=local.strftime('%H:%M'),fold=fold,city=dict(id='test',name='Test',timezone=${JSON.stringify(timezone)})))['chart'])\nprint(json.dumps(charts))`;
+    const script = `import json\nfrom server.python import calculator as c\nfrom server.python import civil_time as d\nminutes=d.local_minutes(${JSON.stringify(date)},${JSON.stringify(timezone)})\ncharts=[]\nfor i in ${JSON.stringify(indices)}:\n m,offset,fold,seconds=minutes[i]\n local=m+c.dt.timedelta(seconds=seconds)\n charts.append(c.calculate(dict(mode='natal',name='Reference',date=${JSON.stringify(date)},time=local.strftime('%H:%M'),fold=fold,city=dict(id='test',name='Test',timezone=${JSON.stringify(timezone)})))['chart'])\nprint(json.dumps(charts))`;
     const references = JSON.parse((await run(`${root}.venv/bin/python`, ['-c', script], { cwd: root, maxBuffer: 100000 })).stdout);
     indices.forEach((index, i) => {
       const chart = chartAtMinute(decoded, index, { id: 'same-id', name: 'Original' }), reference = references[i];

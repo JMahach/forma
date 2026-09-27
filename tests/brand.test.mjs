@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHART_SILHOUETTE_PATH, CHART_BACKDROP_BOUNDS } from '../src/bodygraph/chart-backdrop.js';
+import { CHART_SILHOUETTE_PATH, CHART_BACKDROP_BOUNDS } from '../src/scene/geometry/chart-backdrop.js';
 
 const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const favicon = readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8');
@@ -13,7 +13,7 @@ test('browser tab uses the Forma name and a versioned local SVG favicon', () => 
   const href = page.match(/<link rel="icon"[^>]*href="([^"]+)"/)?.[1];
   assert.match(href, /^\/favicon\.svg\?v=forma-clay-\d+$/);
   assert.equal(new URL(href, 'http://localhost').pathname, '/favicon.svg');
-  const server = readFileSync(new URL('../server/app.mjs', import.meta.url), 'utf8');
+  const server = readFileSync(new URL('../server/http/app.mjs', import.meta.url), 'utf8');
   assert.match(server, /servePublicFile\(root, req, res, url\.pathname\)/, 'cache version never becomes part of the public filename');
 });
 

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createContext, runInContext } from 'node:vm';
 import { createSelectionState } from '../src/selection/selection-state.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CENTERS, GATES } from '../src/bodygraph/graph-data.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
 import { chooseSource, clearSelectionSource, changeChartSource } from './fixtures/selection-before-refactor.js';
 
 // This oracle executes only the frozen, pre-refactor function bodies. It must

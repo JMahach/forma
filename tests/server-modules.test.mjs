@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { createCityCatalog } from '../server/city-catalog.mjs';
-import { createCalculator, CALCULATOR_LIMITS } from '../server/calculator-process.mjs';
-import { createRequestHandler } from '../server/app.mjs';
-import { PUBLIC_FILES } from '../server/public-files.mjs';
+import { createCityCatalog } from '../server/services/cities.mjs';
+import { createCalculator, CALCULATOR_LIMITS } from '../server/services/calculate.mjs';
+import { createRequestHandler } from '../server/http/app.mjs';
+import { PUBLIC_FILES } from '../server/http/public-files.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const city = (id, name, aliases = [name]) => ({ id, name, aliases, country: 'RU', region: 'Region', timezone: 'Europe/Moscow', latitude: 55.75, longitude: 37.62, population: 1000 });
@@ -81,7 +81,7 @@ test('static serving exposes the explicit public files and preserves private pat
   assert.equal(head.status, 200); assert.equal(head.body, '');
   const post = await request(handler, '/', { method: 'POST' });
   assert.equal(post.status, 405); assert.equal(post.headers.Allow, 'GET, HEAD');
-  for (const path of ['/server/app.mjs', '/server/public-files.mjs', '/server/city-catalog.mjs', '/server/calculator-process.mjs', '/data/cities.json', '/.git/config', '/.venv/pyvenv.cfg', '/tests/previews/preview-harness.js', '/src/../server/calculator.py', '/src/%2e%2e/server/calculator.py']) {
+  for (const path of ['/server/http/app.mjs', '/server/http/public-files.mjs', '/server/services/cities.mjs', '/server/services/calculate.mjs', '/data/cities.json', '/.git/config', '/.venv/pyvenv.cfg', '/tests/previews/preview-harness.js', '/src/../server/python/calculator.py', '/src/%2e%2e/server/python/calculator.py']) {
     assert.equal((await request(handler, path)).status, 404, path);
   }
 });
@@ -107,7 +107,7 @@ test('calculator keeps four-process admission, JSON protocol and releases slots 
   assert.equal((await calculate({ mode: 'transit' })).error, 'busy');
   assert.equal(workers.length, 4);
   assert.ok(calls[0][0].endsWith('/.venv/bin/python'));
-  assert.ok(calls[0][1][0].endsWith('/server/calculator.py'));
+  assert.ok(calls[0][1][0].endsWith('/server/python/calculator.py'));
   assert.deepEqual(calls[0][2], { cwd: root, stdio: ['pipe', 'pipe', 'ignore'] });
   assert.equal(workers[0].input, '{"mode":"transit"}');
   assert.equal(workers[0].encoding, 'utf8');

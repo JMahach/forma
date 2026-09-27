@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CHART_SURFACE, CHART_BACKDROP_BOUNDS, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, CHART_SILHOUETTE_PATH, renderChartBackdrop } from '../src/bodygraph/chart-backdrop.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { MANDALA_UNDERLAY_BOUNDS, renderMandalaUnderlay } from '../src/bodygraph/mandala-underlay.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { renderChartThumbnail } from '../src/charts/chart-thumbnail.js';
+import { CHART_SURFACE, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, renderChartBackdrop } from '../src/scene/backdrop.js';
+import { CHART_BACKDROP_BOUNDS, CHART_SILHOUETTE_PATH } from '../src/scene/geometry/chart-backdrop.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { MANDALA_UNDERLAY_BOUNDS, renderMandalaUnderlay } from '../src/scene/mandala-underlay.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { renderChartThumbnail } from '../src/views/thumbnail.js';
 import { renderLoveDiagram } from '../src/stories/vessel-of-love.js';
 
 const freeze = value => {

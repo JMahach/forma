@@ -1,3 +1,4 @@
+import { validateTransitDayQuery } from '../server/http/transit-days.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -8,10 +9,11 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { promisify } from 'node:util';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
-import { createTransitDays, validateTransitDayQuery, generateTransitDay, encodeDayPacket } from '../server/transit-days.mjs';
-import { negotiateEncoding } from '../server/content-encoding.mjs';
-import { decodeTransitDay, transitChartAt } from '../src/transit/day-packet.js';
-import { createRequestHandler } from '../server/app.mjs';
+import { createTransitDays, generateTransitDay, encodeDayPacket, transitCacheFingerprint } from '../server/services/transit-days.mjs';
+import { negotiateEncoding } from '../server/http/content-encoding.mjs';
+import { decodeTransitDay } from '../shared/day-packets/decode.js';
+import { transitChartAt } from '../src/domain/transit-day.js';
+import { createRequestHandler } from '../server/http/app.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const now = () => new Date('2026-09-24T12:00:00Z');
@@ -161,7 +163,7 @@ async function request(service, url, { method = 'GET', headers = {} } = {}) {
   const result = { headersSent: false, status: 0, headers: {}, body: null,
     writeHead(status, values) { this.status = status; this.headers = values; this.headersSent = true; },
     end(body) { this.body = body; } };
-  const handler = createRequestHandler({ root, transitDays: service, cities: {}, calculate: () => { throw new Error('Day route must not run natal workers'); } });
+  const handler = createRequestHandler({ root, transitDays: service, now, cities: {}, calculate: () => { throw new Error('Day route must not run natal workers'); } });
   await handler({ method, url, headers: { host: 'localhost', ...headers } }, result);
   return result;
 }
@@ -214,7 +216,7 @@ test('batch workers are bounded and a terminated process must close before relea
   let settled = false;
   const result = generateTransitDay({ root, date: '2026-09-24', spawnWorker(command, args, options) {
     assert.ok(command.endsWith('/.venv/bin/python'));
-    assert.ok(args[0].endsWith('/server/transit_day.py'));
+    assert.ok(args[0].endsWith('/server/python/transit_day.py'));
     assert.deepEqual(options.stdio, ['pipe', 'pipe', 'ignore']);
     return worker;
   } });
@@ -233,7 +235,7 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
   const date = '2026-09-24';
   const day = await generateTransitDay({ root, date });
   const packet = await encodeDayPacket(day), decoded = decodeTransitDay(packet);
-  const script = "import datetime as dt,json; from server import calculator as c; start=dt.datetime(2026,9,24,tzinfo=c.UTC); print(json.dumps([c.activations(c.julian_tt(start+dt.timedelta(minutes=i))) for i in range(1440)],separators=(',',':')))";
+  const script = "import datetime as dt,json; from server.python import astronomy as c; from server.python import civil_time as civil; start=dt.datetime(2026,9,24,tzinfo=c.UTC); print(json.dumps([c.activations(c.julian_tt(start+dt.timedelta(minutes=i))) for i in range(1440)],separators=(',',':')))";
   const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, maxBuffer: 4000000 });
   const reference = JSON.parse(stdout);
   let crossings = 0;
@@ -244,4 +246,26 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
   }
   assert.ok(crossings > 0, 'the actual day includes gate boundaries');
   assert.equal(transitChartAt(decoded, 1439).utc, `${date}T23:59:00Z`);
+});
+
+
+test('disk fingerprint is stable and tracks the relocated calculation and format owners', async t => {
+  const sourceRoot = await directory(t);
+  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py',
+    'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
+    'shared/day-packets/decode.js', 'server/packets/encode.mjs'];
+  for (const file of [...inputs, 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {
+    await fs.mkdir(path.dirname(path.join(sourceRoot, file)), { recursive: true });
+    await fs.writeFile(path.join(sourceRoot, file), `baseline ${file}`);
+  }
+  const baseline = await transitCacheFingerprint(sourceRoot);
+  assert.match(baseline, /^[a-f0-9]{16}$/);
+  assert.equal(await transitCacheFingerprint(sourceRoot), baseline);
+  for (const file of inputs) {
+    const name = path.join(sourceRoot, file), content = await fs.readFile(name);
+    await fs.appendFile(name, '\nchanged');
+    assert.notEqual(await transitCacheFingerprint(sourceRoot), baseline, file);
+    await fs.writeFile(name, content);
+    assert.equal(await transitCacheFingerprint(sourceRoot), baseline, file);
+  }
 });

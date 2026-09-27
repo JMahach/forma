@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CENTERS, GATES, CHANNELS, getGate } from '../src/bodygraph/graph-data.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { CENTERS, GATES, CHANNELS, getGate } from '../src/scene/geometry/chart-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 
 const attribute = (markup, name) => markup.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1];
 const gateGroups = markup => [...markup.matchAll(/<g\s+data-type="gate"\s+data-id="(\d+)"([^>]*)>([\s\S]*?)<\/g>/g)]

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTransitDayClient } from '../src/transit/day-client.js';
-import { encodeTransitDay, TRANSIT_DAY_VERSION } from '../src/transit/day-packet.js';
+import { createTransitDayClient } from '../src/data/transit-day-client.js';
+import { encodeTransitDay } from '../server/packets/encode.mjs';
+import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
 
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',

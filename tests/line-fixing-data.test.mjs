@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { LINE_FIXING_DATA, LINE_FIXING_PROVENANCE } from '../src/activations/line-fixing-data.js';
+import { LINE_FIXING_DATA, LINE_FIXING_PROVENANCE } from '../src/domain/line-fixing-data.js';
 
 const PLANETS = ['sun', 'earth', 'moon', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
 const PINNED_COMMIT = '8b78031ce9a4244b8eb0a4ce37e612b8d6782570';
@@ -76,6 +76,6 @@ test('data provenance pins the verified source and preserves the complete upstre
   assert.equal(LINE_FIXING_PROVENANCE.copyright, 'Copyright 2023 Christian Reizner');
   const license = readFileSync(new URL('../licenses/SharpAstrology.HumanDesign-MIT.txt', import.meta.url), 'utf8').trimEnd();
   assert.equal(createHash('sha256').update(license).digest('hex'), '9c5d3400ccfbd746e5fc48d6696bb0998c14935801aa669448cf5a564594b9c3', 'the full pinned license is retained without alteration');
-  const moduleSource = readFileSync(new URL('../src/activations/line-fixing-data.js', import.meta.url), 'utf8');
+  const moduleSource = readFileSync(new URL('../src/domain/line-fixing-data.js', import.meta.url), 'utf8');
   assert.ok(moduleSource.replace(/^ \* ?/gm, '').includes(license), 'the module header carries the same complete upstream notice');
 });

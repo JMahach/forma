@@ -1,4 +1,4 @@
-import { GATES, getChannel } from '../bodygraph/graph-data.js';
+import { GATES, getChannel } from '../domain/topology.js';
 
 // Shared identity and topology for ordinary selections, line groups and
 // mandala crosses. These helpers do not own or change selection state.

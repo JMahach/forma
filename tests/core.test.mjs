@@ -3,15 +3,17 @@ import assert from 'node:assert/strict';
 import {
   parseGates, validateChart,
   readCharts, writeCharts, STORAGE_KEY, TRASH_KEY, deleteChart
-} from '../src/charts/storage.js';
-import { zoomAt, validView, fitView, attachGestures, DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
-import {
-  CENTERS, GATES, CHANNELS, DEMO_CHART,
-  getGate, getCenter, getChannel, getDefinition
-} from '../src/bodygraph/graph-data.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { renderActivationColumns, PLANETS } from '../src/activations/activations.js';
-import { formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from '../src/charts/date-input.js';
+} from '../src/data/storage.js';
+import { zoomAt, validView, fitView } from '../src/scene/camera.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.js';
+import { DEMO_CHART } from './fixtures/demo-chart.js';
+import { getDefinition } from '../src/domain/topology.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { renderActivationColumns } from '../src/scene/activation-columns.js';
+import { PLANETS } from '../src/domain/planets.js';
+import { formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from '../src/views/date-input.js';
 
 const exampleChart = (extra = {}) => ({
   id: 'chart-test',

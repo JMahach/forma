@@ -13,7 +13,7 @@ const fixtures = {
 createServer(async (request, response) => {
   const params = new URL(request.url, 'http://127.0.0.1').searchParams;
   const fixture = Object.hasOwn(fixtures, params.get('fixture')) ? params.get('fixture') : 'black34';
-  const source = new URL('../../src/bodygraph/bodygraph.js', import.meta.url);
+  const source = new URL('../../src/scene/bodygraph-svg.js', import.meta.url);
   const version = (await stat(source)).mtimeMs;
   const { renderBodygraph } = await import(`${source.href}?preview=${version}`);
   const lower = params.get('pair') === 'lower';

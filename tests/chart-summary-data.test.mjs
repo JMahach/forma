@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChartSummary } from '../src/charts/chart-summary-data.js';
-import { CENTERS, CHANNELS, GATES, getDefinition } from '../src/bodygraph/graph-data.js';
+import { buildChartSummary } from '../src/views/chart-summary-data.js';
+import { CENTERS, CHANNELS, GATES, getChannel } from '../src/reference/catalog.js';
+import { getDefinition } from '../src/domain/topology.js';
 
 const row = (planet, gate, line) => ({ planet, gate, line });
 const chartFromRows = (design, personality, source = 'calculated') => ({
@@ -104,7 +105,7 @@ test('channels and defined centers derive from the canonical combined gate sets'
   const chart = { design: [34, 44], personality: [20, 26, 64] };
   const summary = buildChartSummary(chart);
   const expected = getDefinition(chart);
-  assert.deepEqual(summary.channels, expected.channels.map(({ id, name, gates }) => ({ id, name, gates })));
+  assert.deepEqual(summary.channels, expected.channels.map(({ id, gates }) => ({ id, name: getChannel(id).name, gates })));
   assert.deepEqual(summary.centers.filter(center => center.defined).map(center => center.id), CENTERS.filter(center => expected.centers.has(center.id)).map(center => center.id));
   assert.deepEqual(summary.centers.find(center => center.id === 'head'), {
     id: 'head', name: 'Теменной', defined: false, activeGates: [64],

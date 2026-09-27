@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CENTERS, GATES, CHANNELS } from '../src/bodygraph/graph-data.js';
-import { STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CENTERS, GATES, CHANNELS } from '../src/scene/geometry/chart-geometry.js';
+import { STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
 
 const chartFixture = () => ({
   personality: [1, 10, 20, 29, 34, 37, 41, 52, 53, 54, 57, 60],
