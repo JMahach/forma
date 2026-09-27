@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { mandalaPreviewFromFocus, mandalaSelectionFromTarget } from '../src/bodygraph/mandala-preview.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { mandalaPreviewFromFocus, mandalaSelectionFromTarget } from '../src/scene/mandala-preview.js';
 import { GATE_WIDTH } from '../src/domain/gate-wheel.js';
 
 const cross = longitude => {

@@ -1,3 +1,4 @@
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { preview as activationPreview } from './previews/activation-preview.mjs';
@@ -25,11 +26,11 @@ test('both preview pages serve the complete browser module graph without the app
         pending.push(target.pathname);
       }
     }
-    for (const path of ['/src/bodygraph/mandala.js', '/src/bodygraph/mandala-underlay.js', '/src/bodygraph/chart-backdrop.js', '/src/domain/gate-wheel.js']) {
+    for (const path of ['/src/scene/mandala.js', '/src/scene/mandala-underlay.js', '/src/scene/backdrop.js', '/src/domain/gate-wheel.js']) {
       assert.ok(visited.has(path), `${path} is reachable`);
     }
     assert.ok(!visited.has('/src/app.js'));
-    assert.ok(!visited.has('/src/charts/storage.js'));
+    assert.ok(!visited.has('/src/data/storage.js'));
     assert.equal((await readPreviewResource('/styles.css', config)).status, 200);
     for (const path of ['/api/calculate', '/src/app.js', '/server/server.mjs', '/data/cities.json', '/tests/previews/preview-server.mjs', '/.git/config', '/src/../server/server.mjs', '/src/%2e%2e/server/server.mjs', '/src/missing.js']) {
       assert.equal((await readPreviewResource(path, config)).status, 404, path);
@@ -99,7 +100,7 @@ function browserHarness(t, config) {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('Preview must not read saved charts'); } });
-  const controller = mountPreview(config);
+  const controller = mountPreview(config, { renderChart: renderBodygraph });
   return { controller, viewport, panel, svg, click: id => nodes.get(id).send('click'), anchor: id => anchors.get(`[data-activation="${id}"]`) };
 }
 

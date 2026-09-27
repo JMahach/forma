@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { getGate } from '../src/bodygraph/graph-data.js';
-import { INTEGRATION_ARMS } from '../src/bodygraph/integration-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { getGate } from '../src/scene/geometry/chart-geometry.js';
+import { INTEGRATION_ARMS } from '../src/scene/geometry/integration-geometry.js';
 
 const gate = id => ({ type: 'gate', id });
 const center = id => ({ type: 'center', id: getGate(id).center });

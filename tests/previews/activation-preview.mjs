@@ -1,6 +1,6 @@
 // Synthetic visual fixture; never loads or writes the user's saved charts.
 // Run: node tests/previews/activation-preview.mjs; open http://localhost:4174.
-import { PLANETS } from '../../src/activations/activations.js';
+import { PLANETS } from '../../src/domain/planets.js';
 import { GATE_ORDER, GATE_LONGITUDE_START, GATE_WIDTH, LINE_WIDTH, normalizeLongitude } from '../../src/domain/gate-wheel.js';
 import { startPreviewIfMain } from './preview-server.mjs';
 

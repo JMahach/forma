@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderActivationColumns } from '../src/activations/activations.js';
-import { DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
+import { renderActivationColumns } from '../src/scene/activation-columns.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
 const activation = (planet, gate, line) => ({ planet, gate, line });
 const chart = (personality, design = []) => ({ activations: { personality, design } });
@@ -78,7 +78,7 @@ test('selection and hover keep fixing symbols unchanged', () => {
 });
 
 test('both fixing modules are available through the production server', () => {
-  const server = readFileSync(new URL('../server/public-files.mjs', import.meta.url), 'utf8');
-  assert.match(server, /'src\/activations\/line-fixing\.js'/);
-  assert.match(server, /'src\/activations\/line-fixing-data\.js'/);
+  const server = readFileSync(new URL('../server/http/public-files.mjs', import.meta.url), 'utf8');
+  assert.match(server, /'src\/domain\/line-fixing\.js'/);
+  assert.match(server, /'src\/domain\/line-fixing-data\.js'/);
 });

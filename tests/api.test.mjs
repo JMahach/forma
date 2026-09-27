@@ -26,8 +26,8 @@ apiTest('the browser can load the selection state module and its dependency', as
   assert.equal(module.status, 200);
   assert.match(module.headers.get('content-type'), /javascript/);
   assert.match(module.body, /export function createSelectionState\(/);
-  assert.match(module.body, /from '\.\.\/bodygraph\/graph-data\.js'/);
-  const graph = await request('/src/bodygraph/graph-data.js');
+  assert.match(module.body, /from '\.\.\/domain\/topology\.js'/);
+  const graph = await request('/src/domain/topology.js');
   assert.equal(graph.status, 200);
   assert.match(graph.headers.get('content-type'), /javascript/);
 });
@@ -48,7 +48,7 @@ apiTest('the page loads the complete frontend module graph through public source
   while (pending.length) {
     const url = pending.pop();
     assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');
-    assert.ok(url.pathname.startsWith('/src/'), `${url.pathname} uses the public source boundary`);
+    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/day-packets/'), `${url.pathname} uses the public source boundary`);
     if (visited.has(url.pathname)) continue;
     visited.add(url.pathname);
     const module = await request(url);
@@ -67,7 +67,7 @@ apiTest('the page loads the complete frontend module graph through public source
     readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
       ? sourceModules(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
       : entry.name.endsWith('.js') ? [`${prefix}${entry.name}`] : []);
-  assert.deepEqual([...visited].sort(), sourceModules().sort(), 'every frontend module is reachable and publicly loadable');
+  assert.deepEqual([...visited].sort(), [...sourceModules(), ...sourceModules(new URL('../shared/day-packets/', import.meta.url), '/shared/day-packets/')].sort(), 'every frontend module is reachable and publicly loadable');
   const styles = await request('/styles.css');
   assert.equal(styles.status, 200);
   assert.match(styles.headers.get('content-type'), /css/);
@@ -181,7 +181,7 @@ apiTest('valid city identity overrides a forged timezone and arbitrary display n
 
 apiTest('private server, data, tests and environment files are not publicly served', async () => {
   for (const path of [
-    '/server/server.mjs', '/server/calculator.py', '/server/',
+    '/server/server.mjs', '/server/python/calculator.py', '/server/', '/server/packets/encode.mjs', '/server/packets/compression.mjs', '/server/runtime/day-worker.mjs',
     '/data/cities.json', '/data/', '/.git/config', '/calculator.py',
     '/tests/api.test.mjs', '/tests/fixtures/selection-before-refactor.js', '/tests/previews/activation-preview.mjs', '/tests/',
     '/.venv/pyvenv.cfg', '/.venv/', '/scripts/prepare-cities.py',

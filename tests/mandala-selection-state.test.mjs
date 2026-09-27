@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { GATES, getChannel } from '../src/bodygraph/graph-data.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { GATES, getChannel } from '../src/scene/geometry/chart-geometry.js';
 
 const gate = (id, additive = false, activation) => ({ type: 'gate', id: String(id), additive, ...(activation ? { activation } : {}) });
 const cross = (longitude, additive = false, source = 'personality') => ({ type: 'mandala-cross', cross: crossAtLongitude(longitude, { source }), additive });

@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMandalaPreviewPainter } from '../src/bodygraph/mandala-preview-painter.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
-import { renderMandala } from '../src/bodygraph/mandala.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { createMandalaPreviewPainter } from '../src/scene/mandala-preview-painter.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
+import { renderMandala } from '../src/scene/mandala.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 
 // Minimal SVG DOM: preserve attributes, descendants and node identity. Actual
 // renderer markup supplies the fixtures rather than a second drawing template.
@@ -163,7 +163,7 @@ test('controller falls back after gate change, chart replacement, selection chan
     const harness = graphHarness();
     mutate(harness);
     harness.controller.preview();
-    assert.equal(harness.calls.summary, 2, 'fallback ran the original controller path');
+    assert.equal(harness.calls.summary, harness.controller.selectionState.items.length ? 2 : 1, 'summary updates only when its chart facts or committed selection change');
     assert.equal(harness.calls.render, harness.state.hasChart ? 2 : 1);
   }
 });

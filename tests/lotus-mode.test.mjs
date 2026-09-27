@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { attachLotusMode } from '../src/bodygraph/lotus-mode.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
+import { attachLotusMode } from '../src/scene/modes/lotus.js';
+import { createGraphController } from '../src/scene/updates.js';
 
 function harness(storage = null, render = () => {}) {
   const callbacks = {}, attributes = {};

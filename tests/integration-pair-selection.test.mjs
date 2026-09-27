@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CHANNELS, GATES } from '../src/bodygraph/graph-data.js';
-import { PLANETS } from '../src/activations/activations.js';
-import { INTEGRATION_IDS, INTEGRATION_ARMS, STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CHANNELS, GATES } from '../src/scene/geometry/chart-geometry.js';
+import { PLANETS } from '../src/domain/planets.js';
+import { INTEGRATION_ARMS, STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
+import { INTEGRATION_IDS } from '../src/domain/topology.js';
 
 const gate = id => ({ type: 'gate', id });
 const center = id => ({ type: 'center', id });

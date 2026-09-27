@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateLineFixings } from '../src/activations/line-fixing.js';
-import { LINE_FIXING_DATA } from '../src/activations/line-fixing-data.js';
-import { PLANETS } from '../src/activations/activations.js';
-import { CHANNELS } from '../src/bodygraph/graph-data.js';
+import { calculateLineFixings } from '../src/domain/line-fixing.js';
+import { LINE_FIXING_DATA } from '../src/domain/line-fixing-data.js';
+import { PLANETS } from '../src/domain/planets.js';
+import { CHANNELS } from '../src/scene/geometry/chart-geometry.js';
 
 const activation = (planet, gate, line) => ({ planet, gate, line });
 const contributor = (source, planet, gate, line) => ({ source, planet, gate, line });

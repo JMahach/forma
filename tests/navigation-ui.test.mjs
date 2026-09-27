@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { chartTitle } from '../src/charts/chart-display.js';
-import { attachChartLibrary, renderChartLibrary } from '../src/charts/chart-library.js';
-import { attachTransitNavigation } from '../src/charts/live-transit.js';
-import { attachCameraControls } from '../src/bodygraph/camera-controls.js';
+import { chartTitle } from '../src/views/chart-display.js';
+import { attachChartLibrary, createChartLibraryView } from '../src/views/library.js';
+import { libraryDom } from './helpers/library-dom.mjs';
+import { attachTransitNavigation } from '../src/views/live-transit.js';
+import { attachCameraControls } from '../src/views/camera-controls.js';
 
 const bootstrapSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 const appSource = [bootstrapSource, ...[
-  'charts/chart-display.js', 'charts/chart-library.js', 'charts/birth-form.js',
-  'charts/live-transit.js', 'bodygraph/graph-controller.js', 'bodygraph/camera-controls.js',
+  'views/chart-display.js', 'views/library.js', 'views/birth-form.js',
+  'views/live-transit.js', 'scene/updates.js', 'views/camera-controls.js',
 ].map(path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8'))].join('\n');
 const pageSource = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
@@ -116,6 +117,7 @@ function menuHarness() {
         id, inert: id === 'library', hidden: id === 'libraryBackdrop',
         get innerHTML() { return markup; },
         set innerHTML(value) { markup = String(value); if (id === 'chartList') renders++; },
+        getBoundingClientRect() { return { top: 0, bottom: 200 }; },
         contains(node) { return node === this || id === 'library' && sidebarChildren.has(node?.id); },
         focus() { document.activeElement = this; },
         setAttribute(name, value) { attributes.set(name, String(value)); },
@@ -132,7 +134,8 @@ function menuHarness() {
   };
   const library = attachChartLibrary({
     document,
-    store: { charts: [], selectedId: 'current-transit', remove() { assert.fail('opening a menu must not delete a chart'); } },
+    session: { selectedId: 'current-transit' },
+    store: { charts: [], remove() { assert.fail('opening a menu must not delete a chart'); } },
     onSelect() { assert.fail('opening a menu does not select a chart'); },
     onEdit() { assert.fail('opening a menu does not edit a chart'); },
     onNew() { assert.fail('opening a menu does not create a chart'); },
@@ -149,7 +152,7 @@ test('the menu button opens the drawer, enables it, and moves focus to current m
   const harness = menuHarness();
   harness.element('openLibrary').focus();
   harness.click('openLibrary');
-  assert.equal(harness.renders, 1, 'opening refreshes the saved-chart listing');
+  assert.equal(harness.renders, 0, 'an empty listing needs no DOM replacement');
   assert.equal(harness.popupCloses, 1, 'opening the drawer dismisses any activation popup');
   assert.equal(harness.element('library').classList.contains('open'), true);
   assert.equal(harness.element('library').inert, false);
@@ -185,33 +188,11 @@ test('closing the menu does not steal focus already moved outside the drawer', (
 // Run the real renderer with synthetic fixtures only. No application bootstrap,
 // storage, network calls, timers, or real browser charts are involved.
 function libraryHarness(savedCharts, selectedChartId = 'current-transit') {
-  const elements = new Map();
-  const element = id => {
-    if (!elements.has(id)) {
-      const attributes = new Map(), classes = new Set();
-      let value = '';
-      elements.set(id, {
-        get textContent() { return value; },
-        set textContent(next) { value = String(next); },
-        innerHTML: '', dataset: {},
-        setAttribute(name, next) { attributes.set(name, String(next)); },
-        getAttribute(name) { return attributes.get(name) ?? null; },
-        classList: {
-          toggle(name, force) { const enabled = force ?? !classes.has(name); if (enabled) classes.add(name); else classes.delete(name); return enabled; },
-          contains(name) { return classes.has(name); },
-        },
-      });
-    }
-    return elements.get(id);
-  };
-  const context = {
-    savedCharts, selectedChartId,
-    render() {
-      renderChartLibrary({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton') }, context.savedCharts, context.selectedChartId);
-    },
-  };
-  context.render();
-  return { context, element };
+  const dom = libraryDom();
+  const view = createChartLibraryView({ ...dom, createObserver: () => ({ observe() {}, disconnect() {} }), schedule() {} });
+  const context = { savedCharts, selectedChartId, render() { view.update(context.savedCharts, context.selectedChartId); } };
+  context.render(); view.show();
+  return { context, element: id => dom[id] };
 }
 
 test('the personal-chart count and list exclude current and legacy transits without changing stored records', () => {

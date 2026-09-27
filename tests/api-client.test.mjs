@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requestJSON } from '../src/api/client.js';
+import { requestJSON } from '../src/data/api-client.js';
 
 test('JSON client forwards request options and returns the server payload', async t => {
   const options = { method: 'POST', body: '{"mode":"transit"}' }, payload = { chart: { id: 'test' } };

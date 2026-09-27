@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CHANNELS, GATES } from '../src/bodygraph/graph-data.js';
-import { INTEGRATION_IDS } from '../src/bodygraph/integration-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CHANNELS, GATES } from '../src/scene/geometry/chart-geometry.js';
+import { INTEGRATION_IDS } from '../src/domain/topology.js';
 
 // Independent output requirements, deliberately not imported from the renderer:
 // Another 10% after the first 20% increase: 1.2 × 1.1 = 1.32 overall.
@@ -257,16 +257,17 @@ const rollbackCases = [
 ];
 
 async function rendererAtScale(scale) {
-  const rendererURL = new URL('../src/bodygraph/bodygraph.js', import.meta.url);
-  const source = await readFile(rendererURL, 'utf8');
+  const rendererURL = new URL('../src/scene/bodygraph-svg.js', import.meta.url);
+  const paintURL = new URL('../src/scene/bodygraph-paint.js', import.meta.url);
+  const paintSource = await readFile(paintURL, 'utf8');
   const setting = /^const CHANNEL_WIDTH_SCALE = 1\.32;$/gm;
-  assert.equal([...source.matchAll(setting)].length, 1, 'one explicit width setting provides the rollback');
-  const reverted = source.replace(setting, `const CHANNEL_WIDTH_SCALE = ${scale};`);
-  // data: modules have no file base; resolve only their existing relative
-  // imports against the original renderer location, without changing files.
-  const linked = reverted.replace(/from (['"])(\.\.?\/[^'"]+)\1/g,
-    (_, quote, name) => `from ${quote}${new URL(name, rendererURL).href}${quote}`);
-  return (await import('data:text/javascript;base64,' + Buffer.from(linked).toString('base64'))).renderBodygraph;
+  assert.equal([...paintSource.matchAll(setting)].length, 1, 'one explicit width setting provides the rollback');
+  const link = (source, base) => source.replace(/from (['"])(\.\.?\/[^'"]+)\1/g,
+    (_, quote, name) => `from ${quote}${new URL(name, base).href}${quote}`);
+  const moduleURL = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
+  const paint = moduleURL(link(paintSource.replace(setting, `const CHANNEL_WIDTH_SCALE = ${scale};`), paintURL));
+  const source = (await readFile(rendererURL, 'utf8')).replace("'./bodygraph-paint.js'", `'${paint}'`);
+  return (await import(moduleURL(link(source, rendererURL)))).renderBodygraph;
 }
 
 test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {

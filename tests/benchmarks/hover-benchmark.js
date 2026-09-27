@@ -1,7 +1,7 @@
-import { createGraphController } from '/src/bodygraph/graph-controller.js';
-import { renderBodygraph } from '/src/bodygraph/bodygraph.js';
-import { crossAtLongitude } from '/src/bodygraph/mandala-cross.js';
-import { PLANETS } from '/src/activations/activations.js';
+import { createGraphController } from '/src/scene/updates.js';
+import { renderBodygraph } from '/src/scene/bodygraph-svg.js';
+import { crossAtLongitude } from '/src/domain/mandala-cross.js';
+import { PLANETS } from '/src/domain/planets.js';
 import { gatePositionAtLongitude, GATE_LONGITUDE_START, GATE_WIDTH, LINE_WIDTH } from '/src/domain/gate-wheel.js';
 
 // The same synthetic 26-activation chart, camera and production renderer for A/B.

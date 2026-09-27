@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures } from '../src/bodygraph/gestures.js';
+import { attachGestures } from '../src/scene/gestures.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
-import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from '../src/bodygraph/mandala-preview.js';
-import { MANDALA_GEOMETRY } from '../src/bodygraph/mandala.js';
+import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from '../src/scene/mandala-preview.js';
+import { MANDALA_GEOMETRY } from '../src/scene/geometry/mandala-geometry.js';
 
 class Point {
   constructor(x, y) { this.x = x; this.y = y; }

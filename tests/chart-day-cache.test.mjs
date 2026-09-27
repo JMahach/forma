@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartDayCache } from '../src/transit/chart-day-cache.js';
+import { createChartDayCache } from '../src/data/natal-day-cache.js';
 
 // Exercise asynchronous transaction completion and eviction with a small
 // IndexedDB-compatible in-memory adapter, without requiring a browser session.

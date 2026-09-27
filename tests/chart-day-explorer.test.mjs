@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartDayExplorer, attachChartDayExplorer, canExploreChartDay } from '../src/charts/chart-day-explorer.js';
-import { createChartStore } from '../src/charts/chart-store.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { chartAtMinute, chartDayMinute } from '../src/transit/chart-day-packet.js';
-import { attachBirthForm } from '../src/charts/birth-form.js';
+import { createChartDayExplorer, canExploreChartDay } from '../src/state/natal-day.js';
+import { attachChartDayExplorer } from '../src/views/natal-day-controls.js';
+import { createChartSession } from '../src/state/chart-session.js';
+import { createChartStore } from '../src/data/chart-store.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { chartAtMinute, chartDayMinute } from '../src/domain/natal-day.js';
+import { attachBirthForm } from '../src/views/birth-form.js';
 import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -172,7 +175,7 @@ test('opening the birth editor closes a minute preview before the dialog appears
   node('chartForm').elements = Object.fromEntries(['name', 'birthPlace', 'note'].map(key => [key, node(key)]));
   const form = attachBirthForm({
     document: { getElementById: node, querySelectorAll: () => [] },
-    store: { charts: [original], selectedId: original.id, current: original },
+    store: { charts: [original] }, session: { selectedId: original.id, original },
     onSave() {}, toast() {}, beforeOpen: h.explorer.close,
   });
   form.open(true, original.id);
@@ -275,17 +278,19 @@ test('birth controls remain usable when the optional marker is omitted', async (
 test('personal scrubbing keeps real graph pins, camera transform and saved storage intact', async () => {
   const original = chartAtMinute(chartDayFixture(), 754, personalChartFixture()), writes = [], values = JSON.stringify([original]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => values, setItem: (...args) => writes.push(args) }) });
-  store.select(original.id);
+  const session = createChartSession({ store });
+  session.select(original.id);
   const before = JSON.stringify(store.charts), charts = store.charts;
   const viewport = { innerHTML: '', transform: 'translate(-70,25) scale(1.4)', querySelector: () => null };
   let explorer;
   const graph = createGraphController({
-    getChart: () => explorer?.current || store.current, viewport, alignHeading() {},
+    renderChart: renderBodygraph,
+    getChart: () => explorer?.current || session.original, viewport, alignHeading() {},
     getMandala: () => ({ enabled: true }), activationPopover: { close() {}, show() {}, refresh() {} },
-    onChartChange(id) { explorer.close(); store.select(id); explorer.select(store.current); graph.render(); },
+    onChartChange(id) { explorer.close(); session.select(id); explorer.select(session.original); graph.render(); },
   });
   explorer = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: graph.render });
-  explorer.select(store.current); await explorer.open();
+  explorer.select(session.original); await explorer.open();
   graph.choose({ type: 'gate', id: 41 });
   graph.choose({ type: 'mandala-cross', cross: { longitude: 0, source: 'personality' }, additive: true });
   const pins = graph.selectionState.items, crosses = graph.selectionState.crosses, markup = viewport.innerHTML;
@@ -295,7 +300,7 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
   assert.equal(graph.selectionState.crosses, crosses);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
   explorer.reset();
-  assert.equal(explorer.current, store.current);
+  assert.equal(explorer.current, session.original);
   assert.equal(store.charts, charts);
   assert.equal(JSON.stringify(store.charts), before);
   assert.deepEqual(writes, []);
@@ -303,7 +308,7 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
   graph.changeChart(original.id);
   assert.equal(explorer.state.opened, false, 'explicit selection closes a preview even for the same saved card');
   assert.equal(explorer.current, null);
-  assert.equal(explorer.state.current, store.current);
+  assert.equal(explorer.state.current, session.original);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
   assert.deepEqual(writes, []);
 });

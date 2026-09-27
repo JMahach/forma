@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { runDayWorker } from '../server/day-worker.mjs';
-import { negotiateEncoding } from '../server/content-encoding.mjs';
+import { runDayWorker } from '../server/runtime/day-worker.mjs';
+import { negotiateEncoding } from '../server/http/content-encoding.mjs';
 
 function harness(options = {}) {
   const worker = new EventEmitter(), kills = [];

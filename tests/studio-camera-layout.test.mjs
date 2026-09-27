@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { attachGestures, DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
-import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from '../src/bodygraph/camera-controls.js';
-import { attachMandalaMode, MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from '../src/views/camera-controls.js';
+import { attachMandalaMode } from '../src/scene/modes/mandala.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
 
 const closeTo = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} ≈ ${expected}`);

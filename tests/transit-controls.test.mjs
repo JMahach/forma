@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachTransitControls } from '../src/charts/transit-controls.js';
-import { createLocalDayTimeline } from '../src/transit/day-timeline.js';
+import { attachTransitControls } from '../src/views/transit-controls.js';
+import { createLocalDayTimeline } from '../src/domain/day-timeline.js';
 
 function element() {
   const attributes = new Map(), listeners = new Map();

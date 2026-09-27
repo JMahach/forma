@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { calculateVariables } from '../src/activations/variables.js';
+import { calculateVariables } from '../src/domain/variables.js';
 
 // Synthetic records use real opposite gate starts: 41/31 and 19/33. Place
 // each longitude in the middle of a requested Tone so expected directions
@@ -226,7 +226,7 @@ test('real natal calculator records yield the expected Variables across three da
 }, () => {
   const charts = JSON.parse(execFileSync(python, ['-B', '-c', `
 import json
-from server import calculator as calc
+from server.python import calculator as calc
 charts = []
 for date in ['1900-01-01', '1990-06-15', '2026-09-12']:
     request = dict(mode='natal', name='Variable regression', date=date, time='12:00',

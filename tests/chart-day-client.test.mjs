@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartDayClient } from '../src/transit/chart-day-client.js';
-import { encodeChartDay, CHART_DAY_VERSION } from '../src/transit/chart-day-packet.js';
+import { createChartDayClient } from '../src/data/natal-day-client.js';
+import { encodeChartDay } from '../server/packets/encode.mjs';
+import { CHART_DAY_VERSION } from '../shared/day-packets/natal-format.js';
 import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
 
 const bytesFor = date => encodeChartDay(chartDayFixture({ date })).buffer;

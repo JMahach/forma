@@ -11,7 +11,10 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from server import calculator as calc
+from server.python import calculator as calc
+from server.python import astronomy as astro
+from server.python import civil_time as civil
+from server.python.errors import ChartError
 
 
 class HistoricalTimezoneTests(unittest.TestCase):
@@ -22,27 +25,27 @@ class HistoricalTimezoneTests(unittest.TestCase):
             ('2020-01-15', '2020-01-15T09:00:00Z', 'UTC+03:00'),
         ]:
             with self.subTest(date=date):
-                moment, offset, fold = calc.local_to_utc(date, '12:00', 'Europe/Moscow')
-                self.assertEqual(calc.iso(moment), expected_utc)
+                moment, offset, fold = civil.local_to_utc(date, '12:00', 'Europe/Moscow')
+                self.assertEqual(civil.iso(moment), expected_utc)
                 self.assertEqual(offset, label)
                 self.assertEqual(fold, 0)
 
     def test_spring_forward_gap_is_rejected(self):
         for fold in (None, 0, 1):
             with self.subTest(fold=fold):
-                with self.assertRaises(calc.ChartError) as error:
-                    calc.local_to_utc('2024-03-10', '02:30', 'America/New_York', fold)
+                with self.assertRaises(ChartError) as error:
+                    civil.local_to_utc('2024-03-10', '02:30', 'America/New_York', fold)
                 self.assertEqual(error.exception.payload['error'], 'nonexistent_time')
 
     def test_fall_back_requires_choice_then_resolves_one_hour_apart(self):
-        with self.assertRaises(calc.ChartError) as error:
-            calc.local_to_utc('2024-11-03', '01:30', 'America/New_York')
+        with self.assertRaises(ChartError) as error:
+            civil.local_to_utc('2024-11-03', '01:30', 'America/New_York')
         self.assertEqual(error.exception.payload['error'], 'ambiguous_time')
         self.assertEqual(len(error.exception.payload['choices']), 2)
-        first, first_offset, first_fold = calc.local_to_utc('2024-11-03', '01:30', 'America/New_York', 0)
-        second, second_offset, second_fold = calc.local_to_utc('2024-11-03', '01:30', 'America/New_York', 1)
-        self.assertEqual(calc.iso(first), '2024-11-03T05:30:00Z')
-        self.assertEqual(calc.iso(second), '2024-11-03T06:30:00Z')
+        first, first_offset, first_fold = civil.local_to_utc('2024-11-03', '01:30', 'America/New_York', 0)
+        second, second_offset, second_fold = civil.local_to_utc('2024-11-03', '01:30', 'America/New_York', 1)
+        self.assertEqual(civil.iso(first), '2024-11-03T05:30:00Z')
+        self.assertEqual(civil.iso(second), '2024-11-03T06:30:00Z')
         self.assertEqual(second - first, dt.timedelta(hours=1))
         self.assertEqual((first_fold, second_fold), (0, 1))
         self.assertEqual((first_offset, second_offset), ('UTC−04:00', 'UTC−05:00'))
@@ -50,8 +53,8 @@ class HistoricalTimezoneTests(unittest.TestCase):
     def test_boolean_or_invalid_fold_does_not_silently_choose(self):
         for fold in (True, False, '0', '1', -1, 2):
             with self.subTest(fold=fold):
-                with self.assertRaises(calc.ChartError) as error:
-                    calc.local_to_utc('2024-11-03', '01:30', 'America/New_York', fold)
+                with self.assertRaises(ChartError) as error:
+                    civil.local_to_utc('2024-11-03', '01:30', 'America/New_York', fold)
                 self.assertEqual(error.exception.payload['error'], 'ambiguous_time')
 
     def test_invalid_leap_dates_times_and_timezones(self):
@@ -65,112 +68,112 @@ class HistoricalTimezoneTests(unittest.TestCase):
             ('2024-01-01', '12:00', 'Invented/Zone'),
         ]:
             with self.subTest(date=date, time=time, timezone=timezone):
-                with self.assertRaises(calc.ChartError) as error:
-                    calc.local_to_utc(date, time, timezone)
+                with self.assertRaises(ChartError) as error:
+                    civil.local_to_utc(date, time, timezone)
                 self.assertEqual(error.exception.payload['error'], 'invalid_datetime')
-        self.assertEqual(calc.iso(calc.local_to_utc('2000-02-29', '12:00', 'UTC')[0]), '2000-02-29T12:00:00Z')
+        self.assertEqual(civil.iso(civil.local_to_utc('2000-02-29', '12:00', 'UTC')[0]), '2000-02-29T12:00:00Z')
 
     def test_supported_calendar_range_is_explicit(self):
         for date in ('1800-12-31', '2400-01-01'):
             with self.subTest(date=date):
-                with self.assertRaises(calc.ChartError) as error:
-                    calc.local_to_utc(date, '12:00', 'UTC')
+                with self.assertRaises(ChartError) as error:
+                    civil.local_to_utc(date, '12:00', 'UTC')
                 self.assertEqual(error.exception.payload['error'], 'unsupported_date')
 
 
 class MandalaTests(unittest.TestCase):
     def test_wheel_contains_each_gate_exactly_once(self):
-        self.assertEqual(len(calc.GATE_WHEEL), 64)
-        self.assertEqual(sorted(calc.GATE_WHEEL), list(range(1, 65)))
+        self.assertEqual(len(astro.GATE_WHEEL), 64)
+        self.assertEqual(sorted(astro.GATE_WHEEL), list(range(1, 65)))
 
     def test_all_gate_and_line_boundaries(self):
         epsilon = 1e-8
-        for index, gate in enumerate(calc.GATE_WHEEL):
+        for index, gate in enumerate(astro.GATE_WHEEL):
             gate_start = 302 + index * 5.625
             with self.subTest(gate=gate):
-                self.assertEqual(calc.gate_line(gate_start + epsilon), (gate, 1))
-                self.assertEqual(calc.gate_line(gate_start + 5.625 - epsilon), (gate, 6))
-                self.assertEqual(calc.gate_line(gate_start), (gate, 1))
+                self.assertEqual(astro.gate_line(gate_start + epsilon), (gate, 1))
+                self.assertEqual(astro.gate_line(gate_start + 5.625 - epsilon), (gate, 6))
+                self.assertEqual(astro.gate_line(gate_start), (gate, 1))
             for line in range(1, 7):
                 start = gate_start + (line - 1) * 0.9375
                 end = start + 0.9375
                 with self.subTest(gate=gate, line=line):
-                    self.assertEqual(calc.gate_line(start + epsilon), (gate, line))
-                    self.assertEqual(calc.gate_line(end - epsilon), (gate, line))
+                    self.assertEqual(astro.gate_line(start + epsilon), (gate, line))
+                    self.assertEqual(astro.gate_line(end - epsilon), (gate, line))
 
     def test_degree_wrap_and_known_anchor(self):
-        self.assertEqual(calc.gate_line(302), (41, 1))
-        self.assertEqual(calc.gate_line(302 - 1e-8), (60, 6))
-        self.assertEqual(calc.gate_line(302 + 5.625), (19, 1))
+        self.assertEqual(astro.gate_line(302), (41, 1))
+        self.assertEqual(astro.gate_line(302 - 1e-8), (60, 6))
+        self.assertEqual(astro.gate_line(302 + 5.625), (19, 1))
         for longitude in (0, 12.345, 301.99999, 302, 359.99999):
             for turns in (-5, -1, 1, 5):
                 with self.subTest(longitude=longitude, turns=turns):
-                    self.assertEqual(calc.gate_line(longitude + 360 * turns), calc.gate_line(longitude))
+                    self.assertEqual(astro.gate_line(longitude + 360 * turns), astro.gate_line(longitude))
         for invalid in (math.inf, -math.inf, math.nan):
             with self.assertRaises(ValueError):
-                calc.gate_line(invalid)
+                astro.gate_line(invalid)
 
 
 class EphemerisTests(unittest.TestCase):
     def test_real_calculation_uses_swiss_files_not_moshier(self):
         for moment in (
-            dt.datetime(1800, 10, 1, tzinfo=calc.UTC),
-            dt.datetime(1972, 8, 2, 7, 30, tzinfo=calc.UTC),
-            dt.datetime(2026, 9, 12, tzinfo=calc.UTC),
-            dt.datetime(2399, 12, 31, tzinfo=calc.UTC),
+            dt.datetime(1800, 10, 1, tzinfo=civil.UTC),
+            dt.datetime(1972, 8, 2, 7, 30, tzinfo=civil.UTC),
+            dt.datetime(2026, 9, 12, tzinfo=civil.UTC),
+            dt.datetime(2399, 12, 31, tzinfo=civil.UTC),
         ):
-            jd = calc.julian_tt(moment)
-            for body in (calc.swe.SUN, calc.swe.MOON, calc.swe.TRUE_NODE, calc.swe.MERCURY,
-                         calc.swe.VENUS, calc.swe.MARS, calc.swe.JUPITER, calc.swe.SATURN,
-                         calc.swe.URANUS, calc.swe.NEPTUNE, calc.swe.PLUTO):
+            jd = astro.julian_tt(moment)
+            for body in (astro.swe.SUN, astro.swe.MOON, astro.swe.TRUE_NODE, astro.swe.MERCURY,
+                         astro.swe.VENUS, astro.swe.MARS, astro.swe.JUPITER, astro.swe.SATURN,
+                         astro.swe.URANUS, astro.swe.NEPTUNE, astro.swe.PLUTO):
                 with self.subTest(moment=moment, body=body):
-                    values, flags = calc.swe.calc(jd, body, calc.FLAGS)
-                    self.assertTrue(flags & calc.swe.FLG_SWIEPH)
-                    self.assertFalse(flags & calc.swe.FLG_MOSEPH)
-                    self.assertTrue(0 <= calc.longitude(jd, body) < 360)
+                    values, flags = astro.swe.calc(jd, body, astro.FLAGS)
+                    self.assertTrue(flags & astro.swe.FLG_SWIEPH)
+                    self.assertFalse(flags & astro.swe.FLG_MOSEPH)
+                    self.assertTrue(0 <= astro.longitude(jd, body) < 360)
                     self.assertTrue(math.isfinite(values[0]))
 
     def test_a_fallback_result_is_rejected(self):
-        with mock.patch.object(calc.swe, 'calc', return_value=((42, 0, 1, 0, 0, 0), calc.swe.FLG_MOSEPH)):
-            with self.assertRaises(calc.ChartError) as error:
-                calc.longitude(2451545, calc.swe.SUN)
+        with mock.patch.object(astro.swe, 'calc', return_value=((42, 0, 1, 0, 0, 0), astro.swe.FLG_MOSEPH)):
+            with self.assertRaises(ChartError) as error:
+                astro.longitude(2451545, astro.swe.SUN)
             self.assertEqual(error.exception.payload['error'], 'ephemeris_unavailable')
 
     def test_solar_arc_in_winter_summer_and_across_calendar_year(self):
         for moment in (
-            dt.datetime(1900, 1, 15, 12, tzinfo=calc.UTC),
-            dt.datetime(1900, 7, 15, 12, tzinfo=calc.UTC),
-            dt.datetime(2000, 1, 1, 0, tzinfo=calc.UTC),
-            dt.datetime(2000, 7, 1, 0, tzinfo=calc.UTC),
-            dt.datetime(2026, 1, 15, 12, tzinfo=calc.UTC),
-            dt.datetime(2026, 7, 15, 12, tzinfo=calc.UTC),
+            dt.datetime(1900, 1, 15, 12, tzinfo=civil.UTC),
+            dt.datetime(1900, 7, 15, 12, tzinfo=civil.UTC),
+            dt.datetime(2000, 1, 1, 0, tzinfo=civil.UTC),
+            dt.datetime(2000, 7, 1, 0, tzinfo=civil.UTC),
+            dt.datetime(2026, 1, 15, 12, tzinfo=civil.UTC),
+            dt.datetime(2026, 7, 15, 12, tzinfo=civil.UTC),
         ):
             with self.subTest(moment=moment):
-                birth_jd = calc.julian_tt(moment)
-                design_jd, residual = calc.design_time(birth_jd)
+                birth_jd = astro.julian_tt(moment)
+                design_jd, residual = astro.design_time(birth_jd)
                 self.assertTrue(75 <= birth_jd - design_jd <= 100)
                 self.assertLess(residual, 1e-7)
-                actual_arc = (calc.longitude(birth_jd, calc.swe.SUN) - calc.longitude(design_jd, calc.swe.SUN)) % 360
+                actual_arc = (astro.longitude(birth_jd, astro.swe.SUN) - astro.longitude(design_jd, astro.swe.SUN)) % 360
                 self.assertAlmostEqual(actual_arc, 88, places=7)
                 if moment.month == 1:
-                    self.assertEqual(calc.tt_to_datetime(design_jd).year, moment.year - 1)
+                    self.assertEqual(astro.tt_to_datetime(design_jd).year, moment.year - 1)
 
     def test_tt_utc_roundtrip_preserves_modern_instants(self):
         for moment in (
-            dt.datetime(1972, 8, 2, 7, 30, tzinfo=calc.UTC),
-            dt.datetime(2026, 9, 12, 17, 45, 25, 123456, tzinfo=calc.UTC),
+            dt.datetime(1972, 8, 2, 7, 30, tzinfo=civil.UTC),
+            dt.datetime(2026, 9, 12, 17, 45, 25, 123456, tzinfo=civil.UTC),
         ):
             with self.subTest(moment=moment):
-                restored = calc.tt_to_datetime(calc.julian_tt(moment))
+                restored = astro.tt_to_datetime(astro.julian_tt(moment))
                 self.assertLess(abs((restored - moment).total_seconds()), 0.001)
 
     def test_supplemental_astronomy_engine_design_moment(self):
         # Source: the Astronomy Engine author's worked 88-degree example:
         # https://github.com/cosinekitty/astronomy/discussions/306
-        birth = dt.datetime(2023, 6, 12, tzinfo=calc.UTC)
-        reference = dt.datetime(2023, 3, 13, 16, 3, 31, 528000, tzinfo=calc.UTC)
-        design_jd, _ = calc.design_time(calc.julian_tt(birth))
-        difference = abs((calc.tt_to_datetime(design_jd) - reference).total_seconds())
+        birth = dt.datetime(2023, 6, 12, tzinfo=civil.UTC)
+        reference = dt.datetime(2023, 3, 13, 16, 3, 31, 528000, tzinfo=civil.UTC)
+        design_jd, _ = astro.design_time(astro.julian_tt(birth))
+        difference = abs((astro.tt_to_datetime(design_jd) - reference).total_seconds())
         self.assertLess(difference, 120, 'supplemental comparison, not an exact ephemeris guarantee')
 
 
@@ -188,7 +191,7 @@ class ChartTests(unittest.TestCase):
             self.assertTrue(1 <= item['gate'] <= 64)
             self.assertTrue(1 <= item['line'] <= 6)
             self.assertTrue(0 <= item['longitude'] < 360)
-            self.assertEqual((item['gate'], item['line']), calc.gate_line(item['longitude']))
+            self.assertEqual((item['gate'], item['line']), astro.gate_line(item['longitude']))
         by_body = {item['planet']: item for item in stream}
         for first, opposite in [('sun', 'earth'), ('north_node', 'south_node')]:
             self.assertAlmostEqual((by_body[opposite]['longitude'] - by_body[first]['longitude']) % 360, 180, places=10)
@@ -248,9 +251,9 @@ class ChartTests(unittest.TestCase):
                                      tuple(map(int, reference.split('.'))))
 
     def test_current_transit_has_13_activations_and_no_design(self):
-        before = dt.datetime.now(calc.UTC).replace(microsecond=0)
+        before = dt.datetime.now(civil.UTC).replace(microsecond=0)
         chart = calc.calculate({'mode': 'transit'})['chart']
-        after = dt.datetime.now(calc.UTC).replace(microsecond=0)
+        after = dt.datetime.now(civil.UTC).replace(microsecond=0)
         moment = dt.datetime.fromisoformat(chart['utc'].replace('Z', '+00:00'))
         self.assertTrue(before <= moment <= after)
         self.assertEqual(chart['source'], 'transit')

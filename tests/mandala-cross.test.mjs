@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.js';
 
 const normalize = value => ((value % 360) + 360) % 360;
@@ -16,7 +16,7 @@ const expectedProfiles = [
 ];
 
 test('cross uses the calculator solar arc and Sun/Earth opposition, not calendar days', () => {
-  const calculator = readFileSync(new URL('../server/calculator.py', import.meta.url), 'utf8');
+  const calculator = readFileSync(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
   assert.match(calculator, /arc > 88/);
   assert.match(calculator, /values\['earth'\] = \(values\['sun'\] \+ 180\) % 360/);
   const cross = crossAtLongitude(180);

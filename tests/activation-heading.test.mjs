@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { alignPersonalityHeading } from '../src/activations/activations.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { alignPersonalityHeading } from '../src/scene/activation-columns.js';
 
 // Independent affine matrices reproduce SVG's multiply/inverse contract without
 // a browser or a camera-specific shortcut in the test expectations.

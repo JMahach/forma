@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachBirthForm } from '../src/charts/birth-form.js';
+import { attachBirthForm } from '../src/views/birth-form.js';
 
 const city = (id, name) => ({ id, name, country: 'DE', region: '', timezone: 'Europe/Berlin' });
 const manualChart = () => ({ id: 'manual-1', name: 'Исходная карта', source: 'manual', birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин', personality: [20], design: [57], note: 'Заметка', createdAt: '2020-01-01T00:00:00.000Z' });
@@ -66,7 +66,7 @@ function formHarness(t, { charts = [], selectedId = charts[0]?.id || 'current-tr
     replace(next) { calls.replaced.push(next); records = next; },
   };
   const form = attachBirthForm({
-    document, store, onSave: id => calls.saved.push(id), beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
+    document, store, session: { get selectedId() { return store.selectedId; }, get original() { return store.current; } }, onSave: id => calls.saved.push(id), beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])),
     requestJSON(url, options = {}) {
       let resolve, reject;

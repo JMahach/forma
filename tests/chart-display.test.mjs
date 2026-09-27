@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartSubtitle } from '../src/charts/chart-display.js';
+import { chartSubtitle } from '../src/views/chart-display.js';
 
 function localZone(t, zone) {
   const previous = process.env.TZ;

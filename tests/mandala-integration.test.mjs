@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
-import { GATES } from '../src/bodygraph/graph-data.js';
+import { GATES } from '../src/scene/geometry/chart-geometry.js';
 import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
-import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
+import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 
 const chart = { id: 'test', personality: [20, 34, 10], design: [57, 20] };
 const gate = id => ({ type: 'gate', id: String(id) });

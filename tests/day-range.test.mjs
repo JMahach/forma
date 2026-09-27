@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachDayRange } from '../src/charts/day-range.js';
+import { attachDayRange } from '../src/views/day-range.js';
 
 function element() {
   const listeners = new Map(), attributes = new Map(), captured = new Set();

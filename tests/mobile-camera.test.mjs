@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures, DRAWING_BOUNDS, isHomeView } from '../src/bodygraph/gestures.js';
-import { MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
-import { PHONE_CHART_FRAME, PHONE_MANDALA_FRAME } from '../src/bodygraph/studio-layout.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { isHomeView } from '../src/scene/camera.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { PHONE_CHART_FRAME, PHONE_MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 
 const CHART_FRAME = { bounds: DRAWING_BOUNDS, minScale: .65 };
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≈ ${expected}`);

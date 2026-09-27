@@ -1,5 +1,5 @@
 import { createSummarySelectionState } from './summary-selection-state.js';
-import { crossAtLongitude } from '../bodygraph/mandala-cross.js';
+import { crossAtLongitude } from '../domain/mandala-cross.js';
 import { selectionKey as key, gatesForSelection as ownedGates } from './selection-targets.js';
 
 const EMPTY_CROSSES = Object.freeze([]);

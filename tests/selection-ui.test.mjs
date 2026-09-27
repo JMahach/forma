@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CENTERS, GATES } from '../src/bodygraph/graph-data.js';
+import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
 import { createSelectionState } from '../src/selection/selection-state.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
+import { createGraphController } from '../src/scene/updates.js';
 
 const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 

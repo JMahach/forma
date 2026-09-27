@@ -1,6 +1,6 @@
 // Synthetic pair/channel comparison. Never reads or writes saved charts.
 import { createServer } from 'node:http';
-import { renderBodygraph } from '../../src/bodygraph/bodygraph.js';
+import { renderBodygraph } from '../../src/scene/bodygraph-svg.js';
 
 const pairs = [[10,34], [20,34], [10,57], [20,57], [10,20], [34,57]];
 createServer((request, response) => {

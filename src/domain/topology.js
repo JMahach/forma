@@ -1,0 +1,137 @@
+// Canonical identities and connections, independent of presentation and geometry.
+export const CENTERS = [
+  { id: "head" },
+  { id: "ajna" },
+  { id: "throat" },
+  { id: "g" },
+  { id: "heart" },
+  { id: "spleen" },
+  { id: "solar" },
+  { id: "sacral" },
+  { id: "root" },
+];
+
+export const GATES = [
+  { id: 1, center: "g" },
+  { id: 2, center: "g" },
+  { id: 3, center: "sacral" },
+  { id: 4, center: "ajna" },
+  { id: 5, center: "sacral" },
+  { id: 6, center: "solar" },
+  { id: 7, center: "g" },
+  { id: 8, center: "throat" },
+  { id: 9, center: "sacral" },
+  { id: 10, center: "g" },
+  { id: 11, center: "ajna" },
+  { id: 12, center: "throat" },
+  { id: 13, center: "g" },
+  { id: 14, center: "sacral" },
+  { id: 15, center: "g" },
+  { id: 16, center: "throat" },
+  { id: 17, center: "ajna" },
+  { id: 18, center: "spleen" },
+  { id: 19, center: "root" },
+  { id: 20, center: "throat" },
+  { id: 21, center: "heart" },
+  { id: 22, center: "solar" },
+  { id: 23, center: "throat" },
+  { id: 24, center: "ajna" },
+  { id: 25, center: "g" },
+  { id: 26, center: "heart" },
+  { id: 27, center: "sacral" },
+  { id: 28, center: "spleen" },
+  { id: 29, center: "sacral" },
+  { id: 30, center: "solar" },
+  { id: 31, center: "throat" },
+  { id: 32, center: "spleen" },
+  { id: 33, center: "throat" },
+  { id: 34, center: "sacral" },
+  { id: 35, center: "throat" },
+  { id: 36, center: "solar" },
+  { id: 37, center: "solar" },
+  { id: 38, center: "root" },
+  { id: 39, center: "root" },
+  { id: 40, center: "heart" },
+  { id: 41, center: "root" },
+  { id: 42, center: "sacral" },
+  { id: 43, center: "ajna" },
+  { id: 44, center: "spleen" },
+  { id: 45, center: "throat" },
+  { id: 46, center: "g" },
+  { id: 47, center: "ajna" },
+  { id: 48, center: "spleen" },
+  { id: 49, center: "solar" },
+  { id: 50, center: "spleen" },
+  { id: 51, center: "heart" },
+  { id: 52, center: "root" },
+  { id: 53, center: "root" },
+  { id: 54, center: "root" },
+  { id: 55, center: "solar" },
+  { id: 56, center: "throat" },
+  { id: 57, center: "spleen" },
+  { id: 58, center: "root" },
+  { id: 59, center: "sacral" },
+  { id: 60, center: "root" },
+  { id: 61, center: "head" },
+  { id: 62, center: "throat" },
+  { id: 63, center: "head" },
+  { id: 64, center: "head" },
+];
+
+export const CHANNELS = [
+  { id: "47-64", gates: [64, 47] },
+  { id: "24-61", gates: [61, 24] },
+  { id: "4-63", gates: [63, 4] },
+  { id: "17-62", gates: [17, 62] },
+  { id: "23-43", gates: [43, 23] },
+  { id: "11-56", gates: [11, 56] },
+  { id: "16-48", gates: [16, 48] },
+  { id: "20-57", gates: [20, 57] },
+  { id: "20-34", gates: [20, 34] },
+  { id: "10-20", gates: [20, 10] },
+  { id: "7-31", gates: [31, 7] },
+  { id: "1-8", gates: [8, 1] },
+  { id: "13-33", gates: [33, 13] },
+  { id: "35-36", gates: [35, 36] },
+  { id: "12-22", gates: [12, 22] },
+  { id: "21-45", gates: [45, 21] },
+  { id: "10-57", gates: [10, 57] },
+  { id: "10-34", gates: [10, 34] },
+  { id: "34-57", gates: [34, 57] },
+  { id: "25-51", gates: [25, 51] },
+  { id: "2-14", gates: [2, 14] },
+  { id: "5-15", gates: [5, 15] },
+  { id: "29-46", gates: [29, 46] },
+  { id: "26-44", gates: [44, 26] },
+  { id: "37-40", gates: [37, 40] },
+  { id: "27-50", gates: [27, 50] },
+  { id: "6-59", gates: [59, 6] },
+  { id: "9-52", gates: [9, 52] },
+  { id: "3-60", gates: [3, 60] },
+  { id: "42-53", gates: [42, 53] },
+  { id: "18-58", gates: [18, 58] },
+  { id: "28-38", gates: [28, 38] },
+  { id: "32-54", gates: [32, 54] },
+  { id: "19-49", gates: [19, 49] },
+  { id: "39-55", gates: [39, 55] },
+  { id: "30-41", gates: [41, 30] },
+];
+
+const gatesById = new Map(GATES.map(gate => [gate.id, gate]));
+const centersById = new Map(CENTERS.map(center => [center.id, center]));
+const channelsById = new Map(CHANNELS.map(channel => [channel.id, channel]));
+export const getGate = id => gatesById.get(Number(id));
+export const getCenter = id => centersById.get(id);
+export const canonicalChannelId = id => String(id).split('-').map(Number).sort((a, b) => a - b).join('-');
+export const getChannel = id => channelsById.get(canonicalChannelId(id));
+
+export function getDefinition(chart = {}) {
+  const active = new Set([...(chart.personality || []), ...(chart.design || [])].map(Number));
+  const channels = CHANNELS.filter(({ gates }) => gates.every((id) => active.has(id)));
+  const centers = new Set(channels.flatMap(({ gates }) => gates.map((id) => getGate(id).center)));
+  return { channels, centers };
+}
+
+
+// The six canonical channels within the four-gate integration group.
+export const INTEGRATION_IDS = new Set(['10-20', '20-34', '20-57', '10-34', '10-57', '34-57']);

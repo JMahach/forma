@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachKnowledge } from '../src/library/knowledge.js';
+import { attachKnowledge } from '../src/views/knowledge.js';
 
 // Minimal DOM surface for the real knowledge module. Fixtures never bootstrap
 // the app or access browser storage, saved charts, timers, or the network.

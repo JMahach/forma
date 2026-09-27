@@ -3,7 +3,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { readPreviewResource } from '../previews/preview-server.mjs';
-import { MANDALA_FRAME } from '../../src/bodygraph/mandala-mode.js';
+import { MANDALA_FRAME } from '../../src/scene/geometry/frames.js';
 
 const { x, y, width, height } = MANDALA_FRAME.bounds;
 const wheelViewBox = `${x} ${y} ${width} ${height}`;

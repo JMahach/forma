@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures, DRAWING_BOUNDS, fitView, validView } from '../src/bodygraph/gestures.js';
-import { MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { fitView, validView } from '../src/scene/camera.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 
 const MANDALA_BOUNDS = MANDALA_FRAME.bounds;
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≈ ${expected}`);

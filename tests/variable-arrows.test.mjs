@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activationDetails } from '../src/activations/activation-details.js';
-import { PLANETS, renderActivationColumns } from '../src/activations/activations.js';
-import { renderVariableArrows } from '../src/activations/variable-arrows.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { CENTERS, GATES, CHANNELS } from '../src/bodygraph/graph-data.js';
+import { activationDetails } from '../src/views/activation-details.js';
+import { PLANETS } from '../src/domain/planets.js';
+import { renderActivationColumns } from '../src/scene/activation-columns.js';
+import { renderVariableArrows } from '../src/scene/variable-arrows.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { CENTERS, GATES, CHANNELS } from '../src/scene/geometry/chart-geometry.js';
 
 // Expected roles and layout are independent of the Variable calculator/renderer.
 const EXPECTED = [

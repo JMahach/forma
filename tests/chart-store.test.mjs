@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartStore } from '../src/charts/chart-store.js';
-import { STORAGE_KEY, TRASH_KEY } from '../src/charts/storage.js';
+import { createChartStore } from '../src/data/chart-store.js';
+import { createChartSession } from '../src/state/chart-session.js';
+import { STORAGE_KEY, TRASH_KEY } from '../src/data/storage.js';
 
 const personal = { id: 'personal', name: 'Test chart', source: 'manual', personality: [1], design: [8] };
 
@@ -19,20 +20,22 @@ function storageHarness(initial = []) {
 test('chart store loads without writing and keeps selection independent of saved records', () => {
   const storage = storageHarness([personal]);
   const store = createChartStore({ getStorage: () => storage });
+  const session = createChartSession({ store });
   assert.equal(store.storageAvailable, true);
-  assert.equal(store.selectedId, 'current-transit');
-  assert.equal(store.current.source, 'transit');
-  assert.deepEqual(store.current.personality, []);
+  assert.equal(session.selectedId, 'current-transit');
+  assert.equal(session.original.source, 'transit');
+  assert.deepEqual(session.original.personality, []);
   assert.equal(store.has('personal'), true);
-  store.select('personal');
-  assert.equal(store.current, store.charts[0]);
-  assert.equal(store.current.name, personal.name);
+  session.select('personal');
+  assert.equal(session.original, store.charts[0]);
+  assert.equal(session.original.name, personal.name);
   assert.equal(storage.writes.length, 0);
 });
 
 test('failed persistence retains existing state until the caller explicitly keeps an unsaved chart in memory', () => {
   const storage = storageHarness([personal]), errors = [];
   const store = createChartStore({ getStorage: () => storage, onStorageError: message => errors.push(message) });
+  const session = createChartSession({ store });
   const previous = store.charts, next = [...previous, { ...personal, id: 'unsaved' }];
   storage.fail = true;
   assert.equal(store.persist(next), false);
@@ -40,8 +43,8 @@ test('failed persistence retains existing state until the caller explicitly keep
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Не удалось сохранить/);
   store.replace(next);
-  store.select('unsaved');
-  assert.equal(store.current.id, 'unsaved');
+  session.select('unsaved');
+  assert.equal(session.original.id, 'unsaved');
   assert.equal(JSON.parse(storage.values.get(STORAGE_KEY)).length, 1);
   assert.doesNotThrow(() => store.flush());
   assert.equal(errors.length, 1, 'background persistence stays best effort');
@@ -53,12 +56,13 @@ test('failed persistence retains existing state until the caller explicitly keep
 test('denied storage access leaves a usable in-memory store without erasing saved data', () => {
   const errors = [];
   const store = createChartStore({ getStorage() { throw new Error('Access denied'); }, onStorageError: message => errors.push(message) });
+  const session = createChartSession({ store });
   assert.equal(store.storageAvailable, false);
   assert.deepEqual(store.charts, []);
   assert.equal(store.persist([personal]), false);
   store.replace([personal]);
-  store.select(personal.id);
-  assert.equal(store.current, personal);
+  session.select(personal.id);
+  assert.equal(session.original, personal);
   assert.doesNotThrow(() => store.flush());
   assert.equal(errors.length, 1);
 });

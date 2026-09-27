@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeTransitDay, decodeTransitDay, encodeNumericColumn, transitChartAt, TRANSIT_PLANETS } from '../src/transit/day-packet.js';
-import { validateChart } from '../src/charts/storage.js';
+import { encodeTransitDay, encodeNumericColumn } from '../server/packets/encode.mjs';
+import { decodeTransitDay } from '../shared/day-packets/decode.js';
+import { transitChartAt } from '../src/domain/transit-day.js';
+import { TRANSIT_PLANETS } from '../shared/day-packets/transit-format.js';
+import { validateChart } from '../src/data/storage.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 
 function fixture() {

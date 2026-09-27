@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/bodygraph/graph-data.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
-import { INTEGRATION_ARMS, STEM_POINTS } from '../src/bodygraph/integration-geometry.js';
+import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { INTEGRATION_ARMS, STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
 
 // The redesign may change coordinates and curves, but never the underlying graph.
 const CENTER_GATES = {

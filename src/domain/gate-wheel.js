@@ -1,5 +1,5 @@
 // Shared longitude rules, independent of SVG, the DOM and selection state.
-// server/calculator.py uses the same tropical wheel; parity tests guard the
+// server/python/astronomy.py uses the same tropical wheel; parity tests guard the
 // Python/JavaScript boundary. Intervals are half-open, with no display rounding.
 export const GATE_ORDER = Object.freeze([
   41, 19, 13, 49, 30, 55, 37, 63, 22, 36, 25, 17, 21, 51, 42, 3,

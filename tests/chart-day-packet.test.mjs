@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeChartDay, decodeChartDay, chartDayMinute, chartDayIndexAt, chartAtMinute } from '../src/transit/chart-day-packet.js';
-import { validateChart } from '../src/charts/storage.js';
+import { encodeChartDay } from '../server/packets/encode.mjs';
+import { decodeChartDay } from '../shared/day-packets/decode.js';
+import { chartDayMinute, chartDayIndexAt, chartAtMinute } from '../src/domain/natal-day.js';
+import { validateChart } from '../src/data/storage.js';
 
 export function makeDay(date = '1990-06-15', timezone = 'UTC', samples = 1440) {
   return { date, timezone, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples,

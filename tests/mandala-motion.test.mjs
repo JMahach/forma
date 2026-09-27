@@ -1,8 +1,9 @@
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMandalaMotion } from '../src/bodygraph/mandala-motion.js';
-import { createGraphController } from '../src/bodygraph/graph-controller.js';
-import { attachMandalaMode } from '../src/bodygraph/mandala-mode.js';
+import { createMandalaMotion } from '../src/scene/modes/mandala-motion.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 
 const property = '--activation-column-offset', revealProperty = '--mandala-reveal';
 function harness(options = {}) {
@@ -40,7 +41,7 @@ function integrationHarness({ reduced = false } = {}) {
   const h = harness({ onFinish: expanded => mode.finishTransition(expanded) });
   h.setReduced(reduced);
   const graph = createGraphController({
-    viewport: h.viewport, getChart: () => ({ personality: [20, 34], design: [10] }), getMandala: () => mode,
+    renderChart: renderBodygraph, viewport: h.viewport, getChart: () => ({ personality: [20, 34], design: [10] }), getMandala: () => mode,
     alignHeading() {}, activationPopover: { close() {}, refresh() {} },
   });
   const render = () => { renders++; graph.render(); };
@@ -183,7 +184,7 @@ test('hover, selection and chart redraws inherit the in-flight offset without re
   const h = harness();
   let chart = { id: 'first', personality: [], design: [] }, enabled = false;
   const graph = createGraphController({
-    viewport: h.viewport, getChart: () => chart, getMandala: () => ({ enabled }),
+    renderChart: renderBodygraph, viewport: h.viewport, getChart: () => chart, getMandala: () => ({ enabled }),
     renderChart: value => `<g data-chart="${value.id}" class="activation-column"></g>`,
     alignHeading() {}, activationPopover: { close() {}, refresh() {} },
   });

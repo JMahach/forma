@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { activationDetails } from '../src/activations/activation-details.js';
+import { activationDetails } from '../src/views/activation-details.js';
 
 const values = rows => rows.map(row => row.value);
 const close = (actual, expected, tolerance = 1e-8) => assert.ok(Math.abs(actual - expected) < tolerance, `${actual} should be close to ${expected}`);
@@ -119,7 +119,7 @@ test('real calculator planetary positions retain gate and line across historical
   const entries = JSON.parse(execFileSync(python, ['-B', '-c', `
 import datetime as dt
 import json
-from server import calculator as calc
+from server.python import astronomy as calc
 entries = []
 for date in ['1900-01-01T00:00:00+00:00', '1990-06-15T10:30:00+00:00', '2026-09-12T12:00:00+00:00']:
     jd = calc.julian_tt(dt.datetime.fromisoformat(date))

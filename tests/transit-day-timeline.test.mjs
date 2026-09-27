@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLocalDayTimeline, localDateAt, timelineIndexAt, timelineMinute, formatTimelineMinute } from '../src/transit/day-timeline.js';
+import { createLocalDayTimeline, localDateAt, timelineIndexAt, timelineMinute, formatTimelineMinute } from '../src/domain/day-timeline.js';
 
 test('a Nepal local day starts at the previous UTC day, including its 45-minute offset', () => {
   const day = createLocalDayTimeline(Date.parse('2026-09-24T12:00:00Z'), 'Asia/Kathmandu');

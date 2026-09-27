@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderMandala, mandalaPoint, MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/bodygraph/mandala.js';
+import { renderMandala } from '../src/scene/mandala.js';
+import { mandalaPoint, MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/scene/geometry/mandala-geometry.js';
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.js';
-import { MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
-import { renderVariableArrows } from '../src/activations/variable-arrows.js';
-import { renderBodygraph } from '../src/bodygraph/bodygraph.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { renderVariableArrows } from '../src/scene/variable-arrows.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 
-const calculator = readFileSync(new URL('../server/calculator.py', import.meta.url), 'utf8');
+const calculator = readFileSync(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
 const normalize = longitude => ((longitude % 360) + 360) % 360;
 const attributes = tag => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]));
 function parseSvg(markup) {
