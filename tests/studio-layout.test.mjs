@@ -1,0 +1,375 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { computeStudioLayout, createStudioLayout, PHONE_LAYOUT_QUERY, STUDIO_FRAME, DAY_CONTROL_HEIGHT } from '../src/bodygraph/studio-layout.js';
+import { attachMandalaMode, MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
+import { attachGestures, DRAWING_BOUNDS } from '../src/bodygraph/gestures.js';
+import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE, renderMandala } from '../src/bodygraph/mandala.js';
+import { crossAtLongitude } from '../src/bodygraph/mandala-cross.js';
+import { createGraphController } from '../src/bodygraph/graph-controller.js';
+import { createCameraChangeHandler } from '../src/bodygraph/camera-controls.js';
+import { ACTIVATION_BLOCK_BOUNDS } from '../src/activations/activation-layout.js';
+
+const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-7, `${message}: ${actual} != ${expected}`);
+const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.scale,
+  y: layout.center.y + (box.y - 398) * layout.scale, width: box.width * layout.scale, height: box.height * layout.scale });
+
+
+function layoutHarness(phone = true, width = 390, height = 844) {
+  const media = { matches: phone }, rect = { width, height };
+  const canvas = { dataset: {}, getBoundingClientRect: () => ({ top: 50, left: 20, bottom: 50 + rect.height, ...rect }) };
+  const drawing = { style: {} };
+  let style = { scrollPaddingTop: '112px', scrollPaddingBottom: '64px', scrollPaddingLeft: '12px' };
+  const panels = [0, 1].map(() => ({ hidden: true, dataset: {}, style: {},
+    getBoundingClientRect() { assert.fail('panel content and visibility must never determine Home'); },
+  }));
+  const layout = createStudioLayout({ canvas, drawing, panels, media, readStyle: () => style });
+  return { layout, media, canvas, drawing, panels, style(value) { style = value; },
+    resize(width, height) { Object.assign(rect, { width, height }); return layout.refresh(); } };
+}
+
+test('one studio square contains the existing drawing and every ring cursor stroke', () => {
+  const { bounds } = STUDIO_FRAME, { centerX, centerY, outerRadius } = MANDALA_GEOMETRY;
+  assert.equal(bounds.width, bounds.height);
+  assert.equal(bounds.x + bounds.width / 2, centerX);
+  assert.equal(bounds.y + bounds.height / 2, centerY);
+  assert.equal(bounds.width / 2, (outerRadius + 7) * MANDALA_SCENE_SCALE);
+  assert.ok(DRAWING_BOUNDS.x >= bounds.x && DRAWING_BOUNDS.y >= bounds.y);
+  assert.ok(DRAWING_BOUNDS.x + DRAWING_BOUNDS.width <= bounds.x + bounds.width);
+  assert.ok(DRAWING_BOUNDS.y + DRAWING_BOUNDS.height <= bounds.y + bounds.height);
+  assert.ok(Object.isFrozen(STUDIO_FRAME) && Object.isFrozen(bounds));
+  for (let longitude = 0; longitude < 360; longitude += 15) {
+    const markup = renderMandala({}, { previewCross: crossAtLongitude(longitude) });
+    const cursor = markup.match(/class="mandala-cross-cursor" d="M ([\d. -]+) L ([\d. -]+)"/);
+    assert.ok(cursor);
+    const [x, y] = cursor[2].trim().split(/\s+/).map(Number);
+    const paintedX = centerX + (x - centerX) * MANDALA_SCENE_SCALE;
+    const paintedY = centerY + (y - centerY) * MANDALA_SCENE_SCALE;
+    const halfStroke = MANDALA_SCENE_SCALE;
+    assert.ok(paintedX - halfStroke >= bounds.x - .001 && paintedX + halfStroke <= bounds.x + bounds.width + .001);
+    assert.ok(paintedY - halfStroke >= bounds.y - .001 && paintedY + halfStroke <= bounds.y + bounds.height + .001);
+  }
+});
+
+test('phone detection explicitly includes narrow screens and short coarse-pointer landscape, not desktop or tablets', () => {
+  assert.equal(PHONE_LAYOUT_QUERY, '(max-width: 699px), (pointer: coarse) and (max-width: 1099px) and (max-height: 500px)');
+  const matches = ({ width, height, coarse }) => PHONE_LAYOUT_QUERY.split(',').some(branch => branch.trim().split(/\s+and\s+/).every(condition => {
+    if (condition === '(pointer: coarse)') return coarse;
+    const [, dimension, limit] = condition.match(/^\(max-(width|height): (\d+)px\)$/);
+    return (dimension === 'width' ? width : height) <= Number(limit);
+  }));
+  for (const [width, height, coarse, expected] of [
+    [390, 844, true, true], [699, 900, false, true], [700, 900, true, false],
+    [844, 390, true, true], [844, 390, false, false], [1099, 500, true, true],
+    [1100, 500, true, false], [1024, 501, true, false], [1440, 900, false, false],
+  ]) assert.equal(matches({ width, height, coarse }), expected, `${width}×${height}, coarse=${coarse}`);
+});
+
+test('both modes and both pointer classes use exactly the same Home and control geometry', () => {
+  const h = layoutHarness(false, 1000, 800), before = h.layout.refresh();
+  for (const phone of [false, true, false]) {
+    h.media.matches = phone;
+    assert.deepEqual(h.layout.refresh(), before);
+    assert.equal(h.canvas.dataset.layout, phone ? 'phone' : 'desktop');
+    assert.equal(h.layout.phone, phone);
+    assert.equal(h.layout.frame(false), STUDIO_FRAME);
+    assert.equal(h.layout.frame(true), STUDIO_FRAME);
+  }
+});
+
+test('Home preserves its fitted square size within the translated studio area', () => {
+  for (const [width, height] of [[393, 852], [700, 1100], [844, 390], [1440, 900], [320, 180], [2400, 220]]) {
+    const layout = computeStudioLayout({ width, height, side: 12, top: 64, bottom: 64 });
+    const box = project(layout, STUDIO_FRAME.bounds), area = layout.area;
+    close(box.x + box.width / 2, area.x + area.width / 2, 'horizontal center');
+    close(box.y + box.height / 2, area.y + area.height / 2, 'vertical center');
+    assert.ok(box.x >= area.x - 1e-7 && box.y >= area.y - 1e-7);
+    assert.ok(box.x + box.width <= area.x + area.width + 1e-7);
+    assert.ok(box.y + box.height <= area.y + area.height + 1e-7);
+    assert.ok(Math.abs(box.width - area.width) < 1e-7 || Math.abs(box.height - area.height) < 1e-7,
+      'one edge must limit Home; optional columns must never shrink it');
+    assert.ok(layout.panel.x >= 0 && layout.panel.y >= 0);
+    assert.ok(layout.panel.x + layout.panel.width <= width + 1e-7);
+    assert.ok(layout.panel.y + layout.panel.height <= height + 1e-7);
+  }
+  const asymmetric = computeStudioLayout({ width: 1200, height: 800, top: 112, bottom: 64 });
+  close(asymmetric.center.y - asymmetric.insets.offsetY, 424,
+    'the quarter-gap shift starts from the established asymmetric fitting center');
+});
+
+test('the shared composition moves down by exactly one quarter of its original gap to the day line', () => {
+  for (const [width, height, top, bottom, side] of [
+    [393, 747, 112, 64, 12], [997, 747, 64, 64, 20], [1440, 900, 64, 64, 20],
+    [844, 390, 64, 98, 12], [320, 100, 64, 64, 12], [2400, 220, 112, 64, 20],
+  ]) {
+    const layout = computeStudioLayout({ width, height, top, bottom, side });
+    const originalTop = Math.min(top, height * .49), originalBottom = Math.min(bottom, height * .49);
+    const originalHeight = Math.max(1, height - originalTop - originalBottom);
+    const originalCenter = originalTop + originalHeight / 2;
+    const lineY = layout.panel.y + 26;
+    const visibleRadius = MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE * layout.scale;
+    const originalGap = lineY - originalCenter - visibleRadius;
+    const expectedShift = Math.max(0, originalGap / 4);
+    close(layout.insets.offsetY, expectedShift, 'translation equals one quarter of the previous clear gap');
+    close(layout.center.y, originalCenter + expectedShift, 'the whole scene has one shifted center');
+    close(layout.area.y, originalTop + expectedShift, 'the fit area is translated with the scene');
+    close(layout.area.height, originalHeight, 'the fitting height is not reduced');
+    close(layout.scale, Math.min(width - 2 * side, originalHeight) / STUDIO_FRAME.bounds.width, 'the established scale is unchanged');
+    close(lineY - layout.center.y - visibleRadius, originalGap * .75, 'three quarters of the original gap remain');
+    assert.equal(layout.insets.top, originalTop);
+    assert.equal(layout.insets.bottom, originalBottom);
+    assert.ok(layout.insets.offsetY >= 0);
+  }
+});
+
+test('columns follow real side room and do not reduce scale when crossing their width threshold', () => {
+  for (const [width, height, expected] of [[393, 852, false], [700, 1100, false], [844, 390, true], [1440, 900, true]]) {
+    const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
+    assert.equal(layout.showMandalaColumns, expected, `${width}×${height}`);
+    if (!expected) continue;
+    // Enlarged row hit areas and fixing marks after the unchanged 228-unit journey.
+    // Explicit painted coordinates also check that the shared envelope is conservative.
+    for (const box of [{ x: -290.68, y: 49.56, width: 126.004, height: 712.86 },
+      { x: 817.32, y: 49.56, width: 126.004, height: 712.86 }]) {
+      const column = project(layout, box), area = layout.area;
+      assert.ok(column.x >= area.x && column.y >= area.y);
+      assert.ok(column.x + column.width <= area.x + area.width);
+      assert.ok(column.y + column.height <= area.y + area.height);
+    }
+  }
+  const before = computeStudioLayout({ width: 964, height: 800, top: 64, bottom: 64 });
+  const after = computeStudioLayout({ width: 965, height: 800, top: 64, bottom: 64 });
+  assert.equal(before.showMandalaColumns, false);
+  assert.equal(after.showMandalaColumns, true);
+  assert.equal(before.scale, after.scale);
+  assert.equal(before.center.y, after.center.y);
+});
+
+test('enlarged calculation blocks fit the ring height and keep room at the narrowest phone sizes', () => {
+  const ringRadius = MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE;
+  assert.ok(ACTIVATION_BLOCK_BOUNDS.height <= 2 * ringRadius, 'columns cannot grow taller than the visible mandala');
+  assert.ok(ACTIVATION_BLOCK_BOUNDS.y >= MANDALA_GEOMETRY.centerY - ringRadius);
+  assert.ok(ACTIVATION_BLOCK_BOUNDS.y + ACTIVATION_BLOCK_BOUNDS.height <= MANDALA_GEOMETRY.centerY + ringRadius);
+  for (const [width, height] of [[320, 568], [320, 747], [393, 747]]) {
+    const layout = computeStudioLayout({ width, height, side: 8, top: 112, bottom: 64 });
+    const resting = project(layout, { ...ACTIVATION_BLOCK_BOUNDS,
+      x: ACTIVATION_BLOCK_BOUNDS.x - 14, width: ACTIVATION_BLOCK_BOUNDS.width + 28 });
+    assert.ok(resting.x >= layout.area.x, `${width}px leaves the full Design block inside the viewport`);
+    assert.ok(resting.x + resting.width <= width - layout.area.x, `${width}px leaves the full Personality block inside the viewport`);
+    assert.ok(resting.y + resting.height <= layout.panel.y + 13, 'the enlarged bottom row clears the visible day control');
+  }
+});
+
+test('the day timeline stays below the chart and spans the visible ring at every aspect ratio', () => {
+  for (const height of [100, 110, 120, 180, 220, 390, 747, 800, 1100]) {
+    let previous;
+    for (let width = 320; width <= 1440; width += 4) {
+      const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
+      const { panel } = layout;
+      const ring = project(layout, {
+        x: MANDALA_GEOMETRY.centerX - MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
+        y: MANDALA_GEOMETRY.centerY - MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
+        width: 2 * MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
+        height: 2 * MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
+      });
+      assert.equal(layout.placement, 'bottom', `${width}×${height} never moves the timeline to one side`);
+      assert.equal(panel.height, DAY_CONTROL_HEIGHT);
+      close(panel.x + panel.width / 2, width / 2, 'timeline center');
+      close(panel.x, ring.x, 'left endpoint matches the visible ring');
+      close(panel.x + panel.width, ring.x + ring.width, 'right endpoint matches the visible ring');
+      assert.ok(panel.width < 2 * layout.radius, 'the cursor clearance is not part of the visible timeline width');
+      close(panel.y, height - DAY_CONTROL_HEIGHT - Math.max(0, layout.insets.bottom - 64), 'timeline sits at the bottom with its existing safe-area allowance');
+      assert.ok(panel.y + 13 >= layout.center.y + layout.radius - 1e-7, 'the ring and outer cursor clear the visible backing even when the transparent hit area overlaps');
+      assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 1e-7);
+      assert.ok(panel.y + panel.height <= height + 1e-7);
+      const boxes = [{ ...ACTIVATION_BLOCK_BOUNDS,
+        x: ACTIVATION_BLOCK_BOUNDS.x - 14, width: ACTIVATION_BLOCK_BOUNDS.width + 28 }];
+      if (layout.showMandalaColumns) boxes.push({ ...ACTIVATION_BLOCK_BOUNDS,
+        x: ACTIVATION_BLOCK_BOUNDS.x - 228, width: ACTIVATION_BLOCK_BOUNDS.width + 456 });
+      for (const box of boxes) {
+        const column = project(layout, box);
+        assert.ok(column.y + column.height <= panel.y + 13 + 1e-7, 'no calculation column in either mode is covered by the visible backing');
+      }
+      if (previous) {
+        assert.deepEqual({ ...layout.insets, offsetY: 0 }, { ...previous.insets, offsetY: 0 });
+        close(layout.center.y - layout.insets.offsetY, previous.center.y - previous.insets.offsetY, 'the original vertical fitting center remains unchanged');
+        assert.ok(Math.abs(layout.insets.offsetY - previous.insets.offsetY) <= .5 + 1e-7, 'the quarter-gap shift changes smoothly through width and column thresholds');
+        // A four-pixel viewport change can grow a width-limited circle by at most four pixels.
+        assert.ok(Math.abs(layout.scale - previous.scale) <= 4 / STUDIO_FRAME.bounds.width + 1e-10);
+      }
+      previous = layout;
+    }
+  }
+});
+
+test('the real camera applies a CSS-pixel quarter-gap shift without scaling or mode-toggle drift', t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
+  globalThis.DOMPoint = class {
+    constructor(x, y) { this.x = x; this.y = y; }
+    matrixTransform(matrix) { return { x: matrix.a * this.x + matrix.e, y: matrix.d * this.y + matrix.f }; }
+  };
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'DOMPoint', previous); else delete globalThis.DOMPoint; });
+  for (const [width, height] of [[393, 852], [997, 852], [844, 390], [320, 100]]) {
+    const h = layoutHarness(width < 700, width, height), listeners = new Map(), captures = new Set();
+    const rect = { left: 37, top: 84, width, height, right: 37 + width, bottom: 84 + height };
+    const svg = {
+      addEventListener: (name, handler) => listeners.set(name, handler),
+      getBoundingClientRect: () => rect,
+      getScreenCTM: () => ({ inverse() {
+        const scale = Math.min(width / 640, height / 820);
+        return { a: 1 / scale, d: 1 / scale, e: -(rect.left + (width - 640 * scale) / 2) / scale,
+          f: -(rect.top + (height - 820 * scale) / 2) / scale };
+      } }),
+      classList: { toggle() {} }, closest: () => null,
+      setPointerCapture: id => captures.add(id), hasPointerCapture: id => captures.has(id), releasePointerCapture: id => captures.delete(id),
+    };
+    let mode, click, transform, offsetEnabled = false;
+    const gestures = attachGestures(svg, { setAttribute(name, value) { transform = value; } }, {
+      fitInsets: () => ({ ...h.layout.insets(), ...(offsetEnabled ? {} : { offsetY: 0 }) }), getFrame: () => mode?.frame, getHomeFrame: () => mode?.homeFrame,
+      onSelect() {}, onChange() {},
+    });
+    mode = attachMandalaMode({ layout: h.layout, gestures, render() {},
+      canvas: { classList: { toggle() {} } },
+      button: { setAttribute() {}, addEventListener(name, handler) { click = handler; } },
+    });
+    const send = (type, extra = {}) => listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0,
+      clientX: rect.left + width / 2, clientY: rect.top + height / 2, target: svg, preventDefault() {}, ...extra });
+    gestures.reset();
+    const originalHome = gestures.getFittedView();
+    offsetEnabled = true;
+    gestures.reset();
+    const shiftedHome = gestures.getFittedView(), svgScale = Math.min(width / 640, height / 820);
+    close(shiftedHome.k, originalHome.k, 'moving toward the timeline does not change scale');
+    close(shiftedHome.x, originalHome.x, 'horizontal camera position stays fixed');
+    close((shiftedHome.y - originalHome.y) * svgScale, h.layout.insets().offsetY, 'offset is applied in CSS pixels after the SVG aspect-ratio transform');
+    for (const zoom of [1, 1.8]) {
+      gestures.reset();
+      if (zoom > 1) {
+        gestures.zoom(zoom);
+        send('pointerdown'); send('pointermove', { clientX: rect.left + width / 2 + 70 });
+        send('pointerup', { clientX: rect.left + width / 2 + 70 });
+      }
+      const before = gestures.getView(), home = gestures.getFittedView(), originalTransform = transform;
+      for (let i = 0; i < 6; i++) {
+        click();
+        assert.deepEqual(gestures.getView(), before, `${width}px, zoom ${zoom}, toggle ${i}`);
+        assert.deepEqual(gestures.getFittedView(), home);
+        assert.equal(transform, originalTransform);
+        assert.equal(h.drawing.style.clipPath, 'none', 'the day control cannot crop a strip from the zoomed or fitted drawing');
+        send('wheel', { deltaY: 0 });
+        assert.deepEqual(gestures.getView(), before, 'the next gesture must not reveal deferred constraint drift');
+      }
+    }
+  }
+});
+
+test('hidden, loading, error and differently sized panels retain the frame without clipping a canvas strip', () => {
+  for (const [width, height] of [[390, 844], [1440, 900]]) {
+    const h = layoutHarness(false, width, height), before = h.layout.refresh();
+    const coordinates = h.panels.map(panel => ({ ...panel.style }));
+    assert.equal(h.drawing.style.clipPath, 'none');
+    for (const state of ['loading', 'ready', 'error', 'hidden']) {
+      for (const [index, panel] of h.panels.entries()) {
+        panel.hidden = state === 'hidden' || index === 1;
+        panel.dataset.status = state;
+        panel.contentHeight = state === 'error' ? 140 : 48;
+      }
+      h.drawing.style.clipPath = 'inset(0 0 80px 0)';
+      assert.deepEqual(h.layout.refresh(), before);
+      assert.deepEqual(h.layout.insets(), { side: 12, top: 112, bottom: 64, offsetY: before.insets.offsetY });
+      assert.equal(h.drawing.style.clipPath, 'none', 'refresh also clears a stale cutoff from an older layout');
+      assert.deepEqual(h.panels.map(panel => panel.style), coordinates);
+      assert.equal(h.panels[0].dataset.placement, h.panels[1].dataset.placement);
+    }
+  }
+});
+
+test('every screen refreshes the existing camera and keeps one Home across both toggle directions', () => {
+  const h = layoutHarness(false), calls = [], attributes = {};
+  let click, mode;
+  mode = attachMandalaMode({
+    layout: h.layout,
+    button: { addEventListener(type, callback) { assert.equal(type, 'click'); click = callback; }, setAttribute(name, value) { attributes[name] = value; } },
+    canvas: { classList: { toggle() {} } },
+    beforeChange: () => calls.push('close'), render: () => calls.push(`render ${mode.enabled}`),
+    gestures: {
+      refreshFrame() { calls.push('refresh'); }, transitionHome() { assert.fail('a mode toggle must not animate the camera'); },
+      reset() { assert.fail('a mode toggle is not an explicit Home reset'); },
+    },
+    motion: { setExpanded: enabled => calls.push(`ring ${enabled}`) },
+  });
+  for (const phone of [false, true]) {
+    h.media.matches = phone; h.layout.refresh();
+    for (const enabled of [true, false]) {
+      const before = h.layout.refresh();
+      calls.length = 0; click();
+      assert.deepEqual(calls, ['close', `render ${enabled}`, 'refresh', `ring ${enabled}`]);
+      assert.equal(mode.homeFrame, STUDIO_FRAME);
+      assert.equal(mode.frame, MANDALA_FRAME, 'navigation bounds also stay independent of the visible layer');
+      assert.equal(attributes['aria-checked'], String(enabled));
+      assert.deepEqual(h.layout.refresh(), before);
+    }
+  }
+});
+
+test('space-dependent columns retain every ring/body gate, exact core markup and committed selection', () => {
+  const h = layoutHarness(false, 700, 1100), state = { enabled: false, visible: false };
+  const chart = { id: 'phone-test', source: 'calculated', personality: [20, 34], design: [57],
+    activations: { personality: [{ planet: 'sun', gate: 20, line: 3 }], design: [{ planet: 'sun', gate: 57, line: 2 }] } };
+  const viewport = { innerHTML: '', querySelector: () => null };
+  const graph = createGraphController({
+    viewport, getChart: () => chart, getMandala: () => state,
+    getShowActivations: () => !(state.enabled && !h.layout.showMandalaColumns),
+    alignHeading() {}, activationPopover: { close() {}, refresh() {}, show() {} },
+  });
+  graph.choose({ type: 'gate', id: '20' });
+  const normal = viewport.innerHTML, selected = graph.selectionState.items;
+  assert.match(normal, /class="activation-columns"/);
+  h.media.matches = true; h.layout.refresh(); graph.render();
+  assert.equal(viewport.innerHTML, normal, 'normal phone mode keeps the existing columns and core markup');
+  state.enabled = state.visible = true; graph.render();
+  const phoneMandala = viewport.innerHTML;
+  assert.doesNotMatch(phoneMandala, /class="activation-column(?:s)?"|data-activation=/);
+  const body = phoneMandala.slice(phoneMandala.indexOf('<g class="bodygraph-gates">'));
+  const gates = [...body.matchAll(/data-type="gate" data-id="(\d+)"/g)].map(match => Number(match[1]));
+  assert.deepEqual(gates.sort((a, b) => a - b), Array.from({ length: 64 }, (_, index) => index + 1));
+  assert.equal((phoneMandala.match(/class="mandala-gate bg-interactive"/g) || []).length, 64);
+  assert.equal(graph.selectionState.items, selected);
+  h.resize(844, 390); graph.render();
+  assert.equal(h.layout.phone, true, 'a landscape phone can have enough room for columns');
+  assert.match(viewport.innerHTML, /class="activation-columns"/);
+  const core = markup => markup.slice(markup.indexOf('<g class="bodygraph-channels">'));
+  assert.equal(core(phoneMandala), core(viewport.innerHTML), 'column visibility never edits channels, centers or gate controls');
+  assert.equal(graph.selectionState.items, selected);
+});
+
+test('Home leaves the caption measurable in both modes; zoom hides it independently of screen class', () => {
+  const h = layoutHarness(), heading = {}, fitButton = {}, state = { enabled: true };
+  const update = createCameraChangeHandler({ heading, fitButton, getMandala: () => state,
+    showMandalaHeading: () => true, activationPopover: { reposition() {} } });
+  const home = { x: 120, y: 210, k: .55 };
+  for (const phone of [true, false]) {
+    h.media.matches = phone;
+    update(home, home);
+    assert.equal(heading.hidden, false, 'CSS decides visibility from the measured caption placement');
+    assert.equal(fitButton.hidden, true);
+    for (const view of [{ ...home, k: home.k * 1.2 }, { ...home, x: home.x + 20 }]) {
+      update(view, home);
+      assert.equal(heading.hidden, true);
+      assert.equal(fitButton.hidden, false);
+    }
+    state.enabled = false; update(home, home);
+    assert.equal(heading.hidden, false);
+    state.enabled = true;
+  }
+});
+
+test('application rerenders geometric column changes without imposing a phone-only caption policy', () => {
+  const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.match(app, /getShowActivations:\s*\(\)\s*=>\s*!\(mandalaMode\?\.enabled && !layout\.showMandalaColumns\)/);
+  assert.match(app, /showMandalaHeading:\s*\(\)\s*=>\s*true/);
+  assert.match(app, /attachMandalaMode\(\{[\s\S]*?motion: mandalaMotion, layout,/);
+  assert.match(app, /mandalaColumns !== layout\.showMandalaColumns[\s\S]*?graph\.render\(\)[\s\S]*?gestures\.resize\(\)/);
+  assert.match(app, /layoutObserver\.observe\(\$\('bodygraph'\)\)/);
+  assert.doesNotMatch(app, /\[\$\('bodygraph'\), \$\('transitControls'\), \$\('chartDayControls'\)\]/, 'day panel content is not a camera resize source');
+});

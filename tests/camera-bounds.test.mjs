@@ -336,3 +336,23 @@ test('the real camera display disables zoom-out at Home and never labels a panna
   }
   assert.equal(repositioned, updates, 'camera changes still reposition an open activation popup');
 });
+
+test('Home availability and zoom-out limit remain independent after retaining a wider camera', () => {
+  const heading = { hidden: false }, fitButton = { hidden: true }, zoomValue = { textContent: '' }, zoomOut = { disabled: false };
+  const changed = createCameraChangeHandler({ heading, fitButton, zoomValue, zoomOut, activationPopover: { reposition() {} } });
+  const fitted = { x: 10, y: 20, k: 1 };
+  changed({ x: 170, y: 220, k: .5 }, fitted, { minScale: .5 });
+  assert.equal(fitButton.hidden, false, 'Home remains available below its desired fit');
+  assert.equal(heading.hidden, true);
+  assert.equal(zoomOut.disabled, true, 'the retained navigation floor cannot shrink further');
+  assert.equal(zoomValue.textContent, '50%');
+  changed({ x: 150, y: 180, k: .6 }, fitted, { minScale: .5 });
+  assert.equal(fitButton.hidden, false);
+  assert.equal(zoomOut.disabled, false, 'zoom-out is available even while below desired Home');
+  changed(fitted, fitted, { minScale: .5 });
+  assert.equal(fitButton.hidden, true, 'the desired Home can coexist with a wider navigation range');
+  assert.equal(zoomOut.disabled, false);
+  changed({ ...fitted, x: fitted.x + 10 }, fitted, { minScale: .5 });
+  assert.equal(fitButton.hidden, false, 'a displaced camera at the same scale still offers Home');
+  assert.equal(zoomValue.textContent, '100%', 'the scale label remains a scale rather than a position indicator');
+});

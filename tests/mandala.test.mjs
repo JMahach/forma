@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { renderMandala, mandalaPoint, MANDALA_GEOMETRY } from '../src/bodygraph/mandala.js';
+import { renderMandala, mandalaPoint, MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/bodygraph/mandala.js';
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.js';
 import { MANDALA_FRAME } from '../src/bodygraph/mandala-mode.js';
 import { renderVariableArrows } from '../src/activations/variable-arrows.js';
@@ -145,12 +145,13 @@ test('five-percent wider ring, light edge, and labels fit the optional frame wit
     assert.ok(Math.abs(radius - before * 1.05) < 1e-10, 'every mandala radius grows by exactly five percent');
   }
   assert.ok(rayRadius < inner && inner < labelRadius && labelRadius < outer);
-  assert.ok(cx - outer - .5 >= bounds.x);
-  assert.ok(cx + outer + .5 <= bounds.x + bounds.width);
-  assert.ok(cy - outer - .5 >= bounds.y);
-  assert.ok(cy + outer + .65 + .5 <= bounds.y + bounds.height);
-  assert.ok(Math.abs(cy - outer - bounds.y - 14) < 1e-10, 'the original ring-to-frame padding is retained');
-  assert.ok(Math.abs(bounds.y + bounds.height - cy - outer - 14) < 1e-10);
+  const radius = (outer + 6.5) * MANDALA_SCENE_SCALE;
+  assert.ok(cx - radius >= bounds.x);
+  assert.ok(cx + radius <= bounds.x + bounds.width);
+  assert.ok(cy - radius >= bounds.y);
+  assert.ok(cy + radius <= bounds.y + bounds.height, 'the enlarged wheel and cursor fit Home without shrinking the body');
+  assert.ok(Math.abs(bounds.x + bounds.width / 2 - cx) < 1e-8);
+  assert.equal(bounds.y + bounds.height / 2, cy);
 });
 
 test('gate-only rendering is deterministic and does not modify saved data', () => {

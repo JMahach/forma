@@ -16,9 +16,20 @@ test('mandala is opt-in and stays beneath all existing channels, centers and act
   assert.ok(wheel.indexOf('class="bodygraph-mandala"') < wheel.indexOf('class="bodygraph-drawing'));
   const corePaths = markup => markup.slice(markup.indexOf('<g class="bodygraph-channels">')).match(/<path\b[^>]*>/g);
   assert.deepEqual(corePaths(wheel), corePaths(plain), 'physical geometry and masks are never rewritten');
-  assert.match(wheel, /class="mandala-core" transform="translate\(320 398\) scale\(\.84\) translate\(-320 -398\)"/);
+  assert.match(wheel, /class="mandala-core">/);
+  assert.doesNotMatch(wheel, /class="(?:bodygraph-drawing[^"]*|mandala-core)"[^>]*transform=/, 'the physical bodygraph never moves or scales on mode change');
+  assert.match(wheel, /class="mandala-scene" transform="translate\(320 398\) scale\(1\.1904761904761905\) translate\(-320 -398\)"/);
   assert.ok(wheel.indexOf('class="mandala-core"') < wheel.indexOf('class="mandala-underlay"'));
   assert.ok(wheel.indexOf('class="mandala-underlay"') < wheel.indexOf('class="bodygraph-channels"'));
+});
+
+test('closing ring has no selectable or focusable targets and does not change normal body geometry', () => {
+  const plain = renderBodygraph(chart, null, { showBackdrop: true });
+  const closing = renderBodygraph(chart, null, { showBackdrop: true, showMandalaLayer: true });
+  const ring = closing.slice(closing.indexOf('<g class="mandala-scene"'), closing.indexOf('<g class="bodygraph-drawing'));
+  assert.match(ring, /bodygraph-mandala/);
+  assert.doesNotMatch(ring, /tabindex=|data-type=|role="button"|pointer-events="all"/);
+  assert.equal(closing.slice(closing.indexOf('<g class="bodygraph-drawing')), plain.slice(plain.indexOf('<g class="bodygraph-drawing')));
 });
 
 test('a pinned cross retains all four wheel and bodygraph gates and exact axes after the preview ends', () => {

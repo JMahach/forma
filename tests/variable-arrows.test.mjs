@@ -14,10 +14,48 @@ const EXPECTED = [
   { id: 'perspective', source: 'personality', position: 'bottom', x: 492, y: 206, label: 'Перспектива', pair: ['north_node', 'south_node'] },
 ];
 const GLYPH_SCALE = 1.3;
+const BLOCK_SCALE = 1.09;
+const BLOCK_LIFT = 15.75;
+const BLOCK_PIVOT = { design: 212, personality: 428 };
 const COLOR = { design: '#c32d35', personality: '#202020' };
 const SOURCE_LABEL = { design: 'Дизайн', personality: 'Личность' };
 const attributes = tag => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map(([, key, value]) => [key, value]));
 const hasClass = (node, name) => (node.attrs.class || '').split(/\s+/).includes(name);
+
+function assertBlockTransform(node, source) {
+  const pivot = BLOCK_PIVOT[source];
+  assert.ok(pivot, 'every content wrapper belongs to a known source');
+  assert.equal(node.attrs.transform, `translate(${pivot} 60.25) scale(1.09) translate(${-pivot} -76)`,
+    'the whole source block keeps its approved scale and rises 15.75 drawing units');
+}
+
+function columnContent(column) {
+  assert.equal(column.children.length, 1, 'one common wrapper scales heading, rule, rows and hit targets together');
+  const content = column.children[0];
+  assert.equal(content.name, 'g');
+  assert.ok(hasClass(content, 'activation-block-content'));
+  assert.equal(content.attrs['data-source'], undefined, 'the original column still owns source-level movement');
+  assertBlockTransform(content, column.attrs['data-source']);
+  return content;
+}
+
+function variableContent(root) {
+  return root.children.map(wrapper => {
+    assert.equal(wrapper.name, 'g');
+    assert.ok(hasClass(wrapper, 'variable-block'));
+    assert.equal(wrapper.children.length, 1, 'each existing heading or Variable group is preserved as one complete child');
+    const child = wrapper.children[0], source = child.attrs['data-source'];
+    assert.equal(wrapper.attrs['data-source'], source);
+    assertBlockTransform(wrapper, source);
+    return child;
+  });
+}
+
+function blockBounds(bounds, source) {
+  const x = BLOCK_PIVOT[source];
+  return { ...bounds, left: x + (bounds.left - x) * BLOCK_SCALE, right: x + (bounds.right - x) * BLOCK_SCALE,
+    top: 76 + (bounds.top - 76) * BLOCK_SCALE - BLOCK_LIFT, bottom: 76 + (bounds.bottom - 76) * BLOCK_SCALE - BLOCK_LIFT };
+}
 
 function chartFor(tones = [1, 2, 3, 6], colors = [1, 2, 4, 6]) {
   const activations = { design: [], personality: [] };
@@ -64,8 +102,9 @@ function arrows(markup) {
   assert.ok(hasClass(root, 'bodygraph-variables'));
   assert.equal(root.attrs['pointer-events'], 'none');
   assert.equal(root.children.length, 6, 'two heading groups precede four Variable groups');
-  root.children.slice(0, 2).forEach(node => assert.ok(hasClass(node, 'bodygraph-variable-headings')));
-  return root.children.slice(2).map(node => {
+  const children = variableContent(root);
+  children.slice(0, 2).forEach(node => assert.ok(hasClass(node, 'bodygraph-variable-headings')));
+  return children.slice(2).map(node => {
     assert.equal(node.name, 'g');
     assert.ok(hasClass(node, 'bodygraph-variable'));
     const glyphs = node.children.filter(child => child.name === 'g');
@@ -131,7 +170,7 @@ function glyphBounds(glyph, origin) {
   const radius = Number(glyph.path['stroke-width']) * GLYPH_SCALE / 2;
   assert.ok(Number.isFinite(radius) && radius > 0);
   const points = polygonPoints(glyph.path.d).map(point => point.map(value => value * GLYPH_SCALE));
-  return { left: origin.x + glyph.shift + Math.min(...points.map(point => point[0])) - radius, right: origin.x + glyph.shift + Math.max(...points.map(point => point[0])) + radius, top: origin.y + Math.min(...points.map(point => point[1])) - radius, bottom: origin.y + Math.max(...points.map(point => point[1])) + radius };
+  return blockBounds({ left: origin.x + glyph.shift + Math.min(...points.map(point => point[0])) - radius, right: origin.x + glyph.shift + Math.max(...points.map(point => point[0])) + radius, top: origin.y + Math.min(...points.map(point => point[1])) - radius, bottom: origin.y + Math.max(...points.map(point => point[1])) + radius }, origin.source);
 }
 
 const HORIZONTAL_RULE = /^M\s*(-?[\d.]+)[,\s]+(-?[\d.]+)\s*([Hh])\s*(-?[\d.]+)$/;
@@ -196,7 +235,7 @@ function assertArrow(arrow, expected, tone, color) {
 
 test('Color and Tone headings retain colors and positions with one connected rule on each side', () => {
   const root = parseSvg(renderVariableArrows(chartFor()));
-  const headings = root.children.filter(node => hasClass(node, 'bodygraph-variable-headings'));
+  const headings = variableContent(root).filter(node => hasClass(node, 'bodygraph-variable-headings'));
   assert.equal(headings.length, 2);
   for (const [index, source] of ['design', 'personality'].entries()) {
     const heading = headings[index];
@@ -233,7 +272,8 @@ test('calculated, manual and transit headings retain only the approved rule span
       const side = column.attrs['data-source'];
       assert.ok(hasClass(column, 'activation-column'));
       assert.equal(column.attrs.fill, COLOR[side]);
-      const headings = column.children.filter(node => node.name === 'text');
+      const content = columnContent(column);
+      const headings = content.children.filter(node => node.name === 'text');
       assert.equal(headings.length, 1, 'each calculation column has exactly one heading');
       const heading = headings[0];
       assert.ok(hasClass(heading, 'activation-heading'));
@@ -243,12 +283,12 @@ test('calculated, manual and transit headings retain only the approved rule span
       assert.equal(heading.attrs['font-size'], '16');
       assert.equal(heading.attrs['font-weight'], '500');
       assert.equal(heading.attrs['text-anchor'] ?? 'start', 'start');
-      const rules = column.children.filter(node => node.name === 'path');
+      const rules = content.children.filter(node => node.name === 'path');
       assert.equal(rules.length, 1, 'each calculation heading has exactly one short underline');
       const start = side === 'design' ? -34 : 582;
       const width = side === 'design' || source === 'transit' ? 58 : 74;
       assertHeaderRule(rules[0], 'activation-header-rule', side, start, start + width);
-      assert.ok(column.children.every(node => node === heading || node === rules[0] || hasClass(node, 'activation-row')), 'only the heading, its short rule and calculation rows belong to the column');
+      assert.ok(content.children.every(node => node === heading || node === rules[0] || hasClass(node, 'activation-row')), 'only the heading, its short rule and calculation rows belong to the column');
     }
     const full = renderBodygraph(current, null, { showActivations: true });
     const headings = [...full.matchAll(/<text\b[^>]*>/g)].filter(([tag]) => hasClass({ attrs: attributes(tag) }, 'activation-heading'));
@@ -277,7 +317,7 @@ test('calculated, manual and transit headings retain only the approved rule span
 
 test('both source heading rules join once without overlap and stop short of the centers', () => {
   const chart = chartFor();
-  const headings = parseSvg(renderVariableArrows(chart)).children.filter(node => hasClass(node, 'bodygraph-variable-headings'));
+  const headings = variableContent(parseSvg(renderVariableArrows(chart))).filter(node => hasClass(node, 'bodygraph-variable-headings'));
   const columns = parseSvg(renderActivationColumns(chart)).children;
   for (const expected of [
     { source: 'design', extension: [24, 198], underline: [-34, 24], joint: 24, anchors: [-34, 112, 184] },
@@ -286,7 +326,7 @@ test('both source heading rules join once without overlap and stop short of the 
     const heading = headings.find(node => node.attrs['data-source'] === expected.source);
     const column = columns.find(node => node.attrs['data-source'] === expected.source);
     const extension = heading.children.find(node => hasClass(node, 'variable-header-rule'));
-    const underline = column.children.find(node => hasClass(node, 'activation-header-rule'));
+    const underline = columnContent(column).children.find(node => hasClass(node, 'activation-header-rule'));
     assertHeaderRule(extension, 'variable-header-rule', expected.source, ...expected.extension);
     assertHeaderRule(underline, 'activation-header-rule', expected.source, ...expected.underline);
     const [left, right] = [horizontalRule(extension.attrs), horizontalRule(underline.attrs)].sort((a, b) => a.start - b.start);
@@ -298,11 +338,48 @@ test('both source heading rules join once without overlap and stop short of the 
     for (const id of ['head', 'ajna']) {
       const center = CENTERS.find(center => center.id === id);
       const xs = center.points.split(/\s+/).map(pair => Number(pair.split(',')[0]));
+      const bounds = blockBounds({ left: left.start - .5, right: right.end + .5, top: 87.5, bottom: 88.5 }, expected.source);
       const clear = expected.source === 'design'
-        ? right.end + 0.5 < Math.min(...xs) - 1.25 / 2
-        : left.start - 0.5 > Math.max(...xs) + 1.25 / 2;
+        ? bounds.right < Math.min(...xs) - 1.25 / 2
+        : bounds.left > Math.max(...xs) + 1.25 / 2;
       assert.ok(clear, expected.source + ' rule and its stroke remain outside the full ' + id + ' center width, not extended toward its edge');
     }
+  }
+});
+
+test('raising the complete source blocks preserves their size and the joined heading rules', () => {
+  const chart = chartFor();
+  const columns = parseSvg(renderActivationColumns(chart)).children;
+  const variables = parseSvg(renderVariableArrows(chart));
+  const project = (wrapper, point) => {
+    const match = wrapper.attrs.transform.match(/^translate\((-?[\d.]+) (-?[\d.]+)\) scale\(([\d.]+)\) translate\((-?[\d.]+) (-?[\d.]+)\)$/);
+    assert.ok(match, 'the actual block transform consists of translations and one uniform scale');
+    const [x, y, scale, localX, localY] = match.slice(1).map(Number);
+    return { x: (point.x + localX) * scale + x, y: (point.y + localY) * scale + y };
+  };
+  for (const column of columns) {
+    const source = column.attrs['data-source'], pivot = BLOCK_PIVOT[source];
+    const content = columnContent(column);
+    const siblings = variables.children.filter(node => node.attrs['data-source'] === source);
+    assert.equal(siblings.length, 3, 'the heading and both Variable rows share the same lift as their calculation column');
+    const points = [{ x: pivot - 40, y: 76 }, { x: pivot + 80, y: 716 }];
+    for (const wrapper of [content, ...siblings]) {
+      const actual = points.map(point => project(wrapper, point));
+      points.forEach((point, index) => {
+        const previous = { x: pivot + (point.x - pivot) * 1.09, y: 76 + (point.y - 76) * 1.09 };
+        assert.ok(Math.abs(actual[index].x - previous.x) < 1e-9, 'the horizontal geometry does not change');
+        assert.ok(Math.abs(actual[index].y - previous.y + BLOCK_LIFT) < 1e-9, 'the lift is 15.75 drawing units, without multiplying it by the block scale');
+      });
+      assert.ok(Math.abs(actual[1].x - actual[0].x - 120 * 1.09) < 1e-9, 'block width retains its approved scale');
+      assert.ok(Math.abs(actual[1].y - actual[0].y - 640 * 1.09) < 1e-9, 'block height retains its approved scale');
+    }
+    const headingWrapper = siblings.find(node => hasClass(node.children[0], 'bodygraph-variable-headings'));
+    const extension = horizontalRule(headingWrapper.children[0].children.find(node => hasClass(node, 'variable-header-rule')).attrs);
+    const underline = horizontalRule(content.children.find(node => hasClass(node, 'activation-header-rule')).attrs);
+    const ends = source === 'design'
+      ? [{ x: extension.start, y: extension.y }, { x: underline.end, y: underline.y }]
+      : [{ x: extension.end, y: extension.y }, { x: underline.start, y: underline.y }];
+    assert.deepEqual(project(headingWrapper, ends[0]), project(content, ends[1]), 'the two visible rule endpoints still meet after the lift');
   }
 });
 
@@ -379,10 +456,10 @@ test('all eight enlarged glyphs keep positive stroke-inclusive spacing from one 
       for (let other = index + 1; other < bounds.length; other++) smallestPairGap = Math.min(smallestPairGap, gap(bounds[index], bounds[other]));
     }
   }
-  assert.ok(Math.abs(smallestPairGap - 15.775) < 1e-9, 'unchanged rows retain the 15.775-unit minimum gap while the closer columns still clear each other');
+  assert.ok(Math.abs(smallestPairGap - 15.775 * BLOCK_SCALE) < 1e-9, 'the common scale also enlarges the original 15.775-unit minimum gap');
 });
 
-test('Color and Tone move 10% closer and outward while the approved row positions stay unchanged', () => {
+test('Color and Tone retain approved local positions and spacing inside the enlarged common block', () => {
   const rendered = arrows(renderVariableArrows(chartFor()));
   for (const source of ['design', 'personality']) {
     const positions = rendered.filter(arrow => arrow.attrs['data-source'] === source).map(arrow => {
@@ -418,7 +495,7 @@ test('all eight arrows clear the numbers, planets and full 40-unit activation hi
   }
   const targets = parseSvg(renderActivationColumns(complete)).children.flatMap(column => {
     const source = column.attrs['data-source'];
-    const rows = column.children.filter(node => hasClass(node, 'activation-row'));
+    const rows = columnContent(column).children.filter(node => hasClass(node, 'activation-row'));
     assert.equal(rows.length, 13, 'both complete calculation columns are included');
     return rows.flatMap(row => {
       const translated = row.attrs.transform.match(/^translate\((-?[\d.]+) (-?[\d.]+)\)$/);
@@ -432,7 +509,7 @@ test('all eight arrows clear the numbers, planets and full 40-unit activation hi
         assert.equal(rectangles.length, 1);
         const rect = rectangles[0].attrs, planet = control.attrs['data-type'] === 'planet';
         assert.deepEqual([Number(rect.x), Number(rect.y), Number(rect.width), Number(rect.height)], planet ? [-8, -20, 32, 40] : [28, -20, 68, 40], 'the full existing hit rectangle is preserved');
-        return { source, left: x + Number(rect.x), right: x + Number(rect.x) + Number(rect.width), top: y + Number(rect.y), bottom: y + Number(rect.y) + Number(rect.height) };
+        return blockBounds({ source, left: x + Number(rect.x), right: x + Number(rect.x) + Number(rect.width), top: y + Number(rect.y), bottom: y + Number(rect.y) + Number(rect.height) }, source);
       });
     });
   });
@@ -452,8 +529,8 @@ test('all eight arrows clear the numbers, planets and full 40-unit activation hi
       }
     });
   }
-  assert.ok(Math.abs(minimum.design - 21.1875) < 1e-9, 'the left block retains 21.1875 units of clearance from its calculation targets');
-  assert.ok(Math.abs(minimum.personality - 19.8875) < 1e-9, 'the right block retains 19.8875 units of clearance from its calculation targets');
+  assert.ok(Math.abs(minimum.design - 21.1875 * BLOCK_SCALE) < 1e-9, 'the whole left block scales its original clearance from calculation targets');
+  assert.ok(Math.abs(minimum.personality - 19.8875 * BLOCK_SCALE) < 1e-9, 'the whole right block scales its original clearance from calculation targets');
 });
 
 test('the decorative Variable layer passes pointer input through and introduces no gesture or keyboard targets', () => {

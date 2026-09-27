@@ -8,7 +8,8 @@ import { createMandalaPreviewPainter } from './mandala-preview-painter.js';
 export function createGraphController({
   selectionState = createMandalaSelectionState(), getChart, hasChart = () => true,
   viewport, getActiveElement = () => null, activationPopover,
-  getHoverPreview = () => null, getSummary = () => null, getMandala = () => null,
+  getShowActivations = () => true,
+  getHoverPreview = () => null, getSummary = () => null, getMandala = () => null, getLotus = () => null,
   renderChart = renderBodygraph, alignHeading = alignPersonalityHeading,
   onChartChange = () => {},
 }) {
@@ -25,11 +26,14 @@ export function createGraphController({
     if (!hasChart()) { viewport.innerHTML = ''; activationPopover.close(); return; }
     const focused = getActiveElement()?.closest?.('#viewport [data-type]');
     const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation, mandala: focused.classList.contains('mandala-gate') } : null;
-    viewport.innerHTML = renderChart(chart, selectionState.primary, {
-      showActivations: true, showBackdrop: true, showMandala: getMandala()?.enabled,
+    const renderOptions = {
+      showActivations: getShowActivations(), showBackdrop: true, showMandala: getMandala()?.enabled,
+      showMandalaLayer: getMandala()?.visible,
       pinnedCrosses: selectionState.crosses, selections: selectionState.items,
       previewSelection: getHoverPreview()?.currentSelection, activationFilter,
-    });
+    };
+    if (getLotus()?.enabled) renderOptions.showLotus = true;
+    viewport.innerHTML = renderChart(chart, selectionState.primary, renderOptions);
     alignHeading(viewport);
     getSummary()?.layout();
     if (focusTarget) viewport.querySelector(focusTarget.activation ? `[data-activation="${focusTarget.activation}"]` : `${focusTarget.mandala ? '.mandala-gate' : '.bodygraph-drawing .bg-interactive'}[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
