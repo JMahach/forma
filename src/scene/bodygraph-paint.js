@@ -1,7 +1,7 @@
-import { CHANNELS } from './geometry/chart-geometry.js';
+import { CHANNELS, GATES } from './geometry/chart-geometry.js';
 import { STEM_POINTS } from './geometry/integration-geometry.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
-import { pointString, offsetPoints, splitAtHalfLength, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.js';
+import { pointString, offsetPoints, splitAtHalfLength, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.js';
 export const PALETTE = {
   ink: '#202020', design: '#c32d35', outline: '#c6c2b9', paper: '#ffffff',
   halo: '#c4d9f1',
@@ -56,6 +56,49 @@ export function stroke(points, color, width, offset = 0) {
 export const paintActivation = (points, black, red) => black && red
   ? stroke(points, PALETTE.ink, CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, PALETTE.design, CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
   : black || red ? stroke(points, black ? PALETTE.ink : PALETTE.design, CHANNEL_WIDTH.paint) : '';
+
+// The static SVG and persistent painter use the same visual decisions.
+export function channelPaint(channel, state, options = {}) {
+  const selected = state.selectedChannels.has(channel.id), related = state.relatedChannels.has(channel.id);
+  const active = channel.gates.some(gate => state.personality.has(gate) || state.design.has(gate));
+  return { selected, related, defined: state.definedChannels.has(channel.id),
+    opacity: options.dimInactive && !active && !related ? .2 : 1,
+    highlight: selected ? '' : channelHalves.get(channel.id).map((points, index) => state.halfGates.has(channel.gates[index])
+      ? `<g data-highlight-gate="${channel.gates[index]}">${stroke(points, PALETTE.halo, CHANNEL_WIDTH.halo)}</g>` : '').join(''),
+    lanes: channelHalves.get(channel.id).map((points, index) => paintActivation(points,
+      state.personality.has(channel.gates[index]), state.design.has(channel.gates[index]))).join(''),
+  };
+}
+
+export function centerPaint(center, state, options = {}) {
+  // Completing a center's gates outlines it without creating a pinned item.
+  const selected = state.selectedCenters.has(center.id)
+    || GATES.filter(gate => gate.center === center.id).every(gate => state.selectedGates.has(gate.id));
+  const defined = state.definition.centers.has(center.id);
+  return { selected, defined, label: `${center.name} центр, ${defined ? 'определён' : 'не определён'}`,
+    opacity: options.dimInactive && !defined && !selected ? .45 : 1,
+    fill: defined ? PALETTE[center.id] : PALETTE.paper, stroke: defined ? '#84715b' : '#b4b0a7' };
+}
+
+export function gatePaint(gate, state, options = {}) {
+  const black = state.personality.has(gate.id), red = state.design.has(gate.id), active = black || red;
+  const selected = state.selectedGates.has(gate.id), related = state.relatedGates.has(gate.id);
+  const fill = black && red ? `url(#${state.prefix}-dual)` : black ? PALETTE.ink : red ? PALETTE.design : PALETTE.paper;
+  const source = black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
+  return { active, selected, related, label: `Ворота ${gate.id}: ${gate.name}, ${source}`,
+    opacity: options.dimInactive && !active && !selected && !related ? .3 : 1,
+    fill: active ? fill : 'transparent', stroke: active ? fill.startsWith('url') ? PALETTE.ink : fill : 'none',
+    highlightState: selected ? 'selected' : related ? 'related' : 'idle',
+    highlightFill: active ? 'none' : PALETTE.halo, highlightOpacity: selected || related ? 1 : 0,
+    textWeight: active ? '650' : '500', textFill: active ? '#ffffff' : '#171513' };
+}
+
+export function integrationStemPaint(state, paint) {
+  return paint.crossesStem ? stemHalves.map((points, index) => {
+    const gates = index ? [34, 57] : [20, 10];
+    return paintActivation(points, gates.some(gate => state.personality.has(gate)), gates.some(gate => state.design.has(gate)));
+  }).join('') : '';
+}
 export function integrationPaint(state, options) {
   const { visualSelections, selectedChannels, halfGates, personality, design, relatedChannels } = state;
   const integrationSelected = visualSelections.some(value => value.type === 'integration');

@@ -2,7 +2,6 @@
 // Only this decorative layer changes pose; all gate anchors and camera bounds
 // remain shared with the ordinary surface. The two inner contours are the
 // spaces between the arms and torso, not additional chart regions.
-export const LOTUS_BACKDROP_BOUNDS = Object.freeze({ x: 80, y: 30, width: 480, height: 740 });
 
 export const LOTUS_SILHOUETTE_PATH = [
   // The Head center projects above the figure; keep the chart anchors fixed.

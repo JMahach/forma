@@ -6,7 +6,7 @@ import { gunzip } from 'node:zlib';
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.js';
 import { decodeTransitDay } from '../../shared/day-packets/decode.js';
 import { encodeNumericColumn, encodeTransitDay } from '../packets/encode.mjs';
-import { runDayWorker } from '../runtime/day-worker.mjs';
+import { runJsonWorker } from '../runtime/json-worker.mjs';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.mjs';
 
 const decompressGzip = promisify(gunzip);
@@ -46,8 +46,8 @@ export async function transitCacheFingerprint(root) {
 export function generateTransitDay({ root, date, spawnWorker, timeoutMs = 60000, maxOutputBytes = 500000 }) {
   transitDateMilliseconds(date);
   const unavailable = () => new TransitDayError('transit_unavailable', 'Не удалось подготовить дневной транзит. Повторите попытку.');
-  return runDayWorker({
-    root, script: 'transit_day.py', input: { date }, spawnWorker, timeoutMs, maxOutputBytes, unavailable,
+  return runJsonWorker({
+    root, script: 'transit_day.py', input: { date }, spawnWorker, timeoutMs, maxOutput: maxOutputBytes, unavailable,
     timeoutError: () => new TransitDayError('transit_timeout', 'Подготовка дневного транзита заняла слишком много времени. Повторите попытку.'),
     validate(day) {
       if (!day || day.error || day.date !== date) throw unavailable();
@@ -60,7 +60,8 @@ export function encodeDayPacket(day) {
   return encodePredictedDay(day, encodeNumericColumn, encodeTransitDay);
 }
 async function representations(raw, storedGzip) {
-  const bytes = await compressDayPacket(raw, { storedGzip });
+  // q9 keeps exact packet bytes while avoiding q11 work on cold and disk-cache reads.
+  const bytes = await compressDayPacket(raw, { quality: 9, storedGzip });
   return { bytes, etags: Object.fromEntries(Object.entries(bytes).map(([name, value]) => [name, `"${digest(value)}"`])) };
 }
 
@@ -121,19 +122,34 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     } catch (error) { job.reject(error); }
     finally { pending.delete(job.date); running = false; void drain(); }
   }
-  function get(date) {
+  function enqueue(job) {
+    const nextBackground = job.background ? -1 : queue.findIndex(item => item.background);
+    if (nextBackground < 0) queue.push(job); else queue.splice(nextBackground, 0, job);
+  }
+  function request(date, background) {
     try { transitDateMilliseconds(date); } catch (error) { return Promise.reject(error); }
     if (memory.has(date)) return Promise.resolve(remember(date, memory.get(date)));
-    if (pending.has(date)) return pending.get(date);
+    if (pending.has(date)) {
+      const job = pending.get(date);
+      if (!background && job.background) {
+        job.background = false;
+        const index = queue.indexOf(job);
+        // A running job keeps its slot; only waiting warmup may be reordered.
+        if (index >= 0) { queue.splice(index, 1); enqueue(job); }
+      }
+      return job.promise;
+    }
     if (queue.length >= MAX_QUEUED) return Promise.reject(new TransitDayError('transit_busy', 'Дневной транзит готовится. Повторите попытку.', 503, 1));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    pending.set(date, promise); queue.push({ date, resolve, reject }); void drain();
+    const job = { date, background, promise, resolve, reject };
+    pending.set(date, job); enqueue(job); void drain();
     return promise;
   }
+  function get(date) { return request(date, false); }
   async function warm() {
     const today = Date.parse(`${utcDate(now())}T00:00:00Z`);
-    await Promise.allSettled([get(utcDate(today)), get(utcDate(today + DAY_MS))]);
+    await Promise.allSettled([request(utcDate(today), true), request(utcDate(today + DAY_MS), true)]);
     await prune();
   }
   function scheduleMidnight() {

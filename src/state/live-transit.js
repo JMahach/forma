@@ -25,9 +25,13 @@ export function createLiveTransit({
   const visible = () => wanted && isVisible();
   const keyOf = day => day && `${day.date}@${day.timeZone}`;
 
+  const isCurrentTimeline = () => timeline && timeline.timeZone === timeZone()
+    && now() >= timeline.startUtc && now() < timeline.endUtc;
+
   function publish(nextIndex) {
-    if (!visible() || !days || status !== 'ready') return;
+    if (!visible() || !days || !isCurrentTimeline()) return;
     const minute = timelineMinute(timeline, nextIndex);
+    if (!days.has(minute.date)) return;
     index = minute.index;
     const next = transitChartAt(days.get(minute.date), minute.packetIndex);
     const previous = current;
@@ -44,6 +48,8 @@ export function createLiveTransit({
     const key = keyOf(target);
     if (activeLoad?.key === key) return activeLoad.promise;
     const requestSequence = ++sequence;
+    // Keep successful packets on retry, but never mix different local days.
+    days = keyOf(timeline) === key ? days || new Map() : new Map();
     timeline = target;
     index = timelineIndexAt(target, now());
     status = 'loading'; error = '';
@@ -51,10 +57,22 @@ export function createLiveTransit({
     notify();
     const promise = (async () => {
       try {
-        const entries = await Promise.all(target.packetDates.map(async date => [date, await dayClient.getDay(date)]));
+        // Ask for the current UTC packet first. It can draw an exact current
+        // chart while the other end of the local day's range is still loading.
+        const currentDate = timelineMinute(target, index).date;
+        const dates = [currentDate, ...target.packetDates.filter(date => date !== currentDate)];
+        const results = await Promise.allSettled(dates.map(async date => {
+          const packet = days.get(date) || await dayClient.getDay(date);
+          if (requestSequence !== sequence) return;
+          days.set(date, packet);
+          if (live) publish(timelineIndexAt(target, now()));
+        }));
         if (requestSequence !== sequence) return false;
+        if (!isCurrentTimeline()) { status = 'idle'; return false; }
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed) throw failed.reason;
         const recovered = failures > 0;
-        timeline = target; days = new Map(entries); status = 'ready'; error = '';
+        timeline = target; status = 'ready'; error = '';
         failures = 0; nextRetry = 0;
         unavailable = false;
         if (recovered && visible()) toast('Транзит дня загружен');
@@ -88,19 +106,21 @@ export function createLiveTransit({
       ? timeline : createLocalDayTimeline(utc, zone);
     const changedDay = timeline && keyOf(target) !== keyOf(timeline);
     if (changedDay) live = true;
+    // A partial range must not stop the minute clock for a packet we do have.
+    if (!changedDay && live) publish(timelineIndexAt(target, utc));
     if (!days || changedDay || status !== 'ready') {
       if (!resume && utc < nextRetry) { notify(); return; }
       if (!await load(target, resume)) return;
     }
-    if (!visible()) return;
+    if (!visible() || keyOf(target) !== keyOf(timeline)) return;
     publish(live ? timelineIndexAt(timeline, now()) : index);
   }
 
   function schedule() {
     clearTimeout(timer);
     if (!running || isSuspended()) return;
-    timer = setTimeout(async () => {
-      await refresh();
+    timer = setTimeout(() => {
+      refresh();
       schedule();
     }, 60_000 - now() % 60_000 + 25);
   }

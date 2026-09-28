@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachGestures } from '../src/scene/gestures.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
-import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from '../src/views/camera-controls.js';
+import { attachCameraControls, createCameraChangeHandler } from '../src/views/camera-controls.js';
+import { createStudioLayout } from '../src/scene/studio-controller.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
-import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
-import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
+import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
+import { createSelectionModel } from '../src/selection/selection-model.js';
 
 const closeTo = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} ≈ ${expected}`);
 const insets = Object.freeze({ side: 20, top: 12, bottom: 12 });
@@ -22,7 +23,7 @@ function harness(t, width, height, mandala = false, initialInsets = insets, shar
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'DOMPoint', previous); else delete globalThis.DOMPoint; });
   let rect = { left: 37, top: 84, width, height }, mode = mandala, safeInsets = { ...initialInsets };
   const listeners = new Map(), captures = new Set();
-  const selection = createMandalaSelectionState();
+  const selection = createSelectionModel();
   const heading = { hidden: true };
   const fitButton = { hidden: true };
   const calls = { select: 0, clear: 0, preview: 0, popover: 0, summary: 0 };
@@ -38,17 +39,13 @@ function harness(t, width, height, mandala = false, initialInsets = insets, shar
     classList: { toggle() {} }, closest: () => null,
   };
   const controls = attachGestures(svg, { setAttribute() {} }, {
-    fitInsets: createCanvasInsetsReader(svg, element => {
-      assert.equal(element, svg);
-      return { scrollPaddingLeft: `${safeInsets.side}px`, scrollPaddingTop: `${safeInsets.top}px`, scrollPaddingBottom: `${safeInsets.bottom}px` };
-    }),
-    getFrame: () => mode ? MANDALA_FRAME : null,
-    getHomeFrame: sharedHome ? () => ({ bounds: DRAWING_BOUNDS, minScale: .65 }) : null,
+    fitInsets: () => safeInsets,
+    getFrame: () => sharedHome || mode ? MANDALA_FRAME : null,
+    getHomeFrame: sharedHome ? () => STUDIO_FRAME : null,
     onSelect(value) { calls.select++; selection.choose(value); },
     onBackgroundTap() { calls.clear++; selection.clear(); },
     onChange: createCameraChangeHandler({
       heading, fitButton,
-      getMandala: () => sharedHome ? { enabled: mode } : null,
       getHoverPreview: () => ({ clear() { calls.preview++; } }),
       activationPopover: { reposition() { calls.popover++; } },
       getSummary: () => ({ layout() { calls.summary++; } }),
@@ -81,6 +78,7 @@ function harness(t, width, height, mandala = false, initialInsets = insets, shar
         button: { setAttribute() {}, addEventListener(type, handler) { assert.equal(type, 'click'); click = handler; } },
         canvas: { classList: { toggle() {}, add() {}, remove() {} } },
         gestures: controls,
+        layout: sharedHome ? { frame: () => STUDIO_FRAME } : null,
         render() { mode = toggle.enabled; },
       });
       return () => click();
@@ -111,14 +109,24 @@ for (const [width, height, edge] of [[1440, 900, 100], [900, 800, 120], [390, 84
 }
 
 
-test('the canvas reader obtains newly resolved CSS inset values on each call', () => {
-  const canvas = {}, measured = [];
-  let style = { scrollPaddingLeft: '20px', scrollPaddingTop: '100px', scrollPaddingBottom: '100px' };
-  const read = createCanvasInsetsReader(canvas, element => { measured.push(element); return style; });
-  assert.deepEqual(read(), { side: 20, top: 100, bottom: 100 });
-  style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px', scrollPaddingBottom: '120px' };
-  assert.deepEqual(read(), { side: 18.5, top: 120, bottom: 120 });
-  assert.deepEqual(measured, [canvas, canvas]);
+test('the layout owns measured insets and refreshes them once when canvas spacing changes', () => {
+  let styleReads = 0, rectReads = 0;
+  let style = { scrollPaddingLeft: '20px', scrollPaddingTop: '100px', scrollPaddingBottom: '60px' };
+  const canvas = { dataset: {}, getBoundingClientRect() { rectReads++; return { width: 1200, height: 800 }; } };
+  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false },
+    readStyle(element) { assert.equal(element, canvas); styleReads++; return style; } });
+  const initial = layout.insets();
+  assert.equal(initial.side, 20);
+  assert.equal(initial.top, 100);
+  assert.equal(initial.bottom, 60);
+  assert.equal(layout.insets(), initial, 'camera measurements reuse the current measured layout');
+  assert.deepEqual([rectReads, styleReads], [1, 1], 'reading resolved insets does not force another DOM measurement');
+  style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px', scrollPaddingBottom: '80px' };
+  layout.refresh();
+  assert.equal(layout.insets().side, 18.5);
+  assert.equal(layout.insets().top, 120);
+  assert.equal(layout.insets().bottom, 80);
+  assert.deepEqual([rectReads, styleReads], [2, 2]);
 });
 
 test('Home and resize reread responsive chrome space while preserving the screen center', t => {
@@ -133,7 +141,7 @@ test('Home and resize reread responsive chrome space while preserving the screen
   assertCenteredAndContained(h);
 });
 
-test('explicit studio insets allow short canvases to fit below the historical normal-scale floor', t => {
+test('explicit fit insets allow short canvases to fit below the historical normal-scale floor', t => {
   const h = harness(t, 320, 56);
   assert.ok(h.controls.getFittedView().k < 0.65, 'the full drawing can shrink when the reserved canvas is short');
   h.controls.zoom(1.01);
@@ -226,7 +234,7 @@ test('panning and resizing at fitted scale do not reveal Home', t => {
   assert.equal(h.fitButton.hidden, true, 'a new fitted scale still counts as Home');
 });
 
-test('studio modes share one Home baseline while mandala always hides the heading', t => {
+test('studio modes share one Home baseline and leave the caption to its overlap layout', t => {
   const h = harness(t, 1200, 800, false, { side: 20, top: 100, bottom: 100 }, true);
   const toggle = h.attachMandalaToggle();
   const chartHome = h.controls.getView();
@@ -234,7 +242,7 @@ test('studio modes share one Home baseline while mandala always hides the headin
   assert.deepEqual(h.controls.getView(), chartHome, 'opening the ring does not zoom the chart out');
   assert.deepEqual(h.controls.getFittedView(), chartHome, 'the body baseline remains Home with the ring visible');
   assert.equal(h.fitButton.hidden, true, 'a toggle alone cannot reveal Home');
-  assert.equal(h.heading.hidden, true, 'mandala hides the title even at Home');
+  assert.equal(h.heading.hidden, false, 'mandala leaves the Home title measurable for the overlap layout');
   toggle();
   assert.deepEqual(h.controls.getView(), chartHome);
   assert.equal(h.fitButton.hidden, true);
@@ -255,7 +263,7 @@ test('studio modes share one Home baseline while mandala always hides the headin
   h.controls.reset();
   assert.deepEqual(h.controls.getView(), chartHome, 'Home restores the same body scale with the ring enabled');
   assert.equal(h.fitButton.hidden, true);
-  assert.equal(h.heading.hidden, true, 'Home never reveals the heading in mandala');
+  assert.equal(h.heading.hidden, false, 'Home restores the caption for overlap measurement');
   toggle();
   assert.deepEqual(h.controls.getView(), chartHome);
   assert.equal(h.fitButton.hidden, true);
@@ -266,7 +274,7 @@ test('studio modes share one Home baseline while mandala always hides the headin
   toggle();
   assert.deepEqual(h.controls.getView(), rotated, 'rotation followed by a toggle retains the new live camera');
   assert.equal(h.fitButton.hidden, true);
-  assert.equal(h.heading.hidden, true);
+  assert.equal(h.heading.hidden, false);
   toggle();
   assert.deepEqual(h.controls.getView(), rotated);
   assert.equal(h.fitButton.hidden, true);
@@ -279,7 +287,7 @@ test('studio modes share one Home baseline while mandala always hides the headin
   const minimum = h.controls.getView();
   assert.deepEqual(minimum, h.controls.getFittedView(), 'studio zoom-out stops at the shared Home even with expanded navigation');
   assert.equal(h.fitButton.hidden, true, 'the minimum studio view remains Home');
-  assert.equal(h.heading.hidden, true);
+  assert.equal(h.heading.hidden, false);
   toggle();
   h.send('wheel', { deltaY: 0 });
   assert.deepEqual(h.controls.getView(), minimum, 'hiding the ring retains the shared minimum exactly');
@@ -297,7 +305,7 @@ test('shared Home survives resizing in mandala while moved cameras retain their 
   h.resize(390, 844);
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
   assert.equal(h.fitButton.hidden, true);
-  assert.equal(h.heading.hidden, true);
+  assert.equal(h.heading.hidden, false);
   h.controls.zoom(1.5);
   const moved = h.controls.getView();
   h.resize(844, 390);
@@ -334,8 +342,8 @@ test('shared Home does not narrow an existing mandala pan when the ring is hidde
 test('the application supplies the studio canvas insets and keeps only the Home button', () => {
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(app, /const readCanvasInsets = createCanvasInsetsReader\(\$\('canvasWrap'\)\)/, 'the application measures its canvas chrome');
-  assert.match(app, /fitInsets:\s*\(\)\s*=>\s*layout\.insets\(readCanvasInsets\(\)\)/, 'phone safe areas and desktop insets feed the same camera');
+  assert.doesNotMatch(app, /createCanvasInsetsReader|readCanvasInsets/, 'the application reuses the layout owner instead of measuring discarded insets');
+  assert.match(app, /fitInsets:\s*\(\)\s*=>\s*layout\.insets\(\)/, 'phone safe areas and desktop insets feed the same camera');
   assert.match(app, /getHomeFrame:\s*\(\)\s*=>\s*mandalaMode\?\.homeFrame/, 'the mode supplies the responsive Home baseline');
   assert.match(app, /createCameraChangeHandler\(\{\s*heading:\s*\$\('chartHeader'\)/, 'the real camera controls fixed-heading visibility');
   assert.match(app, /createCameraChangeHandler\(\{[^}]*fitButton:\s*\$\('fitButton'\)/, 'the real camera controls Home visibility');

@@ -63,6 +63,46 @@ test('a generation error releases the queue and is retriable without an error ca
   assert.equal(calls, 2);
 });
 
+test('interactive days run ahead of queued warmup without interrupting the live day', async t => {
+  const entered = deferred(), release = deferred(), calls = [];
+  let active = 0, maximum = 0;
+  const service = await cache(t, { generateDay: async date => {
+    calls.push(date); active++; maximum = Math.max(maximum, active);
+    if (calls.length === 1) { entered.resolve(); await release.promise; }
+    active--; return makeDay(date);
+  } });
+  const warmup = service.warm();
+  await entered.promise;
+  const firstUser = service.get('2026-09-23'), secondUser = service.get('2026-09-22');
+  assert.deepEqual(calls, ['2026-09-24'], 'the active warmup is never preempted');
+  release.resolve();
+  await Promise.all([warmup, firstUser, secondUser]);
+  assert.deepEqual(calls, ['2026-09-24', '2026-09-23', '2026-09-22', '2026-09-25']);
+  assert.equal(maximum, 1);
+});
+
+test('requesting a queued background day promotes its existing job and preserves singleflight at capacity', async t => {
+  const entered = deferred(), release = deferred(), calls = [];
+  const service = await cache(t, { generateDay: async date => {
+    calls.push(date);
+    if (calls.length === 1) { entered.resolve(); await release.promise; }
+    return makeDay(date);
+  } });
+  const first = service.get('2026-09-20');
+  await entered.promise;
+  const warmup = service.warm();
+  const waiting = ['21', '22', '23'].map(day => service.get(`2026-09-${day}`));
+  assert.equal(service.queued, 5);
+  const promoted = service.get('2026-09-25');
+  assert.equal(service.get('2026-09-25'), promoted);
+  assert.equal(service.queued, 5, 'promotion consumes no additional queue slot');
+  await assert.rejects(service.get('2026-09-26'), error => error.code === 'transit_busy');
+  release.resolve();
+  await Promise.all([first, warmup, promoted, ...waiting]);
+  assert.deepEqual(calls, ['2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-25', '2026-09-24']);
+  assert.equal(calls.filter(date => date === '2026-09-25').length, 1);
+});
+
 test('restart reuses gzip without astronomy; corrupt packets and changed fingerprints regenerate', async t => {
   const cacheDir = await directory(t);
   let calls = 0;

@@ -349,31 +349,28 @@ test('space-dependent columns retain every ring/body gate, exact core markup and
   assert.equal(graph.selectionState.items, selected);
 });
 
-test('Home leaves the caption measurable in both modes; zoom hides it independently of screen class', () => {
-  const h = layoutHarness(), heading = {}, fitButton = {}, state = { enabled: true };
-  const update = createCameraChangeHandler({ heading, fitButton, getMandala: () => state,
-    showMandalaHeading: () => true, activationPopover: { reposition() {} } });
-  const home = { x: 120, y: 210, k: .55 };
-  for (const phone of [true, false]) {
-    h.media.matches = phone;
+test('Home leaves the caption measurable at every fitted scale; zoom and pan hide it', () => {
+  const heading = {}, fitButton = {};
+  const update = createCameraChangeHandler({ heading, fitButton, activationPopover: { reposition() {} } });
+  for (const k of [.25, .55, 1.2]) {
+    const home = { x: 120, y: 210, k };
     update(home, home);
-    assert.equal(heading.hidden, false, 'CSS decides visibility from the measured caption placement');
+    assert.equal(heading.hidden, false, 'the overlap layout decides caption visibility at Home');
     assert.equal(fitButton.hidden, true);
     for (const view of [{ ...home, k: home.k * 1.2 }, { ...home, x: home.x + 20 }]) {
       update(view, home);
       assert.equal(heading.hidden, true);
       assert.equal(fitButton.hidden, false);
     }
-    state.enabled = false; update(home, home);
+    update(home, home);
     assert.equal(heading.hidden, false);
-    state.enabled = true;
   }
 });
 
 test('application rerenders geometric column changes without imposing a phone-only caption policy', () => {
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   assert.match(app, /getShowActivations:\s*\(\)\s*=>\s*!\(mandalaMode\?\.enabled && !layout\.showMandalaColumns\)/);
-  assert.match(app, /showMandalaHeading:\s*\(\)\s*=>\s*true/);
+  assert.doesNotMatch(app, /showMandalaHeading/, 'camera controls do not own the caption overlap policy');
   assert.match(app, /attachMandalaMode\(\{[\s\S]*?motion: mandalaMotion, layout,/);
   assert.match(app, /mandalaColumns !== layout\.showMandalaColumns[\s\S]*?graph\.render\(\)[\s\S]*?gestures\.resize\(\)/);
   assert.match(app, /layoutObserver\.observe\(\$\('bodygraph'\)\)/);

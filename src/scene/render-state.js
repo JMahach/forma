@@ -43,8 +43,15 @@ export function createRenderState(chart, selection, options) {
   const previewGates = new Set(gatesForSelection(options.previewSelection));
   return {
     committedSelection, committedSelections, visualSelections,
+    hasExplicitSelection: Boolean(options.previewSelection || options.selections),
     personality, design, definition, definedChannels, interactive, prefix,
     relatedChannels, relatedGates, halfGates, selectedGates, selectedCenters,
     selectedChannels, committedGates, previewGates,
   };
+}
+
+// Preview contributes paint, but only committed targets own the pressed state.
+export function isSelectionPressed(state, type, id, fallback) {
+  return state.hasExplicitSelection ? state.committedSelections.some(value => type === value.type
+    && String(id) === String(type === 'channel' ? getChannel(value.id)?.id : value.id)) : fallback;
 }

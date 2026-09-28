@@ -30,6 +30,7 @@ function harness({ getDay = async date => day(date), zone = 'UTC', utc = '2026-0
     live, document, button, requests, events, states, messages, listeners, attributes,
     set utc(value) { timestamp = typeof value === 'number' ? value : Date.parse(value); },
     get utc() { return timestamp; }, set formOpen(value) { formOpen = value; },
+    set zone(value) { zone = value; },
   };
 }
 
@@ -56,7 +57,7 @@ test('live view loads a local day once and redraws exact coordinate changes from
 test('scrubbing is entirely local, pauses live, and Now resumes without selecting a chart or moving a camera', async () => {
   const h = harness({ zone: 'Asia/Kathmandu' });
   await h.live.refresh(true);
-  assert.deepEqual(h.requests, ['2026-09-23', '2026-09-24']);
+  assert.deepEqual(h.requests, ['2026-09-24', '2026-09-23']);
   h.live.scrub(0);
   const reference = h.live.state.referenceIndex;
   assert.equal(h.live.state.live, false);
@@ -272,4 +273,234 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
   assert.equal(store.charts, originalCharts);
   assert.equal(JSON.stringify(store.charts), originalValues);
   assert.deepEqual(writes, []);
+});
+
+// A local day can span two UTC packets. Chart readiness and range readiness
+// must remain independent, including late failures and midnight transitions.
+test('current packet draws immediately, but scrubbing waits for every minute of the local day', async () => {
+  const resolves = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+  const loading = h.live.refresh(true);
+  resolves.get('2026-09-24')(day('2026-09-24'));
+  await settle();
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  assert.equal(h.live.state.status, 'loading');
+  assert.equal(h.live.state.referenceIndex, null);
+  const first = h.live.current;
+  h.live.scrub(0);
+  assert.equal(h.live.current, first, 'an incomplete slider range cannot be selected');
+  h.utc += 60_000;
+  const tick = h.live.refresh();
+  assert.equal(h.live.current.utc, '2026-09-24T12:01:00Z');
+  resolves.get('2026-09-23')(day('2026-09-23'));
+  await Promise.all([loading, tick]);
+  assert.equal(h.live.state.status, 'ready');
+  assert.equal(h.events.filter(([type]) => type === 'render').length, 2, 'range completion does not redraw the same minute');
+  h.live.scrub(0);
+  assert.equal(h.live.current.utc, '2026-09-23T18:15:00Z');
+});
+
+test('a missing edge packet does not discard the current chart or block its minute clock during retry backoff', async () => {
+  let fail = true;
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: async date => {
+    if (date === '2026-09-23' && fail) throw new Error('Missing edge');
+    return day(date);
+  } });
+  await h.live.refresh(true);
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  assert.equal(h.live.state.status, 'error');
+  h.utc = '2026-09-24T12:01:00Z';
+  await h.live.refresh();
+  assert.equal(h.live.current.utc, '2026-09-24T12:01:00Z');
+  assert.equal(h.requests.filter(date => date === '2026-09-24').length, 1, 'successful packet retained on retry');
+  h.utc += 10_000;
+  await h.live.refresh();
+  assert.equal(h.requests.length, 3);
+  fail = false;
+  await h.live.goNow();
+  assert.equal(h.live.state.status, 'ready');
+  assert.equal(h.requests.filter(date => date === '2026-09-24').length, 1);
+});
+
+test('late packets cannot publish a clamped last minute after the local day has ended', async () => {
+  const resolves = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', utc: '2026-09-24T18:14:00Z', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+  const loading = h.live.refresh(true);
+  h.utc = '2026-09-24T18:15:00Z';
+  resolves.get('2026-09-24')(day('2026-09-24'));
+  resolves.get('2026-09-23')(day('2026-09-23'));
+  await loading;
+  assert.equal(h.live.current, null);
+  assert.deepEqual(h.events, []);
+});
+
+test('minute scheduling continues while the rest of a local day is loading', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const resolves = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+  const loading = h.live.start();
+  t.after(() => h.live.stop());
+  resolves.get('2026-09-24')(day('2026-09-24'));
+  await settle();
+  for (const advance of [40_025, 60_000]) {
+    h.utc += advance;
+    t.mock.timers.tick(advance);
+    await settle();
+  }
+  assert.equal(h.live.current.utc, '2026-09-24T12:02:00Z');
+  assert.equal(h.requests.length, 2, 'overlapping clock refreshes share one load');
+  resolves.get('2026-09-23')(day('2026-09-23'));
+  await loading;
+});
+
+
+test('partial packets remain cached while a personal chart, hidden page or birth form owns the view', async () => {
+  for (const mode of ['personal', 'hidden', 'form']) {
+    const resolves = new Map();
+    const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+    const loading = h.live.refresh(true);
+    if (mode === 'personal') h.live.setWanted(false);
+    else if (mode === 'hidden') h.document.hidden = true;
+    else h.formOpen = true;
+    resolves.get('2026-09-24')(day('2026-09-24'));
+    await settle();
+    assert.equal(h.live.current, null, `${mode} prevents early current-packet publication`);
+    assert.deepEqual(h.events, []);
+    h.utc += 60_000;
+    if (mode === 'personal') h.live.setWanted(true);
+    else if (mode === 'hidden') { h.document.hidden = false; h.listeners.get('visibilitychange')(); }
+    else { h.formOpen = false; h.live.refresh(); }
+    await settle();
+    assert.equal(h.live.current.utc, '2026-09-24T12:01:00Z');
+    assert.equal(h.live.state.status, 'loading');
+    resolves.get('2026-09-23')(day('2026-09-23'));
+    await loading;
+    assert.equal(h.live.state.status, 'ready');
+    assert.equal(h.requests.length, 2, 'resuming reuses both active requests');
+    assert.equal(h.events.filter(([type]) => type === 'render').length, 1);
+  }
+});
+
+test('changing timezone supersedes a partial local day without accepting old completion or error', async () => {
+  const pending = [];
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise((resolve, reject) => pending.push({ date, resolve, reject })) });
+  const oldLoad = h.live.refresh(true);
+  pending[0].resolve(day(pending[0].date));
+  await settle();
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  h.zone = 'America/New_York';
+  const currentLoad = h.live.refresh();
+  assert.equal(h.live.state.timeline.timeZone, 'America/New_York');
+  assert.deepEqual(pending.map(request => request.date), ['2026-09-24', '2026-09-23', '2026-09-24', '2026-09-25']);
+  pending[2].resolve(day('2026-09-24'));
+  pending[3].resolve(day('2026-09-25'));
+  await currentLoad;
+  pending[1].reject(new Error('Obsolete timezone edge failed'));
+  await oldLoad;
+  assert.equal(h.live.state.status, 'ready');
+  assert.equal(h.live.state.timeline.timeZone, 'America/New_York');
+  assert.equal(h.live.state.referenceIndex, 480);
+  assert.deepEqual(h.messages, []);
+  h.live.scrub(0);
+  assert.equal(h.live.current.utc, '2026-09-24T04:00:00Z');
+});
+
+test('a partial range can cross UTC midnight without clamping to the previous packet', async () => {
+  const resolves = new Map();
+  const h = harness({ zone: 'America/New_York', utc: '2026-09-24T23:59:20Z', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+  const loading = h.live.refresh(true);
+  resolves.get('2026-09-24')(day('2026-09-24'));
+  await settle();
+  assert.equal(h.live.current.utc, '2026-09-24T23:59:00Z');
+  h.utc = '2026-09-25T00:00:25Z';
+  const ticking = h.live.refresh();
+  assert.equal(h.live.current.utc, '2026-09-24T23:59:00Z', 'pending new UTC packet retains the known exact minute');
+  resolves.get('2026-09-25')(day('2026-09-25'));
+  await Promise.all([loading, ticking]);
+  assert.equal(h.live.state.timeline.date, '2026-09-24', 'UTC midnight does not advance the local date');
+  assert.equal(h.live.state.live, true);
+  assert.equal(h.live.current.utc, '2026-09-25T00:00:00Z');
+  assert.deepEqual(h.events.filter(([type]) => type === 'moment').map(([, chart]) => chart.utc), [
+    '2026-09-24T23:59:00Z', '2026-09-25T00:00:00Z',
+  ]);
+});
+
+test('partial live days keep their exact minute through both DST clock transitions', async () => {
+  for (const [before, after, minutes] of [
+    ['2026-03-08T06:59:20Z', '2026-03-08T07:00:00Z', 1380],
+    ['2026-11-01T05:59:20Z', '2026-11-01T06:00:00Z', 1500],
+  ]) {
+    const resolves = new Map();
+    const h = harness({ zone: 'America/New_York', utc: before, getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+    const loading = h.live.refresh(true);
+    const currentDate = before.slice(0, 10);
+    resolves.get(currentDate)(day(currentDate));
+    await settle();
+    const beforeIndex = h.live.state.index;
+    h.utc = after;
+    const tick = h.live.refresh();
+    assert.equal(h.live.current.utc, after);
+    assert.equal(h.live.state.index, beforeIndex + 1, 'elapsed UTC minutes remain monotonic across skipped/repeated wall-clock hours');
+    assert.equal(h.live.state.timeline.minutes, minutes);
+    for (const [date, resolve] of resolves) if (date !== currentDate) resolve(day(date));
+    await Promise.all([loading, tick]);
+    assert.equal(h.live.state.status, 'ready');
+    assert.equal(h.live.state.referenceIndex, beforeIndex + 1);
+  }
+});
+
+test('after range completion every distinct slider minute still publishes synchronously', async () => {
+  const h = harness({ zone: 'America/New_York' });
+  await h.live.refresh(true);
+  h.events.length = 0;
+  const timeline = h.live.state.timeline;
+  const indices = [0, 1, 500, 501, 500, 1200, 1439, 1438, 0];
+  for (const index of indices) {
+    h.live.scrub(index);
+    assert.equal(Date.parse(h.live.current.utc), timeline.startUtc + index * 60_000);
+    assert.equal(h.live.state.index, index);
+    assert.equal(h.live.state.live, false);
+  }
+  assert.equal(h.events.filter(([type]) => type === 'render').length, indices.length);
+  assert.equal(h.requests.length, 2);
+});
+
+test('a completed load from an expired date or timezone cannot enable a stale slider', async () => {
+  for (const change of ['midnight', 'timezone']) {
+    const resolves = new Map();
+    const h = harness({ zone: 'Asia/Kathmandu', utc: '2026-09-24T18:14:20Z', getDay: date => new Promise(resolve => resolves.set(date, resolve)) });
+    const loading = h.live.refresh(true);
+    if (change === 'midnight') h.utc = '2026-09-24T18:15:00Z';
+    else h.zone = 'UTC';
+    for (const [date, resolve] of resolves) resolve(day(date));
+    await loading;
+    assert.equal(h.live.current, null);
+    assert.deepEqual(h.events, []);
+    assert.equal(h.live.state.status, 'idle', `${change} leaves the obsolete range unavailable until its replacement loads`);
+    assert.equal(h.live.state.referenceIndex, null);
+    h.live.scrub(0);
+    assert.equal(h.live.state.live, true, 'a disabled stale range cannot pause current transit');
+  }
+});
+
+test('a failed current packet retries without rerequesting the successful local-day edge', async () => {
+  let unavailable = true;
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: async date => {
+    if (date === '2026-09-24' && unavailable) throw new Error('Current packet unavailable');
+    return day(date);
+  } });
+  await h.live.refresh(true);
+  assert.equal(h.live.current, null, 'an earlier edge is not substituted for the actual current minute');
+  assert.equal(h.live.state.status, 'error');
+  h.utc += 29_999;
+  await h.live.refresh();
+  assert.equal(h.requests.length, 2);
+  unavailable = false;
+  h.utc += 1;
+  await h.live.refresh();
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  assert.equal(h.live.state.status, 'ready');
+  assert.equal(h.requests.filter(date => date === '2026-09-23').length, 1);
+  assert.equal(h.requests.filter(date => date === '2026-09-24').length, 2);
+  assert.deepEqual(h.messages, ['Current packet unavailable', 'Транзит дня загружен']);
 });

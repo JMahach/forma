@@ -26,7 +26,7 @@ test('both preview pages serve the complete browser module graph without the app
         pending.push(target.pathname);
       }
     }
-    for (const path of ['/src/scene/mandala.js', '/src/scene/mandala-underlay.js', '/src/scene/backdrop.js', '/src/domain/gate-wheel.js']) {
+    for (const path of ['/src/scene/mandala.js', '/src/scene/backdrop.js', '/src/domain/gate-wheel.js']) {
       assert.ok(visited.has(path), `${path} is reachable`);
     }
     assert.ok(!visited.has('/src/app.js'));

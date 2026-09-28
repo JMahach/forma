@@ -8,3 +8,4 @@ private-charts/
 __pycache__/
 .pytest_cache/
 .cache/transit/
+dist/

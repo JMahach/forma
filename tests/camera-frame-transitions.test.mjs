@@ -1,12 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from '../src/scene/gestures.js';
-import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 import { isHomeView } from '../src/scene/camera.js';
-import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
-import { PHONE_CHART_FRAME, PHONE_MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { CHART_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { COMPACT_TEST_FRAME, EXPANDED_TEST_FRAME } from './fixtures/camera-frames.js';
 
-const CHART_FRAME = { bounds: DRAWING_BOUNDS, minScale: .65 };
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≈ ${expected}`);
 
 function harness(t, { animated = false, reduced = false, shared = false } = {}) {
@@ -16,7 +14,7 @@ function harness(t, { animated = false, reduced = false, shared = false } = {}) 
     matrixTransform(matrix) { return { x: this.x * matrix.a + matrix.e, y: this.y * matrix.d + matrix.f }; }
   };
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'DOMPoint', previous); else delete globalThis.DOMPoint; });
-  let width = 390, height = 844, enabled = false, phone = !shared, time = 0, nextId = 0;
+  let width = 390, height = 844, enabled = false, separateHome = !shared, time = 0, nextId = 0;
   const frames = new Map(), listeners = new Map(), changes = [], captures = new Set();
   const svg = {
     getBoundingClientRect: () => ({ left: 0, top: 0, right: width, bottom: height, width, height }),
@@ -29,8 +27,8 @@ function harness(t, { animated = false, reduced = false, shared = false } = {}) 
     setPointerCapture: id => captures.add(id), hasPointerCapture: id => captures.has(id), releasePointerCapture: id => captures.delete(id),
   };
   const controls = attachGestures(svg, { setAttribute() {} }, {
-    getFrame: () => phone ? enabled ? PHONE_MANDALA_FRAME : PHONE_CHART_FRAME : enabled ? MANDALA_FRAME : CHART_FRAME,
-    getHomeFrame: () => phone ? enabled ? PHONE_MANDALA_FRAME : PHONE_CHART_FRAME : CHART_FRAME,
+    getFrame: () => separateHome ? enabled ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME : enabled ? MANDALA_FRAME : CHART_FRAME,
+    getHomeFrame: () => separateHome ? enabled ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME : CHART_FRAME,
     fitInsets: { side: 20, top: 100, bottom: 100 },
     onSelect() {}, onChange: (view, fitted, limits) => changes.push({ view, fitted, limits }),
     cameraMotion: {
@@ -45,13 +43,13 @@ function harness(t, { animated = false, reduced = false, shared = false } = {}) 
     toggle() { enabled = !enabled; controls.transitionHome(); },
     refresh() { enabled = !enabled; controls.refreshFrame(); },
     advance(ms) { time += ms; const queue = [...frames.values()]; frames.clear(); queue.forEach(callback => callback(time)); },
-    resize(w, h, nextPhone = phone) { width = w; height = h; phone = nextPhone; controls.resize(); },
+    resize(w, h, nextSeparateHome = separateHome) { width = w; height = h; separateHome = nextSeparateHome; controls.resize(); },
     reduced(value) { reduced = value; },
     send(type, extra = {}) { listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: width / 2, clientY: height / 2, target: svg, preventDefault() {}, ...extra }); },
   };
 }
 
-test('studio minimum is exact Home in both mobile modes despite wider navigation', t => {
+test('camera minimum is exact Home for both test frames despite wider navigation', t => {
   const h = harness(t);
   for (let i = 0; i < 4; i++) {
     const home = h.controls.getFittedView();
@@ -71,7 +69,7 @@ test('studio minimum is exact Home in both mobile modes despite wider navigation
   }
 });
 
-test('desktop shared Home and all pan positions remain exact across refreshFrame', t => {
+test('shared Home and all pan positions remain exact across refreshFrame', t => {
   const h = harness(t, { shared: true });
   for (const factor of [1, 2]) {
     h.controls.reset(); h.controls.zoom(factor);
@@ -84,7 +82,7 @@ test('desktop shared Home and all pan positions remain exact across refreshFrame
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
 });
 
-test('mobile mode and resize map zoom and pan relative to Home without accumulating drift', t => {
+test('changing frames and resize map zoom and pan relative to Home without accumulating drift', t => {
   const h = harness(t);
   h.controls.zoom(1.6);
   const start = h.controls.getView();
@@ -104,7 +102,7 @@ test('mobile mode and resize map zoom and pan relative to Home without accumulat
   assert.deepEqual(h.controls.getView(), resized, 'the subsequent unchanged observer resize cannot move the camera');
 });
 
-test('animated mobile Home remains 100% on every frame and rapid reversal starts from the visible camera', t => {
+test('animated frame transition at Home remains 100% on every frame and rapid reversal starts from the visible camera', t => {
   const h = harness(t, { animated: true }), normal = h.controls.getView();
   h.toggle();
   assert.deepEqual(h.controls.getView(), normal, 'a toggle starts without a camera jump');
@@ -119,7 +117,7 @@ test('animated mobile Home remains 100% on every frame and rapid reversal starts
   h.advance(200);
   assert.deepEqual(h.controls.getView(), normal);
   assert.equal(h.frames.size, 0);
-  for (const { view, fitted } of h.changes) assert.ok(isHomeView(view, fitted), 'no transient Home button or non-100% label');
+  for (const { view, fitted } of h.changes) assert.ok(isHomeView(view, fitted), 'every animation frame remains at its current Home');
 });
 
 test('reduced motion applies the new mode Home immediately and stops an in-flight transition', t => {
@@ -199,22 +197,22 @@ test('unchanged resize keeps animation running while a real resize or Home ends 
   assert.deepEqual(h.controls.getView(), reset);
 });
 
-test('crossing the phone breakpoint in mandala preserves relative zoom across different Home frames', t => {
+test('changing frame policy preserves relative zoom across different Home frames', t => {
   const h = harness(t, { shared: true });
   h.resize(1200, 800, false); h.refresh();
   for (const factor of [1, 1.7]) {
     h.controls.reset(); h.controls.zoom(factor);
     const original = h.controls.getView(), previousHome = h.controls.getFittedView();
     h.resize(390, 844, true);
-    const phoneHome = h.controls.getFittedView();
-    closeTo(h.controls.getView().k / phoneHome.k, original.k / previousHome.k);
-    if (factor === 1) assert.deepEqual(h.controls.getView(), phoneHome);
+    const alternateHome = h.controls.getFittedView();
+    closeTo(h.controls.getView().k / alternateHome.k, original.k / previousHome.k);
+    if (factor === 1) assert.deepEqual(h.controls.getView(), alternateHome);
     h.resize(1200, 800, false);
     for (const key of ['x', 'y', 'k']) closeTo(h.controls.getView()[key], original[key]);
   }
 });
 
-test('mobile pan edges remain valid through transitions and absolute maximum zoom stays bounded', t => {
+test('pan edges remain valid through transitions and absolute maximum zoom stays bounded', t => {
   const h = harness(t, { animated: true });
   for (const [dx, dy] of [[9000, 0], [-9000, 0], [0, 9000], [0, -9000]]) {
     h.controls.reset(); h.controls.zoom(1.6);

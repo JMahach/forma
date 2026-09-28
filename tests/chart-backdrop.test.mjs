@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { CHART_SURFACE, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, renderChartBackdrop } from '../src/scene/backdrop.js';
 import { CHART_BACKDROP_BOUNDS, CHART_SILHOUETTE_PATH } from '../src/scene/geometry/chart-backdrop.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
-import { MANDALA_UNDERLAY_BOUNDS, renderMandalaUnderlay } from '../src/scene/mandala-underlay.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { renderChartThumbnail } from '../src/views/thumbnail.js';
 import { renderLoveDiagram } from '../src/stories/vessel-of-love.js';
@@ -42,7 +41,6 @@ test('both modes compose solid paths so the fill covers the inner half of one un
   assert.ok(CHART_BACKDROP_BOUNDS.x - rimRadius > 64 && CHART_BACKDROP_BOUNDS.x + CHART_BACKDROP_BOUNDS.width + rimRadius < 584, 'even the outer rim remains between the calculation columns');
   assert.ok(CHART_BACKDROP_BOUNDS.y - rimRadius >= 0 && CHART_BACKDROP_BOUNDS.y + CHART_BACKDROP_BOUNDS.height + rimRadius <= 820);
   assert.equal(CHART_BACKDROP_BOUNDS.x + CHART_BACKDROP_BOUNDS.width / 2, 320);
-  assert.equal(MANDALA_UNDERLAY_BOUNDS, CHART_BACKDROP_BOUNDS, 'the mandala reuses the same bounds object');
   for (const color of Object.values(CHART_SURFACE)) assert.match(color, /^#[0-9a-f]{6}$/i);
   for (const mandala of [false, true]) {
     const markup = renderChartBackdrop('surface', { mandala });
@@ -179,10 +177,9 @@ test('mandala always uses one shared silhouette inside its scaled core, never an
   const options = freeze({ idPrefix: 'shared-surface', showMandala: true, showActivations: true, selections: [{ type: 'gate', id: 20 }], pinnedCrosses: [crossAtLongitude(355)], previewSelection: { type: 'mandala-cross', cross: crossAtLongitude(305.7) } });
   const plain = renderBodygraph(chart, null, options);
   const enabled = renderBodygraph(chart, null, { ...options, showBackdrop: true });
-  const underlay = renderMandalaUnderlay(options.idPrefix);
+  const underlay = renderChartBackdrop(options.idPrefix, { mandala: true });
   assert.equal(enabled, plain, 'normal backdrop flag cannot add another layer or alter the mandala');
   assert.equal(renderBodygraph(chart, null, { ...options, showBackdrop: false }), plain);
-  assert.equal(underlay, renderChartBackdrop(options.idPrefix, { mandala: true }));
   assert.equal((enabled.match(/class="mandala-underlay"/g) || []).length, 1);
   assert.doesNotMatch(enabled, /class="chart-backdrop"/);
   const coreIndex = enabled.indexOf('class="mandala-core"'), underlayIndex = enabled.indexOf(underlay);

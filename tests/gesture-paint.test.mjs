@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from '../src/scene/gestures.js';
-import { PHONE_CHART_FRAME, PHONE_MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { COMPACT_TEST_FRAME, EXPANDED_TEST_FRAME } from './fixtures/camera-frames.js';
 
 let originalDOMPoint;
 test.beforeEach(() => {
@@ -22,7 +22,7 @@ function harness({ deferred = true, animated = false } = {}) {
   const listeners = new Map(), captures = new Set(), queued = new Map(), motionFrames = new Map();
   const changes = [], transforms = [], selections = [];
   let nextId = 0, time = 0, width = 640, height = 820, mandala = false;
-  const frame = () => mandala ? PHONE_MANDALA_FRAME : PHONE_CHART_FRAME;
+  const frame = () => mandala ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME;
   const svg = {
     addEventListener: (name, handler) => listeners.set(name, handler),
     getScreenCTM: () => ({ inverse() {

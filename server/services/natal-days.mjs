@@ -1,5 +1,5 @@
 import { encodeChartDayColumn, encodeChartDay } from '../packets/encode.mjs';
-import { runDayWorker } from '../runtime/day-worker.mjs';
+import { runJsonWorker } from '../runtime/json-worker.mjs';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.mjs';
 
 export class ChartDayError extends Error {
@@ -21,8 +21,8 @@ export function validateNatalZone(timezone) {
 export function generateChartDay({ root, date, timezone, spawnWorker, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }) {
   validateNatalDate(date); validateNatalZone(timezone);
   const unavailable = () => new ChartDayError('chart_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
-  return runDayWorker({
-    root, script: 'chart_day.py', input: { date, timezone }, spawnWorker, timeoutMs, maxOutputBytes, unavailable,
+  return runJsonWorker({
+    root, script: 'chart_day.py', input: { date, timezone }, spawnWorker, timeoutMs, maxOutput: maxOutputBytes, unavailable,
     timeoutError: () => new ChartDayError('chart_day_timeout', 'День рождения не успел рассчитаться. Повторите попытку.'),
     validate(day) {
       if (!day) throw unavailable();

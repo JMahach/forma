@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
+import { createSelectionModel } from '../src/selection/selection-model.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { GATES, getChannel } from '../src/scene/geometry/chart-geometry.js';
@@ -21,7 +21,7 @@ const chart = (gates = [46, 29, 8]) => ({
 });
 
 test('without crosses the wrapper keeps ordinary selection, metadata, effects and line-group behavior identical', () => {
-  const actual = createMandalaSelectionState(), expected = createSummarySelectionState();
+  const actual = createSelectionModel(), expected = createSummarySelectionState();
   const actions = [
     ['choose', gate(20, false, 'personality-sun')], ['choose', gate(34, true)],
     ['choose', gate(34, true)], ['choose', { type: 'center', id: 'throat' }],
@@ -40,7 +40,7 @@ test('without crosses the wrapper keeps ordinary selection, metadata, effects an
 });
 
 test('normal cross click pins four gates and a deeply immutable exact-angle snapshot', () => {
-  const state = createMandalaSelectionState(), value = cross(180.123456789);
+  const state = createSelectionModel(), value = cross(180.123456789);
   assert.deepEqual(state.choose(value), { popoverActivation: null });
   assertGates(state, value.cross.gates);
   assert.equal(state.crosses.length, 1);
@@ -56,7 +56,7 @@ test('normal cross click pins four gates and a deeply immutable exact-angle snap
 });
 
 test('same category and ordered quartet toggle off despite small cursor drift; a different category replaces it', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   state.choose(cross(180.1));
   assertGates(state, []);
@@ -69,7 +69,7 @@ test('same category and ordered quartet toggle off despite small cursor drift; a
 });
 
 test('a new nonadditive cross replaces ordinary gates, line groups and old axes', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.chooseSummary([46, 29], lineFilter);
   state.choose(gate(20, true));
   state.choose(cross(180, true));
@@ -81,7 +81,7 @@ test('a new nonadditive cross replaces ordinary gates, line groups and old axes'
 });
 
 test('Shift cross addition/removal has independent ownership from a separately pinned overlapping gate', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(gate(46, false, 'personality-sun'));
   state.choose(cross(180, true));
   assertGates(state, [46, 25, 15, 10]);
@@ -94,7 +94,7 @@ test('Shift cross addition/removal has independent ownership from a separately p
 });
 
 test('two overlapping Shift crosses preserve each other when either group is toggled off', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   state.choose(cross(182, true));
   assertGates(state, [46, 25, 15, 10, 52, 58]);
@@ -108,7 +108,7 @@ test('two overlapping Shift crosses preserve each other when either group is tog
 });
 
 test('Shift subtraction removes a cross-only gate rather than accidentally adding a base gate', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   state.choose(gate(46, true));
   assertGates(state, [25, 15, 10]);
@@ -119,7 +119,7 @@ test('Shift subtraction removes a cross-only gate rather than accidentally addin
 });
 
 test('Shift subtraction affects every overlapping cross; readding the gate restores original exact axes', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180.123));
   state.choose(cross(182.234, true));
   const saved = state.crosses;
@@ -135,7 +135,7 @@ test('Shift subtraction affects every overlapping cross; readding the gate resto
 });
 
 test('Shift subtraction removes gate ownership from cross, explicit base gate, and line group together', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(gate(46));
   state.chooseSummary([46, 29], lineFilter, { additive: true });
   state.choose(cross(180, true));
@@ -149,7 +149,7 @@ test('Shift subtraction removes gate ownership from cross, explicit base gate, a
 });
 
 test('Shift subtraction expands an overlapping center but preserves all its other gates', () => {
-  const state = createMandalaSelectionState(), center = GATES.find(g => g.id === 46).center;
+  const state = createSelectionModel(), center = GATES.find(g => g.id === 46).center;
   state.choose({ type: 'center', id: center });
   state.choose(cross(180, true));
   state.choose(gate(46, true));
@@ -159,7 +159,7 @@ test('Shift subtraction expands an overlapping center but preserves all its othe
 });
 
 test('Shift subtraction splits channel ownership without losing its other half when an overlapping line group is removed', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.chooseSummary([29], lineFilter);
   state.choose({ type: 'channel', id: '29-46', additive: true });
   state.choose(cross(180, true));
@@ -175,7 +175,7 @@ test('Shift subtraction splits channel ownership without losing its other half w
 });
 
 test('Shift subtraction splits integration ownership and never leaves the removed gate selected', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose({ type: 'integration', id: 'integration' });
   state.choose(cross(180, true));
   state.choose(gate(10, true));
@@ -186,7 +186,7 @@ test('Shift subtraction splits integration ownership and never leaves the remove
 });
 
 test('line groups remain exact while full cross gates extend the unfiltered activation selection', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.chooseSummary([46, 29], lineFilter);
   state.choose(gate(20, true));
   state.choose(cross(180, true));
@@ -200,7 +200,7 @@ test('line groups remain exact while full cross gates extend the unfiltered acti
 });
 
 test('additive summary selections preserve pinned crosses, and nonadditive summary selections replace them', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   state.chooseSummary([8, 29], lineFilter, { additive: true });
   assertGates(state, [46, 25, 15, 10, 8, 29]);
@@ -212,7 +212,7 @@ test('additive summary selections preserve pinned crosses, and nonadditive summa
 });
 
 test('normal gate selection replaces all cross state instead of toggling a hidden single base gate', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(gate(20));
   state.choose(cross(180, true));
   state.choose(gate(20));
@@ -223,7 +223,7 @@ test('normal gate selection replaces all cross state instead of toggling a hidde
 });
 
 test('summary refresh updates only line gates while pinned cross positions and no-op identities stay stable', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.chooseSummary([46, 29], lineFilter);
   state.choose(cross(180.123, true));
   const originalCross = state.crosses[0];
@@ -238,7 +238,7 @@ test('summary refresh updates only line gates while pinned cross positions and n
 });
 
 test('malformed cross or summary input never clears valid selection and derived values are recomputed', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   const items = state.items;
   for (const bad of [null, {}, { longitude: NaN }, { longitude: Infinity }, { longitude: '180' }, { longitude: 180, source: 'both' }, { longitude: 180, source: null }]) {
@@ -255,7 +255,7 @@ test('malformed cross or summary input never clears valid selection and derived 
 });
 
 test('clear discards cross axes, partial exclusions, expanded gates, line filters and activation metadata', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose({ type: 'channel', id: '29-46' });
   state.chooseSummary([8], lineFilter, { additive: true });
   state.choose(cross(180, true));
@@ -267,7 +267,7 @@ test('clear discards cross axes, partial exclusions, expanded gates, line filter
 });
 
 test('activation popovers remain suppressed for any multi-item cross selection', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   state.choose(cross(180));
   assert.deepEqual(state.choose(gate(20, true, 'personality-sun')), { popoverActivation: null });
   state.choose(cross(180.1, true));

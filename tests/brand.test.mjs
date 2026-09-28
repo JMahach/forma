@@ -14,7 +14,7 @@ test('browser tab uses the Forma name and a versioned local SVG favicon', () => 
   assert.match(href, /^\/favicon\.svg\?v=forma-clay-\d+$/);
   assert.equal(new URL(href, 'http://localhost').pathname, '/favicon.svg');
   const server = readFileSync(new URL('../server/http/app.mjs', import.meta.url), 'utf8');
-  assert.match(server, /servePublicFile\(root, req, res, url\.pathname\)/, 'cache version never becomes part of the public filename');
+  assert.match(server, /publicFiles\(req, res, url\.pathname\)/, 'cache version never becomes part of the public filename');
 });
 
 test('favicon and menu mark use the actual silhouette with a solid clay fill and darker rim', () => {

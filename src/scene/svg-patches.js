@@ -9,14 +9,15 @@ export function setAttributes(node, values) {
   for (const [name, value] of Object.entries(values)) setAttribute(node, name, value);
 }
 export function svgNodes(parent, markup) {
+  if (!markup) return [];
   const holder = parent.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
   holder.innerHTML = markup;
   return [...holder.childNodes];
 }
 // A variable, non-interactive fragment between persistent targets. Parsing is
 // restricted to a changed fragment: a channel's lanes, or one integration mask.
-export function fragmentSlot(parent, before, nodes = []) {
-  let previous;
+export function fragmentSlot(parent, before, nodes = [], initialMarkup) {
+  let previous = initialMarkup ?? (nodes.length ? undefined : '');
   return markup => {
     if (markup === previous) return false;
     previous = markup;

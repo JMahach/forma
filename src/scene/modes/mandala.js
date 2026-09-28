@@ -19,7 +19,7 @@ export function attachMandalaMode({ button, canvas, gestures, render, motion = n
   button.addEventListener('click', () => setEnabled(!enabled));
   return {
     get enabled() { return enabled; }, get visible() { return visible; },
-    get homeFrame() { return layout?.frame(enabled) || CHART_FRAME; },
+    get homeFrame() { return layout?.frame() || CHART_FRAME; },
     get frame() { return layout ? MANDALA_FRAME : (enabled ? MANDALA_FRAME : CHART_FRAME); },
     finishTransition(value) {
       if (value !== enabled || enabled || !visible) return;

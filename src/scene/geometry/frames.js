@@ -9,9 +9,7 @@ export const MANDALA_FRAME = Object.freeze({
     width: ACTIVATION_BLOCK_BOUNDS.width + 2 * ACTIVATION_COLUMN_REVEAL_DISTANCE, height: 924 }), minScale: .1,
 });
 const radius = (MANDALA_GEOMETRY.outerRadius + 7) * MANDALA_SCENE_SCALE;
-export const PHONE_MANDALA_FRAME = Object.freeze({
+export const STUDIO_FRAME = Object.freeze({
   bounds: Object.freeze({ x: MANDALA_GEOMETRY.centerX - radius, y: MANDALA_GEOMETRY.centerY - radius, width: radius * 2, height: radius * 2 }),
   minScale: .1,
 });
-export const PHONE_CHART_FRAME = Object.freeze({ bounds: DRAWING_BOUNDS, minScale: .1 });
-export const STUDIO_FRAME = PHONE_MANDALA_FRAME;

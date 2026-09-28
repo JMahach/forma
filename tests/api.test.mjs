@@ -181,7 +181,7 @@ apiTest('valid city identity overrides a forged timezone and arbitrary display n
 
 apiTest('private server, data, tests and environment files are not publicly served', async () => {
   for (const path of [
-    '/server/server.mjs', '/server/python/calculator.py', '/server/', '/server/packets/encode.mjs', '/server/packets/compression.mjs', '/server/runtime/day-worker.mjs',
+    '/server/server.mjs', '/server/python/calculator.py', '/server/', '/server/packets/encode.mjs', '/server/packets/compression.mjs', '/server/runtime/json-worker.mjs',
     '/data/cities.json', '/data/', '/.git/config', '/calculator.py',
     '/tests/api.test.mjs', '/tests/fixtures/selection-before-refactor.js', '/tests/previews/activation-preview.mjs', '/tests/',
     '/.venv/pyvenv.cfg', '/.venv/', '/scripts/prepare-cities.py',

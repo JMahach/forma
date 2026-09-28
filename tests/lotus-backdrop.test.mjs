@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { renderChartBackdrop, CHART_SURFACE_RIM_WIDTH } from '../src/scene/backdrop.js';
 import { CHART_BACKDROP_BOUNDS } from '../src/scene/geometry/chart-backdrop.js';
-import { renderMandalaUnderlay } from '../src/scene/mandala-underlay.js';
-import { LOTUS_BACKDROP_BOUNDS, LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/scene/geometry/lotus-backdrop.js';
+import { LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/scene/geometry/lotus-backdrop.js';
 
 const chart = Object.freeze({ personality: Object.freeze([61, 24, 20, 34]), design: Object.freeze([57, 10]) });
 
@@ -26,7 +25,6 @@ test('changing the pose preserves all chart layers, selections and activation da
 });
 
 test('lotus stays inside the existing scene and between the calculation columns', () => {
-  assert.deepEqual(LOTUS_BACKDROP_BOUNDS, CHART_BACKDROP_BOUNDS);
   const { x, y, width, height } = CHART_BACKDROP_BOUNDS;
   for (const path of [LOTUS_SILHOUETTE_PATH, ...LOTUS_DETAIL_PATHS]) {
     // Cubic curves stay within their control-point hulls, so bounding every
@@ -54,6 +52,5 @@ test('lotus is a noninteractive underlay shared by normal and mandala modes', ()
     assert.ok(svg.indexOf(layer) < svg.indexOf('<g class="bodygraph-channels">'));
     assert.equal(svg.split('data-pose="lotus"').length - 1, 1);
   }
-  assert.equal(renderMandalaUnderlay('lotus-check', { lotus: true }), renderChartBackdrop('lotus-check', { mandala: true, lotus: true }));
   assert.doesNotMatch(renderBodygraph(chart, null, { showLotus: true }), /data-pose="lotus"/, 'pose alone does not enable a backdrop on unrelated diagrams');
 });
