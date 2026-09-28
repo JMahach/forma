@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHANNELS, CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
-import { MANDALA_UNDERLAY_BOUNDS, renderMandalaUnderlay } from '../src/scene/mandala-underlay.js';
 import { CHART_SURFACE, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, renderChartBackdrop } from '../src/scene/backdrop.js';
 import { CHART_BACKDROP_BOUNDS, CHART_SILHOUETTE_PATH } from '../src/scene/geometry/chart-backdrop.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
@@ -12,7 +11,7 @@ const sample = (curve, t) => [0, 1].map(axis => (
 ));
 
 function outlineCurves() {
-  const path = renderMandalaUnderlay().match(/ d="([^"]+)"/)[1];
+  const path = renderChartBackdrop('bodygraph', { mandala: true }).match(/ d="([^"]+)"/)[1];
   let point = path.match(/^M ([\d.]+) ([\d.]+)/).slice(1).map(Number);
   const result = [];
   assert.match(path, /^M [\d.]+ [\d.]+(?: C [\d.]+ [\d.]+ [\d.]+ [\d.]+ [\d.]+ [\d.]+)+ Z$/, 'one closed outline made solely from joined cubics');
@@ -63,7 +62,7 @@ function inside([x, y], polygon) {
 }
 
 test('mandala backing composites its uniform rim and solid fill as one translucent noninteractive surface', () => {
-  const markup = renderMandalaUnderlay();
+  const markup = renderChartBackdrop('bodygraph', { mandala: true });
   assert.match(markup, new RegExp(`^<g class="mandala-underlay" pointer-events="none" aria-hidden="true" focusable="false" opacity="${CHART_MANDALA_SURFACE_OPACITY}">`));
   assert.ok(CHART_MANDALA_SURFACE_OPACITY > 0 && CHART_MANDALA_SURFACE_OPACITY < 1);
   assert.equal((markup.match(/<path\b/g) || []).length, 2);
@@ -74,13 +73,12 @@ test('mandala backing composites its uniform rim and solid fill as one transluce
   assert.doesNotMatch(markup.replace(/^<g\b[^>]*>/, ''), /\s(?:fill-|stop-|stroke-)?opacity=/i, 'only the outer group controls transparency, never paths or stops independently');
   assert.doesNotMatch(markup, /transform=|filter|mask|clip-path|data-type|tabindex|href|<image|<script|<foreignObject|<rect|<ellipse|<circle|\son\w+=/i);
   assert.doesNotMatch(markup, /NaN|undefined|Infinity/);
-  assert.equal(renderMandalaUnderlay(), markup, 'no chart, hover, or selection state is needed');
-  assert.equal(markup, renderChartBackdrop('bodygraph', { mandala: true }), 'both modes use one contour renderer');
+  assert.equal(renderChartBackdrop('bodygraph', { mandala: true }), markup, 'no chart, hover, or selection state is needed');
   assert.equal(markup.match(/ d="([^"]+)"/)[1], CHART_SILHOUETTE_PATH);
 });
 
 test('the composited backing retains solid shared palette stops without changing the approved rim', () => {
-  const markup = renderMandalaUnderlay();
+  const markup = renderChartBackdrop('bodygraph', { mandala: true });
   assert.ok(Object.isFrozen(CHART_SURFACE));
   assert.equal((markup.match(/<linearGradient\b/g) || []).length, 1);
   assert.match(markup, /<linearGradient[^>]* x1="0" y1="0" x2="0" y2="1">/);
@@ -93,10 +91,10 @@ test('the composited backing retains solid shared palette stops without changing
 });
 
 test('backing gradient and fill reference are scoped, sanitized and leave the physical contour unchanged', () => {
-  const path = renderMandalaUnderlay().match(/ d="([^"]+)"/)[1];
+  const path = renderChartBackdrop('bodygraph', { mandala: true }).match(/ d="([^"]+)"/)[1];
   const defined = [];
   for (const prefix of ['first-chart', 'second-chart', 'x\"><script>', '!!!']) {
-    const markup = renderMandalaUnderlay(prefix);
+    const markup = renderChartBackdrop(prefix, { mandala: true });
     const ids = [...markup.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
     assert.equal(ids.length, 1);
     assert.match(ids[0], /^[a-zA-Z0-9_-]+$/);
@@ -106,16 +104,15 @@ test('backing gradient and fill reference are scoped, sanitized and leave the ph
     defined.push(ids[0]);
   }
   assert.equal(new Set(defined).size, defined.length, 'separate chart instances have independent gradients');
-  assert.equal(renderMandalaUnderlay('!!!'), renderMandalaUnderlay());
+  assert.equal(renderChartBackdrop('!!!', { mandala: true }), renderChartBackdrop('bodygraph', { mandala: true }));
 });
 
 test('backing has symmetric bounds matching its free-standing silhouette, never a page-wide field', () => {
-  const points = outline(), bounds = MANDALA_UNDERLAY_BOUNDS;
+  const points = outline(), bounds = CHART_BACKDROP_BOUNDS;
   assert.ok(Object.isFrozen(bounds));
   assert.ok(bounds.x > 64 && bounds.x + bounds.width < 584, 'the free-standing form stays away from both calculation columns');
   assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 820, 'the surface stays inside the existing chart canvas');
   assert.equal(bounds.x + bounds.width / 2, 320);
-  assert.equal(bounds, CHART_BACKDROP_BOUNDS, 'normal and mandala modes share the same physical envelope');
   const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9);
   close(Math.min(...points.map(([x]) => x)), bounds.x);
   close(Math.max(...points.map(([x]) => x)), bounds.x + bounds.width);

@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createStaticAssets } from './static-assets.mjs';
+import { negotiateEncoding } from './content-encoding.mjs';
 
 // Every browser entry/dependency is explicit. Project files outside this map
 // remain private even when a new directory or file is added to the repository.
@@ -55,7 +57,7 @@ export const PUBLIC_FILES = new Map([
     'src/scene/mandala-painter.js',
     'src/scene/mandala-preview-painter.js',
     'src/scene/mandala-preview.js',
-    'src/scene/mandala-underlay.js',
+    'src/scene/mandala-paint-rules.js',
     'src/scene/mandala.js',
     'src/scene/modes/lotus.js',
     'src/scene/modes/mandala-motion.js',
@@ -67,7 +69,6 @@ export const PUBLIC_FILES = new Map([
     'src/scene/updates.js',
     'src/scene/variable-arrows.js',
     'src/selection/hover-preview.js',
-    'src/selection/mandala-selection-state.js',
     'src/selection/selection-model.js',
     'src/selection/selection-state.js',
     'src/selection/selection-targets.js',
@@ -99,12 +100,47 @@ export const PUBLIC_FILES = new Map([
 ]);
 const CONTENT_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8' };
 
-export async function servePublicFile(root, req, res, pathname) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
-  const filename = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
-  const file = PUBLIC_FILES.get(filename);
-  if (!file) { res.writeHead(404); res.end('Not found'); return; }
-  const data = await fs.readFile(path.join(root, file));
-  res.writeHead(200, { 'Content-Type': CONTENT_TYPES[path.extname(file)] || 'text/plain', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' });
-  res.end(req.method === 'HEAD' ? undefined : data);
+// A release manifest names only generated page/assets, never source or private
+// project paths. It is read once at startup; a broken release fails to start.
+export async function readReleaseManifest(directory) {
+  const entries = JSON.parse(await fs.readFile(path.join(directory, 'manifest.json'), 'utf8'));
+  const files = new Map();
+  const asset = /^assets\/[a-zA-Z0-9_-]+-[a-zA-Z0-9_-]{8,}\.(?:js|css|svg)$/;
+  for (const [url, entry] of Object.entries(entries)) {
+    const page = ['index.html', 'love.html', 'love'].includes(url);
+    if (!entry || !(page ? entry.file === (url === 'love' ? 'love.html' : url) : asset.test(url) && entry.file === url)
+      || entry.br !== `${entry.file}.br` || entry.gzip !== `${entry.file}.gz`
+      || entry.immutable !== !page) throw new Error(`Invalid public release entry: ${url}`);
+    files.set(url, entry);
+  }
+  for (const page of ['index.html', 'love.html', 'love']) {
+    if (!files.has(page)) throw new Error(`Missing release page: ${page}`);
+  }
+  await Promise.all([...files.values()].flatMap(entry => [entry.file, entry.br, entry.gzip])
+    .map(async file => { if (!(await fs.stat(path.join(directory, file))).isFile()) throw new Error(`Invalid release file: ${file}`); }));
+  return files;
+}
+
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false }) {
+  const assets = createStaticAssets(root, { precompressed });
+  return async function servePublicFile(req, res, pathname) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
+    const filename = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
+    const entry = files.get(filename);
+    if (!entry) { res.writeHead(404); res.end('Not found'); return; }
+    const encoding = negotiateEncoding(req.headers['accept-encoding']);
+    if (!encoding) { res.writeHead(406, { Vary: 'Accept-Encoding' }); res.end(); return; }
+    const asset = await assets.get(typeof entry === 'string' ? { file: entry } : entry);
+    const body = asset.bytes[encoding], etag = asset.etags[encoding];
+    const headers = {
+      'Content-Type': CONTENT_TYPES[path.extname(filename)] || CONTENT_TYPES[path.extname(asset.file)] || 'text/plain',
+      'Content-Length': body.length,
+      'Cache-Control': entry.immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'X-Content-Type-Options': 'nosniff', Vary: 'Accept-Encoding', ETag: etag,
+      ...(encoding === 'identity' ? {} : { 'Content-Encoding': encoding }),
+    };
+    const matched = String(req.headers['if-none-match'] || '').split(',').some(value => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag);
+    res.writeHead(matched ? 304 : 200, headers);
+    res.end(matched || req.method === 'HEAD' ? undefined : body);
+  };
 }

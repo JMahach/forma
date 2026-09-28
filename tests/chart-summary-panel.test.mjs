@@ -141,7 +141,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   let openCalls = 0, closeCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panel, content, overview, search, switcher, canvas, backdrop,
+    panel, content, overview, search, switcher, backdrop,
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
   };

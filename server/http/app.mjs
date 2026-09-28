@@ -1,6 +1,6 @@
 import { createTransitDayHandler } from './transit-days.mjs';
 import { createNatalDayHandler } from './natal-days.mjs';
-import { servePublicFile } from './public-files.mjs';
+import { createPublicFileHandler } from './public-files.mjs';
 
 const MAX_REQUEST_BYTES = 20000;
 function json(res, status, data) {
@@ -10,7 +10,7 @@ function json(res, status, data) {
 
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, now }) {
+export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, now, publicFiles = createPublicFileHandler({ root }) }) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
   const natalDay = chartDays && createNatalDayHandler(chartDays);
   return async function handleRequest(req, res) {
@@ -51,7 +51,7 @@ export function createRequestHandler({ root, cities, calculate, transitDays, cha
         const status = !result.error ? 200 : ['engine_unavailable', 'busy'].includes(result.error) ? 503 : 422;
         json(res, status, result); return;
       }
-      await servePublicFile(root, req, res, url.pathname);
+      await publicFiles(req, res, url.pathname);
     } catch { if (!res.headersSent) json(res, 400, { error: 'invalid_request', message: 'Не удалось обработать запрос.' }); else res.end(); }
   };
 }

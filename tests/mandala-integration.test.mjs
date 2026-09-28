@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
 import { GATES } from '../src/scene/geometry/chart-geometry.js';
-import { createMandalaSelectionState } from '../src/selection/mandala-selection-state.js';
+import { createSelectionModel } from '../src/selection/selection-model.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 
 const chart = { id: 'test', personality: [20, 34, 10], design: [57, 20] };
@@ -33,7 +33,7 @@ test('closing ring has no selectable or focusable targets and does not change no
 });
 
 test('a pinned cross retains all four wheel and bodygraph gates and exact axes after the preview ends', () => {
-  const state = createMandalaSelectionState(), cross = crossAtLongitude(355);
+  const state = createSelectionModel(), cross = crossAtLongitude(355);
   state.choose({ type: 'mandala-cross', cross });
   const options = { showMandala: true, selections: state.items, pinnedCrosses: state.crosses };
   const wheel = renderBodygraph(chart, state.primary, options);
@@ -55,7 +55,7 @@ test('a pinned cross retains all four wheel and bodygraph gates and exact axes a
 });
 
 test('Shift cross addition and removal retain shared gates and only the remaining cross axes', () => {
-  const state = createMandalaSelectionState();
+  const state = createSelectionModel();
   const first = crossAtLongitude(305.7), second = crossAtLongitude(305.9);
   state.choose({ type: 'mandala-cross', cross: first });
   state.choose({ type: 'mandala-cross', cross: second, additive: true });

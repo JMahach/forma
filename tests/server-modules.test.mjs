@@ -114,6 +114,8 @@ test('calculator keeps four-process admission, JSON protocol and releases slots 
   workers[0].stdout.emit('data', '{"chart":'); workers[0].stdout.emit('data', '{}}'); workers[0].emit('close', 0);
   workers[1].stdout.emit('data', 'invalid JSON'); workers[1].emit('close', 0);
   workers[2].stdin.emit('error', new Error('closed pipe'));
+  assert.equal(workers[2].killed, true);
+  workers[2].emit('close', null);
   workers[3].emit('close', 1);
   const results = await Promise.all(pending);
   assert.deepEqual(results[0], { chart: {} });
@@ -128,10 +130,42 @@ test('calculator terminates excessive output and timed-out workers without accep
   const oversized = workerHarness();
   const result = oversized.calculate({ mode: 'transit' });
   oversized.workers[0].stdout.emit('data', 'x'.repeat(100001));
-  assert.equal((await result).error, 'engine_unavailable');
   assert.equal(oversized.workers[0].killed, true);
   oversized.workers[0].stdout.emit('data', '{}'); oversized.workers[0].emit('close', 0);
+  assert.equal((await result).error, 'engine_unavailable');
   const timeout = workerHarness({ ...CALCULATOR_LIMITS, timeoutMs: 1 });
-  assert.equal((await timeout.calculate({ mode: 'transit' })).error, 'timeout');
+  const timedOut = timeout.calculate({ mode: 'transit' });
+  await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(timeout.workers[0].killed, true);
+  timeout.workers[0].emit('close', null);
+  assert.equal((await timedOut).error, 'timeout');
+});
+
+test('calculator holds all four admission slots until failed live processes close', async () => {
+  for (const reason of ['stdin', 'output', 'timeout', 'process']) {
+    const limits = { ...CALCULATOR_LIMITS, timeoutMs: reason === 'timeout' ? 1 : 1000 };
+    const { calculate, workers } = workerHarness(limits);
+    const pending = Array.from({ length: 4 }, () => calculate({ mode: 'transit' }));
+    let completed = 0;
+    pending.forEach(result => result.then(() => { completed++; }));
+    if (reason === 'stdin') workers[0].stdin.emit('error', new Error('pipe'));
+    if (reason === 'output') workers[0].stdout.emit('data', 'x'.repeat(limits.outputCharacters + 1));
+    if (reason === 'timeout') await new Promise(resolve => setTimeout(resolve, 5));
+    if (reason === 'process') {
+      workers[0].emit('spawn');
+      workers[0].emit('error', new Error('live process failure'));
+    }
+    await Promise.resolve();
+    assert.equal(completed, 0, reason);
+    assert.equal(workers[0].killed, true, reason);
+    assert.equal((await calculate({ mode: 'transit' })).error, 'busy', reason);
+    assert.equal(workers.length, 4, reason);
+    for (const worker of workers) worker.emit('close', null);
+    const results = await Promise.all(pending);
+    assert.equal(results[0].error, reason === 'timeout' ? 'timeout' : 'engine_unavailable');
+    const next = calculate({ mode: 'transit' });
+    assert.equal(workers.length, 5);
+    workers[4].stdout.emit('data', '{}'); workers[4].emit('close', 0);
+    assert.deepEqual(await next, {});
+  }
 });

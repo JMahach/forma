@@ -8,7 +8,7 @@ import { createMandalaMotion } from './scene/modes/mandala-motion.js';
 import { createStudioLayout } from './scene/studio-controller.js';
 import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from './scene/mandala-preview.js';
 import { createGraphController } from './scene/updates.js';
-import { attachCameraControls, createCameraChangeHandler, createCanvasInsetsReader } from './views/camera-controls.js';
+import { attachCameraControls, createCameraChangeHandler } from './views/camera-controls.js';
 import { createChartStore } from './data/chart-store.js';
 import { createChartSession } from './state/chart-session.js';
 import { chartTitle, chartSubtitle } from './views/chart-display.js';
@@ -33,7 +33,6 @@ const headingLayout = createChartHeadingLayout({
   leftControls: document.querySelector('.topbar-leading'), rightControls: document.querySelector('.chart-tools'),
   getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
 });
-const readCanvasInsets = createCanvasInsetsReader($('canvasWrap'));
 let hoverPreview = null, chartSummary = null, mandalaMode = null, lotusMode = null, library = null, transit = null, transitControls = null, chartDay = null;
 const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
 const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
@@ -52,7 +51,7 @@ const graph = createGraphController({
   },
 });
 const gestures = attachGestures($('bodygraph'), $('viewport'), {
-  fitInsets: () => layout.insets(readCanvasInsets()),
+  fitInsets: () => layout.insets(),
   onSelect: graph.choose,
   getFrame: () => mandalaMode?.frame,
   getHomeFrame: () => mandalaMode?.homeFrame,
@@ -62,9 +61,6 @@ const gestures = attachGestures($('bodygraph'), $('viewport'), {
     heading: $('chartHeader'), fitButton: $('fitButton'),
     activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
-    getMandala: () => mandalaMode,
-    // CSS hides only a caption that actually overlaps the mandala field.
-    showMandalaHeading: () => true,
   }),
 });
 hoverPreview = attachHoverPreview($('bodygraph'), {
@@ -75,7 +71,7 @@ const knowledge = attachKnowledge($('knowledgeDialog'), graph.choose);
 $('openKnowledge').addEventListener('click', () => { library.close(); knowledge.show(graph.selectionState.primary); });
 chartSummary = attachChartSummary({
   panel: $('chartSummary'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
-  search: $('summarySearch'), switcher: $('summarySwitch'), canvas: $('canvasWrap'), backdrop: $('summaryBackdrop'),
+  search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
   onSelect: graph.choose, onLines: graph.chooseSummary,
   onOpen: () => { activationPopover.close(); hoverPreview?.clear(); library.close(); },
 });

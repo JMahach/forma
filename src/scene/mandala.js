@@ -1,43 +1,14 @@
-import { PLANETS } from '../domain/planets.js';
-import { GATE_ORDER, GATE_LONGITUDE_START, GATE_WIDTH, normalizeLongitude, gatePositionAtLongitude } from '../domain/gate-wheel.js';
-import { MANDALA_GEOMETRY, mandalaPoint, mandalaPointString as point, MANDALA_CENTER as center, sectorPath, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
-
-export const MANDALA_PALETTE = Object.freeze({
-  paper: '#eee8dc', rim: '#a59c8d', light: '#ffffff', empty: '#8e897e',
-  design: '#b6756a', personality: '#727975', both: '#807b73',
-  highlight: '#c4d9f1',
-});
-const gateSet = values => new Set((Array.isArray(values) ? values : [])
-  .map(Number).filter(gate => Number.isInteger(gate) && gate >= 1 && gate <= 64));
-
-export function mandalaPlanetEntries(chart) {
-  if (!['calculated', 'transit'].includes(chart?.source)) return [];
-  return ['design', 'personality'].flatMap(source => {
-    if (source === 'design' && chart.source === 'transit') return [];
-    const entries = chart.activations?.[source];
-    if (!Array.isArray(entries)) return [];
-    return PLANETS.flatMap(([planet]) => {
-      const matches = entries.filter(entry => entry?.planet === planet);
-      if (matches.length !== 1) return [];
-      const entry = matches[0];
-      if (!Number.isFinite(entry.longitude) || entry.longitude < 0 || entry.longitude >= 360) return [];
-      const position = gatePositionAtLongitude(entry.longitude);
-      if (entry.gate !== position.gate || entry.line !== position.line) return [];
-      return [{ source, planet, longitude: entry.longitude }];
-    });
-  });
-}
+import { MANDALA_PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
+import { GATE_ORDER, normalizeLongitude } from '../domain/gate-wheel.js';
+import { MANDALA_GEOMETRY, mandalaPoint, mandalaPointString as point, MANDALA_CENTER as center, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
 
 function planetMarkers(chart) {
   return mandalaPlanetEntries(chart).map(({ source, planet, longitude }) => {
-      // A ray represents the exact saved position, not the middle of its gate.
-      // Both sources meet the same ring; offsetting either would imply a false
-      // position. Sun/Earth are distinguished only by emphasis, not geometry.
-      const cross = planet === 'sun' || planet === 'earth';
+      const paint = mandalaPlanetPaint(source, planet);
       const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
       return `<g class="mandala-planet-marker" data-mandala-planet="${planet}" data-source="${source}" data-longitude="${longitude}">
-        <path class="mandala-planet-ray${cross ? ' mandala-cross-axis' : ''}" d="M ${center} L ${x} ${y}" fill="none" stroke="${MANDALA_PALETTE[source]}" stroke-opacity="${cross ? '.5313' : '.2783'}" stroke-width="${cross ? '.8' : '.55'}"/>
-        <circle class="mandala-planet-endpoint" cx="${x}" cy="${y}" r="${cross ? '1.35' : '.85'}" fill="${MANDALA_PALETTE[source]}" fill-opacity="${cross ? '1' : '.759'}"/>
+        <path class="${paint.rayClass}" d="M ${center} L ${x} ${y}" fill="none" stroke="${paint.color}" stroke-opacity="${paint.rayOpacity}" stroke-width="${paint.rayWidth}"/>
+        <circle class="mandala-planet-endpoint" cx="${x}" cy="${y}" r="${paint.radius}" fill="${paint.color}" fill-opacity="${paint.endpointOpacity}"/>
       </g>`;
   }).join('');
 }
@@ -50,26 +21,22 @@ function planetMarkers(chart) {
  * The renderer has no local selection state, IDs, calculation or storage.
  */
 export function renderMandala(chart = {}, { interactive = true, selectedGates = new Set(), relatedGates = selectedGates, previewCross = null, pinnedCrosses = [] } = {}) {
-  const personality = gateSet(chart?.personality), design = gateSet(chart?.design);
+  const gates = mandalaGateSets(chart);
   const fields = [];
   const wheel = sectors.map(sector => {
-    const { gate, start, middle, ring, halfRings, fan, halfFans, separator, label } = sector;
-    const hasPersonality = personality.has(gate), hasDesign = design.has(gate);
-    const state = hasPersonality && hasDesign ? 'both' : hasDesign ? 'design' : hasPersonality ? 'personality' : 'empty';
-    const active = state !== 'empty';
-    const sources = state === 'both' ? ['design', 'personality'] : active ? [state] : [];
-    const related = relatedGates.has(gate), pressed = selectedGates.has(gate);
-    fields.push(sources.map((source, index) => `<path class="mandala-fan" data-mandala-gate="${gate}" data-mandala-source="${source}" d="${state === 'both' ? halfFans[index] : fan}" fill="${MANDALA_PALETTE[source]}" fill-opacity=".082225"/>`).join('')
-      + (related ? `<path class="mandala-focus-sector" data-mandala-gate="${gate}" d="${fan}" fill="${MANDALA_PALETTE.highlight}" fill-opacity=".242"/>` : ''));
-    const fills = sources.map((source, index) => `<g class="mandala-source" data-mandala-source="${source}" fill="${MANDALA_PALETTE[source]}" pointer-events="none">
-      <path class="mandala-sector-fill" d="${state === 'both' ? halfRings[index] : ring}" fill-opacity=".25"/>
+    const { gate, start, middle, ring, fan, separator, label } = sector;
+    const { state, related, pressed, color, textWeight, sources } = mandalaSectorPaint(sector, gates, selectedGates, relatedGates);
+    fields.push(sources.map(source => `<path class="mandala-fan" data-mandala-gate="${gate}" data-mandala-source="${source.source}" d="${source.fan}" fill="${source.color}" fill-opacity="${MANDALA_OPACITY.fan}"/>`).join('')
+      + (related ? `<path class="mandala-focus-sector" data-mandala-gate="${gate}" d="${fan}" fill="${MANDALA_PALETTE.highlight}" fill-opacity="${MANDALA_OPACITY.focus}"/>` : ''));
+    const fills = sources.map(source => `<g class="mandala-source" data-mandala-source="${source.source}" fill="${source.color}" pointer-events="none">
+      <path class="mandala-sector-fill" d="${source.ring}" fill-opacity="${MANDALA_OPACITY.sector}"/>
     </g>`).join('');
     const interaction = interactive ? ` data-type="gate" data-id="${gate}" role="button" tabindex="0" aria-label="Ворота ${gate}" aria-pressed="${pressed}"` : '';
     return `<g class="mandala-gate${interactive ? ' bg-interactive' : ''}" data-mandala-gate="${gate}" data-mandala-state="${state}" data-related="${related}" data-longitude-start="${normalizeLongitude(start)}" data-longitude-center="${normalizeLongitude(middle)}"${interaction}>
       ${fills}
-      <path class="mandala-gate-highlight" d="${ring}" fill="${MANDALA_PALETTE.highlight}" fill-opacity=".77" opacity="${related ? '1' : '0'}" pointer-events="none"/>
+      <path class="mandala-gate-highlight" d="${ring}" fill="${MANDALA_PALETTE.highlight}" fill-opacity="${MANDALA_OPACITY.highlight}" opacity="${related ? '1' : '0'}" pointer-events="none"/>
       <path class="mandala-separator" d="${separator}" fill="none" stroke="${MANDALA_PALETTE.rim}" stroke-opacity=".4" stroke-width=".75" pointer-events="none"/>
-      <text class="mandala-number" x="${label[0]}" y="${label[1]}" fill="${MANDALA_PALETTE[state]}" fill-opacity="1" font-size="12" font-weight="${active ? '600' : '400'}" text-anchor="middle" dominant-baseline="central" pointer-events="none">${gate}</text>
+      <text class="mandala-number" x="${label[0]}" y="${label[1]}" fill="${color}" fill-opacity="1" font-size="12" font-weight="${textWeight}" text-anchor="middle" dominant-baseline="central" pointer-events="none">${gate}</text>
       ${interactive ? `<path class="mandala-gate-hit" d="${ring}" fill="transparent" pointer-events="all"/>` : ''}
     </g>`;
   }).join('');

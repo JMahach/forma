@@ -270,7 +270,7 @@ test('the fit control uses a decorative home icon and retains its accessible lab
   const handlers = new Map();
   let resets = 0;
   const element = id => ({ addEventListener(type, handler) { assert.equal(type, 'click'); handlers.set(id, handler); } });
-  attachCameraControls({ zoomIn: element('zoomIn'), zoomOut: element('zoomOut'), fitButton: element('fitButton') }, {
+  attachCameraControls({ fitButton: element('fitButton') }, {
     reset() { resets++; }, zoom() { assert.fail('the home button must reset, not increment the zoom'); },
   });
   handlers.get('fitButton')();

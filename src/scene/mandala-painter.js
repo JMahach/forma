@@ -1,12 +1,9 @@
-import { MANDALA_PALETTE as PALETTE, mandalaPlanetEntries, renderCrossPreview } from './mandala.js';
+import { renderCrossPreview } from './mandala.js';
+import { MANDALA_PALETTE as PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
 import { MANDALA_SECTORS, MANDALA_GEOMETRY, MANDALA_CENTER, mandalaPoint, mandalaPointString } from './geometry/mandala-geometry.js';
 import { setAttribute as attr } from './svg-patches.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const sources = ['design', 'personality'];
-const gateSet = values => new Set((Array.isArray(values) ? values : [])
-  .map(Number).filter(gate => Number.isInteger(gate) && gate >= 1 && gate <= 64));
-
 function element(document, tag, attributes) {
   const node = document.createElementNS(SVG_NS, tag);
   for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
@@ -123,7 +120,7 @@ export function createMandalaPainter(root) {
     if (cache?.wheel !== wheel) cache = capture(wheel);
     if (!cache) return false;
     const document = wheel.ownerDocument;
-    const personality = gateSet(chart?.personality), design = gateSet(chart?.design);
+    const gates = mandalaGateSets(chart);
     const fieldNodes = [], nextFans = new Map(), nextFocus = new Map();
     attr(wheel, 'aria-hidden', interactive ? null : 'true');
     attr(wheel, 'pointer-events', interactive ? null : 'none');
@@ -131,44 +128,43 @@ export function createMandalaPainter(root) {
 
     for (const sector of cache.sectors) {
       const { geometry, node, highlight, separator, number } = sector;
-      const { gate, ring, halfRings, fan, halfFans } = geometry;
-      const state = personality.has(gate) ? design.has(gate) ? 'both' : 'personality' : design.has(gate) ? 'design' : 'empty';
-      const activeSources = state === 'both' ? sources : state === 'empty' ? [] : [state];
-      const related = relatedGates.has(gate);
+      const { gate, ring, fan } = geometry;
+      const paint = mandalaSectorPaint(geometry, gates, selectedGates, relatedGates);
+      const { state, related } = paint;
       const fillNodes = [], nextFills = new Map();
-      activeSources.forEach((source, index) => {
+      paint.sources.forEach(({ source, color, ring: sourceRing, fan: sourceFan }) => {
         const key = `${gate}:${source}`;
         const field = cache.fans.get(key) || element(document, 'path', {
           class: 'mandala-fan', 'data-mandala-gate': gate, 'data-mandala-source': source,
-          fill: PALETTE[source], 'fill-opacity': '.082225',
+          fill: color, 'fill-opacity': MANDALA_OPACITY.fan,
         });
-        attr(field, 'd', state === 'both' ? halfFans[index] : fan);
+        attr(field, 'd', sourceFan);
         fieldNodes.push(field); nextFans.set(key, field);
         let fill = sector.fills.get(source);
         if (!fill) {
           const group = element(document, 'g', { class: 'mandala-source', 'data-mandala-source': source,
-            fill: PALETTE[source], 'pointer-events': 'none' });
-          const path = element(document, 'path', { class: 'mandala-sector-fill', 'fill-opacity': '.25' });
+            fill: color, 'pointer-events': 'none' });
+          const path = element(document, 'path', { class: 'mandala-sector-fill', 'fill-opacity': MANDALA_OPACITY.sector });
           group.appendChild(path); fill = { node: group, path };
         }
-        attr(fill.path, 'd', state === 'both' ? halfRings[index] : ring);
+        attr(fill.path, 'd', sourceRing);
         fillNodes.push(fill.node); nextFills.set(source, fill);
       });
       if (related) {
         const field = cache.focus.get(gate) || element(document, 'path', {
           class: 'mandala-focus-sector', 'data-mandala-gate': gate, d: fan,
-          fill: PALETTE.highlight, 'fill-opacity': '.242',
+          fill: PALETTE.highlight, 'fill-opacity': MANDALA_OPACITY.focus,
         });
         fieldNodes.push(field); nextFocus.set(gate, field);
       }
       attr(node, 'class', `mandala-gate${interactive ? ' bg-interactive' : ''}`);
       attr(node, 'data-mandala-state', state); attr(node, 'data-related', related);
       for (const [name, value] of Object.entries({ 'data-type': 'gate', 'data-id': gate,
-        role: 'button', tabindex: '0', 'aria-label': `Ворота ${gate}`, 'aria-pressed': selectedGates.has(gate) })) {
+        role: 'button', tabindex: '0', 'aria-label': `Ворота ${gate}`, 'aria-pressed': paint.pressed })) {
         attr(node, name, interactive ? value : null);
       }
       attr(highlight, 'opacity', related ? '1' : '0');
-      attr(number, 'fill', PALETTE[state]); attr(number, 'font-weight', state === 'empty' ? '400' : '600');
+      attr(number, 'fill', paint.color); attr(number, 'font-weight', paint.textWeight);
       if (interactive && !sector.hit) sector.hit = element(document, 'path', {
         class: 'mandala-gate-hit', d: ring, fill: 'transparent', 'pointer-events': 'all',
       });
@@ -183,12 +179,12 @@ export function createMandalaPainter(root) {
       const key = `${source}:${planet}`;
       let record = cache.markers.get(key);
       if (!record) {
-        const cross = planet === 'sun' || planet === 'earth';
+        const paint = mandalaPlanetPaint(source, planet);
         const node = element(document, 'g', { class: 'mandala-planet-marker', 'data-mandala-planet': planet, 'data-source': source });
-        const ray = element(document, 'path', { class: `mandala-planet-ray${cross ? ' mandala-cross-axis' : ''}`,
-          fill: 'none', stroke: PALETTE[source], 'stroke-opacity': cross ? '.5313' : '.2783', 'stroke-width': cross ? '.8' : '.55' });
-        const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: cross ? '1.35' : '.85',
-          fill: PALETTE[source], 'fill-opacity': cross ? '1' : '.759' });
+        const ray = element(document, 'path', { class: paint.rayClass,
+          fill: 'none', stroke: paint.color, 'stroke-opacity': paint.rayOpacity, 'stroke-width': paint.rayWidth });
+        const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: paint.radius,
+          fill: paint.color, 'fill-opacity': paint.endpointOpacity });
         node.appendChild(ray); node.appendChild(endpoint); record = { node, ray, endpoint };
       }
       const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);

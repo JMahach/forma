@@ -260,21 +260,20 @@ test('bounded drags preserve selection semantics and a fresh background tap stil
   assert.equal(harness.backgroundTaps, 1);
 });
 
-test('the real zoom button bindings use the same bounded controls', t => {
+test('the Home button resets the same camera used by bounded keyboard and programmatic zoom', t => {
   const harness = cameraHarness(t), home = harness.fitted;
-  const handlers = new Map();
-  const element = id => ({ addEventListener(type, callback) { assert.equal(type, 'click'); handlers.set(id, callback); } });
-  attachCameraControls({ zoomIn: element('zoomIn'), zoomOut: element('zoomOut'), fitButton: element('fitButton') }, harness.controls);
-  handlers.get('zoomOut')();
+  let reset;
+  attachCameraControls({ fitButton: { addEventListener(type, callback) { assert.equal(type, 'click'); reset = callback; } } }, harness.controls);
+  harness.send('keydown', { key: '-' });
   assert.deepEqual(harness.controls.getView(), home);
-  handlers.get('zoomIn')();
+  harness.send('keydown', { key: '+' });
   assert.ok(harness.controls.getView().k > home.k);
   harness.drag(10000, 10000);
   assertCoversHome(harness.controls.getView(), home);
-  for (let i = 0; i < 20; i++) handlers.get('zoomOut')();
+  for (let i = 0; i < 20; i++) harness.send('keydown', { key: '-' });
   assert.deepEqual(harness.controls.getView(), home);
-  handlers.get('zoomIn')();
-  handlers.get('fitButton')();
+  harness.controls.zoom(1.25);
+  reset();
   assert.deepEqual(harness.controls.getView(), home);
 });
 
@@ -314,47 +313,41 @@ test('panning and dragging cursors are enabled only above 100% and are cleared o
   assert.match(styles, /#bodygraph\.is-pannable\.is-dragging\s*\{[^}]*cursor:\s*grabbing\s*;/);
 });
 
-test('the real camera display disables zoom-out at Home and never labels a pannable view as 100%', () => {
-  const elements = new Map([['zoomValue', { textContent: '' }], ['zoomOut', { disabled: false }]]);
-  let repositioned = 0;
+test('camera changes keep Home visibility, hover and auxiliary views in sync across scales', () => {
+  const fitButton = { hidden: false };
+  const calls = { preview: 0, popover: 0, summary: 0 };
   const cameraChanged = createCameraChangeHandler({
-    zoomValue: elements.get('zoomValue'), zoomOut: elements.get('zoomOut'),
-    getHoverPreview: () => ({ clear() {} }),
-    activationPopover: { reposition() { repositioned++; } },
+    fitButton,
+    getHoverPreview: () => ({ clear() { calls.preview++; } }),
+    activationPopover: { reposition() { calls.popover++; } },
+    getSummary: () => ({ layout() { calls.summary++; } }),
   });
   let updates = 0;
   for (const k of [0.65, 0.9, 1.5]) {
     const fitted = { x: 30, y: 70, k };
-    for (const [ratio, label, disabled] of [[1, '100%', true], [1 + 5e-10, '100%', true], [1.0001, '101%', false], [1.25, '125%', false], [2, '200%', false]]) {
+    for (const [ratio, home] of [[1, true], [1 + 5e-10, true], [1.0001, false], [1.25, false], [2, false]]) {
       cameraChanged({ ...fitted, k: k * ratio }, fitted);
-      assert.equal(elements.get('zoomValue').textContent, label);
-      assert.equal(elements.get('zoomOut').disabled, disabled);
+      assert.equal(fitButton.hidden, home);
       updates++;
     }
     cameraChanged(fitted, fitted);
-    assert.equal(elements.get('zoomValue').textContent, '100%');
-    assert.equal(elements.get('zoomOut').disabled, true, 'reset restores the disabled state after zooming');
+    assert.equal(fitButton.hidden, true, 'reset removes the Home button again');
     updates++;
   }
-  assert.equal(repositioned, updates, 'camera changes still reposition an open activation popup');
+  assert.deepEqual(calls, { preview: updates, popover: updates, summary: updates });
 });
 
-test('Home availability and zoom-out limit remain independent after retaining a wider camera', () => {
-  const heading = { hidden: false }, fitButton = { hidden: true }, zoomValue = { textContent: '' }, zoomOut = { disabled: false };
-  const changed = createCameraChangeHandler({ heading, fitButton, zoomValue, zoomOut, activationPopover: { reposition() {} } });
+test('Home availability follows the desired camera after retaining a wider view', () => {
+  const heading = { hidden: false }, fitButton = { hidden: true };
+  const changed = createCameraChangeHandler({ heading, fitButton, activationPopover: { reposition() {} } });
   const fitted = { x: 10, y: 20, k: 1 };
-  changed({ x: 170, y: 220, k: .5 }, fitted, { minScale: .5 });
+  changed({ x: 170, y: 220, k: .5 }, fitted);
   assert.equal(fitButton.hidden, false, 'Home remains available below its desired fit');
   assert.equal(heading.hidden, true);
-  assert.equal(zoomOut.disabled, true, 'the retained navigation floor cannot shrink further');
-  assert.equal(zoomValue.textContent, '50%');
-  changed({ x: 150, y: 180, k: .6 }, fitted, { minScale: .5 });
+  changed({ x: 150, y: 180, k: .6 }, fitted);
   assert.equal(fitButton.hidden, false);
-  assert.equal(zoomOut.disabled, false, 'zoom-out is available even while below desired Home');
-  changed(fitted, fitted, { minScale: .5 });
+  changed(fitted, fitted);
   assert.equal(fitButton.hidden, true, 'the desired Home can coexist with a wider navigation range');
-  assert.equal(zoomOut.disabled, false);
-  changed({ ...fitted, x: fitted.x + 10 }, fitted, { minScale: .5 });
+  changed({ ...fitted, x: fitted.x + 10 }, fitted);
   assert.equal(fitButton.hidden, false, 'a displaced camera at the same scale still offers Home');
-  assert.equal(zoomValue.textContent, '100%', 'the scale label remains a scale rather than a position indicator');
 });
