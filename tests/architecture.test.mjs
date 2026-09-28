@@ -59,6 +59,7 @@ test('all browser modules are reachable from real page entries and explicitly pu
 
 test('domain rules and packet contracts are pure and do not import presentation, storage or Node', () => {
   for (const file of files('src/domain')) { only(file, ['src/domain/', 'shared/day-packets/']); pure(file); }
+  for (const file of files('src/diagnostics')) { only(file, ['src/diagnostics/']); pure(file); }
   for (const file of files('shared/day-packets')) { only(file, ['shared/day-packets/']); pure(file); }
   const decoderDependencies = new Set();
   function visit(file) {

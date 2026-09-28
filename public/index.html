@@ -25,7 +25,7 @@
           <button class="new-chart-button" id="newChartButton"><span aria-hidden="true">＋</span> Новая карта</button>
           <div class="chart-list" id="chartList"></div>
         </section>
-        <div class="sidebar-footer"><p>Карты сохраняются в этом браузере.</p></div>
+        <div class="sidebar-footer"><button type="button" class="performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button><p>Карты сохраняются в этом браузере.</p></div>
       </aside>
       <main class="studio">
         <div class="chart-tools" aria-label="Вид схемы">
@@ -115,6 +115,10 @@
   </dialog>
   <div class="activation-popover" id="activationPopover" role="tooltip" aria-label="Подробности активации" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <aside class="performance-panel" id="performancePanel" aria-label="Счётчик FPS" hidden>
+    <div class="performance-reading"><strong><span data-performance="fps">—</span> <small>FPS</small></strong><button type="button" data-performance-close aria-label="Скрыть счётчик FPS">×</button></div>
+    <dl class="performance-metrics"><div><dt>Пауз &gt; 50 мс</dt><dd data-performance="pauses">—</dd></div><div><dt>Макс. пауза</dt><dd data-performance="max">—</dd></div></dl>
+  </aside>
   <script type="module" src="/src/app.js"></script>
 </body>
 </html>

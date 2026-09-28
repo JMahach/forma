@@ -21,6 +21,7 @@ import { attachChartDayExplorer } from './views/natal-day-controls.js';
 import { attachChartSummary } from './views/chart-summary-panel.js';
 import { createToast } from './ui/toast.js';
 import { attachTelegramGestures } from './ui/telegram-gestures.js';
+import { attachPerformanceMonitor } from './views/performance-monitor.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 const $ = id => document.getElementById(id);
@@ -113,6 +114,13 @@ attachTransitNavigation($('nowButton'), {
   onSelect: graph.changeChart, refresh: transit.refresh,
 });
 attachCameraControls({ fitButton: $('fitButton') }, gestures);
+attachPerformanceMonitor({
+  document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'),
+  ranges: [$('transitTime'), $('chartDayTime')],
+  motionButtons: [$('fitButton'), $('mandalaSwitch'), $('lotusSwitch'), $('transitReference'), $('chartDayReference')],
+  initiallyEnabled: new URLSearchParams(location.search).get('fps') === '1',
+  onToggle: () => library.close(),
+});
 
 function updateChartCaption() {
   const chart = currentChart();
