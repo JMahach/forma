@@ -3,7 +3,10 @@ import { measureCameraFit } from './studio-controller.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function attachGestures(svg, viewport, { onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null, cameraMotion = {} }) {
+export function attachGestures(svg, viewport, { onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null, cameraMotion = {},
+  requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
+  cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
+}) {
   const pointers = new Map();
   let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialAdditive = false;
   const selectionFor = (target, event) => resolveSelection(target, event) || ({ type: target.dataset.type, id: target.dataset.id,
@@ -14,6 +17,41 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
     return { x: p.x, y: p.y };
   };
   let camera;
+  let gestureUpdate = false, pendingPaint = null, paintFrame = null;
+  function paint({ view, fitted, metadata }) {
+    updateCursor(view, metadata.minScale);
+    viewport.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`);
+    onChange(view, fitted, metadata);
+  }
+  function flushPaint() {
+    if (paintFrame !== null) cancelPaint?.(paintFrame.handle);
+    paintFrame = null;
+    const pending = pendingPaint;
+    pendingPaint = null;
+    if (pending) paint(pending);
+  }
+  // Apply every input to the camera immediately. Only the DOM transform and
+  // dependent UI wait for the next frame, avoiding write/read layout cycles
+  // between multiple pointer events. Day timeline rendering is independent.
+  function publish(view, fitted, metadata) {
+    pendingPaint = { view, fitted, metadata };
+    if (!gestureUpdate || !requestPaint) { flushPaint(); return; }
+    if (paintFrame === null) {
+      const frame = { handle: null };
+      paintFrame = frame;
+      frame.handle = requestPaint(() => {
+        if (paintFrame !== frame) return;
+        paintFrame = null;
+        const pending = pendingPaint;
+        pendingPaint = null;
+        if (pending) paint(pending);
+      });
+    }
+  }
+  function updateGesture(callback) {
+    gestureUpdate = true;
+    try { callback(); } finally { gestureUpdate = false; }
+  }
   function updateCursor(view = camera.getView(), minScale = camera.minimumScale()) {
     const pannable = view.k > minScale * (1 + 1e-9);
     svg.classList.toggle('is-pannable', pannable);
@@ -22,11 +60,7 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
   camera = createCamera({ getFrame, getHomeFrame,
     measureFit: frame => measureCameraFit(svg, frame, fitInsets),
     cameraMotion: { reducedMotion: () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false, ...cameraMotion },
-    onChange(view, fitted, metadata) {
-      updateCursor(view, metadata.minScale);
-      viewport.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`);
-      onChange(view, fitted, metadata);
-    },
+    onChange: publish,
   });
   const center = pair => ({ x: (pair[0].x + pair[1].x) / 2, y: (pair[0].y + pair[1].y) / 2 });
   const distance = pair => Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
@@ -53,16 +87,17 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
     pointers.set(event.pointerId, current);
     if (Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) > 6) moved = true;
     if (pointers.size === 1) {
-      if (moved || pinched) camera.pan(current.x - old.x, current.y - old.y);
+      if (moved || pinched) updateGesture(() => camera.pan(current.x - old.x, current.y - old.y));
     } else if (pointers.size === 2) {
       const after = [...pointers.values()];
       const oldCenter = center(before), nextCenter = center(after);
-      camera.zoomAt(oldCenter, distance(after) / Math.max(distance(before), 1),
-        nextCenter.x - oldCenter.x, nextCenter.y - oldCenter.y);
+      updateGesture(() => camera.zoomAt(oldCenter, distance(after) / Math.max(distance(before), 1),
+        nextCenter.x - oldCenter.x, nextCenter.y - oldCenter.y));
     }
   });
   function release(event) {
     if (!pointers.has(event.pointerId)) return;
+    flushPaint();
     const tap = event.type === 'pointerup' && pointers.size === 1 && !moved && !pinched
       && Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) <= 6;
     pointers.delete(event.pointerId);
@@ -75,10 +110,11 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
   }
   svg.addEventListener('pointerup', release);
   svg.addEventListener('pointercancel', release);
-  svg.addEventListener('lostpointercapture', event => { pointers.delete(event.pointerId); updateCursor(); });
+  svg.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete(event.pointerId); updateCursor(); });
   svg.addEventListener('wheel', event => {
     event.preventDefault();
-    camera.zoomAt(point(event), Math.exp(-clamp(event.deltaY, -200, 200) * 0.003));
+    const anchor = point(event);
+    updateGesture(() => camera.zoomAt(anchor, Math.exp(-clamp(event.deltaY, -200, 200) * 0.003)));
   }, { passive: false });
   svg.addEventListener('keydown', event => {
     const target = event.target.closest('[data-type]');
