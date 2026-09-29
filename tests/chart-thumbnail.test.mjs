@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderChartThumbnail } from '../src/views/thumbnail.js';
-import { CHART_SILHOUETTE_PATH, CHART_BACKDROP_BOUNDS } from '../src/scene/geometry/chart-backdrop.js';
+import { LOTUS_SILHOUETTE_PATH, LOTUS_BACKDROP_BOUNDS } from '../src/scene/geometry/lotus-backdrop.js';
 import { CHART_SURFACE_RIM_WIDTH } from '../src/scene/backdrop.js';
 
 const decode = source => decodeURIComponent(source.slice('data:image/svg+xml,'.length));
@@ -26,14 +26,15 @@ test('thumbnail changes with activations, not names, dates or selection', () => 
 test('saved-chart thumbnails reuse the complete silhouette behind the geometry', () => {
   const svg = decode(renderChartThumbnail({ personality: [7, 31], design: [37, 40] }));
   assert.match(svg, /class="chart-backdrop" pointer-events="none"/);
-  assert.ok(svg.includes(`d="${CHART_SILHOUETTE_PATH}"`));
+  assert.ok(svg.includes(`d="${LOTUS_SILHOUETTE_PATH}"`));
   assert.ok(svg.indexOf('class="chart-backdrop"') < svg.indexOf('data-type="center"'));
   assert.match(svg, /id="thumbnail-chart-backdrop"/);
   assert.doesNotMatch(svg, /class="mandala-underlay"/);
   assert.doesNotMatch(svg, /class="bodygraph-gates"|data-type="gate"/);
   const [x, y, width, height] = svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number);
-  const bounds = CHART_BACKDROP_BOUNDS, rim = CHART_SURFACE_RIM_WIDTH / 2;
+  const bounds = LOTUS_BACKDROP_BOUNDS, rim = CHART_SURFACE_RIM_WIDTH / 2;
   assert.ok(x < bounds.x - rim && y < bounds.y - rim);
+  assert.ok(y < 40 - rim, 'the Head center remains fully visible above the seated figure');
   assert.ok(x + width > bounds.x + bounds.width + rim);
   assert.ok(y + height > bounds.y + bounds.height + rim);
 });

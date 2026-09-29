@@ -152,7 +152,7 @@ test('alignment compensates the heading ink bearing and repeated calls do not dr
 
 test('the enlarged and raised column aligns once, independently of camera and mandala travel', () => {
   for (const camera of [new Matrix(), new Matrix(.45, 0, 0, .45, 170, -40), new Matrix(3.2, 0, 0, 3.2, -900, 210)]) {
-    for (const offset of [14, 128, 228]) {
+    for (const offset of [14, 128, 256]) {
       const harness = headingHarness({ camera, columnLocal: new Matrix(1, 0, 0, 1, offset, 0) });
       harness.column.getCTM = () => assert.fail('alignment must use the scaled heading coordinates, not the outer column');
       alignPersonalityHeading(harness.root);

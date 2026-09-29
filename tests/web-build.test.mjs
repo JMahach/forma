@@ -66,6 +66,8 @@ test('real release build preserves sources and produces complete deterministic c
     assert.equal(entry.immutable, entry.file.startsWith('assets/'), `${route}: only versioned assets have immutable caching`);
   }
 
+  assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
+
   const resolve = (reference, parent) => {
     const url = new URL(reference, `https://forma.test/${parent}`);
     assert.equal(url.origin, 'https://forma.test', `${parent} contains no external release dependency`);

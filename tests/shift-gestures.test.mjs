@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 
 function harness(t) {
   const originalPoint = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');

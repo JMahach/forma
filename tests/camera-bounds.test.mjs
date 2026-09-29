@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachCameraControls, createCameraChangeHandler } from '../src/views/camera-controls.js';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { constrainView, zoomAt } from '../src/scene/camera.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 

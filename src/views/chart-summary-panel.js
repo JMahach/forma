@@ -45,8 +45,11 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
   const document = panel.ownerDocument;
   const window = document.defaultView;
   let opened = false, model = null, fingerprint = '', expanded = new Set(['lines']);
-  let currentItems = [], currentFilter = null, lastId = null;
+  let currentItems = [], currentFilter = null, lastId = null, appliedOpen = null;
   function layout() {
+    // This view owns the drawer state; camera and resize callbacks can repeat it.
+    if (appliedOpen === opened) return;
+    appliedOpen = opened;
     // CSS slides the overlay without changing the chart's layout or camera.
     // Keep it rendered for its closing transition, but inaccessible when shut.
     panel.hidden = false;
@@ -75,9 +78,12 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
       const gates = model?.lines.find(row => row.line === line)?.gates[source] || [];
       const pressed = groups.some(group => group.line === line && group.source === source
         && (!group.gates || gates.length === group.gates.length && gates.every(gate => group.gates.includes(gate))));
-      button.setAttribute('aria-pressed', String(pressed));
+      if (button.getAttribute('aria-pressed') !== String(pressed)) button.setAttribute('aria-pressed', String(pressed));
     });
-    content.querySelectorAll('[data-summary-type]').forEach(button => button.setAttribute('aria-pressed', String(currentItems.some(item => item.type === button.dataset.summaryType && String(item.id) === button.dataset.summaryId))));
+    content.querySelectorAll('[data-summary-type]').forEach(button => {
+      const pressed = String(currentItems.some(item => item.type === button.dataset.summaryType && String(item.id) === button.dataset.summaryId));
+      if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+    });
   }
   function render() {
     if (!model) return;

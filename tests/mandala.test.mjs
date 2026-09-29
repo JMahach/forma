@@ -7,6 +7,7 @@ import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGI
 import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 import { renderVariableArrows } from '../src/scene/variable-arrows.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { PLANETS } from '../src/domain/planets.js';
 
 const calculator = readFileSync(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
 const normalize = longitude => ((longitude % 360) + 360) % 360;
@@ -74,6 +75,8 @@ test('one gate can be empty, design-only, personality-only, or activated by both
   for (const [gate, state, sources] of [[1, 'empty', []], [10, 'design', ['design']], [20, 'personality', ['personality']], [34, 'both', ['design', 'personality']]]) {
     const node = wheel.find(item => Number(item.attrs['data-mandala-gate']) === gate);
     assert.equal(node.attrs['data-mandala-state'], state);
+    const number = node.children.find(child => hasClass(child, 'mandala-number'));
+    assert.equal(number.attrs.fill, { empty: '#8e897e', design: '#ae6259', personality: '#4b514e', both: '#696257' }[state], 'gate number retains the intentional source palette');
     const sourceGroups = node.children.filter(child => child.attrs.class === 'mandala-source');
     assert.deepEqual(sourceGroups.map(child => child.attrs['data-mandala-source']), sources);
     assert.equal(collect(node, child => child.attrs.class === 'mandala-sector-fill').length, sources.length);
@@ -189,16 +192,20 @@ const crossFixture = () => ({
   },
 });
 const markers = root => collect(root, node => node.attrs.class === 'mandala-planet-marker');
+const symbols = root => collect(root, node => hasClass(node, 'mandala-planet-symbol'));
+const planetKey = node => `${node.attrs['data-source']}:${node.attrs['data-mandala-planet']}`;
+function assertMatchingSymbols(root) {
+  assert.deepEqual(symbols(root).map(planetKey).sort(), markers(root).map(planetKey).sort(), 'every valid exact marker has one matching glyph, with no stale labels');
+}
 const knownPlanets = ['sun', 'earth', 'moon', 'north_node', 'south_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
 
-test('subdued mandala contrast rises fifteen percent while gate stripes gain extra clarity', () => {
+test('mandala gains clearer source colors, sectors and rays while engraving stays subdued', () => {
   const chart = crossFixture();
   chart.activations.personality.push(entryAt('moon', 45.123));
   const root = parseSvg(renderMandala(chart, { relatedGates: new Set([25]) }));
   for (const [className, attribute, previous] of [
     ['mandala-well', 'fill-opacity', .132],
-    ['mandala-engraving-edge', 'stroke-opacity', .33], ['mandala-fan', 'fill-opacity', .0715],
-    ['mandala-cross-axis', 'stroke-opacity', .462], ['mandala-number', 'fill-opacity', .88],
+    ['mandala-engraving-edge', 'stroke-opacity', .33], ['mandala-number', 'fill-opacity', .88],
   ]) {
     const nodes = collect(root, node => hasClass(node, className));
     assert.ok(nodes.length, className);
@@ -209,18 +216,20 @@ test('subdued mandala contrast rises fifteen percent while gate stripes gain ext
   const separators = collect(root, node => hasClass(node, 'mandala-separator'));
   assert.equal(separators.length, 64);
   assert.ok(separators.every(node => Number(node.attrs['stroke-opacity']) === .4 && Number(node.attrs['stroke-width']) === .75));
-  assert.ok(collect(root, node => hasClass(node, 'mandala-sector-fill')).every(node => Number(node.attrs['fill-opacity']) === .25));
+  assert.ok(collect(root, node => hasClass(node, 'mandala-fan')).every(node => Number(node.attrs['fill-opacity']) === .11));
+  assert.ok(collect(root, node => hasClass(node, 'mandala-sector-fill')).every(node => Number(node.attrs['fill-opacity']) === .30));
   for (const marker of markers(root)) {
     const cross = ['sun', 'earth'].includes(marker.attrs['data-mandala-planet']);
     const ray = collect(marker, node => hasClass(node, 'mandala-planet-ray'))[0];
     const endpoint = collect(marker, node => hasClass(node, 'mandala-planet-endpoint'))[0];
-    assert.equal(Number(ray.attrs['stroke-opacity']), cross ? .5313 : .2783);
+    assert.equal(Number(ray.attrs['stroke-opacity']), cross ? .64 : .4);
     assert.equal(ray.attrs['stroke-width'], cross ? '.8' : '.55');
-    assert.equal(Number(endpoint.attrs['fill-opacity']), cross ? 1 : .759);
+    assert.equal(Number(endpoint.attrs['fill-opacity']), cross ? 1 : .9);
   }
-  for (const [source, color] of [['design', '#b6756a'], ['personality', '#727975']]) {
+  for (const [source, color] of [['design', '#ae6259'], ['personality', '#4b514e']]) {
     const sourceMarkers = markers(root).filter(node => node.attrs['data-source'] === source);
     assert.ok(sourceMarkers.every(node => collect(node, child => hasClass(child, 'mandala-planet-ray'))[0].attrs.stroke === color));
+    assert.ok(collect(root, node => hasClass(node, 'mandala-fan') && node.attrs['data-mandala-source'] === source).every(node => node.attrs.fill === color));
   }
 });
 
@@ -315,6 +324,53 @@ test('all known planet and node activations receive exact rays, not artificial g
   assert.equal(renderMandala(chart), renderMandala(chart), 'exact rendering remains deterministic');
 });
 
+test('all 26 natal or 13 transit planet glyphs occupy a separate decorative outer layer without moving true rays', () => {
+  const natal = {
+    source: 'calculated', personality: [41], design: [41],
+    activations: Object.fromEntries(['design', 'personality'].map(source => [source,
+      PLANETS.map(([planet], index) => entryAt(planet, 302.1 + index * .1)),
+    ])),
+  };
+  for (const chart of [natal, { ...natal, source: 'transit' }]) {
+    const before = structuredClone(chart), root = parseSvg(renderMandala(chart));
+    const layers = root.children.filter(node => hasClass(node, 'mandala-planet-labels'));
+    assert.equal(layers.length, 1, 'one permanent layer holds the glyphs');
+    const layer = layers[0], edgeIndex = root.children.findIndex(node => hasClass(node, 'mandala-engraving-edge'));
+    assert.equal(root.children.indexOf(layer), edgeIndex + 1, 'glyphs paint above the outer engraving');
+    assert.equal(layer.attrs['pointer-events'], 'none');
+    assert.equal(layer.attrs['aria-hidden'], 'true');
+    assert.equal(collect(layer, node => node.attrs['data-type'] || node.attrs.tabindex || node.attrs.role || node.attrs['pointer-events'] === 'all').length, 0);
+    const glyphs = symbols(root), expectedSources = chart.source === 'transit' ? ['personality'] : ['design', 'personality'];
+    assert.equal(glyphs.length, expectedSources.length * PLANETS.length);
+    assertMatchingSymbols(root);
+    for (const source of expectedSources) {
+      const sourceGlyphs = glyphs.filter(node => node.attrs['data-source'] === source);
+      assert.deepEqual(sourceGlyphs.map(node => node.attrs['data-mandala-planet']), PLANETS.map(([planet]) => planet));
+      for (const [planet, glyph] of PLANETS) {
+        const symbol = sourceGlyphs.find(node => node.attrs['data-mandala-planet'] === planet);
+        const entry = chart.activations[source].find(item => item.planet === planet);
+        const mark = markers(root).find(node => planetKey(node) === `${source}:${planet}`);
+        assert.equal(symbol.name, 'text'); assert.equal(symbol.text, glyph);
+        assert.equal(symbol.attrs.fill, source === 'design' ? '#ae6259' : '#4b514e');
+        assert.equal(Number(symbol.attrs['font-size']), 14);
+        assert.equal(Number(symbol.attrs['data-longitude']), entry.longitude, 'glyph retains its astronomical longitude');
+        const labelLongitude = Number(symbol.attrs['data-label-longitude']);
+        assert.ok(Number.isFinite(labelLongitude) && labelLongitude >= 0 && labelLongitude < 360);
+        const x = Number(symbol.attrs.x), y = Number(symbol.attrs.y);
+        assert.ok(Number.isFinite(x) && Number.isFinite(y));
+        assert.ok(Math.hypot(x - MANDALA_GEOMETRY.centerX, y - MANDALA_GEOMETRY.centerY) > MANDALA_GEOMETRY.outerRadius, 'glyph stays outside gate cells');
+        assertExactMarker(mark, entry);
+        const leaders = collect(mark, node => hasClass(node, 'mandala-planet-leader'));
+        assert.equal(leaders.length, 1); assert.equal(leaders[0].name, 'path');
+        assert.ok(leaders[0].attrs.d.startsWith(`M ${mandalaPoint(entry.longitude, MANDALA_GEOMETRY.outerRadius + 1).join(' ')} `), 'leader starts at the true longitude outside the rim');
+        assert.doesNotMatch(leaders[0].attrs.d, /NaN|undefined|Infinity/);
+      }
+    }
+    assert.ok(glyphs.some(node => Number(node.attrs['data-label-longitude']) !== Number(node.attrs['data-longitude'])), 'dense real positions spread labels rather than overwriting one another');
+    assert.deepEqual(chart, before, 'collision layout cannot mutate activation data');
+  }
+});
+
 test('exact rays preserve longitude wraparound, gate boundaries and line boundaries', () => {
   const epsilon = 1e-7;
   const longitudes = [0, epsilon, 360 - epsilon, 302 - epsilon, 302, 302 + epsilon,
@@ -334,6 +390,9 @@ test('manual or gate-only charts never fabricate midpoint rays when exact positi
   for (const chart of [{ personality: [25, 46], design: [10, 15] }, { ...crossFixture(), source: 'manual' }, null]) {
     const root = parseSvg(renderMandala(chart));
     assert.equal(markers(root).length, 0);
+    assert.equal(symbols(root).length, 0);
+    assert.equal(collect(root, node => hasClass(node, 'mandala-planet-leader')).length, 0);
+    assert.equal(collect(root, node => hasClass(node, 'mandala-planet-labels')).length, 1, 'empty charts still keep the reusable decorative layer');
     assert.equal(collect(root, node => hasClass(node, 'mandala-ray') || hasClass(node, 'mandala-planet-ray')).length, 0);
   }
 });
@@ -344,21 +403,26 @@ test('incomplete or invalid saved planet data never produces guessed marker posi
   for (const patch of [{ longitude: null }, { longitude: '0.123' }, { longitude: NaN }, { longitude: Infinity }, { longitude: -1 }, { longitude: 360 }, { gate: 41 }, { gate: '25' }, { line: 6 }, { line: '1' }, { line: null }]) {
     const chart = crossFixture();
     Object.assign(chart.activations.personality[0], patch);
-    const marks = markers(parseSvg(renderMandala(chart)));
+    const root = parseSvg(renderMandala(chart)), marks = markers(root);
+    assertMatchingSymbols(root);
     assert.equal(marks.length, 3);
     assert.equal(marks.some(marker => marker.attrs['data-source'] === 'personality' && marker.attrs['data-mandala-planet'] === 'sun'), false);
   }
   const duplicates = crossFixture();
   duplicates.activations.design.push(duplicates.activations.design[0]);
   assert.equal(markers(parseSvg(renderMandala(duplicates))).length, 3);
+  assertMatchingSymbols(parseSvg(renderMandala(duplicates)));
   const unknown = crossFixture();
   unknown.activations.personality.push(entryAt('unknown', .5), entryAt('<script>', .7), null);
   assert.equal(markers(parseSvg(renderMandala(unknown))).length, 4, 'unknown planet names are never rendered');
   assert.doesNotMatch(renderMandala(unknown), /<script>|unknown/);
+  assertMatchingSymbols(parseSvg(renderMandala(unknown)));
   const malformed = { ...crossFixture(), activations: { personality: {}, design: false } };
   assert.equal(markers(parseSvg(renderMandala(malformed))).length, 0);
+  assert.equal(symbols(parseSvg(renderMandala(malformed))).length, 0);
   const transit = { ...crossFixture(), source: 'transit' };
   const transitMarkers = markers(parseSvg(renderMandala(transit)));
   assert.equal(transitMarkers.length, 2);
+  assertMatchingSymbols(parseSvg(renderMandala(transit)));
   assert.ok(transitMarkers.every(marker => marker.attrs['data-source'] === 'personality'));
 });

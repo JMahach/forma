@@ -25,7 +25,7 @@ function harness(chart = {}, options = {}, { groupRoot = false } = {}) {
 }
 function staticNodes(group) {
   return ['.mandala-gate', '.mandala-gate-highlight', '.mandala-separator', '.mandala-number',
-    '.mandala-well', '.mandala-engraving-light', '.mandala-engraving-edge']
+    '.mandala-well', '.mandala-engraving-light', '.mandala-engraving-edge', '.mandala-planet-labels']
     .flatMap(selector => group.querySelectorAll(selector));
 }
 function assertStaticNodes(group, expected) {
@@ -49,8 +49,26 @@ function chartAt(tick = 0) {
 function rayNodes(group) {
   return new Map(group.querySelectorAll('.mandala-planet-marker').map(marker => [
     `${marker.getAttribute('data-source')}:${marker.getAttribute('data-mandala-planet')}`,
-    [marker, marker.querySelector('.mandala-planet-ray'), marker.querySelector('.mandala-planet-endpoint')],
+    [marker, marker.querySelector('.mandala-planet-ray'), marker.querySelector('.mandala-planet-endpoint'), marker.querySelector('.mandala-planet-leader')],
   ]));
+}
+
+function symbolNodes(group) {
+  return new Map(group.querySelectorAll('.mandala-planet-symbol').map(node => [
+    `${node.getAttribute('data-source')}:${node.getAttribute('data-mandala-planet')}`, node,
+  ]));
+}
+
+function attributeCounts(nodes, callback) {
+  let reads = 0, writes = 0;
+  const restore = nodes.map(node => {
+    const get = node.getAttribute, set = node.setAttribute;
+    node.getAttribute = function(...args) { reads++; return get.apply(this, args); };
+    node.setAttribute = function(...args) { writes++; return set.apply(this, args); };
+    return () => { node.getAttribute = get; node.setAttribute = set; };
+  });
+  try { callback(); } finally { restore.forEach(reset => reset()); }
+  return { reads, writes };
 }
 
 test('persistent mandala matches every gate state, selection and interactive transition without replacing static nodes', () => {
@@ -74,10 +92,11 @@ test('persistent mandala matches every gate state, selection and interactive tra
   assert.equal(h.group.querySelectorAll('[tabindex="0"]').length, 64, 'default interactive mode restores all gate targets');
 });
 
-test('every delivered longitude updates all 26 existing ray nodes even when chart id, gates and lines stay unchanged', () => {
-  const initial = chartAt(), h = harness(initial), originalStatic = staticNodes(h.group), originalRays = rayNodes(h.group);
-  assert.equal(originalRays.size, 26);
-  const delivered = Array.from({ length: 32 }, (_, index) => index + 1), received = [];
+test('every delivered longitude updates all 26 persistent rays, leaders and glyphs even when chart id, gates and lines stay unchanged', () => {
+  const initial = chartAt(), h = harness(initial), originalStatic = staticNodes(h.group), originalRays = rayNodes(h.group), originalSymbols = symbolNodes(h.group);
+  assert.equal(originalRays.size, 26); assert.equal(originalSymbols.size, 26);
+  for (const nodes of originalRays.values()) assert.ok(nodes.every(Boolean), 'each marker has a retained leader as well as ray and endpoint');
+  const delivered = Array.from({ length: 32 }, (_, index) => index + 1), received = [], receivedLabels = [], labelGeometry = [];
   const gateLines = chart => ['design', 'personality'].flatMap(source => chart.activations[source].map(({ gate, line }) => [gate, line]));
   for (const tick of delivered) {
     const chart = chartAt(tick);
@@ -85,15 +104,69 @@ test('every delivered longitude updates all 26 existing ray nodes even when char
     assert.equal(h.painter.update(chart), true);
     const actualRays = rayNodes(h.group);
     for (const [key, originals] of originalRays) originals.forEach((node, index) => assert.equal(actualRays.get(key)[index], node, `${key} part ${index} is reused`));
+    const actualSymbols = symbolNodes(h.group);
+    assert.equal(actualSymbols.size, 26);
+    for (const [key, node] of originalSymbols) {
+      assert.equal(actualSymbols.get(key), node, `${key} text node retains identity`);
+      assert.equal(node.getAttribute('data-longitude'), actualRays.get(key)[0].getAttribute('data-longitude'));
+      assert.ok(Number.isFinite(Number(node.getAttribute('data-label-longitude'))));
+    }
     received.push(Number(actualRays.get('personality:sun')[0].getAttribute('data-longitude')));
+    const sun = actualSymbols.get('personality:sun');
+    receivedLabels.push(Number(sun.getAttribute('data-longitude')));
+    labelGeometry.push([sun.getAttribute('x'), sun.getAttribute('y'), actualRays.get('personality:sun')[3].getAttribute('d')].join('|'));
     assertRendered(h.root, chart);
     assertStaticNodes(h.group, originalStatic);
   }
-  assert.deepEqual(received, delivered.map(tick => chartAt(tick).activations.personality[0].longitude), 'no intermediate input is dropped');
+  const expected = delivered.map(tick => chartAt(tick).activations.personality[0].longitude);
+  assert.deepEqual(received, expected, 'no intermediate ray input is dropped');
+  assert.deepEqual(receivedLabels, expected, 'no intermediate glyph input is dropped');
+  assert.equal(new Set(labelGeometry).size, delivered.length, 'glyph position or leader geometry changes for every delivered minute');
   assertNoSceneParse(h.document);
 });
 
-test('invalid, duplicated, missing and recovered planets match the renderer without leaving stale rays', () => {
+test('longitude-only motion does not revisit sector attributes while every planet decoration still updates', () => {
+  // Use the wheel itself so the fixture's selector traversal is not counted as
+  // painter work. Capture once before observing the steady-state DOM reads.
+  const chart = chartAt(), h = harness(chart, {}, { groupRoot: true });
+  h.painter.update(chart);
+  const subtree = node => [node, ...node.children.flatMap(subtree)];
+  const sectors = [...h.group.querySelectorAll('.mandala-gate').flatMap(subtree),
+    ...h.group.querySelectorAll('.mandala-fan, .mandala-focus-sector')];
+  const planets = [...h.group.querySelectorAll('.mandala-planet-marker').flatMap(subtree),
+    ...h.group.querySelectorAll('.mandala-planet-symbol')];
+  const next = chartAt(1);
+  let planetCounts;
+  const sectorCounts = attributeCounts(sectors, () => {
+    planetCounts = attributeCounts(planets, () => h.painter.update(next));
+  });
+  assert.deepEqual(sectorCounts, { reads: 0, writes: 0 }, 'unchanged sectors need no attribute work');
+  assert.ok(planetCounts.reads > 0 && planetCounts.writes > 0, 'planet geometry still consumes the next input');
+  assertRendered(h.root, next);
+  assert.equal(h.document.parses.length, 0, 'no fragments are reparsed for pure longitude motion');
+});
+
+test('each sector input invalidates independently, including mutations of caller-owned sets and gate arrays', () => {
+  const chart = chartAt(), options = { selectedGates: new Set(), relatedGates: new Set(), interactive: true };
+  const h = harness(chart, options);
+  const check = () => { h.painter.update(chart, options); assertRendered(h.root, chart, options); };
+  check();
+  const gate = chart.personality[0];
+  options.selectedGates.add(gate); check();
+  options.relatedGates.add(gate); check();
+  options.selectedGates.clear(); check();
+  options.relatedGates.clear(); check();
+  options.interactive = false; check();
+  options.interactive = true; check();
+  const sun = chart.activations.personality[0];
+  chart.activations.personality[0] = { ...sun, ...gatePositionAtLongitude(sun.longitude + GATE_WIDTH) };
+  chart.personality.splice(0, chart.personality.length, ...new Set(chart.activations.personality.map(entry => entry.gate)));
+  check();
+  chart.design.splice(0, chart.design.length); check();
+  chart.design.push(gate); check();
+});
+
+test('invalid, duplicated, missing and recovered planets match the renderer without stale rays, leaders or symbols', () => {
   const initial = chartAt(), h = harness(initial), staticBefore = staticNodes(h.group);
   const duplicate = structuredClone(initial);
   duplicate.activations.personality.push({ ...duplicate.activations.personality[0] });
@@ -106,11 +179,17 @@ test('invalid, duplicated, missing and recovered planets match the renderer with
   const missing = structuredClone(initial);
   missing.activations.design = [];
   missing.activations.personality = missing.activations.personality.filter(entry => entry.planet !== 'moon');
-  for (const chart of [duplicate, invalid, missing, { ...initial, source: 'transit' },
-    { ...initial, source: 'manual' }, { ...initial, activations: {} }, initial]) {
+  const variants = [duplicate, invalid, missing, { ...initial, source: 'transit' },
+    { ...initial, source: 'manual' }, { ...initial, activations: {} }, initial];
+  const counts = [25, 21, 12, 13, 0, 0, 26];
+  for (const [index, chart] of variants.entries()) {
     assert.equal(h.painter.update(chart), true);
     assertRendered(h.root, chart);
     assertStaticNodes(h.group, staticBefore);
+    assert.equal(rayNodes(h.group).size, counts[index]);
+    assert.equal(symbolNodes(h.group).size, counts[index]);
+    assert.equal(h.group.querySelectorAll('.mandala-planet-leader').length, counts[index]);
+    assert.deepEqual([...symbolNodes(h.group).keys()].sort(), [...rayNodes(h.group).keys()].sort());
   }
   assert.equal(rayNodes(h.group).size, 26, 'recovery restores every valid source and planet');
   assertNoSceneParse(h.document);
@@ -216,6 +295,22 @@ test('reset recaptures replaced descendants inside the same group, including whe
     assertStaticNodes(h.group, rebuilt);
     assertNoSceneParse(h.document);
   }
+});
+
+test('scene replacement and reset rebuild sector ownership even when the requested snapshot is unchanged', () => {
+  const chart = chartAt(), options = { selectedGates: new Set([25]), relatedGates: new Set([25, 46]) };
+  const h = harness(chart, options);
+  h.painter.update(chart, options);
+  const detached = h.group, detachedSnapshot = significantDOM(detached);
+  h.root.innerHTML = renderMandala({}, { interactive: false });
+  h.painter.update(chart, options);
+  assertRendered(h.root, chart, options);
+  assert.deepEqual(significantDOM(detached), detachedSnapshot, 'new wheel must not reuse the old field nodes');
+  const replacement = mandalaGroup(h.root);
+  replacement.innerHTML = rendered({}, { interactive: false }).group.innerHTML;
+  h.painter.reset();
+  h.painter.update(chart, options);
+  assertRendered(h.root, chart, options);
 });
 
 test('display changes and input snapshots stay caller-owned, including reused mutable option sets', () => {

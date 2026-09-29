@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { isHomeView } from '../src/scene/camera.js';
 import { CHART_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 import { COMPACT_TEST_FRAME, EXPANDED_TEST_FRAME } from './fixtures/camera-frames.js';

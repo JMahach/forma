@@ -13,7 +13,7 @@ const svgElement = (root, name) => root.ownerDocument.createElementNS('http://ww
 const mandalaOptions = (state, options) => ({ interactive: state.interactive && Boolean(options.showMandala),
   selectedGates: state.committedGates, relatedGates: state.relatedGates, pinnedCrosses: options.pinnedCrosses,
   previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null });
-const backdropSignature = (state, options) => JSON.stringify([Boolean(options.showMandala), Boolean(options.showBackdrop), Boolean(options.showLotus), state.prefix]);
+const backdropSignature = (state, options) => JSON.stringify([Boolean(options.showMandala), Boolean(options.showBackdrop), state.prefix]);
 const variableArrows = (chart, options) => options.showActivations && !options.showMandala ? renderVariableArrows(chart) : '';
 
 // One SVG skeleton per view. Switching decorative modes moves existing body
@@ -48,7 +48,7 @@ export function createSceneRenderer(root) {
       drawing.querySelector('.mandala-underlay')?.remove();
       if (options.showMandala || options.showBackdrop) {
         const parent = core || drawing;
-        for (const node of svgNodes(parent, renderChartBackdrop(state.prefix, { mandala: options.showMandala, lotus: options.showLotus }))) parent.insertBefore(node, layers[0]);
+        for (const node of svgNodes(parent, renderChartBackdrop(state.prefix, { mandala: options.showMandala }))) parent.insertBefore(node, layers[0]);
       }
       backdropKey = nextBackdrop;
     }

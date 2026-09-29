@@ -35,6 +35,8 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     ['love.html', 'src/stories/vessel-of-love.js', '/love.css', 'public/love.css'],
   ]) {
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
+    // The local tab has a version label; the published site keeps its name.
+    if (page === 'index.html') html = html.replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
     html = html.replace(`src="/${script}"`, `src="${entryUrl(script)}"`)
       .replace(`href="${style}"`, `href="${entryUrl(styleEntry)}"`)
       .replace(/href="\/favicon\.svg(?:\?[^"]*)?"/, `href="/${iconFile}"`)

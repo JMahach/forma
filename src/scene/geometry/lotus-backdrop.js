@@ -1,7 +1,7 @@
 // A seated figure authored in the same 640 × 820 space as the chart.
-// Only this decorative layer changes pose; all gate anchors and camera bounds
-// remain shared with the ordinary surface. The two inner contours are the
-// spaces between the arms and torso, not additional chart regions.
+// The two inner contours are the spaces between the arms and torso.
+// This decorative surface does not define gate anchors or camera bounds.
+export const LOTUS_BACKDROP_BOUNDS = Object.freeze({ x: 80, y: 80, width: 480, height: 690 });
 
 export const LOTUS_SILHOUETTE_PATH = [
   // The Head center projects above the figure; keep the chart anchors fixed.

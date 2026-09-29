@@ -395,3 +395,81 @@ test('transit refresh with only coordinates changed preserves disclosure and sea
   assert.equal(h.search.value, 'линии');
   assert.equal(h.content.innerHTML, html);
 });
+
+function observeLayoutWrites(h) {
+  const writes = [];
+  for (const [element, property] of [[h.panel, 'hidden'], [h.panel, 'inert'], [h.backdrop, 'hidden']]) {
+    let value = element[property];
+    Object.defineProperty(element, property, {
+      get: () => value,
+      set(next) { writes.push(property); value = next; },
+    });
+  }
+  for (const [element, method] of [[h.panel, 'setAttribute'], [h.switcher, 'setAttribute'], [h.panel.classList, 'toggle']]) {
+    const original = element[method];
+    element[method] = function (...args) { writes.push(args[0]); return original.apply(this, args); };
+  }
+  return writes;
+}
+
+test('camera layout repeats perform no DOM writes, including after resize and close', () => {
+  const h = harness(), writes = observeLayoutWrites(h);
+  for (const opened of [false, true, false]) {
+    if (opened) h.controller.open(); else h.controller.close();
+    writes.length = 0;
+    for (let i = 0; i < 1000; i++) h.controller.layout();
+    assert.equal(writes.length, 0, `unchanged ${opened ? 'open' : 'closed'} drawer does not rewrite DOM`);
+    h.resize(opened ? 390 : 1440);
+    assert.equal(writes.length, 0, 'responsive CSS does not require repeating drawer state writes');
+    assert.equal(h.panel.hidden, false, 'closing transition retains the rendered panel');
+    assert.equal(h.panel.inert, !opened);
+    assert.equal(h.panel.classList.contains('open'), opened);
+    assert.equal(h.backdrop.hidden, !opened);
+  }
+  assert.equal(h.openCalls, 1);
+  assert.equal(h.closeCalls, 1);
+  assert.equal(h.globals.activeElement, h.switcher);
+});
+
+test('selection updates write only changed aria state and preserve focused buttons', () => {
+  const h = harness(), writes = [];
+  const buttons = [...h.content.querySelectorAll('[data-summary-line]'), ...h.content.querySelectorAll('[data-summary-type]')];
+  for (const button of buttons) {
+    const original = button.setAttribute;
+    button.setAttribute = function (name, value) { writes.push({ button, name, value }); original.call(this, name, value); };
+  }
+  const selected = { items: [{ type: 'gate', id: 34 }], filter: { line: 2, source: 'design' } };
+  h.entityButton('gate', 34).focus();
+  for (let i = 0; i < 1000; i++) h.controller.update(chart);
+  assert.equal(writes.length, 0, 'unchanged unselected buttons are not rewritten');
+  h.controller.update(chart, selected);
+  assert.deepEqual(writes.map(write => write.button), [h.lineButton(2, 'design'), h.entityButton('gate', 34)]);
+  writes.length = 0;
+  for (let i = 0; i < 1000; i++) h.controller.update(chart, selected);
+  assert.equal(writes.length, 0, 'unchanged selected buttons are not rewritten');
+  assert.equal(h.globals.activeElement, h.entityButton('gate', 34));
+  h.controller.update(chart);
+  assert.equal(writes.length, 2, 'clearing selection updates both previously selected buttons');
+  assert.ok(writes.every(write => write.name === 'aria-pressed' && write.value === 'false'));
+});
+
+test('changed chart data stays immediate while the summary closes, preserving search and scroll', () => {
+  const h = harness();
+  h.controller.open(); h.searchFor('линии'); h.content.scrollTop = 83; h.controller.close();
+  const next = { ...chart, activations: { ...chart.activations,
+    design: chart.activations.design.map(row => row.planet === 'sun' ? { ...row, line: 4 } : row),
+  } };
+  h.controller.update(next, { filter: { line: 4, source: 'design' } });
+  assert.equal(h.controller.opened, false);
+  assert.equal(h.panel.hidden, false);
+  assert.equal(h.panel.inert, true);
+  assert.equal(h.search.value, 'линии');
+  assert.equal(h.content.scrollTop, 83);
+  assert.equal(h.lineButton(4, 'design').disabled, false);
+  assert.equal(h.lineButton(4, 'design').getAttribute('aria-pressed'), 'true');
+  assert.match(h.overview.innerHTML, /Профиль <strong>1\/4<\/strong>/);
+  assert.equal(h.globals.activeElement, h.switcher);
+  h.controller.open();
+  assert.equal(h.globals.activeElement, h.search);
+  assert.equal(h.lineButton(4, 'design').getAttribute('aria-pressed'), 'true');
+});

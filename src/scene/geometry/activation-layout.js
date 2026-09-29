@@ -1,4 +1,4 @@
-export const ACTIVATION_COLUMN_REVEAL_DISTANCE = 228;
+export const ACTIVATION_COLUMN_REVEAL_DISTANCE = 244;
 
 // Both source blocks grow outward from their inner edge and the heading baseline,
 // then rise together to align their last numbers with gate 41's hover rim.

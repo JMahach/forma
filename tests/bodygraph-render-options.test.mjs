@@ -9,7 +9,7 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const chart = { personality: [20, 34, 7, 31], design: [20, 34, 37, 40] };
 
 test('showGates remains an unknown option in the published drawing contract and cannot remove 64 gates', () => {
-  for (const options of [{}, { interactive: false }, { showMandala: true }, { showBackdrop: true, showLotus: true }]) {
+  for (const options of [{}, { interactive: false }, { showMandala: true }, { showBackdrop: true }]) {
     for (const selection of [null, { type: 'gate', id: 20 }, { type: 'center', id: 'root' }]) {
       const expected = renderBodygraph(chart, selection, options);
       const actual = renderBodygraph(chart, selection, { ...options, showGates: false });

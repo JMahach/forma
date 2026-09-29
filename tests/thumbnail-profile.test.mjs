@@ -67,7 +67,7 @@ test('thumbnail profile excludes interaction-only geometry and is unaffected by 
   const chart = integrationChart(255), expected = renderBodygraph(chart, null, profile);
   assert.equal(renderBodygraph(chart, { type: 'integration', id: 'integration' }, {
     ...profile, interactive: true, showActivations: true, showGates: true, showLabels: true, showMandala: true,
-    showMandalaLayer: true, showLotus: true, dimInactive: true, showBackdrop: false,
+    showMandalaLayer: true, dimInactive: true, showBackdrop: false,
     selections: [{ type: 'channel', id: '20-34' }], previewSelection: { type: 'center', id: 'root' },
   }), expected);
   assert.doesNotMatch(expected, /<style\b|<mask\b|<clipPath\b|tabindex=|role="button"|bg-interactive|bg-focus-shape|bg-center-highlight|bg-channel-highlight|data-highlight-gate|bg-integration-(?:hover|focus|selection)|stroke="transparent"/);

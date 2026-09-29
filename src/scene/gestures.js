@@ -1,26 +1,24 @@
 import { createCamera } from './camera.js';
-import { measureCameraFit } from './studio-controller.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function attachGestures(svg, viewport, { onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null, cameraMotion = {},
+export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null, cameraMotion = {},
   requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
 }) {
   const pointers = new Map();
-  let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialAdditive = false;
+  let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialPoint = null, initialAdditive = false;
   const selectionFor = (target, event) => resolveSelection(target, event) || ({ type: target.dataset.type, id: target.dataset.id,
     ...(target.dataset.activation ? { activation: target.dataset.activation } : {}) });
   const selectTarget = (target, additive = false, event) => onSelect({ ...selectionFor(target, event), ...(additive ? { additive: true } : {}) });
-  const point = (event) => {
-    const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
-    return { x: p.x, y: p.y };
-  };
+  const surface = cameraView.surface;
+  const point = event => cameraView.point(event);
   let camera;
   let gestureUpdate = false, pendingPaint = null, paintFrame = null;
+  let wasPannable, wasDragging;
   function paint({ view, fitted, metadata }) {
     updateCursor(view, metadata.minScale);
-    viewport.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`);
+    cameraView.paint(view);
     onChange(view, fitted, metadata);
   }
   function flushPaint() {
@@ -54,40 +52,52 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
   }
   function updateCursor(view = camera.getView(), minScale = camera.minimumScale()) {
     const pannable = view.k > minScale * (1 + 1e-9);
-    svg.classList.toggle('is-pannable', pannable);
-    svg.classList.toggle('is-dragging', pannable && pointers.size > 0);
+    const dragging = pannable && pointers.size > 0;
+    if (pannable !== wasPannable) { svg.classList.toggle('is-pannable', pannable); wasPannable = pannable; }
+    if (dragging !== wasDragging) { svg.classList.toggle('is-dragging', dragging); wasDragging = dragging; }
   }
   camera = createCamera({ getFrame, getHomeFrame,
-    measureFit: frame => measureCameraFit(svg, frame, fitInsets),
+    measureFit: frame => cameraView.measureFit(frame, fitInsets),
     cameraMotion: { reducedMotion: () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false, ...cameraMotion },
     onChange: publish,
   });
   const center = pair => ({ x: (pair[0].x + pair[1].x) / 2, y: (pair[0].y + pair[1].y) / 2 });
   const distance = pair => Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
-  svg.addEventListener('pointerdown', event => {
+  surface.addEventListener('pointerdown', event => {
     if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const current = point(event);
     if (!pointers.size) {
       moved = false; pinched = false; initialTarget = event.target.closest('[data-type]'); initialClient = { x: event.clientX, y: event.clientY };
+      initialPoint = current;
       // Resolve while the pressed SVG target still exists. Hover redraws may
       // replace it before pointerup; a tap must keep its original exact angle.
       initialSelection = initialTarget ? selectionFor(initialTarget, event) : null;
       // The first press owns both the target and modifier for this gesture.
       initialAdditive = Boolean(event.shiftKey);
     }
-    pointers.set(event.pointerId, point(event));
+    if (event.target === surface) {
+      // The fixed field is not focusable. Suppress its default mouse focus so
+      // it cannot undo the SVG focus after a press on uncovered background.
+      event.preventDefault();
+      svg.focus?.({ preventScroll: true });
+    }
+    pointers.set(event.pointerId, current);
     if (pointers.size > 1) pinched = true;
-    svg.setPointerCapture(event.pointerId);
+    surface.setPointerCapture(event.pointerId);
     updateCursor();
   });
-  svg.addEventListener('pointermove', event => {
+  surface.addEventListener('pointermove', event => {
     if (!pointers.has(event.pointerId)) return;
     const before = [...pointers.values()];
     const old = pointers.get(event.pointerId);
     const current = point(event);
     pointers.set(event.pointerId, current);
+    // The first drag includes travel inside the tap tolerance. Keep the pointer
+    // map current for pinch, which must never replay that one-finger travel.
+    const panOrigin = moved || pinched ? old : initialPoint;
     if (Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) > 6) moved = true;
     if (pointers.size === 1) {
-      if (moved || pinched) updateGesture(() => camera.pan(current.x - old.x, current.y - old.y));
+      if (moved || pinched) updateGesture(() => camera.pan(current.x - panOrigin.x, current.y - panOrigin.y));
     } else if (pointers.size === 2) {
       const after = [...pointers.values()];
       const oldCenter = center(before), nextCenter = center(after);
@@ -101,17 +111,17 @@ export function attachGestures(svg, viewport, { onSelect, onChange, onBackground
     const tap = event.type === 'pointerup' && pointers.size === 1 && !moved && !pinched
       && Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) <= 6;
     pointers.delete(event.pointerId);
-    if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+    if (surface.hasPointerCapture(event.pointerId)) surface.releasePointerCapture(event.pointerId);
     updateCursor();
     if (tap) {
       if (initialSelection) onSelect({ ...initialSelection, ...(initialAdditive ? { additive: true } : {}) });
       else onBackgroundTap();
     }
   }
-  svg.addEventListener('pointerup', release);
-  svg.addEventListener('pointercancel', release);
-  svg.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete(event.pointerId); updateCursor(); });
-  svg.addEventListener('wheel', event => {
+  surface.addEventListener('pointerup', release);
+  surface.addEventListener('pointercancel', release);
+  surface.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete(event.pointerId); updateCursor(); });
+  surface.addEventListener('wheel', event => {
     event.preventDefault();
     const anchor = point(event);
     updateGesture(() => camera.zoomAt(anchor, Math.exp(-clamp(event.deltaY, -200, 200) * 0.003)));

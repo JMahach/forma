@@ -2,8 +2,8 @@ import { attachKnowledge } from './views/knowledge.js';
 import { attachActivationPopover } from './views/activation-popover.js';
 import { attachHoverPreview } from './selection/hover-preview.js';
 import { attachGestures } from './scene/gestures.js';
+import { createCameraView } from './scene/camera-view.js';
 import { attachMandalaMode } from './scene/modes/mandala.js';
-import { attachLotusMode } from './scene/modes/lotus.js';
 import { createMandalaMotion } from './scene/modes/mandala-motion.js';
 import { createStudioLayout } from './scene/studio-controller.js';
 import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from './scene/mandala-preview.js';
@@ -25,7 +25,7 @@ import { attachPerformanceMonitor } from './views/performance-monitor.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 const $ = id => document.getElementById(id);
-attachTelegramGestures([$('bodygraph'), $('transitTime'), $('chartDayTime')]);
+attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('chartDayTime')]);
 const toast = createToast($('toast'));
 const store = createChartStore({ onStorageError: toast });
 const layout = createStudioLayout({ canvas: $('canvasWrap'), drawing: $('bodygraph'), panels: [$('transitControls'), $('chartDayControls')] });
@@ -34,7 +34,7 @@ const headingLayout = createChartHeadingLayout({
   leftControls: document.querySelector('.topbar-leading'), rightControls: document.querySelector('.chart-tools'),
   getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
 });
-let hoverPreview = null, chartSummary = null, mandalaMode = null, lotusMode = null, library = null, transit = null, transitControls = null, chartDay = null;
+let hoverPreview = null, chartSummary = null, mandalaMode = null, library = null, transit = null, transitControls = null, chartDay = null;
 const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
 const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
 const currentChart = () => session.current;
@@ -45,13 +45,13 @@ const graph = createGraphController({
   getActiveElement: () => document.activeElement, activationPopover,
   getShowActivations: () => !(mandalaMode?.enabled && !layout.showMandalaColumns),
   getHoverPreview: () => hoverPreview, getSummary: () => chartSummary, getMandala: () => mandalaMode,
-  getLotus: () => lotusMode,
   onChartChange(id) {
     session.select(id);
     library.close();
   },
 });
-const gestures = attachGestures($('bodygraph'), $('viewport'), {
+const gestures = attachGestures($('bodygraph'), {
+  cameraView: createCameraView({ svg: $('bodygraph'), surface: $('canvasWrap') }),
   fitInsets: () => layout.insets(),
   onSelect: graph.choose,
   getFrame: () => mandalaMode?.frame,
@@ -85,7 +85,6 @@ mandalaMode = attachMandalaMode({
   motion: mandalaMotion, layout,
   beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
 });
-lotusMode = attachLotusMode({ button: $('lotusSwitch'), render: graph.render });
 library = attachChartLibrary({
   document, store, session, toast, onSelect: graph.changeChart, onUpdate: updatePage,
   onEdit: id => birthForm.open(true, id), onNew: () => birthForm.open(),
@@ -115,9 +114,9 @@ attachTransitNavigation($('nowButton'), {
 });
 attachCameraControls({ fitButton: $('fitButton') }, gestures);
 attachPerformanceMonitor({
-  document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'),
+  document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
   ranges: [$('transitTime'), $('chartDayTime')],
-  motionButtons: [$('fitButton'), $('mandalaSwitch'), $('lotusSwitch'), $('transitReference'), $('chartDayReference')],
+  motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('chartDayReference')],
   initiallyEnabled: new URLSearchParams(location.search).get('fps') === '1',
   onToggle: () => library.close(),
 });
@@ -153,6 +152,6 @@ const resizeLayout = () => {
   gestures.resize();
 };
 const layoutObserver = new ResizeObserver(resizeLayout);
-layoutObserver.observe($('bodygraph'));
+layoutObserver.observe($('canvasWrap'));
 if (!store.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
 transit.start();

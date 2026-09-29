@@ -5,7 +5,7 @@ import {
   readCharts, writeCharts, STORAGE_KEY, TRASH_KEY, deleteChart
 } from '../src/data/storage.js';
 import { zoomAt, validView, fitView } from '../src/scene/camera.js';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.js';
 import { DEMO_CHART } from './fixtures/demo-chart.js';

@@ -1,20 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { computeStudioLayout, DAY_CONTROL_HEIGHT } from '../src/scene/layout.js';
+import { computeStudioLayout, DAY_CONTROL_HEIGHT, STUDIO_BOTTOM_INSET } from '../src/scene/layout.js';
 import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from '../src/scene/geometry/mandala-planets.js';
 import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/scene/geometry/mandala-geometry.js';
 import { renderMandala } from '../src/scene/mandala.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { createGraphController } from '../src/scene/updates.js';
 import { createCameraChangeHandler } from '../src/views/camera-controls.js';
-import { ACTIVATION_BLOCK_BOUNDS } from '../src/scene/geometry/activation-layout.js';
+import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activation-layout.js';
 
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-7, `${message}: ${actual} != ${expected}`);
 const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.scale,
@@ -34,12 +35,12 @@ function layoutHarness(phone = true, width = 390, height = 844) {
     resize(width, height) { Object.assign(rect, { width, height }); return layout.refresh(); } };
 }
 
-test('one studio square contains the existing drawing and every ring cursor stroke', () => {
-  const { bounds } = STUDIO_FRAME, { centerX, centerY, outerRadius } = MANDALA_GEOMETRY;
+test('one studio square contains the drawing, ring cursors and full planet lanes', () => {
+  const { bounds } = STUDIO_FRAME, { centerX, centerY } = MANDALA_GEOMETRY;
   assert.equal(bounds.width, bounds.height);
   assert.equal(bounds.x + bounds.width / 2, centerX);
   assert.equal(bounds.y + bounds.height / 2, centerY);
-  assert.equal(bounds.width / 2, (outerRadius + 7) * MANDALA_SCENE_SCALE);
+  assert.equal(bounds.width / 2, MANDALA_PLANET_LAYOUT.visualRadius * MANDALA_SCENE_SCALE);
   assert.ok(DRAWING_BOUNDS.x >= bounds.x && DRAWING_BOUNDS.y >= bounds.y);
   assert.ok(DRAWING_BOUNDS.x + DRAWING_BOUNDS.width <= bounds.x + bounds.width);
   assert.ok(DRAWING_BOUNDS.y + DRAWING_BOUNDS.height <= bounds.y + bounds.height);
@@ -83,6 +84,40 @@ test('both modes and both pointer classes use exactly the same Home and control 
   }
 });
 
+test('outside planet glyphs fit every Home and leave the entire day touch target clear', () => {
+  const entries = ['design', 'personality'].flatMap(source => Array.from({ length: 13 }, (_, index) => ({
+    source, planet: `planet-${index}`, longitude: (index % 4) * 90 + index * .01,
+  })));
+  const glyphs = layoutMandalaPlanets(entries);
+  for (const [width, height, top, bottom] of [
+    [320, 568, 112, 64], [393, 747, 112, 64], [505, 692, 112, 64],
+    [759, 747, 64, 64], [1002, 817, 64, 64], [844, 390, 64, 98], [1440, 900, 64, 64],
+  ]) {
+    const h = layoutHarness(width < 700, width, height);
+    h.style({ scrollPaddingTop: `${top}px`, scrollPaddingBottom: `${bottom}px`, scrollPaddingLeft: '12px' });
+    const layout = h.layout.refresh();
+    for (const glyph of glyphs) {
+      const x = layout.center.x + (glyph.x - MANDALA_GEOMETRY.centerX) * MANDALA_SCENE_SCALE * layout.scale;
+      const y = layout.center.y + (glyph.y - MANDALA_GEOMETRY.centerY) * MANDALA_SCENE_SCALE * layout.scale;
+      const radius = MANDALA_PLANET_LAYOUT.glyphRadius * MANDALA_SCENE_SCALE * layout.scale;
+      assert.ok(x - radius >= layout.area.x, `${width}×${height}: left glyph edge stays inside`);
+      assert.ok(x + radius <= width - layout.area.x, `${width}×${height}: right glyph edge stays inside`);
+      assert.ok(y - radius >= top, `${width}×${height}: the planet clears the top inset`);
+      assert.ok(y + radius <= layout.panel.y - 4 + .001, `${width}×${height}: glyph clears even the transparent slider touch target`);
+      assert.ok(h.layout.mandalaTop <= y - radius + .001, 'caption overlap sees the glyph envelope');
+    }
+    close(h.layout.mandalaTop, layout.center.y - layout.mandalaRadius, 'caption uses full planet extent');
+    assert.ok(h.layout.mandalaTop < layout.center.y - layout.panel.width / 2, 'the ring edge is insufficient for header overlap');
+    if (layout.showMandalaColumns) {
+      // Conservative inner edges of the actual row hit areas after scale and travel.
+      const leftInner = project(layout, { x: -62.68 - ACTIVATION_COLUMN_REVEAL_DISTANCE, y: 49.56, width: 126.004, height: 712.86 });
+      const rightInner = project(layout, { x: 589.32 + ACTIVATION_COLUMN_REVEAL_DISTANCE, y: 49.56, width: 126.004, height: 712.86 });
+      assert.ok(leftInner.x + leftInner.width < layout.center.x - layout.mandalaRadius, 'Design rows never enter the outer glyph lane');
+      assert.ok(rightInner.x > layout.center.x + layout.mandalaRadius, 'Personality rows never enter the outer glyph lane');
+    }
+  }
+});
+
 test('Home preserves its fitted square size within the translated studio area', () => {
   for (const [width, height] of [[393, 852], [700, 1100], [844, 390], [1440, 900], [320, 180], [2400, 220]]) {
     const layout = computeStudioLayout({ width, height, side: 12, top: 64, bottom: 64 });
@@ -103,7 +138,7 @@ test('Home preserves its fitted square size within the translated studio area', 
     'the quarter-gap shift starts from the established asymmetric fitting center');
 });
 
-test('the shared composition moves down by exactly one quarter of its original gap to the day line', () => {
+test('the shared composition moves toward the day line while protecting the full touch target', () => {
   for (const [width, height, top, bottom, side] of [
     [393, 747, 112, 64, 12], [997, 747, 64, 64, 20], [1440, 900, 64, 64, 20],
     [844, 390, 64, 98, 12], [320, 100, 64, 64, 12], [2400, 220, 112, 64, 20],
@@ -113,15 +148,15 @@ test('the shared composition moves down by exactly one quarter of its original g
     const originalHeight = Math.max(1, height - originalTop - originalBottom);
     const originalCenter = originalTop + originalHeight / 2;
     const lineY = layout.panel.y + 26;
-    const visibleRadius = MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE * layout.scale;
+    const visibleRadius = MANDALA_PLANET_LAYOUT.visualRadius * MANDALA_SCENE_SCALE * layout.scale;
     const originalGap = lineY - originalCenter - visibleRadius;
-    const expectedShift = Math.max(0, originalGap / 4);
-    close(layout.insets.offsetY, expectedShift, 'translation equals one quarter of the previous clear gap');
+    const expectedShift = Math.max(0, Math.min(originalGap / 4, layout.panel.y - 4 - originalCenter - visibleRadius));
+    close(layout.insets.offsetY, expectedShift, 'translation is a quarter-gap shift capped by the control clearance');
     close(layout.center.y, originalCenter + expectedShift, 'the whole scene has one shifted center');
     close(layout.area.y, originalTop + expectedShift, 'the fit area is translated with the scene');
     close(layout.area.height, originalHeight, 'the fitting height is not reduced');
     close(layout.scale, Math.min(width - 2 * side, originalHeight) / STUDIO_FRAME.bounds.width, 'the established scale is unchanged');
-    close(lineY - layout.center.y - visibleRadius, originalGap * .75, 'three quarters of the original gap remain');
+    assert.ok(lineY - layout.center.y - visibleRadius >= originalGap * .75 - 1e-7, 'at least three quarters of the original gap remain');
     assert.equal(layout.insets.top, originalTop);
     assert.equal(layout.insets.bottom, originalBottom);
     assert.ok(layout.insets.offsetY >= 0);
@@ -133,18 +168,20 @@ test('columns follow real side room and do not reduce scale when crossing their 
     const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
     assert.equal(layout.showMandalaColumns, expected, `${width}×${height}`);
     if (!expected) continue;
-    // Enlarged row hit areas and fixing marks after the unchanged 228-unit journey.
+    // Enlarged row hit areas and fixing marks after the shared outward journey.
     // Explicit painted coordinates also check that the shared envelope is conservative.
-    for (const box of [{ x: -290.68, y: 49.56, width: 126.004, height: 712.86 },
-      { x: 817.32, y: 49.56, width: 126.004, height: 712.86 }]) {
+    for (const box of [{ x: -62.68 - ACTIVATION_COLUMN_REVEAL_DISTANCE, y: 49.56, width: 126.004, height: 712.86 },
+      { x: 589.32 + ACTIVATION_COLUMN_REVEAL_DISTANCE, y: 49.56, width: 126.004, height: 712.86 }]) {
       const column = project(layout, box), area = layout.area;
       assert.ok(column.x >= area.x && column.y >= area.y);
       assert.ok(column.x + column.width <= area.x + area.width);
       assert.ok(column.y + column.height <= area.y + area.height);
     }
   }
-  const before = computeStudioLayout({ width: 964, height: 800, top: 64, bottom: 64 });
-  const after = computeStudioLayout({ width: 965, height: 800, top: 64, bottom: 64 });
+  let width = 700;
+  while (!computeStudioLayout({ width, height: 800, top: 64, bottom: 64 }).showMandalaColumns) width++;
+  const before = computeStudioLayout({ width: width - 1, height: 800, top: 64, bottom: 64 });
+  const after = computeStudioLayout({ width, height: 800, top: 64, bottom: 64 });
   assert.equal(before.showMandalaColumns, false);
   assert.equal(after.showMandalaColumns, true);
   assert.equal(before.scale, after.scale);
@@ -183,15 +220,15 @@ test('the day timeline stays below the chart and spans the visible ring at every
       close(panel.x + panel.width / 2, width / 2, 'timeline center');
       close(panel.x, ring.x, 'left endpoint matches the visible ring');
       close(panel.x + panel.width, ring.x + ring.width, 'right endpoint matches the visible ring');
-      assert.ok(panel.width < 2 * layout.radius, 'the cursor clearance is not part of the visible timeline width');
-      close(panel.y, height - DAY_CONTROL_HEIGHT - Math.max(0, layout.insets.bottom - 64), 'timeline sits at the bottom with its existing safe-area allowance');
+      assert.ok(panel.width < 2 * layout.radius, 'the outside planet lanes are not part of the visible timeline width');
+      close(panel.y, height - DAY_CONTROL_HEIGHT - Math.max(0, layout.insets.bottom - STUDIO_BOTTOM_INSET), 'timeline sits at the bottom with its existing safe-area allowance');
       assert.ok(panel.y + 13 >= layout.center.y + layout.radius - 1e-7, 'the ring and outer cursor clear the visible backing even when the transparent hit area overlaps');
       assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 1e-7);
       assert.ok(panel.y + panel.height <= height + 1e-7);
       const boxes = [{ ...ACTIVATION_BLOCK_BOUNDS,
         x: ACTIVATION_BLOCK_BOUNDS.x - 14, width: ACTIVATION_BLOCK_BOUNDS.width + 28 }];
       if (layout.showMandalaColumns) boxes.push({ ...ACTIVATION_BLOCK_BOUNDS,
-        x: ACTIVATION_BLOCK_BOUNDS.x - 228, width: ACTIVATION_BLOCK_BOUNDS.width + 456 });
+        x: ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE, width: ACTIVATION_BLOCK_BOUNDS.width + 2 * ACTIVATION_COLUMN_REVEAL_DISTANCE });
       for (const box of boxes) {
         const column = project(layout, box);
         assert.ok(column.y + column.height <= panel.y + 13 + 1e-7, 'no calculation column in either mode is covered by the visible backing');
@@ -199,7 +236,7 @@ test('the day timeline stays below the chart and spans the visible ring at every
       if (previous) {
         assert.deepEqual({ ...layout.insets, offsetY: 0 }, { ...previous.insets, offsetY: 0 });
         close(layout.center.y - layout.insets.offsetY, previous.center.y - previous.insets.offsetY, 'the original vertical fitting center remains unchanged');
-        assert.ok(Math.abs(layout.insets.offsetY - previous.insets.offsetY) <= .5 + 1e-7, 'the quarter-gap shift changes smoothly through width and column thresholds');
+        assert.ok(Math.abs(layout.insets.offsetY - previous.insets.offsetY) <= 2 + 1e-7, 'the quarter-gap shift and its touch-clearance cap change continuously through width and column thresholds');
         // A four-pixel viewport change can grow a width-limited circle by at most four pixels.
         assert.ok(Math.abs(layout.scale - previous.scale) <= 4 / STUDIO_FRAME.bounds.width + 1e-10);
       }
@@ -373,6 +410,33 @@ test('application rerenders geometric column changes without imposing a phone-on
   assert.doesNotMatch(app, /showMandalaHeading/, 'camera controls do not own the caption overlap policy');
   assert.match(app, /attachMandalaMode\(\{[\s\S]*?motion: mandalaMotion, layout,/);
   assert.match(app, /mandalaColumns !== layout\.showMandalaColumns[\s\S]*?graph\.render\(\)[\s\S]*?gestures\.resize\(\)/);
-  assert.match(app, /layoutObserver\.observe\(\$\('bodygraph'\)\)/);
+  assert.match(app, /layoutObserver\.observe\(\$\('canvasWrap'\)\)/);
   assert.doesNotMatch(app, /\[\$\('bodygraph'\), \$\('transitControls'\), \$\('chartDayControls'\)\]/, 'day panel content is not a camera resize source');
+});
+
+test('narrow Home uses a four-pixel outer planet margin without shrinking either mode', () => {
+  const planetRadius = MANDALA_PLANET_LAYOUT.visualRadius * MANDALA_SCENE_SCALE;
+  for (const width of [320, 375, 390, 393, 505]) {
+    const layout = computeStudioLayout({ width, height: 844, side: 4, top: 112, bottom: 52 });
+    close(layout.center.x - planetRadius * layout.scale, 4, `${width}px left outer planet edge`);
+    close(width - layout.center.x - planetRadius * layout.scale, 4, `${width}px right outer planet edge`);
+    assert.ok(layout.center.y + planetRadius * layout.scale <= layout.panel.y - 4);
+  }
+});
+
+test('compact exterior spacing increases Home on phones and desktop while protecting the heading and day target', () => {
+  // Previous live geometry: 1006.67 SVG units with duplicated outer clearance,
+  // 8–20px side gutters and a 64px footer reserve. Compare at equal viewports.
+  const previousDiameter = 1006.6666666666666;
+  for (const [width, height, oldSide, oldTop, top] of [
+    [390, 844, 8, 112, 112], [505, 692, 10.1, 112, 112],
+    [1002, 817, 20, 64, 74], [1228, 705, 20, 64, 74], [1440, 900, 20, 64, 74],
+  ]) {
+    const previousScale = Math.min(width - 2 * oldSide, height - oldTop - 64) / previousDiameter;
+    const layout = computeStudioLayout({ width, height, side: 4, top, bottom: 52 });
+    assert.ok(layout.scale > previousScale, `${width}×${height}: the body must grow`);
+    assert.ok(layout.center.y - layout.mandalaRadius >= top - 1e-7, 'the heading keeps its protected area');
+    assert.ok(layout.center.y + layout.mandalaRadius <= layout.panel.y - 4 + 1e-7, 'full slider hit area has a four-pixel gap');
+    if (width >= 1000) close(layout.panel.y - layout.center.y - layout.mandalaRadius, 4, 'height-limited Home uses available space');
+  }
 });

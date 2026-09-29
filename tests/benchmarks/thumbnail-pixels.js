@@ -1,15 +1,13 @@
 import { renderBodygraph } from '/src/scene/bodygraph-svg.js';
 import { renderChartThumbnail } from '/src/views/thumbnail.js';
-import { CHART_SURFACE_RIM_WIDTH } from '/src/scene/backdrop.js';
-import { CHART_BACKDROP_BOUNDS } from '/src/scene/geometry/chart-backdrop.js';
 import { DEMO_CHART } from '/fixtures/demo-chart.js';
-import { renderChartThumbnail as publishedThumbnail } from '/baseline/src/charts/chart-thumbnail.js';
 
 const profileOptions = { profile: 'thumbnail', idPrefix: 'thumbnail' };
 const width = 44, height = 68;
-const inset = CHART_SURFACE_RIM_WIDTH / 2 + 1;
-const { x, y, width: bodyWidth, height: bodyHeight } = CHART_BACKDROP_BOUNDS;
-const viewBox = [x - inset, y - inset, bodyWidth + inset * 2, bodyHeight + inset * 2].join(' ');
+const viewBox = decodeURIComponent(renderChartThumbnail({})).match(/viewBox="([^"]+)"/)[1];
+const referenceThumbnail = chart => source(renderBodygraph(chart, null, {
+  interactive: false, showActivations: false, showLabels: false, showBackdrop: true, idPrefix: 'thumbnail',
+}) + '<style>.bodygraph-gates { display: none; }</style>');
 const report = document.getElementById('report'), status = document.getElementById('status');
 const verify = document.getElementById('verify'), stop = document.getElementById('stop');
 let stopped = false, running = false;
@@ -61,7 +59,7 @@ function compare(expected, actual) {
 }
 function showExample(label, rasters, differences) {
   const figure = document.createElement('figure'), caption = document.createElement('figcaption');
-  caption.textContent = `${label}: прежняя / профиль / actual; различаются ${differences[0].differentPixels} / ${differences[1].differentPixels} пикселей`;
+  caption.textContent = `${label}: полная сцена / профиль / миниатюра; различаются ${differences[0].differentPixels} / ${differences[1].differentPixels} пикселей`;
   figure.append(caption, ...rasters.map(item => item.canvas));
   document.getElementById('examples').append(figure);
 }
@@ -72,13 +70,13 @@ export async function verifyThumbnailPixels() {
   document.getElementById('examples').replaceChildren();
   const started = performance.now();
   const result = { kind: 'thumbnail-pixels', status: 'running', width, height, tolerance: 0, channels: 'RGBA',
-    reference: 'published renderChartThumbnail (read-only baseline)',
+    reference: 'full scene renderer with gates hidden',
     compared: 0, expectedCases: 261, profileFailures: 0, actualFailures: 0, emptyPaintFailures: 0, examples: [] };
   try {
     for (const [label, chart] of cases()) {
       if (stopped) break;
       const [reference, profile, actual] = await Promise.all([
-        raster(publishedThumbnail(chart)),
+        raster(referenceThumbnail(chart)),
         raster(source(renderBodygraph(chart, null, profileOptions))),
         raster(renderChartThumbnail(chart)),
       ]);

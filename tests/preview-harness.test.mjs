@@ -80,7 +80,7 @@ function browserHarness(t, config) {
       classList: { contains: value => classes.has(value), toggle(value, enabled) { if (enabled) classes.add(value); else classes.delete(value); } },
     };
   };
-  const nodes = new Map(['preview', 'viewport', 'activationPopover', ...config.controls.map(control => control.id)].map(id => [id, surface()]));
+  const nodes = new Map(['previewSurface', 'preview', 'viewport', 'activationPopover', ...config.controls.map(control => control.id)].map(id => [id, surface()]));
   const svg = nodes.get('preview'), viewport = nodes.get('viewport'), panel = nodes.get('activationPopover'), anchors = new Map();
   panel.id = 'activationPopover';
   const target = dataset => ({ ...surface(), dataset, closest() { return this; }, dispatchEvent(event) { svg.send(event.type, { ...event, target: this }); } });
@@ -92,6 +92,10 @@ function browserHarness(t, config) {
   svg.contains = node => [...anchors.values()].includes(node);
   svg.getScreenCTM = () => ({ inverse: () => ({}) });
   svg.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 900, width: 1000, height: 900 });
+  nodes.get('previewSurface').getBoundingClientRect = svg.getBoundingClientRect;
+  const [x, y, width, height] = config.viewBox.split(' ').map(Number);
+  svg.viewBox = { baseVal: { x, y, width, height } };
+  svg.preserveAspectRatio = { baseVal: { align: 6, meetOrSlice: 1 } };
   const document = { ...surface(), activeElement: null, getElementById: id => nodes.get(id) };
   const window = { ...surface(), innerWidth: 1000, innerHeight: 900 };
   const DOMPoint = class { constructor(x, y) { this.x = x; this.y = y; } matrixTransform() { return this; } };
