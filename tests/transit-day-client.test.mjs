@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
 import { encodeTransitDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
+import { createLiveTransit } from '../src/state/live-transit.js';
 
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
@@ -69,4 +70,58 @@ test('day requests have a deadline instead of accumulating indefinitely', async 
   t.mock.timers.tick(100);
   await pending;
   assert.equal(signal.aborted, true);
+});
+
+test('the startup request shares the pending request and decoded cache with the live view', async () => {
+  for (const completeBeforeAttach of [false, true]) {
+    let finish, requests = 0;
+    const client = createTransitDayClient({ initialDate: '2026-09-24', fetch: () => {
+      requests++;
+      return new Promise(resolve => { finish = () => resolve(response('2026-09-24')); });
+    } });
+    assert.equal(requests, 1, 'construction starts the UTC packet before UI attachment');
+    if (completeBeforeAttach) { finish(); await new Promise(resolve => setImmediate(resolve)); }
+    const first = client.getDay('2026-09-24'), concurrent = client.getDay('2026-09-24');
+    if (!completeBeforeAttach) finish();
+    const [a, b] = await Promise.all([first, concurrent]);
+    assert.equal(a, b);
+    assert.equal(await client.getDay('2026-09-24'), a);
+    assert.equal(requests, 1, 'handoff uses one network request in both timing orders');
+  }
+});
+
+test('an early failure reaches the existing live retry policy without an automatic duplicate request', async () => {
+  const requests = [];
+  const client = createTransitDayClient({ initialDate: '2026-09-24', fetch: async url => {
+    const date = new URL(url, 'https://example.test').searchParams.get('date');
+    requests.push(date);
+    return requests.length === 1 ? { ok: false, json: async () => ({ message: 'День ещё не готов' }) } : response(date);
+  } });
+  // The rejection must remain handled even if loading the UI takes another task.
+  await new Promise(resolve => setImmediate(resolve));
+  const live = createLiveTransit({ dayClient: client,
+    now: () => Date.parse('2026-09-24T12:00:20Z'), timeZone: () => 'Europe/Moscow' });
+  await live.refresh(true);
+  assert.equal(live.state.status, 'error');
+  assert.equal(live.state.error, 'День ещё не готов');
+  assert.deepEqual(requests, ['2026-09-24', '2026-09-23'], 'current UTC request precedes the local-day edge');
+  await live.refresh();
+  assert.equal(requests.length, 2, 'automatic retry observes the original backoff');
+  await live.refresh(true);
+  assert.equal(live.state.status, 'ready');
+  assert.deepEqual(requests, ['2026-09-24', '2026-09-23', '2026-09-24'], 'explicit retry reuses the successful edge');
+});
+
+test('a changed UTC date discards the one-shot startup result instead of retaining an obsolete failure', async () => {
+  const requests = [];
+  const client = createTransitDayClient({ initialDate: '2026-09-24', fetch: async url => {
+    const date = new URL(url, 'https://example.test').searchParams.get('date');
+    requests.push(date);
+    if (requests.length === 1) throw new Error('Offline during startup');
+    return response(date);
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await client.getDay('2026-09-25')).date, '2026-09-25');
+  assert.equal((await client.getDay('2026-09-24')).date, '2026-09-24');
+  assert.deepEqual(requests, ['2026-09-24', '2026-09-25', '2026-09-24']);
 });

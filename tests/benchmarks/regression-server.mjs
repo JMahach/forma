@@ -19,7 +19,7 @@ function page(kind) {
 
 export async function regressionResource(pathname) {
   const baselineRoot = process.env.FORMA_BASELINE_ROOT;
-  if (baselineRoot && pathname !== '/baseline/src/app.js' && /^\/baseline\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname)) {
+  if (baselineRoot && !['/baseline/src/app.js', '/baseline/src/startup.js'].includes(pathname) && /^\/baseline\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname)) {
     try { return { status: 200, type: 'text/javascript; charset=utf-8', body: await readFile(path.join(baselineRoot, pathname.slice('/baseline/'.length)), 'utf8') }; }
     catch (error) { if (error.code === 'ENOENT') return { status: 404, body: 'Not found' }; throw error; }
   }

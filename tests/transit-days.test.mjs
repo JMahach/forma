@@ -345,7 +345,7 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
 });
 
 
-test('disk fingerprint is stable and tracks the relocated calculation and format owners', async t => {
+test('disk fingerprint follows calculation bytes, not deployment timestamps or interface changes', async t => {
   const sourceRoot = await directory(t);
   const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py',
     'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
@@ -364,4 +364,39 @@ test('disk fingerprint is stable and tracks the relocated calculation and format
     await fs.writeFile(name, content);
     assert.equal(await transitCacheFingerprint(sourceRoot), baseline, file);
   }
+  const ephemerides = ['data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1'];
+  const archivedTime = new Date('2026-09-30T12:00:00Z');
+  for (const file of ephemerides) {
+    const name = path.join(sourceRoot, file), content = await fs.readFile(name);
+    await fs.utimes(name, archivedTime, archivedTime);
+    assert.equal(await transitCacheFingerprint(sourceRoot), baseline, `${file}: identical bytes after deployment`);
+    const changed = Buffer.from(content); changed[0] ^= 1;
+    await fs.writeFile(name, changed);
+    await fs.utimes(name, archivedTime, archivedTime);
+    assert.equal((await fs.stat(name)).size, content.length);
+    assert.equal((await fs.stat(name)).mtimeMs, archivedTime.getTime());
+    assert.notEqual(await transitCacheFingerprint(sourceRoot), baseline, `${file}: changed bytes with identical metadata`);
+    await fs.writeFile(name, content);
+    assert.equal(await transitCacheFingerprint(sourceRoot), baseline);
+  }
+
+  const cacheDir = await directory(t);
+  let calculations = 0;
+  const options = { root: sourceRoot, cacheDir, generateDay: async date => { calculations++; return makeDay(date); } };
+  const first = await createTransitDays(options);
+  const original = await first.get('2026-09-24'); await first.close();
+  for (const file of [...inputs, ...ephemerides]) await fs.utimes(path.join(sourceRoot, file), archivedTime, archivedTime);
+  await fs.mkdir(path.join(sourceRoot, 'public'));
+  await fs.writeFile(path.join(sourceRoot, 'public/index.html'), 'new interface');
+  const redeployed = await createTransitDays(options);
+  const reused = await redeployed.get('2026-09-24'); await redeployed.close();
+  assert.equal(calculations, 1, 'an interface-only deployment reuses the existing disk packet');
+  assert.deepEqual(reused.bytes, original.bytes);
+
+  const name = path.join(sourceRoot, ephemerides[0]), changed = await fs.readFile(name);
+  changed[0] ^= 1;
+  await fs.writeFile(name, changed); await fs.utimes(name, archivedTime, archivedTime);
+  const changedData = await createTransitDays(options);
+  await changedData.get('2026-09-24'); await changedData.close();
+  assert.equal(calculations, 2, 'real ephemeris changes invalidate the disk packet');
 });

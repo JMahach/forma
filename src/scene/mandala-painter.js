@@ -76,7 +76,7 @@ export function createMandalaPainter(root) {
     });
     if (sectors.some(sector => !sector.highlight || !sector.separator || !sector.number)) return null;
     return {
-      wheel, field, edge, labels, sectors, fans, focus, sectorKey: null, sectorFieldNodes: [],
+      wheel, field, edge, labels, sectors, fans, focus, sectorKey: null, sectorFieldNodes: [], planetEntries: null, planetFieldNodes: [],
       symbols: new Map([...labels.querySelectorAll('.mandala-planet-symbol')].map(node =>
         [`${node.getAttribute('data-source')}:${node.getAttribute('data-mandala-planet')}`, node])),
       markers: new Map([...field.querySelectorAll('.mandala-planet-marker')].map(node =>
@@ -186,44 +186,55 @@ export function createMandalaPainter(root) {
       cache.sectorFieldNodes = [...fieldNodes];
     }
 
-    // Rays, leaders and collision-aware labels still receive every exact input.
-    const markers = new Map(), symbols = new Map(), labelNodes = [];
-    for (const { source, planet, longitude, x: labelX, y: labelY, labelLongitude, leaderPath } of layoutMandalaPlanets(mandalaPlanetEntries(chart))) {
-      const key = `${source}:${planet}`;
-      const paint = mandalaPlanetPaint(source, planet);
-      let record = cache.markers.get(key);
-      if (!record) {
-        const node = element(document, 'g', { class: 'mandala-planet-marker', 'data-mandala-planet': planet, 'data-source': source });
-        const ray = element(document, 'path', { class: paint.rayClass,
-          fill: 'none', stroke: paint.color, 'stroke-opacity': paint.rayOpacity, 'stroke-width': paint.rayWidth });
-        const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: paint.radius,
-          fill: paint.color, 'fill-opacity': paint.endpointOpacity });
-        const leader = element(document, 'path', { class: 'mandala-planet-leader', fill: 'none',
-          stroke: paint.color, 'stroke-opacity': paint.leaderOpacity, 'stroke-width': paint.leaderWidth });
-        node.appendChild(ray); node.appendChild(endpoint); node.appendChild(leader); record = { node, ray, endpoint, leader };
-      }
-      const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
-      attr(record.node, 'data-longitude', longitude);
-      attr(record.ray, 'd', `M ${MANDALA_CENTER} L ${x} ${y}`);
-      attr(record.endpoint, 'cx', x); attr(record.endpoint, 'cy', y);
-      attr(record.leader, 'd', leaderPath);
-      fieldNodes.push(record.node); markers.set(key, record);
+    // Only exact, validated source/planet/longitude values affect this layout.
+    // These fresh entries are owned snapshots, even if the chart mutates in place.
+    const planetEntries = mandalaPlanetEntries(chart);
+    const refreshPlanets = !cache.planetEntries || planetEntries.length !== cache.planetEntries.length
+      || planetEntries.some((entry, index) => {
+        const previous = cache.planetEntries[index];
+        return entry.source !== previous.source || entry.planet !== previous.planet || entry.longitude !== previous.longitude;
+      });
+    if (refreshPlanets) {
+      const markers = new Map(), symbols = new Map(), labelNodes = [], planetFieldNodes = [];
+      for (const { source, planet, longitude, x: labelX, y: labelY, labelLongitude, leaderPath } of layoutMandalaPlanets(planetEntries)) {
+        const key = `${source}:${planet}`;
+        const paint = mandalaPlanetPaint(source, planet);
+        let record = cache.markers.get(key);
+        if (!record) {
+          const node = element(document, 'g', { class: 'mandala-planet-marker', 'data-mandala-planet': planet, 'data-source': source });
+          const ray = element(document, 'path', { class: paint.rayClass,
+            fill: 'none', stroke: paint.color, 'stroke-opacity': paint.rayOpacity, 'stroke-width': paint.rayWidth });
+          const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: paint.radius,
+            fill: paint.color, 'fill-opacity': paint.endpointOpacity });
+          const leader = element(document, 'path', { class: 'mandala-planet-leader', fill: 'none',
+            stroke: paint.color, 'stroke-opacity': paint.leaderOpacity, 'stroke-width': paint.leaderWidth });
+          node.appendChild(ray); node.appendChild(endpoint); node.appendChild(leader); record = { node, ray, endpoint, leader };
+        }
+        const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
+        attr(record.node, 'data-longitude', longitude);
+        attr(record.ray, 'd', `M ${MANDALA_CENTER} L ${x} ${y}`);
+        attr(record.endpoint, 'cx', x); attr(record.endpoint, 'cy', y);
+        attr(record.leader, 'd', leaderPath);
+        planetFieldNodes.push(record.node); markers.set(key, record);
 
-      let symbol = cache.symbols.get(key);
-      if (!symbol) {
-        symbol = element(document, 'text', { class: 'mandala-planet-symbol', 'data-mandala-planet': planet, 'data-source': source,
-          fill: paint.color, 'font-size': MANDALA_PLANET_LAYOUT.fontSize, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-          stroke: paint.symbolOutline, 'stroke-width': paint.symbolOutlineWidth, 'stroke-linejoin': 'round', 'paint-order': 'stroke' });
-        symbol.textContent = paint.symbol;
+        let symbol = cache.symbols.get(key);
+        if (!symbol) {
+          symbol = element(document, 'text', { class: 'mandala-planet-symbol', 'data-mandala-planet': planet, 'data-source': source,
+            fill: paint.color, 'font-size': MANDALA_PLANET_LAYOUT.fontSize, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+            stroke: paint.symbolOutline, 'stroke-width': paint.symbolOutlineWidth, 'stroke-linejoin': 'round', 'paint-order': 'stroke' });
+          symbol.textContent = paint.symbol;
+        }
+        attr(symbol, 'data-longitude', longitude); attr(symbol, 'data-label-longitude', labelLongitude);
+        attr(symbol, 'x', labelX); attr(symbol, 'y', labelY);
+        labelNodes.push(symbol); symbols.set(key, symbol);
       }
-      attr(symbol, 'data-longitude', longitude); attr(symbol, 'data-label-longitude', labelLongitude);
-      attr(symbol, 'x', labelX); attr(symbol, 'y', labelY);
-      labelNodes.push(symbol); symbols.set(key, symbol);
+      children(cache.labels, labelNodes);
+      cache.markers = markers;
+      cache.symbols = symbols;
+      cache.planetEntries = planetEntries;
+      cache.planetFieldNodes = planetFieldNodes;
     }
-    children(cache.field, fieldNodes);
-    children(cache.labels, labelNodes);
-    cache.markers = markers;
-    cache.symbols = symbols;
+    children(cache.field, [...fieldNodes, ...cache.planetFieldNodes]);
 
     const previous = [...cache.pinned, ...(cache.preview ? [cache.preview] : [])];
     const pinned = [];

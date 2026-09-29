@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { encodeTransitDay, encodeChartDay } from '../server/packets/encode.mjs';
-import { TRANSIT_PLANETS } from '../shared/day-packets/transit-format.js';
-import { CHART_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
+import { TRANSIT_DAY_VERSION, TRANSIT_PLANETS } from '../shared/day-packets/transit-format.js';
+import { CHART_DAY_VERSION, CHART_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
 import { decodeTransitDay, decodeChartDay } from '../shared/day-packets/decode.js';
+import { createTransitDayClient } from '../src/data/transit-day-client.js';
+import { createChartDayClient } from '../src/data/natal-day-client.js';
 
 // Captured from the published pre-refactor implementation before extracting
 // the codecs. Covers every predictor, header ordering and float boundary bits.
@@ -29,6 +31,22 @@ for (const [name, day, encode, decode] of [['transit', transit, encodeTransitDay
     }
   });
 }
+
+test('bit-preserving calculation changes keep the published version 1 service/client contract', async () => {
+  assert.equal(TRANSIT_DAY_VERSION, '1');
+  assert.equal(CHART_DAY_VERSION, '1');
+  const transitClient = createTransitDayClient({ fetch: async url => {
+    assert.equal(new URL(url, 'https://example.test').searchParams.get('v'), '1');
+    return { ok: true, arrayBuffer: async () => encodeTransitDay(transit) };
+  } });
+  const natalClient = createChartDayClient({ persistentCache: null, fetch: async (url, options) => {
+    assert.equal(url, '/api/chart/day');
+    assert.equal(JSON.parse(options.body).v, '1');
+    return { ok: true, arrayBuffer: async () => encodeChartDay(natal) };
+  } });
+  assert.deepEqual((await transitClient.getDay(base.date)).columns.map(bits), transit.columns.map(bits));
+  assert.deepEqual((await natalClient.getDay({ birthDate: base.date, cityId: 'synthetic', timezone: 'UTC' })).columns.map(bits), natal.columns.map(bits));
+});
 
 
 test('binary planet column order matches both Python producers independently of UI order', async () => {

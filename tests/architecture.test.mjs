@@ -12,7 +12,7 @@ const files = directory => fs.readdirSync(path.join(root, directory), { recursiv
 const loadingGenerator = 'src/scene/loading-placeholder.js';
 const sourceFiles = [...files('src'), ...files('shared/day-packets')];
 const browserFiles = sourceFiles.filter(file => file !== loadingGenerator);
-const dependencies = file => [...source(file).matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g)]
+const dependencies = file => [...source(file).matchAll(/(?:from\s+|import\s*(?:\(\s*)?)['"]([^'"]+)['"]/g)]
   .map(([, specifier]) => specifier.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)) : specifier);
 const graph = new Map([...sourceFiles, ...files('server')].map(file => [file, dependencies(file)]));
 const pure = file => assert.doesNotMatch(source(file), /\b(?:document|window|localStorage|sessionStorage|indexedDB)\s*\.|\bfetch\s*\(/, `${file} must stay pure`);
@@ -41,7 +41,7 @@ test('production imports resolve and contain no dependency cycles', () => {
 test('all browser modules are reachable from real page entries and explicitly public', () => {
   const entries = ['public/index.html', 'public/love.html'].flatMap(file =>
     [...source(file).matchAll(/<script\b[^>]*src="\/(src\/[^"?]+)[^"]*"/g)].map(([, entry]) => entry));
-  assert.deepEqual(entries.sort(), ['src/app.js', 'src/stories/vessel-of-love.js']);
+  assert.deepEqual(entries.sort(), ['src/startup.js', 'src/stories/vessel-of-love.js']);
   const reachable = new Set();
   function visit(file) {
     if (reachable.has(file)) return;

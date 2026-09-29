@@ -4,6 +4,7 @@ import { activationDetails } from '../src/views/activation-details.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { renderActivationColumns } from '../src/scene/activation-columns.js';
 import { renderVariableArrows } from '../src/scene/variable-arrows.js';
+import { calculateVariables } from '../src/domain/variables.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { CENTERS, GATES, CHANNELS } from '../src/scene/geometry/chart-geometry.js';
 
@@ -77,6 +78,20 @@ function chartFor(tones = [1, 2, 3, 6], colors = [1, 2, 4, 6]) {
   });
   return { source: 'calculated', personality: activations.personality.map(entry => entry.gate), design: activations.design.map(entry => entry.gate), activations };
 }
+
+test('a prepared domain snapshot produces the exact chart API markup without rereading mutable input', () => {
+  for (let color = 1; color <= 6; color++) {
+    for (let tone = 1; tone <= 6; tone++) {
+      const chart = chartFor([tone, tone, tone, tone], [color, color, color, color]);
+      const expected = renderVariableArrows(chart), variables = calculateVariables(chart);
+      assert.equal(renderVariableArrows(chart, variables), expected);
+      chart.activations.design.length = 0;
+      assert.equal(renderVariableArrows(chart), '');
+      assert.equal(renderVariableArrows(chart, variables), expected, 'format the prepared snapshot instead of calculating it again');
+    }
+  }
+  assert.equal(renderVariableArrows(chartFor(), []), '', 'an explicitly absent prepared state stays absent');
+});
 
 function parseSvg(markup) {
   const document = { children: [] }, stack = [document];

@@ -15,7 +15,7 @@ html,body{height:auto;overflow:auto}body{margin:0;padding:16px;background:#f6f5f
 export async function sceneResource(pathname) {
   const baselineRoot = process.env.FORMA_BASELINE_ROOT;
   if (pathname === '/benchmark-config.json') return { status: 200, type: 'application/json; charset=utf-8', body: JSON.stringify({ baselineAvailable: Boolean(baselineRoot) }) };
-  if (baselineRoot && pathname !== '/baseline/src/app.js' && /^\/baseline\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname)) {
+  if (baselineRoot && !['/baseline/src/app.js', '/baseline/src/startup.js'].includes(pathname) && /^\/baseline\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname)) {
     try { return { status: 200, type: 'text/javascript; charset=utf-8', body: await readFile(path.join(baselineRoot, pathname.slice('/baseline/'.length)), 'utf8') }; }
     catch (error) { if (error.code === 'ENOENT') return { status: 404, body: 'Not found' }; throw error; }
   }
