@@ -32,7 +32,7 @@ test('both preview pages serve the complete browser module graph without the app
     assert.ok(!visited.has('/src/app.js'));
     assert.ok(!visited.has('/src/data/storage.js'));
     assert.equal((await readPreviewResource('/styles.css', config)).status, 200);
-    for (const path of ['/api/calculate', '/src/app.js', '/server/server.mjs', '/data/cities.json', '/tests/previews/preview-server.mjs', '/.git/config', '/src/../server/server.mjs', '/src/%2e%2e/server/server.mjs', '/src/missing.js']) {
+    for (const path of ['/api/calculate', '/src/app.js', '/src/startup.js', '/server/server.mjs', '/data/cities.json', '/tests/previews/preview-server.mjs', '/.git/config', '/src/../server/server.mjs', '/src/%2e%2e/server/server.mjs', '/src/missing.js']) {
       assert.equal((await readPreviewResource(path, config)).status, 404, path);
     }
   }

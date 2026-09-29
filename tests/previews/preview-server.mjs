@@ -23,7 +23,7 @@ export async function readPreviewResource(pathname, config) {
   if (pathname === '/') return { status: 200, type: 'text/html; charset=utf-8', body: renderPage(config) };
   const file = pathname === '/preview-harness.js' ? new URL('./preview-harness.js', import.meta.url)
     : pathname === '/styles.css' ? new URL('public/styles.css', root)
-      : pathname !== '/src/app.js' && /^\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname) ? new URL(pathname.slice(1), root) : null;
+      : !['/src/app.js', '/src/startup.js'].includes(pathname) && /^\/src\/(?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.js$/i.test(pathname) ? new URL(pathname.slice(1), root) : null;
   if (!file) return { status: 404, body: 'Not found' };
   try {
     return { status: 200, type: pathname.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8', body: await readFile(file, 'utf8') };

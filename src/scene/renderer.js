@@ -5,6 +5,7 @@ import { createMandalaPainter } from './mandala-painter.js';
 import { createActivationPainter } from './activation-painter.js';
 import { renderMandala } from './mandala.js';
 import { renderVariableArrows } from './variable-arrows.js';
+import { calculateVariables } from '../domain/variables.js';
 import { renderChartBackdrop } from './backdrop.js';
 import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
 import { setAttribute, svgNodes } from './svg-patches.js';
@@ -14,16 +15,17 @@ const mandalaOptions = (state, options) => ({ interactive: state.interactive && 
   selectedGates: state.committedGates, relatedGates: state.relatedGates, pinnedCrosses: options.pinnedCrosses,
   previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null });
 const backdropSignature = (state, options) => JSON.stringify([Boolean(options.showMandala), Boolean(options.showBackdrop), state.prefix]);
-const variableArrows = (chart, options) => options.showActivations && !options.showMandala ? renderVariableArrows(chart) : '';
+const visibleVariables = (chart, options) => options.showActivations && !options.showMandala ? calculateVariables(chart) : [];
 
 // One SVG skeleton per view. Switching decorative modes moves existing body
 // layers; changing the minute only paints their current values.
 export function createSceneRenderer(root) {
   let body = null, wheel = null, columns = null, drawing = null;
-  let structure = null, backdropKey, variableMarkup;
+  let structure = null, backdropKey, variableKey;
   function mount(chart, state, options) {
-    variableMarkup = variableArrows(chart, options);
-    root.innerHTML = renderBodygraphState(chart, state, options, variableMarkup);
+    const variables = visibleVariables(chart, options);
+    variableKey = JSON.stringify(variables);
+    root.innerHTML = renderBodygraphState(chart, state, options, renderVariableArrows(chart, variables));
     drawing = root.querySelector('.bodygraph-drawing');
     body = createBodygraphPainter(root, state, options);
     wheel = createMandalaPainter(root);
@@ -52,11 +54,12 @@ export function createSceneRenderer(root) {
       }
       backdropKey = nextBackdrop;
     }
-    const variables = variableArrows(chart, options);
-    if (variables !== variableMarkup) {
+    // Compare the domain result before formatting SVG; inputs may mutate in place.
+    const variables = visibleVariables(chart, options), nextVariables = JSON.stringify(variables);
+    if (nextVariables !== variableKey) {
       drawing.querySelector('.bodygraph-variables')?.remove();
-      for (const node of svgNodes(drawing, variables)) drawing.insertBefore(node, core || drawing.querySelector('.chart-backdrop') || layers[0]);
-      variableMarkup = variables;
+      for (const node of svgNodes(drawing, renderVariableArrows(chart, variables))) drawing.insertBefore(node, core || drawing.querySelector('.chart-backdrop') || layers[0]);
+      variableKey = nextVariables;
     }
     let ring = root.querySelector('.mandala-scene');
     if (options.showMandala || options.showMandalaLayer) {
@@ -86,6 +89,6 @@ export function createSceneRenderer(root) {
       columns.update(chart, state, options);
       return state;
     },
-    clear() { root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; },
+    clear() { root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; backdropKey = variableKey = undefined; },
   };
 }

@@ -33,12 +33,11 @@ export async function transitCacheFingerprint(root) {
   const hash = createHash('sha256');
   for (const name of ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py',
     'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
-    'shared/day-packets/decode.js', 'server/packets/encode.mjs']) {
+    'shared/day-packets/decode.js', 'server/packets/encode.mjs',
+    'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {
+    // Deployments may change file timestamps without changing calculation data.
+    // Content identity also detects changed bytes with preserved size and mtime.
     hash.update(name).update(await fs.readFile(path.join(root, name)));
-  }
-  for (const name of ['data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {
-    const stat = await fs.stat(path.join(root, name));
-    hash.update(`${name}:${stat.size}:${stat.mtimeMs}`);
   }
   return hash.digest('hex').slice(0, 16);
 }

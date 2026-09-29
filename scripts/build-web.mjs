@@ -15,33 +15,49 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
   const { prepareLoadingPage } = await import(pathToFileURL(path.join(root, 'src/scene/loading-placeholder.js')).href);
   const result = await build({
     absWorkingDir: root,
-    entryPoints: { app: 'src/app.js', love: 'src/stories/vessel-of-love.js', styles: 'public/styles.css', 'love-style': 'public/love.css' },
+    entryPoints: { startup: 'src/startup.js', love: 'src/stories/vessel-of-love.js', styles: 'public/styles.css', 'love-style': 'public/love.css' },
     outdir, entryNames: 'assets/[name]-[hash]', chunkNames: 'assets/shared-[hash]',
     bundle: true, splitting: true, format: 'esm', platform: 'browser', target: ['safari15', 'chrome100'],
     minify: true, metafile: true, write: false, logLevel: 'silent',
   });
   const manifest = {}, outputs = new Map(result.outputFiles.map(file => [path.relative(outdir, file.path), file.contents]));
-  const entryUrl = input => {
+  const entryOutput = input => {
     const output = Object.entries(result.metafile.outputs).find(([, meta]) => meta.entryPoint === input)?.[0];
     if (!output) throw new Error(`Missing browser entry: ${input}`);
-    return '/' + path.relative(outdir, path.resolve(root, output));
+    return output;
   };
+  const outputUrl = output => '/' + path.relative(outdir, path.resolve(root, output));
+  const entryUrl = input => outputUrl(entryOutput(input));
   const icon = await fs.readFile(path.join(root, 'public/favicon.svg'));
   const iconFile = `assets/favicon-${createHash('sha256').update(icon).digest('hex').slice(0, 16)}.svg`;
   outputs.set(iconFile, icon);
   const shared = Object.keys(result.metafile.outputs).filter(file => /shared-[^/]+\.js$/.test(file));
-  const preload = shared.map(file => `<link rel="modulepreload" href="/${path.relative(outdir, path.resolve(root, file))}">`).join('\n  ');
+  const preloadFor = input => {
+    const dependencies = new Set();
+    const visit = file => {
+      for (const dependency of result.metafile.outputs[file].imports) {
+        if (dependency.external || dependencies.has(dependency.path)) continue;
+        dependencies.add(dependency.path); visit(dependency.path);
+      }
+    };
+    visit(entryOutput(input));
+    return shared.filter(file => dependencies.has(file))
+      .map(file => `<link rel="modulepreload" href="${outputUrl(file)}">`).join('\n  ');
+  };
   for (const [page, script, style, styleEntry] of [
-    ['index.html', 'src/app.js', '/styles.css', 'public/styles.css'],
+    ['index.html', 'src/startup.js', '/styles.css', 'public/styles.css'],
     ['love.html', 'src/stories/vessel-of-love.js', '/love.css', 'public/love.css'],
   ]) {
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
     // The local tab has a version label; the published site keeps its name.
     if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
+    // Source preloads the UI graph alongside the small startup entry. In release
+    // its generated chunk is included in the explicit preload list below.
+    html = html.replace(/  <link rel="modulepreload" href="\/src\/app\.js">\n/, '');
     html = html.replace(`src="/${script}"`, `src="${entryUrl(script)}"`)
       .replace(`href="${style}"`, `href="${entryUrl(styleEntry)}"`)
       .replace(/href="\/favicon\.svg(?:\?[^"]*)?"/, `href="/${iconFile}"`)
-      .replace('</head>', `  ${preload}\n</head>`);
+      .replace('</head>', `  ${preloadFor(script)}\n</head>`);
     outputs.set(page, Buffer.from(html));
   }
   for (const [file, contents] of outputs) {

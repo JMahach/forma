@@ -19,6 +19,7 @@ export const PUBLIC_FILES = new Map([
     'shared/day-packets/natal-format.js',
     'shared/day-packets/transit-format.js',
     'src/app.js',
+    'src/startup.js',
     'src/views/chart-loading.js',
     'src/data/api-client.js',
     'src/data/chart-store.js',

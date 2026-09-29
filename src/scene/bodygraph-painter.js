@@ -50,9 +50,11 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
   const focus = integrationChannels.map((channel, index) => ({ channel,
     target: byType('channel', channel.id), halo: focusHalos[index] }));
   const defs = root.querySelector('defs');
-  const maskSignature = paint => JSON.stringify([paint.selectionPath, paint.integrationSelected,
+  const selectionMaskSignature = paint => JSON.stringify([paint.selectionPath, paint.integrationSelected,
     [...paint.highlightedArms], paint.stemHighlighted, paint.connectedIntegrationGates, paint.activeIntegrationParts]);
-  let maskKey = initialIntegration ? maskSignature(initialIntegration) : null;
+  const focusMaskSignature = paint => JSON.stringify(paint.activeIntegrationParts);
+  let selectionMaskKey = initialIntegration ? selectionMaskSignature(initialIntegration) : null;
+  let focusMaskKey = initialIntegration ? focusMaskSignature(initialIntegration) : null;
   let previous = initialState ? coreKey(initialState, initialOptions) : null;
   function patchMask(markup, id, before = null) {
     const current = [...defs.children].find(node => node.id === id);
@@ -125,13 +127,19 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
         pressed(target, 'channel', channel.id, selectedChannels.has(channel.id), state);
         setAttribute(halo, 'style', `--integration-focus-opacity:${integrationFocusOpacity(channel)}`);
       }
-      const nextMaskKey = maskSignature(paint);
-      if (nextMaskKey !== maskKey) {
-        maskKey = nextMaskKey;
+      const nextSelectionMaskKey = selectionMaskSignature(paint);
+      if (nextSelectionMaskKey !== selectionMaskKey) {
+        selectionMaskKey = nextSelectionMaskKey;
         const id = `${prefix}-integration-selection-outline`;
         patchMask(selectionPath && !integrationSelected
           ? integrationOutlineMask(id, [...highlightedArms], stemHighlighted, prefix, connectedIntegrationGates, activeIntegrationParts) : '', id,
           [...defs.children].find(node => node.id === `${prefix}-integration-focus-${integrationChannels[0].id}`));
+      }
+      // Focus routes are fixed. Only active arms/stem change their occlusion;
+      // hovering or selecting a different route cannot change these masks.
+      const nextFocusMaskKey = focusMaskSignature(paint);
+      if (nextFocusMaskKey !== focusMaskKey) {
+        focusMaskKey = nextFocusMaskKey;
         for (const channel of integrationChannels) {
           const id = `${prefix}-integration-focus-${channel.id}`;
           patchMask(integrationOutlineMask(id, channel.gates,

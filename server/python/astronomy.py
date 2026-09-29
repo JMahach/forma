@@ -47,6 +47,9 @@ def design_time(birth_jd):
     low, high = birth_jd - 100, birth_jd - 75
     for _ in range(48):
         mid = (low + high) / 2
+        # Further bisections cannot change this representable midpoint.
+        if mid == low or mid == high:
+            break
         arc = (birth_sun - longitude(mid, swe.SUN)) % 360
         if arc > 88:
             low = mid

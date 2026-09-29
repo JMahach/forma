@@ -146,6 +146,63 @@ test('longitude-only motion does not revisit sector attributes while every plane
   assert.equal(h.document.parses.length, 0, 'no fragments are reparsed for pure longitude motion');
 });
 
+test('selection-only updates retain ordered planet nodes without repeating layout or reading their attributes', () => {
+  const chart = chartAt(), h = harness(chart, {}, { groupRoot: true });
+  h.painter.update(chart);
+  const originalRays = rayNodes(h.group), originalSymbols = symbolNodes(h.group);
+  const nodes = [...originalRays.values()].flat().concat([...originalSymbols.values()]);
+  const options = { selectedGates: new Set(), relatedGates: new Set(), interactive: true };
+  for (const change of [
+    () => options.selectedGates.add(chart.personality[0]),
+    () => options.relatedGates.add(chart.design[0]),
+    () => options.selectedGates.clear(),
+    () => options.relatedGates.clear(),
+    () => { options.interactive = false; },
+    () => { options.interactive = true; chart.personality.push(64); },
+  ]) {
+    change();
+    // A distinct chart and activation array with equal values must also reuse
+    // the geometry; chart identity is unrelated to the rendered planet layout.
+    const equivalent = { ...structuredClone(chart), id: 'another-chart' };
+    let points = 0;
+    const cos = Math.cos;
+    Math.cos = angle => { points++; return cos(angle); };
+    let counts;
+    try { counts = attributeCounts(nodes, () => h.painter.update(equivalent, options)); }
+    finally { Math.cos = cos; }
+    assert.equal(points, 0, 'unchanged planets need no label, leader or ray geometry');
+    assert.deepEqual(counts, { reads: 0, writes: 0 }, 'selection painting does not revisit planet attributes');
+    assert.deepEqual([...rayNodes(h.group).values()].flat(), [...originalRays.values()].flat());
+    assert.deepEqual([...symbolNodes(h.group).values()], [...originalSymbols.values()]);
+    assertRendered(h.root, equivalent, options);
+  }
+});
+
+test('in-place tiny longitude, validation and planet changes invalidate the owned planet snapshot', () => {
+  const chart = chartAt(), h = harness(chart, {}, { groupRoot: true });
+  h.painter.update(chart);
+  const sun = chart.activations.personality[0], originalLine = sun.line;
+  for (const change of [
+    () => { sun.longitude += 1e-10; },
+    () => { sun.line = originalLine === 6 ? 1 : 6; },
+    () => { sun.line = originalLine; },
+    () => { [chart.activations.design[0].planet, chart.activations.design[1].planet]
+      = [chart.activations.design[1].planet, chart.activations.design[0].planet]; },
+    () => { chart.source = 'transit'; },
+  ]) {
+    change();
+    let points = 0;
+    const cos = Math.cos;
+    Math.cos = angle => { points++; return cos(angle); };
+    try { h.painter.update(chart); } finally { Math.cos = cos; }
+    assert.ok(points > 0, 'a changed validated input must recompute exact geometry');
+    assertRendered(h.root, chart);
+    const marker = rayNodes(h.group).get('personality:sun');
+    if (sun.line === originalLine) assert.equal(marker[0].getAttribute('data-longitude'), String(sun.longitude));
+    else assert.equal(marker, undefined, 'invalidated input removes the obsolete planet');
+  }
+});
+
 test('each sector input invalidates independently, including mutations of caller-owned sets and gate arrays', () => {
   const chart = chartAt(), options = { selectedGates: new Set(), relatedGates: new Set(), interactive: true };
   const h = harness(chart, options);

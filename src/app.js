@@ -25,142 +25,144 @@ import { attachPerformanceMonitor } from './views/performance-monitor.js';
 import { attachChartLoading } from './views/chart-loading.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-const $ = id => document.getElementById(id);
-attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('chartDayTime')]);
-const toast = createToast($('toast'));
-const store = createChartStore({ onStorageError: toast });
-const layout = createStudioLayout({ canvas: $('canvasWrap'), drawing: $('bodygraph'), panels: [$('transitControls'), $('chartDayControls')] });
-const headingLayout = createChartHeadingLayout({
-  header: $('chartHeader'), title: $('chartTitle'), subtitle: $('chartSubtitle'), canvas: $('canvasWrap'),
-  leftControls: document.querySelector('.topbar-leading'), rightControls: document.querySelector('.chart-tools'),
-  getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
-});
-let hoverPreview = null, chartSummary = null, mandalaMode = null, library = null, transit = null, transitControls = null, chartDay = null;
-const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
-const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
-const currentChart = () => session.current;
-const chartLoading = attachChartLoading({
-  canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
-  message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
-  onRetry: () => transit?.refresh(true),
-});
-const updateLoading = (state = transit?.state) => chartLoading.update({
-  hasChart: session.hasCurrent, failed: state?.unavailable, loading: state?.loading,
-});
+export function startApp({ dayClient }) {
+  const $ = id => document.getElementById(id);
+  attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('chartDayTime')]);
+  const toast = createToast($('toast'));
+  const store = createChartStore({ onStorageError: toast });
+  const layout = createStudioLayout({ canvas: $('canvasWrap'), drawing: $('bodygraph'), panels: [$('transitControls'), $('chartDayControls')] });
+  const headingLayout = createChartHeadingLayout({
+    header: $('chartHeader'), title: $('chartTitle'), subtitle: $('chartSubtitle'), canvas: $('canvasWrap'),
+    leftControls: document.querySelector('.topbar-leading'), rightControls: document.querySelector('.chart-tools'),
+    getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
+  });
+  let hoverPreview = null, chartSummary = null, mandalaMode = null, library = null, transit = null, transitControls = null, chartDay = null;
+  const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
+  const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
+  const currentChart = () => session.current;
+  const chartLoading = attachChartLoading({
+    canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
+    message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
+    onRetry: () => transit?.refresh(true),
+  });
+  const updateLoading = (state = transit?.state) => chartLoading.update({
+    hasChart: session.hasCurrent, failed: state?.unavailable, loading: state?.loading,
+  });
 
-const graph = createGraphController({
-  getChart: currentChart, hasChart: () => session.hasCurrent,
-  viewport: $('viewport'),
-  getActiveElement: () => document.activeElement, activationPopover,
-  getShowActivations: () => !(mandalaMode?.enabled && !layout.showMandalaColumns),
-  getHoverPreview: () => hoverPreview, getSummary: () => chartSummary, getMandala: () => mandalaMode,
-  onChartChange(id) {
-    session.select(id);
-    library.close();
-  },
-});
-const gestures = attachGestures($('bodygraph'), {
-  cameraView: createCameraView({ svg: $('bodygraph'), surface: $('canvasWrap') }),
-  fitInsets: () => layout.insets(),
-  onSelect: graph.choose,
-  getFrame: () => mandalaMode?.frame,
-  getHomeFrame: () => mandalaMode?.homeFrame,
-  resolveSelection: (target, event) => mandalaSelectionFromTarget(event, target, hoverPreview?.currentSelection),
-  onBackgroundTap: graph.clear,
-  onChange: createCameraChangeHandler({
-    heading: $('chartHeader'), fitButton: $('fitButton'),
-    activationPopover,
-    getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
-  }),
-});
-hoverPreview = attachHoverPreview($('bodygraph'), {
-  resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
-  coalesceMandala: true, onPreview: graph.preview,
-});
-const knowledge = attachKnowledge($('knowledgeDialog'), graph.choose);
-$('openKnowledge').addEventListener('click', () => { library.close(); knowledge.show(graph.selectionState.primary); });
-chartSummary = attachChartSummary({
-  panel: $('chartSummary'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
-  search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
-  onSelect: graph.choose, onLines: graph.chooseSummary,
-  onOpen: () => { activationPopover.close(); hoverPreview?.clear(); library.close(); },
-});
-const mandalaMotion = createMandalaMotion({
-  viewport: $('viewport'), onUpdate: () => activationPopover.reposition(),
-  onFinish: enabled => mandalaMode?.finishTransition(enabled),
-});
-mandalaMode = attachMandalaMode({
-  button: $('mandalaSwitch'), canvas: $('canvasWrap'), gestures, render: graph.render,
-  motion: mandalaMotion, layout,
-  beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
-});
-library = attachChartLibrary({
-  document, store, session, toast, onSelect: graph.changeChart, onUpdate: updatePage,
-  onEdit: id => birthForm.open(true, id), onNew: () => birthForm.open(),
-  beforeOpen: () => { chartSummary.close(); activationPopover.close(); hoverPreview?.clear(); },
-});
-const birthForm = attachBirthForm({
-  document, store, session, toast, onSave: graph.changeChart,
-  beforeOpen: () => { chartDay?.close(); library.close(); chartSummary.close(); },
-});
-chartDay = attachChartDayExplorer({
-  toggle: $('chartDayToggle'), panel: $('chartDayControls'), range: $('chartDayTime'), marker: $('chartDayReference'),
-  date: $('chartDayDate'), time: $('chartDayMoment'), status: $('chartDayStatus'), resetButton: $('chartDayReset'),
-  onRender: session.refresh,
-});
-transit = attachLiveTransit({
-  document, button: $('nowButton'), toast, isFormOpen: () => birthForm.opened,
-  onRender: session.refresh, onStateChange: state => { transitControls?.update(state); updateLoading(state); },
-});
-transitControls = attachTransitControls({
-  panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'), date: $('transitDate'), time: $('transitMoment'),
-  status: $('transitStatus'), nowButton: $('transitNow'), onScrub: transit.scrub, onNow: transit.goNow,
-});
-transitControls.update(transit.state);
-$('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit.refresh(); });
-attachTransitNavigation($('nowButton'), {
-  closeLibrary: library.close,
-  onSelect: graph.changeChart, refresh: transit.refresh,
-});
-attachCameraControls({ fitButton: $('fitButton') }, gestures);
-attachPerformanceMonitor({
-  document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
-  ranges: [$('transitTime'), $('chartDayTime')],
-  motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('chartDayReference')],
-  initiallyEnabled: new URLSearchParams(location.search).get('fps') === '1',
-  onToggle: () => library.close(),
-});
+  const graph = createGraphController({
+    getChart: currentChart, hasChart: () => session.hasCurrent,
+    viewport: $('viewport'),
+    getActiveElement: () => document.activeElement, activationPopover,
+    getShowActivations: () => !(mandalaMode?.enabled && !layout.showMandalaColumns),
+    getHoverPreview: () => hoverPreview, getSummary: () => chartSummary, getMandala: () => mandalaMode,
+    onChartChange(id) {
+      session.select(id);
+      library.close();
+    },
+  });
+  const gestures = attachGestures($('bodygraph'), {
+    cameraView: createCameraView({ svg: $('bodygraph'), surface: $('canvasWrap') }),
+    fitInsets: () => layout.insets(),
+    onSelect: graph.choose,
+    getFrame: () => mandalaMode?.frame,
+    getHomeFrame: () => mandalaMode?.homeFrame,
+    resolveSelection: (target, event) => mandalaSelectionFromTarget(event, target, hoverPreview?.currentSelection),
+    onBackgroundTap: graph.clear,
+    onChange: createCameraChangeHandler({
+      heading: $('chartHeader'), fitButton: $('fitButton'),
+      activationPopover,
+      getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
+    }),
+  });
+  hoverPreview = attachHoverPreview($('bodygraph'), {
+    resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
+    coalesceMandala: true, onPreview: graph.preview,
+  });
+  const knowledge = attachKnowledge($('knowledgeDialog'), graph.choose);
+  $('openKnowledge').addEventListener('click', () => { library.close(); knowledge.show(graph.selectionState.primary); });
+  chartSummary = attachChartSummary({
+    panel: $('chartSummary'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
+    search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
+    onSelect: graph.choose, onLines: graph.chooseSummary,
+    onOpen: () => { activationPopover.close(); hoverPreview?.clear(); library.close(); },
+  });
+  const mandalaMotion = createMandalaMotion({
+    viewport: $('viewport'), onUpdate: () => activationPopover.reposition(),
+    onFinish: enabled => mandalaMode?.finishTransition(enabled),
+  });
+  mandalaMode = attachMandalaMode({
+    button: $('mandalaSwitch'), canvas: $('canvasWrap'), gestures, render: graph.render,
+    motion: mandalaMotion, layout,
+    beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
+  });
+  library = attachChartLibrary({
+    document, store, session, toast, onSelect: graph.changeChart, onUpdate: updatePage,
+    onEdit: id => birthForm.open(true, id), onNew: () => birthForm.open(),
+    beforeOpen: () => { chartSummary.close(); activationPopover.close(); hoverPreview?.clear(); },
+  });
+  const birthForm = attachBirthForm({
+    document, store, session, toast, onSave: graph.changeChart,
+    beforeOpen: () => { chartDay?.close(); library.close(); chartSummary.close(); },
+  });
+  chartDay = attachChartDayExplorer({
+    toggle: $('chartDayToggle'), panel: $('chartDayControls'), range: $('chartDayTime'), marker: $('chartDayReference'),
+    date: $('chartDayDate'), time: $('chartDayMoment'), status: $('chartDayStatus'), resetButton: $('chartDayReset'),
+    onRender: session.refresh,
+  });
+  transit = attachLiveTransit({
+    document, button: $('nowButton'), dayClient, toast, isFormOpen: () => birthForm.opened,
+    onRender: session.refresh, onStateChange: state => { transitControls?.update(state); updateLoading(state); },
+  });
+  transitControls = attachTransitControls({
+    panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'), date: $('transitDate'), time: $('transitMoment'),
+    status: $('transitStatus'), nowButton: $('transitNow'), onScrub: transit.scrub, onNow: transit.goNow,
+  });
+  transitControls.update(transit.state);
+  $('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit.refresh(); });
+  attachTransitNavigation($('nowButton'), {
+    closeLibrary: library.close,
+    onSelect: graph.changeChart, refresh: transit.refresh,
+  });
+  attachCameraControls({ fitButton: $('fitButton') }, gestures);
+  attachPerformanceMonitor({
+    document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
+    ranges: [$('transitTime'), $('chartDayTime')],
+    motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('chartDayReference')],
+    initiallyEnabled: new URLSearchParams(location.search).get('fps') === '1',
+    onToggle: () => library.close(),
+  });
 
-function updateChartCaption() {
-  const chart = currentChart();
-  headingLayout.updateText(chartTitle(chart), chartSubtitle(chart));
-}
-
-function updatePage() {
-  updateChartCaption();
-  library.render();
-  graph.render();
-  updateLoading();
-}
-
-chartDay.select(session.original);
-updatePage();
-gestures.reset();
-let phoneLayout = layout.phone;
-let mandalaColumns = layout.showMandalaColumns;
-const resizeLayout = () => {
-  layout.refresh();
-  headingLayout.refresh();
-  if (phoneLayout !== layout.phone || mandalaColumns !== layout.showMandalaColumns) {
-    phoneLayout = layout.phone;
-    mandalaColumns = layout.showMandalaColumns;
-    activationPopover.close();
-    hoverPreview?.clear({ notify: false });
-    graph.render();
+  function updateChartCaption() {
+    const chart = currentChart();
+    headingLayout.updateText(chartTitle(chart), chartSubtitle(chart));
   }
-  gestures.resize();
-};
-const layoutObserver = new ResizeObserver(resizeLayout);
-layoutObserver.observe($('canvasWrap'));
-if (!store.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
-transit.start();
+
+  function updatePage() {
+    updateChartCaption();
+    library.render();
+    graph.render();
+    updateLoading();
+  }
+
+  chartDay.select(session.original);
+  updatePage();
+  gestures.reset();
+  let phoneLayout = layout.phone;
+  let mandalaColumns = layout.showMandalaColumns;
+  const resizeLayout = () => {
+    layout.refresh();
+    headingLayout.refresh();
+    if (phoneLayout !== layout.phone || mandalaColumns !== layout.showMandalaColumns) {
+      phoneLayout = layout.phone;
+      mandalaColumns = layout.showMandalaColumns;
+      activationPopover.close();
+      hoverPreview?.clear({ notify: false });
+      graph.render();
+    }
+    gestures.resize();
+  };
+  const layoutObserver = new ResizeObserver(resizeLayout);
+  layoutObserver.observe($('canvasWrap'));
+  if (!store.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
+  transit.start();
+}

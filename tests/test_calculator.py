@@ -17,6 +17,24 @@ from server.python import civil_time as civil
 from server.python.errors import ChartError
 
 
+def legacy_design_time(birth_jd):
+    """Frozen 48-step search, before stopping at an identical float midpoint."""
+    birth_sun = astro.longitude(birth_jd, astro.swe.SUN)
+    low, high = birth_jd - 100, birth_jd - 75
+    for _ in range(48):
+        mid = (low + high) / 2
+        arc = (birth_sun - astro.longitude(mid, astro.swe.SUN)) % 360
+        if arc > 88:
+            low = mid
+        else:
+            high = mid
+    result = (low + high) / 2
+    residual = abs((birth_sun - astro.longitude(result, astro.swe.SUN)) % 360 - 88)
+    if residual > 1e-7:
+        raise ChartError('design_search_failed', 'Не удалось точно определить момент дизайна.')
+    return result, residual
+
+
 class HistoricalTimezoneTests(unittest.TestCase):
     def test_historical_moscow_offsets(self):
         for date, expected_utc, label in [
@@ -182,6 +200,54 @@ class EphemerisTests(unittest.TestCase):
                 self.assertAlmostEqual(actual_arc, 88, places=7)
                 if moment.month == 1:
                     self.assertEqual(astro.tt_to_datetime(design_jd).year, moment.year - 1)
+
+    def test_design_search_retains_legacy_bits_at_date_edges_and_adjacent_floats(self):
+        moments = [
+            dt.datetime(1801, 1, 1, tzinfo=civil.UTC),
+            dt.datetime(1900, 3, 1, tzinfo=civil.UTC),
+            dt.datetime(2000, 2, 29, 23, 59, 59, 999999, tzinfo=civil.UTC),
+            dt.datetime(2399, 12, 31, 23, 59, 59, 999999, tzinfo=civil.UTC),
+        ] + [dt.datetime(year, month, 15, 12, 34, 56, 123456, tzinfo=civil.UTC)
+             for year in (1850, 1950, 2026, 2100, 2250, 2350) for month in (1, 4, 7, 10)]
+        for moment in moments:
+            jd = astro.julian_tt(moment)
+            for birth_jd in (math.nextafter(jd, -math.inf), jd, math.nextafter(jd, math.inf)):
+                with self.subTest(moment=moment, birth_jd=birth_jd.hex()):
+                    expected = legacy_design_time(birth_jd)
+                    actual = astro.design_time(birth_jd)
+                    self.assertEqual(tuple(value.hex() for value in actual), tuple(value.hex() for value in expected))
+                    self.assertEqual(astro.activations(actual[0]), astro.activations(expected[0]))
+
+    def test_design_search_avoids_repeated_sun_calls_and_keeps_final_residual_input(self):
+        for moment in (dt.datetime(1801, 1, 1, tzinfo=civil.UTC),
+                       dt.datetime(2026, 9, 29, 12, tzinfo=civil.UTC),
+                       dt.datetime(2399, 12, 31, tzinfo=civil.UTC)):
+            with self.subTest(moment=moment):
+                jd = astro.julian_tt(moment)
+                with mock.patch.object(astro, 'longitude', wraps=astro.longitude) as calls:
+                    expected = legacy_design_time(jd)
+                    legacy_calls = calls.call_count
+                with mock.patch.object(astro, 'longitude', wraps=astro.longitude) as calls:
+                    actual = astro.design_time(jd)
+                    self.assertLess(calls.call_count, legacy_calls)
+                    self.assertEqual(calls.call_args.args, (expected[0], astro.swe.SUN))
+                self.assertEqual(legacy_calls, 50)
+                self.assertEqual(tuple(value.hex() for value in actual), tuple(value.hex() for value in expected))
+
+    def test_design_search_preserves_ephemeris_and_residual_errors(self):
+        jd = astro.julian_tt(dt.datetime(1800, 1, 1, tzinfo=civil.UTC))
+        payloads = []
+        for search in (legacy_design_time, astro.design_time):
+            with self.assertRaises(ChartError) as error:
+                search(jd)
+            payloads.append(error.exception.payload)
+        self.assertEqual(payloads[0], payloads[1])
+        self.assertEqual(payloads[0]['error'], 'ephemeris_unavailable')
+        with mock.patch.object(astro, 'longitude', return_value=0.0):
+            for search in (legacy_design_time, astro.design_time):
+                with self.assertRaises(ChartError) as error:
+                    search(2451545.0)
+                self.assertEqual(error.exception.payload['error'], 'design_search_failed')
 
     def test_tt_utc_roundtrip_preserves_modern_instants(self):
         for moment in (

@@ -94,6 +94,18 @@ test('real release build preserves sources and produces complete deterministic c
     assert.equal(links.filter(filename => filename.endsWith('.css')).length, 1, `${page} preserves its stylesheet`);
     assert.equal(links.filter(filename => filename.endsWith('.svg')).length, 1, `${page} preserves its icon`);
     entries.set(page, scripts[0]);
+    const imported = new Set();
+    function visitImports(filename) {
+      for (const reference of moduleReferences(contents.get(filename))) {
+        const dependency = resolve(reference, filename);
+        if (imported.has(dependency)) continue;
+        imported.add(dependency); visitImports(dependency);
+      }
+    }
+    visitImports(scripts[0]);
+    for (const filename of links.filter(filename => filename.endsWith('.js'))) {
+      assert.ok(imported.has(filename), `${page} must not preload another page's UI`);
+    }
     const queue = [...scripts, ...links];
     while (queue.length) {
       const filename = queue.pop();
