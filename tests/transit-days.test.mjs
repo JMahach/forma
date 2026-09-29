@@ -28,8 +28,9 @@ async function directory(t) {
   return dir;
 }
 async function cache(t, options = {}) {
-  const service = await createTransitDays({ root, cacheDir: await directory(t), now, fingerprint, generateDay: async date => makeDay(date), ...options });
-  t.after(() => service.close());
+  let service;
+  t.after(() => service?.close());
+  service = await createTransitDays({ root, cacheDir: await directory(t), now, fingerprint, generateDay: async date => makeDay(date), ...options });
   return service;
 }
 
@@ -61,6 +62,60 @@ test('a generation error releases the queue and is retriable without an error ca
   assert.equal(service.size, 0);
   assert.equal(decodeTransitDay((await service.get('2026-09-24')).bytes.identity).date, '2026-09-24');
   assert.equal(calls, 2);
+});
+
+test('HTTP receives a ready day before disk persistence; writes retain the single queue slot and close awaits them', async t => {
+  const entered = deferred(), release = deferred(), calls = [];
+  const write = fs.writeFile.bind(fs);
+  let blocked = false, delivered = false, closed = false;
+  t.mock.method(fs, 'writeFile', async (file, ...args) => {
+    if (!blocked && String(file).endsWith('.tmp')) {
+      blocked = true; entered.resolve(); await release.promise;
+    }
+    return write(file, ...args);
+  });
+  const service = await cache(t, { generateDay: async date => { calls.push(date); return makeDay(date); } });
+  const response = request(service, '/api/transit/day?date=2026-09-24&v=1', { headers: { 'accept-encoding': 'identity' } })
+    .then(value => { delivered = true; return value; });
+  let next, closing;
+  try {
+    await entered.promise;
+    await new Promise(setImmediate);
+    assert.equal(delivered, true, 'disk latency must not hold an already complete HTTP response');
+    assert.equal(service.size, 1);
+    const result = await response;
+    assert.equal(result.status, 200);
+    assert.equal(decodeTransitDay(result.body).date, '2026-09-24');
+    assert.deepEqual((await service.get('2026-09-24')).bytes.identity, result.body);
+    next = service.get('2026-09-25');
+    closing = service.close().then(() => { closed = true; });
+    await new Promise(setImmediate);
+    assert.equal(service.queued, 1);
+    assert.deepEqual(calls, ['2026-09-24'], 'a slow write still occupies its bounded job slot');
+    assert.equal(closed, false, 'close waits for cache persistence and queued work');
+  } finally { release.resolve(); }
+  await Promise.all([response, next, closing]);
+  assert.deepEqual(calls, ['2026-09-24', '2026-09-25']);
+  assert.equal(closed, true);
+});
+
+test('a failed disk write keeps the delivered packet usable and releases the queue', async t => {
+  const errors = [], write = fs.writeFile.bind(fs);
+  let failed = false;
+  t.mock.method(fs, 'writeFile', async (file, ...args) => {
+    if (!failed && String(file).endsWith('.tmp')) {
+      failed = true; throw Object.assign(new Error('test disk unavailable'), { code: 'EIO' });
+    }
+    return write(file, ...args);
+  });
+  const service = await cache(t, { onCacheError: error => errors.push(error) });
+  const first = await service.get('2026-09-24');
+  const next = await service.get('2026-09-25');
+  await service.close();
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, 'EIO');
+  assert.equal(await service.get('2026-09-24'), first);
+  assert.equal(decodeTransitDay(next.bytes.identity).date, '2026-09-25');
 });
 
 test('interactive days run ahead of queued warmup without interrupting the live day', async t => {
@@ -108,16 +163,16 @@ test('restart reuses gzip without astronomy; corrupt packets and changed fingerp
   let calls = 0;
   const options = { root, cacheDir, now, fingerprint, generateDay: async date => { calls++; return makeDay(date); } };
   const first = await createTransitDays(options);
-  const original = await first.get('2026-09-24'); first.close();
+  const original = await first.get('2026-09-24'); await first.close();
   const restarted = await createTransitDays(options);
   assert.deepEqual((await restarted.get('2026-09-24')).bytes, original.bytes);
-  assert.equal(calls, 1); restarted.close();
+  assert.equal(calls, 1); await restarted.close();
   const file = path.join(cacheDir, `2026-09-24.${fingerprint}.gz`);
   await fs.writeFile(file, 'not gzip');
   const repaired = await createTransitDays(options);
-  await repaired.get('2026-09-24'); assert.equal(calls, 2); repaired.close();
+  await repaired.get('2026-09-24'); assert.equal(calls, 2); await repaired.close();
   const invalidated = await createTransitDays({ ...options, fingerprint: 'abcdef0123456789' });
-  await invalidated.get('2026-09-24'); assert.equal(calls, 3); invalidated.close();
+  await invalidated.get('2026-09-24'); assert.equal(calls, 3); await invalidated.close();
   assert.deepEqual(await fs.readdir(cacheDir), ['2026-09-24.abcdef0123456789.gz']);
 });
 
@@ -127,6 +182,7 @@ test('RAM and disk retain at most seven days and pruning leaves unrelated files 
   await fs.writeFile(path.join(cacheDir, 'notes.txt'), 'keep');
   await fs.mkdir(path.join(cacheDir, `2026-08-01.${fingerprint}.gz`));
   for (let day = 10; day <= 18; day++) await service.get(`2026-09-${day}`);
+  await service.close();
   assert.equal(service.size, 7);
   const entries = await fs.readdir(cacheDir, { withFileTypes: true });
   assert.equal(entries.filter(entry => entry.isFile() && entry.name.endsWith('.gz')).length, 7);

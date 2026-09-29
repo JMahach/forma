@@ -54,6 +54,41 @@ test('live view loads a local day once and redraws exact coordinate changes from
   assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render'], 'mandala rays still receive exact minute positions');
 });
 
+test('repeated publication keeps state notifications without reading the same minute again', async () => {
+  let columnReads = 0;
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: async date => {
+    const packet = day(date), columns = packet.columns;
+    Object.defineProperty(packet, 'columns', { get() { columnReads++; return columns; } });
+    return packet;
+  } });
+  await h.live.refresh(true);
+  assert.equal(h.requests.length, 2);
+  assert.equal(columnReads, 11, 'both packet completions and load completion materialize one current chart');
+  const first = h.live.current;
+  assert.deepEqual(first, transitChartAt(day('2026-09-24'), 720));
+
+  h.events.length = 0; h.states.length = 0;
+  await h.live.refresh();
+  assert.equal(columnReads, 11);
+  assert.equal(h.live.current, first);
+  assert.deepEqual(h.events, []);
+  assert.equal(h.states.length, 2, 'refresh still publishes reference and loading state');
+
+  h.states.length = 0;
+  h.live.scrub(h.live.state.index);
+  assert.equal(columnReads, 11);
+  assert.equal(h.live.current, first);
+  assert.equal(h.states.length, 1);
+  assert.equal(h.states[0].live, false, 'selecting the current minute still pauses live mode');
+
+  h.utc += 60_000;
+  await h.live.goNow();
+  assert.equal(columnReads, 22, 'the next minute is materialized exactly once');
+  assert.deepEqual(h.live.current, transitChartAt(day('2026-09-24'), 721));
+  assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render']);
+  assert.equal(h.live.state.live, true);
+});
+
 test('scrubbing is entirely local, pauses live, and Now resumes without selecting a chart or moving a camera', async () => {
   const h = harness({ zone: 'Asia/Kathmandu' });
   await h.live.refresh(true);

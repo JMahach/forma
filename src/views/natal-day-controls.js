@@ -1,5 +1,4 @@
 import { createChartDayExplorer } from '../state/natal-day.js';
-import { chartDayIndexAt } from '../domain/natal-day.js';
 import { formatDateInput } from './date-input.js';
 import { attachDayRange } from './day-range.js';
 
@@ -34,8 +33,7 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
       range.min = '0'; range.max = String(state.day.samples - 1); range.step = '1'; range.value = String(state.index);
     } else { range.min = '0'; range.max = '1439'; range.value = '0'; }
     // Saved UTC identifies the original fold, independently of the preview.
-    dayRange.updateReference({ value: state.day && Number.isFinite(Date.parse(state.original?.utc))
-      ? chartDayIndexAt(state.day, state.original.utc) : null,
+    dayRange.updateReference({ value: state.referenceIndex,
       visible: state.opened && state.status === 'ready' && Boolean(state.day),
       label: 'Вернуться к сохранённому времени рождения', active: state.exactOriginal });
     const offset = chart?.utcOffset || '';

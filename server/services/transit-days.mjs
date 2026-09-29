@@ -70,7 +70,7 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
   fingerprint ||= await transitCacheFingerprint(root);
   if (!/^[a-f0-9]{16}$/.test(fingerprint)) throw new Error('Invalid transit cache fingerprint');
   const memory = new Map(), pending = new Map(), queue = [];
-  let running = false, timer = null, warming = false;
+  let running = null, timer = null, warming = false;
   const filename = date => `${date}.${fingerprint}.gz`;
 
   async function prune() {
@@ -106,21 +106,25 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     while (memory.size > MAX_DAYS) memory.delete(memory.keys().next().value);
     return packet;
   }
-  async function drain() {
+  function drain() {
     if (running || !queue.length) return;
-    running = true;
     const job = queue.shift();
-    try {
-      let packet = await load(job.date);
-      if (!packet) {
-        const day = await generateDay(job.date);
-        if (day.date !== job.date) throw new Error('Unexpected transit date');
-        packet = await representations(await encodeDayPacket(day));
-        await persist(job.date, packet).catch(onCacheError);
-      }
-      job.resolve(remember(job.date, packet));
-    } catch (error) { job.reject(error); }
-    finally { pending.delete(job.date); running = false; void drain(); }
+    running = (async () => {
+      try {
+        let packet = await load(job.date);
+        const generated = !packet;
+        if (generated) {
+          const day = await generateDay(job.date);
+          if (day.date !== job.date) throw new Error('Unexpected transit date');
+          packet = await representations(await encodeDayPacket(day));
+        }
+        // The browser needs the ready packet, not the completion of its disk
+        // copy. Persistence keeps this same queue slot: writes cannot pile up.
+        job.resolve(remember(job.date, packet));
+        if (generated) await persist(job.date, packet).catch(onCacheError);
+      } catch (error) { job.reject(error); }
+      finally { pending.delete(job.date); running = null; drain(); }
+    })();
   }
   function enqueue(job) {
     const nextBackground = job.background ? -1 : queue.findIndex(item => item.background);
@@ -150,6 +154,7 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
   async function warm() {
     const today = Date.parse(`${utcDate(now())}T00:00:00Z`);
     await Promise.allSettled([request(utcDate(today), true), request(utcDate(today + DAY_MS), true)]);
+    await running;
     await prune();
   }
   function scheduleMidnight() {
@@ -172,7 +177,11 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     scheduleMidnight();
     void warm().catch(onCacheError);
   }
-  function close() { warming = false; clearTimeout(timer); timer = null; }
+  async function close() {
+    warming = false; clearTimeout(timer); timer = null;
+    // Stop scheduling immediately; callers may also await the remaining writes.
+    while (running) await running;
+  }
 
   return { get, warm, startWarmup, close, prune,
     get size() { return memory.size; }, get queued() { return queue.length; } };

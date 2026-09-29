@@ -12,7 +12,7 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     ...(target.dataset.activation ? { activation: target.dataset.activation } : {}) });
   const selectTarget = (target, additive = false, event) => onSelect({ ...selectionFor(target, event), ...(additive ? { additive: true } : {}) });
   const surface = cameraView.surface;
-  const point = event => cameraView.point(event);
+  const point = event => ({ ...cameraView.point(event), clientX: event.clientX, clientY: event.clientY });
   let camera;
   let gestureUpdate = false, pendingPaint = null, paintFrame = null;
   let wasPannable, wasDragging;
@@ -86,11 +86,16 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     surface.setPointerCapture(event.pointerId);
     updateCursor();
   });
-  surface.addEventListener('pointermove', event => {
+  function movePointer(event) {
     if (!pointers.has(event.pointerId)) return;
-    const before = [...pointers.values()];
     const old = pointers.get(event.pointerId);
+    // A release may contain the last movement without a preceding move event.
+    // Compare screen coordinates first: resizing under a still finger is not
+    // new travel, and a hidden surface may no longer have a valid projection.
+    if (event.type === 'pointerup' && event.clientX === old.clientX && event.clientY === old.clientY) return;
     const current = point(event);
+    if (event.type === 'pointerup' && (!Number.isFinite(current.x) || !Number.isFinite(current.y))) return;
+    const before = [...pointers.values()];
     pointers.set(event.pointerId, current);
     // The first drag includes travel inside the tap tolerance. Keep the pointer
     // map current for pinch, which must never replay that one-finger travel.
@@ -104,9 +109,11 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
       updateGesture(() => camera.zoomAt(oldCenter, distance(after) / Math.max(distance(before), 1),
         nextCenter.x - oldCenter.x, nextCenter.y - oldCenter.y));
     }
-  });
+  }
+  surface.addEventListener('pointermove', movePointer);
   function release(event) {
     if (!pointers.has(event.pointerId)) return;
+    if (event.type === 'pointerup') movePointer(event);
     flushPaint();
     const tap = event.type === 'pointerup' && pointers.size === 1 && !moved && !pinched
       && Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) <= 6;
