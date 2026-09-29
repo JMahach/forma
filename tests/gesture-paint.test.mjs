@@ -21,14 +21,14 @@ test.afterEach(() => {
 function harness({ deferred = true, animated = false } = {}) {
   const listeners = new Map(), captures = new Set(), queued = new Map(), motionFrames = new Map();
   const changes = [], transforms = [], selections = [], cursorChanges = [];
-  let nextId = 0, time = 0, width = 640, height = 820, mandala = false;
+  let nextId = 0, time = 0, width = 640, height = 820, mandala = false, projectionReads = 0;
   const frame = () => mandala ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME;
   const svg = {
     addEventListener: (name, handler) => listeners.set(name, handler),
-    getScreenCTM: () => ({ inverse() {
+    getScreenCTM: () => { projectionReads++; return { inverse() {
       const scale = Math.min(width / 640, height / 820);
       return { a: 1 / scale, d: 1 / scale, e: -(width - 640 * scale) / (2 * scale), f: -(height - 820 * scale) / (2 * scale) };
-    } }),
+    } }; },
     getBoundingClientRect: () => ({ left: 0, top: 0, right: width, bottom: height, width, height }),
     classList: { toggle: (name, enabled) => cursorChanges.push([name, enabled]) }, closest: () => null,
     setPointerCapture: id => captures.add(id),
@@ -63,6 +63,8 @@ function harness({ deferred = true, animated = false } = {}) {
       for (const callback of motionFirst ? [...motions, ...paints] : [...paints, ...motions]) callback(time);
     },
     resize(w, h) { width = w; height = h; controls.resize(); },
+    setSurfaceSize(w, h) { width = w; height = h; },
+    get projectionReads() { return projectionReads; },
     toggle() { mandala = !mandala; controls.transitionHome(); },
   };
 }
@@ -204,6 +206,129 @@ test('pinch and pan settle before release without inventing a tap or losing the 
   assert.equal(deferred.selections.length, 0);
   assert.deepEqual(deferred.controls.getView(), immediate.controls.getView());
   assert.equal(deferred.transforms.at(-1), immediate.transforms.at(-1));
+});
+
+test('pointerup consumes final pan movement and can cross the drag threshold without a move event', () => {
+  for (const [width, height] of [[640, 820], [390, 844]]) for (const priorMove of [null, 4, 30]) {
+    const h = harness(), scale = Math.min(width / 640, height / 820);
+    h.resize(width, height);
+    h.controls.zoom(2);
+    const start = h.controls.getView(), center = width / 2;
+    h.send('pointerdown');
+    if (priorMove !== null) h.send('pointermove', { clientX: center + priorMove });
+    h.send('pointerup', { clientX: center + 40 });
+    closeTo(h.controls.getView().x, start.x + 40 / scale);
+    closeTo(h.controls.getView().y, start.y);
+    assert.deepEqual(h.changes.at(-1), h.controls.getView());
+    assert.equal(h.queued.size, 0);
+    assert.equal(h.selections.length, 0);
+  }
+});
+
+test('a final pinch coordinate matches an explicit move and becomes the next pan baseline', () => {
+  const released = harness(), moved = harness();
+  for (const h of [released, moved]) {
+    h.controls.zoom(2);
+    h.send('pointerdown', { clientX: 250 });
+    h.send('pointerdown', { pointerId: 2, clientX: 390 });
+    h.send('pointermove', { clientX: 240 });
+  }
+  moved.send('pointermove', { pointerId: 2, clientX: 405, clientY: 425 });
+  for (const h of [released, moved]) h.send('pointerup', { pointerId: 2, clientX: 405, clientY: 425 });
+  assert.deepEqual(released.controls.getView(), moved.controls.getView());
+  const beforePan = released.controls.getView();
+  for (const h of [released, moved]) h.send('pointerup', { clientX: 250, clientY: 417 });
+  assert.deepEqual(released.controls.getView(), moved.controls.getView());
+  closeTo(released.controls.getView().x, beforePan.x + 10);
+  closeTo(released.controls.getView().y, beforePan.y + 7);
+  assert.equal(released.queued.size, 0);
+  assert.equal(released.selections.length, 0);
+});
+
+test('unchanged release coordinates add no projection, frame request or paint', () => {
+  for (const alreadyPainted of [false, true]) {
+    const h = harness();
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 350 });
+    if (alreadyPainted) h.tick();
+    const reads = h.projectionReads, paints = h.transforms.length, pending = h.queued.size;
+    h.send('pointerup', { clientX: 350 });
+    assert.equal(h.projectionReads, reads);
+    assert.equal(h.transforms.length, paints + pending, 'only an existing pending paint is flushed');
+    assert.equal(h.queued.size, 0);
+  }
+});
+
+test('movement first seen on release retains a tap through the exact screen tolerance', () => {
+  for (const dx of [0, 4, 6]) {
+    const h = harness(), target = { dataset: { type: 'gate', id: '41' }, closest() { return this; } };
+    h.controls.zoom(2);
+    const start = h.controls.getView();
+    h.send('pointerdown', { target });
+    h.send('pointerup', { clientX: 320 + dx });
+    assert.deepEqual(h.controls.getView(), start);
+    assert.deepEqual(h.selections, [{ type: 'gate', id: '41' }]);
+    assert.equal(h.queued.size, 0);
+  }
+});
+
+test('cancel and capture loss ignore their endpoint and retain the last real movement', () => {
+  for (const type of ['pointercancel', 'lostpointercapture']) {
+    const h = harness();
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 350 });
+    const view = h.controls.getView(), reads = h.projectionReads;
+    h.send(type, { clientX: 900, clientY: -200 });
+    assert.deepEqual(h.controls.getView(), view);
+    assert.deepEqual(h.changes.at(-1), view);
+    assert.equal(h.projectionReads, reads);
+    assert.equal(h.queued.size, 0);
+    assert.equal(h.selections.length, 0);
+  }
+});
+
+test('resize or a collapsed surface under a still finger cannot invent release movement', () => {
+  for (const size of [[390, 844], [0, 0]]) {
+    const h = harness();
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 350 });
+    const view = h.controls.getView(), reads = h.projectionReads;
+    h.setSurfaceSize(...size);
+    h.send('pointerup', { clientX: 350, clientY: 410 });
+    assert.deepEqual(h.controls.getView(), view);
+    assert.deepEqual(h.changes.at(-1), view);
+    assert.equal(h.projectionReads, reads);
+    assert.equal(h.queued.size, 0);
+  }
+});
+
+test('a changed release uses the current projection and ignores an unavailable one', () => {
+  const released = harness(), moved = harness();
+  for (const h of [released, moved]) {
+    h.controls.zoom(2);
+    h.send('pointerdown');
+    h.send('pointermove', { clientX: 350 });
+    h.setSurfaceSize(390, 844);
+  }
+  moved.send('pointermove', { clientX: 360, clientY: 420 });
+  for (const h of [released, moved]) h.send('pointerup', { clientX: 360, clientY: 420 });
+  assert.deepEqual(released.controls.getView(), moved.controls.getView());
+  assert.deepEqual(released.changes.at(-1), released.controls.getView());
+
+  const collapsed = harness();
+  collapsed.controls.zoom(2);
+  collapsed.send('pointerdown');
+  collapsed.send('pointermove', { clientX: 350 });
+  const view = collapsed.controls.getView();
+  collapsed.setSurfaceSize(0, 0);
+  collapsed.send('pointerup', { clientX: 360, clientY: 420 });
+  assert.deepEqual(collapsed.controls.getView(), view);
+  assert.deepEqual(collapsed.changes.at(-1), view);
+  assert.equal(collapsed.queued.size, 0);
+  assert.equal(collapsed.selections.length, 0);
 });
 
 test('Home cancels a pending gesture paint and an obsolete callback cannot steal a newer paint', () => {

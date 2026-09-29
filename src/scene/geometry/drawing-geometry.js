@@ -1,4 +1,5 @@
 import { CHANNELS, getGate, getChannel } from './chart-geometry.js';
+import { INTEGRATION_IDS } from '../../domain/topology.js';
 import { INTEGRATION_ARMS as ARM_GEOMETRY, STEM_POINTS, sampleBezier } from './integration-geometry.js';
 
 // Geometry-only preparation: cached paths never depend on selection or paint.
@@ -48,8 +49,9 @@ export function offsetPoints(points, offset) {
   });
 }
 
-// Geometry is cached; selection changes do not resample 36 curves.
-export const channelHalves = new Map(CHANNELS.map((channel) => [channel.id, splitAtHalfLength(
+// Ordinary channels use two halves; integration uses its own arms and stem.
+// Geometry is cached, so selection changes do not resample these curves.
+export const channelHalves = new Map(CHANNELS.filter(channel => !INTEGRATION_IDS.has(channel.id)).map((channel) => [channel.id, splitAtHalfLength(
   channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0))
 )]));
 // 26–44 crosses the central routes behind every other channel, including integration.

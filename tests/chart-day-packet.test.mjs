@@ -53,6 +53,30 @@ test('historical seconds and repeated folds preserve unique sample instants with
   assert.equal(chartDayMinute(decodeChartDay(encodeChartDay(historical)), 1).utc, '1899-12-31T23:51:39Z');
 });
 
+test('minute lookup keeps exact second boundaries, gaps and endpoint clamping', () => {
+  const day = makeDay('1900-01-01', 'Europe/Paris', 4);
+  day.startUtc = '1899-12-31T23:50:39Z';
+  day.segments = [
+    { index: 0, startUtc: day.startUtc, offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 },
+    { index: 2, startUtc: '1899-12-31T23:54:39Z', offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 },
+  ];
+  const decoded = decodeChartDay(encodeChartDay(day));
+  for (const [utc, index] of [
+    ['1899-12-31T23:49:00Z', 0], ['1899-12-31T23:50:38.999Z', 0],
+    ['1899-12-31T23:50:39Z', 0], ['1899-12-31T23:51:38.999Z', 0],
+    ['1899-12-31T23:51:39Z', 1], ['1899-12-31T23:54:38.999Z', 1],
+    ['1899-12-31T23:54:39Z', 2], ['1899-12-31T23:55:38.999Z', 2],
+    ['1899-12-31T23:55:39Z', 3], ['1900-01-02T00:00:00Z', 3],
+  ]) {
+    assert.equal(chartDayIndexAt(decoded, utc), index, utc);
+    assert.equal(chartDayIndexAt(decoded, Date.parse(utc)), index, `numeric ${utc}`);
+  }
+  for (const invalid of [undefined, null, '', 'invalid', NaN, Infinity]) assert.equal(chartDayIndexAt(decoded, invalid), 0);
+  for (const invalid of [-1, 4, 0.5, '1', NaN, Infinity]) {
+    assert.throws(() => chartDayMinute(decoded, invalid), /Некорректный пакет дня рождения/);
+  }
+});
+
 test('materialization retains original identity and never mutates the saved chart', () => {
   const day = decodeChartDay(encodeChartDay(makeDay()));
   const original = Object.freeze({ id: 'saved-id', name: 'My chart', note: 'Keep', createdAt: 'original', updatedAt: 'original', cityId: '123' });

@@ -33,9 +33,9 @@ export function createLiveTransit({
     const minute = timelineMinute(timeline, nextIndex);
     if (!days.has(minute.date)) return;
     index = minute.index;
-    const next = transitChartAt(days.get(minute.date), minute.packetIndex);
     const previous = current;
-    if (!previous || previous.utc !== next.utc) {
+    if (!previous || Date.parse(previous.utc) !== minute.utc) {
+      const next = transitChartAt(days.get(minute.date), minute.packetIndex);
       current = next;
       onMoment(next, previous);
       // Exact longitudes move even when gate and line stay the same.

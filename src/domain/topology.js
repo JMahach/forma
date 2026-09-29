@@ -118,10 +118,8 @@ export const CHANNELS = [
 ];
 
 const gatesById = new Map(GATES.map(gate => [gate.id, gate]));
-const centersById = new Map(CENTERS.map(center => [center.id, center]));
 const channelsById = new Map(CHANNELS.map(channel => [channel.id, channel]));
 export const getGate = id => gatesById.get(Number(id));
-export const getCenter = id => centersById.get(id);
 export const canonicalChannelId = id => String(id).split('-').map(Number).sort((a, b) => a - b).join('-');
 export const getChannel = id => channelsById.get(canonicalChannelId(id));
 

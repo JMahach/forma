@@ -36,6 +36,7 @@ test('only calculated personal charts opt into a day and selecting one never sta
   assert.equal(h.requests.length, 1);
   assert.equal(h.explorer.current, chart);
   assert.equal(h.explorer.state.index, 754, 'the saved second stays in its own minute');
+  assert.equal(h.explorer.state.referenceIndex, 754);
   assert.equal(h.explorer.current.birthTime, '12:34:45');
   assert.deepEqual(h.renders, [], 'opening retains the original exact calculation');
 });
@@ -51,12 +52,19 @@ test('scrub recalculates both sides locally; reset and close restore the origina
   const previous = h.explorer.current;
   h.explorer.scrub(755);
   assert.notEqual(h.explorer.current.activations.personality[0].longitude, previous.activations.personality[0].longitude);
+  assert.equal(h.explorer.state.referenceIndex, 754, 'the birth reference belongs to the original chart');
+  const selected = h.explorer.current, notifications = h.states.length, renders = h.renders.length;
+  h.explorer.scrub(755.9);
+  assert.equal(h.explorer.current, selected, 'repeating the same bounded minute retains the current calculation');
+  assert.equal(h.states.length, notifications);
+  assert.equal(h.renders.length, renders);
   assert.notEqual(h.explorer.current.activations.design[0].longitude, previous.activations.design[0].longitude);
   assert.equal(h.explorer.current.id, chart.id);
   assert.equal(h.requests.length, 1);
   h.explorer.reset();
   assert.equal(h.explorer.current, chart);
   assert.equal(h.explorer.state.index, 754);
+  assert.equal(h.explorer.state.referenceIndex, 754);
   h.explorer.scrub(0); h.explorer.close();
   assert.equal(h.explorer.current, null);
   assert.equal(h.renders.at(-1), null, 'closed view resolves to saved chart at composition root');
@@ -64,6 +72,7 @@ test('scrub recalculates both sides locally; reset and close restore the origina
   await h.explorer.open();
   assert.equal(h.explorer.current, chart);
   assert.equal(h.requests.length, 1, 'reopening reuses its already loaded day');
+  assert.equal(h.explorer.state.referenceIndex, 754);
 });
 
 test('switching chart or closing cancels the active view; stale completion cannot reopen or publish it', async () => {
@@ -248,11 +257,13 @@ test('closed, changed and stale birth-day loads cannot show an old reference mar
   h.explorer.select(personalChartFixture());
   const first = h.explorer.open();
   assert.equal(h.marker.hidden, true);
+  assert.equal(h.explorer.state.referenceIndex, null);
   h.explorer.select(personalChartFixture({ id: 'next' }));
   complete(chartDayFixture()); await first;
   assert.equal(h.marker.hidden, true);
   assert.equal(h.marker.style.left, '');
   assert.equal(h.panel.dataset.status, 'idle');
+  assert.equal(h.explorer.state.referenceIndex, null, 'a stale load cannot supply a birth reference');
   const second = h.explorer.open();
   h.explorer.close();
   complete(chartDayFixture()); await second;
@@ -264,6 +275,7 @@ test('closed, changed and stale birth-day loads cannot show an old reference mar
   h.explorer.select(personalChartFixture({ id: 'third' }));
   assert.equal(h.marker.hidden, true, 'selecting another saved chart removes the previous marker immediately');
   assert.equal(h.marker.style.left, '');
+  assert.equal(h.explorer.state.referenceIndex, null);
 });
 
 test('birth controls remain usable when the optional marker is omitted', async () => {

@@ -1,5 +1,5 @@
 import { createChartDayClient } from '../data/natal-day-client.js';
-import { chartAtMinute, chartDayMinute, chartDayIndexAt } from '../domain/natal-day.js';
+import { chartAtMinute, chartDayIndexAt } from '../domain/natal-day.js';
 
 export const canExploreChartDay = chart => Boolean(chart?.source === 'calculated'
   && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
@@ -10,9 +10,9 @@ export const canExploreChartDay = chart => Boolean(chart?.source === 'calculated
 export function createChartDayExplorer({
   dayClient = createChartDayClient(), onStateChange = () => {}, onRender = () => {},
 } = {}) {
-  let original = null, current = null, day = null, index = 0;
+  let original = null, current = null, day = null, index = 0, referenceIndex = null;
   let opened = false, status = 'idle', error = '', exactOriginal = true, sequence = 0, active = null;
-  const state = () => ({ original, current, day, index, opened, status, error, exactOriginal, available: canExploreChartDay(original) });
+  const state = () => ({ original, current, day, index, referenceIndex, opened, status, error, exactOriginal, available: canExploreChartDay(original) });
   const notify = () => onStateChange(state());
   const cancel = () => { sequence += 1; active?.controller.abort(); active = null; };
 
@@ -25,7 +25,7 @@ export function createChartDayExplorer({
       try {
         const result = await dayClient.getDay(chart, { signal: controller.signal });
         if (requestSequence !== sequence || !opened || chart !== original) return false;
-        day = result; index = chartDayIndexAt(day, chart.utc); status = 'ready';
+        day = result; referenceIndex = chartDayIndexAt(day, chart.utc); index = referenceIndex; status = 'ready';
         return true;
       } catch (failure) {
         if (requestSequence !== sequence || controller.signal.aborted) return false;
@@ -43,7 +43,7 @@ export function createChartDayExplorer({
     if (!original) return;
     const changed = current !== original;
     current = original; exactOriginal = true;
-    if (day) index = chartDayIndexAt(day, original.utc);
+    if (day) index = referenceIndex;
     notify();
     if (changed) onRender();
   }
@@ -59,7 +59,7 @@ export function createChartDayExplorer({
     get state() { return state(); },
     select(chart) {
       if (chart === original) return;
-      cancel(); original = chart; current = chart; day = null; index = 0;
+      cancel(); original = chart; current = chart; day = null; index = 0; referenceIndex = null;
       opened = false; status = 'idle'; error = ''; exactOriginal = true; notify();
     },
     async open() {
@@ -73,9 +73,9 @@ export function createChartDayExplorer({
     reset,
     scrub(value) {
       if (!opened || status !== 'ready' || !day || !Number.isFinite(value)) return;
-      const minute = chartDayMinute(day, Math.min(day.samples - 1, Math.max(0, Math.trunc(value))));
-      if (!exactOriginal && index === minute.index) return;
-      index = minute.index; current = chartAtMinute(day, index, original); exactOriginal = false;
+      const nextIndex = Math.min(day.samples - 1, Math.max(0, Math.trunc(value)));
+      if (!exactOriginal && index === nextIndex) return;
+      index = nextIndex; current = chartAtMinute(day, index, original); exactOriginal = false;
       notify(); onRender();
     },
   };

@@ -3,10 +3,14 @@ import { PLANET_IDS as DISPLAY_PLANETS } from './planets.js';
 import { CHART_DAY_PLANETS, failChartDayPacket as fail } from '../../shared/day-packets/natal-format.js';
 const iso = value => new Date(value).toISOString().replace('.000Z', 'Z');
 
-export function chartDayMinute(day, index) {
+function minuteAt(day, index) {
   if (!Number.isInteger(index) || index < 0 || index >= day.samples) return fail();
   const segment = day.segments.findLast(segment => segment.index <= index);
   const moment = Date.parse(segment.startUtc) + (index - segment.index) * 60000;
+  return { segment, moment };
+}
+export function chartDayMinute(day, index) {
+  const { segment, moment } = minuteAt(day, index);
   return { index, utc: iso(moment), birthTime: iso(moment + segment.offsetSeconds * 1000).slice(11, 16), utcOffset: segment.utcOffset, fold: segment.fold };
 }
 export function chartDayIndexAt(day, utc) {
@@ -15,9 +19,9 @@ export function chartDayIndexAt(day, utc) {
   let low = 0, high = day.samples - 1;
   while (low < high) {
     const mid = Math.floor((low + high) / 2);
-    if (Date.parse(chartDayMinute(day, mid).utc) <= moment) low = mid + 1; else high = mid;
+    if (minuteAt(day, mid).moment <= moment) low = mid + 1; else high = mid;
   }
-  return Date.parse(chartDayMinute(day, low).utc) > moment ? Math.max(0, low - 1) : low;
+  return minuteAt(day, low).moment > moment ? Math.max(0, low - 1) : low;
 }
 export function chartAtMinute(day, index, originalChart) {
   const minute = chartDayMinute(day, index);
