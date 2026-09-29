@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createStaticAssets } from './static-assets.mjs';
 import { negotiateEncoding } from './content-encoding.mjs';
+import { prepareLoadingPage } from '../../src/scene/loading-placeholder.js';
 
 // Every browser entry/dependency is explicit. Project files outside this map
 // remain private even when a new directory or file is added to the repository.
@@ -18,6 +19,7 @@ export const PUBLIC_FILES = new Map([
     'shared/day-packets/natal-format.js',
     'shared/day-packets/transit-format.js',
     'src/app.js',
+    'src/views/chart-loading.js',
     'src/data/api-client.js',
     'src/data/chart-store.js',
     'src/data/natal-day-cache.js',
@@ -124,7 +126,8 @@ export async function readReleaseManifest(directory) {
 }
 
 export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false }) {
-  const assets = createStaticAssets(root, { precompressed });
+  const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => entry.file === 'public/index.html'
+    ? Buffer.from(prepareLoadingPage(bytes.toString('utf8'))) : bytes });
   return async function servePublicFile(req, res, pathname) {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
     const filename = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));

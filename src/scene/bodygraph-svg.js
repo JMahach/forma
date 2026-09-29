@@ -3,7 +3,7 @@ import { CENTERS, GATES } from './geometry/chart-geometry.js';
 import { renderActivationColumns } from './activation-columns.js';
 import { renderVariableArrows } from './variable-arrows.js';
 import { renderMandala } from './mandala.js';
-import { MANDALA_SCENE_SCALE } from './geometry/mandala-geometry.js';
+import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
 import { renderChartBackdrop } from './backdrop.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
 import {
@@ -160,7 +160,7 @@ ${thumbnail ? '' : `  <style>
       .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     }
   </style>`}
-  ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="translate(320 398) scale(${MANDALA_SCENE_SCALE}) translate(-320 -398)">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
+  ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
     ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + variables : ''}
     ${options.showMandala ? '<g class="mandala-core">\n    ' + renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>

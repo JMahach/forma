@@ -49,6 +49,10 @@ test('real release build preserves sources and produces complete deterministic c
   for (const directory of ['src', 'shared', 'public']) {
     await fs.cp(path.join(project, directory), path.join(root, directory), { recursive: true });
   }
+  await fs.copyFile(path.join(project, 'package.json'), path.join(root, 'package.json'));
+  // An independent snapshot must provide both its chart and its loading art.
+  const placeholder = path.join(root, 'src/scene/loading-placeholder.js');
+  await fs.writeFile(placeholder, (await fs.readFile(placeholder, 'utf8')).replace('loading-centers', 'loading-centers-from-root'));
   const before = await fileDigests(root);
   const outdir = path.join(temporary, 'first'), repeat = path.join(temporary, 'repeat');
   const manifest = await buildWeb({ root, outdir });
@@ -67,6 +71,9 @@ test('real release build preserves sources and produces complete deterministic c
   }
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
+  assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
+  assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
+  assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
 
   const resolve = (reference, parent) => {
     const url = new URL(reference, `https://forma.test/${parent}`);

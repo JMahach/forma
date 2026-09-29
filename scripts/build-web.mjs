@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gzip, brotliCompress, constants } from 'node:zlib';
@@ -12,6 +12,7 @@ const gzipAsync = promisify(gzip), brotli = promisify(brotliCompress);
 // Source remains readable and runs directly in development. Only release HTML
 // refers to these content-versioned assets; the server reads one explicit map.
 export async function buildWeb({ root = project, outdir = path.join(root, 'dist') } = {}) {
+  const { prepareLoadingPage } = await import(pathToFileURL(path.join(root, 'src/scene/loading-placeholder.js')).href);
   const result = await build({
     absWorkingDir: root,
     entryPoints: { app: 'src/app.js', love: 'src/stories/vessel-of-love.js', styles: 'public/styles.css', 'love-style': 'public/love.css' },
@@ -36,7 +37,7 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
   ]) {
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
     // The local tab has a version label; the published site keeps its name.
-    if (page === 'index.html') html = html.replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
+    if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
     html = html.replace(`src="/${script}"`, `src="${entryUrl(script)}"`)
       .replace(`href="${style}"`, `href="${entryUrl(styleEntry)}"`)
       .replace(/href="\/favicon\.svg(?:\?[^"]*)?"/, `href="/${iconFile}"`)

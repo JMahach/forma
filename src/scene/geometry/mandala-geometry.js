@@ -7,6 +7,7 @@ export const MANDALA_GEOMETRY = Object.freeze({
 // Keep the established ring-to-body proportions without shrinking the body on
 // toggle. Only the decorative wheel receives the inverse of the old .84 scale.
 export const MANDALA_SCENE_SCALE = 1 / .84;
+export const MANDALA_SCENE_TRANSFORM = `translate(${MANDALA_GEOMETRY.centerX} ${MANDALA_GEOMETRY.centerY}) scale(${MANDALA_SCENE_SCALE}) translate(${-MANDALA_GEOMETRY.centerX} ${-MANDALA_GEOMETRY.centerY})`;
 
 const format = value => Number(value.toFixed(3));
 

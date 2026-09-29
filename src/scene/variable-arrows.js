@@ -1,11 +1,11 @@
 import { calculateVariables } from '../domain/variables.js';
-import { activationBlockTransform } from './geometry/activation-layout.js';
+import { ACTIVATION_COLUMN_LAYOUT, activationBlockTransform, activationHeadingX } from './geometry/activation-layout.js';
 
 // A separate, non-interactive layer within the existing drawing bounds.
 // Arrow direction changes only the glyph, never the bodygraph geometry.
 const SIDES = Object.freeze({
-  design: { x: 148, color: '#c32d35', label: 'Дизайн', rule: 'M 24 88 H 198' },
-  personality: { x: 492, color: '#202020', label: 'Личность', rule: 'M 437 88 H 582' },
+  design: { x: 148, color: '#c32d35', label: 'Дизайн', rule: `M ${activationHeadingX('design') + ACTIVATION_COLUMN_LAYOUT.headingWidths['Дизайн']} ${ACTIVATION_COLUMN_LAYOUT.ruleY} H 198` },
+  personality: { x: 492, color: '#202020', label: 'Личность', rule: `M 437 ${ACTIVATION_COLUMN_LAYOUT.ruleY} H ${activationHeadingX('personality')}` },
 });
 const ROWS = Object.freeze({ top: 134, bottom: 206 });
 const GLYPH_SCALE = 1.3;
@@ -21,8 +21,8 @@ export function renderVariableArrows(chart) {
   const variables = calculateVariables(chart);
   if (!variables.length || variables.some(variable => !ARROWS[variable.colorDirection])) return '';
   const headings = Object.entries(SIDES).map(([source, side]) => `<g class="variable-block" data-source="${source}" transform="${activationBlockTransform(source)}"><g class="bodygraph-variable-headings" data-source="${source}" fill="${side.color}" aria-hidden="true">
-    <text class="activation-heading" x="${side.x - GLYPH_OFFSET}" y="76" text-anchor="middle" font-size="16" font-weight="500">Цвет</text>
-    <text class="activation-heading" x="${side.x + GLYPH_OFFSET}" y="76" text-anchor="middle" font-size="16" font-weight="500">Тон</text>
+    <text class="activation-heading" x="${side.x - GLYPH_OFFSET}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" text-anchor="middle" font-size="16" font-weight="500">Цвет</text>
+    <text class="activation-heading" x="${side.x + GLYPH_OFFSET}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" text-anchor="middle" font-size="16" font-weight="500">Тон</text>
     <path class="variable-header-rule" d="${side.rule}" fill="none" stroke="${side.color}" stroke-opacity=".18" stroke-width="1"/>
   </g></g>`).join('');
   return `<g class="bodygraph-variables" pointer-events="none" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">${headings}${variables.map(variable => {

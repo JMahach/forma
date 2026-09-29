@@ -83,6 +83,26 @@ test('development static assets negotiate exact bytes, representation ETags, HEA
   assert.equal(refused.status, 406); assert.equal(refused.headers.Vary, 'Accept-Encoding');
 });
 
+test('initial HTML includes the empty silhouette before JavaScript in every encoding', async t => {
+  const root = await directory(t);
+  const source = '<html><body><!-- chart-loading-placeholder --></body></html>';
+  await write(root, 'public/index.html', source);
+  const serve = handler(root);
+  let rendered;
+  for (const [encoding, unpack] of [['identity', bytes => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]]) {
+    const response = await request(serve, '/', { headers: { 'accept-encoding': encoding } });
+    const html = unpack(response.body).toString();
+    assert.equal(response.status, 200);
+    assert.match(html, /<svg id="chartLoadingArt"/);
+    assert.match(html, /class="loading-centers"/);
+    assert.doesNotMatch(html, /chart-loading-placeholder|data-activation|data-type|<script/);
+    assert.equal(response.headers.ETag, digest(response.body));
+    if (rendered) assert.equal(html, rendered);
+    rendered = html;
+  }
+  assert.equal(await fs.readFile(path.join(root, 'public/index.html'), 'utf8'), source);
+});
+
 test('development revalidates source files while sharing concurrent encoding work', async t => {
   const root = await directory(t);
   await write(root, 'src/app.js', content);
