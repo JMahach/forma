@@ -9,13 +9,15 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const source = file => fs.readFileSync(path.join(root, file), 'utf8');
 const files = directory => fs.readdirSync(path.join(root, directory), { recursive: true })
   .filter(file => /\.(?:js|mjs)$/.test(file)).map(file => `${directory}/${file}`);
-const browserFiles = [...files('src'), ...files('shared/day-packets')];
+const loadingGenerator = 'src/scene/loading-placeholder.js';
+const sourceFiles = [...files('src'), ...files('shared/day-packets')];
+const browserFiles = sourceFiles.filter(file => file !== loadingGenerator);
 const dependencies = file => [...source(file).matchAll(/(?:from\s+|import\s*)['"]([^'"]+)['"]/g)]
   .map(([, specifier]) => specifier.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)) : specifier);
-const graph = new Map([...browserFiles, ...files('server')].map(file => [file, dependencies(file)]));
+const graph = new Map([...sourceFiles, ...files('server')].map(file => [file, dependencies(file)]));
 const pure = file => assert.doesNotMatch(source(file), /\b(?:document|window|localStorage|sessionStorage|indexedDB)\s*\.|\bfetch\s*\(/, `${file} must stay pure`);
-const only = (file, roots) => {
-  for (const dependency of graph.get(file)) assert.ok(roots.some(prefix => dependency.startsWith(prefix)), `${file} must not import ${dependency}`);
+const only = (file, roots, exact = []) => {
+  for (const dependency of graph.get(file)) assert.ok(exact.includes(dependency) || roots.some(prefix => dependency.startsWith(prefix)), `${file} must not import ${dependency}`);
 };
 
 // Tests inspect both pages, not a hand-maintained list of module entry points.
@@ -48,6 +50,7 @@ test('all browser modules are reachable from real page entries and explicitly pu
     for (const dependency of graph.get(file) || []) visit(dependency);
   }
   entries.forEach(visit);
+  assert.ok(!reachable.has(loadingGenerator), 'the loading illustration is prepared before browser execution');
   assert.deepEqual([...reachable].sort(), [...browserFiles].sort(), 'orphaned browser files need an owner or removal');
   for (const file of browserFiles) assert.equal(PUBLIC_FILES.get(file), file, `${file} must be served`);
   for (const file of PUBLIC_FILES.values()) {
@@ -55,6 +58,28 @@ test('all browser modules are reachable from real page entries and explicitly pu
     assert.ok(fs.existsSync(path.join(root, file)), `stale public path: ${file}`);
     if (!file.startsWith('public/')) assert.ok(reachable.has(file), `unneeded public module: ${file}`);
   }
+});
+
+test('the loading illustration has explicit server and build owners and only pure geometry dependencies', () => {
+  const owners = [...graph].filter(([, imports]) => imports.includes(loadingGenerator)).map(([file]) => file);
+  assert.deepEqual(owners, ['server/http/public-files.mjs']);
+  assert.match(source('scripts/build-web.mjs'), /await import\(pathToFileURL\(path\.join\(root, 'src\/scene\/loading-placeholder\.js'\)\)\.href\)/,
+    'the release build imports its requested source root, not browser execution');
+  assert.ok(!PUBLIC_FILES.has(loadingGenerator));
+  assert.ok(![...PUBLIC_FILES.values()].includes(loadingGenerator), 'no public alias exposes the generator');
+  only(loadingGenerator, ['src/scene/geometry/', 'src/domain/']);
+  const visited = new Set();
+  function visit(file) {
+    if (visited.has(file)) return;
+    visited.add(file);
+    pure(file);
+    for (const dependency of graph.get(file)) {
+      assert.ok(['src/scene/geometry/', 'src/domain/', 'src/reference/'].some(prefix => dependency.startsWith(prefix)),
+        `${file} must not bring browser or server state into loading geometry: ${dependency}`);
+      visit(dependency);
+    }
+  }
+  visit(loadingGenerator);
 });
 
 test('domain rules and packet contracts are pure and do not import presentation, storage or Node', () => {
@@ -76,7 +101,8 @@ test('server separates HTTP, service policies, process adapters and private enco
   for (const file of files('server/services')) only(file, ['node:', 'shared/day-packets/', 'server/services/', 'server/runtime/', 'server/packets/']);
   for (const file of files('server/runtime')) only(file, ['node:', 'server/runtime/']);
   for (const file of files('server/packets')) only(file, ['node:', 'shared/day-packets/', 'server/packets/']);
-  for (const file of files('server/http')) only(file, ['node:', 'shared/day-packets/', 'server/http/', 'server/services/']);
+  for (const file of files('server/http')) only(file, ['node:', 'shared/day-packets/', 'server/http/', 'server/services/'],
+    file === 'server/http/public-files.mjs' ? [loadingGenerator] : []);
   assert.ok(!graph.get('server/services/natal-days.mjs').includes('server/services/transit-days.mjs'));
   assert.ok(!graph.get('server/services/transit-days.mjs').includes('server/services/natal-days.mjs'));
   for (const file of [...files('server/services'), ...files('server/runtime'), ...files('server/packets')]) {

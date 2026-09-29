@@ -6,7 +6,7 @@ import { createActivationPainter } from './activation-painter.js';
 import { renderMandala } from './mandala.js';
 import { renderVariableArrows } from './variable-arrows.js';
 import { renderChartBackdrop } from './backdrop.js';
-import { MANDALA_SCENE_SCALE } from './geometry/mandala-geometry.js';
+import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
 import { setAttribute, svgNodes } from './svg-patches.js';
 
 const svgElement = (root, name) => root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', name);
@@ -63,7 +63,7 @@ export function createSceneRenderer(root) {
       if (!ring) {
         ring = svgElement(root, 'g');
         ring.setAttribute('class', 'mandala-scene');
-        ring.setAttribute('transform', `translate(320 398) scale(${MANDALA_SCENE_SCALE}) translate(-320 -398)`);
+        ring.setAttribute('transform', MANDALA_SCENE_TRANSFORM);
         ring.innerHTML = renderMandala(chart, mandalaOptions(state, options));
         root.insertBefore(ring, drawing);
       }

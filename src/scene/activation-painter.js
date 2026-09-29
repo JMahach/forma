@@ -1,5 +1,6 @@
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading } from './activation-columns.js';
 import { setAttribute, setAttributes, svgNodes } from './svg-patches.js';
+import { ACTIVATION_COLUMN_LAYOUT, activationHeadingX } from './geometry/activation-layout.js';
 
 const text = (node, value) => { if (node.textContent !== String(value)) node.textContent = String(value); };
 const elementFrom = (parent, markup) => svgNodes(parent, markup).find(node => node.nodeType === 1);
@@ -74,8 +75,8 @@ export function createActivationPainter(root) {
         }
         if (column.label !== model.label) {
           text(column.heading, model.label);
-          setAttributes(column.heading, { x: model.x - 2, 'text-anchor': null });
-          setAttribute(column.rule, 'd', `M ${model.x - 2} 88 h ${model.headingWidth}`);
+          setAttributes(column.heading, { x: activationHeadingX(model.source), 'text-anchor': null });
+          setAttribute(column.rule, 'd', `M ${activationHeadingX(model.source)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${model.headingWidth}`);
           column.label = model.label;
         }
         const ids = new Set(model.rows.map(row => row.id));

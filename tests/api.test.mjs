@@ -36,6 +36,8 @@ apiTest('the page loads the complete frontend module graph through public source
   const page = await request('/');
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /html/);
+  assert.match(page.body, /<svg id="chartLoadingArt"/, 'loading art is present before application JavaScript');
+  assert.doesNotMatch(page.body, /<!-- chart-loading-placeholder -->/);
   const entryPoints = [...page.body.matchAll(/<script\b([^>]*)>/g)]
     .filter(([, attributes]) => /\btype=["']module["']/.test(attributes))
     .map(([, attributes]) => attributes.match(/\bsrc=["']([^"']+)["']/)?.[1]);
@@ -67,7 +69,10 @@ apiTest('the page loads the complete frontend module graph through public source
     readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
       ? sourceModules(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
       : entry.name.endsWith('.js') ? [`${prefix}${entry.name}`] : []);
-  assert.deepEqual([...visited].sort(), [...sourceModules(), ...sourceModules(new URL('../shared/day-packets/', import.meta.url), '/shared/day-packets/')].sort(), 'every frontend module is reachable and publicly loadable');
+  const loadingGenerator = '/src/scene/loading-placeholder.js';
+  assert.ok(!visited.has(loadingGenerator), 'the server/build generator is not browser-reachable');
+  assert.equal((await request(loadingGenerator)).status, 404, 'the loading generator remains private');
+  assert.deepEqual([...visited].sort(), [...sourceModules().filter(file => file !== loadingGenerator), ...sourceModules(new URL('../shared/day-packets/', import.meta.url), '/shared/day-packets/')].sort(), 'every frontend module is reachable and publicly loadable');
   const styles = await request('/styles.css');
   assert.equal(styles.status, 200);
   assert.match(styles.headers.get('content-type'), /css/);

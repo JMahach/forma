@@ -9,7 +9,7 @@ const tag = bytes => `"${createHash('sha256').update(bytes).digest('base64url')}
 
 // Only the HTTP allowlist calls this cache. Development files are revalidated
 // on disk; release files and their prebuilt encodings are immutable per process.
-export function createStaticAssets(root, { precompressed = false } = {}) {
+export function createStaticAssets(root, { precompressed = false, transform = (_entry, bytes) => bytes } = {}) {
   const cache = new Map();
   return {
     async get(entry) {
@@ -18,7 +18,8 @@ export function createStaticAssets(root, { precompressed = false } = {}) {
       const version = stat ? `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}` : 'release';
       if (cache.get(entry.file)?.version === version) return cache.get(entry.file).promise;
       const promise = (async () => {
-        const identity = await fs.readFile(filename);
+        const source = await fs.readFile(filename);
+        const identity = precompressed ? source : transform(entry, source);
         const [br, gz] = precompressed
           ? await Promise.all([fs.readFile(path.join(root, entry.br)), fs.readFile(path.join(root, entry.gzip))])
           : await Promise.all([brotli(identity, { params: { [constants.BROTLI_PARAM_QUALITY]: 6 } }), gzipAsync(identity)]);

@@ -58,6 +58,19 @@ small { font-size: 11px; }
 .app-shell:has(.chart-summary.open) .canvas-wrap { clip-path: inset(0 var(--summary-width) 0 0); }
 .studio > .canvas-wrap { position: absolute; inset: 0; height: 100%; scroll-padding: var(--studio-top-space) max(4px, env(safe-area-inset-left), env(safe-area-inset-right)) var(--studio-bottom-space); }
 
+/* Static preview stays still while the real camera starts. No second camera. */
+#chartLoadingArt { position: absolute; top: var(--studio-top-space); left: max(4px, env(safe-area-inset-left)); width: calc(100% - 2 * max(4px, env(safe-area-inset-left), env(safe-area-inset-right))); height: calc(100% - var(--studio-top-space) - var(--studio-bottom-space)); pointer-events: none; }
+.loading-columns { fill: #e9e6e1; }
+.loading-channels { fill: none; stroke: #ebe8e2; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+.loading-centers { fill: var(--canvas-background); stroke: #dedad3; stroke-width: 1.5; }
+.chart-loading-message { position: absolute; z-index: 22; left: 50%; bottom: max(66px, calc(env(safe-area-inset-bottom) + 60px)); transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); text-align: center; color: #837d73; font-size: 12px; line-height: 1.6; letter-spacing: .01em; }
+.chart-loading-message > p { padding: 4px 10px; border-radius: 6px; background: var(--canvas-background); }
+.chart-loading-message button { min-height: 40px; margin-top: 8px; padding: 8px 18px; font-size: 12px; }
+.studio:has(.canvas-wrap:not([data-chart-state='ready'])) .day-controls { visibility: hidden; }
+.canvas-wrap[data-chart-state='ready'] #bodygraph { animation: chart-arrival .18s ease-out; }
+@keyframes chart-arrival { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .canvas-wrap[data-chart-state='ready'] #bodygraph { animation: none; } }
+
 /* Floating navigation and chart heading. */
 .topbar { align-items: center; justify-content: flex-start; position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; right: 16px; z-index: 30; display: flex; height: 44px; min-height: 0; padding: 0; border: 0; background: transparent; pointer-events: none; }
 .topbar-leading { display: flex; gap: 5px; align-items: center; pointer-events: none; }

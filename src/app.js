@@ -22,6 +22,7 @@ import { attachChartSummary } from './views/chart-summary-panel.js';
 import { createToast } from './ui/toast.js';
 import { attachTelegramGestures } from './ui/telegram-gestures.js';
 import { attachPerformanceMonitor } from './views/performance-monitor.js';
+import { attachChartLoading } from './views/chart-loading.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 const $ = id => document.getElementById(id);
@@ -38,6 +39,14 @@ let hoverPreview = null, chartSummary = null, mandalaMode = null, library = null
 const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
 const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => chartDay, onChange: updatePage });
 const currentChart = () => session.current;
+const chartLoading = attachChartLoading({
+  canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
+  message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
+  onRetry: () => transit?.refresh(true),
+});
+const updateLoading = (state = transit?.state) => chartLoading.update({
+  hasChart: session.hasCurrent, failed: state?.unavailable, loading: state?.loading,
+});
 
 const graph = createGraphController({
   getChart: currentChart, hasChart: () => session.hasCurrent,
@@ -101,13 +110,14 @@ chartDay = attachChartDayExplorer({
 });
 transit = attachLiveTransit({
   document, button: $('nowButton'), toast, isFormOpen: () => birthForm.opened,
-  onRender: session.refresh, onStateChange: state => transitControls?.update(state),
+  onRender: session.refresh, onStateChange: state => { transitControls?.update(state); updateLoading(state); },
 });
 transitControls = attachTransitControls({
   panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'), date: $('transitDate'), time: $('transitMoment'),
   status: $('transitStatus'), nowButton: $('transitNow'), onScrub: transit.scrub, onNow: transit.goNow,
 });
 transitControls.update(transit.state);
+$('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit.refresh(); });
 attachTransitNavigation($('nowButton'), {
   closeLibrary: library.close,
   onSelect: graph.changeChart, refresh: transit.refresh,
@@ -132,6 +142,7 @@ function updatePage() {
   updateChartCaption();
   library.render();
   graph.render();
+  updateLoading();
 }
 
 chartDay.select(session.original);

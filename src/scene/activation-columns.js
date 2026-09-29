@@ -1,5 +1,5 @@
 import { calculateLineFixings } from '../domain/line-fixing.js';
-import { activationBlockTransform } from './geometry/activation-layout.js';
+import { ACTIVATION_COLUMN_LAYOUT, activationBlockTransform, activationHeadingX, activationRowY } from './geometry/activation-layout.js';
 
 import { PLANETS } from '../domain/planets.js';
 
@@ -7,7 +7,6 @@ const FIXING_LABELS = {
   exalted: 'Экзальтация', detriment: 'Падение', juxtaposed: 'Экзальтация и падение'
 };
 const FIXING_SCALE = 1.15;
-const HEADING_WIDTHS = { 'Дизайн': 58, 'Личность': 74, 'Транзит': 58 };
 
 export const fixingPath = state => state === 'exalted' ? 'M -4 3 L 0 -4 L 4 3 Z'
   : state === 'detriment' ? 'M -4 -3 L 0 4 L 4 -3 Z'
@@ -34,7 +33,8 @@ export function alignPersonalityHeading(root) {
   if (!Number.isFinite(bounds.width) || bounds.width <= 0) return;
   const relative = columnMatrix.inverse().multiply(valueMatrix);
   const right = relative.a * (bounds.x + bounds.width) + relative.c * bounds.y + relative.e;
-  if (!Number.isFinite(right) || right <= 582) return;
+  const startX = activationHeadingX('personality');
+  if (!Number.isFinite(right) || right <= startX) return;
   heading.setAttribute('x', String(right));
   heading.setAttribute('text-anchor', 'end');
   const headingBounds = heading.getBBox();
@@ -42,7 +42,7 @@ export function alignPersonalityHeading(root) {
   if (Number.isFinite(correction) && Math.abs(correction) > 1e-6) {
     heading.setAttribute('x', String(right + correction));
   }
-  rule.setAttribute('d', `M 582 88 H ${right}`);
+  rule.setAttribute('d', `M ${startX} ${ACTIVATION_COLUMN_LAYOUT.ruleY} H ${right}`);
 }
 
 // Planetary values come exclusively from the saved calculation, never from
@@ -55,7 +55,7 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
   const columns = ['design', 'personality'].map(source => {
     const entries = chart.activations[source];
     if (!Array.isArray(entries) || !entries.length) return null;
-    const x = source === 'design' ? -32 : 584;
+    const x = ACTIVATION_COLUMN_LAYOUT.x[source];
     const label = source === 'design' ? 'Дизайн' : chart.source === 'transit' ? 'Транзит' : 'Личность';
     const color = source === 'design' ? '#c32d35' : '#202020';
     const rows = PLANETS.map(([planet, symbol, name], index) => {
@@ -73,7 +73,7 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
       const fixingLabel = FIXING_LABELS[fixing];
       const planetSelected = selections.some(value => value.type === 'planet' && value.id === `${source}-${planet}`);
       const id = `${source}-${planet}`;
-      return { id, source, planet, symbol, name, x, y: 118 + index * 48, label,
+      return { id, source, planet, symbol, name, x, y: activationRowY(index), label,
         gate: entry.gate, line: entry.line, selected, pressed, fixing, fixingLabel, planetSelected,
         planetPressed: pressedSelections.some(value => value.type === 'planet' && value.id === id),
         planetAria: `${label}, ${name}`, planetTitle: `${name} · ${label}`,
@@ -81,7 +81,7 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
         gateTitle: `Ворота ${entry.gate} · линия ${entry.line}${fixingLabel ? ` · ${fixingLabel}` : ''}`,
       };
     }).filter(Boolean);
-    return { source, x, label, color, rows, transform: activationBlockTransform(source), headingWidth: HEADING_WIDTHS[label] };
+    return { source, x, label, color, rows, transform: activationBlockTransform(source), headingWidth: ACTIVATION_COLUMN_LAYOUT.headingWidths[label] };
   }).filter(Boolean);
   return columns;
 }
@@ -104,11 +104,11 @@ export function renderActivationRow(row) {
 }
 
 export function renderActivationColumn(column) {
-  const { source, x, label, color, transform, headingWidth, rows } = column;
+  const { source, label, color, transform, headingWidth, rows } = column;
   return `<g class="activation-column" data-source="${source}" fill="${color}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
       <g class="activation-block-content" transform="${transform}">
-      <text class="activation-heading" x="${x - 2}" y="76" font-size="16" font-weight="500">${label}</text>
-      <path class="activation-header-rule" d="M ${x - 2} 88 h ${headingWidth}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
+      <text class="activation-heading" x="${activationHeadingX(source)}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" font-size="16" font-weight="500">${label}</text>
+      <path class="activation-header-rule" d="M ${activationHeadingX(source)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${headingWidth}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
       ${rows.map(renderActivationRow).join('')}
       </g>
     </g>`;

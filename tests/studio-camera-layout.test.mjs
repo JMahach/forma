@@ -376,7 +376,8 @@ test('the application supplies the studio canvas insets and keeps only the Home 
   }
   assert.match(page, /\bid="fitButton"/);
   assert.match(page, /<button\b[^>]*id="fitButton"[^>]*\bhidden(?:\s|>)/, 'Home starts hidden before camera initialization to prevent a startup flash');
-  assert.match(page, /<svg\b[^>]*id="bodygraph"[^>]*tabindex="0"/, 'the drawing remains keyboard focusable for +, − and 0');
+  assert.match(page, /<svg\b[^>]*id="bodygraph"[^>]*tabindex="-1"[^>]*aria-hidden="true"/, 'the empty drawing stays out of keyboard navigation until a chart is ready');
+  assert.match(page, /<section\b[^>]*id="canvasWrap"[^>]*\binert(?:\s|>)/, 'the loading canvas starts non-interactive before JavaScript');
   assert.ok(/attachCameraControls\(\{\s*fitButton:\s*\$\('fitButton'\)\s*\}/.test(app), 'the application binds the Home button without obsolete zoom controls');
 });
 

@@ -6,6 +6,7 @@ import { attachChartLibrary, createChartLibraryView } from '../src/views/library
 import { libraryDom } from './helpers/library-dom.mjs';
 import { attachTransitNavigation } from '../src/views/live-transit.js';
 import { attachCameraControls } from '../src/views/camera-controls.js';
+import { prepareLoadingPage } from '../src/scene/loading-placeholder.js';
 
 const bootstrapSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 const appSource = [bootstrapSource, ...[
@@ -41,8 +42,12 @@ test('removed legacy panels leave no DOM nodes, event bindings, or renderer call
   assert.doesNotMatch(pageSource, /class="(?:view-switch|canvas-bottomline|chart-footer)"/);
 });
 
-test('every statically referenced app element exists in the page after cleanup', () => {
-  const ids = new Set([...pageSource.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
+test('every statically referenced app element exists in the prepared page after cleanup', () => {
+  const preparedPage = prepareLoadingPage(pageSource);
+  const allIds = [...preparedPage.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+  const ids = new Set(allIds);
+  assert.equal(ids.size, allIds.length, 'server-prepared illustration adds no duplicate element IDs');
+  assert.doesNotMatch(preparedPage, /<!-- chart-loading-placeholder -->/);
   for (const [, id] of appSource.matchAll(/\$\('([^']+)'\)/g)) {
     assert.ok(ids.has(id), `${id} is available to app bootstrap and event handlers`);
   }
