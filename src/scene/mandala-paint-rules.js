@@ -4,7 +4,7 @@ import { gatePositionAtLongitude } from '../domain/gate-wheel.js';
 // Shared visual decisions for the complete SVG and persistent mandala painter.
 export const MANDALA_PALETTE = Object.freeze({
   paper: '#eee8dc', rim: '#a59c8d', light: '#ffffff', empty: '#8e897e',
-  design: '#b6756a', personality: '#727975', both: '#807b73',
+  design: '#ae6259', personality: '#4b514e', both: '#696257',
   highlight: '#c4d9f1',
 });
 const gateSet = values => new Set((Array.isArray(values) ? values : [])
@@ -32,7 +32,7 @@ export function mandalaGateSets(chart) {
   return { personality: gateSet(chart?.personality), design: gateSet(chart?.design) };
 }
 
-export const MANDALA_OPACITY = Object.freeze({ fan: '.082225', focus: '.242', sector: '.25', highlight: '.77' });
+export const MANDALA_OPACITY = Object.freeze({ fan: '.11', focus: '.242', sector: '.30', highlight: '.77' });
 
 export function mandalaSectorPaint(geometry, gates, selectedGates, relatedGates) {
   const { gate, ring, halfRings, fan, halfFans } = geometry;
@@ -52,6 +52,8 @@ export function mandalaPlanetPaint(source, planet) {
   // differ only in emphasis; their geometry never receives an offset.
   const cross = planet === 'sun' || planet === 'earth';
   return { rayClass: `mandala-planet-ray${cross ? ' mandala-cross-axis' : ''}`, color: MANDALA_PALETTE[source],
-    rayOpacity: cross ? '.5313' : '.2783', rayWidth: cross ? '.8' : '.55',
-    radius: cross ? '1.35' : '.85', endpointOpacity: cross ? '1' : '.759' };
+    symbol: PLANETS.find(([id]) => id === planet)?.[1] || '',
+    leaderOpacity: '.5', leaderWidth: '.65', symbolOutline: MANDALA_PALETTE.light, symbolOutlineWidth: '3',
+    rayOpacity: cross ? '.64' : '.4', rayWidth: cross ? '.8' : '.55',
+    radius: cross ? '1.35' : '.85', endpointOpacity: cross ? '1' : '.9' };
 }

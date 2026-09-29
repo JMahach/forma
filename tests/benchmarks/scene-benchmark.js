@@ -16,7 +16,7 @@ const integrationChannels = ['10-20', '10-34', '10-57', '20-34', '20-57', '34-57
 let baselinePromise, referenceRenderer = renderBodygraph, referenceAlign = alignPersonalityHeading;
 let renderer = createSceneRenderer(roots.persistent), running = false, stopped = false;
 const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
-const baseOptions = { interactive: true, showBackdrop: true, showActivations: true, showMandala: true, showLotus: true };
+const baseOptions = { interactive: true, showBackdrop: true, showActivations: true, showMandala: true };
 const gates = entries => [...new Set(entries.map(entry => entry.gate))].sort((a, b) => a - b);
 
 function chartFrom(activations) {
@@ -64,8 +64,8 @@ function integrationChart(combination) {
 const gate = id => ({ type: 'gate', id });
 const targetSet = combination => [gate(integrationGates[combination % 4]), { type: 'center', id: ['throat', 'g', 'spleen', 'sacral'][combination % 4] },
   { type: 'channel', id: integrationChannels[combination % 6] }, { type: 'integration', id: 'integration' }];
-const modes = Array.from({ length: 8 }, (_, value) => ({ ...baseOptions,
-  showMandala: Boolean(value & 1), showActivations: Boolean(value & 2), showLotus: Boolean(value & 4) }));
+const modes = Array.from({ length: 4 }, (_, value) => ({ ...baseOptions,
+  showMandala: Boolean(value & 1), showActivations: Boolean(value & 2) }));
 
 function* phaseCases(label, chart, options, targets, identity = true) {
   yield { label: `${label}: idle`, chart, options, identity };

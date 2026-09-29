@@ -358,7 +358,7 @@ test('the title stays centered across portrait, landscape and toolbar breakpoint
 test('Home sits left of the adjacent clock and Mandala controls without changing their order', () => {
   const tools = byId('fitButton').parent;
   assert.deepEqual(nodes.filter(node => node.parent === tools && node.tag === 'button')
-    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'chartDayToggle', 'mandalaSwitch', 'lotusSwitch', 'summarySwitch']);
+    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'chartDayToggle', 'mandalaSwitch', 'summarySwitch']);
   assert.match(byId('fitButton').attributes, /\bhidden(?:\s|$)/, 'the fitted initial chart starts without Home');
   assert.equal(byId('chartDayToggle').parent, byId('mandalaSwitch').parent);
 });
@@ -485,7 +485,7 @@ test('caption fit can move a centered title below the tools without a landscape-
   }
 });
 
-test('all five chart controls fit beside Menu at the narrowest phone size', () => {
+test('all chart controls fit beside Menu at the narrowest phone size', () => {
   for (const [width, height] of [[320, 568], [359, 740], [393, 747]]) {
     const toolbar = declarationsAt('.chart-tools', width, height);
     const icon = declarationsAt('.chart-tools .icon-button', width, height);

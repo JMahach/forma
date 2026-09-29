@@ -34,7 +34,7 @@ function assertSameNodes(actual, expected) {
 test('first mount parses one complete SVG, adopts its caches and retains every initial node on an identical update', () => {
   for (const mode of [{}, { showMandala: true }, { showMandalaLayer: true }]) {
     const h = fixture(), chart = chartAt();
-    const options = { showBackdrop: true, showLotus: true, showActivations: true, ...mode };
+    const options = { showBackdrop: true, showActivations: true, ...mode };
     h.renderer.update(chart, null, options);
     assert.equal(h.document.parses.length, 1, 'only the complete SVG is parsed');
     assert.equal(h.document.parses[0].target, h.root);
@@ -71,9 +71,9 @@ test('adopted integration masks and lanes survive unrelated selections and repai
 
 test('decorative mode transitions reuse the body and keep the same complete scene as static SVG', () => {
   const h = fixture(), chart = chartAt();
-  const modes = [{}, { showBackdrop: true }, { showLotus: true, showBackdrop: true },
+  const modes = [{}, { showBackdrop: true },
     { showMandalaLayer: true }, { showMandala: true, showActivations: true },
-    { showMandala: true, showLotus: true }, { showActivations: true }, {}];
+    { showMandala: true }, { showActivations: true }, {}];
   let targets;
   for (const options of modes) {
     h.renderer.update(chart, null, options);

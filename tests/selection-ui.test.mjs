@@ -380,7 +380,7 @@ test('ordinary graph and planet selections dismiss an open activation popup with
 });
 
 test('pointer and keyboard graph selections use the tested choose callback', () => {
-  const options = appSource.match(/attachGestures\(\$\('bodygraph'\),\s*\$\('viewport'\),\s*\{([\s\S]*?)\n\}\);/)?.[1];
+  const options = appSource.match(/attachGestures\(\$\('bodygraph'\),\s*\{([\s\S]*?)\n\}\);/)?.[1];
   assert.ok(options, 'the application attaches gestures to the drawing');
   assert.match(options, /\bonSelect:\s*graph\.choose\s*,/);
   assert.match(options, /\bonBackgroundTap:\s*graph\.clear\s*,/);

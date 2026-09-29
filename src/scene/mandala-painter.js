@@ -1,6 +1,7 @@
 import { renderCrossPreview } from './mandala.js';
 import { MANDALA_PALETTE as PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
 import { MANDALA_SECTORS, MANDALA_GEOMETRY, MANDALA_CENTER, mandalaPoint, mandalaPointString } from './geometry/mandala-geometry.js';
+import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 import { setAttribute as attr } from './svg-patches.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -26,7 +27,8 @@ function children(parent, desired) {
 }
 
 function markerRecord(node) {
-  return { node, ray: node.querySelector('.mandala-planet-ray'), endpoint: node.querySelector('.mandala-planet-endpoint') };
+  return { node, ray: node.querySelector('.mandala-planet-ray'), endpoint: node.querySelector('.mandala-planet-endpoint'),
+    leader: node.querySelector('.mandala-planet-leader') };
 }
 
 function crossRecord(node) {
@@ -54,9 +56,10 @@ export function createMandalaPainter(root) {
   function capture(wheel) {
     const field = wheel.querySelector('.mandala-field');
     const edge = wheel.querySelector('.mandala-engraving-edge');
+    const labels = wheel.querySelector('.mandala-planet-labels');
     const gates = new Map([...wheel.querySelectorAll('.mandala-gate')]
       .map(node => [Number(node.getAttribute('data-mandala-gate')), node]));
-    if (!field || !edge || MANDALA_SECTORS.some(({ gate }) => !gates.has(gate))) return null;
+    if (!field || !edge || !labels || MANDALA_SECTORS.some(({ gate }) => !gates.has(gate))) return null;
     const fans = new Map([...field.querySelectorAll('.mandala-fan')]
       .map(node => [`${node.getAttribute('data-mandala-gate')}:${node.getAttribute('data-mandala-source')}`, node]));
     const focus = new Map([...field.querySelectorAll('.mandala-focus-sector')]
@@ -73,7 +76,9 @@ export function createMandalaPainter(root) {
     });
     if (sectors.some(sector => !sector.highlight || !sector.separator || !sector.number)) return null;
     return {
-      wheel, field, edge, sectors, fans, focus,
+      wheel, field, edge, labels, sectors, fans, focus, sectorKey: null, sectorFieldNodes: [],
+      symbols: new Map([...labels.querySelectorAll('.mandala-planet-symbol')].map(node =>
+        [`${node.getAttribute('data-source')}:${node.getAttribute('data-mandala-planet')}`, node])),
       markers: new Map([...field.querySelectorAll('.mandala-planet-marker')].map(node =>
         [`${node.getAttribute('data-source')}:${node.getAttribute('data-mandala-planet')}`, markerRecord(node)])),
       pinned: [...wheel.querySelectorAll('.mandala-cross-pinned')].map(crossRecord),
@@ -121,12 +126,19 @@ export function createMandalaPainter(root) {
     if (!cache) return false;
     const document = wheel.ownerDocument;
     const gates = mandalaGateSets(chart);
-    const fieldNodes = [], nextFans = new Map(), nextFocus = new Map();
+    // Sectors depend on gates and selection, not on exact planet longitudes.
+    // Snapshot values so reused, mutable chart arrays and option sets stay valid.
+    const sectorKey = JSON.stringify([Boolean(interactive), [...gates.design], [...gates.personality],
+      [...selectedGates], [...relatedGates]]);
+    const refreshSectors = sectorKey !== cache.sectorKey;
+    const fieldNodes = refreshSectors ? [] : [...cache.sectorFieldNodes];
+    const nextFans = refreshSectors ? new Map() : cache.fans;
+    const nextFocus = refreshSectors ? new Map() : cache.focus;
     attr(wheel, 'aria-hidden', interactive ? null : 'true');
     attr(wheel, 'pointer-events', interactive ? null : 'none');
     attr(wheel, 'focusable', interactive ? null : 'false');
 
-    for (const sector of cache.sectors) {
+    if (refreshSectors) for (const sector of cache.sectors) {
       const { geometry, node, highlight, separator, number } = sector;
       const { gate, ring, fan } = geometry;
       const paint = mandalaSectorPaint(geometry, gates, selectedGates, relatedGates);
@@ -173,28 +185,49 @@ export function createMandalaPainter(root) {
       sector.fills = nextFills;
     }
     cache.fans = nextFans; cache.focus = nextFocus;
+    if (refreshSectors) {
+      cache.sectorKey = sectorKey;
+      cache.sectorFieldNodes = [...fieldNodes];
+    }
 
-    const markers = new Map();
-    for (const { source, planet, longitude } of mandalaPlanetEntries(chart)) {
+    // Rays, leaders and collision-aware labels still receive every exact input.
+    const markers = new Map(), symbols = new Map(), labelNodes = [];
+    for (const { source, planet, longitude, x: labelX, y: labelY, labelLongitude, leaderPath } of layoutMandalaPlanets(mandalaPlanetEntries(chart))) {
       const key = `${source}:${planet}`;
+      const paint = mandalaPlanetPaint(source, planet);
       let record = cache.markers.get(key);
       if (!record) {
-        const paint = mandalaPlanetPaint(source, planet);
         const node = element(document, 'g', { class: 'mandala-planet-marker', 'data-mandala-planet': planet, 'data-source': source });
         const ray = element(document, 'path', { class: paint.rayClass,
           fill: 'none', stroke: paint.color, 'stroke-opacity': paint.rayOpacity, 'stroke-width': paint.rayWidth });
         const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: paint.radius,
           fill: paint.color, 'fill-opacity': paint.endpointOpacity });
-        node.appendChild(ray); node.appendChild(endpoint); record = { node, ray, endpoint };
+        const leader = element(document, 'path', { class: 'mandala-planet-leader', fill: 'none',
+          stroke: paint.color, 'stroke-opacity': paint.leaderOpacity, 'stroke-width': paint.leaderWidth });
+        node.appendChild(ray); node.appendChild(endpoint); node.appendChild(leader); record = { node, ray, endpoint, leader };
       }
       const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
       attr(record.node, 'data-longitude', longitude);
       attr(record.ray, 'd', `M ${MANDALA_CENTER} L ${x} ${y}`);
       attr(record.endpoint, 'cx', x); attr(record.endpoint, 'cy', y);
+      attr(record.leader, 'd', leaderPath);
       fieldNodes.push(record.node); markers.set(key, record);
+
+      let symbol = cache.symbols.get(key);
+      if (!symbol) {
+        symbol = element(document, 'text', { class: 'mandala-planet-symbol', 'data-mandala-planet': planet, 'data-source': source,
+          fill: paint.color, 'font-size': MANDALA_PLANET_LAYOUT.fontSize, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+          stroke: paint.symbolOutline, 'stroke-width': paint.symbolOutlineWidth, 'stroke-linejoin': 'round', 'paint-order': 'stroke' });
+        symbol.textContent = paint.symbol;
+      }
+      attr(symbol, 'data-longitude', longitude); attr(symbol, 'data-label-longitude', labelLongitude);
+      attr(symbol, 'x', labelX); attr(symbol, 'y', labelY);
+      labelNodes.push(symbol); symbols.set(key, symbol);
     }
     children(cache.field, fieldNodes);
+    children(cache.labels, labelNodes);
     cache.markers = markers;
+    cache.symbols = symbols;
 
     const previous = [...cache.pinned, ...(cache.preview ? [cache.preview] : [])];
     const pinned = [];

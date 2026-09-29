@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
 import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from '../src/scene/mandala-preview.js';
 import { MANDALA_GEOMETRY } from '../src/scene/geometry/mandala-geometry.js';

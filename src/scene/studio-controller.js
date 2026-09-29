@@ -1,14 +1,8 @@
-import { computeStudioLayout, computeCameraFit } from './layout.js';
+import { computeStudioLayout, STUDIO_BOTTOM_INSET } from './layout.js';
 import { STUDIO_FRAME } from './geometry/frames.js';
 
 // Phone chrome is presentation, not a branch in camera or chart geometry.
 export const PHONE_LAYOUT_QUERY = '(max-width: 699px), (pointer: coarse) and (max-width: 1099px) and (max-height: 500px)';
-
-export function measureCameraFit(svg, frame, fitInsets) {
-  const rect = svg.getBoundingClientRect(), matrix = svg.getScreenCTM().inverse();
-  const insets = typeof fitInsets === 'function' ? fitInsets() : fitInsets;
-  return computeCameraFit(frame, rect, insets, (x, y) => new DOMPoint(x, y).matrixTransform(matrix));
-}
 
 export function createStudioLayout({ canvas, panels, drawing = null, readStyle = element => getComputedStyle(element),
   media = globalThis.matchMedia(PHONE_LAYOUT_QUERY) }) {
@@ -17,9 +11,9 @@ export function createStudioLayout({ canvas, panels, drawing = null, readStyle =
   function refresh() {
     const rect = canvas.getBoundingClientRect(), style = readStyle(canvas);
     current = computeStudioLayout({ width: rect.width, height: rect.height,
-      side: parseFloat(style.scrollPaddingLeft) || 12,
+      side: parseFloat(style.scrollPaddingLeft) || 4,
       top: parseFloat(style.scrollPaddingTop) || 112,
-      bottom: parseFloat(style.scrollPaddingBottom) || 64 });
+      bottom: parseFloat(style.scrollPaddingBottom) || STUDIO_BOTTOM_INSET });
     canvas.dataset.layout = phone() ? 'phone' : 'desktop';
     canvas.dataset.mandalaColumns = current.showMandalaColumns ? 'visible' : 'hidden';
     const { panel, placement } = current;
@@ -42,7 +36,7 @@ export function createStudioLayout({ canvas, panels, drawing = null, readStyle =
     get phone() { return phone(); },
     get showMandalaColumns() { return current.showMandalaColumns; },
     get placement() { return current.placement; },
-    get mandalaTop() { return current.center.y - current.panel.width / 2; },
+    get mandalaTop() { return current.center.y - current.mandalaRadius; },
     frame() { return STUDIO_FRAME; },
     refresh,
     insets() { return current.insets; },

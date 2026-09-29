@@ -1,6 +1,7 @@
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ACTIVATION_COLUMN_REVEAL_DISTANCE as distance } from '../src/scene/geometry/activation-layout.js';
 import { createMandalaMotion } from '../src/scene/modes/mandala-motion.js';
 import { createGraphController } from '../src/scene/updates.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
@@ -156,11 +157,11 @@ test('one inherited progress synchronizes ring and columns without moving the ca
   assert.equal(h.motion.active, true);
   assert.equal(h.motion.expanded, true);
   h.tick(100);
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   assert.equal(h.reveal, 0.5);
   assert.deepEqual(h.finishes, []);
   h.tick(200);
-  assert.equal(h.offset, 228);
+  assert.equal(h.offset, distance);
   assert.equal(h.reveal, 1);
   assert.equal(h.motion.active, false);
   assert.deepEqual(h.finishes, [true]);
@@ -168,7 +169,7 @@ test('one inherited progress synchronizes ring and columns without moving the ca
   h.motion.setExpanded(false);
   assert.equal(h.motion.expanded, false);
   h.tick(300);
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   h.tick(400);
   assert.equal(h.offset, 0);
   assert.equal(h.reveal, 0);
@@ -195,12 +196,12 @@ test('hover, selection and chart redraws inherit the in-flight offset without re
   graph.preview();
   graph.choose({ type: 'gate', id: 36 });
   chart = { ...chart, id: 'next-minute' }; graph.render();
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   assert.deepEqual([...h.frames.keys()], frame, 'rendering does not schedule or replace the animation frame');
   assert.match(h.viewport.innerHTML, /next-minute/);
   assert.equal(h.reveal, 0.5);
   h.tick(200);
-  assert.equal(h.offset, 228, 'the original animation deadline is retained');
+  assert.equal(h.offset, distance, 'the original animation deadline is retained');
   assert.equal(h.frames.size, 0);
 });
 
@@ -209,16 +210,16 @@ test('rapid reversals start at the current offset and use a proportional duratio
   h.motion.setExpanded(true);
   h.tick(100);
   h.motion.setExpanded(false);
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   assert.equal(h.frames.size, 1);
   h.tick(150);
-  assert.equal(h.offset, 57);
+  assert.equal(h.offset, distance / 4);
   h.motion.setExpanded(true);
-  assert.equal(h.offset, 57);
+  assert.equal(h.offset, distance / 4);
   h.tick(225);
-  assert.equal(h.offset, 142.5);
+  assert.equal(h.offset, distance * .625);
   h.tick(300);
-  assert.equal(h.offset, 228, 'three quarters of the distance take three quarters of 200ms');
+  assert.equal(h.offset, distance, 'three quarters of the distance take three quarters of 200ms');
   assert.deepEqual(h.finishes, [true], 'reversed endpoints never notify');
   assert.equal(h.frames.size, 0);
 });
@@ -229,7 +230,7 @@ test('reversal between frames samples current progress rather than a stale paint
   assert.equal(h.reveal, 0.15625);
   h.at(100); h.motion.setExpanded(false);
   assert.equal(h.reveal, 0.5);
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   h.tick(150);
   assert.equal(h.reveal, 0.25);
   h.tick(200);
@@ -248,7 +249,7 @@ test('a repeated target neither restarts motion nor adds animation frames', () =
   h.at(150); h.motion.setExpanded(true);
   assert.deepEqual([...h.frames.keys()], pending);
   h.tick(200);
-  assert.equal(h.offset, 228);
+  assert.equal(h.offset, distance);
   h.motion.setExpanded(true);
   assert.equal(h.frames.size, 0);
   assert.deepEqual(h.finishes, [true], 'repeating a settled target does not notify again');
@@ -261,7 +262,7 @@ test('canceled callbacks cannot overwrite a reversed animation or queue another 
   h.tick(100); h.motion.setExpanded(false);
   const pending = [...h.frames.keys()];
   stale(200);
-  assert.equal(h.offset, 114);
+  assert.equal(h.offset, distance / 2);
   assert.deepEqual([...h.frames.keys()], pending);
   assert.deepEqual(h.finishes, []);
   h.tick(200);
@@ -273,14 +274,14 @@ test('canceled callbacks cannot overwrite a reversed animation or queue another 
 test('reduced motion snaps directly and can also finish an animation already running', () => {
   const h = harness();
   h.setReduced(true); h.motion.setExpanded(true);
-  assert.equal(h.offset, 228);
+  assert.equal(h.offset, distance);
   assert.equal(h.frames.size, 0);
   h.motion.setExpanded(false);
   assert.equal(h.offset, 0);
   h.setReduced(false); h.motion.setExpanded(true); h.tick(60);
-  assert.ok(h.offset > 0 && h.offset < 228);
+  assert.ok(h.offset > 0 && h.offset < distance);
   h.setReduced(true); h.tick(80);
-  assert.equal(h.offset, 228);
+  assert.equal(h.offset, distance);
   assert.equal(h.frames.size, 0);
   h.setReduced(false); h.motion.setExpanded(false); h.tick(120);
   h.setReduced(true); h.motion.setExpanded(false);
@@ -293,7 +294,7 @@ test('missing frame support or zero duration settle synchronously without pendin
   for (const options of [{ requestFrame: null }, { durationMs: 0 }]) {
     const h = harness(options);
     h.motion.setExpanded(true);
-    assert.equal(h.offset, 228);
+    assert.equal(h.offset, distance);
     assert.equal(h.reveal, 1);
     assert.equal(h.frames.size, 0);
     h.motion.setExpanded(false);
@@ -342,7 +343,7 @@ test('finish callbacks observe settled styles and can start the next transition 
     assert.equal(h.motion.active, false);
     assert.equal(h.motion.expanded, expanded);
     assert.equal(h.reveal, expanded ? 1 : 0);
-    assert.equal(h.offset, expanded ? 228 : 0);
+    assert.equal(h.offset, expanded ? distance : 0);
     if (expanded) h.motion.setExpanded(false);
   } });
   h.motion.setExpanded(true); h.tick(200);

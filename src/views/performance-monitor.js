@@ -2,7 +2,7 @@ import { createFrameMonitor } from '../diagnostics/frame-monitor.js';
 
 // This view observes input without owning gestures, camera state or rendering.
 // Sampling and its bounded statistics belong to diagnostics/frame-monitor.
-export function attachPerformanceMonitor({ document, button, panel, drawing, ranges = [], motionButtons = [],
+export function attachPerformanceMonitor({ document, button, panel, drawing, inputSurface = drawing, ranges = [], motionButtons = [],
   initiallyEnabled = false, onToggle = () => {}, monitorOptions = {},
 }) {
   const field = name => panel.querySelector(`[data-performance="${name}"]`);
@@ -46,8 +46,8 @@ export function attachPerformanceMonitor({ document, button, panel, drawing, ran
     }
   }
   function observe() {
-    observeDrag(drawing);
-    listen(drawing, 'wheel', event => { if (event.deltaX || event.deltaY) activity(); });
+    observeDrag(inputSurface);
+    listen(inputSurface, 'wheel', event => { if (event.deltaX || event.deltaY) activity(); });
     listen(drawing, 'keydown', event => {
       if (event.target === drawing && ['+', '-', '0'].includes(event.key)) activity();
     });

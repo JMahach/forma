@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHART_SURFACE, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, renderChartBackdrop } from '../src/scene/backdrop.js';
-import { CHART_BACKDROP_BOUNDS, CHART_SILHOUETTE_PATH } from '../src/scene/geometry/chart-backdrop.js';
+import { LOTUS_BACKDROP_BOUNDS, LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/scene/geometry/lotus-backdrop.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { renderChartThumbnail } from '../src/views/thumbnail.js';
@@ -20,13 +20,13 @@ const ids = markup => [...markup.matchAll(/\sid="([^"]+)"/g)].map(match => match
 const references = markup => [...markup.matchAll(/url\(#([^)]+)\)/g)].map(match => match[1]);
 const paths = markup => [...markup.matchAll(/<path\b([^>]*)\/>/g)].map(([, attrs]) => attributes(attrs));
 
-test('chart surface is two deterministic decorative paths, never a page-wide field or interactive target', () => {
+test('chart surface is a deterministic decorative seated figure, never a page-wide field or interactive target', () => {
   for (const mandala of [false, true]) {
     const markup = renderChartBackdrop('bodygraph', { mandala });
     assert.match(markup, new RegExp(`^<g class="${mandala ? 'mandala-underlay' : 'chart-backdrop'}" pointer-events="none" aria-hidden="true" focusable="false"${mandala ? ` opacity="${CHART_MANDALA_SURFACE_OPACITY}"` : ''}>`));
     assert.doesNotMatch(markup, /data-type|tabindex|role=|bg-interactive|href|<image|<script|<foreignObject|\son\w+=|<filter|<fe\w+|<animate/i);
     assert.doesNotMatch(markup, /NaN|undefined|Infinity/);
-    assert.equal((markup.match(/<path\b/g) || []).length, 2, 'one perimeter stroke followed by one opaque surface');
+    assert.equal((markup.match(/<path\b/g) || []).length, 2 + LOTUS_DETAIL_PATHS.length, 'one perimeter, one opaque surface and the crossed-leg contours');
     assert.equal((markup.match(/<linearGradient\b/g) || []).length, 1);
     assert.doesNotMatch(markup, /<rect|<ellipse|<circle|<mask|<radialGradient|filter=/, 'only the bodygraph silhouette receives a surface');
     assert.equal(renderChartBackdrop('bodygraph', { mandala }), markup);
@@ -35,19 +35,19 @@ test('chart surface is two deterministic decorative paths, never a page-wide fie
 
 test('both modes compose solid paths so the fill covers the inner half of one uniform perimeter stroke', () => {
   assert.ok(Object.isFrozen(CHART_SURFACE));
-  assert.ok(Object.isFrozen(CHART_BACKDROP_BOUNDS));
+  assert.ok(Object.isFrozen(LOTUS_BACKDROP_BOUNDS));
   assert.ok(Number.isFinite(CHART_SURFACE_RIM_WIDTH) && CHART_SURFACE_RIM_WIDTH > 0 && CHART_SURFACE_RIM_WIDTH <= 6);
   const rimRadius = CHART_SURFACE_RIM_WIDTH / 2;
-  assert.ok(CHART_BACKDROP_BOUNDS.x - rimRadius > 64 && CHART_BACKDROP_BOUNDS.x + CHART_BACKDROP_BOUNDS.width + rimRadius < 584, 'even the outer rim remains between the calculation columns');
-  assert.ok(CHART_BACKDROP_BOUNDS.y - rimRadius >= 0 && CHART_BACKDROP_BOUNDS.y + CHART_BACKDROP_BOUNDS.height + rimRadius <= 820);
-  assert.equal(CHART_BACKDROP_BOUNDS.x + CHART_BACKDROP_BOUNDS.width / 2, 320);
+  assert.ok(LOTUS_BACKDROP_BOUNDS.x - rimRadius > 64 && LOTUS_BACKDROP_BOUNDS.x + LOTUS_BACKDROP_BOUNDS.width + rimRadius < 584, 'even the outer rim remains between the calculation columns');
+  assert.ok(LOTUS_BACKDROP_BOUNDS.y - rimRadius >= 0 && LOTUS_BACKDROP_BOUNDS.y + LOTUS_BACKDROP_BOUNDS.height + rimRadius <= 820);
+  assert.equal(LOTUS_BACKDROP_BOUNDS.x + LOTUS_BACKDROP_BOUNDS.width / 2, 320);
   for (const color of Object.values(CHART_SURFACE)) assert.match(color, /^#[0-9a-f]{6}$/i);
   for (const mandala of [false, true]) {
     const markup = renderChartBackdrop('surface', { mandala });
     const [rim, surface] = paths(markup);
     assert.equal(rim.class, 'chart-surface-rim');
     for (const path of [rim, surface]) {
-      assert.equal(path.d, CHART_SILHOUETTE_PATH);
+      assert.equal(path.d, LOTUS_SILHOUETTE_PATH);
       assert.ok(!('opacity' in path) || Number(path.opacity) === 1);
       assert.ok(!('fill-opacity' in path) || Number(path['fill-opacity']) === 1);
       assert.equal(path.transform, undefined, 'anisotropic inset scaling cannot create an uneven border');
@@ -152,8 +152,8 @@ test('calculated columns stay outside the surface in both modes while Color and 
     }
     assert.ok(layerIndex > 0);
     assert.equal(decorated.slice(0, layerIndex), plain.slice(0, showMandala ? plain.indexOf(layer) : plain.indexOf('<g class="bodygraph-channels">')), 'the surface does not change headings, numeric activations or mode-appropriate variable arrows');
-    assert.ok(CHART_BACKDROP_BOUNDS.x >= 80, 'the silhouette never reaches the design column or its fixing marks');
-    assert.ok(CHART_BACKDROP_BOUNDS.x + CHART_BACKDROP_BOUNDS.width < 584, 'the silhouette never reaches the personality column');
+    assert.ok(LOTUS_BACKDROP_BOUNDS.x >= 80, 'the silhouette never reaches the design column or its fixing marks');
+    assert.ok(LOTUS_BACKDROP_BOUNDS.x + LOTUS_BACKDROP_BOUNDS.width < 584, 'the silhouette never reaches the personality column');
   }
 });
 

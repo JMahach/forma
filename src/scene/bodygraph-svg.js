@@ -21,7 +21,7 @@ const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
  * SVG inner markup, for a parent SVG with viewBox="0 0 640 820".
  * chart.personality/design: gate-number arrays. No birth-date calculation occurs.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
- * options: { profile?: 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean, showLotus?: boolean,
+ * options: { profile?: 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
  *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
  *   activationFilter?: { line: number, source: 'design' | 'personality' | 'all' }
  *     | { groups: Array<{ line: number, source: 'design' | 'personality' | 'all', gates?: number[] }>, unfilteredGates: number[] } }.
@@ -162,7 +162,7 @@ ${thumbnail ? '' : `  <style>
   </style>`}
   ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="translate(320 398) scale(${MANDALA_SCENE_SCALE}) translate(-320 -398)">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
     ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + variables : ''}
-    ${options.showMandala ? '<g class="mandala-core">\n    ' + renderChartBackdrop(prefix, { mandala: true, lotus: options.showLotus }) : options.showBackdrop ? renderChartBackdrop(prefix, { lotus: options.showLotus }) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
+    ${options.showMandala ? '<g class="mandala-core">\n    ' + renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
     ${thumbnail ? '' : `<g class="bodygraph-gates">${gates}</g>`}${options.showMandala ? '\n    </g>' : ''}
   </g>`;

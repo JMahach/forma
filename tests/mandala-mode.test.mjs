@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
-import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
+import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activation-layout.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
-test('navigation includes enlarged column hit areas and fixing marks without changing its vertical range', () => {
+test('navigation includes enlarged columns and the complete outer planet envelope', () => {
   const { bounds } = MANDALA_FRAME;
   // Painted source envelopes after the 1.09 scale and existing mandala journeys.
-  assert.ok(bounds.x <= -290.68);
-  assert.ok(bounds.x + bounds.width >= 943.324);
+  assert.ok(bounds.x <= -62.68 - ACTIVATION_COLUMN_REVEAL_DISTANCE);
+  assert.ok(bounds.x + bounds.width >= 715.324 + ACTIVATION_COLUMN_REVEAL_DISTANCE);
   assert.ok(Math.abs(bounds.x + bounds.width / 2 - 320) < 1e-8, 'horizontal expansion stays symmetric about the chart');
-  assert.equal(bounds.y, -64);
-  assert.equal(bounds.height, 924);
+  assert.equal(bounds.y, STUDIO_FRAME.bounds.y);
+  assert.equal(bounds.height, STUDIO_FRAME.bounds.height);
   assert.equal(MANDALA_FRAME.minScale, .1);
   assert.ok(Object.isFrozen(MANDALA_FRAME) && Object.isFrozen(bounds));
 });

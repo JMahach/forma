@@ -1,15 +1,24 @@
 import { MANDALA_PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
 import { GATE_ORDER, normalizeLongitude } from '../domain/gate-wheel.js';
 import { MANDALA_GEOMETRY, mandalaPoint, mandalaPointString as point, MANDALA_CENTER as center, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
+import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 
-function planetMarkers(chart) {
-  return mandalaPlanetEntries(chart).map(({ source, planet, longitude }) => {
+function planetMarkers(planets) {
+  return planets.map(({ source, planet, longitude, leaderPath }) => {
       const paint = mandalaPlanetPaint(source, planet);
       const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
       return `<g class="mandala-planet-marker" data-mandala-planet="${planet}" data-source="${source}" data-longitude="${longitude}">
         <path class="${paint.rayClass}" d="M ${center} L ${x} ${y}" fill="none" stroke="${paint.color}" stroke-opacity="${paint.rayOpacity}" stroke-width="${paint.rayWidth}"/>
         <circle class="mandala-planet-endpoint" cx="${x}" cy="${y}" r="${paint.radius}" fill="${paint.color}" fill-opacity="${paint.endpointOpacity}"/>
+        <path class="mandala-planet-leader" d="${leaderPath}" fill="none" stroke="${paint.color}" stroke-opacity="${paint.leaderOpacity}" stroke-width="${paint.leaderWidth}"/>
       </g>`;
+  }).join('');
+}
+
+function planetSymbols(planets) {
+  return planets.map(({ source, planet, longitude, x, y, labelLongitude }) => {
+    const paint = mandalaPlanetPaint(source, planet);
+    return `<text class="mandala-planet-symbol" data-mandala-planet="${planet}" data-source="${source}" data-longitude="${longitude}" data-label-longitude="${labelLongitude}" x="${x}" y="${y}" fill="${paint.color}" font-size="${MANDALA_PLANET_LAYOUT.fontSize}" text-anchor="middle" dominant-baseline="central" stroke="${paint.symbolOutline}" stroke-width="${paint.symbolOutlineWidth}" stroke-linejoin="round" paint-order="stroke">${paint.symbol}</text>`;
   }).join('');
 }
 
@@ -22,6 +31,7 @@ function planetMarkers(chart) {
  */
 export function renderMandala(chart = {}, { interactive = true, selectedGates = new Set(), relatedGates = selectedGates, previewCross = null, pinnedCrosses = [] } = {}) {
   const gates = mandalaGateSets(chart);
+  const planets = layoutMandalaPlanets(mandalaPlanetEntries(chart));
   const fields = [];
   const wheel = sectors.map(sector => {
     const { gate, start, middle, ring, fan, separator, label } = sector;
@@ -46,13 +56,14 @@ export function renderMandala(chart = {}, { interactive = true, selectedGates = 
     <g class="mandala-engraving-light" fill="none" stroke="${MANDALA_PALETTE.light}" stroke-opacity=".902" stroke-width="1" transform="translate(0 .65)" pointer-events="none" aria-hidden="true">
       <circle cx="${cx}" cy="${cy}" r="${outer}"/><circle cx="${cx}" cy="${cy}" r="${inner}"/><circle cx="${cx}" cy="${cy}" r="${rayRadius}"/>
     </g>
-    <g class="mandala-field" pointer-events="none" aria-hidden="true">${fields.join('')}${planetMarkers(chart)}</g>
+    <g class="mandala-field" pointer-events="none" aria-hidden="true">${fields.join('')}${planetMarkers(planets)}</g>
     ${wheel}
     ${pinnedCrosses.map(cross => renderCrossPreview(cross, { pinned: true })).join('')}
     ${pinnedCrosses.some(cross => cross.longitude === previewCross?.longitude && cross.source === previewCross?.source) ? '' : renderCrossPreview(previewCross)}
     <g class="mandala-engraving-edge" fill="none" stroke="${MANDALA_PALETTE.rim}" stroke-opacity=".3795" stroke-width=".65" pointer-events="none" aria-hidden="true">
       <circle cx="${cx}" cy="${cy}" r="${outer}"/><circle cx="${cx}" cy="${cy}" r="${inner}"/><circle cx="${cx}" cy="${cy}" r="${rayRadius}" stroke-opacity=".1771"/>
     </g>
+    <g class="mandala-planet-labels" pointer-events="none" aria-hidden="true">${planetSymbols(planets)}</g>
   </g>`;
 }
 

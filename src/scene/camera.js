@@ -76,8 +76,9 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   function publish() {
     onChange({ ...view }, { ...fittedView }, { minScale: minimumScale() });
   }
-  const constrain = candidate => studioHome && candidate.k <= fittedView.k * (1 + 1e-9)
-    ? { ...fittedView } : constrainView(candidate, navigationFit, navigationFrame.bounds);
+  // Expanded bounds allow panning, but their limits must converge at the true
+  // Home scale. A smaller navigation fit leaves an offset until the last step.
+  const constrain = candidate => constrainView(candidate, studioHome ? fittedView : navigationFit, navigationFrame.bounds);
   function apply() {
     view = constrain(view);
     publish();

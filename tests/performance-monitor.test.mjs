@@ -24,9 +24,10 @@ function eventTarget() {
   };
 }
 
-function harness({ initiallyEnabled = false } = {}) {
+function harness({ initiallyEnabled = false, separateSurface = false } = {}) {
   const document = eventTarget(), window = eventTarget(), drawing = eventTarget();
   document.defaultView = window;
+  const inputSurface = separateSurface ? eventTarget() : drawing;
   const button = eventTarget(), panel = eventTarget(), close = eventTarget();
   panel.hidden = true;
   const fields = Object.fromEntries(['fps', 'pauses', 'max']
@@ -37,7 +38,7 @@ function harness({ initiallyEnabled = false } = {}) {
   const scheduled = new Map(), callbacks = new Map(), toggles = [];
   let time = 0, handle = 0;
   const view = attachPerformanceMonitor({
-    document, button, panel, drawing, ranges, motionButtons, initiallyEnabled,
+    document, button, panel, drawing, inputSurface, ranges, motionButtons, initiallyEnabled,
     onToggle: enabled => toggles.push(enabled),
     monitorOptions: {
       now: () => time,
@@ -51,9 +52,9 @@ function harness({ initiallyEnabled = false } = {}) {
     },
   });
   return {
-    document, window, drawing, button, panel, close, fields, ranges, motionButtons,
+    document, window, drawing, inputSurface, button, panel, close, fields, ranges, motionButtons,
     view, scheduled, toggles,
-    observedTargets: [drawing, ...ranges, ...motionButtons, document, window],
+    observedTargets: [...new Set([drawing, inputSurface]), ...ranges, ...motionButtons, document, window],
     at(value) { time = value; },
     frame(value) {
       time = value;
@@ -65,7 +66,7 @@ function harness({ initiallyEnabled = false } = {}) {
     invoke(id, value) { time = value; callbacks.get(id)?.(time); },
     read() { return Object.fromEntries(Object.entries(fields).map(([key, element]) => [key, element.textContent])); },
     pointer(type, detail = {}) {
-      drawing.emit(type, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 10, clientY: 20, ...detail });
+      inputSurface.emit(type, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 10, clientY: 20, ...detail });
     },
   };
 }
@@ -441,4 +442,22 @@ test('repeated enable is idempotent and destroy removes every listener and rejec
   noObservers(h);
   assert.equal(h.panel.hidden, true);
   assert.deepEqual(h.read(), destroyed);
+});
+
+
+test('fixed input surface records captured drags while keyboard and close focus stay on the drawing', () => {
+  const h = harness({ initiallyEnabled: true, separateSurface: true });
+  assert.deepEqual(h.drawing.listeners.map(entry => entry.type), ['keydown']);
+  h.pointer('pointerdown');
+  h.pointer('pointermove', { clientX: 35 });
+  h.frame(16); h.frame(32); h.frame(48); h.frame(64);
+  assert.notEqual(h.fields.fps.textContent, '—');
+  h.close.emit('click');
+  assert.equal(h.drawing.focused, true);
+  noObservers(h);
+  h.view.setEnabled(true);
+  h.inputSurface.emit('wheel', { deltaY: -30 });
+  assert.equal(h.scheduled.size, 1);
+  h.view.destroy();
+  noObservers(h);
 });

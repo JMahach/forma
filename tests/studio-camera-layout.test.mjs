@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { attachGestures } from '../src/scene/gestures.js';
+import { attachGestures } from './fixtures/gesture-harness.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 import { attachCameraControls, createCameraChangeHandler } from '../src/views/camera-controls.js';
 import { createStudioLayout } from '../src/scene/studio-controller.js';
@@ -339,6 +339,28 @@ test('shared Home does not narrow an existing mandala pan when the ring is hidde
 });
 
 
+for (const [width, height] of [[390, 844], [390, 664], [1228, 705], [844, 390]]) {
+  test(`edge panning converges continuously to Home on zoom-out at ${width}×${height}`, t => {
+    const h = harness(t, 390, 844, true, { side: 12, top: 112, bottom: 64 }, true);
+    for (const [dx, dy] of [[10000, 0], [-10000, 0], [0, 10000], [0, -10000]]) {
+      // Include the narrow → wide history that keeps expanded navigation.
+      h.resize(390, 844); h.controls.reset(); h.resize(width, height);
+      const home = h.controls.getFittedView(), homeDrawing = h.project(home);
+      h.controls.zoom(2);
+      h.controls.pan(dx, dy);
+      for (const excess of [.0001, .000001]) {
+        h.controls.zoomAt({ x: 10, y: 790 }, home.k * (1 + excess) / h.controls.getView().k);
+        const drawing = h.project();
+        const distance = Math.max(...['left', 'right', 'top', 'bottom'].map(edge => Math.abs(drawing[edge] - homeDrawing[edge])));
+        assert.ok(distance < Math.max(width, height) * excess * 3,
+          `remaining movement must shrink with zoom, not wait for a Home snap: ${distance}px at +${excess}`);
+      }
+      h.controls.zoom(.999);
+      assert.deepEqual(h.controls.getView(), home, 'the continuous limit is still exact Home');
+    }
+  });
+}
+
 test('the application supplies the studio canvas insets and keeps only the Home button', () => {
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -356,4 +378,29 @@ test('the application supplies the studio canvas insets and keeps only the Home 
   assert.match(page, /<button\b[^>]*id="fitButton"[^>]*\bhidden(?:\s|>)/, 'Home starts hidden before camera initialization to prevent a startup flash');
   assert.match(page, /<svg\b[^>]*id="bodygraph"[^>]*tabindex="0"/, 'the drawing remains keyboard focusable for +, − and 0');
   assert.ok(/attachCameraControls\(\{\s*fitButton:\s*\$\('fitButton'\)\s*\}/.test(app), 'the application binds the Home button without obsolete zoom controls');
+});
+
+
+test('camera chrome avoids repeated visibility writes without skipping dependent views', () => {
+  let writes = 0, previews = 0, popovers = 0, summaries = 0;
+  const element = initial => {
+    let value = initial;
+    return { get hidden() { return value; }, set hidden(next) { writes++; value = next; } };
+  };
+  const heading = element(false), fitButton = element(true);
+  const change = createCameraChangeHandler({ heading, fitButton,
+    getHoverPreview: () => ({ clear() { previews++; } }),
+    activationPopover: { reposition() { popovers++; } },
+    getSummary: () => ({ layout() { summaries++; } }),
+  });
+  const home = { x: 0, y: 0, k: 1 };
+  change(home, home);
+  assert.equal(writes, 0);
+  change({ x: 0, y: 0, k: 2 }, home);
+  assert.equal(writes, 2);
+  for (let frame = 0; frame < 120; frame++) change({ x: frame, y: 0, k: 2 }, home);
+  assert.equal(writes, 2, '120 pan frames add no visibility writes');
+  assert.deepEqual([previews, popovers, summaries], [122, 122, 122]);
+  change(home, home);
+  assert.equal(writes, 4, 'Home still updates both controls once');
 });

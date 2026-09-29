@@ -9,7 +9,7 @@ export function createGraphController({
   selectionState = createSelectionModel(), getChart, hasChart = () => true,
   viewport, getActiveElement = () => null, activationPopover,
   getShowActivations = () => true,
-  getHoverPreview = () => null, getSummary = () => null, getMandala = () => null, getLotus = () => null,
+  getHoverPreview = () => null, getSummary = () => null, getMandala = () => null,
   renderChart = null, alignHeading = alignPersonalityHeading,
   onChartChange = () => {},
 }) {
@@ -43,7 +43,6 @@ export function createGraphController({
       pinnedCrosses: selectionState.crosses, selections: selectionState.items,
       previewSelection: getHoverPreview()?.currentSelection, activationFilter,
     };
-    if (getLotus()?.enabled) renderOptions.showLotus = true;
     scene.update(chart, selectionState.primary, renderOptions);
     if (renderChart) alignHeading(viewport);
     if (focusTarget && getActiveElement() !== focused) viewport.querySelector(focusTarget.activation ? `[data-activation="${focusTarget.activation}"]` : `${focusTarget.mandala ? '.mandala-gate' : '.bodygraph-drawing .bg-interactive'}[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
