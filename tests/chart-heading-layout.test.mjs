@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartHeadingLayout } from '../src/views/chart-heading-layout.js';
 
-function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity } = {}) {
+function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts } = {}) {
   const observed = new Set();
   let resized, disconnected = false;
   const node = (left, top, width, height) => {
@@ -17,6 +17,7 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
   };
   const canvas = node(origin, 100, width, 817);
   const header = node(origin + width / 2, 119, 200, 51);
+  header.ownerDocument = { fonts };
   const headerRect = header.getBoundingClientRect.bind(header);
   header.getBoundingClientRect = () => {
     const rect = headerRect();
@@ -54,6 +55,46 @@ test('a transit caption with minute stays above at both reported desktop widths'
     assert.equal(header.dataset.captionPlacement, 'top');
     assert.ok(layout.refresh().width >= 260);
   }
+});
+
+test('unchanged caption text causes no DOM writes or layout reads while a new minute is measured', () => {
+  const h = harness();
+  let writes = 0, reads = 0;
+  for (const element of [h.title, h.subtitle]) {
+    let text = '';
+    Object.defineProperty(element, 'textContent', { get: () => text, set: value => { text = value; writes++; } });
+  }
+  const measure = h.canvas.getBoundingClientRect.bind(h.canvas);
+  h.canvas.getBoundingClientRect = () => { reads++; return measure(); };
+  h.layout.updateText('Транзит', '29 сентября · 12:00');
+  assert.equal(writes, 2);
+  assert.equal(reads, 1);
+  for (let index = 0; index < 120; index++) h.layout.updateText('Транзит', '29 сентября · 12:00');
+  assert.equal(writes, 2);
+  assert.equal(reads, 1);
+  h.layout.updateText('Транзит', '29 сентября · 12:01');
+  assert.equal(writes, 3, 'only the changed subtitle is written');
+  assert.equal(reads, 2);
+  h.canvas.rect.width = 390;
+  h.resize();
+  assert.equal(h.header.dataset.captionPlacement, 'below', 'unchanged text still follows viewport changes');
+  assert.equal(writes, 3);
+});
+
+test('new font metrics are measured even with unchanged text and the listener is disposed', () => {
+  const listeners = new Map();
+  const fonts = {
+    addEventListener(type, listener) { listeners.set(type, listener); },
+    removeEventListener(type, listener) { if (listeners.get(type) === listener) listeners.delete(type); },
+  };
+  const h = harness({ fonts });
+  h.layout.updateText('Транзит', '29 сентября · 12:00');
+  assert.equal(h.header.dataset.captionPlacement, 'top');
+  h.subtitle.scrollWidth = 1100;
+  listeners.get('loadingdone')();
+  assert.equal(h.header.dataset.captionPlacement, 'below');
+  h.layout.destroy();
+  assert.equal(listeners.size, 0);
 });
 
 test('a phone moves its caption below the real button row and uses the full centered width', () => {

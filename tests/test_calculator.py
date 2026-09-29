@@ -135,9 +135,34 @@ class EphemerisTests(unittest.TestCase):
 
     def test_a_fallback_result_is_rejected(self):
         with mock.patch.object(astro.swe, 'calc', return_value=((42, 0, 1, 0, 0, 0), astro.swe.FLG_MOSEPH)):
-            with self.assertRaises(ChartError) as error:
-                astro.longitude(2451545, astro.swe.SUN)
-            self.assertEqual(error.exception.payload['error'], 'ephemeris_unavailable')
+            for calculate, args in ((astro.longitude, (2451545, astro.swe.SUN)),
+                                    (astro.longitudes, (2451545,)),
+                                    (astro.activations, (2451545,))):
+                with self.subTest(calculate=calculate.__name__), self.assertRaises(ChartError) as error:
+                    calculate(*args)
+                self.assertEqual(error.exception.payload['error'], 'ephemeris_unavailable')
+
+    def test_longitudes_retain_swiss_bits_and_activation_formatting(self):
+        jd = astro.julian_tt(dt.datetime(2026, 9, 24, tzinfo=civil.UTC))
+        bodies = [('sun', astro.swe.SUN), ('moon', astro.swe.MOON), ('north_node', astro.swe.TRUE_NODE),
+                  ('mercury', astro.swe.MERCURY), ('venus', astro.swe.VENUS), ('mars', astro.swe.MARS),
+                  ('jupiter', astro.swe.JUPITER), ('saturn', astro.swe.SATURN), ('uranus', astro.swe.URANUS),
+                  ('neptune', astro.swe.NEPTUNE), ('pluto', astro.swe.PLUTO)]
+        with mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
+            values = astro.longitudes(jd)
+        self.assertEqual(list(values), [name for name, _ in bodies])
+        for name, body in bodies:
+            expected = astro.swe.calc(jd, body, astro.FLAGS)[0][0] % 360
+            self.assertEqual(values[name].hex(), expected.hex())
+        with mock.patch.object(astro, 'gate_line', wraps=astro.gate_line) as gate_line:
+            formatted = astro.activations(jd)
+        self.assertEqual(gate_line.call_count, 13)
+        self.assertEqual([call.args[0].hex() for call in gate_line.call_args_list],
+                         [entry['longitude'].hex() for entry in formatted])
+        for entry in formatted:
+            expected = values.get(entry['planet'])
+            if expected is not None:
+                self.assertEqual(entry['longitude'].hex(), expected.hex())
 
     def test_solar_arc_in_winter_summer_and_across_calendar_year(self):
         for moment in (

@@ -44,3 +44,36 @@ test('saved transit moments work regardless of their id; natal captions keep the
       birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин' }), '02.01.2000 · 03:04 · Берлин');
   }
 });
+
+test('cached formatting follows live timezone changes, DST and historical second offsets exactly', t => {
+  localZone(t, 'UTC');
+  for (const zone of ['UTC', 'Europe/Moscow', 'Asia/Kathmandu', 'America/New_York', 'Australia/Lord_Howe', 'Pacific/Apia', 'Europe/Amsterdam']) {
+    process.env.TZ = zone;
+    for (const utc of ['1801-01-01T00:00:00Z', '1890-01-01T23:59:45Z', '1930-06-15T00:00:00Z',
+      '2024-03-10T06:59:00Z', '2024-03-10T07:00:00Z', '2024-11-03T05:30:00Z', '2024-11-03T06:30:00Z',
+      '2011-12-30T10:00:00Z', '2399-12-31T23:59:00Z']) {
+      const date = new Date(utc);
+      const expected = [
+        new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(date),
+        new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(date),
+      ].join(' · ');
+      assert.equal(chartSubtitle({ source: 'transit', utc }), expected, `${zone} ${utc}`);
+    }
+  }
+});
+
+test('120 selected minutes reuse two formatters, including after changing the device timezone', async t => {
+  localZone(t, 'UTC');
+  const original = Intl.DateTimeFormat;
+  let constructors = 0;
+  Intl.DateTimeFormat = function(...args) { constructors++; return new original(...args); };
+  try {
+    const { chartSubtitle: isolated } = await import('../src/views/chart-display.js?formatter-count');
+    for (let index = 0; index < 120; index++) {
+      if (index === 60) process.env.TZ = 'Asia/Kathmandu';
+      const utc = new Date(Date.UTC(2026, 8, 29, 0, index)).toISOString();
+      assert.equal(isolated({ source: 'transit', utc }), chartSubtitle({ source: 'transit', utc }));
+    }
+    assert.equal(constructors, 2);
+  } finally { Intl.DateTimeFormat = original; }
+});

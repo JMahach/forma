@@ -29,8 +29,7 @@ def calculate_day(date):
     columns = [[] for _ in PLANETS]
     for minute in range(1440):
         moment = start + dt.timedelta(minutes=minute)
-        values = {entry['planet']: entry['longitude']
-                  for entry in astro.activations(astro.julian_tt(moment))}
+        values = astro.longitudes(astro.julian_tt(moment))
         for column, planet in zip(columns, PLANETS):
             column.append(values[planet])
     return dict(

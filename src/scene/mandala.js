@@ -1,6 +1,6 @@
 import { MANDALA_PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
-import { GATE_ORDER, normalizeLongitude } from '../domain/gate-wheel.js';
-import { MANDALA_GEOMETRY, mandalaPoint, mandalaPointString as point, MANDALA_CENTER as center, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
+import { normalizeLongitude } from '../domain/gate-wheel.js';
+import { MANDALA_GEOMETRY, mandalaPoint, mandalaCrossKey, mandalaCrossGeometry, MANDALA_CENTER as center, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 
 function planetMarkers(planets) {
@@ -70,24 +70,24 @@ export function renderMandala(chart = {}, { interactive = true, selectedGates = 
 // Separate selection layers: original planetary rays and chart activations
 // never move. Angle categories describe profiles, not a mirrored solar arc.
 export function renderCrossPreview(cross, { pinned = false } = {}) {
-  if (!['right-angle', 'juxtaposition', 'left-angle'].includes(cross?.type)
-    || !Array.isArray(cross.positions) || cross.positions.length !== 4) return '';
+  if (!mandalaCrossKey(cross)) return '';
+  return renderCrossOverlay(mandalaCrossGeometry(cross), { pinned });
+}
+
+// The persistent painter already prepared these coordinates. It needs markup
+// only when creating an overlay or replacing a changed/damaged structure.
+export function renderCrossOverlay(geometry, { pinned = false } = {}) {
   const colors = { design: '#ae6259', personality: '#4b514e' };
-  if (!cross.positions.every(p => p && ['design', 'personality'].includes(p.source)
-    && ['sun', 'earth'].includes(p.planet) && Number.isFinite(p.longitude)
-    && p.longitude >= 0 && p.longitude < 360 && GATE_ORDER.includes(p.gate))) return '';
-  if (new Set(cross.positions.map(p => `${p.source}-${p.planet}`)).size !== 4) return '';
-  if (cross.source !== undefined && !['personality', 'design'].includes(cross.source)) return '';
-  const marks = cross.positions.map(p => {
+  const marks = geometry.positions.map((p, index) => {
     const sector = sectors.find(s => s.gate === p.gate);
-    const [x, y] = mandalaPoint(p.longitude, MANDALA_GEOMETRY.innerRadius);
+    const [x, y] = geometry.points[index];
     return `<g class="mandala-cross-position" data-cross-gate="${p.gate}" data-source="${p.source}" data-cross-planet="${p.planet}" data-longitude="${p.longitude}">
       <path class="mandala-cross-sector" d="${sector.ring}" fill="${colors[p.source]}" fill-opacity=".15" stroke="${colors[p.source]}" stroke-opacity=".7" stroke-width=".8"/>
       <path class="mandala-cross-preview-ray" d="M ${center} L ${x} ${y}" fill="none" stroke="${colors[p.source]}" stroke-opacity=".85" stroke-width="1.45"/>
       <circle cx="${x}" cy="${y}" r="2.5" fill="${colors[p.source]}"/>
     </g>`;
   }).join('');
-  const cursor = cross.positions.find(p => p.source === (cross.source || 'personality') && p.planet === 'sun');
-  const indicator = `<path class="mandala-cross-cursor" d="M ${point(cursor.longitude, MANDALA_GEOMETRY.outerRadius - 3)} L ${point(cursor.longitude, MANDALA_GEOMETRY.outerRadius + 6)}" fill="none" stroke="${colors[cursor.source]}" stroke-width="2" stroke-linecap="round"/>`;
-  return `<g class="${pinned ? 'mandala-cross-pinned' : 'mandala-cross-preview'}" data-cross-type="${cross.type}" pointer-events="none" aria-hidden="true">${marks}${indicator}</g>`;
+  const cursor = geometry.positions[geometry.cursorIndex];
+  const indicator = `<path class="mandala-cross-cursor" d="${geometry.cursorPath}" fill="none" stroke="${colors[cursor.source]}" stroke-width="2" stroke-linecap="round"/>`;
+  return `<g class="${pinned ? 'mandala-cross-pinned' : 'mandala-cross-preview'}" data-cross-type="${geometry.type}" pointer-events="none" aria-hidden="true">${marks}${indicator}</g>`;
 }

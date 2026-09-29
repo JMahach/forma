@@ -89,6 +89,36 @@ test('invalid or incomplete input never partially patches the overlay', () => {
   }
 });
 
+test('hover keeps stricter gate eligibility while sharing exact cross validation', () => {
+  const start = preview(305.7).cross, viewport = wheel(start), painter = createMandalaPreviewPainter(viewport);
+  painter.capture(start);
+  const before = viewport.snapshot();
+  const changed = patch => ({ ...start, positions: start.positions.map((position, index) => index ? position : { ...position, ...patch }) });
+  for (const cross of [{ ...start, source: null }, { ...start, gates: undefined },
+    { ...start, gates: start.gates.map(gate => gate === 64 ? 1 : gate + 1) },
+    { ...start, positions: Array(4).fill(start.positions[0]) },
+    ...[-1, 360, Infinity, '305.7'].map(longitude => changed({ longitude })),
+    ...[0, 65, 1.5, '41'].map(gate => changed({ gate })), changed({ source: 'other' }), changed({ planet: 'moon' }),
+  ]) {
+    assert.equal(painter.update(cross), false);
+    assert.deepEqual(viewport.snapshot(), before);
+  }
+});
+
+test('hover consumes mutations to the same cross and position objects including raw sub-pixel longitudes', () => {
+  const cross = structuredClone(preview(305.7).cross), viewport = wheel(cross), painter = createMandalaPreviewPainter(viewport);
+  painter.capture(cross);
+  const overlay = viewport.querySelector('.mandala-cross-preview');
+  for (const [index, type] of ['right-angle', 'juxtaposition', 'left-angle'].entries()) {
+    const next = preview(305.7 + index * .000001).cross;
+    cross.longitude = next.longitude; cross.type = type; cross.source = undefined;
+    cross.positions.forEach((position, i) => Object.assign(position, next.positions[i]));
+    assert.equal(painter.update(cross), true);
+    assert.equal(viewport.querySelector('.mandala-cross-preview'), overlay);
+    assert.deepEqual(viewport.snapshot(), wheel(cross).snapshot());
+  }
+});
+
 test('detached overlay descendants invalidate cached references', () => {
   for (const selector of ['.mandala-cross-preview', '.mandala-cross-preview-ray', 'circle', '.mandala-cross-cursor']) {
     const start = preview(305.7).cross, viewport = wheel(start), painter = createMandalaPreviewPainter(viewport);

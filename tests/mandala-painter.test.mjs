@@ -253,6 +253,96 @@ test('cross motion within a quartet updates its existing marks and preserves raw
   assertNoSceneParse(h.document);
 });
 
+test('every mutable cross update computes four endpoints and two cursor points once without rebuilding overlays', () => {
+  const cross = structuredClone(crossAtLongitude(305.65)), pinned = crossAtLongitude(217.7, { source: 'design' });
+  const options = { previewCross: cross, pinnedCrosses: [pinned] }, h = harness({}, options);
+  h.painter.update({}, options);
+  const nodes = h.group.querySelectorAll('.mandala-cross-position, .mandala-cross-cursor');
+  const delivered = Array.from({ length: 20 }, (_, index) => crossAtLongitude(305.65 + index * .000001));
+  const received = [];
+  let points = 0;
+  const cos = Math.cos;
+  Math.cos = angle => { points++; return cos(angle); };
+  try {
+    for (const next of delivered) {
+      // Preserve the cross, array and all four position object identities.
+      cross.longitude = next.longitude;
+      cross.positions.forEach((position, index) => Object.assign(position, next.positions[index]));
+      assert.equal(h.painter.update({}, options), true);
+      received.push(h.group.querySelector('.mandala-cross-preview .mandala-cross-position').getAttribute('data-longitude'));
+    }
+  } finally { Math.cos = cos; }
+  assert.equal(points, delivered.length * 2 * 6, 'each of two overlays computes only its six necessary points per input');
+  assert.deepEqual(received, delivered.map(next => String(next.positions[0].longitude)), 'raw longitudes survive even sub-pixel motion');
+  assert.equal(h.document.parses.length, 0);
+  h.group.querySelectorAll('.mandala-cross-position, .mandala-cross-cursor').forEach((node, index) => assert.equal(node, nodes[index]));
+  assertRendered(h.root, {}, options);
+});
+
+test('cursor-source and category changes retain marks while reordered positions change their structural order', () => {
+  const cross = structuredClone(crossAtLongitude(305.65)), h = harness({}, { previewCross: cross });
+  const overlay = h.group.querySelector('.mandala-cross-preview');
+  for (const [source, type] of [['design', 'left-angle'], [undefined, 'juxtaposition'], ['personality', 'right-angle']]) {
+    cross.source = source; cross.type = type;
+    h.painter.update({}, { previewCross: cross });
+    assert.equal(h.group.querySelector('.mandala-cross-preview'), overlay);
+    assertRendered(h.root, {}, { previewCross: cross });
+  }
+  assert.equal(h.document.parses.length, 0, 'cursor source and profile category do not change the four-mark structure');
+  cross.positions.reverse();
+  h.painter.update({}, { previewCross: cross });
+  assert.notEqual(h.group.querySelector('.mandala-cross-preview'), overlay);
+  assert.equal(h.document.parses.length, 1);
+  assertRendered(h.root, {}, { previewCross: cross });
+});
+
+test('invalid crosses disappear without partial geometry and rendering does not require the hover gates array', () => {
+  const valid = crossAtLongitude(305.65), h = harness({}, { previewCross: valid });
+  const changed = patch => ({ ...valid, positions: valid.positions.map((position, index) => index ? position : { ...position, ...patch }) });
+  const invalid = [null, {}, { ...valid, type: 'unknown' }, { ...valid, source: '' }, { ...valid, source: null },
+    { ...valid, positions: valid.positions.slice(1) }, { ...valid, positions: Array(4).fill(valid.positions[0]) },
+    ...[-1, 360, NaN, Infinity, '305'].map(longitude => changed({ longitude })),
+    ...[0, 65, 1.5, '41', null].map(gate => changed({ gate })), changed({ source: 'other' }), changed({ planet: 'moon' })];
+  for (const cross of invalid) {
+    h.painter.update({}, { previewCross: cross, pinnedCrosses: [cross || {}] });
+    assert.equal(h.group.querySelectorAll('.mandala-cross-preview, .mandala-cross-pinned').length, 0);
+    assertRendered(h.root, {}, { previewCross: cross, pinnedCrosses: [cross || {}] });
+    h.painter.update({}, { previewCross: valid });
+  }
+  const noGates = { ...valid, source: undefined, gates: null };
+  h.painter.update({}, { previewCross: noGates });
+  assert.equal(h.group.querySelectorAll('.mandala-cross-preview').length, 1);
+  assertRendered(h.root, {}, { previewCross: noGates });
+});
+
+test('cross repairs rebuild missing structure but repair external attribute motion on retained nodes', () => {
+  const cross = crossAtLongitude(305.65), h = harness({}, { previewCross: cross });
+  h.painter.update({}, { previewCross: cross });
+  for (const selector of ['.mandala-cross-preview-ray', 'circle', '.mandala-cross-cursor', '.mandala-cross-position']) {
+    const damaged = h.group.querySelector('.mandala-cross-preview');
+    damaged.querySelector(selector).remove();
+    h.document.parses.length = 0;
+    h.painter.update({}, { previewCross: cross });
+    assert.notEqual(h.group.querySelector('.mandala-cross-preview'), damaged);
+    assert.equal(h.document.parses.length, 1);
+    assertRendered(h.root, {}, { previewCross: cross });
+  }
+  const overlay = h.group.querySelector('.mandala-cross-preview');
+  overlay.setAttribute('data-cross-type', 'left-angle');
+  overlay.querySelector('.mandala-cross-position').setAttribute('data-longitude', '0');
+  overlay.querySelector('.mandala-cross-preview-ray').setAttribute('d', 'M 0 0');
+  overlay.querySelector('circle').setAttribute('cx', '0');
+  overlay.querySelector('circle').setAttribute('cy', '0');
+  overlay.querySelector('.mandala-cross-cursor').setAttribute('d', 'M 0 0');
+  overlay.querySelector('.mandala-cross-cursor').setAttribute('stroke', 'red');
+  overlay.remove();
+  h.document.parses.length = 0;
+  h.painter.update({}, { previewCross: cross });
+  assert.equal(h.group.querySelector('.mandala-cross-preview'), overlay);
+  assert.equal(h.document.parses.length, 0);
+  assertRendered(h.root, {}, { previewCross: cross });
+});
+
 test('painter recaptures a replaced mandala group and returns false while no wheel exists', () => {
   const emptyDocument = svgDocument(), root = emptyDocument.createElementNS(SVG_NS, 'svg');
   const painter = createMandalaPainter(root);

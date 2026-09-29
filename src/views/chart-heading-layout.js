@@ -47,6 +47,17 @@ export function createChartHeadingLayout({ header, title, subtitle, leftControls
   for (const element of new Set([header, title, subtitle, leftControls, rightControls, canvas].filter(Boolean))) {
     observer?.observe(element);
   }
+  const fonts = header.ownerDocument?.fonts;
+  fonts?.addEventListener('loadingdone', refresh);
+  function updateText(titleText, subtitleText) {
+    let changed = false;
+    for (const [element, value] of [[title, titleText], [subtitle, subtitleText]]) {
+      if (!element) continue;
+      const text = value == null ? '' : String(value);
+      if (element.textContent !== text) { element.textContent = text; changed = true; }
+    }
+    return changed ? refresh() : current;
+  }
   refresh();
-  return { refresh, destroy() { observer?.disconnect(); } };
+  return { refresh, updateText, destroy() { observer?.disconnect(); fonts?.removeEventListener('loadingdone', refresh); } };
 }
