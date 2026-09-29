@@ -34,7 +34,7 @@ def calculate_day(date, timezone):
         jd = astro.julian_tt(moment)
         design_jd, residual = astro.design_time(jd)
         for side, side_jd in enumerate((jd, design_jd)):
-            values = {entry['planet']: entry['longitude'] for entry in astro.activations(side_jd)}
+            values = astro.longitudes(side_jd)
             for column, planet in enumerate(PLANETS):
                 columns[side * 11 + column].append(values[planet])
         # Match the existing API's second precision exactly (no recomputation

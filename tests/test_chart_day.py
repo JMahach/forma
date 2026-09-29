@@ -3,9 +3,11 @@ import datetime as dt
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from server.python import calculator as calc
+from server.python import astronomy as astro
 from server.python import civil_time as civil
 from server.python.errors import ChartError
 from server.python import chart_day
@@ -49,7 +51,8 @@ class ChartDayTests(unittest.TestCase):
 
     def test_every_minute_matches_original_personality_design_and_residual(self):
         date, zone = '1990-06-15', 'Europe/Moscow'
-        day = chart_day.calculate_day(date, zone)
+        with mock.patch.object(astro, 'activations', side_effect=AssertionError('No chart formatting')), mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
+            day = chart_day.calculate_day(date, zone)
         self.assertEqual(day['samples'], 1440)
         self.assertEqual(len(day['columns']), 24)
         self.assertEqual(day['segments'], [dict(index=0, startUtc='1990-06-14T20:00:00Z', utcOffset='UTC+04:00', offsetSeconds=14400, fold=0)])

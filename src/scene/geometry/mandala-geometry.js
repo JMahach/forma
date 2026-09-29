@@ -46,3 +46,30 @@ export const MANDALA_SECTORS = Object.freeze(GATE_ORDER.map((gate, index) => {
     label: mandalaPoint(middle, MANDALA_GEOMETRY.labelRadius),
   });
 }));
+
+// Both overlay painters and the string renderer accept the same four exact
+// positions. The hover painter additionally checks its surrounding gate state.
+const CROSS_TYPES = new Set(['right-angle', 'juxtaposition', 'left-angle']);
+const CROSS_SOURCES = new Set(['personality', 'design']);
+const CROSS_PLANETS = new Set(['sun', 'earth']);
+export function mandalaCrossKey(cross) {
+  if (!CROSS_TYPES.has(cross?.type)
+    || !Array.isArray(cross.positions) || cross.positions.length !== 4) return null;
+  if (!cross.positions.every(p => p && CROSS_SOURCES.has(p.source)
+    && CROSS_PLANETS.has(p.planet) && Number.isFinite(p.longitude)
+    && p.longitude >= 0 && p.longitude < 360
+    && Number.isInteger(p.gate) && p.gate >= 1 && p.gate <= 64)) return null;
+  if (new Set(cross.positions.map(p => `${p.source}-${p.planet}`)).size !== 4) return null;
+  if (cross.source !== undefined && !CROSS_SOURCES.has(cross.source)) return null;
+  return cross.positions.map(p => `${p.source}:${p.planet}:${p.gate}`).join('|');
+}
+
+// Call after mandalaCrossKey validates the input. Recalculate each delivered
+// longitude, including when callers mutate and reuse the same cross object.
+export function mandalaCrossGeometry(cross) {
+  const points = cross.positions.map(position => mandalaPoint(position.longitude, MANDALA_GEOMETRY.innerRadius));
+  const cursorIndex = cross.positions.findIndex(p => p.source === (cross.source || 'personality') && p.planet === 'sun');
+  const cursor = cross.positions[cursorIndex];
+  return { type: cross.type, positions: cross.positions, points, cursorIndex,
+    cursorPath: `M ${mandalaPointString(cursor.longitude, MANDALA_GEOMETRY.outerRadius - 3)} L ${mandalaPointString(cursor.longitude, MANDALA_GEOMETRY.outerRadius + 6)}` };
+}

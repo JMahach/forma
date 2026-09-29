@@ -29,8 +29,8 @@ class TransitDayTests(unittest.TestCase):
             def julian(moment):
                 moments.append(moment)
                 return 0
-            values = [dict(planet=planet, longitude=index + .125) for index, planet in enumerate(transit_day.PLANETS)]
-            with mock.patch.object(astro, 'julian_tt', side_effect=julian), mock.patch.object(astro, 'activations', return_value=values), mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')):
+            values = {planet: index + .125 for index, planet in enumerate(transit_day.PLANETS)}
+            with mock.patch.object(astro, 'julian_tt', side_effect=julian), mock.patch.object(astro, 'longitudes', return_value=values), mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')):
                 day = transit_day.calculate_day(date)
             self.assertEqual(day['startUtc'], date + 'T00:00:00Z')
             self.assertEqual(day['samples'], 1440)
@@ -43,10 +43,10 @@ class TransitDayTests(unittest.TestCase):
                 self.assertEqual(column, [index + .125] * 1440)
 
     def test_real_batch_retains_engine_values_and_metadata_without_design(self):
-        with mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')):
+        with mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')), mock.patch.object(astro, 'activations', side_effect=AssertionError('No chart formatting')), mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
             day = transit_day.calculate_day('2026-09-24')
         start = dt.datetime(2026, 9, 24, tzinfo=civil.UTC)
-        for minute in (0, 1, 719, 720, 1439):
+        for minute in range(1440):
             reference = {entry['planet']: entry['longitude'] for entry in astro.activations(astro.julian_tt(start + dt.timedelta(minutes=minute)))}
             for index, planet in enumerate(transit_day.PLANETS):
                 self.assertEqual(day['columns'][index][minute].hex(), reference[planet].hex())

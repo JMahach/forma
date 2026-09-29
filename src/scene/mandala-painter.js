@@ -1,6 +1,6 @@
-import { renderCrossPreview } from './mandala.js';
+import { renderCrossOverlay } from './mandala.js';
 import { MANDALA_PALETTE as PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
-import { MANDALA_SECTORS, MANDALA_GEOMETRY, MANDALA_CENTER, mandalaPoint, mandalaPointString } from './geometry/mandala-geometry.js';
+import { MANDALA_SECTORS, MANDALA_GEOMETRY, MANDALA_CENTER, mandalaPoint, mandalaCrossKey, mandalaCrossGeometry } from './geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 import { setAttribute as attr } from './svg-patches.js';
 
@@ -87,34 +87,30 @@ export function createMandalaPainter(root) {
   }
 
   function updateCross(previous, cross, pinned, document) {
-    // Share validation and the uncommon structural template with the string
-    // renderer. This is at most a four-mark overlay, never the complete wheel.
-    const markup = renderCrossPreview(cross, { pinned });
-    if (!markup) return null;
-    const key = cross.positions.map(position => `${position.source}:${position.planet}:${position.gate}`).join('|');
-    let record = previous;
+    const key = mandalaCrossKey(cross);
+    if (!key) return null;
+    const geometry = mandalaCrossGeometry(cross);
+    const record = previous;
     if (!record || record.key !== key || record.positions.length !== 4 || !record.cursor
       || !record.node.contains(record.cursor)
       || record.positions.some(({ mark, ray, circle }) => !ray || !circle
         || !record.node.contains(mark) || !mark.contains(ray) || !mark.contains(circle))) {
       const fragment = document.createElementNS(SVG_NS, 'g');
-      fragment.innerHTML = markup;
-      record = crossRecord(fragment.firstElementChild);
+      fragment.innerHTML = renderCrossOverlay(geometry, { pinned });
+      return crossRecord(fragment.firstElementChild);
     }
     // Read actual attributes, not last markup: the independent fast preview
     // painter may have moved these nodes since the preceding ordinary update.
-    cross.positions.forEach((position, index) => {
+    geometry.positions.forEach((position, index) => {
       const { mark, ray, circle } = record.positions[index];
-      const [x, y] = mandalaPoint(position.longitude, MANDALA_GEOMETRY.innerRadius);
+      const [x, y] = geometry.points[index];
       attr(mark, 'data-longitude', position.longitude);
       attr(ray, 'd', `M ${MANDALA_CENTER} L ${x} ${y}`);
       attr(circle, 'cx', x); attr(circle, 'cy', y);
     });
-    const cursorIndex = cross.positions.findIndex(position => position.source === (cross.source || 'personality') && position.planet === 'sun');
-    const cursor = cross.positions[cursorIndex];
-    attr(record.cursor, 'd', `M ${mandalaPointString(cursor.longitude, MANDALA_GEOMETRY.outerRadius - 3)} L ${mandalaPointString(cursor.longitude, MANDALA_GEOMETRY.outerRadius + 6)}`);
-    attr(record.cursor, 'stroke', record.positions[cursorIndex].ray.getAttribute('stroke'));
-    attr(record.node, 'data-cross-type', cross.type);
+    attr(record.cursor, 'd', geometry.cursorPath);
+    attr(record.cursor, 'stroke', record.positions[geometry.cursorIndex].ray.getAttribute('stroke'));
+    attr(record.node, 'data-cross-type', geometry.type);
     return record;
   }
 

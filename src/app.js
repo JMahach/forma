@@ -133,9 +133,7 @@ attachPerformanceMonitor({
 
 function updateChartCaption() {
   const chart = currentChart();
-  $('chartTitle').textContent = chartTitle(chart);
-  $('chartSubtitle').textContent = chartSubtitle(chart);
-  headingLayout.refresh();
+  headingLayout.updateText(chartTitle(chart), chartSubtitle(chart));
 }
 
 function updatePage() {

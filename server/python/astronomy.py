@@ -59,10 +59,18 @@ def design_time(birth_jd):
     return result, residual
 
 
-def activations(jd):
+def longitudes(jd):
     bodies = [('sun', swe.SUN), ('moon', swe.MOON), ('north_node', swe.TRUE_NODE), ('mercury', swe.MERCURY), ('venus', swe.VENUS), ('mars', swe.MARS), ('jupiter', swe.JUPITER), ('saturn', swe.SATURN), ('uranus', swe.URANUS), ('neptune', swe.NEPTUNE), ('pluto', swe.PLUTO)]
-    values = {name: longitude(jd, body) for name, body in bodies}
+    return {name: longitude(jd, body) for name, body in bodies}
+
+
+def activations(jd):
+    values = longitudes(jd)
     values['earth'] = (values['sun'] + 180) % 360
     values['south_node'] = (values['north_node'] + 180) % 360
     ordered = ['sun', 'earth', 'moon', 'north_node', 'south_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']
-    return [dict(planet=name, longitude=values[name], gate=gate_line(values[name])[0], line=gate_line(values[name])[1]) for name in ordered]
+    result = []
+    for name in ordered:
+        gate, line = gate_line(values[name])
+        result.append(dict(planet=name, longitude=values[name], gate=gate, line=line))
+    return result
