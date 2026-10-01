@@ -1,9 +1,10 @@
 import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from './geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT } from './geometry/mandala-planets.js';
-import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE } from './geometry/activation-layout.js';
+import { MANDALA_COLUMN_SPAN } from './geometry/activation-layout.js';
 import { STUDIO_FRAME } from './geometry/frames.js';
 
 export const DAY_CONTROL_HEIGHT = 48;
+export const DAY_CONTROL_TOP_CLEARANCE = 20;
 const GAP = 4;
 export const STUDIO_BOTTOM_INSET = DAY_CONTROL_HEIGHT + GAP;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -15,18 +16,16 @@ export function computeStudioLayout({ width, height, side = 4, top = 112, bottom
   side = clamp(side, 0, width / 4);
   top = clamp(top, 0, height * .49);
   bottom = clamp(bottom, 0, height * .49);
-  const area = { x: side, y: top, width: Math.max(1, width - 2 * side), height: Math.max(1, height - top - bottom) };
+  const cameraBottom = Math.min(bottom + DAY_CONTROL_TOP_CLEARANCE, height * .49);
+  const headingClearance = cameraBottom - bottom;
+  const area = { x: side, y: top, width: Math.max(1, width - 2 * side), height: Math.max(1, height - top - cameraBottom) };
   const diameter = Math.min(area.width, area.height), scale = diameter / STUDIO_FRAME.bounds.width;
   const center = { x: width / 2, y: top + area.height / 2 }, r = diameter / 2;
-  const project = ({ x, y, width, height }) => ({
-    x: center.x + (x - MANDALA_GEOMETRY.centerX) * scale, y: center.y + (y - MANDALA_GEOMETRY.centerY) * scale,
-    width: width * scale, height: height * scale,
-  });
   // Enlarged source blocks and their outward journeys clear the planet lanes.
-  // The shared envelope includes fixing marks and hit areas, not only text.
-  const expanded = project({ ...ACTIVATION_BLOCK_BOUNDS,
-    x: ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE, width: ACTIVATION_BLOCK_BOUNDS.width + 2 * ACTIVATION_COLUMN_REVEAL_DISTANCE });
-  const showMandalaColumns = expanded.x >= area.x + GAP && expanded.x + expanded.width <= width - side - GAP;
+  // Include the final content scale so neither column is clipped.
+  const columnLeft = center.x + (MANDALA_COLUMN_SPAN.left - MANDALA_GEOMETRY.centerX) * scale;
+  const columnRight = center.x + (MANDALA_COLUMN_SPAN.right - MANDALA_GEOMETRY.centerX) * scale;
+  const showMandalaColumns = columnLeft >= area.x + GAP && columnRight <= width - side - GAP;
   const footerY = height - DAY_CONTROL_HEIGHT - Math.max(0, bottom - STUDIO_BOTTOM_INSET);
   // Match the visible ring at Home, excluding its planet lanes. The CSS
   // extends only the invisible thumb area beyond these endpoints by 22px.
@@ -35,12 +34,12 @@ export function computeStudioLayout({ width, height, side = 4, top = 112, bottom
   const bottomOfMandala = center.y + mandalaRadius;
   // Move a quarter of the decorative envelope's gap toward the line, but leave
   // the full touch target clear. The visible backing occupies only 26px of it.
-  const offsetY = Math.max(0, Math.min((footerY + 26 - bottomOfMandala) / 4, footerY - GAP - bottomOfMandala));
+  const offsetY = Math.max(0, Math.min((footerY + 26 - bottomOfMandala) / 4, footerY - headingClearance - GAP - bottomOfMandala));
   area.y += offsetY;
   center.y += offsetY;
   const placement = 'bottom';
   const panel = { x: center.x - panelWidth / 2, y: footerY, width: panelWidth, height: DAY_CONTROL_HEIGHT };
-  return { area, scale, center, radius: r, mandalaRadius, placement, panel, showMandalaColumns, insets: { side, top, bottom, offsetY } };
+  return { area, scale, center, radius: r, mandalaRadius, placement, panel, showMandalaColumns, insets: { side, top, bottom: cameraBottom, offsetY } };
 }
 
 // A deterministic conversion of viewport insets into a camera fitting area.

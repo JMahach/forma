@@ -46,8 +46,12 @@ export function timelineMinute(timeline, index) {
   return { index: bounded, utc, date, packetIndex: (utc - Date.parse(`${date}T00:00:00Z`)) / MINUTE };
 }
 
+// Several views can label the same exact moment in one update. Keep only the
+// latest label, and return a copy so a caller cannot change another view's text.
+let previousLabelUtc, previousLabelZone, previousLabel;
 export function formatTimelineMinute(timeline, index) {
   const { utc } = timelineMinute(timeline, index);
+  if (utc === previousLabelUtc && timeline.timeZone === previousLabelZone) return { ...previousLabel };
   const date = new Date(utc);
   if (!labelFormatters.has(timeline.timeZone)) labelFormatters.set(timeline.timeZone, {
     time: new Intl.DateTimeFormat('ru-RU', { timeZone: timeline.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' }),
@@ -56,10 +60,12 @@ export function formatTimelineMinute(timeline, index) {
   const format = labelFormatters.get(timeline.timeZone);
   const parts = format.time.formatToParts(date);
   const value = type => parts.find(part => part.type === type)?.value || '';
-  return {
+  const label = {
     date: format.date.format(date),
     time: `${value('hour')}:${value('minute')}`,
     offset: value('timeZoneName').replace('GMT', 'UTC'),
     utc: date.toISOString(),
   };
+  previousLabelUtc = utc; previousLabelZone = timeline.timeZone; previousLabel = label;
+  return { ...label };
 }

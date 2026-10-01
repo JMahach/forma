@@ -1,6 +1,6 @@
 import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from './mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT } from './mandala-planets.js';
-import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE } from './activation-layout.js';
+import { MANDALA_COLUMN_SPAN } from './activation-layout.js';
 
 // SVG-space bounds. CSS-pixel layout insets are owned by scene/layout.
 export const DRAWING_BOUNDS = Object.freeze({ x: -52, y: 28, width: 744, height: 740 });
@@ -14,8 +14,8 @@ export const STUDIO_FRAME = Object.freeze({
   minScale: .1,
 });
 export const MANDALA_FRAME = Object.freeze({
-  bounds: Object.freeze({ x: ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE,
+  bounds: Object.freeze({ x: MANDALA_COLUMN_SPAN.left,
     y: STUDIO_FRAME.bounds.y,
-    width: ACTIVATION_BLOCK_BOUNDS.width + 2 * ACTIVATION_COLUMN_REVEAL_DISTANCE,
+    width: MANDALA_COLUMN_SPAN.right - MANDALA_COLUMN_SPAN.left,
     height: STUDIO_FRAME.bounds.height }), minScale: .1,
 });

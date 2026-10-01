@@ -19,8 +19,10 @@ export function createStaticAssets(root, { precompressed = false, transform = (_
       if (cache.get(entry.file)?.version === version) return cache.get(entry.file).promise;
       const promise = (async () => {
         const source = await fs.readFile(filename);
-        const identity = precompressed ? source : transform(entry, source);
-        const [br, gz] = precompressed
+        const identity = transform(entry, source);
+        // Runtime page settings may change HTML. All representations must then
+        // describe those same bytes; untouched release assets keep their sidecars.
+        const [br, gz] = precompressed && identity.equals(source)
           ? await Promise.all([fs.readFile(path.join(root, entry.br)), fs.readFile(path.join(root, entry.gzip))])
           : await Promise.all([brotli(identity, { params: { [constants.BROTLI_PARAM_QUALITY]: 6 } }), gzipAsync(identity)]);
         const bytes = { identity, br, gzip: gz };

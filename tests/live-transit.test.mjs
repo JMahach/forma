@@ -9,7 +9,8 @@ import { transitChartAt } from '../src/domain/transit-day.js';
 const day = date => ({
   date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
-  columns: Array.from({ length: 11 }, (_, col) => Float64Array.from({ length: 1440 }, (_, minute) => col * 30 + minute / 10000)),
+  columns: Array.from({ length: 24 }, (_, col) => Float64Array.from({ length: 1440 }, (_, minute) => col < 22
+    ? (col * 30 + minute / 10000) % 360 : col === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 61 : minute % 100 * 1e-12)),
 });
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
@@ -40,6 +41,9 @@ test('live view loads a local day once and redraws exact coordinate changes from
   assert.deepEqual(h.requests, ['2026-09-24']);
   assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
   assert.equal(h.live.current.activations.personality.length, 13);
+  assert.equal(h.live.current.activations.design.length, 13);
+  assert.equal(Date.parse(h.live.current.designUtc) / 1000, day('2026-09-24').columns[22][720]);
+  assert.equal(h.live.current.designArcResidualDegrees, day('2026-09-24').columns[23][720]);
   const initial = h.live.current;
   h.events.length = 0;
   h.utc += 20_000;
@@ -57,33 +61,36 @@ test('live view loads a local day once and redraws exact coordinate changes from
 test('repeated publication keeps state notifications without reading the same minute again', async () => {
   let columnReads = 0;
   const h = harness({ zone: 'Asia/Kathmandu', getDay: async date => {
-    const packet = day(date), columns = packet.columns;
-    Object.defineProperty(packet, 'columns', { get() { columnReads++; return columns; } });
+    const packet = day(date);
+    packet.columns = packet.columns.map(column => new Proxy(column, { get(target, key) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) columnReads++;
+      return Reflect.get(target, key, target);
+    } }));
     return packet;
   } });
   await h.live.refresh(true);
   assert.equal(h.requests.length, 2);
-  assert.equal(columnReads, 11, 'both packet completions and load completion materialize one current chart');
+  assert.equal(columnReads, 24, 'both packet completions and load completion materialize one complete two-sided chart');
   const first = h.live.current;
   assert.deepEqual(first, transitChartAt(day('2026-09-24'), 720));
 
   h.events.length = 0; h.states.length = 0;
   await h.live.refresh();
-  assert.equal(columnReads, 11);
+  assert.equal(columnReads, 24);
   assert.equal(h.live.current, first);
   assert.deepEqual(h.events, []);
   assert.equal(h.states.length, 2, 'refresh still publishes reference and loading state');
 
   h.states.length = 0;
   h.live.scrub(h.live.state.index);
-  assert.equal(columnReads, 11);
+  assert.equal(columnReads, 24);
   assert.equal(h.live.current, first);
   assert.equal(h.states.length, 1);
   assert.equal(h.states[0].live, false, 'selecting the current minute still pauses live mode');
 
   h.utc += 60_000;
   await h.live.goNow();
-  assert.equal(columnReads, 22, 'the next minute is materialized exactly once');
+  assert.equal(columnReads, 48, 'the next minute is materialized exactly once');
   assert.deepEqual(h.live.current, transitChartAt(day('2026-09-24'), 721));
   assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render']);
   assert.equal(h.live.state.live, true);
@@ -159,7 +166,7 @@ test('day errors retain the prior chart, back off automatic retries and allow ex
   assert.equal(h.live.current, previous);
   assert.equal(h.live.state.status, 'error');
   assert.equal(h.live.state.referenceIndex, null);
-  assert.deepEqual(h.messages, ['Day unavailable']);
+  assert.deepEqual(h.messages, [], 'a failed day never opens an error toast');
   await h.live.refresh();
   h.utc += 29_999;
   await h.live.refresh();
@@ -167,11 +174,11 @@ test('day errors retain the prior chart, back off automatic retries and allow ex
   h.utc += 1;
   await h.live.refresh();
   assert.equal(h.requests.length, 3);
-  assert.deepEqual(h.messages, ['Day unavailable'], 'unchanged failures stay quiet');
+  assert.deepEqual(h.messages, [], 'automatic retries stay quiet');
   fail = false;
   await h.live.goNow();
   assert.equal(h.live.current.utc, '2026-09-25T00:00:00Z');
-  assert.deepEqual(h.messages, ['Day unavailable', 'Транзит дня загружен']);
+  assert.deepEqual(h.messages, [], 'explicit recovery does not open a success toast');
   assert.equal(h.live.state.status, 'ready');
 });
 
@@ -276,6 +283,10 @@ test('the running clock waits for the next minute boundary and uses no per-secon
 test('scrubbing through the real graph controller preserves pinned selection, camera transform and stored charts', async () => {
   const personal = { id: 'personal', name: 'Saved chart', source: 'manual', personality: [1], design: [8] };
   const fallback = transitChartAt(day('2026-09-23'), 720);
+  // Older saved transit fallbacks contain only Personality. Live two-sided
+  // charts remain ephemeral and never rewrite that legacy stored record.
+  fallback.design = []; fallback.designUtc = null; fallback.designArcResidualDegrees = null;
+  fallback.activations.design = [];
   const writes = [], stored = JSON.stringify([personal, fallback]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => stored, setItem: (...args) => writes.push(args) }) });
   const originalCharts = store.charts, originalValues = JSON.stringify(store.charts);
@@ -537,5 +548,5 @@ test('a failed current packet retries without rerequesting the successful local-
   assert.equal(h.live.state.status, 'ready');
   assert.equal(h.requests.filter(date => date === '2026-09-23').length, 1);
   assert.equal(h.requests.filter(date => date === '2026-09-24').length, 2);
-  assert.deepEqual(h.messages, ['Current packet unavailable', 'Транзит дня загружен']);
+  assert.deepEqual(h.messages, [], 'partial failures and successful retries do not open toasts');
 });

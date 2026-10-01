@@ -5,7 +5,7 @@ import { createLocalDayTimeline, localDateAt, timelineIndexAt, timelineMinute } 
 // The current day is ephemeral. Cached minute samples never mutate the saved
 // chart collection, and completion of a request never navigates between charts.
 export function createLiveTransit({
-  isVisible = () => true, isSuspended = () => false, onMoment = () => {}, onRender = () => {}, toast = () => {},
+  isVisible = () => true, isSuspended = () => false, onMoment = () => {}, onRender = () => {},
   onStateChange = () => {}, dayClient = createTransitDayClient(),
   now = () => Date.now(), timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
 }) {
@@ -71,11 +71,9 @@ export function createLiveTransit({
         if (!isCurrentTimeline()) { status = 'idle'; return false; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) throw failed.reason;
-        const recovered = failures > 0;
         timeline = target; status = 'ready'; error = '';
         failures = 0; nextRetry = 0;
         unavailable = false;
-        if (recovered && visible()) toast('Транзит дня загружен');
         return true;
       } catch (failure) {
         if (requestSequence !== sequence) return false;
@@ -83,7 +81,6 @@ export function createLiveTransit({
         nextRetry = now() + Math.min(300_000, 30_000 * 2 ** Math.min(failures - 1, 4));
         status = 'error'; error = failure.message || 'Не удалось загрузить транзит дня.';
         unavailable = true;
-        if (visible() && (failures === 1 || force)) toast(error);
         return false;
       } finally {
         if (requestSequence === sequence) {

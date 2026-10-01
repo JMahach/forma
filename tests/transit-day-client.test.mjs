@@ -7,7 +7,8 @@ import { createLiveTransit } from '../src/state/live-transit.js';
 
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
-  columns: Array.from({ length: 11 }, (_, col) => Float64Array.from({ length: 1440 }, (_, index) => col * 30 + index / 10000)),
+  columns: Array.from({ length: 24 }, (_, col) => Float64Array.from({ length: 1440 }, (_, index) => col < 22
+    ? (col * 30 + index / 10000) % 360 : col === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + index * 61 : index % 100 * 1e-12)),
 });
 const response = date => ({ ok: true, arrayBuffer: async () => encodeTransitDay(day(date)).buffer });
 
@@ -27,6 +28,8 @@ test('day client coalesces concurrent requests and reuses the decoded immutable 
   const [a, b] = await Promise.all([first, second]);
   assert.equal(a, b);
   assert.equal(a.columns[0][100], 0.01);
+  assert.equal(a.columns.length, 24);
+  assert.deepEqual(a.columns.map(column => [...column]), day('2026-09-24').columns.map(column => [...column]), 'all red angles, exact Design seconds and residuals survive the network decoder');
   assert.equal(await client.getDay('2026-09-24'), a);
   assert.equal(requests.length, 1);
 });

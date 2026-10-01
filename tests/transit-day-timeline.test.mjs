@@ -62,3 +62,33 @@ test('every local minute maps to a listed UTC packet and a valid 0–1439 minute
     assert.equal(timelineMinute(day, 1e6).index, day.minutes - 1);
   }
 });
+
+test('views reuse one exact UTC/zone label across timeline origins without sharing mutable results', t => {
+  const formatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+  const formatting = t.mock.method(Intl.DateTimeFormat.prototype, 'formatToParts', function (...args) {
+    return formatToParts.apply(this, args);
+  });
+  const timeline = { startUtc: Date.parse('2026-11-01T04:00:00Z'), minutes: 1500, timeZone: 'America/New_York' };
+  const exact = { ...timeline, startUtc: Date.parse('2026-11-01T05:30:00Z'), minutes: 1 };
+  const first = formatTimelineMinute(timeline, 90), shown = formatTimelineMinute(exact, 0);
+  assert.deepEqual(first, shown);
+  assert.notEqual(first, shown);
+  assert.equal(formatting.mock.callCount(), 1, 'two views format one instant only once');
+  first.time = 'changed by caller'; shown.offset = 'changed by another caller';
+  assert.equal(formatTimelineMinute(exact, 0).time, '01:30');
+  assert.equal(formatTimelineMinute(exact, 0).offset, 'UTC-4');
+  assert.equal(formatting.mock.callCount(), 1);
+
+  const secondFold = formatTimelineMinute(timeline, 150);
+  assert.equal(secondFold.time, '01:30'); assert.equal(secondFold.offset, 'UTC-5');
+  assert.equal(secondFold.utc, '2026-11-01T06:30:00.000Z');
+  assert.equal(formatting.mock.callCount(), 2, 'the same wall clock at another UTC is a distinct label');
+  const otherZone = formatTimelineMinute({ ...timeline, timeZone: 'Asia/Kathmandu' }, 150);
+  assert.equal(otherZone.time, '12:15'); assert.equal(otherZone.offset, 'UTC+5:45');
+  assert.equal(formatting.mock.callCount(), 3, 'an explicit zone change invalidates the reused label');
+  formatTimelineMinute(timeline, 150);
+  assert.equal(formatting.mock.callCount(), 4, 'only the latest label is retained');
+  const subminute = formatTimelineMinute({ ...exact, startUtc: exact.startUtc + 1 }, 0);
+  assert.equal(subminute.utc, '2026-11-01T05:30:00.001Z', 'exact UTC is never rounded to the visible minute');
+  assert.equal(formatting.mock.callCount(), 5);
+});

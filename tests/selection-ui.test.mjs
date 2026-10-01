@@ -9,7 +9,7 @@ const appSource = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8'
 
 // Exercise the public controller with real selection state and isolated UI
 // boundaries. No source extraction, app bootstrap, storage or real charts.
-function selectionHarness() {
+function selectionHarness({ getActiveElement = () => null } = {}) {
   const panels = new Map(), opened = [], calls = { graph: 0, details: 0, camera: 0, popupClosed: 0, popupShows: [], events: [], hoverClears: [], updates: 0, libraryCloses: 0 };
   const currentChart = {
     id: 'activation-chart', source: 'calculated', personality: [4], design: [4],
@@ -55,7 +55,7 @@ function selectionHarness() {
   const selectionState = createSelectionState();
   let selectedChartId = currentChart.id, liveWanted = false;
   const controller = createGraphController({
-    selectionState, getChart: () => currentChart, viewport: panel('viewport'),
+    selectionState, getChart: () => currentChart, viewport: panel('viewport'), getActiveElement,
     activationPopover,
     getHoverPreview: () => ({ clear(options) { calls.hoverClears.push(options); } }),
     renderChart() { calls.graph++; calls.events.push('graph'); return ''; },
@@ -109,9 +109,11 @@ test('all graph selection types highlight without automatically opening any info
   }
 });
 
-test('numeric activation selection opens only its exact source and planet after graph rendering', () => {
+test('inspecting a numeric activation opens only its exact source and planet after graph rendering', () => {
   const { context, calls, currentChart, activationPopover, opened } = selectionHarness();
   for (const activation of ['personality-mercury', 'personality-mars', 'design-mercury']) {
+    context.invokeSelection({ type: 'gate', id: '4', activation });
+    assert.equal(activationPopover.currentId, null);
     context.invokeSelection({ type: 'gate', id: '4', activation });
     assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { type: 'gate', id: 4 });
     assert.equal(activationPopover.currentId, activation, 'duplicate gate numbers do not determine the popup identity');
@@ -120,28 +122,97 @@ test('numeric activation selection opens only its exact source and planet after 
     assert.deepEqual(calls.events.slice(-3), ['close', 'graph', `show:${activation}`], 'the popup anchors to the newly rendered selection');
   }
   assert.equal(calls.popupShows.length, 3);
-  assert.equal(calls.graph, 3);
+  assert.equal(calls.graph, 6);
   assert.equal(calls.camera, 0);
   assert.deepEqual(opened, [], 'activation selection leaves the knowledge library and other information panels closed');
 });
 
-test('selecting the same numeric activation again closes its popup and a later selection reopens it', () => {
-  for (const source of ['personality', 'design']) {
-    const { context, calls, activationPopover } = selectionHarness();
-    const value = { type: 'gate', id: '4', activation: `${source}-mercury` };
-    context.invokeSelection(value);
-    assert.equal(activationPopover.currentId, value.activation);
-    context.invokeSelection(value);
-    assert.equal(activationPopover.currentId, null);
-    assert.equal(calls.popupShows.length, 1, 'the second selection does not reopen the popup');
-    assert.equal(context.selection, null, 'the second exact click unpins the selected gate');
-    assert.equal(context.selectedActivation, null);
-    assert.deepEqual(calls.events.slice(-2), ['close', 'graph']);
-    context.invokeSelection(value);
-    assert.equal(activationPopover.currentId, value.activation);
+test('numeric activations select, inspect, then clear for mouse, touch and keyboard without changing selection on the second', () => {
+  for (const pointerType of ['mouse', 'touch', undefined]) for (const activation of ['personality-mercury', 'personality-mars', 'design-mercury']) {
+    const { context, activationPopover, calls } = selectionHarness();
+    const value = { type: 'gate', id: '4', activation, ...(pointerType ? { pointerType } : {}) };
+    for (let cycle = 0; cycle < 2; cycle++) {
+      context.invokeSelection(value);
+      assert.deepEqual(context.selectedItems, [{ type: 'gate', id: 4, activation }]);
+      assert.equal(activationPopover.currentId, null, 'the first tap highlights without showing percentages');
+      const selected = context.selectedItems;
+      context.invokeSelection(value);
+      assert.equal(context.selectedItems, selected, 'the second tap preserves the committed selection snapshot');
+      assert.equal(activationPopover.currentId, activation);
+      context.invokeSelection(value);
+      assert.deepEqual(context.selectedItems, []);
+      assert.equal(activationPopover.currentId, null, 'the third tap clears both selection and details');
+    }
     assert.equal(calls.popupShows.length, 2);
-    assert.equal(calls.graph, 3);
+    assert.equal(calls.camera, 0);
   }
+});
+
+test('touch switches between equal gate values by activation identity and background clear restarts the cycle', () => {
+  const { context, activationPopover, calls } = selectionHarness();
+  const first = { type: 'gate', id: '4', activation: 'personality-mercury', pointerType: 'touch' };
+  const second = { ...first, activation: 'personality-mars' };
+  context.invokeSelection(first); context.invokeSelection(first);
+  assert.equal(activationPopover.currentId, first.activation);
+  context.invokeSelection(second);
+  assert.deepEqual(context.selectedItems, [{ type: 'gate', id: 4, activation: second.activation }]);
+  assert.equal(activationPopover.currentId, null, 'a different row begins at the selection-only step');
+  context.invokeSelection(second); assert.equal(activationPopover.currentId, second.activation);
+  context.clearSelected();
+  assert.equal(context.selection, null); assert.equal(activationPopover.currentId, null);
+  context.invokeSelection(second);
+  assert.equal(activationPopover.currentId, null);
+  assert.equal(calls.popupShows.length, 2);
+});
+
+test('pointer deselection releases only the matching SVG focus while keyboard keeps it for the next activation', () => {
+  for (const pointerType of ['touch', 'mouse', 'pen', undefined]) {
+    let active, blurs = 0;
+    const value = { type: 'gate', id: '4', activation: 'personality-mercury', ...(pointerType ? { pointerType } : {}) };
+    const focused = { dataset: value, closest() { return this; }, classList: { contains() { return false; } }, blur() { active = null; blurs++; } };
+    active = focused;
+    const { context } = selectionHarness({ getActiveElement: () => active });
+    context.invokeSelection(value);
+    context.invokeSelection(value);
+    assert.equal(active, focused, 'selecting and inspecting do not discard the target focus');
+    context.invokeSelection(value);
+    assert.equal(active, pointerType ? null : focused);
+    assert.equal(blurs, pointerType ? 1 : 0, 'keyboard deselection leaves its focus indicator and tab position intact');
+  }
+  let blurs = 0;
+  const focused = { dataset: { type: 'planet-filter', id: 'sun' }, closest() { return this; }, classList: { contains() { return false; } }, blur() { blurs++; } };
+  const { context } = selectionHarness({ getActiveElement: () => focused });
+  const value = { type: 'gate', id: '4', activation: 'personality-mercury', pointerType: 'mouse' };
+  for (let n = 0; n < 3; n++) context.invokeSelection(value);
+  assert.equal(blurs, 0, 'a click must never blur an unrelated active control');
+});
+
+test('a numeric cycle can continue across pointer and keyboard inputs', () => {
+  const { context, activationPopover } = selectionHarness();
+  const value = { type: 'gate', id: '4', activation: 'personality-mercury' };
+  context.invokeSelection({ ...value, pointerType: 'mouse' });
+  assert.equal(activationPopover.currentId, null);
+  context.invokeSelection({ ...value, pointerType: 'touch' });
+  assert.equal(activationPopover.currentId, value.activation);
+  context.invokeSelection(value);
+  assert.deepEqual(context.selectedItems, []);
+  assert.equal(activationPopover.currentId, null);
+});
+
+test('touch planet glyphs keep a two-tap selection toggle and never open details or change a planet filter', () => {
+  const { context, activationPopover, currentChart, calls } = selectionHarness();
+  const full = structuredClone(currentChart.activations.personality);
+  currentChart.planetFilter = { selectedPlanets: [], activations: full };
+  currentChart.activations.personality = []; currentChart.personality = [];
+  const value = { type: 'planet', id: 'personality-mercury', activation: 'personality-mercury-planet', pointerType: 'touch' };
+  context.invokeSelection(value);
+  assert.deepEqual(context.selectedItems, [{ type: 'planet', id: 'personality-mercury' }]);
+  assert.equal(activationPopover.currentId, null);
+  context.invokeSelection(value);
+  assert.deepEqual(context.selectedItems, []);
+  assert.deepEqual(currentChart.planetFilter.selectedPlanets, []);
+  assert.deepEqual(currentChart.activations.personality, []);
+  assert.equal(calls.popupShows.length, 0);
 });
 
 test('a second exact graph selection unpins every selection type, and a later click pins it again', () => {
@@ -169,7 +240,7 @@ test('activation identity distinguishes different planets and a diagram gate tha
     context.invokeSelection({ type: 'gate', id: '4', activation });
     assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { type: 'gate', id: 4 });
     assert.equal(context.selectedActivation, activation);
-    assert.equal(activationPopover.currentId, activation, 'a different activation opens its own details instead of toggling off');
+    assert.equal(activationPopover.currentId, null, 'a different activation starts at selection without opening details');
   }
   context.invokeSelection({ type: 'gate', id: '4' });
   assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { type: 'gate', id: 4 }, 'the diagram gate remains a separate exact click target');
@@ -265,7 +336,7 @@ test('subtracting a center gate retains unrelated items, removes its explicit du
   context.invokeSelection({ ...otherGate, additive: true });
   context.invokeSelection({ type: 'center', id: 'throat', additive: true });
   for (const item of unrelated) context.invokeSelection({ ...item, additive: true });
-  assert.equal(calls.popupShows.length, 1, 'the first numeric item was the only single-item popup');
+  assert.equal(calls.popupShows.length, 0, 'selecting numeric items never opens details automatically');
   context.invokeSelection({ type: 'gate', id: '20', activation: 'design-earth', additive: true });
   const selected = items(context), keys = selected.map(item => `${item.type}:${item.id}`);
   assert.equal(keys.length, new Set(keys).size, 'expanded gates and previously explicit gates are deduplicated');
@@ -278,7 +349,7 @@ test('subtracting a center gate retains unrelated items, removes its explicit du
   assert.deepEqual(JSON.parse(JSON.stringify(context.selection)), { type: primary.type, id: primary.id });
   assert.equal(context.selectedActivation, primary.activation || null);
   assert.equal(activationPopover.currentId, null);
-  assert.equal(calls.popupShows.length, 1, 'subtracting closes details without reopening a retained activation');
+  assert.equal(calls.popupShows.length, 0, 'subtracting does not open details for a retained activation');
   assert.equal(calls.camera, 0);
 });
 
@@ -297,8 +368,10 @@ test('Shift treats numeric copies in different planets, sources and the diagram 
   assert.equal(activationPopover.currentId, null, 'removal back to one item does not reopen that item’s popup');
 });
 
-test('numeric detail popups open for a newly selected single item and stay hidden throughout multi-selection and removal', () => {
+test('numeric details need a repeat on a single item and stay hidden throughout multi-selection and removal', () => {
   const { context, calls, activationPopover } = selectionHarness();
+  context.invokeSelection({ type: 'gate', id: '4', activation: 'personality-mercury' });
+  assert.equal(activationPopover.currentId, null);
   context.invokeSelection({ type: 'gate', id: '4', activation: 'personality-mercury' });
   assert.equal(activationPopover.currentId, 'personality-mercury');
   assert.equal(calls.popupShows.length, 1);
@@ -314,20 +387,24 @@ test('numeric detail popups open for a newly selected single item and stay hidde
   context.invokeSelection({ type: 'center', id: 'throat', additive: true });
   context.invokeSelection({ type: 'gate', id: '29', activation: 'design-mars' });
   assert.deepEqual(items(context), [{ type: 'gate', id: 29, activation: 'design-mars' }]);
-  assert.equal(activationPopover.currentId, 'design-mars', 'a normal numeric click replaces the group and opens its own details');
+  assert.equal(activationPopover.currentId, null, 'a normal numeric click replaces the group without opening details');
+  context.invokeSelection({ type: 'gate', id: '29', activation: 'design-mars' });
+  assert.equal(activationPopover.currentId, 'design-mars');
   context.invokeSelection({ type: 'gate', id: '29', activation: 'personality-jupiter' });
-  assert.equal(activationPopover.currentId, 'personality-jupiter', 'normal clicking another planet with the same gate updates its popup');
+  assert.equal(activationPopover.currentId, null, 'another planet with the same gate starts a fresh cycle');
+  context.invokeSelection({ type: 'gate', id: '29', activation: 'personality-jupiter' });
+  assert.equal(activationPopover.currentId, 'personality-jupiter');
   assert.equal(calls.popupShows.length, 3);
   context.invokeSelection({ type: 'gate', id: '29', activation: 'personality-jupiter' });
   assert.deepEqual(items(context), []);
   assert.equal(activationPopover.currentId, null);
   context.invokeSelection({ type: 'gate', id: '29', activation: 'design-mars', additive: true });
-  assert.equal(activationPopover.currentId, 'design-mars', 'Shift can add the first numeric item and open its details');
-  assert.equal(calls.popupShows.length, 4);
+  assert.equal(activationPopover.currentId, null, 'Shift adds the first numeric item without opening details');
+  assert.equal(calls.popupShows.length, 3);
   context.invokeSelection({ type: 'gate', id: '29', activation: 'design-mars', additive: true });
   assert.deepEqual(items(context), []);
   assert.equal(activationPopover.currentId, null);
-  assert.equal(calls.popupShows.length, 4);
+  assert.equal(calls.popupShows.length, 3);
 });
 
 test('selection items store only normalized fields and keep planet metadata separate from numeric activation details', () => {
@@ -349,7 +426,7 @@ test('background clearing and chart changes reset the complete selection list an
     assert.equal(context.selection, null);
     assert.equal(context.selectedActivation, null);
     assert.equal(activationPopover.currentId, null);
-    assert.equal(calls.hoverClears.length, 1);
+    assert.equal(calls.hoverClears.length, 3);
     assert.deepEqual(JSON.parse(JSON.stringify(calls.hoverClears[0])), { notify: false });
     if (action === 'chart') {
       assert.equal(context.selectedChartId, 'another-chart');
@@ -370,10 +447,11 @@ test('ordinary graph and planet selections dismiss an open activation popup with
   ]) {
     const { context, calls, activationPopover, opened } = selectionHarness();
     context.invokeSelection({ type: 'gate', id: '4', activation: 'personality-mercury' });
+    context.invokeSelection({ type: 'gate', id: '4', activation: 'personality-mercury' });
     context.invokeSelection(value);
     assert.equal(activationPopover.currentId, null, `${value.type} dismisses the previous popup`);
     assert.equal(calls.popupShows.length, 1, `${value.type} does not open another activation popup`);
-    assert.equal(calls.graph, 2, `${value.type} still updates highlighting`);
+    assert.equal(calls.graph, 3, `${value.type} still updates highlighting`);
     assert.equal(calls.camera, 0, `${value.type} leaves the camera unchanged`);
     assert.deepEqual(opened, [], `${value.type} leaves all information panels closed`);
   }
@@ -382,6 +460,6 @@ test('ordinary graph and planet selections dismiss an open activation popup with
 test('pointer and keyboard graph selections use the tested choose callback', () => {
   const options = appSource.match(/attachGestures\(\$\('bodygraph'\),\s*\{([\s\S]*?)\n[ \t]*\}\);/)?.[1];
   assert.ok(options, 'the application attaches gestures to the drawing');
-  assert.match(options, /\bonSelect:\s*graph\.choose\s*,/);
+  assert.match(options, /if \(selection\.type !== 'planet-filter'\) \{ graph\.choose\(selection\); return; \}/);
   assert.match(options, /\bonBackgroundTap:\s*graph\.clear\s*,/);
 });

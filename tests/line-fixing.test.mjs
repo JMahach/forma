@@ -4,6 +4,7 @@ import { calculateLineFixings } from '../src/domain/line-fixing.js';
 import { LINE_FIXING_DATA } from '../src/domain/line-fixing-data.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { CHANNELS } from '../src/scene/geometry/chart-geometry.js';
+import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 
 const activation = (planet, gate, line) => ({ planet, gate, line });
 const contributor = (source, planet, gate, line) => ({ source, planet, gate, line });
@@ -202,15 +203,21 @@ test('same planet across sources remains distinct and duplication affects only i
   expectFixing(result, 'personality-sun', 'exalted', [contributor('design', 'pluto', 23, 5)]);
 });
 
-test('transit charts ignore all design targets and contributors', () => {
-  const input = chart([activation('sun', 43, 2)], [activation('pluto', 23, 4), activation('moon', 43, 5)], { source: 'transit' });
-  const result = calculateLineFixings(input);
-  assert.deepEqual([...result.keys()], ['personality-sun']);
-  expectFixing(result, 'personality-sun', 'none');
-  input.activations.personality.push(activation('pluto', 43, 3));
-  const withPersonalityRuler = calculateLineFixings(input);
-  assert.ok([...withPersonalityRuler.keys()].every(key => key.startsWith('personality-')));
-  expectFixing(withPersonalityRuler, 'personality-sun', 'exalted', [contributor('personality', 'pluto', 43, 3)]);
+test('transit fixings use selected black and red targets and contributors without hidden-planet influence', () => {
+  const input = chart([activation('sun', 43, 2), activation('venus', 39, 6)],
+    [activation('sun', 55, 2), activation('pluto', 23, 4), activation('moon', 43, 5)], { source: 'transit' });
+  const filter = createTransitPlanetFilter();
+  filter.setExpanded(true);
+  const blackOnly = calculateLineFixings(filter.filter(input));
+  assert.deepEqual([...blackOnly.keys()], ['personality-sun', 'personality-venus']);
+  expectFixing(blackOnly, 'personality-sun', 'none');
+  filter.setPlanet('sun', true, 'design');
+  expectFixing(calculateLineFixings(filter.filter(input)), 'design-sun', 'exalted', [contributor('personality', 'venus', 39, 6)]);
+  filter.setAllPlanets(true, 'design');
+  expectFixing(calculateLineFixings(filter.filter(input)), 'personality-sun', 'juxtaposed',
+    [contributor('design', 'pluto', 23, 4)], [contributor('design', 'moon', 43, 5)]);
+  filter.setPlanet('venus', false);
+  expectFixing(calculateLineFixings(filter.filter(input)), 'design-sun', 'none');
 });
 
 function freezeDeep(value) {

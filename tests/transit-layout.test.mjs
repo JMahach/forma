@@ -83,13 +83,13 @@ test('consolidated form styles retain their small-screen overrides', () => {
   assert.equal(declarationsAt('.dialog-content', 320, 568).padding, '18px');
 });
 
-test('normal activation spacing moves each complete source block symmetrically on the main chart only', () => {
+test('normal activation spacing moves each complete source block symmetrically on the main chart and loading art only', () => {
   const shifts = rules.filter(rule => rule.declarations.translate?.includes('--activation-rest-gap'));
   assert.equal(shifts.length, 2, 'one source-level translation per side, not another shift on each child');
   const seen = [];
   for (const rule of shifts) {
-    const match = /^#bodygraph :is\(([^)]+)\)\[data-source=['"](design|personality)['"]\]$/.exec(rule.selector);
-    assert.ok(match, 'the extra spacing is restricted to the main bodygraph, never library thumbnails');
+    const match = /^:is\(#bodygraph,\s*#chartLoadingArt\) :is\(([^)]+)\)\[data-source=['"](design|personality)['"]\]$/.exec(rule.selector);
+    assert.ok(match, 'the extra spacing is shared by the main bodygraph and its loading art, never library thumbnails');
     assert.deepEqual(match[1].split(',').map(selector => selector.trim()).sort(),
       ['.activation-column', '.variable-block'],
       'planetary values, Color/Tone labels and arrows move together, but neither channels nor centers move');
@@ -111,7 +111,7 @@ test('the fourteen-unit resting gap disappears continuously at the inherited man
   const definitions = rules.filter(rule => '--activation-rest-gap' in rule.declarations);
   assert.equal(definitions.length, 2);
   const readGap = (selector, reveal) => {
-    const rule = definitions.find(candidate => candidate.selector === selector);
+    const rule = definitions.find(candidate => candidate.selector.split(',').some(value => value.trim() === selector));
     assert.ok(rule, `${selector} owns its explicit reveal fallback`);
     assert.deepEqual(rule.media, []);
     const formula = /^calc\((\d+)px \* \(1 - var\(--mandala-reveal, ([01])\)\)\)$/.exec(rule.declarations['--activation-rest-gap']);
@@ -120,8 +120,9 @@ test('the fourteen-unit resting gap disappears continuously at the inherited man
     return Number(formula[1]) * (1 - (reveal ?? Number(formula[2])));
   };
   assert.equal(readGap('#bodygraph .bodygraph-drawing'), 14, 'normal standalone rendering expands each side by fourteen SVG units');
+  assert.equal(readGap('#chartLoadingArt'), 14, 'the first visible skeleton uses the same column spacing');
   assert.equal(readGap('#bodygraph .mandala-drawing'), 0, 'standalone mandala fallback retains its original columns');
-  for (const selector of ['#bodygraph .bodygraph-drawing', '#bodygraph .mandala-drawing']) {
+  for (const selector of ['#bodygraph .bodygraph-drawing', '#bodygraph .mandala-drawing', '#chartLoadingArt']) {
     assert.equal(readGap(selector, 0), 14);
     assert.equal(readGap(selector, .5), 7);
     assert.equal(readGap(selector, 1), 0, 'expanded inherited reveal cannot add space beyond the existing mandala offset');
@@ -211,6 +212,8 @@ test('the day slider keeps its 48px hit area but paints only a slim rounded loca
   }
 });
 
+
+
 test('CSS leaves the centered footer geometry to the studio, without a width switch', () => {
   const controls = rules.filter(rule => rule.selector === '.day-controls');
   assert.equal(controls.length, 1);
@@ -247,6 +250,27 @@ test('all viewport shapes keep the same full-width native range and permanent pa
     assert.equal(declarationsAt('.day-range', width, height).height, '44px');
     assert.equal(declarationsAt('.transit-status', width, height).position, 'absolute');
     assert.equal(declarationsAt('.transit-status:empty', width, height).display, 'none');
+  }
+});
+
+test('coarse pointers gain a 56px invisible range target without moving the rail, marker or date fields', () => {
+  for (const [width, height] of [[320, 568], [390, 844], [844, 390], [1024, 768]]) {
+    const fine = declarationsAt(".day-controls input[type='range']", width, height);
+    const coarse = declarationsAt(".day-controls input[type='range']", width, height, { coarse: true });
+    assert.equal(coarse.height, '56px'); assert.equal(coarse.top, '-6px');
+    assert.equal(coarse.width, fine.width);
+    assert.equal(Number.parseFloat(coarse.top) + Number.parseFloat(coarse.height) / 2,
+      Number.parseFloat(fine.height) / 2, 'the visible native track and thumb retain their vertical center');
+    const wrapper = declarationsAt('.day-range', width, height, { coarse: true });
+    assert.equal(wrapper.height, '44px'); assert.equal(wrapper['margin-top'], '4px');
+    assert.equal(declarationsAt('.day-reference-rail', width, height, { coarse: true }).inset, '0 22px');
+    const heading = declarationsAt('.lifetime-heading', width, height, { coarse: true });
+    assert.equal(heading['z-index'], '1', 'date inputs remain above the invisible touch target');
+    assert.equal(coarse['z-index'], undefined, 'the expanded hit area never covers date buttons or inputs');
+    for (const id of ['transitTime', 'chartDayTime', 'lifetimeTime']) {
+      assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
+      assert.match(byId(id).parent.parent.attributes, /\bday-controls\b/);
+    }
   }
 });
 
@@ -355,10 +379,11 @@ test('the title stays centered across portrait, landscape and toolbar breakpoint
   assert.equal(byId('chartTitle').parent.parent.parent.parent, byId('canvasWrap').parent, 'the title and drawing use the same studio coordinate space');
 });
 
-test('Home sits left of the adjacent clock and Mandala controls without changing their order', () => {
+test('Home is the first toolbar control, before Years, Day and Mandala', () => {
   const tools = byId('fitButton').parent;
   assert.deepEqual(nodes.filter(node => node.parent === tools && node.tag === 'button')
-    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'chartDayToggle', 'mandalaSwitch', 'summarySwitch']);
+    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'chartDayToggle', 'mandalaSwitch', 'summarySwitch']);
+  assert.match(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'the server exposes Years in its first HTML only when available');
   assert.match(byId('fitButton').attributes, /\bhidden(?:\s|$)/, 'the fitted initial chart starts without Home');
   assert.equal(byId('chartDayToggle').parent, byId('mandalaSwitch').parent);
 });

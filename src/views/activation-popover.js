@@ -24,7 +24,7 @@ export function placeActivationPopover(anchor, size, viewport, source) {
 }
 
 export function attachActivationPopover(panel, svg) {
-  let currentId = null;
+  let currentId = null, maxHeight = null, arrowOffset = null;
   const anchor = () => currentId ? svg.querySelector(`[data-activation="${currentId}"]`) : null;
   const positionAnchor = () => currentId?.startsWith('design-')
     ? svg.querySelector(`[data-activation="${currentId}-planet"]`) || anchor() : anchor();
@@ -47,19 +47,25 @@ export function attachActivationPopover(panel, svg) {
     const visual = window.visualViewport;
     const viewport = { left: visual?.offsetLeft || 0, top: visual?.offsetTop || 0, width: visual?.width || window.innerWidth, height: visual?.height || window.innerHeight };
     if (rect.right <= viewport.left || rect.left >= viewport.left + viewport.width || rect.bottom <= viewport.top || rect.top >= viewport.top + viewport.height) { close(); return; }
-    panel.style.maxWidth = `${Math.max(0, viewport.width - 24)}px`;
-    panel.style.setProperty('--popover-max-height', `${Math.max(0, viewport.height - 24)}px`);
+    const width = `${Math.max(0, viewport.width - 24)}px`, height = `${Math.max(0, viewport.height - 24)}px`;
+    if (panel.style.maxWidth !== width) panel.style.maxWidth = width;
+    if (maxHeight !== height) { panel.style.setProperty('--popover-max-height', height); maxHeight = height; }
     const size = panel.getBoundingClientRect();
     const position = placeActivationPopover(rect, size, viewport, currentId.split('-')[0]);
-    panel.style.left = `${position.left}px`;
-    panel.style.top = `${position.top}px`;
-    panel.style.setProperty('--arrow-offset', `${position.arrow}px`);
-    panel.dataset.side = position.side;
+    // A fixed origin plus 2D translation moves the popup without changing its
+    // layout coordinates. Keep actual measurements and unrounded CSS pixels.
+    const transform = `translate(${position.left}px, ${position.top}px)`;
+    if (panel.style.transform !== transform) panel.style.transform = transform;
+    if (arrowOffset !== position.arrow) { panel.style.setProperty('--arrow-offset', `${position.arrow}px`); arrowOffset = position.arrow; }
+    if (panel.dataset.side !== position.side) panel.dataset.side = position.side;
   }
   function refresh(chart) {
     if (!currentId) return;
     const [source, planet] = currentId.split('-');
-    const entry = chart.activations?.[source]?.find(item => item.planet === planet);
+    const entries = chart.planetFilter
+      ? source === 'design' ? chart.planetFilter.designActivations : chart.planetFilter.activations
+      : chart.activations?.[source];
+    const entry = entries?.find(item => item.planet === planet);
     const rows = activationDetails(entry);
     if (!rows || !anchor()) { close(); return; }
     panel.innerHTML = `<div class="activation-detail-content">${rows.map(row => `<div class="activation-detail-row"><span class="activation-detail-label">${row.label}</span><span class="activation-detail-value">${row.value}</span><span class="activation-detail-meter" aria-hidden="true"><i style="width:${row.percent}%"></i></span><span class="activation-detail-percent">${row.percent.toFixed(2)}%</span></div>`).join('')}</div>`;

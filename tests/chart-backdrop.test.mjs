@@ -173,7 +173,7 @@ test('removing only the normal outline leaves every channel, activation, selecti
   }
 });
 
-test('mandala always uses one shared silhouette inside its scaled core, never an additional field around the wheel', () => {
+test('mandala always uses one shared silhouette inside the shared drawing, never an additional field around the wheel', () => {
   const options = freeze({ idPrefix: 'shared-surface', showMandala: true, showActivations: true, selections: [{ type: 'gate', id: 20 }], pinnedCrosses: [crossAtLongitude(355)], previewSelection: { type: 'mandala-cross', cross: crossAtLongitude(305.7) } });
   const plain = renderBodygraph(chart, null, options);
   const enabled = renderBodygraph(chart, null, { ...options, showBackdrop: true });
@@ -182,9 +182,9 @@ test('mandala always uses one shared silhouette inside its scaled core, never an
   assert.equal(renderBodygraph(chart, null, { ...options, showBackdrop: false }), plain);
   assert.equal((enabled.match(/class="mandala-underlay"/g) || []).length, 1);
   assert.doesNotMatch(enabled, /class="chart-backdrop"/);
-  const coreIndex = enabled.indexOf('class="mandala-core"'), underlayIndex = enabled.indexOf(underlay);
-  assert.ok(coreIndex > enabled.indexOf('class="bodygraph-mandala"'));
-  assert.ok(coreIndex < underlayIndex);
+  const drawingIndex = enabled.indexOf('class="bodygraph-drawing'), underlayIndex = enabled.indexOf(underlay);
+  assert.ok(drawingIndex > enabled.indexOf('class="bodygraph-mandala"'));
+  assert.ok(drawingIndex < underlayIndex);
   assert.ok(enabled.includes(`${underlay}<g class="bodygraph-channels">`));
   assert.equal(new Set(ids(enabled)).size, ids(enabled).length, 'the full rendered SVG has no duplicate IDs');
   for (const ref of references(enabled)) assert.ok(ids(enabled).includes(ref), `missing resource ${ref}`);

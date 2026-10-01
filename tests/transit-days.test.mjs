@@ -19,7 +19,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const now = () => new Date('2026-09-24T12:00:00Z');
 const fingerprint = '0123456789abcdef';
 const makeDay = date => ({ date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
-  columns: Array.from({ length: 11 }, (_, column) => Array.from({ length: 1440 }, (_, minute) => 10 + column * 20 + minute / 10000)),
+  columns: Array.from({ length: 24 }, (_, column) => Array.from({ length: 1440 }, (_, minute) => column < 22 ? (10 + column * 20 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 61 : minute % 100 * 1e-12)),
   engine: 'Swiss Ephemeris test', ephemeris: 'Test ephemerides', timezoneDatabase: 'IANA test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 async function directory(t) {
@@ -75,7 +75,7 @@ test('HTTP receives a ready day before disk persistence; writes retain the singl
     return write(file, ...args);
   });
   const service = await cache(t, { generateDay: async date => { calls.push(date); return makeDay(date); } });
-  const response = request(service, '/api/transit/day?date=2026-09-24&v=1', { headers: { 'accept-encoding': 'identity' } })
+  const response = request(service, '/api/transit/day?date=2026-09-24&v=2', { headers: { 'accept-encoding': 'identity' } })
     .then(value => { delivered = true; return value; });
   let next, closing;
   try {
@@ -193,14 +193,14 @@ test('RAM and disk retain at most seven days and pruning leaves unrelated files 
 
 test('query validation is exact, version aware and uses UTC dates through month/year boundaries', () => {
   const query = value => new URLSearchParams(value);
-  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '1' }), now()), { date, versioned: true });
+  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '2' }), now()), { date, versioned: true });
   assert.equal(validateTransitDayQuery(query({ date: '2026-09-24' }), now()).versioned, false);
-  for (const value of [{}, { date: '2026-9-24' }, { date: '2026-02-30' }, { date: '../2026-09-24' }, { date: '2026-09-24', v: '2' }, { date: '2026-09-24', v: '' }]) {
+  for (const value of [{}, { date: '2026-9-24' }, { date: '2026-02-30' }, { date: '../2026-09-24' }, { date: '2026-09-24', v: '0' }, { date: '2026-09-24', v: '' }]) {
     assert.throws(() => validateTransitDayQuery(query(value), now()), error => error.status === 400);
   }
   assert.throws(() => validateTransitDayQuery(query({ date: '2026-09-27' }), now()), error => error.status === 422);
-  assert.equal(validateTransitDayQuery(query({ date: '2027-01-01', v: '1' }), new Date('2026-12-31T23:59:59Z')).date, '2027-01-01');
-  assert.equal(validateTransitDayQuery(query({ date: '2026-09-30', v: '1' }), new Date('2026-10-01T00:00:00Z')).date, '2026-09-30');
+  assert.equal(validateTransitDayQuery(query({ date: '2027-01-01', v: '2' }), new Date('2026-12-31T23:59:59Z')).date, '2027-01-01');
+  assert.equal(validateTransitDayQuery(query({ date: '2026-09-30', v: '2' }), new Date('2026-10-01T00:00:00Z')).date, '2026-09-30');
 });
 
 test('warmup shares tomorrow at a month rollover and cleans its unref midnight timer', async t => {
@@ -267,7 +267,7 @@ async function request(service, url, { method = 'GET', headers = {} } = {}) {
 test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and version-scoped immutable caching', async t => {
   let calls = 0;
   const service = await cache(t, { generateDay: async date => { calls++; return makeDay(date); } });
-  const url = '/api/transit/day?date=2026-09-24&v=1';
+  const url = '/api/transit/day?date=2026-09-24&v=2';
   for (const [accept, encoding, unpack] of [['gzip, br', 'br', brotliDecompressSync], ['gzip', 'gzip', gunzipSync], ['identity', undefined, value => value]]) {
     const result = await request(service, url, { headers: { 'accept-encoding': accept } });
     assert.equal(result.status, 200); assert.equal(result.headers['Content-Encoding'], encoding);
@@ -285,7 +285,7 @@ test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and versi
   assert.equal((await request(service, url, { method: 'POST' })).status, 405);
   assert.equal((await request(service, url, { headers: { origin: 'https://unrelated.example' } })).status, 403);
   assert.equal((await request(service, '/.cache/transit/v1/2026-09-24.gz')).status, 404);
-  const version = await request(service, '/api/transit/day?date=2026-09-24&v=2');
+  const version = await request(service, '/api/transit/day?date=2026-09-24&v=0');
   assert.equal(version.status, 400); assert.equal(version.headers['Cache-Control'], 'no-store');
   const unacceptable = await request(service, url, { headers: { 'accept-encoding': 'br;q=0,gzip;q=0,identity;q=0' } });
   assert.equal(unacceptable.status, 406); assert.equal(calls, 1);
@@ -298,7 +298,7 @@ test('encoding preference honors exclusions and transient HTTP failures remain r
   assert.equal(negotiateEncoding('*'), 'br');
   let calls = 0;
   const service = await cache(t, { generateDay: async date => { if (++calls === 1) throw new Error('temporary'); return makeDay(date); } });
-  const url = '/api/transit/day?date=2026-09-24&v=1';
+  const url = '/api/transit/day?date=2026-09-24&v=2';
   const failed = await request(service, url);
   assert.equal(failed.status, 503); assert.equal(failed.headers['Cache-Control'], 'no-store'); assert.equal(failed.headers['Retry-After'], '5');
   assert.equal((await request(service, url)).status, 200); assert.equal(calls, 2);
@@ -318,7 +318,7 @@ test('batch workers are bounded and a terminated process must close before relea
   } });
   result.then(() => { settled = true; }, () => { settled = true; });
   assert.equal(worker.input, '{"date":"2026-09-24"}');
-  worker.stdout.emit('data', 'x'.repeat(500001));
+  worker.stdout.emit('data', 'x'.repeat(1000001));
   assert.equal(worker.signal, 'SIGKILL');
   await Promise.resolve();
   assert.equal(settled, false);
@@ -331,14 +331,14 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
   const date = '2026-09-24';
   const day = await generateTransitDay({ root, date });
   const packet = await encodeDayPacket(day), decoded = decodeTransitDay(packet);
-  const script = "import datetime as dt,json; from server.python import astronomy as c; from server.python import civil_time as civil; start=dt.datetime(2026,9,24,tzinfo=c.UTC); print(json.dumps([c.activations(c.julian_tt(start+dt.timedelta(minutes=i))) for i in range(1440)],separators=(',',':')))";
-  const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, maxBuffer: 4000000 });
+  const script = "import datetime as dt,json; from server.python import calculator as c; print(json.dumps([c.calculate(dict(mode='natal',name='Parity',date='2026-09-24',time=f'{i//60:02d}:{i%60:02d}',city=dict(id='utc',name='UTC',timezone='UTC')))['chart']['activations'] for i in range(1440)],separators=(',',':')))";
+  const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, maxBuffer: 6000000 });
   const reference = JSON.parse(stdout);
   let crossings = 0;
   for (let minute = 0; minute < 1440; minute++) {
     const chart = transitChartAt(decoded, minute);
-    assert.deepEqual(chart.activations.personality, reference[minute], `minute ${minute}`);
-    if (minute) crossings += reference[minute].filter((entry, index) => entry.gate !== reference[minute - 1][index].gate).length;
+    assert.deepEqual(chart.activations, reference[minute], `minute ${minute}`);
+    if (minute) crossings += reference[minute].personality.filter((entry, index) => entry.gate !== reference[minute - 1].personality[index].gate).length;
   }
   assert.ok(crossings > 0, 'the actual day includes gate boundaries');
   assert.equal(transitChartAt(decoded, 1439).utc, `${date}T23:59:00Z`);

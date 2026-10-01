@@ -76,7 +76,7 @@ function harness(t, width, height, mandala = false, initialInsets = insets, shar
       let toggle, click;
       toggle = attachMandalaMode({
         button: { setAttribute() {}, addEventListener(type, handler) { assert.equal(type, 'click'); click = handler; } },
-        canvas: { classList: { toggle() {}, add() {}, remove() {} } },
+        canvas: { style: { setProperty() {} }, classList: { toggle() {}, add() {}, remove() {} } },
         gestures: controls,
         layout: sharedHome ? { frame: () => STUDIO_FRAME } : null,
         render() { mode = toggle.enabled; },
@@ -118,14 +118,14 @@ test('the layout owns measured insets and refreshes them once when canvas spacin
   const initial = layout.insets();
   assert.equal(initial.side, 20);
   assert.equal(initial.top, 100);
-  assert.equal(initial.bottom, 60);
+  assert.equal(initial.bottom, 80);
   assert.equal(layout.insets(), initial, 'camera measurements reuse the current measured layout');
   assert.deepEqual([rectReads, styleReads], [1, 1], 'reading resolved insets does not force another DOM measurement');
   style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px', scrollPaddingBottom: '80px' };
   layout.refresh();
   assert.equal(layout.insets().side, 18.5);
   assert.equal(layout.insets().top, 120);
-  assert.equal(layout.insets().bottom, 80);
+  assert.equal(layout.insets().bottom, 100);
   assert.deepEqual([rectReads, styleReads], [2, 2]);
 });
 

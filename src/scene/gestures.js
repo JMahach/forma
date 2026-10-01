@@ -8,8 +8,14 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
 }) {
   const pointers = new Map();
   let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialPoint = null, initialAdditive = false;
-  const selectionFor = (target, event) => resolveSelection(target, event) || ({ type: target.dataset.type, id: target.dataset.id,
-    ...(target.dataset.activation ? { activation: target.dataset.activation } : {}) });
+  let tapTolerance = 6;
+  const selectionFor = (target, event) => {
+    const value = resolveSelection(target, event) || { type: target.dataset.type, id: target.dataset.id,
+      ...(target.dataset.activation ? { activation: target.dataset.activation } : {}) };
+    // Pointer context belongs to this press, not to the target or viewport.
+    // Keyboard activation has no pointer context, so its focus stays visible.
+    return event?.type === 'pointerdown' && event.pointerType ? { ...value, pointerType: event.pointerType } : value;
+  };
   const selectTarget = (target, additive = false, event) => onSelect({ ...selectionFor(target, event), ...(additive ? { additive: true } : {}) });
   const surface = cameraView.surface;
   const point = event => ({ ...cameraView.point(event), clientX: event.clientX, clientY: event.clientY });
@@ -68,12 +74,21 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     const current = point(event);
     if (!pointers.size) {
       moved = false; pinched = false; initialTarget = event.target.closest('[data-type]'); initialClient = { x: event.clientX, y: event.clientY };
+      // A finger can roll slightly while pressing a control. Keep that a tap;
+      // panning from empty space retains its existing, smaller start distance.
+      tapTolerance = initialTarget && event.pointerType === 'touch' ? 10 : 6;
       initialPoint = current;
       // Resolve while the pressed SVG target still exists. Hover redraws may
       // replace it before pointerup; a tap must keep its original exact angle.
       initialSelection = initialTarget ? selectionFor(initialTarget, event) : null;
       // The first press owns both the target and modifier for this gesture.
       initialAdditive = Boolean(event.shiftKey);
+    }
+    // Touch synthesizes mouse focus after pointerup, which could refocus an
+    // activation that this tap just deselected. Keyboard focus stays native.
+    if (initialTarget?.dataset.activation) {
+      event.preventDefault();
+      if (!pointers.size) initialTarget.focus?.({ preventScroll: true });
     }
     if (event.target === surface) {
       // The fixed field is not focusable. Suppress its default mouse focus so
@@ -100,7 +115,7 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     // The first drag includes travel inside the tap tolerance. Keep the pointer
     // map current for pinch, which must never replay that one-finger travel.
     const panOrigin = moved || pinched ? old : initialPoint;
-    if (Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) > 6) moved = true;
+    if (Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) > tapTolerance) moved = true;
     if (pointers.size === 1) {
       if (moved || pinched) updateGesture(() => camera.pan(current.x - panOrigin.x, current.y - panOrigin.y));
     } else if (pointers.size === 2) {
@@ -116,7 +131,7 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     if (event.type === 'pointerup') movePointer(event);
     flushPaint();
     const tap = event.type === 'pointerup' && pointers.size === 1 && !moved && !pinched
-      && Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) <= 6;
+      && Math.hypot(event.clientX - initialClient.x, event.clientY - initialClient.y) <= tapTolerance;
     pointers.delete(event.pointerId);
     if (surface.hasPointerCapture(event.pointerId)) surface.releasePointerCapture(event.pointerId);
     updateCursor();

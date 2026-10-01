@@ -10,6 +10,7 @@ from server.python import astronomy as astro
 from server.python import civil_time as civil
 from server.python.errors import ChartError
 from server.python import transit_day
+from server.python import calculator
 
 
 class TransitDayTests(unittest.TestCase):
@@ -30,26 +31,35 @@ class TransitDayTests(unittest.TestCase):
                 moments.append(moment)
                 return 0
             values = {planet: index + .125 for index, planet in enumerate(transit_day.PLANETS)}
-            with mock.patch.object(astro, 'julian_tt', side_effect=julian), mock.patch.object(astro, 'longitudes', return_value=values), mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')):
+            design_moment = dt.datetime(2026, 1, 1, tzinfo=civil.UTC)
+            with mock.patch.object(astro, 'julian_tt', side_effect=julian), mock.patch.object(astro, 'longitudes', return_value=values), mock.patch.object(astro, 'design_time', return_value=(-88, 1e-12)), mock.patch.object(astro, 'tt_to_datetime', return_value=design_moment):
                 day = transit_day.calculate_day(date)
             self.assertEqual(day['startUtc'], date + 'T00:00:00Z')
             self.assertEqual(day['samples'], 1440)
             self.assertEqual(day['stepSeconds'], 60)
-            self.assertEqual(len(day['columns']), 11)
+            self.assertEqual(len(day['columns']), 24)
             self.assertEqual(civil.iso(moments[-1]), date + 'T23:59:00Z')
             self.assertTrue(all(moment.tzinfo is civil.UTC for moment in moments))
             self.assertTrue(all(b - a == dt.timedelta(minutes=1) for a, b in zip(moments, moments[1:])))
-            for index, column in enumerate(day['columns']):
-                self.assertEqual(column, [index + .125] * 1440)
+            for index, column in enumerate(day['columns'][:22]):
+                self.assertEqual(column, [index % 11 + .125] * 1440)
+            self.assertEqual(day['columns'][22], [int(design_moment.timestamp())] * 1440)
+            self.assertEqual(day['columns'][23], [1e-12] * 1440)
 
-    def test_real_batch_retains_engine_values_and_metadata_without_design(self):
-        with mock.patch.object(astro, 'design_time', side_effect=AssertionError('No natal search')), mock.patch.object(astro, 'activations', side_effect=AssertionError('No chart formatting')), mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
+    def test_real_batch_matches_every_scalar_natal_side_time_and_residual(self):
+        with mock.patch.object(astro, 'activations', side_effect=AssertionError('No chart formatting')), mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
             day = transit_day.calculate_day('2026-09-24')
         start = dt.datetime(2026, 9, 24, tzinfo=civil.UTC)
         for minute in range(1440):
-            reference = {entry['planet']: entry['longitude'] for entry in astro.activations(astro.julian_tt(start + dt.timedelta(minutes=minute)))}
-            for index, planet in enumerate(transit_day.PLANETS):
-                self.assertEqual(day['columns'][index][minute].hex(), reference[planet].hex())
+            moment = start + dt.timedelta(minutes=minute)
+            reference = calculator.calculate(dict(mode='natal', name='Transit parity', date='2026-09-24',
+                time=moment.strftime('%H:%M'), city=dict(id='utc', name='UTC', timezone='UTC')))['chart']
+            for side, name in enumerate(('personality', 'design')):
+                values = {entry['planet']: entry['longitude'] for entry in reference['activations'][name]}
+                for index, planet in enumerate(transit_day.PLANETS):
+                    self.assertEqual(day['columns'][side * 11 + index][minute].hex(), values[planet].hex())
+            self.assertEqual(civil.iso(dt.datetime.fromtimestamp(day['columns'][22][minute], civil.UTC)), reference['designUtc'])
+            self.assertEqual(day['columns'][23][minute].hex(), reference['designArcResidualDegrees'].hex())
         self.assertEqual(day['engine'], 'Swiss Ephemeris ' + astro.swe.version)
         self.assertEqual(day['timezoneDatabase'], 'IANA tzdata ' + civil.tzdata.__version__)
         self.assertEqual(day['nodeModel'], 'true')

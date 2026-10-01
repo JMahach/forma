@@ -341,7 +341,7 @@ class ChartTests(unittest.TestCase):
                     self.assertEqual((actual[planet]['gate'], actual[planet]['line']),
                                      tuple(map(int, reference.split('.'))))
 
-    def test_current_transit_has_13_activations_and_no_design(self):
+    def test_current_transit_has_both_exact_sides_and_design_moment(self):
         before = dt.datetime.now(civil.UTC).replace(microsecond=0)
         chart = calc.calculate({'mode': 'transit'})['chart']
         after = dt.datetime.now(civil.UTC).replace(microsecond=0)
@@ -349,10 +349,42 @@ class ChartTests(unittest.TestCase):
         self.assertTrue(before <= moment <= after)
         self.assertEqual(chart['source'], 'transit')
         self.check_stream(chart['activations']['personality'])
-        self.assertEqual(chart['activations']['design'], [])
-        self.assertEqual(chart['design'], [])
-        self.assertIsNone(chart['designUtc'])
-        self.assertIsNone(chart['designArcResidualDegrees'])
+        self.check_stream(chart['activations']['design'])
+        design_jd, residual = astro.design_time(astro.julian_tt(moment))
+        self.assertEqual(chart['activations']['design'], astro.activations(design_jd))
+        self.assertEqual(chart['design'], sorted({entry['gate'] for entry in chart['activations']['design']}))
+        self.assertEqual(chart['designUtc'], civil.iso(astro.tt_to_datetime(design_jd)))
+        self.assertEqual(chart['designArcResidualDegrees'].hex(), residual.hex())
+
+    def test_design_only_matches_natal_exactly_without_unused_personality_work(self):
+        for date in ('1801-01-01', '1998-08-11', '2024-02-29', '2399-12-31'):
+            with self.subTest(date=date):
+                chart = calc.calculate(dict(mode='natal', name='Parity', date=date, time='12:34',
+                    city=dict(id='utc', name='UTC', timezone='UTC')))['chart']
+                with mock.patch.object(astro, 'longitudes', wraps=astro.longitudes) as longitudes, mock.patch.object(astro, 'activations', side_effect=AssertionError('No discarded activations')):
+                    point = calc.calculate(dict(mode='transit_design', utc=chart['utc']))
+                self.assertEqual(longitudes.call_count, 1)
+                expected = {entry['planet']: entry['longitude'] for entry in chart['activations']['design']}
+                planets = ('sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto')
+                self.assertEqual([value.hex() for value in point['longitudes']], [expected[planet].hex() for planet in planets])
+                self.assertEqual(point['engine'], chart['engine'])
+                self.assertEqual(point['utc'], chart['utc'])
+                self.assertEqual(point['designUtc'], chart['designUtc'])
+                self.assertEqual(point['designArcResidualDegrees'].hex(), chart['designArcResidualDegrees'].hex())
+
+    def test_design_only_preserves_seconds_and_milliseconds_and_rejects_invalid_instants(self):
+        for utc in ('1801-01-01T00:00:00Z', '2026-09-30T12:34:56.789Z', '2399-12-31T23:59:59.999Z'):
+            point = calc.calculate(dict(mode='transit_design', utc=utc))
+            moment = dt.datetime.fromisoformat(utc.replace('Z', '+00:00'))
+            design_jd, residual = astro.design_time(astro.julian_tt(moment))
+            self.assertEqual(point['utc'], utc)
+            self.assertEqual([value.hex() for value in point['longitudes']], [value.hex() for value in astro.longitudes(design_jd).values()])
+            self.assertEqual(point['designArcResidualDegrees'].hex(), residual.hex())
+        for utc in (None, [], '2026-09-30', '2026-09-30T12:34:56+00:00', '2026-02-30T12:34:56Z',
+                    '2026-09-30T24:00:00Z', '2026-09-30T12:34:60Z', '2026-09-30T12:34:56.1234Z',
+                    '1800-12-31T23:59:59Z', '2400-01-01T00:00:00Z'):
+            with self.subTest(utc=utc), self.assertRaises(ChartError):
+                calc.calculate(dict(mode='transit_design', utc=utc))
 
 
 if __name__ == '__main__':

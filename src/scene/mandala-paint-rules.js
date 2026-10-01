@@ -13,7 +13,6 @@ const gateSet = values => new Set((Array.isArray(values) ? values : [])
 export function mandalaPlanetEntries(chart) {
   if (!['calculated', 'transit'].includes(chart?.source)) return [];
   return ['design', 'personality'].flatMap(source => {
-    if (source === 'design' && chart.source === 'transit') return [];
     const entries = chart.activations?.[source];
     if (!Array.isArray(entries)) return [];
     return PLANETS.flatMap(([planet]) => {

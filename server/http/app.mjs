@@ -1,6 +1,8 @@
 import { createTransitDayHandler } from './transit-days.mjs';
 import { createNatalDayHandler } from './natal-days.mjs';
 import { createPublicFileHandler } from './public-files.mjs';
+import { createLifetimeHandler } from './lifetime.mjs';
+import { createLifetimeMoments } from '../services/lifetime.mjs';
 
 const MAX_REQUEST_BYTES = 20000;
 function json(res, status, data) {
@@ -10,15 +12,19 @@ function json(res, status, data) {
 
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, now, publicFiles = createPublicFileHandler({ root }) }) {
+export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, lifetime, now, publicFiles = createPublicFileHandler({ root }) }) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
   const natalDay = chartDays && createNatalDayHandler(chartDays);
+  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ archive: lifetime, calculate }));
   return async function handleRequest(req, res) {
     try {
       const url = new URL(req.url, 'http://localhost');
       // No cross-origin access to the API; no birth details in logs.
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) {
         json(res, 403, { error: 'origin', message: 'Откройте сайт с адреса локального сервера.' }); return;
+      }
+      if (url.pathname === '/api/lifetime' || url.pathname === '/api/lifetime/meta') {
+        await lifetimePoint(req, res, url); return;
       }
       if (url.pathname === '/api/transit/day') {
         if (!transitDays) { json(res, 503, { error: 'transit_unavailable', message: 'Дневной транзит недоступен.' }); return; }

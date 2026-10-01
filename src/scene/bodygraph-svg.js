@@ -4,6 +4,7 @@ import { renderActivationColumns } from './activation-columns.js';
 import { renderVariableArrows } from './variable-arrows.js';
 import { renderMandala } from './mandala.js';
 import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
+import { DRAWING_TRANSFORM } from './geometry/drawing-presentation.js';
 import { renderChartBackdrop } from './backdrop.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
 import {
@@ -21,12 +22,14 @@ const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
  * SVG inner markup, for a parent SVG with viewBox="0 0 640 820".
  * chart.personality/design: gate-number arrays. No birth-date calculation occurs.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
- * options: { profile?: 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
+ * options: { profile?: 'studio' | 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
  *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
  *   activationFilter?: { line: number, source: 'design' | 'personality' | 'all' }
  *     | { groups: Array<{ line: number, source: 'design' | 'personality' | 'all', gates?: number[] }>, unfilteredGates: number[] } }.
  * Preview paint is added to the pinned selection without changing pressed state.
  * The parent owns gestures, event delegation, and persisted view transforms.
+ * The studio profile gives the complete drawing one permanent presentation
+ * transform. Standalone illustrations and thumbnails use their own viewBox.
  */
 export function renderBodygraph(chart = {}, selection = null, options = {}) {
   const thumbnail = options.profile === 'thumbnail';
@@ -125,7 +128,7 @@ export function renderBodygraphState(chart, state, options = {},
     const { active, selected, related, label, opacity, fill, stroke } = paint;
     return `<g ${attrs('gate', gate.id, label, selected)} data-active="${active}" data-related="${related}" opacity="${opacity}" transform="translate(${gate.x} ${gate.y})">
       <circle r="12.5" fill="transparent" pointer-events="${interactive ? 'all' : 'none'}"/>
-      <circle class="bg-gate-disc" r="9.5" fill="${fill}" stroke="${stroke}" stroke-width=".8" pointer-events="none"/>
+      <circle class="bg-gate-disc" r="9.5" fill="${fill}" stroke="${stroke}" pointer-events="none"/>
       <circle class="bg-gate-highlight" data-state="${paint.highlightState}" r="8.5" fill="${paint.highlightFill}" stroke="${PALETTE.halo}" stroke-width="2" opacity="${paint.highlightOpacity}" pointer-events="none"/>
       <text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="9.9" font-weight="${paint.textWeight}" fill="${paint.textFill}" pointer-events="none">${gate.id}</text>
     </g>`;
@@ -149,8 +152,7 @@ ${thumbnail ? '' : `  <style>
     .bg-interactive:focus-visible .bg-channel-highlight { opacity: 1; }
     .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); }`).join('\n    ')}
-    .bg-activation { cursor: pointer; outline: none; }
-    .bg-activation:hover rect { fill: #f1f4f8; }
+    .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
     .bg-activation:focus-visible rect { stroke: #c4d9f1; stroke-width: 1.5; }
     .planet-symbol { font-family: 'Apple Symbols', 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif; }
     @media (hover: hover) {
@@ -160,10 +162,10 @@ ${thumbnail ? '' : `  <style>
       .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     }
   </style>`}
-  ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}" ${interactive ? '' : 'pointer-events="none"'}>
+  ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}"${options.profile === 'studio' ? ` transform="${DRAWING_TRANSFORM}"` : ''} ${interactive ? '' : 'pointer-events="none"'}>
     ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + variables : ''}
-    ${options.showMandala ? '<g class="mandala-core">\n    ' + renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
+    ${options.showMandala ? renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
-    ${thumbnail ? '' : `<g class="bodygraph-gates">${gates}</g>`}${options.showMandala ? '\n    </g>' : ''}
+    ${thumbnail ? '' : `<g class="bodygraph-gates">${gates}</g>`}
   </g>`;
 }

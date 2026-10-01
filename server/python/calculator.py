@@ -15,6 +15,13 @@ else:
 
 def calculate(request):
     mode = request.get('mode', 'natal')
+    if mode == 'transit_design':
+        moment = civil.transit_utc(request.get('utc'))
+        design_jd, residual = astro.design_time(astro.julian_tt(moment))
+        values = astro.longitudes(design_jd)
+        return dict(utc=request['utc'], designUtc=civil.iso(astro.tt_to_datetime(design_jd)),
+                    designArcResidualDegrees=residual, longitudes=list(values.values()),
+                    engine='Swiss Ephemeris ' + astro.swe.version)
     city, offset, fold = None, 'UTC+00:00', 0
     if mode == 'transit':
         moment = dt.datetime.now(civil.UTC).replace(microsecond=0)
@@ -32,11 +39,9 @@ def calculate(request):
         raise ChartError('invalid_mode', 'Неизвестный режим расчёта.')
     jd = astro.julian_tt(moment)
     personality = astro.activations(jd)
-    design, design_utc, residual = [], None, None
-    if mode == 'natal':
-        design_jd, residual = astro.design_time(jd)
-        design = astro.activations(design_jd)
-        design_utc = civil.iso(astro.tt_to_datetime(design_jd))
+    design_jd, residual = astro.design_time(jd)
+    design = astro.activations(design_jd)
+    design_utc = civil.iso(astro.tt_to_datetime(design_jd))
     return {'chart': dict(
         id=None, name=name, personality=sorted(set(a['gate'] for a in personality)), design=sorted(set(a['gate'] for a in design)),
         source='transit' if mode == 'transit' else 'calculated', birthDate=date, birthTime=time, birthPlace=place, timezone=timezone,

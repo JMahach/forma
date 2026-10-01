@@ -14,6 +14,7 @@ export const PUBLIC_FILES = new Map([
   ['love', 'public/love.html'],
   ['love.css', 'public/love.css'],
   ...[
+    'shared/lifetime-format.js',
     'shared/day-packets/decode.js',
     'shared/day-packets/float64-codec.js',
     'shared/day-packets/natal-format.js',
@@ -27,6 +28,7 @@ export const PUBLIC_FILES = new Map([
     'src/data/natal-day-client.js',
     'src/data/storage.js',
     'src/data/transit-day-client.js',
+    'src/data/lifetime-client.js',
     'src/diagnostics/frame-monitor.js',
     'src/domain/chart-facts.js',
     'src/domain/day-timeline.js',
@@ -39,6 +41,7 @@ export const PUBLIC_FILES = new Map([
     'src/domain/substructure.js',
     'src/domain/topology.js',
     'src/domain/transit-day.js',
+    'src/domain/lifetime.js',
     'src/domain/variables.js',
     'src/reference/catalog.js',
     'src/scene/activation-columns.js',
@@ -52,6 +55,7 @@ export const PUBLIC_FILES = new Map([
     'src/scene/geometry/activation-layout.js',
     'src/scene/geometry/chart-geometry.js',
     'src/scene/geometry/drawing-geometry.js',
+    'src/scene/geometry/drawing-presentation.js',
     'src/scene/geometry/frames.js',
     'src/scene/geometry/integration-geometry.js',
     'src/scene/geometry/lotus-backdrop.js',
@@ -80,6 +84,8 @@ export const PUBLIC_FILES = new Map([
     'src/state/chart-session.js',
     'src/state/live-transit.js',
     'src/state/natal-day.js',
+    'src/state/lifetime.js',
+    'src/state/transit-planets.js',
     'src/stories/vessel-of-love.js',
     'src/ui/html.js',
     'src/ui/telegram-gestures.js',
@@ -93,11 +99,13 @@ export const PUBLIC_FILES = new Map([
     'src/views/chart-summary-data.js',
     'src/views/chart-summary-panel.js',
     'src/views/date-input.js',
+    'src/views/date-picker.js',
     'src/views/day-range.js',
     'src/views/knowledge.js',
     'src/views/library.js',
     'src/views/live-transit.js',
     'src/views/natal-day-controls.js',
+    'src/views/lifetime-controls.js',
     'src/views/performance-monitor.js',
     'src/views/thumbnail.js',
     'src/views/transit-controls.js',
@@ -126,9 +134,16 @@ export async function readReleaseManifest(directory) {
   return files;
 }
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false }) {
-  const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => entry.file === 'public/index.html'
-    ? Buffer.from(prepareLoadingPage(bytes.toString('utf8'))) : bytes });
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, lifetimeEnabled = false }) {
+  const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
+    if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
+    let html = prepareLoadingPage(bytes.toString('utf8'));
+    if (lifetimeEnabled) {
+      html = html.replace('<body>', '<body data-lifetime-enabled="true">')
+        .replace(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/, tag => tag.replace(/\s+hidden(?=\s|>)/, ''));
+    }
+    return Buffer.from(html);
+  } });
   return async function servePublicFile(req, res, pathname) {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
     const filename = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));

@@ -53,13 +53,13 @@ small { font-size: 11px; }
 /* One permanent composition area; controls never take part in its sizing. */
 .studio { position: absolute; inset: 0; display: block; width: auto; height: 100%; min-width: 0; min-height: 0; background: var(--canvas-background); }
 .canvas-wrap { touch-action: none; -webkit-user-select: none; user-select: none; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; background: var(--canvas-background); overflow: hidden; isolation: isolate; clip-path: inset(0); transition: clip-path .24s ease; }
-#bodygraph { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; max-width: none; max-height: none; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; cursor: default; }
+#bodygraph { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; max-width: none; max-height: none; overflow: visible; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; cursor: default; }
 .app-shell:has(.library.open) .canvas-wrap { clip-path: inset(0 0 0 var(--drawer-width)); }
 .app-shell:has(.chart-summary.open) .canvas-wrap { clip-path: inset(0 var(--summary-width) 0 0); }
 .studio > .canvas-wrap { position: absolute; inset: 0; height: 100%; scroll-padding: var(--studio-top-space) max(4px, env(safe-area-inset-left), env(safe-area-inset-right)) var(--studio-bottom-space); }
 
 /* Static preview stays still while the real camera starts. No second camera. */
-#chartLoadingArt { position: absolute; top: var(--studio-top-space); left: max(4px, env(safe-area-inset-left)); width: calc(100% - 2 * max(4px, env(safe-area-inset-left), env(safe-area-inset-right))); height: calc(100% - var(--studio-top-space) - var(--studio-bottom-space)); pointer-events: none; }
+#chartLoadingArt { position: absolute; visibility: hidden; top: var(--studio-top-space); left: max(4px, env(safe-area-inset-left), env(safe-area-inset-right)); width: calc(100% - 2 * max(4px, env(safe-area-inset-left), env(safe-area-inset-right))); height: calc(100% - var(--studio-top-space) - var(--studio-bottom-space)); pointer-events: none; }
 .loading-columns { fill: #e9e6e1; }
 .loading-channels { fill: none; stroke: #ebe8e2; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
 .loading-centers { fill: var(--canvas-background); stroke: #dedad3; stroke-width: 1.5; }
@@ -228,7 +228,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .knowledge-link:hover { color: #3b72b8; }
 
 /* Activation details. */
-.activation-popover { position: fixed; z-index: 45; width: 254px; padding: 15px 14px; border: 1px solid #45464f; border-radius: 9px; background: #24252d; color: #f6f7fa; box-shadow: 0 5px 22px #17192326; font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, sans-serif; font-variant-numeric: tabular-nums; }
+.activation-popover { position: fixed; left: 0; top: 0; z-index: 45; width: 254px; padding: 15px 14px; border: 1px solid #45464f; border-radius: 9px; background: #24252d; color: #f6f7fa; box-shadow: 0 5px 22px #17192326; font: 12px/1.4 Inter, -apple-system, BlinkMacSystemFont, sans-serif; font-variant-numeric: tabular-nums; }
 .activation-popover::before { content: ''; position: absolute; width: 10px; height: 10px; background: #24252d; transform: rotate(45deg); }
 .activation-popover[data-side="right"]::before { left: -6px; top: calc(var(--arrow-offset) - 5px); border-left: 1px solid #45464f; border-bottom: 1px solid #45464f; }
 .activation-popover[data-side="left"]::before { right: -6px; top: calc(var(--arrow-offset) - 5px); border-right: 1px solid #45464f; border-top: 1px solid #45464f; }
@@ -241,13 +241,19 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .activation-detail-percent { text-align: right; font-size: 11px; }
 .activation-detail-meter { height: 8px; overflow: hidden; border-radius: 3px; background: #f0f1f7; }
 .activation-detail-meter i { display: block; height: 100%; border-radius: inherit; background: #91aacb; }
+.activation-planet-filter { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
+.activation-planet-filter:is([aria-checked='true'], [aria-checked='mixed']) .activation-planet-filter-frame { fill: #879277; stroke: #758267; }
+.activation-planet-filter:focus-visible .activation-planet-filter-frame { stroke: #586749; stroke-width: 2; }
+@media (hover: hover) and (pointer: fine) {
+  .activation-planet-filter:hover .activation-planet-filter-frame { stroke: #586749; }
+}
 /* Progress lives on the stable viewport: replacing chart SVG never restarts it. */
 /* A little breathing room around the normal silhouette; the mandala endpoint
    stays unchanged. Independent translate preserves each arrow's SVG transform. */
-#bodygraph .bodygraph-drawing { --activation-rest-gap: calc(14px * (1 - var(--mandala-reveal, 0))); }
+#bodygraph .bodygraph-drawing, #chartLoadingArt { --activation-rest-gap: calc(14px * (1 - var(--mandala-reveal, 0))); }
 #bodygraph .mandala-drawing { --activation-rest-gap: calc(14px * (1 - var(--mandala-reveal, 1))); }
-#bodygraph :is(.activation-column, .variable-block)[data-source='design'] { translate: calc(-1 * var(--activation-rest-gap)) 0; }
-#bodygraph :is(.activation-column, .variable-block)[data-source='personality'] { translate: var(--activation-rest-gap) 0; }
+:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-source='design'] { translate: calc(-1 * var(--activation-rest-gap)) 0; }
+:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-source='personality'] { translate: var(--activation-rest-gap) 0; }
 .activation-column[data-source='design'] { transform: translateX(calc(-1 * var(--activation-column-offset, 0px))); }
 .activation-column[data-source='personality'] { transform: translateX(var(--activation-column-offset, 0px)); }
 .mandala-drawing .activation-column[data-source='design'] { transform: translateX(calc(-1 * var(--activation-column-offset, 256px))); }
@@ -312,11 +318,15 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .transit-controls-heading > span { display: none; }
 .day-controls time { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #746e64; font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums; }
 .transit-controls-heading > button { display: none; }
-.day-controls input[type='range'] { position: relative; display: block; appearance: none; -webkit-appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; accent-color: #8e9b8b; cursor: ew-resize; touch-action: none; }
+.day-controls input[type='range'] { position: relative; display: block; appearance: none; -webkit-appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; accent-color: #8e9b8b; cursor: grab; touch-action: none; }
+.day-controls input[type='range']:focus { outline: none; box-shadow: none; }
+.day-controls input[type='range']:not(:disabled):active { cursor: grabbing; }
 .day-controls input[type='range']::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent 22px, #d9d9ce 22px, #d9d9ce calc(100% - 22px), transparent calc(100% - 22px)); }
 .day-controls input[type='range']::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 44px; height: 44px; margin-top: -21px; border: 0; background: radial-gradient(circle, #8e9b8b 0 4px, #fffefa 4px 6px, #8e9b8b50 6px 7px, transparent 7px); box-shadow: none; }
 .day-controls input[type='range']::-moz-range-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent 22px, #d9d9ce 22px, #d9d9ce calc(100% - 22px), transparent calc(100% - 22px)); }
 .day-controls input[type='range']::-moz-range-thumb { width: 44px; height: 44px; border: 0; background: radial-gradient(circle, #8e9b8b 0 4px, #fffefa 4px 6px, #8e9b8b50 6px 7px, transparent 7px); box-shadow: none; }
+.day-controls input[type='range']:focus-visible::-webkit-slider-thumb { background: radial-gradient(circle, #8e9b8b 0 4px, #fffefa 4px 6px, #778773 6px 7px, #8e9b8b22 7px 10px, transparent 10px); }
+.day-controls input[type='range']:focus-visible::-moz-range-thumb { background: radial-gradient(circle, #8e9b8b 0 4px, #fffefa 4px 6px, #778773 6px 7px, #8e9b8b22 7px 10px, transparent 10px); }
 .day-controls input:disabled { opacity: .35; cursor: default; }
 /* Extend the invisible thumb area; the visible rail matches the panel/ring width. */
 .day-range { position: relative; height: 44px; margin-top: 4px; margin-inline: -22px; }
@@ -331,6 +341,56 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-controls[data-status='loading'] .transit-controls-heading time, .day-controls[data-status='error'] .transit-controls-heading time { display: none; }
 .day-controls[data-status='error'] .transit-controls-heading > button { display: block; height: 44px; padding: 0 12px; border-radius: 6px; font-size: 11px; pointer-events: auto; }
 .day-controls[data-status='error'] .transit-status { top: 17px; right: 86px; }
+
+/* The year preview shares the studio's panel placement and range geometry. */
+.lifetime-toggle[aria-pressed='true'] { background: #edf0e9; border-color: #b8c1b2; }
+/* The Years backing also contains its lower date/time labels. */
+.lifetime-controls::before { bottom: 0; }
+.lifetime-heading { position: absolute; z-index: 1; left: 0; right: 0; top: -13px; display: flex; align-items: center; justify-content: center; gap: 5px; height: 22px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lifetime-date-control { display: flex; align-items: center; gap: 3px; }
+.lifetime-date-control > label { color: #746e64; font-size: 11px; }
+.lifetime-date-field { display: flex; align-items: center; border: 1px solid #d9d9ce; border-radius: 5px; background: var(--canvas-background); }
+.lifetime-date-field:focus-within { border-color: #89947b; }
+.lifetime-heading input { width: 81px; height: 28px; padding: 0 2px; border: 0; border-radius: 0 5px 5px 0; background: transparent; color: #514b43; font-family: inherit; font-size: 11px; font-variant-numeric: tabular-nums; cursor: text; }
+.lifetime-heading input:focus, .lifetime-heading input:focus-visible { outline: none; box-shadow: none; }
+.lifetime-date-field:has(input[aria-invalid='true']) { border-color: #b46d66; }
+.lifetime-heading .lifetime-calendar-toggle { display: grid; place-items: center; width: 24px; height: 28px; padding: 0; border-radius: 5px; color: #858974; background: transparent; }
+.lifetime-calendar-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; }
+.lifetime-calendar-toggle:hover, .lifetime-calendar-toggle[aria-expanded='true'] { color: #59694f; }
+.lifetime-heading .lifetime-calendar-toggle:focus-visible { outline: 1px solid #89947b; outline-offset: -3px; }
+.date-picker { position: fixed; z-index: 160; width: min(286px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 9px; border: 1px solid #dadbd0; border-radius: 10px; background: var(--canvas-background); box-shadow: 0 6px 24px #514b4320; color: #655f54; font-size: 11px; font-variant-numeric: tabular-nums; }
+.date-picker-heading { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+.date-picker button { min-width: 0; height: 32px; padding: 0 3px; border-radius: 5px; color: inherit; font: inherit; }
+.date-picker-heading > button { width: 28px; font-size: 19px; }
+.date-picker-heading > .date-picker-title { flex: 1; width: auto; font-size: 12px; font-weight: 500; }
+.date-picker button:hover { background: #eeeee5; }
+.date-picker button:focus-visible { outline: 1px solid #89947b; outline-offset: -2px; }
+.date-picker button:disabled { opacity: .3; cursor: default; }
+.date-picker button[data-selected='true'] { background: #e5eadf; color: #536348; }
+.date-picker button[aria-current] { box-shadow: inset 0 0 0 1px #89947b; color: #536348; }
+.date-picker-grid { display: flex; flex-direction: column; gap: 3px; }
+.date-picker-row { display: grid; grid-template-columns: repeat(var(--calendar-columns), minmax(0, 1fr)); gap: 3px; }
+.date-picker-row button { width: 100%; }
+.date-picker[data-view='periods'] .date-picker-row button { font-size: 10px; }
+.date-picker [role='columnheader'] { padding: 5px 0; color: #9a958a; text-align: center; font-size: 10px; }
+#lifetimeRetry { position: absolute; top: -40px; right: 0; height: 25px; padding: 0 7px; border-radius: 5px; background: var(--canvas-background); font-size: 11px; }
+.lifetime-scale { position: absolute; left: 0; right: 0; bottom: 2px; display: flex; justify-content: space-between; color: #a49d93; font-size: 9px; line-height: 10px; pointer-events: none; }
+.lifetime-clock { display: flex; gap: 5px; color: #746e64; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lifetime-clock time { font-size: inherit; line-height: inherit; }
+#lifetimeTime:focus-visible { outline-offset: -10px; }
+.lifetime-status { position: absolute; top: -42px; left: 0; right: 0; text-align: center; font-size: 10px; line-height: 12px; max-height: 24px; overflow: hidden; color: #82796e; }
+.lifetime-status:empty { display: none; }
+.lifetime-controls[data-status='error'] .lifetime-status { right: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lifetime-controls[data-status='error'] .day-range { visibility: visible; }
+
+@media (pointer: coarse) {
+  /* Six extra pixels on each side of the same rail center; headings stay above. */
+  .day-controls input[type='range'] { top: -6px; height: 56px; }
+  .lifetime-heading { gap: 3px; }
+  .lifetime-date-control { gap: 2px; }
+  .lifetime-date-control > label { font-size: 10px; }
+  .lifetime-heading input { width: 96px; font-size: 16px; }
+}
 
 /* Feedback and accessibility helpers. */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); padding: 13px 19px; line-height: 1.5; max-width: calc(100vw - 32px); opacity: 0; pointer-events: none; z-index: 150; transition: opacity .22s, transform .22s; background: #242c38; color: #ffffff; box-shadow: 0 8px 24px #18263816; border-radius: 8px; font-size: .9375rem; }

@@ -569,7 +569,7 @@ test('only a background tap clears selection; dragging, pinching and cancelled p
   send('pointerdown'); send('pointerup');
   assert.equal(cleared, 1);
   send('pointerdown', { target: { closest: () => gate } }); send('pointerup');
-  assert.deepEqual(selected, [{ type: 'gate', id: '37' }]);
+  assert.deepEqual(selected, [{ type: 'gate', id: '37', pointerType: 'touch' }]);
   assert.equal(cleared, 1);
   send('pointerdown'); send('pointermove', { clientX: 140 }); send('pointerup', { clientX: 140 });
   assert.equal(cleared, 1);
@@ -593,7 +593,7 @@ test('only a background tap clears selection; dragging, pinching and cancelled p
   assert.equal(cleared, 2, 'a fresh tap still works after cancelled gestures');
 });
 
-test('pointer and keyboard selections retain optional activation identity without changing ordinary graph payloads', t => {
+test('pointer and keyboard selections retain activation identity with per-press input context', t => {
   const originalPoint = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
   globalThis.DOMPoint = class {
     constructor(x, y) { this.x = x; this.y = y; }
@@ -623,9 +623,11 @@ test('pointer and keyboard selections retain optional activation identity withou
   for (const dataset of datasets) {
     const target = { closest: () => ({ dataset }) };
     for (const type of ['pointerdown', 'pointerup']) {
-      listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: 100, clientY: 100, target });
+      let prevented = false;
+      listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: 100, clientY: 100, target, preventDefault() { prevented = true; } });
+      assert.equal(prevented, type === 'pointerdown' && Boolean(dataset.activation), 'only activation presses suppress delayed native touch focus');
     }
-    assert.deepEqual(selected.at(-1), dataset, `${dataset.activation || dataset.type} tap payload`);
+    assert.deepEqual(selected.at(-1), { ...dataset, pointerType: 'touch' }, `${dataset.activation || dataset.type} tap payload`);
     for (const key of ['Enter', ' ']) {
       let prevented = false;
       listeners.get('keydown')({ target, key, preventDefault() { prevented = true; } });

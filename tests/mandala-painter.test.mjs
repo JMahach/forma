@@ -7,6 +7,7 @@ import { renderMandala } from '../src/scene/mandala.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { GATE_WIDTH, GATE_LONGITUDE_START, gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
+import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 
 const mandalaGroup = root => root.matches('.bodygraph-mandala') ? root : root.querySelector('.bodygraph-mandala');
 function rendered(chart, options = {}) {
@@ -188,17 +189,18 @@ test('in-place tiny longitude, validation and planet changes invalidate the owne
     () => { sun.line = originalLine; },
     () => { [chart.activations.design[0].planet, chart.activations.design[1].planet]
       = [chart.activations.design[1].planet, chart.activations.design[0].planet]; },
-    () => { chart.source = 'transit'; },
+    () => { chart.source = 'manual'; },
   ]) {
     change();
     let points = 0;
     const cos = Math.cos;
     Math.cos = angle => { points++; return cos(angle); };
     try { h.painter.update(chart); } finally { Math.cos = cos; }
-    assert.ok(points > 0, 'a changed validated input must recompute exact geometry');
+    if (chart.source === 'manual') assert.equal(rayNodes(h.group).size, 0);
+    else assert.ok(points > 0, 'a changed validated input must recompute exact geometry');
     assertRendered(h.root, chart);
     const marker = rayNodes(h.group).get('personality:sun');
-    if (sun.line === originalLine) assert.equal(marker[0].getAttribute('data-longitude'), String(sun.longitude));
+    if (sun.line === originalLine && chart.source !== 'manual') assert.equal(marker[0].getAttribute('data-longitude'), String(sun.longitude));
     else assert.equal(marker, undefined, 'invalidated input removes the obsolete planet');
   }
 });
@@ -238,7 +240,7 @@ test('invalid, duplicated, missing and recovered planets match the renderer with
   missing.activations.personality = missing.activations.personality.filter(entry => entry.planet !== 'moon');
   const variants = [duplicate, invalid, missing, { ...initial, source: 'transit' },
     { ...initial, source: 'manual' }, { ...initial, activations: {} }, initial];
-  const counts = [25, 21, 12, 13, 0, 0, 26];
+  const counts = [25, 21, 12, 26, 0, 0, 26];
   for (const [index, chart] of variants.entries()) {
     assert.equal(h.painter.update(chart), true);
     assertRendered(h.root, chart);
@@ -249,6 +251,37 @@ test('invalid, duplicated, missing and recovered planets match the renderer with
     assert.deepEqual([...symbolNodes(h.group).keys()].sort(), [...rayNodes(h.group).keys()].sort());
   }
   assert.equal(rayNodes(h.group).size, 26, 'recovery restores every valid source and planet');
+  assertNoSceneParse(h.document);
+});
+
+test('transit red selection reconciles exact rays with full-render parity and removes disabled planets', () => {
+  const full = { ...chartAt(), source: 'transit' }, filter = createTransitPlanetFilter();
+  filter.setExpanded(true);
+  const h = harness(filter.filter(full)), original = staticNodes(h.group);
+  const blackSun = rayNodes(h.group).get('personality:sun');
+  for (const change of [
+    () => {},
+    () => filter.setPlanet('moon', true, 'design'),
+    () => filter.setAllPlanets(true, 'design'),
+    () => filter.setPlanet('moon', false, 'design'),
+    () => filter.setAllPlanets(false),
+    () => filter.setAllPlanets(false, 'design'),
+    () => { filter.setAllPlanets(true); filter.setAllPlanets(true, 'design'); },
+  ]) {
+    change(); const chart = filter.filter(full); h.painter.update(chart);
+    assertRendered(h.root, chart); assertStaticNodes(h.group, original);
+    const rays = rayNodes(h.group), symbols = symbolNodes(h.group);
+    const entries = ['design', 'personality'].flatMap(source => chart.activations[source].map(entry => ({ source, ...entry })));
+    assert.equal(rays.size, entries.length); assert.equal(symbols.size, entries.length);
+    for (const entry of entries) {
+      const nodes = rays.get(`${entry.source}:${entry.planet}`);
+      assert.equal(nodes[0].getAttribute('data-longitude'), String(entry.longitude));
+      assert.equal(nodes[1].getAttribute('stroke'), entry.source === 'design' ? '#ae6259' : '#4b514e');
+    }
+    if (chart.activations.personality.length && chart.activations.design.length < 13) {
+      assert.equal(rays.get('personality:sun')[0], blackSun[0], 'enabling red preserves an existing black ray');
+    }
+  }
   assertNoSceneParse(h.document);
 });
 

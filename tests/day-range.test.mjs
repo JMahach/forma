@@ -110,6 +110,74 @@ test('ordinary range input remains native, forwards once, and never auto-returns
   }
 });
 
+test('touch and pen capture the enlarged transparent area around the thumb without jumping, then track the first movement', () => {
+  for (const pointerType of ['touch', 'pen']) for (const withMarker of [true, false]) {
+    const h = harness({ withMarker });
+    h.range.getBoundingClientRect = () => ({ left: 10, top: 24, width: 244, height: 56 });
+    // The visible dot is (72,52); this finger is 26px to the right and 27px above.
+    const down = h.range.send('pointerdown', { pointerType, clientX: 98, clientY: 25 });
+    assert.equal(down.defaultPrevented, true); assert.equal(h.range.hasPointerCapture(1), true);
+    assert.deepEqual(h.scrubs, [], 'a generous thumb grip starts at its selected value');
+    h.range.send('pointermove', { pointerType, clientX: 99, clientY: 25 });
+    assert.deepEqual(h.scrubs, [205], 'ordinary thumb dragging has no eight-pixel dead zone');
+    // Pointer capture continues even when a finger drifts outside the control.
+    h.range.send('pointermove', { pointerType, clientX: 120, clientY: -10 });
+    h.range.send('pointerup', { pointerType, clientX: 120, clientY: -10 });
+    assert.deepEqual(h.scrubs, [205, 310]); assert.deepEqual(h.returns, []);
+    assert.equal(h.range.hasPointerCapture(1), false);
+  }
+});
+
+test('touching anywhere on the track scrubs immediately and dragging reaches both exact endpoints without a marker', () => {
+  const h = harness({ withMarker: false });
+  h.range.getBoundingClientRect = () => ({ left: 10, top: 24, width: 244, height: 56 });
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 192, clientY: 79 });
+  assert.deepEqual(h.scrubs, [800], 'a tap far below the two-pixel rail still chooses that point');
+  h.range.send('pointermove', { pointerType: 'touch', clientX: 194, clientY: 79 });
+  h.range.send('pointerup', { pointerType: 'touch', clientX: 194, clientY: 79 });
+  assert.deepEqual(h.scrubs, [800, 810], 'release does not duplicate the last point');
+  for (const [clientX, expected] of [[10, 0], [254, 1000]]) {
+    h.range.send('pointerdown', { pointerType: 'touch', clientX });
+    h.range.send('pointerup', { pointerType: 'touch', clientX });
+    assert.equal(h.scrubs.at(-1), expected);
+  }
+  assert.deepEqual(h.returns, []);
+});
+
+test('touch reference taps retain release arbitration while no-reference archive drags remain available', () => {
+  const h = harness();
+  h.range.send('pointerdown', { pointerType: 'touch' });
+  assert.deepEqual(h.scrubs, []); assert.deepEqual(h.returns, []);
+  h.range.send('pointerup', { pointerType: 'touch' }); assert.deepEqual(h.returns, [true]);
+  h.update({ visible: false });
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 72 });
+  h.update({ visible: false });
+  assert.equal(h.range.hasPointerCapture(1), true, 'a range without an in-range reference still supports touch dragging');
+  h.range.send('pointermove', { pointerType: 'touch', clientX: 74 });
+  assert.deepEqual(h.scrubs, [210]);
+  h.range.send('pointerup', { pointerType: 'touch', clientX: 74 });
+  assert.deepEqual(h.returns, [true]);
+});
+
+test('hidden, disabled, cancelled and multipointer touch gestures cannot scrub a covered control', () => {
+  for (const unavailable of ['disabled', 'hidden', 'ancestor']) {
+    const h = harness({ withMarker: false });
+    if (unavailable === 'ancestor') h.range.closest = () => ({});
+    else h.range[unavailable] = true;
+    assert.equal(h.range.send('pointerdown', { pointerType: 'touch', clientX: 192 }).defaultPrevented, false);
+    h.range.send('input'); assert.deepEqual(h.scrubs, []);
+  }
+  for (const end of ['pointercancel', 'lostpointercapture', 'second', 'covered']) {
+    const h = harness({ withMarker: false });
+    h.range.send('pointerdown', { pointerType: 'touch', clientX: 72 });
+    if (end === 'second') h.range.send('pointerdown', { pointerType: 'touch', pointerId: 2, isPrimary: false });
+    else if (end === 'covered') { h.range.closest = () => ({}); h.update({ visible: false }); }
+    else h.range.send(end);
+    h.range.send('pointerup', { pointerType: 'touch', clientX: 90 });
+    assert.deepEqual(h.scrubs, [], end); assert.deepEqual(h.returns, [], end);
+  }
+});
+
 test('keyboard range input and the semantic reference button have independent single actions', () => {
   const h = harness();
   h.range.send('keydown', { key: 'ArrowRight' }); h.range.value = '201'; h.range.send('input');

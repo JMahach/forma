@@ -50,14 +50,14 @@ const datasets = [
   { type: 'planet', id: 'personality-mercury', activation: 'personality-mercury-planet' },
 ];
 
-test('Shift pointer taps add only additive:true and preserve every target and activation identity', t => {
+test('Shift pointer taps preserve input context and add additive:true and preserve every target and activation identity', t => {
   const h = harness(t), initialView = h.controls.getView();
   for (const dataset of datasets) for (const shiftKey of [false, true]) {
     const target = h.target(dataset);
     const down = h.send('pointerdown', { target, shiftKey });
     const up = h.send('pointerup', { target, shiftKey });
-    assert.deepEqual(h.selections.at(-1), { ...dataset, ...(shiftKey ? { additive: true } : {}) });
-    assert.equal(down.defaultPrevented, false, 'pointer selection retains native focus behavior');
+    assert.deepEqual(h.selections.at(-1), { ...dataset, pointerType: 'mouse', ...(shiftKey ? { additive: true } : {}) });
+    assert.equal(down.defaultPrevented, Boolean(dataset.activation), 'activation taps suppress delayed native focus without affecting diagram targets');
     assert.equal(up.defaultPrevented, false);
     assert.equal(h.captures.size, 0);
   }
@@ -71,13 +71,26 @@ test('pointer selection snapshots Shift and the target at the initial press rath
   const first = h.target({ type: 'gate', id: '20' }), second = h.target({ type: 'gate', id: '10' });
   h.send('pointerdown', { target: first, shiftKey: true });
   h.send('pointerup', { target: second, shiftKey: false });
-  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '20', additive: true }, 'releasing Shift before the pointer does not change this tap');
+  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '20', pointerType: 'mouse', additive: true }, 'releasing Shift before the pointer does not change this tap');
   h.send('pointerdown', { target: first, shiftKey: false });
   h.send('pointerup', { target: second, shiftKey: true });
-  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '20' }, 'pressing Shift after pointerdown applies only to the next gesture');
+  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '20', pointerType: 'mouse' }, 'pressing Shift after pointerdown applies only to the next gesture');
   h.send('pointerdown', { target: second });
   h.send('pointerup', { target: second });
-  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '10' }, 'no modifier state leaks into an ordinary tap');
+  assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '10', pointerType: 'mouse' }, 'no modifier state leaks into an ordinary tap');
+});
+
+test('pointer taps forward their original input type without leaking into keyboard selections', t => {
+  const h = harness(t), dataset = { type: 'gate', id: '37', activation: 'personality-mercury' };
+  const target = h.target(dataset);
+  h.send('pointerdown', { target, pointerType: 'touch' });
+  h.send('pointerup', { target, pointerType: 'mouse' });
+  assert.deepEqual(h.selections.at(-1), { ...dataset, pointerType: 'touch' }, 'pointer capture cannot replace the initial touch context');
+  h.send('pointerdown', { target, pointerType: 'mouse' });
+  h.send('pointerup', { target, pointerType: 'touch' });
+  assert.deepEqual(h.selections.at(-1), { ...dataset, pointerType: 'mouse' }, 'the original mouse context survives a changed release event');
+  h.send('keydown', { target, key: 'Enter', pointerType: 'touch' });
+  assert.deepEqual(h.selections.at(-1), dataset, 'keyboard activation does not inherit pointer context');
 });
 
 test('Shift+Enter and Shift+Space emit additive selection while ordinary keyboard payloads remain unchanged', t => {
@@ -127,5 +140,5 @@ test('Shift drags, pinches, cancellations and background taps retain existing ge
   assert.equal(h.backgroundTaps, 2, 'Shift background taps use the same existing callback');
   h.send('pointerdown', { target });
   h.send('pointerup', { target });
-  assert.deepEqual(h.selections, [datasets[0]], 'a fresh ordinary tap works after all rejected gestures');
+  assert.deepEqual(h.selections, [{ ...datasets[0], pointerType: 'mouse' }], 'a fresh ordinary tap works after all rejected gestures');
 });

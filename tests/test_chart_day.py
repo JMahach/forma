@@ -14,6 +14,44 @@ from server.python import chart_day
 
 
 class ChartDayTests(unittest.TestCase):
+    def test_grid_matches_scalar_fold_policy_for_every_local_minute(self):
+        for date, zone in (
+            ('1801-01-01', 'UTC'), ('2399-12-31', 'UTC'),
+            ('2024-03-10', 'America/New_York'), ('2024-11-03', 'America/New_York'),
+            ('2026-10-04', 'Australia/Lord_Howe'), ('2026-04-05', 'Australia/Lord_Howe'),
+            ('2018-11-04', 'America/Sao_Paulo'), ('1892-07-04', 'Pacific/Apia'),
+            ('1900-01-01', 'Europe/Paris'), ('1911-03-10', 'Europe/Paris'),
+            ('2011-12-30', 'Pacific/Apia'),
+        ):
+            with self.subTest(date=date, zone=zone):
+                expected = {}
+                timezone = civil.zoneinfo.ZoneInfo(zone)
+                for minute in range(1440):
+                    for fold in (0, 1):
+                        try:
+                            moment, offset, actual_fold = civil.local_to_utc(date, f'{minute // 60:02d}:{minute % 60:02d}', zone, fold)
+                        except ChartError as error:
+                            self.assertEqual(error.payload['error'], 'nonexistent_time')
+                            continue
+                        expected[moment] = (moment, offset, actual_fold, int(moment.astimezone(timezone).utcoffset().total_seconds()))
+                if expected:
+                    self.assertEqual(civil.local_minutes(date, zone), [expected[moment] for moment in sorted(expected)])
+                else:
+                    with self.assertRaises(ChartError) as error:
+                        civil.local_minutes(date, zone)
+                    self.assertEqual(error.exception.payload['error'], 'nonexistent_date')
+
+    def test_grid_parses_date_and_zone_once_without_scalar_reparsing(self):
+        with mock.patch.object(civil.dt, 'date', wraps=dt.date) as dates, \
+                mock.patch.object(civil.dt, 'datetime', wraps=dt.datetime) as moments, \
+                mock.patch.object(civil.zoneinfo, 'ZoneInfo', wraps=civil.zoneinfo.ZoneInfo) as zones, \
+                mock.patch.object(civil, 'local_to_utc', side_effect=AssertionError('No per-minute parsing')):
+            minutes = civil.local_minutes('2024-11-03', 'America/New_York')
+        self.assertEqual(len(minutes), 1500)
+        self.assertEqual(dates.fromisoformat.call_count, 1)
+        self.assertEqual(zones.call_count, 1)
+        self.assertEqual(moments.strptime.call_count, 0)
+
     def test_invalid_dates_and_zones(self):
         for date in (None, [], '1990-6-15', '2023-02-29', '1800-01-01', '2400-01-01'):
             with self.subTest(date=date), self.assertRaises(ChartError):

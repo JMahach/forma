@@ -1,25 +1,48 @@
-import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading } from './activation-columns.js';
+import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.js';
 import { setAttribute, setAttributes, svgNodes } from './svg-patches.js';
 import { ACTIVATION_COLUMN_LAYOUT, activationHeadingX } from './geometry/activation-layout.js';
 
 const text = (node, value) => { if (node.textContent !== String(value)) node.textContent = String(value); };
 const elementFrom = (parent, markup) => svgNodes(parent, markup).find(node => node.nodeType === 1);
+const activationValues = entries => Array.isArray(entries) ? entries.map(entry => [entry?.planet, entry?.gate, entry?.line]) : null;
+
+// Snapshot only facts used by column models, including the filtered contributors
+// to line fixings and the full records retained for unchecked rows. Exact
+// longitudes continue through the separate mandala, Variable and detail owners.
+function columnInput(chart, state, options) {
+  if (!options.showActivations) return 'hidden';
+  const filter = chart.planetFilter;
+  return JSON.stringify([chart.source,
+    activationValues(chart.activations?.design), activationValues(chart.activations?.personality),
+    filter ? [filter.perPlanetControls === true, filter.selectedPlanets, filter.selectedDesignPlanets,
+      activationValues(filter.activations), activationValues(filter.designActivations)] : null,
+    [...state.relatedGates], [...state.committedGates], [...state.previewGates],
+    state.visualSelections.map(value => [value.type, value.id]),
+    state.committedSelections.map(value => [value.type, value.id]), options.activationFilter]);
+}
 
 function captureRow(row) {
-  const planet = row.querySelector('[data-type="planet"]');
+  const planet = row.querySelector('.bg-planet');
   const gate = row.querySelector('[data-type="gate"]');
   const value = gate.querySelector('text');
   return { row, planet, gate, value, line: value.querySelector('tspan'),
     planetTitle: planet.querySelector('title'), gateTitle: gate.querySelector('title'),
     planetRect: planet.querySelector('rect'), gateRect: gate.querySelector('rect'),
-    fixing: row.querySelector('.line-fixing'), previous: null };
+    fixing: row.querySelector('.line-fixing'), filter: row.querySelector('.activation-planet-filter'), previous: null };
 }
 function captureColumn(node) {
   const rows = new Map([...node.querySelectorAll('.activation-row')].map(row => {
-    const entry = captureRow(row); return [entry.planet.dataset.id, entry];
+    const entry = captureRow(row); return [entry.gate.dataset.activation, entry];
   }));
   return { node, rows, heading: node.querySelector('.activation-heading'), rule: node.querySelector('.activation-header-rule'),
-    content: node.querySelector('.activation-block-content'), label: null };
+    content: node.querySelector('.activation-block-content'), filter: node.querySelector(`.activation-planet-filter[data-id="${node.dataset.source === 'design' ? 'design:' : ''}all"]`), label: null };
+}
+
+function updatePlanetFilter(control, checked, name) {
+  setAttribute(control, 'aria-checked', checked);
+  setAttribute(control, 'aria-label', name);
+  text(control.querySelector('title'), name);
+  setAttributes(control.querySelector('.activation-planet-filter-mark'), { d: planetFilterMark(checked), opacity: checked === false ? 0 : 1 });
 }
 
 // Numeric and planet targets keep their identity when gates, lines, selection or
@@ -27,16 +50,25 @@ function captureColumn(node) {
 export function createActivationPainter(root) {
   const drawing = root.querySelector('.bodygraph-drawing');
   let group = drawing.querySelector('.activation-columns'), headingKey = null;
+  let previousInput = null;
   const columns = new Map([...drawing.querySelectorAll('.activation-column')].map(node => [node.dataset.source, captureColumn(node)]));
 
   function updateRow(entry, row) {
-    const key = JSON.stringify([row.gate, row.line, row.selected, row.pressed, row.fixing, row.planetSelected, row.planetPressed, row.label]);
+    const key = JSON.stringify([row.gate, row.line, row.selected, row.pressed, row.fixing, row.planetSelected, row.planetPressed, row.label, row.hasPlanetControl, row.planetEnabled]);
     if (key === entry.previous) return;
     entry.previous = key;
-    setAttributes(entry.planet, { 'aria-label': row.planetAria, 'aria-pressed': row.planetPressed });
+    if (row.hasPlanetControl) {
+      if (!entry.filter) {
+        entry.filter = elementFrom(entry.row, renderPlanetFilterControl(row.filterId, row.planetAria, row.planetEnabled));
+        entry.row.insertBefore(entry.filter, entry.planet);
+      }
+      updatePlanetFilter(entry.filter, row.planetEnabled, row.planetAria);
+    } else if (entry.filter) { entry.filter.remove(); entry.filter = null; }
+    setAttributes(entry.planet, { 'aria-label': row.planetAria, 'aria-pressed': row.planetPressed, opacity: row.planetEnabled ? null : '.35' });
     text(entry.planetTitle, row.planetTitle);
     setAttribute(entry.planetRect, 'fill', row.planetSelected ? '#eaf0f8' : 'transparent');
-    setAttributes(entry.gate, { 'data-id': row.gate, 'data-selected': row.selected, 'aria-label': row.gateAria, 'aria-pressed': row.pressed });
+    setAttributes(entry.gate, { 'data-id': row.gate, 'data-selected': row.selected, 'aria-label': row.gateAria, 'aria-pressed': row.pressed,
+      opacity: row.planetEnabled ? null : '.22' });
     text(entry.gateTitle, row.gateTitle);
     setAttribute(entry.gateRect, 'fill', row.selected ? '#eaf0f8' : 'transparent');
     if (entry.value.firstChild.nodeValue !== String(row.gate)) entry.value.firstChild.nodeValue = String(row.gate);
@@ -54,6 +86,8 @@ export function createActivationPainter(root) {
 
   return {
     update(chart, state, options = {}) {
+      const input = columnInput(chart, state, options);
+      if (input === previousInput) return;
       const models = options.showActivations ? describeActivationColumns(chart, state.relatedGates, state.committedSelection, {
         pressedGates: state.committedGates, pressedSelection: state.committedSelection,
         selections: state.visualSelections, pressedSelections: state.committedSelections,
@@ -61,7 +95,7 @@ export function createActivationPainter(root) {
       }) : [];
       const sources = new Set(models.map(column => column.source));
       for (const [source, column] of columns) if (!sources.has(source)) { column.node.remove(); columns.delete(source); }
-      if (!models.length) { group?.remove(); group = null; headingKey = null; return; }
+      if (!models.length) { group?.remove(); group = null; headingKey = null; previousInput = input; return; }
       if (!group) {
         group = drawing.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.setAttribute('class', 'activation-columns'); drawing.insertBefore(group, drawing.firstChild);
@@ -79,6 +113,13 @@ export function createActivationPainter(root) {
           setAttribute(column.rule, 'd', `M ${activationHeadingX(model.source)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${model.headingWidth}`);
           column.label = model.label;
         }
+        if (model.hasMasterControl) {
+          if (!column.filter) {
+            column.filter = elementFrom(column.content, renderPlanetFilterControl(model.filterId, `${model.label}, все планеты`, model.allPlanetsChecked, `translate(${model.x} ${ACTIVATION_COLUMN_LAYOUT.headingY - 6})`));
+            column.content.insertBefore(column.filter, column.content.querySelector('.activation-row'));
+          }
+          updatePlanetFilter(column.filter, model.allPlanetsChecked, `${model.label}, все планеты`);
+        } else if (column.filter) { column.filter.remove(); column.filter = null; }
         const ids = new Set(model.rows.map(row => row.id));
         for (const [id, row] of column.rows) if (!ids.has(id)) { row.row.remove(); column.rows.delete(id); }
         let next = null;
@@ -96,6 +137,7 @@ export function createActivationPainter(root) {
       const sun = personality?.rows.find(row => row.planet === 'sun');
       const nextHeadingKey = `${personality?.label || ''}:${sun?.gate || ''}.${sun?.line || ''}`;
       if (headingKey !== nextHeadingKey) { alignPersonalityHeading(root); headingKey = nextHeadingKey; }
+      previousInput = input;
     },
   };
 }

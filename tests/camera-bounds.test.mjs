@@ -247,7 +247,7 @@ test('bounded drags preserve selection semantics and a fresh background tap stil
   const harness = cameraHarness(t);
   const gate = { closest: () => ({ dataset: { type: 'gate', id: '37' } }) };
   harness.send('pointerdown', { target: gate }); harness.send('pointerup', { target: gate });
-  assert.deepEqual(harness.selections, [{ type: 'gate', id: '37' }]);
+  assert.deepEqual(harness.selections, [{ type: 'gate', id: '37', pointerType: 'touch' }]);
   for (const zoom of [1, 2]) {
     harness.controls.reset(); harness.controls.zoom(zoom);
     harness.drag(9000, -9000, { target: gate });

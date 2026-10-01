@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
+import { DRAWING_TRANSFORM } from '../src/scene/geometry/drawing-presentation.js';
+import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
 import { GATES } from '../src/scene/geometry/chart-geometry.js';
 import { createSelectionModel } from '../src/selection/selection-model.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
@@ -11,15 +13,22 @@ const gate = id => ({ type: 'gate', id: String(id) });
 const cell = (svg, id) => svg.match(new RegExp(`<g class="mandala-gate bg-interactive"[^>]*data-id="${id}"[^>]*>`))?.[0];
 
 test('mandala is opt-in and stays beneath all existing channels, centers and activations', () => {
-  const plain = renderBodygraph(chart), wheel = renderBodygraph(chart, null, { showMandala: true });
+  const plain = renderBodygraph(chart, null, { profile: 'studio' }), wheel = renderBodygraph(chart, null, { profile: 'studio', showMandala: true });
   assert.doesNotMatch(plain, /bodygraph-mandala|mandala-core|mandala-underlay/);
   assert.ok(wheel.indexOf('class="bodygraph-mandala"') < wheel.indexOf('class="bodygraph-drawing'));
   const corePaths = markup => markup.slice(markup.indexOf('<g class="bodygraph-channels">')).match(/<path\b[^>]*>/g);
   assert.deepEqual(corePaths(wheel), corePaths(plain), 'physical geometry and masks are never rewritten');
-  assert.match(wheel, /class="mandala-core">/);
-  assert.doesNotMatch(wheel, /class="(?:bodygraph-drawing[^"]*|mandala-core)"[^>]*transform=/, 'the physical bodygraph never moves or scales on mode change');
+  for (const markup of [plain, wheel]) {
+    const root = svgDocument().createElementNS(SVG_NS, 'svg'); root.innerHTML = markup;
+    const drawing = root.querySelector('.bodygraph-drawing');
+    assert.equal(drawing.getAttribute('transform'), DRAWING_TRANSFORM);
+    for (const selector of ['.bodygraph-channels', '.bodygraph-centers', '.bodygraph-gates']) {
+      assert.equal(drawing.querySelector(selector).parentNode, drawing, 'body layers keep their permanent presentation parent');
+    }
+    assert.equal(root.querySelector('.mandala-core'), null, 'a mode-specific geometry wrapper cannot return');
+  }
   assert.match(wheel, /class="mandala-scene" transform="translate\(320 398\) scale\(1\.1904761904761905\) translate\(-320 -398\)"/);
-  assert.ok(wheel.indexOf('class="mandala-core"') < wheel.indexOf('class="mandala-underlay"'));
+  assert.ok(wheel.indexOf('class="bodygraph-drawing') < wheel.indexOf('class="mandala-underlay"'));
   assert.ok(wheel.indexOf('class="mandala-underlay"') < wheel.indexOf('class="bodygraph-channels"'));
 });
 

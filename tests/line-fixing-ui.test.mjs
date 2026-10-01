@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderActivationColumns } from '../src/scene/activation-columns.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
+import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 
 const activation = (planet, gate, line) => ({ planet, gate, line });
 const chart = (personality, design = []) => ({ activations: { personality, design } });
@@ -32,6 +33,17 @@ test('same gate can have different fixing states in different lines', () => {
   const markup = renderActivationColumns(chart([activation('sun', 55, 2), activation('moon', 55, 1)], [activation('venus', 39, 1)]));
   assert.match(rowFor(markup, 'personality-sun'), /data-fixing="exalted"/);
   assert.match(rowFor(markup, 'personality-moon'), /data-fixing="detriment"/);
+});
+
+test('a selected red transit row displays its fixing, and hiding its black ruler removes that mark', () => {
+  const input = { ...chart([activation('venus', 39, 6)], [activation('sun', 55, 2)]), source: 'transit' };
+  const filter = createTransitPlanetFilter();
+  filter.setExpanded(true);
+  assert.doesNotMatch(rowFor(renderActivationColumns(filter.filter(input)), 'design-sun'), /class="line-fixing"/);
+  filter.setPlanet('sun', true, 'design');
+  assert.match(rowFor(renderActivationColumns(filter.filter(input)), 'design-sun'), /data-fixing="exalted"/);
+  filter.setPlanet('venus', false);
+  assert.doesNotMatch(rowFor(renderActivationColumns(filter.filter(input)), 'design-sun'), /class="line-fixing"/);
 });
 
 test('manual charts and unfixed lines receive no invented symbols', () => {

@@ -17,8 +17,8 @@ const mandalaOptions = (state, options) => ({ interactive: state.interactive && 
 const backdropSignature = (state, options) => JSON.stringify([Boolean(options.showMandala), Boolean(options.showBackdrop), state.prefix]);
 const visibleVariables = (chart, options) => options.showActivations && !options.showMandala ? calculateVariables(chart) : [];
 
-// One SVG skeleton per view. Switching decorative modes moves existing body
-// layers; changing the minute only paints their current values.
+// One SVG skeleton per view. Decorative modes leave all body layers in place;
+// changing the minute only paints their current values.
 export function createSceneRenderer(root) {
   let body = null, wheel = null, columns = null, drawing = null;
   let structure = null, backdropKey, variableKey;
@@ -33,24 +33,14 @@ export function createSceneRenderer(root) {
     backdropKey = backdropSignature(state, options);
   }
   function decorations(chart, state, options) {
-    let core = drawing.querySelector('.mandala-core');
-    const layers = ['.bodygraph-channels', '.bodygraph-centers', '.bodygraph-gates'].map(selector => drawing.querySelector(selector)).filter(Boolean);
-    if (options.showMandala && !core) {
-      core = svgElement(root, 'g'); core.setAttribute('class', 'mandala-core');
-      drawing.insertBefore(core, layers[0]);
-      for (const layer of layers) core.append(layer);
-    } else if (!options.showMandala && core) {
-      for (const layer of layers) drawing.insertBefore(layer, core);
-      core.remove(); core = null;
-    }
+    const firstBodyLayer = drawing.querySelector('.bodygraph-channels');
     setAttribute(drawing, 'class', `bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}`);
     const nextBackdrop = backdropSignature(state, options);
     if (backdropKey !== nextBackdrop) {
       drawing.querySelector('.chart-backdrop')?.remove();
       drawing.querySelector('.mandala-underlay')?.remove();
       if (options.showMandala || options.showBackdrop) {
-        const parent = core || drawing;
-        for (const node of svgNodes(parent, renderChartBackdrop(state.prefix, { mandala: options.showMandala }))) parent.insertBefore(node, layers[0]);
+        for (const node of svgNodes(drawing, renderChartBackdrop(state.prefix, { mandala: options.showMandala }))) drawing.insertBefore(node, firstBodyLayer);
       }
       backdropKey = nextBackdrop;
     }
@@ -58,7 +48,7 @@ export function createSceneRenderer(root) {
     const variables = visibleVariables(chart, options), nextVariables = JSON.stringify(variables);
     if (nextVariables !== variableKey) {
       drawing.querySelector('.bodygraph-variables')?.remove();
-      for (const node of svgNodes(drawing, renderVariableArrows(chart, variables))) drawing.insertBefore(node, core || drawing.querySelector('.chart-backdrop') || layers[0]);
+      for (const node of svgNodes(drawing, renderVariableArrows(chart, variables))) drawing.insertBefore(node, drawing.querySelector('.chart-backdrop') || firstBodyLayer);
       variableKey = nextVariables;
     }
     let ring = root.querySelector('.mandala-scene');
@@ -75,7 +65,7 @@ export function createSceneRenderer(root) {
   }
   return {
     update(chart, selection, options = {}) {
-      const nextStructure = JSON.stringify([options.interactive !== false, options.idPrefix,
+      const nextStructure = JSON.stringify([options.profile, options.interactive !== false, options.idPrefix,
         options.showLabels === true]);
       const state = createRenderState(chart, selection, options);
       if (!body || structure !== nextStructure) {
