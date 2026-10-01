@@ -1,6 +1,7 @@
 import { createChartDayExplorer } from '../state/natal-day.js';
 import { formatDateInput } from './date-input.js';
 import { attachDayRange } from './day-range.js';
+import { setText } from '../ui/html.js';
 
 function savedClock(chart) {
   const offset = /^UTC([+−-])(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(chart?.utcOffset || '');
@@ -16,19 +17,19 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     toggle.hidden = !state.available;
     toggle.setAttribute('aria-expanded', String(state.opened));
     toggle.setAttribute('aria-pressed', String(state.opened));
-    toggle.title = state.opened ? 'Закрыть просмотр дня рождения' : 'Посмотреть день рождения по минутам';
+    toggle.title = state.opened ? 'Шкала дня · закрыть' : 'Шкала дня';
     panel.hidden = !state.opened;
     panel.setAttribute('aria-busy', String(state.status === 'loading'));
     panel.dataset.original = String(state.exactOriginal);
     panel.dataset.status = state.status;
     range.disabled = state.status !== 'ready';
     resetButton.disabled = state.status === 'loading' || state.exactOriginal && state.status !== 'error';
-    resetButton.textContent = state.status === 'error' ? 'Повторить' : 'К рождению';
+    setText(resetButton, state.status === 'error' ? 'Повторить' : 'К рождению');
     resetButton.title = state.status === 'error' ? 'Повторить загрузку дня рождения' : 'Вернуться к сохранённому времени рождения';
     resetButton.setAttribute('aria-pressed', String(state.exactOriginal));
-    status.textContent = state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '';
+    setText(status, state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '');
     const chart = state.current;
-    date.textContent = chart?.birthDate ? formatDateInput(chart.birthDate) : '';
+    setText(date, chart?.birthDate ? formatDateInput(chart.birthDate) : '');
     if (state.day) {
       range.min = '0'; range.max = String(state.day.samples - 1); range.step = '1'; range.value = String(state.index);
     } else { range.min = '0'; range.max = '1439'; range.value = '0'; }
@@ -40,7 +41,7 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     const clock = state.exactOriginal ? savedClock(chart) : chart?.birthTime || '';
     const zone = chart?.timezone || state.day?.timezone || '';
     const utcOffset = offset && /^[-+]/.test(offset) ? `UTC${offset}` : offset;
-    time.textContent = [clock, utcOffset].filter(Boolean).join(' · ');
+    setText(time, [clock, utcOffset].filter(Boolean).join(' · '));
     time.dateTime = chart?.utc || '';
     time.title = [zone, state.exactOriginal ? 'Сохранённое время рождения' : 'Просмотр другой минуты'].filter(Boolean).join(' · ');
     time.setAttribute('aria-label', [clock, utcOffset, zone].filter(Boolean).join(', '));

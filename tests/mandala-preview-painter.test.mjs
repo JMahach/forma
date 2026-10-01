@@ -176,7 +176,7 @@ test('controller fast preview updates only cross marks without redrawing the cha
   assert.equal(controller.selectionState.items, snapshot);
   assert.equal(viewport.querySelector('.mandala-gate'), ring);
   const expected = new SvgNode();
-  expected.innerHTML = renderBodygraph(state.chart, null, { showMandala: true, showActivations: true, showBackdrop: true, selections: [], pinnedCrosses: [], previewSelection: state.current });
+  expected.innerHTML = renderBodygraph(state.chart, null, { profile: 'studio', showMandala: true, showActivations: true, showBackdrop: true, selections: [], pinnedCrosses: [], previewSelection: state.current });
   assert.deepEqual(viewport.snapshot(), expected.snapshot());
 });
 

@@ -19,7 +19,7 @@ export function decodeTransitDay(input) {
   const words = view(shuffle(packet.subarray(8 + length), true));
   const columns = metadata.orders.map((order, column) => {
     const values = decodeFloat64Column(words, column, MINUTES, order);
-    if (!values.every(validTransitValue)) return failTransitPacket();
+    if (!values.every(value => validTransitValue(value, column))) return failTransitPacket();
     return values;
   });
   return { ...metadata, columns };

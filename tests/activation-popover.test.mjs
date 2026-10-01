@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { attachActivationPopover, placeActivationPopover } from '../src/views/activation-popover.js';
 import { activationDetails } from '../src/views/activation-details.js';
 
 const rectAt = (left, top, width = 68, height = 40) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const panelSize = { width: 254, height: 147 };
+function panelPosition(panel) {
+  const match = /^translate\(([-\d.]+)px, ([-\d.]+)px\)$/.exec(panel.style.transform);
+  assert.ok(match, 'the popup uses a finite 2D screen translation');
+  return { left: Number(match[1]), top: Number(match[2]) };
+}
 
 function assertContained(position, size, viewport) {
   assert.ok(position.left >= viewport.left + 12, 'left edge keeps the viewport margin');
@@ -100,12 +106,15 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
   };
   Object.defineProperty(globalThis, 'document', { configurable: true, writable: true, value: document });
   Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: window });
-  const panelChild = {};
+  const panelChild = {}, styleWrites = [], measurements = [];
   const panel = {
     id: 'activationPopover', hidden: true, innerHTML: '', dataset: {},
-    style: { setProperty(name, value) { this[name] = value; } },
+    style: new Proxy({ setProperty(name, value) { this[name] = value; } }, {
+      set(target, key, value) { styleWrites.push([key, value]); target[key] = value; return true; },
+    }),
     contains(node) { return node === this || node === panelChild; },
     getBoundingClientRect() {
+      measurements.push('panel');
       return measurePanel ? measurePanel(this) : { width: Math.min(panelSize.width, Number.parseFloat(this.style.maxWidth) || panelSize.width), height: panelSize.height };
     },
   };
@@ -122,7 +131,7 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
     const attributes = new Map();
     const anchor = {
       dataset: { activation: id }, rect,
-      getBoundingClientRect() { return this.rect; },
+      getBoundingClientRect() { measurements.push(id); return this.rect; },
       setAttribute(name, value) { attributes.set(name, String(value)); },
       getAttribute(name) { return attributes.get(name) ?? null; },
       removeAttribute(name) { attributes.delete(name); },
@@ -138,7 +147,7 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
     return event;
   }
   const controller = attachActivationPopover(panel, svg);
-  return { controller, panel, panelChild, anchors, addAnchor, dispatch, listeners, queries, focusCalls, cameraMutations, window };
+  return { controller, panel, panelChild, styleWrites, measurements, anchors, addAnchor, dispatch, listeners, queries, focusCalls, cameraMutations, window };
 }
 
 function renderedRows(panel) {
@@ -169,6 +178,45 @@ test('opening uses the exact saved source and planet, including duplicate gate n
   assert.deepEqual(harness.cameraMutations, []);
 });
 
+test('unchecked planets show and refresh their exact full records without enabling an activation', t => {
+  const harness = popoverHarness(t), original = chartFixture();
+  const full = structuredClone(original.activations.personality);
+  const chart = { ...original, personality: [], activations: { ...original.activations, personality: [] },
+    planetFilter: { selectedPlanets: [], activations: full } };
+  harness.addAnchor('personality-mercury');
+  harness.controller.show(chart, 'personality-mercury');
+  assert.equal(harness.panel.hidden, false);
+  assert.deepEqual(renderedRows(harness.panel), expectedRows(full[0]));
+  assert.deepEqual(chart.planetFilter.selectedPlanets, []);
+  assert.deepEqual(chart.activations.personality, []);
+  const changed = { ...chart, planetFilter: { selectedPlanets: [],
+    activations: full.map(entry => entry.planet === 'mercury' ? { ...entry, longitude: 302.125 } : entry) } };
+  harness.controller.refresh(changed);
+  assert.deepEqual(renderedRows(harness.panel), expectedRows(changed.planetFilter.activations[0]));
+  assert.equal(harness.controller.currentId, 'personality-mercury');
+  harness.controller.refresh({ ...changed, planetFilter: { selectedPlanets: [], activations: [] } });
+  assert.equal(harness.panel.hidden, true, 'a missing full record still closes rather than inventing details');
+});
+
+test('unchecked design planets use only their own full records and never enable a red or black activation', t => {
+  const h = popoverHarness(t), original = chartFixture();
+  const full = structuredClone(original.activations.design);
+  const chart = { ...original, design: [], activations: { ...original.activations, design: [] },
+    planetFilter: { selectedPlanets: ['mercury', 'mars'], selectedDesignPlanets: [],
+      activations: original.activations.personality, designActivations: full } };
+  const before = JSON.stringify(chart);
+  h.addAnchor('design-mercury'); h.controller.show(chart, 'design-mercury');
+  assert.equal(h.panel.hidden, false); assert.deepEqual(renderedRows(h.panel), expectedRows(full[0]));
+  assert.equal(JSON.stringify(chart), before);
+  const changed = { ...chart, planetFilter: { ...chart.planetFilter,
+    designActivations: full.map(entry => entry.planet === 'mercury' ? { ...entry, longitude: 307.125 } : entry) } };
+  h.controller.refresh(changed);
+  assert.deepEqual(renderedRows(h.panel), expectedRows(changed.planetFilter.designActivations[0]));
+  assert.deepEqual(changed.planetFilter.selectedDesignPlanets, []); assert.deepEqual(changed.activations.design, []);
+  h.controller.refresh({ ...changed, planetFilter: { ...changed.planetFilter, designActivations: [] } });
+  assert.equal(h.panel.hidden, true, 'missing design data cannot fall back to a same-named black planet');
+});
+
 test('design positions 14px left of its matching planet while the number owns the trigger, description and Escape focus', t => {
   const harness = popoverHarness(t), chart = chartFixture();
   const number = harness.addAnchor('design-mercury', rectAt(700, 320));
@@ -177,8 +225,8 @@ test('design positions 14px left of its matching planet while the number owns th
   harness.controller.show(chart, 'design-mercury');
   assert.equal(harness.controller.currentId, 'design-mercury', 'the numeric activation remains the popup identity');
   assert.equal(harness.panel.dataset.side, 'left');
-  assert.equal(Number.parseFloat(harness.panel.style.left) + panelSize.width, planet.rect.left - 14);
-  assert.equal(Number.parseFloat(harness.panel.style.top) + Number.parseFloat(harness.panel.style['--arrow-offset']), planet.rect.top + planet.rect.height / 2, 'the arrow aligns with the matching planet');
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, planet.rect.left - 14);
+  assert.equal(panelPosition(harness.panel).top + Number.parseFloat(harness.panel.style['--arrow-offset']), planet.rect.top + planet.rect.height / 2, 'the arrow aligns with the matching planet');
   assert.equal(number.getAttribute('aria-describedby'), harness.panel.id);
   assert.equal(planet.getAttribute('aria-describedby'), null, 'positioning does not transfer the accessible description');
   harness.dispatch('document', 'pointerdown', { target: number });
@@ -198,7 +246,7 @@ test('personality keeps positioning 12px right of its number even when a planet 
   const planet = harness.addAnchor('personality-mercury-planet', rectAt(660, 320, 32));
   harness.controller.show(chartFixture(), 'personality-mercury');
   assert.equal(harness.panel.dataset.side, 'right');
-  assert.equal(Number.parseFloat(harness.panel.style.left), number.rect.right + 12);
+  assert.equal(panelPosition(harness.panel).left, number.rect.right + 12);
   assert.equal(number.getAttribute('aria-describedby'), harness.panel.id);
   assert.equal(planet.getAttribute('aria-describedby'), null);
   assert.ok(!harness.queries.some(query => query.includes('personality-mercury-planet')), 'personality does not resolve the symbol as a positioning reference');
@@ -210,15 +258,15 @@ test('a red popup flipped right clears the numeric trigger by 14px so a second c
   const planet = harness.addAnchor('design-mercury-planet', rectAt(169, 320, 17));
   const number = harness.addAnchor('design-mercury', rectAt(188, 320, 36));
   harness.controller.show(chartFixture(), 'design-mercury');
-  const left = Number.parseFloat(harness.panel.style.left);
+  const left = panelPosition(harness.panel).left;
   assert.equal(harness.panel.dataset.side, 'right', 'the left side has insufficient room');
   assert.equal(left, number.rect.right + 14, 'the flipped popup clears the entire number, not only its planet');
   assert.ok((number.rect.left + number.rect.right) / 2 < left, 'the number center cannot be covered by the popup');
-  assert.equal(Number.parseFloat(harness.panel.style.top) + Number.parseFloat(harness.panel.style['--arrow-offset']), planet.rect.top + planet.rect.height / 2, 'the arrow retains the planet row alignment');
+  assert.equal(panelPosition(harness.panel).top + Number.parseFloat(harness.panel.style['--arrow-offset']), planet.rect.top + planet.rect.height / 2, 'the arrow retains the planet row alignment');
   assert.equal(number.getAttribute('aria-describedby'), harness.panel.id);
   harness.dispatch('document', 'pointerdown', { target: number });
   assert.equal(harness.controller.currentId, 'design-mercury', 'the second number press remains available to the app toggle');
-  assertContained({ left, top: Number.parseFloat(harness.panel.style.top), side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, panelSize, viewport);
+  assertContained({ left, top: panelPosition(harness.panel).top, side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, panelSize, viewport);
 });
 
 test('narrow phone layouts use above or below when a red popup beside the planet would cover its number', t => {
@@ -230,10 +278,10 @@ test('narrow phone layouts use above or below when a red popup beside the planet
       harness.addAnchor('design-mercury-planet', rectAt(planetLeft, top, 17));
       const number = harness.addAnchor('design-mercury', rectAt(numberLeft, top, 36));
       harness.controller.show(chartFixture(), 'design-mercury');
-      const popupTop = Number.parseFloat(harness.panel.style.top);
+      const popupTop = panelPosition(harness.panel).top;
       assert.equal(harness.panel.dataset.side, expectedSide, 'fitting beside the planet alone is not sufficient');
       assert.ok(expectedSide === 'bottom' ? popupTop >= number.rect.bottom + 14 : popupTop + panelSize.height <= number.rect.top - 14, 'vertical fallback keeps the whole number clear with the same gap');
-      assertContained({ left: Number.parseFloat(harness.panel.style.left), top: popupTop, side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, panelSize, viewport);
+      assertContained({ left: panelPosition(harness.panel).left, top: popupTop, side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, panelSize, viewport);
       assert.equal(harness.controller.currentId, 'design-mercury');
       assert.equal(number.getAttribute('aria-describedby'), harness.panel.id);
     }
@@ -245,14 +293,14 @@ test('design falls back to its number when the planet symbol is absent and still
   const number = harness.addAnchor('design-mercury', rectAt(700, 320));
   harness.controller.show(chart, 'design-mercury');
   assert.equal(harness.panel.hidden, false);
-  assert.equal(Number.parseFloat(harness.panel.style.left) + panelSize.width, number.rect.left - 14);
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, number.rect.left - 14);
   const planet = harness.addAnchor('design-mercury-planet', rectAt(660, 320, 32));
   harness.controller.reposition();
-  assert.equal(Number.parseFloat(harness.panel.style.left) + panelSize.width, planet.rect.left - 14, 'a restored symbol becomes the positioning reference');
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, planet.rect.left - 14, 'a restored symbol becomes the positioning reference');
   harness.anchors.delete('design-mercury-planet');
   harness.controller.reposition();
   assert.equal(harness.controller.currentId, 'design-mercury');
-  assert.equal(Number.parseFloat(harness.panel.style.left) + panelSize.width, number.rect.left - 14, 'removing only the symbol restores number positioning');
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, number.rect.left - 14, 'removing only the symbol restores number positioning');
   harness.controller.close();
   harness.addAnchor('design-mercury-planet', planet.rect);
   harness.anchors.delete('design-mercury');
@@ -270,7 +318,7 @@ test('design refresh resolves both replacement elements after a redraw and retur
   const replacementPlanet = harness.addAnchor('design-mercury-planet', rectAt(860, 500, 32));
   harness.controller.refresh(chart);
   assert.equal(harness.controller.currentId, 'design-mercury');
-  assert.equal(Number.parseFloat(harness.panel.style.left) + panelSize.width, replacementPlanet.rect.left - 14);
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, replacementPlanet.rect.left - 14);
   assert.equal(replacementNumber.getAttribute('aria-describedby'), harness.panel.id);
   assert.equal(replacementPlanet.getAttribute('aria-describedby'), null);
   harness.dispatch('document', 'keydown', { key: 'Escape' });
@@ -296,7 +344,7 @@ test('the content wrapper retains all five detail rows and short viewport height
   assert.equal((harness.panel.innerHTML.match(/class="activation-detail-row"/g) || []).length, 5);
   assert.deepEqual(renderedRows(harness.panel), expectedRows(chart.activations.design[0]));
   assert.equal(harness.panel.hidden, false);
-  assertContained({ left: Number.parseFloat(harness.panel.style.left), top: Number.parseFloat(harness.panel.style.top), side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, { width: 254, height: 126 }, viewport);
+  assertContained({ left: panelPosition(harness.panel).left, top: panelPosition(harness.panel).top, side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) }, { width: 254, height: 126 }, viewport);
   assert.deepEqual(harness.cameraMutations, []);
 });
 
@@ -356,12 +404,12 @@ test('graph redraw resolves the replacement anchor and preserves the popup ident
   const harness = popoverHarness(t), chart = chartFixture();
   const original = harness.addAnchor('personality-mercury', rectAt(600, 200));
   harness.controller.show(chart, 'personality-mercury');
-  const firstLeft = harness.panel.style.left;
+  const firstLeft = panelPosition(harness.panel).left;
   const replacement = harness.addAnchor('personality-mercury', rectAt(850, 500));
   harness.controller.refresh(chart);
   assert.equal(harness.controller.currentId, 'personality-mercury');
   assert.equal(harness.panel.hidden, false);
-  assert.notEqual(harness.panel.style.left, firstLeft, 'placement uses the new SVG element rather than a detached node');
+  assert.notEqual(panelPosition(harness.panel).left, firstLeft, 'placement uses the new SVG element rather than a detached node');
   assert.equal(replacement.getAttribute('aria-describedby'), harness.panel.id);
   const escape = harness.dispatch('document', 'keydown', { key: 'Escape' });
   assert.equal(escape.defaultPrevented, true);
@@ -424,17 +472,17 @@ test('resize and visual viewport movement reposition the popup using current scr
   const anchor = harness.addAnchor('personality-mercury', rectAt(160, 200));
   harness.controller.show(chart, 'personality-mercury');
   const checkPlacement = () => {
-    const position = { left: Number.parseFloat(harness.panel.style.left), top: Number.parseFloat(harness.panel.style.top), side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) };
+    const position = { left: panelPosition(harness.panel).left, top: panelPosition(harness.panel).top, side: harness.panel.dataset.side, arrow: Number.parseFloat(harness.panel.style['--arrow-offset']) };
     assertContained(position, harness.panel.getBoundingClientRect(), { left: harness.window.visualViewport.offsetLeft, top: harness.window.visualViewport.offsetTop, width: harness.window.visualViewport.width, height: harness.window.visualViewport.height });
   };
   checkPlacement();
   assert.equal(harness.panel.style.maxWidth, '296px');
   for (const [surface, type] of [['window', 'resize'], ['visualViewport', 'resize'], ['visualViewport', 'scroll']]) {
-    const previousTop = harness.panel.style.top;
+    const previousTop = panelPosition(harness.panel).top;
     anchor.rect = rectAt(anchor.rect.left, anchor.rect.top + 35);
     harness.window.visualViewport.offsetTop += 5;
     harness.dispatch(surface, type);
-    assert.notEqual(harness.panel.style.top, previousTop, `${surface} ${type} recomputes placement`);
+    assert.notEqual(panelPosition(harness.panel).top, previousTop, `${surface} ${type} recomputes placement`);
     assert.equal(harness.controller.currentId, 'personality-mercury');
     checkPlacement();
   }
@@ -448,7 +496,35 @@ test('the layout viewport is a fallback when visualViewport is unavailable', t =
   assert.equal(harness.panel.hidden, false);
   assert.equal(harness.panel.style.maxWidth, '366px');
   assert.equal(harness.panel.dataset.side, 'bottom');
-  assert.equal(harness.panel.style.top, '352px');
+  assert.equal(panelPosition(harness.panel).top, 352);
+});
+
+test('camera movement changes only the 2D translation while reading the current red planet and numeric bounds', t => {
+  const h = popoverHarness(t);
+  const number = h.addAnchor('design-mercury', rectAt(700, 320));
+  const planet = h.addAnchor('design-mercury-planet', rectAt(660, 320, 32));
+  h.controller.show(chartFixture(), 'design-mercury');
+  const content = h.panel.innerHTML;
+  h.styleWrites.length = h.measurements.length = 0;
+  for (let frame = 1; frame <= 120; frame++) {
+    number.rect = rectAt(700 + frame / 4, 320 + frame / 8);
+    planet.rect = rectAt(660 + frame / 4, 320 + frame / 8, 32);
+    h.controller.reposition();
+    assert.equal(panelPosition(h.panel).left + panelSize.width, planet.rect.left - 14);
+  }
+  assert.equal(h.styleWrites.length, 120, 'one changed transform write per moving frame');
+  assert.ok(h.styleWrites.every(([name]) => name === 'transform'), 'no repeated layout-position, sizing or arrow writes');
+  assert.equal(h.measurements.filter(id => id === 'design-mercury').length, 120);
+  assert.equal(h.measurements.filter(id => id === 'design-mercury-planet').length, 120);
+  assert.equal(h.measurements.filter(id => id === 'panel').length, 120, 'actual popup size remains authoritative');
+  assert.equal(h.panel.innerHTML, content, 'repositioning retains the content and its scroll container');
+  assert.equal(h.panel.style.left, undefined); assert.equal(h.panel.style.top, undefined);
+  h.styleWrites.length = 0; h.controller.reposition();
+  assert.deepEqual(h.styleWrites, [], 'an unchanged position writes no styles');
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const rule = css.match(/\.activation-popover\s*\{([^}]+)\}/)[1];
+  assert.match(rule, /position: fixed;/); assert.match(rule, /left: 0;/); assert.match(rule, /top: 0;/);
+  assert.doesNotMatch(rule, /will-change|translate3d/, 'no forced GPU text layer is introduced');
 });
 
 test('panning an anchor out of view or removing it dismisses the popup without changing the camera', t => {

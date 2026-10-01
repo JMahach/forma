@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
-import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activation-layout.js';
+import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE, MANDALA_COLUMN_SPAN } from '../src/scene/geometry/activation-layout.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
 test('navigation includes enlarged columns and the complete outer planet envelope', () => {
@@ -10,7 +10,13 @@ test('navigation includes enlarged columns and the complete outer planet envelop
   // Painted source envelopes after the 1.09 scale and existing mandala journeys.
   assert.ok(bounds.x <= -62.68 - ACTIVATION_COLUMN_REVEAL_DISTANCE);
   assert.ok(bounds.x + bounds.width >= 715.324 + ACTIVATION_COLUMN_REVEAL_DISTANCE);
-  assert.ok(Math.abs(bounds.x + bounds.width / 2 - 320) < 1e-8, 'horizontal expansion stays symmetric about the chart');
+  assert.equal(bounds.x, MANDALA_COLUMN_SPAN.left, 'navigation and capacity share the complete column footprint');
+  assert.equal(bounds.width, MANDALA_COLUMN_SPAN.right - MANDALA_COLUMN_SPAN.left);
+  assert.ok(bounds.x <= ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE);
+  assert.ok(bounds.x + bounds.width >= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width + ACTIVATION_COLUMN_REVEAL_DISTANCE);
+  assert.ok(Math.abs(bounds.x - -370.828125) < 1e-9, 'the enlarged left checkbox target fits navigation');
+  assert.ok(Math.abs(bounds.x + bounds.width - 986.4166666666667) < 1e-9, 'enlarged right fixing and hit bounds fit too');
+  assert.equal(STUDIO_FRAME.bounds.x + STUDIO_FRAME.bounds.width / 2, 320, 'navigation bounds never move the shared Home center');
   assert.equal(bounds.y, STUDIO_FRAME.bounds.y);
   assert.equal(bounds.height, STUDIO_FRAME.bounds.height);
   assert.equal(MANDALA_FRAME.minScale, .1);

@@ -74,6 +74,9 @@ test('real release build preserves sources and produces complete deterministic c
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
   assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
+  const lifetimeChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('/api/lifetime/meta'))?.[0];
+  assert.ok(lifetimeChunk, 'the optional century view can be loaded on demand');
+  assert.ok(!contents.get('index.html').includes(`href="/${lifetimeChunk}"`), 'ordinary startup never preloads the optional century view');
 
   const resolve = (reference, parent) => {
     const url = new URL(reference, `https://forma.test/${parent}`);

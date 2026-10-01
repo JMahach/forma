@@ -37,6 +37,10 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     const visit = file => {
       for (const dependency of result.metafile.outputs[file].imports) {
         if (dependency.external || dependencies.has(dependency.path)) continue;
+        // Startup intentionally opens the UI early. Other dynamic features
+        // stay on demand: preloading them would defeat their loading boundary.
+        if (dependency.kind === 'dynamic-import'
+          && result.metafile.outputs[dependency.path]?.entryPoint !== 'src/app.js') continue;
         dependencies.add(dependency.path); visit(dependency.path);
       }
     };

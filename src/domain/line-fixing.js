@@ -12,8 +12,7 @@ for (const { gates: [first, second] } of CHANNELS) {
 
 function validActivations(chart) {
   const result = [];
-  const sources = chart?.source === 'transit' ? ['personality'] : ['design', 'personality'];
-  for (const source of sources) {
+  for (const source of ['design', 'personality']) {
     const entries = chart?.activations?.[source];
     if (!Array.isArray(entries)) continue;
     const counts = new Map();

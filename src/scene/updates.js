@@ -38,6 +38,7 @@ export function createGraphController({
     const focused = getActiveElement()?.closest?.('#viewport [data-type]');
     const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation, mandala: focused.classList.contains('mandala-gate') } : null;
     const renderOptions = {
+      profile: 'studio',
       showActivations: getShowActivations(), showBackdrop: true, showMandala: getMandala()?.enabled,
       showMandalaLayer: getMandala()?.visible,
       pinnedCrosses: selectionState.crosses, selections: selectionState.items,
@@ -70,10 +71,29 @@ export function createGraphController({
   }
 
   function choose(value) {
+    const numeric = value.type === 'gate' && value.activation && !value.additive;
+    const selected = selectionState.items;
+    const sameNumeric = numeric && selected.length === 1 && selected[0].type === 'gate'
+      && Number(selected[0].id) === Number(value.id) && selected[0].activation === value.activation;
+    const showDetails = sameNumeric && activationPopover.currentId !== value.activation;
+    getHoverPreview()?.clear({ notify: false });
     activationPopover.close();
-    const { popoverActivation } = selectionState.choose(value);
+    // Every input selects the row first, inspects it second and clears it third.
+    if (showDetails) {
+      render();
+      activationPopover.show(getChart(), value.activation);
+      return;
+    }
+    selectionState.choose(value);
+    if (value.pointerType && !selectionState.items.length) {
+      const focused = getActiveElement()?.closest?.('#viewport [data-type]');
+      const sameTarget = focused && (value.activation ? focused.dataset.activation === value.activation
+        : focused.dataset.type === value.type && focused.dataset.id === String(value.id));
+      // Release native pointer focus before rendering can restore it. Keyboard
+      // focus remains on the control for the next Enter/Space activation.
+      if (sameTarget) focused.blur?.();
+    }
     render();
-    if (popoverActivation) activationPopover.show(getChart(), popoverActivation);
   }
 
   function chooseSummary(gates, filter, options = {}) {

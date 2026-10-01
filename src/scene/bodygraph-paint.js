@@ -87,7 +87,7 @@ export function gatePaint(gate, state, options = {}) {
   const source = black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
   return { active, selected, related, label: `Ворота ${gate.id}: ${gate.name}, ${source}`,
     opacity: options.dimInactive && !active && !selected && !related ? .3 : 1,
-    fill: active ? fill : 'transparent', stroke: active ? fill.startsWith('url') ? PALETTE.ink : fill : 'none',
+    fill: active ? fill : 'transparent', stroke: 'none',
     highlightState: selected ? 'selected' : related ? 'related' : 'idle',
     highlightFill: active ? 'none' : PALETTE.halo, highlightOpacity: selected || related ? 1 : 0,
     textWeight: active ? '650' : '500', textFill: active ? '#ffffff' : '#171513' };

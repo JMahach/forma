@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { ACTIVATION_COLUMN_REVEAL_DISTANCE as distance } from '../src/scene/geometry/activation-layout.js';
 import { createMandalaMotion } from '../src/scene/modes/mandala-motion.js';
 import { createGraphController } from '../src/scene/updates.js';
+import { DRAWING_TRANSFORM } from '../src/scene/geometry/drawing-presentation.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 
 const property = '--activation-column-offset', revealProperty = '--mandala-reveal';
@@ -51,7 +52,7 @@ function integrationHarness({ reduced = false } = {}) {
       setAttribute: (key, value) => { attributes[key] = value; },
       addEventListener: (event, callback) => { callbacks[event] = callback; },
     },
-    canvas: { classList: { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); } } },
+    canvas: { style: { setProperty() {} }, classList: { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); } } },
     gestures: { refreshFrame() { frameRefreshes++; } },
     render, motion: h.motion,
   });
@@ -67,6 +68,7 @@ function integrationHarness({ reduced = false } = {}) {
 }
 const ringMarkup = markup => markup.includes('<g class="mandala-scene"')
   ? markup.slice(markup.indexOf('<g class="mandala-scene"'), markup.indexOf('<g class="bodygraph-drawing')) : '';
+const drawingTransform = markup => markup.match(/class="bodygraph-drawing[^"]*" transform="([^"]+)"/)?.[1];
 const between = (markup, start, end) => markup.slice(markup.indexOf(start), markup.indexOf(end));
 
 test('integrated ring closes decoratively across redraws and is removed once without idle work', () => {
@@ -79,8 +81,9 @@ test('integrated ring closes decoratively across redraws and is removed once wit
   for (const [start, end] of [
     ['<g class="bodygraph-channels">', '<g class="bodygraph-centers">'],
     ['<g class="bodygraph-centers">', '<g class="bodygraph-gates">'],
-  ]) assert.equal(between(h.markup, start, end), between(original, start, end), 'body geometry never moves');
-  assert.match(h.markup, /<g class="mandala-core">/);
+  ]) assert.equal(between(h.markup, start, end), between(original, start, end), 'the underlying body paths stay unchanged');
+  assert.equal(drawingTransform(original), DRAWING_TRANSFORM);
+  assert.equal(drawingTransform(h.markup), drawingTransform(original), 'opening cannot change the body presentation matrix');
   h.tick(100);
   assert.equal(h.renders, 2, 'animation frames do not rebuild SVG');
   h.graph.preview(); h.graph.choose({ type: 'gate', id: 20 });
@@ -93,11 +96,13 @@ test('integrated ring closes decoratively across redraws and is removed once wit
   assert.equal(h.mode.visible, true);
   assert.equal(h.attributes['aria-checked'], 'false');
   assert.equal(h.classes.has('has-mandala'), false);
+  assert.equal(drawingTransform(h.markup), drawingTransform(original), 'closing keeps the exact body matrix before the first animation frame');
   const closing = ringMarkup(h.markup);
   assert.ok(closing);
   assert.match(closing, /class="bodygraph-mandala" aria-hidden="true" pointer-events="none" focusable="false"/);
   assert.doesNotMatch(closing, /data-type=|tabindex=|role=|pointer-events="all"|mandala-gate-hit/);
   h.tick(300); h.graph.preview();
+  assert.equal(drawingTransform(h.markup), drawingTransform(original), 'an outgoing redraw cannot reset body geometry');
   assert.equal(h.reveal, 0.5);
   assert.doesNotMatch(ringMarkup(h.markup), /data-type=|tabindex=|pointer-events="all"/);
   h.tick(400);

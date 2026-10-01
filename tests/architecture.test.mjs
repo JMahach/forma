@@ -10,7 +10,7 @@ const source = file => fs.readFileSync(path.join(root, file), 'utf8');
 const files = directory => fs.readdirSync(path.join(root, directory), { recursive: true })
   .filter(file => /\.(?:js|mjs)$/.test(file)).map(file => `${directory}/${file}`);
 const loadingGenerator = 'src/scene/loading-placeholder.js';
-const sourceFiles = [...files('src'), ...files('shared/day-packets')];
+const sourceFiles = [...files('src'), ...files('shared')];
 const browserFiles = sourceFiles.filter(file => file !== loadingGenerator);
 const dependencies = file => [...source(file).matchAll(/(?:from\s+|import\s*(?:\(\s*)?)['"]([^'"]+)['"]/g)]
   .map(([, specifier]) => specifier.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)) : specifier);
@@ -45,7 +45,7 @@ test('all browser modules are reachable from real page entries and explicitly pu
   const reachable = new Set();
   function visit(file) {
     if (reachable.has(file)) return;
-    assert.ok(file.startsWith('src/') || file.startsWith('shared/day-packets/'), `browser imports private code: ${file}`);
+    assert.ok(file.startsWith('src/') || file.startsWith('shared/'), `browser imports private code: ${file}`);
     reachable.add(file);
     for (const dependency of graph.get(file) || []) visit(dependency);
   }
@@ -54,7 +54,7 @@ test('all browser modules are reachable from real page entries and explicitly pu
   assert.deepEqual([...reachable].sort(), [...browserFiles].sort(), 'orphaned browser files need an owner or removal');
   for (const file of browserFiles) assert.equal(PUBLIC_FILES.get(file), file, `${file} must be served`);
   for (const file of PUBLIC_FILES.values()) {
-    assert.ok(file.startsWith('src/') || file.startsWith('public/') || file.startsWith('shared/day-packets/'), `private path exposed: ${file}`);
+    assert.ok(file.startsWith('src/') || file.startsWith('public/') || file.startsWith('shared/'), `private path exposed: ${file}`);
     assert.ok(fs.existsSync(path.join(root, file)), `stale public path: ${file}`);
     if (!file.startsWith('public/')) assert.ok(reachable.has(file), `unneeded public module: ${file}`);
   }
@@ -83,9 +83,9 @@ test('the loading illustration has explicit server and build owners and only pur
 });
 
 test('domain rules and packet contracts are pure and do not import presentation, storage or Node', () => {
-  for (const file of files('src/domain')) { only(file, ['src/domain/', 'shared/day-packets/']); pure(file); }
+  for (const file of files('src/domain')) { only(file, ['src/domain/', 'shared/']); pure(file); }
   for (const file of files('src/diagnostics')) { only(file, ['src/diagnostics/']); pure(file); }
-  for (const file of files('shared/day-packets')) { only(file, ['shared/day-packets/']); pure(file); }
+  for (const file of files('shared')) { only(file, ['shared/']); pure(file); }
   const decoderDependencies = new Set();
   function visit(file) {
     if (decoderDependencies.has(file)) return;
@@ -98,11 +98,11 @@ test('domain rules and packet contracts are pure and do not import presentation,
 });
 
 test('server separates HTTP, service policies, process adapters and private encoders', () => {
-  for (const file of files('server/services')) only(file, ['node:', 'shared/day-packets/', 'server/services/', 'server/runtime/', 'server/packets/']);
+  for (const file of files('server/services')) only(file, ['node:', 'shared/', 'server/services/', 'server/runtime/', 'server/packets/']);
   for (const file of files('server/runtime')) only(file, ['node:', 'server/runtime/']);
   for (const file of files('server/packets')) only(file, ['node:', 'shared/day-packets/', 'server/packets/']);
   for (const file of files('server/http')) only(file, ['node:', 'shared/day-packets/', 'server/http/', 'server/services/'],
-    file === 'server/http/public-files.mjs' ? [loadingGenerator] : []);
+    file === 'server/http/public-files.mjs' ? [loadingGenerator] : file === 'server/http/lifetime.mjs' ? ['shared/lifetime-format.js'] : []);
   assert.ok(!graph.get('server/services/natal-days.mjs').includes('server/services/transit-days.mjs'));
   assert.ok(!graph.get('server/services/transit-days.mjs').includes('server/services/natal-days.mjs'));
   for (const file of [...files('server/services'), ...files('server/runtime'), ...files('server/packets')]) {

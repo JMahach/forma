@@ -195,7 +195,9 @@ test('larger channel paint leaves gate/center dimensions and pointer hit areas u
   for (const { id, x, y } of GATES) {
     const body = target(markup, 'gate', id), circles = [...body.matchAll(/<circle\b[^>]*\/>/g)].map(match => match[0]);
     assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 9.5, 8.5], `gate ${id}: radii`);
-    assert.equal(width(circles[1]), 0.8); assert.equal(width(circles[2]), 2);
+    assert.equal(attribute(circles[1], 'stroke'), 'none');
+    assert.equal(attribute(circles[1], 'stroke-width'), undefined);
+    assert.equal(width(circles[2]), 2);
     assert.match(markup, new RegExp(`data-type="gate" data-id="${id}"[^>]*transform="translate\\(${x} ${y}\\)"`));
   }
 });
@@ -213,15 +215,29 @@ const unchangedHashes = {
 // Normalize only that typography change when comparing this historical oracle;
 // gate-highlight.test.mjs independently requires the new 9.9 label size.
 const originalGateFont = markup => markup.replace(/font-size="9\.9"/g, 'font-size="11"');
+// Gate contours were later removed independently of channel width. Restore
+// only the exact current disc tag; radius, fill, highlight and hit area remain
+// covered by the frozen oracle and the current assertions above.
+const originalGateContour = markup => markup.replace(
+  /(<circle class="bg-gate-disc" r="9\.5" fill="([^"]+)") stroke="none"( pointer-events="none"\/>)/g,
+  (_tag, opening, fill, ending) => {
+    const stroke = fill === 'transparent' ? 'none' : fill.startsWith('url(') ? '#202020' : fill;
+    return `${opening} stroke="${stroke}" stroke-width=".8"${ending}`;
+  });
+// The later activation interaction change removes sticky pointer hover/tap
+// decoration. Restore only those exact CSS lines for this geometry oracle.
+const originalActivationStyle = markup => markup.replace(
+  '    .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }\n',
+  '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center', id: 'throat' },
     { type: 'channel', id: '37-40' }, { type: 'integration', id: 'integration' }];
   for (const [mode, chart] of Object.entries(charts)) {
     const markup = renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' });
     const unchanged = {
-      gatesAndCenters: originalGateFont(markup.slice(markup.indexOf('<g class="bodygraph-centers">'))),
+      gatesAndCenters: originalGateFont(originalGateContour(markup.slice(markup.indexOf('<g class="bodygraph-centers">')))),
       clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g),
-      style: markup.match(/<style>[\s\S]*?<\/style>/)[0],
+      style: originalActivationStyle(markup.match(/<style>[\s\S]*?<\/style>/)[0]),
       pointerTargets: paths(markup).filter(tag => attribute(tag, 'stroke') === 'transparent'
         && attribute(tag, 'pointer-events') === 'stroke'),
     };
@@ -273,7 +289,7 @@ async function rendererAtScale(scale) {
 test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {
   const renderReverted = await rendererAtScale(1);
   for (const { name, args, hash } of rollbackCases) {
-    assert.equal(createHash('sha256').update(originalGateFont(renderReverted(...args))).digest('hex'), hash, name);
+    assert.equal(createHash('sha256').update(originalActivationStyle(originalGateFont(originalGateContour(renderReverted(...args))))).digest('hex'), hash, name);
   }
 });
 

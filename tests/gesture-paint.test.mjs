@@ -130,8 +130,56 @@ test('movement within tap tolerance still selects the pressed object without mov
     h.send('pointermove', { pointerType, target, clientX: 326 });
     h.send('pointerup', { pointerType, clientX: 326 });
     assert.deepEqual(h.controls.getView(), start);
-    assert.deepEqual(h.selections, [{ type: 'gate', id: '41' }]);
+    assert.deepEqual(h.selections, [{ type: 'gate', id: '41', pointerType }]);
     assert.equal(h.queued.size, 0);
+  }
+});
+
+test('finger roll over a control still selects immediately without camera work', () => {
+  for (const dataset of [{ type: 'center', id: 'solar' }, { type: 'gate', id: '41' },
+    { type: 'channel', id: '41-30' }, { type: 'planet-filter', id: 'design:all' },
+    { type: 'gate', id: '41', activation: 'personality-pluto' }]) {
+    const h = harness();
+    h.controls.zoom(2);
+    h.changes.length = h.transforms.length = 0;
+    const before = h.controls.getView(), target = { dataset, closest() { return this; } };
+    h.send('pointerdown', { target });
+    h.send('pointermove', { target, clientX: 326, clientY: 418 }); // Ten CSS pixels diagonally.
+    h.send('pointerup', { clientX: 326, clientY: 418 });
+    assert.deepEqual(h.selections, [{ ...dataset, pointerType: 'touch' }]);
+    assert.deepEqual(h.controls.getView(), before);
+    assert.equal(h.queued.size, 0, 'tap does not wait for a scheduled camera frame');
+    assert.equal(h.changes.length, 0);
+    assert.equal(h.transforms.length, 0);
+  }
+});
+
+test('control drag keeps full displacement, while mouse keeps its original start distance', () => {
+  for (const [pointerType, travel] of [['touch', 11], ['mouse', 7]]) {
+    const h = harness(), target = { dataset: { type: 'center', id: 'solar' }, closest() { return this; } };
+    h.controls.zoom(2);
+    const before = h.controls.getView();
+    h.send('pointerdown', { pointerType, target });
+    h.send('pointermove', { pointerType, target, clientX: 320 + travel });
+    closeTo(h.controls.getView().x, before.x + travel);
+    h.send('pointermove', { pointerType, clientX: 320 });
+    h.send('pointerup', { pointerType });
+    assert.equal(h.selections.length, 0, 'returning after a drag does not select the initial control');
+    assert.deepEqual(h.controls.getView(), before);
+  }
+});
+
+test('cancelled touch and pinch cannot turn a tolerant control press into a tap', () => {
+  for (const cancel of ['pointercancel', 'lostpointercapture', 'pinch']) {
+    const h = harness(), target = { dataset: { type: 'center', id: 'solar' }, closest() { return this; } };
+    h.send('pointerdown', { target });
+    h.send('pointermove', { target, clientX: 328 });
+    if (cancel === 'pinch') {
+      h.send('pointerdown', { pointerId: 2, clientX: 420 });
+      h.send('pointerup', { pointerId: 2, clientX: 420 });
+    } else h.send(cancel, { clientX: 328 });
+    h.send('pointerup', { clientX: 328 });
+    assert.equal(h.selections.length, 0, cancel);
   }
 });
 
@@ -268,7 +316,7 @@ test('movement first seen on release retains a tap through the exact screen tole
     h.send('pointerdown', { target });
     h.send('pointerup', { clientX: 320 + dx });
     assert.deepEqual(h.controls.getView(), start);
-    assert.deepEqual(h.selections, [{ type: 'gate', id: '41' }]);
+    assert.deepEqual(h.selections, [{ type: 'gate', id: '41', pointerType: 'touch' }]);
     assert.equal(h.queued.size, 0);
   }
 });
@@ -422,7 +470,7 @@ test('a tap keeps its pressed object when pointerup flushes a pending camera pai
   h.send('pointerup', { target });
   assert.equal(h.queued.size, 0);
   assert.deepEqual(h.changes.at(-1), h.controls.getView());
-  assert.deepEqual(h.selections, [{ type: 'gate', id: '41' }]);
+  assert.deepEqual(h.selections, [{ type: 'gate', id: '41', pointerType: 'touch' }]);
 });
 
 test('fixed canvas owns pointer capture and blank presses preserve keyboard focus on the SVG', async () => {
@@ -459,7 +507,7 @@ test('fixed canvas owns pointer capture and blank presses preserve keyboard focu
   const gate = { dataset: { type: 'gate', id: '29' }, closest() { return this; } };
   input.get('pointerdown')({ ...event, type: 'pointerdown', target: gate });
   input.get('pointerup')({ ...event, type: 'pointerup', target: surface });
-  assert.deepEqual(selections, [{ type: 'gate', id: '29' }], 'capture retargeting retains the originally pressed element');
+  assert.deepEqual(selections, [{ type: 'gate', id: '29', pointerType: 'mouse' }], 'capture retargeting retains the originally pressed element');
   assert.equal(focused, 1, 'pressing a real SVG element keeps its native focus behavior');
   assert.equal(prevented, 1);
 });

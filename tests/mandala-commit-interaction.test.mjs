@@ -176,7 +176,7 @@ test('the mandala resolver preserves ordinary bodygraph gate and Shift semantics
   const h = harness(t), target = h.target(36, false);
   h.send('pointerdown', { target, shiftKey: true });
   h.send('pointerup', { target });
-  assert.deepEqual(h.selections[0], { type: 'gate', id: '36', additive: true });
+  assert.deepEqual(h.selections[0], { type: 'gate', id: '36', pointerType: 'mouse', additive: true });
   h.send('keydown', { target, key: 'Enter' });
   assert.deepEqual(h.selections[1], { type: 'gate', id: '36' });
 });

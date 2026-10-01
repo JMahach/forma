@@ -208,7 +208,7 @@ test('mandala wheel, bounded pan and pinch keep home covered while Shift keeps i
   const home = h.projected(), target = { closest: () => ({ dataset: { type: 'gate', id: '20' } }) };
   h.send('pointerdown', { target, shiftKey: true });
   h.send('pointerup', { target, shiftKey: false });
-  assert.deepEqual(h.selections, [{ type: 'gate', id: '20', additive: true }]);
+  assert.deepEqual(h.selections, [{ type: 'gate', id: '20', additive: true, pointerType: 'touch' }]);
   h.send('keydown', { key: 'Enter', target, shiftKey: true });
   assert.deepEqual(h.selections.at(-1), { type: 'gate', id: '20', additive: true });
   h.send('wheel', { deltaY: -200 });

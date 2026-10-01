@@ -24,6 +24,12 @@ test('transit caption uses minute precision in the browser timezone', t => {
   assert.equal(chartSubtitle({ source: 'transit', utc: '2026-09-26T18:20:59Z' }), '27 сентября 2026 г. · 00:05');
 });
 
+test('century preview caption uses the same UTC grid as its slider, including historical offsets', t => {
+  localZone(t, 'Europe/Moscow');
+  assert.equal(chartSubtitle({ id: 'lifetime-preview', source: 'transit', utc: '1900-01-01T00:10:00Z' }),
+    '1 января 1900 г. · 00:10 · UTC');
+});
+
 test('legacy transit placeholders never fabricate a time when UTC is missing or invalid', () => {
   for (const chart of [
     { id: 'current-transit', name: 'Legacy moment' },

@@ -5,13 +5,15 @@ import { decodeTransitDay } from '../../shared/day-packets/decode.js';
 // reuses these versioned, immutable packets across page loads.
 export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, decode = decodeTransitDay, capacity = 4, timeoutMs = 20_000, initialDate = null } = {}) {
   const cache = new Map(), pending = new Map();
+  function peekDay(date) {
+    const day = cache.get(date);
+    if (day) { cache.delete(date); cache.set(date, day); }
+    return day || null;
+  }
   async function getDay(date) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Некорректная дата транзита.');
-    if (cache.has(date)) {
-      const value = cache.get(date);
-      cache.delete(date); cache.set(date, value);
-      return value;
-    }
+    const remembered = peekDay(date);
+    if (remembered) return remembered;
     if (pending.has(date)) return pending.get(date);
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), timeoutMs);
@@ -41,7 +43,7 @@ export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, dec
   // follows the same error/backoff path instead of silently issuing a retry.
   let initial = initialDate ? getDay(initialDate) : null;
   initial?.catch(() => {});
-  return { getDay(date) {
+  return { peekDay, getDay(date) {
     const started = initial;
     initial = null;
     return started && date === initialDate ? started : getDay(date);

@@ -42,10 +42,41 @@ def gate_line(lon):
     return GATE_WHEEL[index], line
 
 
-def design_time(birth_jd):
+def design_time(birth_jd, *, hint=None):
     birth_sun = longitude(birth_jd, swe.SUN)
     low, high = birth_jd - 100, birth_jd - 75
-    for _ in range(48):
+    remaining = 48
+    if hint is not None and math.isfinite(hint):
+        # Only skip a prefix of this exact bisection tree. The solar arc is
+        # monotone here; strict lower / inclusive upper preserve the 88° tie.
+        nodes = []
+        for depth in range(1, 35):
+            mid = (low + high) / 2
+            if mid == low or mid == high:
+                break
+            if hint >= mid:
+                low = mid
+            else:
+                high = mid
+            if depth >= 28:
+                nodes.append((depth, low, high))
+        signs = {}
+        def above_target(jd):
+            if jd not in signs:
+                signs[jd] = (birth_sun - longitude(jd, swe.SUN)) % 360 > 88
+            return signs[jd]
+        valid = False
+        for depth, low, high in reversed(nodes):
+            try:
+                valid = above_target(low) and not above_target(high)
+            except ChartError:
+                break
+            if valid:
+                remaining -= depth
+                break
+        if not valid:
+            low, high = birth_jd - 100, birth_jd - 75
+    for _ in range(remaining):
         mid = (low + high) / 2
         # Further bisections cannot change this representable midpoint.
         if mid == low or mid == high:
@@ -60,6 +91,23 @@ def design_time(birth_jd):
     if residual > 1e-7:
         raise ChartError('design_search_failed', 'Не удалось точно определить момент дизайна.')
     return result, residual
+
+
+class DesignTimeSearch:
+    """One day owns two exact results; a prediction is never an output."""
+    def __init__(self):
+        self.previous = self.older = None
+
+    def __call__(self, birth_jd):
+        hint = None
+        if self.previous is not None:
+            old_birth, old_design = self.previous
+            slope = ((old_design - self.older[1]) / (old_birth - self.older[0])
+                     if self.older is not None and old_birth != self.older[0] else 1)
+            hint = old_design + (birth_jd - old_birth) * slope
+        result, residual = design_time(birth_jd, hint=hint)
+        self.older, self.previous = self.previous, (birth_jd, result)
+        return result, residual
 
 
 def longitudes(jd):

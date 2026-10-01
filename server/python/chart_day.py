@@ -26,21 +26,21 @@ def calculate_day(date, timezone):
     columns = [[] for _ in range(24)]
     segments = []
     previous = None
+    design_search = astro.DesignTimeSearch()
     for index, (moment, offset, fold, offset_seconds) in enumerate(minutes):
         if (previous is None or moment - previous[0] != dt.timedelta(minutes=1)
                 or (offset, fold) != previous[1:3]):
             segments.append(dict(index=index, startUtc=civil.iso(moment),
                                  utcOffset=offset, offsetSeconds=offset_seconds, fold=fold))
         jd = astro.julian_tt(moment)
-        design_jd, residual = astro.design_time(jd)
+        design_jd, residual = design_search(jd)
         for side, side_jd in enumerate((jd, design_jd)):
             values = astro.longitudes(side_jd)
             for column, planet in enumerate(PLANETS):
                 columns[side * 11 + column].append(values[planet])
-        # Match the existing API's second precision exactly (no recomputation
-        # from the rounded UTC label when materializing Design activations).
-        design_iso = civil.iso(astro.tt_to_datetime(design_jd))
-        columns[22].append(int(dt.datetime.fromisoformat(design_iso.replace('Z', '+00:00')).timestamp()))
+        # Match the API's UTC second precision, including dates before 1970.
+        # Planet positions still use the unrounded Julian instant above.
+        columns[22].append(int(astro.tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
         columns[23].append(residual)
         previous = (moment, offset, fold)
     return dict(date=date, timezone=timezone, startUtc=civil.iso(minutes[0][0]),

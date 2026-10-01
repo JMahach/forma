@@ -48,6 +48,46 @@ test('controls are visible only when transit is wanted, independently of readine
   assert.deepEqual(h.nowCalls, [], 'rendering state never requests a live refresh');
 });
 
+test('Years coverage hides the ordinary panel while retaining the latest exact day state without owner callbacks', () => {
+  const h = harness();
+  h.update(state({ index: 754, live: false }));
+  h.setCoveredByYears(true); assert.equal(h.panel.hidden, true);
+  const day = timeline('2026-11-01', 'America/New_York');
+  const next = Object.freeze(state({ timeline: day, index: 150, referenceIndex: 901, live: false, status: 'error' }));
+  h.update(next);
+  assert.equal(h.panel.hidden, true);
+  assert.equal(h.range.value, '150'); assert.equal(h.time.textContent, '01:30 · UTC-5');
+  assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
+  assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.nowButton.textContent, 'Повторить');
+  h.setCoveredByYears(false);
+  assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '150');
+  assert.equal(h.range.disabled, true); assert.equal(h.status.textContent, 'День не загрузился');
+  assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+});
+
+test('ending Years coverage reveals the ordinary panel only when its latest owner state wants transit', () => {
+  const h = harness(); h.update(state()); h.setCoveredByYears(true);
+  h.update(state({ wanted: false })); h.setCoveredByYears(false);
+  assert.equal(h.panel.hidden, true, 'closing Years cannot restore a panel after navigating away');
+  h.setCoveredByYears(true); h.update(state({ wanted: true, index: 755 }));
+  assert.equal(h.panel.hidden, true, 'a ready day cannot uncover the Years rail');
+  h.setCoveredByYears(false); assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '755');
+  h.update(state({ wanted: false })); assert.equal(h.panel.hidden, true);
+  assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+});
+
+test('repeated coverage changes never duplicate ordinary slider or Now event delegation', () => {
+  const h = harness(); h.update(state({ index: 120, referenceIndex: 754, live: false }));
+  for (let index = 0; index < 5; index++) {
+    h.setCoveredByYears(true); h.setCoveredByYears(true);
+    h.setCoveredByYears(false); h.setCoveredByYears(false);
+  }
+  assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+  h.range.value = '121'; h.range.dispatch('input'); h.marker.dispatch('click'); h.nowButton.dispatch('click');
+  assert.deepEqual(h.scrubCalls, [[121]]); assert.deepEqual(h.nowCalls, [[], []]);
+  assert.equal(h.range.value, '121'); assert.equal(h.nowButton.getAttribute('aria-pressed'), 'false');
+});
+
 test('range covers every actual minute of ordinary, short and long local days', () => {
   const h = harness();
   for (const [date, zone, minutes] of [
@@ -208,6 +248,28 @@ test('marker-only updates preserve the selected time and aria-valuetext without 
   assert.equal(h.range.getAttribute('aria-valuetext'), label);
   assert.deepEqual(h.scrubCalls, []);
   assert.deepEqual(h.nowCalls, []);
+});
+
+test('unchanged visible text survives marker, coverage and readiness updates without replacing its nodes', () => {
+  const h = harness(), ready = state({ index: 754, referenceIndex: 800, live: false });
+  h.update(ready);
+  const writes = [];
+  for (const name of ['date', 'time', 'status', 'nowButton']) {
+    let value = h[name].textContent;
+    Object.defineProperty(h[name], 'textContent', { get: () => value, set(next) { value = next; writes.push(name); } });
+  }
+  h.update({ ...ready, referenceIndex: 801 });
+  h.setCoveredByYears(true); h.setCoveredByYears(false);
+  assert.deepEqual(writes, []);
+  assert.equal(h.marker.style.left, `${801 / 1439 * 100}%`);
+  assert.equal(h.panel.hidden, false);
+  h.update({ ...ready, status: 'loading' });
+  assert.deepEqual(writes.splice(0), ['status']); assert.equal(h.range.disabled, true);
+  h.update({ ...ready, status: 'error' });
+  assert.deepEqual(writes.splice(0), ['nowButton', 'status']); assert.equal(h.nowButton.disabled, false);
+  h.update({ ...ready, index: 755 });
+  assert.deepEqual(writes, ['nowButton', 'status', 'time']);
+  assert.equal(h.range.disabled, false); assert.equal(h.time.textContent, '12:35 · UTC+5:45');
 });
 
 test('unavailable, stale and hidden transit states clear the marker while callers may omit it', () => {

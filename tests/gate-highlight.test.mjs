@@ -60,7 +60,7 @@ test('compact rings keep the existing touch target, activation disc and readable
       assert.match(group.content, /<circle r="12\.5" fill="transparent" pointer-events="all"\/>/, `gate ${group.id} keeps its touch target`);
       const disc = circle(group, 'bg-gate-disc'), ring = circle(group, 'bg-gate-highlight');
       assert.equal(attribute(disc, 'r'), '9.5');
-      assert.equal(attribute(disc, 'stroke-width'), '.8');
+      assert.equal(attribute(disc, 'stroke'), 'none');
       assert.ok(group.content.indexOf(disc) < group.content.indexOf(ring), 'the compact ring is visible over the activation disc');
       assert.ok(group.content.indexOf(ring) < group.content.indexOf('<text'), 'gate number stays above the ring');
       assert.match(group.content, new RegExp(`<text[^>]*font-size="9\\.9"[^>]*>${group.id}<\\/text>`));

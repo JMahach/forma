@@ -42,7 +42,7 @@ export async function transitCacheFingerprint(root) {
   return hash.digest('hex').slice(0, 16);
 }
 
-export function generateTransitDay({ root, date, spawnWorker, timeoutMs = 60000, maxOutputBytes = 500000 }) {
+export function generateTransitDay({ root, date, spawnWorker, timeoutMs = 60000, maxOutputBytes = 1000000 }) {
   transitDateMilliseconds(date);
   const unavailable = () => new TransitDayError('transit_unavailable', 'Не удалось подготовить дневной транзит. Повторите попытку.');
   return runJsonWorker({

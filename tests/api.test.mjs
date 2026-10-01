@@ -50,7 +50,7 @@ apiTest('the page loads the complete frontend module graph through public source
   while (pending.length) {
     const url = pending.pop();
     assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');
-    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/day-packets/'), `${url.pathname} uses the public source boundary`);
+    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/'), `${url.pathname} uses the public source boundary`);
     if (visited.has(url.pathname)) continue;
     visited.add(url.pathname);
     const module = await request(url);
@@ -72,7 +72,7 @@ apiTest('the page loads the complete frontend module graph through public source
   const loadingGenerator = '/src/scene/loading-placeholder.js';
   assert.ok(!visited.has(loadingGenerator), 'the server/build generator is not browser-reachable');
   assert.equal((await request(loadingGenerator)).status, 404, 'the loading generator remains private');
-  assert.deepEqual([...visited].sort(), [...sourceModules().filter(file => file !== loadingGenerator), ...sourceModules(new URL('../shared/day-packets/', import.meta.url), '/shared/day-packets/')].sort(), 'every frontend module is reachable and publicly loadable');
+  assert.deepEqual([...visited].sort(), [...sourceModules().filter(file => file !== loadingGenerator), ...sourceModules(new URL('../shared/', import.meta.url), '/shared/')].sort(), 'every frontend module is reachable and publicly loadable');
   const styles = await request('/styles.css');
   assert.equal(styles.status, 200);
   assert.match(styles.headers.get('content-type'), /css/);
@@ -149,7 +149,7 @@ apiTest('New York spring-forward gap and impossible calendar dates are rejected'
   assert.equal(invalid.json().error, 'invalid_datetime');
 });
 
-apiTest('current moment calculation returns 13 live transit activations and no design', async () => {
+apiTest('current moment calculation returns 13 live and 13 Design transit activations', async () => {
   const before = Math.floor(Date.now() / 1000) * 1000;
   const response = await post({ mode: 'transit' });
   const after = Date.now();
@@ -157,9 +157,10 @@ apiTest('current moment calculation returns 13 live transit activations and no d
   const { chart } = response.json();
   assert.equal(chart.source, 'transit');
   assert.equal(chart.activations.personality.length, 13);
-  assert.deepEqual(chart.activations.design, []);
-  assert.deepEqual(chart.design, []);
-  assert.equal(chart.designUtc, null);
+  assert.equal(chart.activations.design.length, 13);
+  assert.ok(chart.design.length > 0);
+  assert.ok(Date.parse(chart.designUtc) < Date.parse(chart.utc));
+  assert.ok(chart.designArcResidualDegrees <= 1e-7);
   assert.ok(Date.parse(chart.utc) >= before && Date.parse(chart.utc) <= after);
 });
 

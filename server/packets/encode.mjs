@@ -1,5 +1,5 @@
 import { byteView as view, validOrder, encodeFloat64Words, shuffle } from '../../shared/day-packets/float64-codec.js';
-import { TRANSIT_DAY_VERSION, TRANSIT_PLANETS, TRANSIT_SAMPLES as MINUTES, TRANSIT_PAYLOAD_BYTES as PAYLOAD_BYTES,
+import { TRANSIT_DAY_VERSION, TRANSIT_DAY_COLUMNS, TRANSIT_SAMPLES as MINUTES, TRANSIT_PAYLOAD_BYTES as PAYLOAD_BYTES,
   TRANSIT_MAX_HEADER_BYTES as MAX_HEADER_BYTES, validateTransitMetadata, validTransitValue, failTransitPacket } from '../../shared/day-packets/transit-format.js';
 import { CHART_DAY_VERSION, CHART_DAY_COLUMNS as COLUMNS, CHART_DAY_MAX_SAMPLES as MAX_SAMPLES,
   CHART_DAY_MAX_HEADER_BYTES as MAX_HEADER, validateChartDayMetadata, validChartDayValue, failChartDayPacket } from '../../shared/day-packets/natal-format.js';
@@ -7,7 +7,7 @@ import { CHART_DAY_VERSION, CHART_DAY_COLUMNS as COLUMNS, CHART_DAY_MAX_SAMPLES 
 const encoder = new TextEncoder();
 function transitWords(values, order) {
   if (!validOrder(order) || !values || values.length !== MINUTES) return failTransitPacket();
-  for (let row = 0; row < values.length; row++) if (!validTransitValue(values[row])) return failTransitPacket();
+  for (let row = 0; row < values.length; row++) if (!Number.isFinite(values[row])) return failTransitPacket();
   return encodeFloat64Words(values, order);
 }
 function chartWords(values, order) {
@@ -18,15 +18,18 @@ function chartWords(values, order) {
 export const encodeNumericColumn = (values, order) => shuffle(transitWords(values, order));
 export const encodeChartDayColumn = (values, order) => shuffle(chartWords(values, order));
 
-export function encodeTransitDay(day, { orders = TRANSIT_PLANETS.map(() => 3) } = {}) {
+export function encodeTransitDay(day, { orders = Array(TRANSIT_DAY_COLUMNS).fill(3) } = {}) {
   const header = validateTransitMetadata({ version: TRANSIT_DAY_VERSION, date: day.date, startUtc: day.startUtc,
     samples: day.samples, stepSeconds: day.stepSeconds, orders: [...orders], engine: day.engine,
     ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac });
-  if (!Array.isArray(day.columns) || day.columns.length !== TRANSIT_PLANETS.length) return failTransitPacket();
+  if (!Array.isArray(day.columns) || day.columns.length !== TRANSIT_DAY_COLUMNS) return failTransitPacket();
   const metadata = encoder.encode(JSON.stringify(header));
   if (metadata.length > MAX_HEADER_BYTES) return failTransitPacket();
   const numeric = new Uint8Array(PAYLOAD_BYTES);
-  day.columns.forEach((column, i) => numeric.set(transitWords(column, orders[i]), i * MINUTES * 8));
+  day.columns.forEach((column, i) => {
+    if (!column || column.length !== MINUTES || !column.every(value => validTransitValue(value, i))) return failTransitPacket();
+    numeric.set(transitWords(column, orders[i]), i * MINUTES * 8);
+  });
   const packet = new Uint8Array(8 + metadata.length + PAYLOAD_BYTES);
   packet.set([70, 84, 68, 49]); // FTD1
   view(packet).setUint32(4, metadata.length, true);

@@ -117,6 +117,53 @@ test('development revalidates source files while sharing concurrent encoding wor
   assert.notEqual(next.headers.ETag, previous.headers.ETag);
 });
 
+test('archive availability exposes Years in the first development/release HTML in every encoding without changing build files', async t => {
+  for (const precompressed of [false, true]) {
+    const root = await directory(t);
+    const source = '<html><body><button id="fitButton" hidden>Домой</button><button id="lifetimeToggle" hidden>Годы</button><main id="lifetimeControls" hidden>Форма</main></body></html>';
+    const file = precompressed ? 'index.html' : 'public/index.html';
+    const files = precompressed ? await release(root) : undefined;
+    await write(root, file, source);
+    if (precompressed) {
+      await write(root, `${file}.br`, brotli(Buffer.from(source)));
+      await write(root, `${file}.gz`, gzipSync(source));
+    }
+    const tags = new Map();
+    for (const lifetimeEnabled of [false, true]) {
+      const serve = handler(root, { files, precompressed, lifetimeEnabled });
+      const expected = lifetimeEnabled ? source.replace('<body>', '<body data-lifetime-enabled="true">')
+        .replace('id="lifetimeToggle" hidden', 'id="lifetimeToggle"') : source;
+      for (const [encoding, unpack] of [['identity', bytes => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]]) {
+        const headers = { 'accept-encoding': encoding };
+        const get = await request(serve, '/', { headers });
+        assert.equal(get.status, 200);
+        const html = unpack(get.body).toString();
+        assert.equal(html, expected);
+        const toggle = html.match(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/)?.[0];
+        assert.ok(toggle);
+        assert.equal(/\s+hidden(?=\s|>)/.test(toggle), !lifetimeEnabled, 'Years availability is resolved before JavaScript');
+        assert.match(html, /<button id="fitButton" hidden>/, 'Home still waits for actual camera movement');
+        assert.match(html, /<main id="lifetimeControls" hidden>/, 'the optional panel starts closed');
+        assert.equal(get.headers.ETag, digest(get.body));
+        assert.equal(get.headers['Content-Length'], get.body.length);
+        const head = await request(serve, '/', { method: 'HEAD', headers });
+        assert.deepEqual(head.headers, get.headers); assert.equal(head.body, undefined);
+        const tag = get.headers.ETag;
+        assert.equal((await request(serve, '/', { headers: { ...headers, 'if-none-match': tag } })).status, 304);
+        if (lifetimeEnabled) {
+          assert.notEqual(tag, tags.get(encoding));
+          assert.equal((await request(serve, '/', { headers: { ...headers, 'if-none-match': tags.get(encoding) } })).status, 200);
+        } else tags.set(encoding, tag);
+      }
+    }
+    assert.equal(await fs.readFile(path.join(root, file), 'utf8'), source);
+    if (precompressed) {
+      assert.equal(gunzipSync(await fs.readFile(path.join(root, `${file}.gz`))).toString(), source);
+      assert.equal(brotliDecompressSync(await fs.readFile(path.join(root, `${file}.br`))).toString(), source);
+    }
+  }
+});
+
 test('unlisted source, private files and encoded traversal are never served', async t => {
   const root = await directory(t);
   for (const filename of ['private.txt', 'src/unlisted.js', '.git/config', 'server/private.mjs', 'data/cities.json']) {

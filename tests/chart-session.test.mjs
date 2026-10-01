@@ -39,6 +39,24 @@ test('reselecting a saved chart closes its day preview in one update', async () 
   assert.equal(h.changes.length, 1); assert.equal(h.changes[0].chart, h.session.original);
 });
 
+test('lifetime is a temporary view and selecting a chart closes it without changing saved records', () => {
+  const original = { id: 'saved', source: 'calculated', name: 'Saved' };
+  const preview = { id: 'lifetime-preview', source: 'transit', utc: '1900-01-01T00:00:00Z' };
+  let current = null, closes = 0;
+  const lifetime = { get current() { return current; }, close() { current = null; closes++; session.refresh(); } };
+  const changes = [];
+  const store = { get: id => id === 'saved' ? original : null, has: id => id === 'saved' };
+  const session = createChartSession({ store, getLifetime: () => lifetime, onChange: () => changes.push(session.current) });
+  session.select('saved');
+  current = preview; session.refresh();
+  assert.equal(session.current, preview); assert.equal(session.original, original);
+  assert.equal(session.selectedId, 'saved'); assert.equal(session.hasCurrent, true);
+  changes.length = 0;
+  session.select('saved');
+  assert.equal(current, null); assert.equal(closes, 2);
+  assert.deepEqual(changes, [original]);
+});
+
 test('every intermediate natal minute is published synchronously without waiting for release or a frame', async () => {
   const h = harness([personalChartFixture()]);
   h.session.select(h.store.charts[0].id); await h.natal.open(); h.changes.length = 0;
@@ -53,7 +71,8 @@ test('every intermediate natal minute is published synchronously without waiting
 
 test('every transit input publishes exact positions while late source updates never change navigation', async () => {
   const h = harness([personalChartFixture()]);
-  const columns = Array.from({ length: 11 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column * 20 + minute / 10000));
+  const columns = Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
+    ? (column * 20 + minute / 10000) % 360 : column === 22 ? Date.parse('2026-09-24T00:00:00Z') / 1000 - 88 * 86400 + minute * 61 : minute % 100 * 1e-12));
   const transit = createLiveTransit({ now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'UTC',
     dayClient: { getDay: async date => ({ date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60, columns }) },
     onRender: h.session.refresh });

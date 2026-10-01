@@ -9,3 +9,8 @@ __pycache__/
 .pytest_cache/
 .cache/transit/
 dist/
+
+# Generated lifetime archives and their completion metadata.
+*.f64le
+*.f64le.*.tmp
+.cache/lifetime/

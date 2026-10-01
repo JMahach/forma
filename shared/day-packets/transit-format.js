@@ -2,18 +2,21 @@ import { validOrder } from './float64-codec.js';
 
 // Version the calculation AND binary contract together. Bump when ephemerides,
 // calculation flags or reconstruction rules change: HTTP/disk caches use it.
-export const TRANSIT_DAY_VERSION = '1';
+export const TRANSIT_DAY_VERSION = '2';
 export const TRANSIT_PLANETS = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']);
 // Protocol column order is fixed; never derive it from the UI catalogue.
 export const TRANSIT_SAMPLES = 1440;
-export const TRANSIT_PAYLOAD_BYTES = TRANSIT_SAMPLES * TRANSIT_PLANETS.length * 8;
+// Personality, Design, Design UTC seconds and the exact 88° search residual.
+export const TRANSIT_DAY_COLUMNS = 24;
+export const TRANSIT_PAYLOAD_BYTES = TRANSIT_SAMPLES * TRANSIT_DAY_COLUMNS * 8;
 export const TRANSIT_MAX_HEADER_BYTES = 4096;
 export const failTransitPacket = () => { throw new Error('Некорректный пакет дневного транзита.'); };
-export const validTransitValue = value => Number.isFinite(value) && value >= 0 && value < 360;
+export const validTransitValue = (value, column = 0) => Number.isFinite(value) && (column < 22 ? value >= 0 && value < 360
+  : column === 22 ? Number.isInteger(value) && value > -10_000_000_000 && value < 20_000_000_000 : value >= 0 && value <= 1e-7);
 
 export function validateTransitMetadata(header) {
   if (!header || header.version !== TRANSIT_DAY_VERSION || header.samples !== TRANSIT_SAMPLES || header.stepSeconds !== 60
-    || !Array.isArray(header.orders) || header.orders.length !== TRANSIT_PLANETS.length || !header.orders.every(validOrder)
+    || !Array.isArray(header.orders) || header.orders.length !== TRANSIT_DAY_COLUMNS || !header.orders.every(validOrder)
     || typeof header.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(header.date)
     || header.startUtc !== `${header.date}T00:00:00Z`) return failTransitPacket();
   const parsed = new Date(header.startUtc);

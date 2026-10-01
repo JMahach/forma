@@ -124,10 +124,15 @@ test('activation preview mounts real controllers and preserves hover, selection,
   click('pinThroat');
   assert.deepEqual(controller.selectionState.items, []);
   svg.send('keydown', { key: 'Enter', target: anchor('design-sun') });
+  assert.equal(controller.activationPopover.currentId, null);
+  assert.equal(panel.hidden, true, 'the first activation selects without percentages');
+  assert.deepEqual(controller.selectionState.items, [{ type: 'gate', id: 41, activation: 'design-sun' }]);
+  svg.send('keydown', { key: 'Enter', target: anchor('design-sun') });
   assert.equal(controller.activationPopover.currentId, 'design-sun');
   assert.equal(panel.hidden, false);
   svg.send('keydown', { key: 'Enter', target: anchor('design-sun') });
   assert.equal(panel.hidden, true);
+  assert.deepEqual(controller.selectionState.items, [], 'the third activation clears selection and percentages');
   controller.choose({ type: 'gate', id: 29 });
   controller.clearSelection();
   assert.deepEqual(controller.selectionState.items, []);

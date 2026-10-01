@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderMandala } from '../src/scene/mandala.js';
-import { mandalaPoint, MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from '../src/scene/geometry/mandala-geometry.js';
+import { mandalaPoint, MANDALA_GEOMETRY, MANDALA_SCENE_SCALE, MANDALA_SCENE_TRANSFORM } from '../src/scene/geometry/mandala-geometry.js';
+import { DRAWING_TRANSFORM } from '../src/scene/geometry/drawing-presentation.js';
+import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.js';
-import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { renderVariableArrows } from '../src/scene/variable-arrows.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { PLANETS } from '../src/domain/planets.js';
@@ -154,8 +156,44 @@ test('five-percent wider ring, light edge, and labels fit the optional frame wit
   assert.ok(cx + radius <= bounds.x + bounds.width);
   assert.ok(cy - radius >= bounds.y);
   assert.ok(cy + radius <= bounds.y + bounds.height, 'the enlarged wheel and cursor fit Home without shrinking the body');
-  assert.ok(Math.abs(bounds.x + bounds.width / 2 - cx) < 1e-8);
+  assert.equal(STUDIO_FRAME.bounds.x + STUDIO_FRAME.bounds.width / 2, cx, 'Home remains centered; optional navigation also accommodates asymmetric checkbox hit areas');
   assert.equal(bounds.y + bounds.height / 2, cy);
+});
+
+test('shared studio content enlarges around chart y=410 while its focus targets clear the unchanged inner rim', () => {
+  assert.deepEqual(MANDALA_GEOMETRY, { centerX: 320, centerY: 398, outerRadius: 373.8,
+    innerRadius: 340.2, labelRadius: 357, rayRadius: 331.8 }, 'the established wheel remains exact');
+  assert.equal(MANDALA_SCENE_TRANSFORM, 'translate(320 398) scale(1.1904761904761905) translate(-320 -398)');
+  const matrix = /^matrix\(([^)]+)\)$/.exec(DRAWING_TRANSFORM)?.[1].split(',').map(Number);
+  assert.equal(matrix?.length, 6);
+  assert.ok(matrix.every(Number.isFinite));
+  const [a, b, c, d, tx, ty] = matrix;
+  assert.equal(b, 0); assert.equal(c, 0); assert.equal(a, d, 'no rotation, skew or unequal scaling');
+  assert.ok(Math.abs(a * .96 - 1) < 1e-12, 'restoring a four-percent smaller ring enlarges the core by 1/.96');
+  const project = ([x, y]) => [a * x + c * y + tx, b * x + d * y + ty];
+  const center = project([320, 410]);
+  assert.ok(Math.abs(center[0] - 320) < 1e-10 && Math.abs(center[1] - 398) < 1e-10);
+  const gCenter = project([320, CENTERS.find(center => center.id === 'g').labelY]);
+  assert.ok(Math.abs(gCenter[1] - 398 - 26 / .96) < 1e-10, 'G is closer to the ring center by the requested twelve chart units');
+
+  const markup = renderBodygraph({}, null, { profile: 'studio', showMandala: true });
+  assert.equal(markup.match(/class="bodygraph-drawing[^"]*" transform="([^"]+)"/)?.[1], DRAWING_TRANSFORM);
+  const focusWidths = [...markup.matchAll(/<path class="bg-center-highlight"[^>]*stroke-width="([^"]+)"/g)].map(match => Number(match[1]));
+  assert.equal(focusWidths.length, CENTERS.length);
+  const innerRadius = MANDALA_GEOMETRY.innerRadius * MANDALA_SCENE_SCALE;
+  const inside = (point, padding, label) => {
+    const [x, y] = project(point);
+    assert.ok(Math.hypot(x - 320, y - 398) + padding * a < innerRadius - 1,
+      `${label}, including its transformed focus/hit extent, leaves clearance for the inner rim stroke`);
+  };
+  CENTERS.forEach((center, index) => {
+    // Rounded centers stay inside their authored convex polygons. Checking
+    // every vertex plus the focus stroke therefore bounds the entire shape.
+    center.points.split(' ').forEach(point => inside(point.split(',').map(Number), focusWidths[index] / 2, center.id));
+  });
+  const gateHits = [...markup.matchAll(/<circle r="([^"]+)" fill="transparent" pointer-events="all"/g)].map(match => Number(match[1]));
+  assert.equal(gateHits.length, GATES.length);
+  GATES.forEach((gate, index) => inside([gate.x, gate.y], gateHits[index], `gate ${gate.id}`));
 });
 
 test('gate-only rendering is deterministic and does not modify saved data', () => {
@@ -324,7 +362,7 @@ test('all known planet and node activations receive exact rays, not artificial g
   assert.equal(renderMandala(chart), renderMandala(chart), 'exact rendering remains deterministic');
 });
 
-test('all 26 natal or 13 transit planet glyphs occupy a separate decorative outer layer without moving true rays', () => {
+test('all supplied natal or transit planet glyphs occupy a separate decorative outer layer without moving true rays', () => {
   const natal = {
     source: 'calculated', personality: [41], design: [41],
     activations: Object.fromEntries(['design', 'personality'].map(source => [source,
@@ -340,7 +378,7 @@ test('all 26 natal or 13 transit planet glyphs occupy a separate decorative oute
     assert.equal(layer.attrs['pointer-events'], 'none');
     assert.equal(layer.attrs['aria-hidden'], 'true');
     assert.equal(collect(layer, node => node.attrs['data-type'] || node.attrs.tabindex || node.attrs.role || node.attrs['pointer-events'] === 'all').length, 0);
-    const glyphs = symbols(root), expectedSources = chart.source === 'transit' ? ['personality'] : ['design', 'personality'];
+    const glyphs = symbols(root), expectedSources = ['design', 'personality'];
     assert.equal(glyphs.length, expectedSources.length * PLANETS.length);
     assertMatchingSymbols(root);
     for (const source of expectedSources) {
@@ -422,7 +460,7 @@ test('incomplete or invalid saved planet data never produces guessed marker posi
   assert.equal(symbols(parseSvg(renderMandala(malformed))).length, 0);
   const transit = { ...crossFixture(), source: 'transit' };
   const transitMarkers = markers(parseSvg(renderMandala(transit)));
-  assert.equal(transitMarkers.length, 2);
+  assert.equal(transitMarkers.length, 4);
   assertMatchingSymbols(parseSvg(renderMandala(transit)));
-  assert.ok(transitMarkers.every(marker => marker.attrs['data-source'] === 'personality'));
+  assert.deepEqual(new Set(transitMarkers.map(marker => marker.attrs['data-source'])), new Set(['design', 'personality']));
 });
