@@ -2,6 +2,7 @@
 import datetime as dt
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import struct
 import sys
@@ -12,13 +13,15 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server.python import astronomy as astro
 from server.python import lifetime_archive as archive
-from server.python.transit_day import PLANETS as TRANSIT_PLANETS
 
 
 class LifetimeArchiveTests(unittest.TestCase):
     def test_shared_format_matches_full_transit_planet_contract(self):
         planets, step, version, format_text = archive.archive_format()
-        self.assertEqual(planets, list(TRANSIT_PLANETS))
+        protocol = ['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter',
+                    'saturn', 'uranus', 'neptune', 'pluto']
+        self.assertEqual(planets, protocol)
+        self.assertEqual([planet for planet, _ in astro.PLANET_BODIES], protocol)
         self.assertEqual(step, 600)
         self.assertEqual(version, '2')
         self.assertIn('planet-major', format_text)
@@ -42,7 +45,7 @@ class LifetimeArchiveTests(unittest.TestCase):
             self.assertEqual(one.read_bytes(), two.read_bytes())
             self.assertEqual(serial['sha256'], parallel['sha256'])
             self.assertEqual(serial['sha256'], hashlib.sha256(one.read_bytes()).hexdigest())
-            self.assertEqual(serial['bytes'], 144 * len(TRANSIT_PLANETS) * 8)
+            self.assertEqual(serial['bytes'], 144 * 11 * 8)
             self.assertEqual(serial['sampleCount'], 144)
             self.assertEqual(serial['stepSeconds'], 600)
             self.assertEqual(serial, json.loads(one.with_suffix('.metadata.json').read_text()))
@@ -77,7 +80,7 @@ class LifetimeArchiveTests(unittest.TestCase):
             self.assertEqual(result['version'], version)
             self.assertEqual(result['columns'], planets)
             self.assertEqual(result['computedColumns'], missing)
-            self.assertEqual(result['reusedArchive'], dict(version='1', columns=old_planets, sha256=old['sha256']))
+            self.assertEqual(result['reusedArchive'], dict(version='1', columns=old_planets, sha256=old['sha256'], provenance=old['provenance']))
             # A complete compatible archive requires no ephemeris chunk calls.
             copied = Path(directory) / 'copied.f64le'
             with mock.patch.object(archive, 'calculate_chunk', side_effect=AssertionError('Nothing missing')):
@@ -134,6 +137,45 @@ class LifetimeArchiveTests(unittest.TestCase):
                 archive.publish_new(temporary, destination)
             self.assertEqual(destination.read_bytes(), b'existing')
             self.assertEqual(temporary.read_bytes(), b'new')
+
+    def test_new_archive_records_current_inputs_and_legacy_reuse_stays_unverified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, copied = [Path(directory) / (name + '.f64le') for name in ('source', 'copied')]
+            metadata = archive.generate_archive(source, '2024-02-29', '2024-03-01', workers=1)
+            self.assertEqual(metadata['provenance'], dict(version='1', calculationFingerprint=archive.calculation_fingerprint()))
+            del metadata['provenance']
+            source.with_suffix('.metadata.json').write_text(json.dumps(metadata))
+            result = archive.generate_archive(copied, '2024-02-29', '2024-03-01', workers=1, reuse_file=source)
+            self.assertNotIn('provenance', result, 'A byte copy cannot certify unknown generation inputs')
+            self.assertEqual(copied.read_bytes(), source.read_bytes())
+
+    def test_declared_incompatible_provenance_cannot_be_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, copied = [Path(directory) / (name + '.f64le') for name in ('source', 'copied')]
+            metadata = archive.generate_archive(source, '2024-02-29', '2024-03-01', workers=1)
+            metadata['provenance'] = dict(version='1', calculationFingerprint='0' * 64)
+            source.with_suffix('.metadata.json').write_text(json.dumps(metadata))
+            with self.assertRaisesRegex(ValueError, 'provenance'):
+                archive.generate_archive(copied, '2024-02-29', '2024-03-01', workers=1, reuse_file=source)
+            self.assertFalse(copied.exists())
+
+    def test_fingerprint_tracks_optional_ephemeris_files_without_changing_real_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('server/python', 'shared', 'data/ephe'):
+                shutil.copytree(archive.ROOT / name, root / name)
+            shutil.copyfile(archive.ROOT / 'requirements.txt', root / 'requirements.txt')
+            with mock.patch.object(archive, 'ROOT', root):
+                original = archive.calculation_fingerprint()
+                optional = root / 'data/ephe/seleapsec.txt'
+                before = original
+                for payload in (b'', b'20261231\n', b'20271231\n'):
+                    optional.write_bytes(payload)
+                    changed = archive.calculation_fingerprint()
+                    self.assertNotEqual(changed, before, 'Optional input appearance and changed bytes must invalidate provenance')
+                    before = changed
+                optional.unlink()
+                self.assertEqual(archive.calculation_fingerprint(), original)
 
     def test_only_supported_exact_calendar_intervals_are_accepted(self):
         for start, end in (('1800-12-31', '1801-01-02'), ('2399-12-31', '2400-01-02'),

@@ -1,7 +1,16 @@
+import { primaryChart, isChartOverlay } from '../domain/chart-composition.js';
+import { cycleEventLabel } from '../domain/cycles.js';
 import { formatDateInput } from './date-input.js';
 
-export const canManageChart = chart => chart && chart.id !== 'current-transit' && chart.source !== 'transit';
-export const chartTitle = chart => chart.id === 'current-transit' || chart.source === 'transit' ? 'Транзит' : chart.name;
+export const canManageChart = value => {
+  const chart = primaryChart(value);
+  return chart && chart.id !== 'current-transit' && chart.source !== 'transit';
+};
+export const chartTitle = value => {
+  const chart = primaryChart(value);
+  if (isChartOverlay(value)) return `${chart.name?.trim() || 'Личная карта'} · ${value.kind === 'return' ? cycleEventLabel(value.event) : 'Транзит'}`;
+  return chart.id === 'current-transit' || chart.source === 'transit' ? 'Транзит' : chart.name;
+};
 let transitFormatters;
 const transitSubtitle = (value, useUtc = false) => {
   if (typeof value !== 'string' || !value.trim()) return '';
@@ -22,5 +31,16 @@ const transitSubtitle = (value, useUtc = false) => {
   ];
   return transitFormatters.map(formatter => formatter.format(local)).join(' · ') + (useUtc ? ' · UTC' : '');
 };
-export const chartSubtitle = chart => chart.id === 'current-transit' || chart.source === 'transit' ? transitSubtitle(chart.utc, chart.id === 'lifetime-preview')
-  : [chart.birthDate ? formatDateInput(chart.birthDate) : '', chart.birthTime, chart.birthPlace].filter(Boolean).join(' · ');
+export const chartSubtitle = (value, { useUtc } = {}) => {
+  if (isChartOverlay(value)) return transitSubtitle(value.utc, true);
+  const chart = primaryChart(value);
+  return chart.id === 'current-transit' || chart.source === 'transit' ? transitSubtitle(chart.utc, useUtc ?? chart.id === 'lifetime-preview')
+    : [chart.birthDate ? formatDateInput(chart.birthDate) : '', chart.birthTime, chart.birthPlace].filter(Boolean).join(' · ');
+};
+
+// A personal timeline is a preview owned by the selected natal chart. Its
+// calculation uses transit data, but navigation and the header retain identity.
+export function chartCaption(chart, owner = chart, personalPreview = false, options) {
+  const identity = personalPreview && !isChartOverlay(chart) && owner?.source !== 'transit' && owner?.id !== 'current-transit' ? owner : chart;
+  return { title: chartTitle(identity), subtitle: chartSubtitle(identity, options) };
+}

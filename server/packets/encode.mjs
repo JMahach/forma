@@ -26,10 +26,12 @@ export function encodeTransitDay(day, { orders = Array(TRANSIT_DAY_COLUMNS).fill
   const metadata = encoder.encode(JSON.stringify(header));
   if (metadata.length > MAX_HEADER_BYTES) return failTransitPacket();
   const numeric = new Uint8Array(PAYLOAD_BYTES);
-  day.columns.forEach((column, i) => {
-    if (!column || column.length !== MINUTES || !column.every(value => validTransitValue(value, i))) return failTransitPacket();
-    numeric.set(transitWords(column, orders[i]), i * MINUTES * 8);
-  });
+  for (let i = 0; i < TRANSIT_DAY_COLUMNS; i++) {
+    const column = day.columns[i];
+    if (!column || column.length !== MINUTES) return failTransitPacket();
+    for (let row = 0; row < MINUTES; row++) if (!validTransitValue(column[row], i)) return failTransitPacket();
+    numeric.set(encodeFloat64Words(column, orders[i]), i * MINUTES * 8);
+  }
   const packet = new Uint8Array(8 + metadata.length + PAYLOAD_BYTES);
   packet.set([70, 84, 68, 49]); // FTD1
   view(packet).setUint32(4, metadata.length, true);
@@ -46,10 +48,12 @@ export function encodeChartDay(day, { orders = Array(COLUMNS).fill(3) } = {}) {
   const metadata = encoder.encode(JSON.stringify(header));
   if (metadata.length > MAX_HEADER) return failChartDayPacket();
   const numeric = new Uint8Array(COLUMNS * day.samples * 8);
-  day.columns.forEach((column, i) => {
-    if (column.length !== day.samples || !column.every(value => validChartDayValue(value, i))) return failChartDayPacket();
-    numeric.set(chartWords(column, orders[i]), i * day.samples * 8);
-  });
+  for (let i = 0; i < COLUMNS; i++) {
+    const column = day.columns[i];
+    if (!column || column.length !== day.samples) return failChartDayPacket();
+    for (let row = 0; row < day.samples; row++) if (!validChartDayValue(column[row], i)) return failChartDayPacket();
+    numeric.set(encodeFloat64Words(column, orders[i]), i * day.samples * 8);
+  }
   const packet = new Uint8Array(8 + metadata.length + numeric.length);
   packet.set([70, 67, 68, 49]); // FCD1
   view(packet).setUint32(4, metadata.length, true);

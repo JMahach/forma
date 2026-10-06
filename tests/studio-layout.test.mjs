@@ -35,6 +35,27 @@ function layoutHarness(phone = true, width = 390, height = 844) {
     resize(width, height) { Object.assign(rect, { width, height }); return layout.refresh(); } };
 }
 
+test('layout reads the shared canvas offset once before writing any panel styles', () => {
+  const events = [];
+  let offset = 40;
+  const writes = () => new Proxy({}, { set(target, key, value) { events.push('write'); target[key] = value; return true; } });
+  const canvas = { dataset: writes(), getBoundingClientRect: () => ({ width: 1000, height: 800 }),
+    get offsetLeft() { events.push('offset'); return offset; } };
+  const panels = Array.from({ length: 3 }, () => ({ dataset: writes(), style: writes() }));
+  const layout = createStudioLayout({ canvas, panels, art: { style: writes() }, media: { matches: false },
+    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '64px', scrollPaddingLeft: '12px' }) });
+  const assertReads = () => {
+    assert.equal(events.filter(event => event === 'offset').length, 1);
+    assert.ok(events.indexOf('offset') < events.indexOf('write'), 'geometry is read before styles or data attributes change');
+  };
+  assertReads();
+  const initialLeft = parseFloat(panels[0].style.left);
+  events.length = 0; offset = 120;
+  layout.refresh();
+  assertReads();
+  for (const panel of panels) assert.equal(parseFloat(panel.style.left), initialLeft + 80, 'all timelines follow the changed canvas offset');
+});
+
 test('one studio square contains the drawing, ring cursors and full planet lanes', () => {
   const { bounds } = STUDIO_FRAME, { centerX, centerY } = MANDALA_GEOMETRY;
   assert.equal(bounds.width, bounds.height);
@@ -346,7 +367,7 @@ test('hidden, loading, error and differently sized panels retain the frame witho
   }
 });
 
-test('every screen refreshes the existing camera and keeps one Home across both toggle directions', () => {
+test('every Studio screen keeps one Home without remeasuring the camera on either toggle', () => {
   const h = layoutHarness(false), calls = [], attributes = {};
   let click, mode;
   mode = attachMandalaMode({
@@ -355,7 +376,7 @@ test('every screen refreshes the existing camera and keeps one Home across both 
     canvas: { style: { setProperty() {} }, classList: { toggle() {} } },
     beforeChange: () => calls.push('close'), render: () => calls.push(`render ${mode.enabled}`),
     gestures: {
-      refreshFrame() { calls.push('refresh'); }, transitionHome() { assert.fail('a mode toggle must not animate the camera'); },
+      refreshFrame() { assert.fail('the permanent Studio frame does not need a new measurement'); }, transitionHome() { assert.fail('a mode toggle must not animate the camera'); },
       reset() { assert.fail('a mode toggle is not an explicit Home reset'); },
     },
     motion: { setExpanded: enabled => calls.push(`ring ${enabled}`) },
@@ -365,7 +386,7 @@ test('every screen refreshes the existing camera and keeps one Home across both 
     for (const enabled of [true, false]) {
       const before = h.layout.refresh();
       calls.length = 0; click();
-      assert.deepEqual(calls, ['close', `render ${enabled}`, 'refresh', `ring ${enabled}`]);
+      assert.deepEqual(calls, ['close', `render ${enabled}`, `ring ${enabled}`]);
       assert.equal(mode.homeFrame, STUDIO_FRAME);
       assert.equal(mode.frame, MANDALA_FRAME, 'navigation bounds also stay independent of the visible layer');
       assert.equal(attributes['aria-checked'], String(enabled));
@@ -380,9 +401,9 @@ test('space-dependent columns retain every ring/body gate, exact core markup and
     activations: { personality: [{ planet: 'sun', gate: 20, line: 3 }], design: [{ planet: 'sun', gate: 57, line: 2 }] } };
   const viewport = { innerHTML: '', querySelector: () => null };
   const graph = createGraphController({
-    viewport, renderChart: renderBodygraph, getChart: () => chart, getMandala: () => state,
+    viewport, scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } }, getChart: () => chart, getMandala: () => state,
     getShowActivations: () => !(state.enabled && !h.layout.showMandalaColumns),
-    alignHeading() {}, activationPopover: { close() {}, refresh() {}, show() {} },
+    activationPopover: { close() {}, refresh() {}, show() {} },
   });
   graph.choose({ type: 'gate', id: '20' });
   const normal = viewport.innerHTML, selected = graph.selectionState.items;

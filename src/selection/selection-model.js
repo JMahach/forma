@@ -60,12 +60,11 @@ export function createSelectionModel() {
   }
 
   function clearCrosses() { groups = []; expandedGates.clear(); combined = null; crosses = EMPTY_CROSSES; }
-  const effect = value => (combined?.items || base.items).length === 1 ? value : { popoverActivation: null };
 
   function choose(value) {
     if (value?.type === 'mandala-cross') {
       const cross = snapshotCross(value.cross);
-      if (!cross) return { popoverActivation: null };
+      if (!cross) return;
       const index = groups.findIndex(group => crossKey(group.cross) === crossKey(cross));
       const repeated = index !== -1 && (value.additive || groups.length === 1 && base.items.length === 0 && expandedGates.size === 0);
       if (!value.additive) {
@@ -74,7 +73,7 @@ export function createSelectionModel() {
       } else if (repeated) groups.splice(index, 1);
       else groups.push({ cross, excluded: new Set() });
       rebuild();
-      return { popoverActivation: null };
+      return;
     }
 
     if (!groups.length && !expandedGates.size) return base.choose(value);
@@ -99,12 +98,11 @@ export function createSelectionModel() {
         }
         if (base.items.some(item => ownedGates(item).includes(id))) base.choose(value);
         rebuild();
-        return { popoverActivation: null };
+        return;
       }
     }
-    const result = base.choose(value);
+    base.choose(value);
     rebuild();
-    return effect(result);
   }
 
   function chooseSummary(gates, filter, { additive = false } = {}) {

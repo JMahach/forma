@@ -14,6 +14,12 @@ swe.set_ephe_path(str(ROOT / 'data' / 'ephe'))
 FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 UTC = dt.timezone.utc
 GATE_WHEEL = [41,19,13,49,30,55,37,63,22,36,25,17,21,51,42,3,27,24,2,23,8,20,16,35,45,12,15,52,39,53,62,56,31,33,7,4,29,59,40,64,47,6,46,18,48,57,32,50,28,44,1,43,14,34,9,5,26,11,10,58,38,54,61,60]
+PLANET_BODIES = (
+    ('sun', swe.SUN), ('moon', swe.MOON), ('north_node', swe.TRUE_NODE),
+    ('mercury', swe.MERCURY), ('venus', swe.VENUS), ('mars', swe.MARS),
+    ('jupiter', swe.JUPITER), ('saturn', swe.SATURN), ('uranus', swe.URANUS),
+    ('neptune', swe.NEPTUNE), ('pluto', swe.PLUTO),
+)
 
 
 def julian_tt(moment):
@@ -111,8 +117,25 @@ class DesignTimeSearch:
 
 
 def longitudes(jd):
-    bodies = [('sun', swe.SUN), ('moon', swe.MOON), ('north_node', swe.TRUE_NODE), ('mercury', swe.MERCURY), ('venus', swe.VENUS), ('mars', swe.MARS), ('jupiter', swe.JUPITER), ('saturn', swe.SATURN), ('uranus', swe.URANUS), ('neptune', swe.NEPTUNE), ('pluto', swe.PLUTO)]
-    return {name: longitude(jd, body) for name, body in bodies}
+    return {name: longitude(jd, body) for name, body in PLANET_BODIES}
+
+
+def sample_columns(moments):
+    """Exact P/D columns for an already selected UTC minute grid."""
+    columns = [[] for _ in range(24)]
+    design_search = DesignTimeSearch()
+    for moment in moments:
+        jd = julian_tt(moment)
+        design_jd, residual = design_search(jd)
+        for side, side_jd in enumerate((jd, design_jd)):
+            values = longitudes(side_jd)
+            for column, (planet, _) in enumerate(PLANET_BODIES):
+                columns[side * 11 + column].append(values[planet])
+        # Match API UTC seconds, including dates before 1970. Positions above
+        # still use the unrounded Julian instant.
+        columns[22].append(int(tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
+        columns[23].append(residual)
+    return columns
 
 
 def activations(jd):

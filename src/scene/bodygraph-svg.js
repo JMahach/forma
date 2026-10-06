@@ -1,7 +1,7 @@
-import { PALETTE, CHANNEL_WIDTH, paintActivation, integrationPaint, integrationStemPaint, integrationOutlineMask, integrationChannels, armPaintPoints, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.js';
+import { PALETTE, CHANNEL_WIDTH, paintGateActivation, integrationPaint, integrationStemPaint, integrationOutlineMask, integrationChannels, armPaintPoints, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.js';
 import { CENTERS, GATES } from './geometry/chart-geometry.js';
 import { renderActivationColumns } from './activation-columns.js';
-import { renderVariableArrows } from './variable-arrows.js';
+import { renderVariableArrows, visibleVariables } from './variable-arrows.js';
 import { renderMandala } from './mandala.js';
 import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
 import { DRAWING_TRANSFORM } from './geometry/drawing-presentation.js';
@@ -13,14 +13,11 @@ import {
   INTEGRATION_OUTER_SIDE, integrationOuterOwnership, integrationEndPlanes, integrationRoute,
 } from './geometry/drawing-geometry.js';
 import { createRenderState, isSelectionPressed } from './render-state.js';
-
-const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-}[character]));
+import { escapeHtml as escape } from '../ui/html.js';
 
 /**
  * SVG inner markup, for a parent SVG with viewBox="0 0 640 820".
- * chart.personality/design: gate-number arrays. No birth-date calculation occurs.
+ * chart: a composition or physical chart. Topology and activation owners stay separate.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
  * options: { profile?: 'studio' | 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
  *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
@@ -46,7 +43,7 @@ export function renderBodygraph(chart = {}, selection = null, options = {}) {
 // Render an already prepared snapshot. The persistent scene shares this exact
 // first SVG, then adopts its state instead of repainting it immediately.
 export function renderBodygraphState(chart, state, options = {},
-  variables = options.showActivations && !options.showMandala ? renderVariableArrows(chart) : '') {
+  variables = renderVariableArrows(chart, visibleVariables(chart, options))) {
   const thumbnail = options.profile === 'thumbnail';
   const {
     committedSelection, committedSelections, visualSelections,
@@ -78,9 +75,9 @@ export function renderBodygraphState(chart, state, options = {},
   const backgroundParts = [...integrationArmState, { path: STEM_PATH, opacity: stemOpacity }];
   const integrationBackground = backgroundParts.map(({ path, opacity }) => `<path d="${path}" fill="none" stroke="${PALETTE.outline}" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" pointer-events="none"/>`).join('')
     + backgroundParts.map(({ path, opacity }) => `<path d="${path}" fill="none" stroke="${PALETTE.paper}" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" pointer-events="none"/>`).join('');
-  const integrationBranches = integrationArmState.map(({ gate, black, red, highlighted, opacity }) => {
+  const integrationBranches = integrationArmState.map(({ gate, highlighted, opacity }) => {
     return `<g class="bg-integration-arm" data-arm="${gate}" data-related="${highlighted}" opacity="${opacity}" pointer-events="none">
-      ${paintActivation(armPaintPoints.get(gate), black, red)}
+      ${paintGateActivation(armPaintPoints.get(gate), state, gate)}
     </g>`;
   }).join('');
   const integrationStem = integrationStemPaint(state, integrationState);
@@ -134,17 +131,17 @@ export function renderBodygraphState(chart, state, options = {},
     </g>`;
   }).join('');
 
-  return `<defs>
+  return `${thumbnail ? '' : `<defs>
     <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${PALETTE.ink}"/><stop offset="50%" stop-color="${PALETTE.design}"/></linearGradient>
-${thumbnail ? '' : `    <clipPath id="${prefix}-integration-inner-side" clipPathUnits="userSpaceOnUse"><path d="${INTEGRATION_INNER_SIDE}"/></clipPath>
+    <clipPath id="${prefix}-integration-inner-side" clipPathUnits="userSpaceOnUse"><path d="${INTEGRATION_INNER_SIDE}"/></clipPath>
     ${integrationOuterOwnership.map(({ gate, path }) => `<clipPath id="${prefix}-integration-outer-owner-${gate}" clipPathUnits="userSpaceOnUse"><path class="bg-integration-outer-side" d="${INTEGRATION_OUTER_SIDE}"/><path class="bg-integration-fork-side" d="${path}"/></clipPath>`).join('')}
     ${integrationEndPlanes.map(({ gate, polygon }) => `<clipPath id="${prefix}-integration-end-${gate}" clipPathUnits="userSpaceOnUse"><polygon data-terminal-gate="${gate}" points="${polygon}"/></clipPath>`).join('')}
     <!-- Single-arm outlines exclude the physical node. Complete connections also
          own a continuous exterior ring, with active neighboring paint protected. -->
     ${integrationOutlineMask(`${prefix}-integration-outline`)}
     ${selectionPath && !integrationSelected ? integrationOutlineMask(`${prefix}-integration-selection-outline`, [...highlightedArms], stemHighlighted, prefix, connectedIntegrationGates, activeIntegrationParts) : ''}
-    ${integrationChannels.map(channel => integrationOutlineMask(`${prefix}-integration-focus-${channel.id}`, channel.gates, [20, 10].includes(channel.gates[0]) !== [20, 10].includes(channel.gates[1]), prefix, channel.gates, activeIntegrationParts)).join('')}`}
-  </defs>
+    ${integrationChannels.map(channel => integrationOutlineMask(`${prefix}-integration-focus-${channel.id}`, channel.gates, [20, 10].includes(channel.gates[0]) !== [20, 10].includes(channel.gates[1]), prefix, channel.gates, activeIntegrationParts)).join('')}
+  </defs>`}
 ${thumbnail ? '' : `  <style>
     .bg-interactive { cursor: pointer; outline: none; }
     .bg-interactive:focus-visible .bg-gate-highlight { opacity: 1; }
@@ -163,7 +160,7 @@ ${thumbnail ? '' : `  <style>
     }
   </style>`}
   ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}"${options.profile === 'studio' ? ` transform="${DRAWING_TRANSFORM}"` : ''} ${interactive ? '' : 'pointer-events="none"'}>
-    ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates }) + variables : ''}
+    ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates, showMandala: options.showMandala }) + variables : ''}
     ${options.showMandala ? renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
     ${thumbnail ? '' : `<g class="bodygraph-gates">${gates}</g>`}

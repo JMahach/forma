@@ -68,14 +68,12 @@ test('version 2 preserves all 24 columns and explicitly rejects genuine cached v
 });
 
 
-test('binary planet column order matches both Python producers independently of UI order', async () => {
+test('binary planet column order matches the shared Python sampler independently of UI order', async () => {
   const protocol = ['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
   assert.deepEqual(TRANSIT_PLANETS, protocol);
   assert.deepEqual(CHART_DAY_PLANETS, protocol);
-  for (const file of ['transit_day.py', 'chart_day.py']) {
-    const python = await readFile(new URL(`../server/python/${file}`, import.meta.url), 'utf8');
-    const tuple = python.match(/PLANETS = \(([\s\S]*?)\)/)?.[1];
-    assert.ok(tuple, file);
-    assert.deepEqual([...tuple.matchAll(/'([^']+)'/g)].map(([, name]) => name), protocol, file);
-  }
+  const python = await readFile(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
+  const tuple = python.match(/PLANET_BODIES = \(([\s\S]*?)\n\)/)?.[1];
+  assert.ok(tuple);
+  assert.deepEqual([...tuple.matchAll(/'([^']+)'/g)].map(([, name]) => name), protocol);
 });

@@ -1,21 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.js';
-import { isHomeView } from '../src/scene/camera.js';
 import { CHART_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 import { COMPACT_TEST_FRAME, EXPANDED_TEST_FRAME } from './fixtures/camera-frames.js';
 
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} ≈ ${expected}`);
 
-function harness(t, { animated = false, reduced = false, shared = false } = {}) {
+function harness(t, { shared = false } = {}) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
   globalThis.DOMPoint = class {
     constructor(x, y) { this.x = x; this.y = y; }
     matrixTransform(matrix) { return { x: this.x * matrix.a + matrix.e, y: this.y * matrix.d + matrix.f }; }
   };
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'DOMPoint', previous); else delete globalThis.DOMPoint; });
-  let width = 390, height = 844, enabled = false, separateHome = !shared, time = 0, nextId = 0;
-  const frames = new Map(), listeners = new Map(), changes = [], captures = new Set();
+  let width = 390, height = 844, enabled = false, separateHome = !shared;
+  const listeners = new Map(), changes = [], captures = new Set();
   const svg = {
     getBoundingClientRect: () => ({ left: 0, top: 0, right: width, bottom: height, width, height }),
     getScreenCTM: () => ({ inverse() {
@@ -31,20 +30,13 @@ function harness(t, { animated = false, reduced = false, shared = false } = {}) 
     getHomeFrame: () => separateHome ? enabled ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME : CHART_FRAME,
     fitInsets: { side: 20, top: 100, bottom: 100 },
     onSelect() {}, onChange: (view, fitted, limits) => changes.push({ view, fitted, limits }),
-    cameraMotion: {
-      now: () => time, reducedMotion: () => reduced,
-      requestFrame: animated ? callback => { frames.set(++nextId, callback); return nextId; } : null,
-      cancelFrame: id => frames.delete(id),
-    },
   });
   controls.reset();
   return {
-    controls, changes, frames,
-    toggle() { enabled = !enabled; controls.transitionHome(); },
+    controls, changes,
+    toggle() { enabled = !enabled; controls.resize(); },
     refresh() { enabled = !enabled; controls.refreshFrame(); },
-    advance(ms) { time += ms; const queue = [...frames.values()]; frames.clear(); queue.forEach(callback => callback(time)); },
     resize(w, h, nextSeparateHome = separateHome) { width = w; height = h; separateHome = nextSeparateHome; controls.resize(); },
-    reduced(value) { reduced = value; },
     send(type, extra = {}) { listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: width / 2, clientY: height / 2, target: svg, preventDefault() {}, ...extra }); },
   };
 }
@@ -65,7 +57,7 @@ test('camera minimum is exact Home for both test frames despite wider navigation
     assert.deepEqual(h.controls.getView(), home);
     assert.equal(h.changes.at(-1).limits.minScale, home.k);
     h.toggle();
-    assert.deepEqual(h.controls.getView(), h.controls.getFittedView(), 'changing mode at 100% reaches its own exact Home');
+    assert.deepEqual(h.controls.getView(), h.controls.getFittedView(), 'resizing its frame at 100% reaches its own exact Home');
   }
 });
 
@@ -102,101 +94,6 @@ test('changing frames and resize map zoom and pan relative to Home without accum
   assert.deepEqual(h.controls.getView(), resized, 'the subsequent unchanged observer resize cannot move the camera');
 });
 
-test('animated frame transition at Home remains 100% on every frame and rapid reversal starts from the visible camera', t => {
-  const h = harness(t, { animated: true }), normal = h.controls.getView();
-  h.toggle();
-  assert.deepEqual(h.controls.getView(), normal, 'a toggle starts without a camera jump');
-  assert.equal(h.frames.size, 1);
-  h.advance(75);
-  const midway = h.controls.getView();
-  assert.notDeepEqual(midway, normal);
-  assert.ok(isHomeView(midway, h.controls.getFittedView()));
-  h.toggle();
-  assert.deepEqual(h.controls.getView(), midway, 'reversal starts at the currently painted camera');
-  assert.equal(h.frames.size, 1, 'only one animation owns the camera');
-  h.advance(200);
-  assert.deepEqual(h.controls.getView(), normal);
-  assert.equal(h.frames.size, 0);
-  for (const { view, fitted } of h.changes) assert.ok(isHomeView(view, fitted), 'every animation frame remains at its current Home');
-});
-
-test('reduced motion applies the new mode Home immediately and stops an in-flight transition', t => {
-  const h = harness(t, { animated: true, reduced: true }), normal = h.controls.getView();
-  h.toggle();
-  assert.notDeepEqual(h.controls.getView(), normal);
-  assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
-  assert.equal(h.frames.size, 0);
-  h.reduced(false); h.toggle(); h.advance(50);
-  h.reduced(true); h.advance(16);
-  assert.deepEqual(h.controls.getView(), normal);
-  assert.equal(h.frames.size, 0);
-});
-
-test('wheel, drag and pinch remain interactive during the Home transition and retain their resulting relative zoom', t => {
-  const h = harness(t, { animated: true });
-  h.toggle(); h.advance(40);
-  h.send('wheel', { deltaY: -140 });
-  const zoomed = h.controls.getView();
-  assert.ok(zoomed.k > h.controls.getFittedView().k);
-  h.send('pointerdown');
-  h.send('pointermove', { clientX: 207, clientY: 414 });
-  h.send('pointerup', { clientX: 207, clientY: 414 });
-  assert.notDeepEqual(h.controls.getView(), zoomed, 'a drag moves the live camera rather than waiting for animation');
-  h.send('pointerdown', { pointerId: 1, clientX: 145 });
-  h.send('pointerdown', { pointerId: 2, clientX: 245 });
-  h.send('pointermove', { pointerId: 2, clientX: 265 });
-  h.send('pointerup', { pointerId: 2, clientX: 265 });
-  h.send('pointerup', { pointerId: 1, clientX: 145 });
-  const live = h.controls.getView(), home = h.controls.getFittedView();
-  assert.equal(h.frames.size, 1, 'direct input does not leave a transient baseline or block the transition');
-  h.advance(200);
-  const final = h.controls.getView(), finalHome = h.controls.getFittedView(), ratio = finalHome.k / home.k;
-  closeTo(final.k / finalHome.k, live.k / home.k);
-  closeTo(final.x, finalHome.x + (live.x - home.x) * ratio);
-  closeTo(final.y, finalHome.y + (live.y - home.y) * ratio);
-  assert.equal(h.frames.size, 0);
-  h.controls.zoom(.0001);
-  assert.deepEqual(h.controls.getView(), finalHome, 'the completed mode has its true exact Home floor');
-});
-
-test('reversing an interactively zoomed transition preserves relative zoom and never revives a cancelled callback', t => {
-  const h = harness(t, { animated: true });
-  h.controls.zoom(1.5);
-  h.toggle(); h.advance(60);
-  h.controls.zoom(1.2);
-  const live = h.controls.getView(), relative = live.k / h.controls.getFittedView().k;
-  const staleCallback = [...h.frames.values()][0];
-  h.toggle();
-  assert.deepEqual(h.controls.getView(), live);
-  staleCallback();
-  assert.deepEqual(h.controls.getView(), live, 'an already queued obsolete callback cannot repaint the camera');
-  assert.equal(h.frames.size, 1);
-  h.advance(200);
-  closeTo(h.controls.getView().k / h.controls.getFittedView().k, relative);
-  assert.equal(h.frames.size, 0);
-});
-
-test('unchanged resize keeps animation running while a real resize or Home ends at the true target', t => {
-  const h = harness(t, { animated: true });
-  h.toggle(); h.advance(75);
-  const midway = h.controls.getView();
-  h.resize(390, 844);
-  assert.deepEqual(h.controls.getView(), midway, 'a delayed identical observer notification has no effect');
-  assert.equal(h.frames.size, 1);
-  h.controls.zoom(1.4);
-  const relative = h.controls.getView().k / h.controls.getFittedView().k;
-  h.resize(844, 390);
-  closeTo(h.controls.getView().k / h.controls.getFittedView().k, relative);
-  assert.equal(h.frames.size, 0);
-  h.toggle(); h.advance(50);
-  h.controls.reset();
-  assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
-  assert.equal(h.frames.size, 0, 'explicit Home cancels every remaining camera frame');
-  const reset = h.controls.getView();
-  h.advance(500);
-  assert.deepEqual(h.controls.getView(), reset);
-});
-
 test('changing frame policy preserves relative zoom across different Home frames', t => {
   const h = harness(t, { shared: true });
   h.resize(1200, 800, false); h.refresh();
@@ -212,25 +109,25 @@ test('changing frame policy preserves relative zoom across different Home frames
   }
 });
 
-test('pan edges remain valid through transitions and absolute maximum zoom stays bounded', t => {
-  const h = harness(t, { animated: true });
+test('pan edges remain valid through responsive Home rebases and absolute maximum zoom stays bounded', t => {
+  const h = harness(t);
   for (const [dx, dy] of [[9000, 0], [-9000, 0], [0, 9000], [0, -9000]]) {
     h.controls.reset(); h.controls.zoom(1.6);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 195 + dx, clientY: 422 + dy });
     h.send('pointerup', { clientX: 195 + dx, clientY: 422 + dy });
     const relative = h.controls.getView().k / h.controls.getFittedView().k;
-    h.toggle(); h.advance(80);
+    h.toggle();
     const midway = h.controls.getView();
     h.send('wheel', { deltaY: 0 });
-    assert.deepEqual(h.controls.getView(), midway, 'a no-op gesture cannot snap an animated pan edge');
-    h.advance(120);
+    assert.deepEqual(h.controls.getView(), midway, 'a no-op gesture cannot snap a rebased pan edge');
+
     closeTo(h.controls.getView().k / h.controls.getFittedView().k, relative);
-    h.toggle(); h.advance(200);
+    h.toggle();
   }
   h.controls.zoom(100);
   assert.equal(h.controls.getView().k, 4.5);
-  h.toggle(); h.advance(200); h.toggle(); h.advance(200);
+  h.toggle(); h.toggle();
   assert.ok(h.controls.getView().k <= 4.5);
   h.resize(1600, 1200, false);
   assert.ok(h.controls.getView().k <= 4.5);

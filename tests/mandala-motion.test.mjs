@@ -43,8 +43,8 @@ function integrationHarness({ reduced = false } = {}) {
   const h = harness({ onFinish: expanded => mode.finishTransition(expanded) });
   h.setReduced(reduced);
   const graph = createGraphController({
-    renderChart: renderBodygraph, viewport: h.viewport, getChart: () => ({ personality: [20, 34], design: [10] }), getMandala: () => mode,
-    alignHeading() {}, activationPopover: { close() {}, refresh() {} },
+    scene: { update(chart, selection, options) { h.viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { h.viewport.innerHTML = ''; } }, viewport: h.viewport, getChart: () => ({ personality: [20, 34], design: [10] }), getMandala: () => mode,
+    activationPopover: { close() {}, refresh() {} },
   });
   const render = () => { renders++; graph.render(); };
   mode = attachMandalaMode({
@@ -190,9 +190,9 @@ test('hover, selection and chart redraws inherit the in-flight offset without re
   const h = harness();
   let chart = { id: 'first', personality: [], design: [] }, enabled = false;
   const graph = createGraphController({
-    renderChart: renderBodygraph, viewport: h.viewport, getChart: () => chart, getMandala: () => ({ enabled }),
-    renderChart: value => `<g data-chart="${value.id}" class="activation-column"></g>`,
-    alignHeading() {}, activationPopover: { close() {}, refresh() {} },
+    viewport: h.viewport, getChart: () => chart, getMandala: () => ({ enabled }),
+    scene: { update(value) { h.viewport.innerHTML = `<g data-chart="${value.id}" class="activation-column"></g>`; }, clear() { h.viewport.innerHTML = ''; } },
+    activationPopover: { close() {}, refresh() {} },
   });
   graph.render();
   enabled = true; h.motion.setExpanded(true); graph.render();

@@ -1,7 +1,7 @@
-import { validateChartDayRequest } from '../server/http/natal-days.mjs';
+import { createNatalDayHandler, validateChartDayRequest } from '../server/http/natal-days.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Readable } from 'node:stream';
+import { Readable, PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -19,6 +19,7 @@ const makeDay = (date, timezone) => ({ date, timezone, startUtc: `${date}T00:00:
   columns: Array.from({ length: 24 }, (_, column) => Array.from({ length: 10 }, (_, minute) => column < 22 ? 10 + column * 10 + minute / 10000 : column === 22 ? Date.parse(date) / 1000 - 88 * 86400 + minute * 60 : 1e-10)),
   engine: 'Swiss Ephemeris test', ephemeris: 'Test ephemerides', timezoneDatabase: 'IANA test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' });
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { resolve, promise }; };
+const tick = () => new Promise(setImmediate);
 
 test('request uses only trusted city timezone and strictly validates date, city and version', () => {
   assert.deepEqual(validateChartDayRequest({ birthDate: '1990-06-15', cityId: 'trusted', v: '1', timezone: 'UTC', city: { timezone: 'UTC' }, name: 'Never forwarded' }, cities), { date: '1990-06-15', timezone: 'Europe/Moscow' });
@@ -55,6 +56,69 @@ test('failed generation releases admission and same day can be retried', async (
   await assert.rejects(service.get('1990-06-15', 'UTC'));
   assert.equal(service.size, 0);
   assert.equal(decodeChartDay((await service.get('1990-06-15', 'UTC')).bytes.identity).date, '1990-06-15');
+});
+
+test('disconnected natal requests release queued admission for the latest day', async t => {
+  const held = deferred(), calls = [];
+  const service = createChartDays({ generateDay: async (date, timezone) => {
+    calls.push(date); await held.promise; return makeDay(date, timezone);
+  } });
+  const handle = createNatalDayHandler(service), requests = [];
+  t.after(async () => { held.resolve(); await Promise.all(requests.map(item => item.done)); });
+  function start(date) {
+    const req = Readable.from([Buffer.from(JSON.stringify({ birthDate: date, cityId: 'trusted', v: '1' }))]);
+    req.method = 'POST'; req.complete = true; req.headers = { 'content-type': 'application/json' };
+    const res = new EventEmitter();
+    res.writeHead = status => { assert.ok(!res.destroyed, 'no response after disconnect'); res.status = status; };
+    res.end = body => { res.body = body; res.writableEnded = true; };
+    const item = { res, done: handle(req, res, cities) }; requests.push(item); return item;
+  }
+  const obsolete = ['15', '16', '17', '18'].map(day => start(`1990-06-${day}`));
+  await tick(); assert.equal(service.queued, 3);
+  obsolete.forEach(({ res }) => { res.destroyed = true; res.emit('close'); });
+  await tick(); assert.equal(service.queued, 0);
+  const latest = start('1990-06-19'); await tick(); assert.equal(service.queued, 1);
+  held.resolve(); await latest.done;
+  assert.equal(latest.res.status, 200);
+  assert.deepEqual(calls, ['1990-06-15', '1990-06-19']);
+});
+
+test('natal cancellation keeps shared queued consumers and the active process slot', async t => {
+  const held = deferred(), calls = [], outcomes = [];
+  const service = createChartDays({ generateDay: async (date, timezone) => {
+    calls.push(date); await held.promise; return makeDay(date, timezone);
+  } });
+  const outcome = promise => { const result = promise.then(() => 'ready', error => error.name); outcomes.push(result); return result; };
+  t.after(async () => { held.resolve(); await Promise.all(outcomes); });
+  const active = new AbortController(), first = new AbortController(), second = new AbortController();
+  const running = outcome(service.get('1990-06-15', 'UTC', { signal: active.signal }));
+  const queued = outcome(service.get('1990-06-16', 'UTC', { signal: first.signal }));
+  const shared = outcome(service.get('1990-06-16', 'UTC', { signal: second.signal }));
+  first.abort(); await tick();
+  assert.equal(await Promise.race([queued, Promise.resolve('pending')]), 'AbortError');
+  assert.equal(service.queued, 1);
+  second.abort(); await tick();
+  assert.equal(await Promise.race([shared, Promise.resolve('pending')]), 'AbortError');
+  assert.equal(service.queued, 0);
+  active.abort(); await tick();
+  assert.equal(await Promise.race([running, Promise.resolve('pending')]), 'AbortError');
+  const resumed = outcome(service.get('1990-06-15', 'UTC'));
+  const latest = outcome(service.get('1990-06-17', 'UTC'));
+  assert.deepEqual(calls, ['1990-06-15']); assert.equal(service.queued, 1);
+  held.resolve(); assert.equal(await resumed, 'ready'); assert.equal(await latest, 'ready');
+  assert.deepEqual(calls, ['1990-06-15', '1990-06-17']);
+  const cancelled = new AbortController(); cancelled.abort();
+  await assert.rejects(service.get('1990-06-15', 'UTC', { signal: cancelled.signal }), { name: 'AbortError' });
+});
+
+test('a natal disconnect during upload never submits calculation work', async t => {
+  let calls = 0;
+  const req = new PassThrough(); req.method = 'POST'; req.headers = { 'content-type': 'application/json' };
+  const res = new EventEmitter(); res.writeHead = () => { throw Error('disconnected response'); }; res.end = () => {};
+  const handled = createNatalDayHandler({ get() { calls++; } })(req, res, cities);
+  handled.catch(() => {}); t.after(() => req.destroy());
+  req.write('{"birthDate":'); res.emit('close'); await tick();
+  assert.equal(req.destroyed, true); await handled; assert.equal(calls, 0);
 });
 
 async function request(service, { method = 'POST', value = { birthDate: '1990-06-15', cityId: 'trusted', v: '1' }, body = JSON.stringify(value), headers = {} } = {}) {

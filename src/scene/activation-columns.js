@@ -1,3 +1,5 @@
+import { renderOverlayActivationColumns } from './overlay-activation-columns.js';
+import { isChartOverlay, primaryChart } from '../domain/chart-composition.js';
 import { calculateLineFixings } from '../domain/line-fixing.js';
 import { ACTIVATION_COLUMN_LAYOUT, ACTIVATION_PLANET_FILTER_LAYOUT, activationBlockTransform, activationHeadingX, activationRowY } from './geometry/activation-layout.js';
 
@@ -7,6 +9,25 @@ const FIXING_LABELS = {
   exalted: 'Экзальтация', detriment: 'Падение', juxtaposed: 'Экзальтация и падение'
 };
 const FIXING_SCALE = 1.15;
+
+// Initial SVG and persistent columns share one bounded snapshot of chart facts.
+// Hover/selection changes paint only; compare values to also observe in-place
+// edits and transit filtering without retaining caller-owned activation rows.
+let fixingSnapshot = null, cachedFixings = null;
+function lineFixingsFor(chart) {
+  const sources = ['design', 'personality'].map(source =>
+    Array.isArray(chart.activations?.[source]) ? chart.activations[source] : []);
+  const changed = !fixingSnapshot || sources.some((entries, source) => entries.length !== fixingSnapshot[source].length
+    || entries.some((entry, index) => {
+      const previous = fixingSnapshot[source][index];
+      return !Object.is(entry?.planet, previous[0]) || !Object.is(entry?.gate, previous[1]) || !Object.is(entry?.line, previous[2]);
+    }));
+  if (changed) {
+    cachedFixings = calculateLineFixings(chart);
+    fixingSnapshot = sources.map(entries => entries.map(entry => [entry?.planet, entry?.gate, entry?.line]));
+  }
+  return cachedFixings;
+}
 
 export const fixingPath = state => state === 'exalted' ? 'M -4 3 L 0 -4 L 4 3 Z'
   : state === 'detriment' ? 'M -4 -3 L 0 4 L 4 -3 Z'
@@ -62,8 +83,10 @@ export function alignPersonalityHeading(root) {
 // Planetary values come exclusively from the saved calculation, never from
 // the gate arrays of a manually entered chart.
 export function describeActivationColumns(chart, selectedGates = new Set(), selection = null, { pressedGates = selectedGates, pressedSelection = selection, selections = [selection].filter(Boolean), pressedSelections = [pressedSelection].filter(Boolean), activationFilter = null, previewGates = new Set() } = {}) {
+  chart = primaryChart(chart);
+  if (chart.source === 'manual') return [];
   if (!chart.activations && !chart.planetFilter?.activations && !chart.planetFilter?.designActivations) return [];
-  const fixings = calculateLineFixings(chart);
+  const fixings = lineFixingsFor(chart);
   const planetFilter = chart.planetFilter;
   const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
   const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
@@ -141,6 +164,7 @@ export function renderActivationColumn(column) {
 }
 
 export function renderActivationColumns(chart, selectedGates = new Set(), selection = null, options = {}) {
+  if (isChartOverlay(chart)) return renderOverlayActivationColumns(chart, selectedGates, options.pressedGates || selectedGates, options);
   const columns = describeActivationColumns(chart, selectedGates, selection, options);
   return columns.length ? `<g class="activation-columns">${columns.map(renderActivationColumn).join('')}</g>` : '';
 }

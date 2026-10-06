@@ -108,7 +108,7 @@ test('each caller validates its timezone on memory hits and shared requests, ind
   const chart = personalChartFixture(), otherZone = { ...chart, timezone: 'Europe/Moscow' };
   let complete, requests = 0;
   const client = createChartDayClient({ persistentCache: null, fetch: () => {
-    requests++; return new Promise(resolve => { complete = resolve; });
+    requests++; return requests === 1 ? new Promise(resolve => { complete = resolve; }) : Promise.resolve(response(chart.birthDate));
   } });
   const mismatch = assert.rejects(client.getDay(otherZone), /Часовой пояс/);
   const valid = client.getDay(chart);
@@ -117,7 +117,7 @@ test('each caller validates its timezone on memory hits and shared requests, ind
   assert.equal((await valid).timezone, 'UTC', 'a mismatched first caller does not poison another subscriber');
   await assert.rejects(client.getDay(otherZone), /Часовой пояс/);
   assert.equal((await client.getDay(chart)).timezone, 'UTC');
-  assert.equal(requests, 1, 'caller-specific validation applies even without another fetch');
+  assert.equal(requests, 3, 'a conflicting cache hit rechecks the server; an incompatible fresh response is not retained');
 });
 
 test('personal-day errors remain retryable and requests expire', async t => {
@@ -133,4 +133,78 @@ test('personal-day errors remain retryable and requests expire', async t => {
   }) });
   const result = assert.rejects(slow.getDay(personalChartFixture()), /не успел загрузиться/);
   await settle(); t.mock.timers.tick(100); await result;
+});
+
+test('a disk packet from another timezone is removed and recovered from the server before entering memory', async () => {
+  const chart = personalChartFixture(), key = `${CHART_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
+  let packet = encodeChartDay(chartDayFixture({ timezone: 'Europe/Moscow' })).buffer;
+  let requests = 0, removed = 0, writes = 0;
+  const disk = { get: async () => packet,
+    remove(value) { assert.equal(value, key); removed++; packet = null; },
+    put(value, bytes) { assert.equal(value, key); writes++; packet = bytes; },
+  };
+  const fetch = async () => { requests++; return response(chart.birthDate); };
+  const client = createChartDayClient({ persistentCache: disk, fetch });
+  const recovered = await client.getDay(chart);
+  assert.equal(recovered.timezone, chart.timezone);
+  assert.equal(await client.getDay(chart), recovered);
+  await settle();
+  assert.equal(requests, 1); assert.equal(removed, 1); assert.equal(writes, 1);
+  const reloaded = createChartDayClient({ persistentCache: disk, fetch });
+  assert.equal((await reloaded.getDay(chart)).timezone, chart.timezone);
+  assert.equal(requests, 1, 'the recovered persisted packet is reusable');
+});
+
+test('an incompatible RAM packet is evicted and skips the same stale disk packet on recovery', async () => {
+  const chart = personalChartFixture(), previous = { ...chart, timezone: 'Europe/Moscow' };
+  const stale = encodeChartDay(chartDayFixture({ timezone: previous.timezone })).buffer;
+  let requests = 0, reads = 0, removed = 0;
+  const client = createChartDayClient({ persistentCache: {
+    get: async () => { reads++; return stale; }, remove() { removed++; },
+  }, fetch: async () => { requests++; return response(chart.birthDate); } });
+  assert.equal((await client.getDay(previous)).timezone, previous.timezone);
+  const recovered = await client.getDay(chart);
+  assert.equal(recovered.timezone, chart.timezone);
+  assert.equal(await client.getDay(chart), recovered);
+  await settle();
+  assert.equal(requests, 1); assert.equal(reads, 1); assert.equal(removed, 1);
+});
+
+test('a fresh incompatible server packet remains an error and is never retained in either cache', async () => {
+  const chart = personalChartFixture(); let requests = 0, writes = 0;
+  const wrong = encodeChartDay(chartDayFixture({ timezone: 'Europe/Moscow' })).buffer;
+  const client = createChartDayClient({ persistentCache: { get: async () => null, put() { writes++; } },
+    fetch: async () => { requests++; return { ok: true, arrayBuffer: async () => wrong }; },
+  });
+  for (let attempt = 0; attempt < 2; attempt++) await assert.rejects(client.getDay(chart), /Часовой пояс/);
+  await settle(); assert.equal(requests, 2); assert.equal(writes, 0);
+});
+
+test('a cached timezone matching only the first caller is revalidated without poisoning the correct shared consumer', async () => {
+  const chart = personalChartFixture(), staleChart = { ...chart, timezone: 'Europe/Moscow' };
+  const stale = encodeChartDay(chartDayFixture({ timezone: staleChart.timezone })).buffer;
+  let requests = 0, removed = 0, writes = 0;
+  const client = createChartDayClient({ persistentCache: { get: async () => stale, remove() { removed++; }, put() { writes++; } },
+    fetch: async () => { requests++; return response(chart.birthDate); },
+  });
+  const outdated = assert.rejects(client.getDay(staleChart), /Часовой пояс/), current = client.getDay(chart);
+  await outdated;
+  const day = await current;
+  assert.equal(day.timezone, chart.timezone);
+  assert.equal(await client.getDay(chart), day);
+  await settle(); assert.equal(requests, 1); assert.equal(removed, 1); assert.equal(writes, 1);
+});
+
+test('a cancelled incompatible subscriber does not invalidate a cached packet still needed by a compatible subscriber', async () => {
+  const chart = personalChartFixture(), controller = new AbortController();
+  let release, requests = 0, removed = 0;
+  const client = createChartDayClient({ persistentCache: {
+    get: () => new Promise(resolve => { release = resolve; }), remove() { removed++; },
+  }, fetch: async () => { requests++; return response(chart.birthDate); } });
+  const cancelled = assert.rejects(client.getDay({ ...chart, timezone: 'Europe/Moscow' }, { signal: controller.signal }), { name: 'AbortError' });
+  const ready = client.getDay(chart);
+  controller.abort(); await cancelled;
+  release(bytesFor(chart.birthDate));
+  assert.equal((await ready).timezone, chart.timezone);
+  assert.equal(requests, 0); assert.equal(removed, 0);
 });

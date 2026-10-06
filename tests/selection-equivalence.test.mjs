@@ -29,21 +29,19 @@ const chart = {
 const plain = value => JSON.parse(JSON.stringify(value));
 
 function legacyState() {
-  let popoverActivation = null;
   const context = createContext({
     GATES, selection: null, selectedItems: [], selectedActivation: null,
     selectedChartId: chart.id, liveWanted: false,
     chart: () => chart,
     activationPopover: {
-      close() { popoverActivation = null; },
-      show(_chart, activation) { popoverActivation = activation; },
+      close() {}, show() {},
     },
     hoverPreview: { clear() {} },
     renderGraph() {}, updatePage() {}, closeLibrary() {},
   });
   runInContext(`${chooseSource}\n${clearSelectionSource}\n${changeChartSource}`, context);
   return {
-    choose(value) { context.choose(value); return { popoverActivation }; },
+    choose(value) { context.choose(value); },
     clear() { context.clearSelection(); },
     changeChart(id) { context.changeChart(id); },
     get items() { return plain(context.selectedItems); },
@@ -61,7 +59,7 @@ function pair() {
     oldState, newState, assertSame,
     choose(value, label = JSON.stringify(value)) {
       const input = Object.freeze({ ...value });
-      assert.deepEqual(newState.choose(input), oldState.choose(input), `${label}: popover effect`);
+      newState.choose(input); oldState.choose(input);
       assertSame(`${label}: items, primary and activation`);
     },
     clear(label = 'clear') {
@@ -95,7 +93,7 @@ const scenarios = [
     gate(4, 'personality-mercury'), gate(29, 'design-mars', true),
     gate(4, 'design-mercury', true), gate(4, 'personality-mars', true), add(gate(4)),
   ]],
-  ['activation popover after replacing a group', [
+  ['activation identity after replacing a group', [
     gate(4, 'personality-mercury', true), gate(29, 'design-mars', true),
     gate(4, 'design-mercury', true), add(center('throat')), gate(29, 'design-mars'),
   ]],
@@ -206,7 +204,7 @@ test('all actual UI targets preserve ordinary and Shift toggling', () => {
   }
 });
 
-test('deterministic mixed UI sequences preserve every state transition and popover effect', () => {
+test('deterministic mixed UI sequences preserve every selection state transition', () => {
   for (let seed = 1; seed <= 32; seed++) {
     let randomState = seed;
     const random = () => {

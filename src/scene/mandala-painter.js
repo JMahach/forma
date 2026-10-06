@@ -1,5 +1,5 @@
 import { renderCrossOverlay } from './mandala.js';
-import { MANDALA_PALETTE as PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
+import { MANDALA_PALETTE as PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint, mandalaEndpointPath } from './mandala-paint-rules.js';
 import { MANDALA_SECTORS, MANDALA_GEOMETRY, MANDALA_CENTER, mandalaPoint, mandalaCrossKey, mandalaCrossGeometry } from './geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 import { setAttribute as attr } from './svg-patches.js';
@@ -125,9 +125,9 @@ export function createMandalaPainter(root) {
     // Sectors depend on gates and selection, not on exact planet longitudes.
     // Snapshot values so reused, mutable chart arrays and option sets stay valid.
     const sectorKey = JSON.stringify([Boolean(interactive), [...gates.design], [...gates.personality],
-      [...selectedGates], [...relatedGates]]);
+      [...selectedGates], [...relatedGates], gates.sources?.map(source => [source.id, [...source.gates]])]);
     const refreshSectors = sectorKey !== cache.sectorKey;
-    const fieldNodes = refreshSectors ? [] : [...cache.sectorFieldNodes];
+    const fieldNodes = refreshSectors ? [] : cache.sectorFieldNodes;
     const nextFans = refreshSectors ? new Map() : cache.fans;
     const nextFocus = refreshSectors ? new Map() : cache.focus;
     attr(wheel, 'aria-hidden', interactive ? null : 'true');
@@ -192,11 +192,11 @@ export function createMandalaPainter(root) {
     const refreshPlanets = !cache.planetEntries || planetEntries.length !== cache.planetEntries.length
       || planetEntries.some((entry, index) => {
         const previous = cache.planetEntries[index];
-        return entry.source !== previous.source || entry.planet !== previous.planet || entry.longitude !== previous.longitude;
+        return entry.source !== previous.source || entry.planet !== previous.planet || entry.longitude !== previous.longitude || entry.shared !== previous.shared;
       });
     if (refreshPlanets) {
       const markers = new Map(), symbols = new Map(), labelNodes = [], planetFieldNodes = [];
-      for (const { source, planet, longitude, x: labelX, y: labelY, labelLongitude, leaderPath } of layoutMandalaPlanets(planetEntries)) {
+      for (const { source, planet, longitude, x: labelX, y: labelY, labelLongitude, leaderPath, shared } of layoutMandalaPlanets(planetEntries)) {
         const key = `${source}:${planet}`;
         const paint = mandalaPlanetPaint(source, planet);
         let record = cache.markers.get(key);
@@ -204,7 +204,7 @@ export function createMandalaPainter(root) {
           const node = element(document, 'g', { class: 'mandala-planet-marker', 'data-mandala-planet': planet, 'data-source': source });
           const ray = element(document, 'path', { class: paint.rayClass,
             fill: 'none', stroke: paint.color, 'stroke-opacity': paint.rayOpacity, 'stroke-width': paint.rayWidth });
-          const endpoint = element(document, 'circle', { class: 'mandala-planet-endpoint', r: paint.radius,
+          const endpoint = element(document, paint.origin ? 'path' : 'circle', { class: 'mandala-planet-endpoint', ...(paint.origin ? {} : { r: paint.radius }),
             fill: paint.color, 'fill-opacity': paint.endpointOpacity });
           const leader = element(document, 'path', { class: 'mandala-planet-leader', fill: 'none',
             stroke: paint.color, 'stroke-opacity': paint.leaderOpacity, 'stroke-width': paint.leaderWidth });
@@ -213,7 +213,8 @@ export function createMandalaPainter(root) {
         const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
         attr(record.node, 'data-longitude', longitude);
         attr(record.ray, 'd', `M ${MANDALA_CENTER} L ${x} ${y}`);
-        attr(record.endpoint, 'cx', x); attr(record.endpoint, 'cy', y);
+        if (paint.origin) attr(record.endpoint, 'd', mandalaEndpointPath(paint, x, y, shared));
+        else { attr(record.endpoint, 'cx', x); attr(record.endpoint, 'cy', y); }
         attr(record.leader, 'd', leaderPath);
         planetFieldNodes.push(record.node); markers.set(key, record);
 
@@ -234,7 +235,7 @@ export function createMandalaPainter(root) {
       cache.planetEntries = planetEntries;
       cache.planetFieldNodes = planetFieldNodes;
     }
-    children(cache.field, [...fieldNodes, ...cache.planetFieldNodes]);
+    if (refreshSectors || refreshPlanets) children(cache.field, [...fieldNodes, ...cache.planetFieldNodes]);
 
     const previous = [...cache.pinned, ...(cache.preview ? [cache.preview] : [])];
     const pinned = [];

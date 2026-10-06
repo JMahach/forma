@@ -1,5 +1,11 @@
 export const STORAGE_KEY = 'liniya.charts.v1';
 export const TRASH_KEY = 'liniya.trash.v1';
+export const CHART_RECORD_PREFIX = 'liniya.charts.v2:';
+export const CHART_DELETED_PREFIX = 'liniya.deleted.v2:';
+
+export function normalizeChartName(value) {
+  return String(value ?? '').trim().replace(/\p{L}/u, letter => letter.toUpperCase());
+}
 
 export function createChartId(cryptoApi = globalThis.crypto) {
   if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
@@ -25,7 +31,8 @@ export function parseGates(value) {
 
 export function validateChart(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('В файле нет карты.');
-  if (typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 80) throw new Error('У карты должно быть имя длиной до 80 символов.');
+  const name = normalizeChartName(raw.name);
+  if (typeof raw.name !== 'string' || !name || raw.name.length > 80 || name.length > 80) throw new Error('У карты должно быть имя длиной до 80 символов.');
   for (const key of ['personality', 'design']) {
     if (!Array.isArray(raw[key]) || raw[key].length > 64 || raw[key].some(n => !Number.isInteger(n) || n < 1 || n > 64)) throw new Error('Некорректный список активаций: нужны номера от 1 до 64.');
   }
@@ -33,10 +40,10 @@ export function validateChart(raw) {
   const source = ['calculated', 'transit'].includes(raw.source) ? raw.source : 'manual';
   const result = {
     id: typeof raw.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(raw.id) && raw.id !== 'demo' ? raw.id : null,
-    name: raw.name.trim(),
+    name,
     personality: [...new Set(raw.personality)].sort((a, b) => a - b),
     design: [...new Set(raw.design)].sort((a, b) => a - b),
-    birthDate: cleanText('birthDate', 10), birthTime: cleanText('birthTime', 5), birthPlace: cleanText('birthPlace', 120), note: cleanText('note', 2000),
+    birthDate: cleanText('birthDate', 10), birthTime: cleanText('birthTime', 8), birthPlace: cleanText('birthPlace', 120), note: cleanText('note', 2000),
     createdAt: cleanText('createdAt', 40), updatedAt: cleanText('updatedAt', 40),
     source
   };
@@ -66,26 +73,145 @@ export function validateChart(raw) {
   return result;
 }
 
-export function readCharts(storage, key = STORAGE_KEY) {
+function legacyCharts(storage, key, onInvalid) {
   const value = storage.getItem(key);
   if (!value) return [];
-  const data = JSON.parse(value);
-  if (!Array.isArray(data) || data.length > 500) throw new Error('Не удалось прочитать сохранённую библиотеку.');
-  return data.map(validateChart).filter(chart => chart.id);
+  let data;
+  try {
+    data = JSON.parse(value);
+    if (!Array.isArray(data) || data.length > 500) throw new Error();
+  } catch { onInvalid(key); return []; }
+  return data.flatMap((raw, index) => {
+    try {
+      const chart = { ...raw, ...validateChart(raw) };
+      if (!chart.id) throw new Error();
+      return [chart];
+    } catch { onInvalid(`${key}:${index}`); return []; }
+  });
 }
 
-export function writeCharts(storage, charts, key = STORAGE_KEY) {
-  storage.setItem(key, JSON.stringify(charts));
+// The v1 array is a read-only fallback during ordinary saves. Each v2 key owns
+// one chart; a separate tombstone wins even over an interleaved stale save.
+// Never repair or rewrite corrupt data while reading another healthy record.
+export function readCharts(storage, key = STORAGE_KEY, onInvalid = () => {}) {
+  let charts = legacyCharts(storage, key, onInvalid);
+  if (key !== STORAGE_KEY) return charts;
+  const records = new Map(), deleted = new Set();
+  for (let index = 0; index < storage.length; index++) {
+    const recordKey = storage.key(index);
+    if (recordKey?.startsWith(CHART_DELETED_PREFIX)) {
+      const id = recordKey.slice(CHART_DELETED_PREFIX.length);
+      if (storage.getItem(recordKey) !== '1') onInvalid(recordKey);
+      deleted.add(id);
+    } else if (recordKey?.startsWith(CHART_RECORD_PREFIX)) {
+      const id = recordKey.slice(CHART_RECORD_PREFIX.length), value = storage.getItem(recordKey);
+      if (value === null) continue;
+      try {
+        const record = JSON.parse(value), chart = { ...record.chart, ...validateChart(record.chart) };
+        if (record.version !== 2 || chart.id !== id) throw new Error();
+        records.set(id, chart);
+      } catch { onInvalid(recordKey); deleted.add(id); }
+    }
+  }
+  const seen = new Set(charts.map(chart => chart.id));
+  charts = charts.filter(chart => !deleted.has(chart.id)).map(chart => records.get(chart.id) || chart);
+  for (const [id, chart] of records) if (!seen.has(id) && !deleted.has(id)) charts.push(chart);
+  return charts;
 }
 
-export function deleteChart(storage, charts, id) {
+// Compare with the calling store's saved snapshot, never with another tab's
+// current value. Unchanged local cards do not participate in this save at all.
+function saveFailure(code, message) { return Object.assign(new Error(message), { code }); }
+const ambiguousMessage = 'В библиотеке есть карты с одинаковым идентификатором. Не удалось однозначно сохранить изменения.';
+
+function chartsById(charts) {
+  const groups = new Map();
+  for (const chart of charts) {
+    if (!groups.has(chart.id)) groups.set(chart.id, []);
+    groups.get(chart.id).push(chart);
+  }
+  return groups;
+}
+
+// Existing repeated IDs are separate saved records. Compare whole groups,
+// including multiplicity, so an unrelated action never chooses a winner.
+export function changedChartRecords(charts, previous) {
+  const before = chartsById(previous), changed = [];
+  for (const [id, group] of chartsById(charts)) {
+    const original = before.get(id) || [];
+    const saved = original.map(chart => JSON.stringify(chart)).sort();
+    const next = group.map(chart => JSON.stringify(chart)).sort();
+    if (saved.length === next.length && saved.every((value, index) => value === next[index])) continue;
+    if (original.length > 1 || group.length > 1) throw saveFailure('ambiguous', ambiguousMessage);
+    changed.push(group[0]);
+  }
+  return changed;
+}
+
+export function writeChartChanges(storage, charts, previous) {
+  let changed;
+  try {
+    const checked = charts.map(chart => {
+      const validated = validateChart(chart);
+      if (!validated.id) throw new Error('Некорректный идентификатор карты.');
+      return { ...chart, name: validated.name };
+    });
+    changed = changedChartRecords(checked, previous);
+  }
+  catch (error) { throw error?.code === 'ambiguous' ? error : saveFailure('invalid', error.message); }
+  if (!changed.length) return 0;
+  const latest = chartsById(readCharts(storage)), ids = new Set(latest.keys());
+  for (const chart of changed) {
+    if (latest.get(chart.id)?.length > 1) throw saveFailure('ambiguous', ambiguousMessage);
+    if (storage.getItem(`${CHART_DELETED_PREFIX}${chart.id}`) !== null) {
+      throw saveFailure('deleted', 'Карта удалена в другой вкладке. Изменения не сохранены.');
+    }
+    const key = `${CHART_RECORD_PREFIX}${chart.id}`, stored = storage.getItem(key);
+    if (stored !== null) {
+      try {
+        const record = JSON.parse(stored);
+        if (record.version !== 2 || validateChart(record.chart).id !== chart.id) throw new Error();
+      } catch { throw saveFailure('corrupt', 'Сохранённая карта повреждена. Исходные данные оставлены без изменений.'); }
+    }
+    ids.add(chart.id);
+  }
+  if (ids.size > 500) throw saveFailure('limit', 'В библиотеке уже 500 карт.');
+  for (const chart of changed) {
+    const key = `${CHART_RECORD_PREFIX}${chart.id}`;
+    storage.setItem(key, JSON.stringify({ version: 2, chart }));
+    // A delete between the preflight and setItem remains authoritative. The
+    // separate marker cannot be overwritten by this stale record write.
+    if (storage.getItem(`${CHART_DELETED_PREFIX}${chart.id}`) !== null) {
+      try { storage.removeItem(key); } catch { /* The tombstone still hides it. */ }
+      throw saveFailure('deleted', 'Карта удалена в другой вкладке. Изменения не сохранены.');
+    }
+  }
+  return changed.length;
+}
+
+export function deleteChart(storage, charts, id, onCleanupError = () => {}, onInvalid = () => {}) {
   const target = charts.find(c => c.id === id);
   if (!target || id === 'demo' || id === 'current-transit' || target.source === 'transit') throw new Error('Эта карта не удаляется.');
-  // Older releases may have retained a copy of this same record. Remove only
-  // the confirmed target; never purge unrelated historical records on load.
-  const legacy = readCharts(storage, TRASH_KEY);
-  if (legacy.some(c => c.id === id)) writeCharts(storage, legacy.filter(c => c.id !== id), TRASH_KEY);
-  const next = charts.filter(c => c.id !== id);
-  writeCharts(storage, next);
-  return next;
+  storage.setItem(`${CHART_DELETED_PREFIX}${id}`, '1');
+  // Deletion is committed by the marker. Cleanup uses fresh raw arrays and
+  // removes only the explicitly confirmed ID, including its historical copy.
+  // A cleanup failure must not falsely report that the visible card survived.
+  // Cross-tab array cleanup is best effort, not transactional secure erasure;
+  // the per-ID tombstone is the authoritative deletion state.
+  let incomplete = false;
+  try { if (storage.getItem(`${CHART_RECORD_PREFIX}${id}`) !== null) storage.removeItem(`${CHART_RECORD_PREFIX}${id}`); }
+  catch { incomplete = true; }
+  for (const key of [STORAGE_KEY, TRASH_KEY]) {
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) throw new Error();
+      const next = data.filter(record => record?.id !== id);
+      if (next.length !== data.length) storage.setItem(key, JSON.stringify(next));
+    } catch { incomplete = true; }
+  }
+  if (incomplete) onCleanupError('Карта удалена из библиотеки, но не удалось очистить все прежние данные в браузере.');
+  try { return readCharts(storage, STORAGE_KEY, onInvalid); }
+  catch { return charts.filter(chart => chart.id !== id); }
 }

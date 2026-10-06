@@ -1,3 +1,4 @@
+import { primaryChart, chartTopology, isChartOverlay } from './chart-composition.js';
 import { CENTERS, GATES, getDefinition } from './topology.js';
 
 const gateIds = new Set(GATES.map(gate => gate.id));
@@ -22,29 +23,63 @@ function sunLine(chart, source, active) {
   return matches[0].line;
 }
 
+function lineFacts(rows) {
+  return Array.from({ length: 6 }, (_, index) => {
+    const line = index + 1;
+    const designRows = rows.design.filter(entry => entry.line === line);
+    const personalityRows = rows.personality.filter(entry => entry.line === line);
+    return {
+      line,
+      design: designRows.length,
+      personality: personalityRows.length,
+      total: designRows.length + personalityRows.length,
+      gates: {
+        design: sortedUnique(designRows.map(entry => entry.gate)),
+        personality: sortedUnique(personalityRows.map(entry => entry.gate)),
+        all: sortedUnique([...designRows, ...personalityRows].map(entry => entry.gate)),
+      },
+    };
+  });
+}
+
+export function chartLineGates(chart, line, source) {
+  if (!validLine(line) || !['design', 'personality', 'all'].includes(source)) return [];
+  const primary = primaryChart(chart && typeof chart === 'object' ? chart : {});
+  if (primary.source === 'manual') return [];
+  const sources = source === 'all' ? ['design', 'personality'] : [source];
+  return sortedUnique(sources.flatMap(side => savedRows(primary, side, activeGateSet(primary[side])))
+    .filter(entry => entry.line === line).map(entry => entry.gate));
+}
+
 // Read only saved facts: topology comes from the same gate sets as the diagram.
 // A line count counts planetary activations, while selection targets are unique
 // gates. In particular, two planets in the same gate still count as two rows.
 export function buildChartFacts(chart = {}) {
   chart = chart && typeof chart === 'object' ? chart : {};
-  const isTransit = chart.source === 'transit';
-  const design = activeGateSet(chart.design);
-  const personality = activeGateSet(chart.personality);
+  const rowsChart = primaryChart(chart);
+  const topology = chartTopology(chart);
+  const isTransit = rowsChart.source === 'transit';
+  const design = activeGateSet(topology.design);
+  const personality = activeGateSet(topology.personality);
+  const rowDesign = activeGateSet(rowsChart.design);
+  const rowPersonality = activeGateSet(rowsChart.personality);
   const active = new Set([...design, ...personality]);
   const rows = {
-    design: savedRows(chart, 'design', design),
-    personality: savedRows(chart, 'personality', personality),
+    design: savedRows(rowsChart, 'design', rowDesign),
+    personality: savedRows(rowsChart, 'personality', rowPersonality),
   };
   const allRows = [...rows.design, ...rows.personality];
   const hasLines = allRows.length > 0;
   const definition = getDefinition({ design: [...design], personality: [...personality] });
-  const designSun = sunLine(chart, 'design', design);
-  const personalitySun = sunLine(chart, 'personality', personality);
+  const designSun = sunLine(rowsChart, 'design', rowDesign);
+  const personalitySun = sunLine(rowsChart, 'personality', rowPersonality);
 
   return {
     isTransit,
+    scope: isChartOverlay(chart) ? 'overlay' : 'single',
+    rowsLabel: isChartOverlay(chart) ? rowsChart.name?.trim() || 'Личная карта' : null,
     hasLines,
-    profile: chart.source === 'calculated' && designSun && personalitySun
+    profile: rowsChart.source === 'calculated' && designSun && personalitySun
       ? `${personalitySun}/${designSun}` : null,
     totals: {
       gates: active.size,
@@ -52,22 +87,7 @@ export function buildChartFacts(chart = {}) {
       centers: definition.centers.size,
       activations: hasLines ? allRows.length : null,
     },
-    lines: Array.from({ length: 6 }, (_, index) => {
-      const line = index + 1;
-      const designRows = rows.design.filter(entry => entry.line === line);
-      const personalityRows = rows.personality.filter(entry => entry.line === line);
-      return {
-        line,
-        design: designRows.length,
-        personality: personalityRows.length,
-        total: designRows.length + personalityRows.length,
-        gates: {
-          design: sortedUnique(designRows.map(entry => entry.gate)),
-          personality: sortedUnique(personalityRows.map(entry => entry.gate)),
-          all: sortedUnique([...designRows, ...personalityRows].map(entry => entry.gate)),
-        },
-      };
-    }),
+    lines: lineFacts(rows),
     centers: CENTERS.map(({ id }) => ({
       id, defined: definition.centers.has(id),
       activeGates: GATES.filter(gate => gate.center === id && active.has(gate.id)).map(gate => gate.id),

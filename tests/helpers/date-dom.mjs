@@ -24,7 +24,18 @@ export function dateDom() {
       setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
       select() { this.setSelectionRange(0, this.value.length); },
       focus() { document.activeElement = this; this.dispatch('focus'); document.dispatch('focusin', { target: this }); },
-      append(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.push(node); } },
+      append(...nodes) { for (const node of nodes) this.insertBefore(node, null); },
+      insertBefore(node, reference) {
+        if (node === reference) return node;
+        node.remove();
+        const index = reference === null ? this.children.length : this.children.indexOf(reference);
+        this.children.splice(index, 0, node); node.parentElement = this; return node;
+      },
+      remove() {
+        if (!this.parentElement) return;
+        const siblings = this.parentElement.children;
+        siblings.splice(siblings.indexOf(this), 1); this.parentElement = null;
+      },
       replaceChildren(...nodes) { for (const node of this.children) node.parentElement = null; this.children = []; this.append(...nodes); },
       contains(target) { return this === target || this.children.some(child => child.contains(target)); },
       all(predicate) { return this.children.flatMap(child => [...(predicate(child) ? [child] : []), ...child.all(predicate)]); },

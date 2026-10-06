@@ -7,7 +7,7 @@ const sourceNames = { calculated: 'Расчёт по данным рождени
 
 function rowContent(chart, selected) {
   const caption = chart.birthDate ? [formatDateInput(chart.birthDate), chart.birthTime].filter(Boolean).join(' · ') : sourceNames[chart.source] || 'Ручные активации';
-  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}"><img class="chart-avatar chart-thumbnail" alt="" aria-hidden="true" width="44" height="68" decoding="async"><span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(chart.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
+  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}"><img class="chart-thumbnail" alt="" aria-hidden="true" width="44" height="68" decoding="async"><span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(chart.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
 }
 
 // Saved data never lives here. Rows retain DOM identity across selection and
@@ -114,9 +114,13 @@ export function createChartLibraryView({
       reconcile();
     },
     show() {
-      opened = true; reconcile();
-      for (const entry of rows.values()) if (!entry.ready) observer?.observe(entry.row);
-      measureVisible();
+      if (opened) return;
+      opened = true;
+      if (renderedCharts !== charts) reconcile();
+      else {
+        for (const entry of rows.values()) if (!entry.ready) observer?.observe(entry.row);
+        measureVisible();
+      }
     },
     hide() {
       opened = false; observer?.disconnect(); pending.clear();
@@ -126,7 +130,7 @@ export function createChartLibraryView({
   };
 }
 
-export function attachChartLibrary({ document, store, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {}, toast }) {
+export function attachChartLibrary({ document, store, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {} }) {
   const $ = id => document.getElementById(id);
   let deletingId = null;
   const view = createChartLibraryView({ chartList: $('chartList'), libraryCount: $('libraryCount'), nowButton: $('nowButton'), document });
@@ -185,7 +189,6 @@ export function attachChartLibrary({ document, store, session, onSelect, onEdit,
       if (session.selectedId === deletingId) onSelect(store.charts.find(c => c.id !== 'current-transit')?.id || 'current-transit');
       else onUpdate();
       deletingId = null;
-      toast('Карта удалена');
     } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
   });
 

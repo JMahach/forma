@@ -1,10 +1,13 @@
 import { createGraphController } from '/src/scene/updates.js';
 import { renderBodygraph } from '/src/scene/bodygraph-svg.js';
+import { createSceneRenderer } from '/src/scene/renderer.js';
+import { alignPersonalityHeading } from '/src/scene/activation-columns.js';
 import { crossAtLongitude } from '/src/domain/mandala-cross.js';
 import { PLANETS } from '/src/domain/planets.js';
 import { gatePositionAtLongitude, GATE_LONGITUDE_START, GATE_WIDTH, LINE_WIDTH } from '/src/domain/gate-wheel.js';
 
-// The same synthetic 26-activation chart, camera and production renderer for A/B.
+// The same synthetic 26-activation chart and camera for A/B: a local full-rebuild
+// baseline versus the production persistent scene and its fast hover painter.
 // No personal data, localStorage, network calculations or app entrypoint.
 const activations = Object.fromEntries(['personality', 'design'].map((source, side) => [source,
   PLANETS.map(([planet], index) => ({ planet, ...gatePositionAtLongitude(17.234 + index * 26.13 + side * 88) })),
@@ -17,27 +20,40 @@ const emptyPopover = { close() {}, refresh() {} };
 
 function createRunner(name) {
   const section = document.getElementById(name), viewport = section.querySelector('.viewport');
-  let preview = null, rebuilds = 0, patches = 0;
+  let preview = null, rebuilds = 0, patches = 0, sceneUpdates = 0;
+  const renderer = name === 'baseline' ? null : createSceneRenderer(viewport);
+  const scene = {
+    update(data, selection, options) {
+      sceneUpdates++;
+      const config = { ...options, idPrefix: name };
+      if (renderer) {
+        const mounted = viewport.firstElementChild;
+        renderer.update(data, selection, config);
+        if (viewport.firstElementChild !== mounted) rebuilds++;
+      } else {
+        viewport.innerHTML = renderBodygraph(data, selection, config);
+        alignPersonalityHeading(viewport);
+        rebuilds++;
+      }
+    },
+    clear() { if (renderer) renderer.clear(); else viewport.replaceChildren(); },
+  };
   const graph = createGraphController({ getChart: () => chart, viewport,
     activationPopover: emptyPopover, getMandala: () => ({ enabled: true }),
     getHoverPreview: () => ({ currentSelection: preview, clear() { preview = null; } }),
-    renderChart: (data, selection, options) => {
-      rebuilds += 1;
-      return renderBodygraph(data, selection, { ...options, idPrefix: name });
-    },
+    scene,
   });
   return {
     section, viewport,
-    reset() { graph.reset(); rebuilds = 0; patches = 0; },
+    reset() { graph.reset(); rebuilds = 0; patches = 0; sceneUpdates = 0; },
     select(values) { graph.reset(); for (const value of values) graph.selectionState.choose({ ...value, additive: true }); graph.render(); },
-    stats() { return { rebuilds, patches }; },
+    stats() { return { rebuilds, patches, sceneUpdates }; },
     update(longitude, source = 'personality') {
       const cross = crossAtLongitude(longitude, { source });
       preview = { type: 'mandala-cross', id: cross.longitude, cross };
-      const previousRebuilds = rebuilds;
-      // Both paths are actual production methods, not a benchmark-only renderer.
+      const previousUpdates = sceneUpdates;
       if (name === 'baseline') graph.render(); else graph.preview();
-      if (rebuilds === previousRebuilds) patches += 1;
+      if (sceneUpdates === previousUpdates) patches += 1;
     },
   };
 }
@@ -67,14 +83,17 @@ document.getElementById('verify').addEventListener('click', () => guarded(async 
   const pinned = crossAtLongitude(305.123);
   angles.push(305.123 - .000001, 305.123, 305.123 + .000001, -.000001, 0, .000001);
   let parityCases = 0;
-  const normalized = markup => markup.replaceAll('baseline-', 'drawing-').replaceAll('partial-', 'drawing-');
+  const normalize = value => value.replaceAll('baseline-', 'drawing-').replaceAll('partial-', 'drawing-');
+  const snapshot = node => node.nodeType === 3 ? normalize(node.textContent.trim()) || null
+    : [node.localName, node.getAttributeNames().sort().map(name => [name, normalize(node.getAttribute(name))]),
+      [...node.childNodes].map(snapshot).filter(value => value !== null)];
   for (const selected of [[], [{ type: 'gate', id: 10 }, { type: 'gate', id: 20 }], [{ type: 'mandala-cross', id: pinned.longitude, cross: pinned }]]) {
   show(baseline); baseline.select(selected); show(partial); partial.select(selected);
   for (const source of ['personality', 'design']) for (let i = 0; i < angles.length; i++) {
     // Both are laid out at the same size before comparing their serialized SVG.
     show(baseline); baseline.update(angles[i], source);
     show(partial); partial.update(angles[i], source);
-    if (normalized(baseline.viewport.innerHTML) !== normalized(partial.viewport.innerHTML)) {
+    if (JSON.stringify(snapshot(baseline.viewport)) !== JSON.stringify(snapshot(partial.viewport))) {
       throw new Error(`A/B mismatch at ${angles[i]} (${source})`);
     }
     parityCases += 1;
@@ -83,7 +102,7 @@ document.getElementById('verify').addEventListener('click', () => guarded(async 
   }
   verified = true;
   status.textContent = 'Разметка совпала';
-  results.textContent = JSON.stringify({ parityCases, partialStats: partial.stats(), scope: 'Production methods; empty selection, two selected gates and pinned cross; both sources. No open summary/popover.' }, null, 2);
+  results.textContent = JSON.stringify({ parityCases, partialStats: partial.stats(), scope: 'Local full-rebuild baseline vs production persistent scene; empty selection, two selected gates and pinned cross; both sources. No open summary/popover.' }, null, 2);
 }));
 
 document.getElementById('measure').addEventListener('click', () => guarded(async () => {

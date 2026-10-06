@@ -2,7 +2,8 @@ import { createCamera } from './camera.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null, cameraMotion = {},
+export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null,
+  resolvePointerTarget = event => event.target.closest('[data-type]'),
   requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
 }) {
@@ -64,7 +65,6 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
   }
   camera = createCamera({ getFrame, getHomeFrame,
     measureFit: frame => cameraView.measureFit(frame, fitInsets),
-    cameraMotion: { reducedMotion: () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false, ...cameraMotion },
     onChange: publish,
   });
   const center = pair => ({ x: (pair[0].x + pair[1].x) / 2, y: (pair[0].y + pair[1].y) / 2 });
@@ -73,7 +73,7 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     const current = point(event);
     if (!pointers.size) {
-      moved = false; pinched = false; initialTarget = event.target.closest('[data-type]'); initialClient = { x: event.clientX, y: event.clientY };
+      moved = false; pinched = false; initialTarget = resolvePointerTarget(event); initialClient = { x: event.clientX, y: event.clientY };
       // A finger can roll slightly while pressing a control. Keep that a tap;
       // panning from empty space retains its existing, smaller start distance.
       tapTolerance = initialTarget && event.pointerType === 'touch' ? 10 : 6;
@@ -151,7 +151,11 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
   svg.addEventListener('keydown', event => {
     const target = event.target.closest('[data-type]');
     if (target && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectTarget(target, Boolean(event.shiftKey), event); }
-    if (event.target === svg && ['+', '-', '0'].includes(event.key)) { event.preventDefault(); camera.zoom(event.key === '+' ? 1.25 : event.key === '-' ? 0.8 : 1); if (event.key === '0') camera.reset(); }
+    if (event.target === svg && ['+', '-', '0'].includes(event.key)) {
+      event.preventDefault();
+      if (event.key === '0') camera.reset();
+      else camera.zoom(event.key === '+' ? 1.25 : 0.8);
+    }
   });
   return camera;
 }

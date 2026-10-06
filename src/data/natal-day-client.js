@@ -1,12 +1,13 @@
 import { CHART_DAY_VERSION } from '../../shared/day-packets/natal-format.js';
 import { decodeChartDay } from '../../shared/day-packets/decode.js';
-import { createChartDayCache } from './natal-day-cache.js';
+import { createBinaryCache } from './binary-cache.js';
 
 const aborted = () => new DOMException('Загрузка отменена.', 'AbortError');
+const compatibleTimezone = (day, timezone) => !timezone || day.timezone === timezone;
 
 export function createChartDayClient({
   fetch: fetchDay = globalThis.fetch, decode = decodeChartDay,
-  persistentCache = createChartDayCache(), capacity = 3, timeoutMs = 60_000,
+  persistentCache = createBinaryCache({ databaseName: 'bodygraph-chart-days' }), capacity = 3, timeoutMs = 60_000,
 } = {}) {
   const memory = new Map(), pending = new Map();
   const limit = Math.max(1, Math.floor(capacity));
@@ -15,17 +16,23 @@ export function createChartDayClient({
     while (memory.size > limit) memory.delete(memory.keys().next().value);
     return day;
   }
+  function forget(key) {
+    memory.delete(key);
+    Promise.resolve().then(() => persistentCache?.remove(key)).catch(() => {});
+  }
 
   async function getDay(chart, { signal } = {}) {
-    const birthDate = chart?.birthDate, cityId = String(chart?.cityId ?? chart?.city?.id ?? '');
+    const birthDate = chart?.birthDate, cityId = String(chart?.cityId ?? chart?.city?.id ?? ''), timezone = chart?.timezone;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate || '') || !cityId) throw new Error('Для просмотра дня нужны дата и город рождения.');
     if (signal?.aborted) throw aborted();
     const forChart = day => {
-      if (chart.timezone && day.timezone !== chart.timezone) throw new Error('Часовой пояс расчёта не совпадает с картой.');
+      if (!compatibleTimezone(day, timezone)) throw new Error('Часовой пояс расчёта не совпадает с картой.');
       return day;
     };
     const key = `${CHART_DAY_VERSION}:${birthDate}:${cityId}`;
-    if (memory.has(key)) return forChart(remember(key, memory.get(key)));
+    const cached = memory.get(key), skipDisk = cached && !compatibleTimezone(cached, timezone);
+    if (cached && !skipDisk) return remember(key, cached);
+    if (skipDisk) forget(key);
     let request = pending.get(key);
     if (!request) {
       const controller = new AbortController();
@@ -38,11 +45,16 @@ export function createChartDayClient({
           return day;
         };
         let bytes;
-        try { bytes = await persistentCache?.get(key); } catch { /* Local storage is optional. */ }
+        try { if (!skipDisk) bytes = await persistentCache?.get(key); } catch { /* Local storage is optional. */ }
         if (controller.signal.aborted) throw aborted();
         if (bytes) {
-          try { return remember(key, validate(bytes)); }
-          catch { Promise.resolve().then(() => persistentCache?.remove(key)).catch(() => {}); }
+          try {
+            const day = validate(bytes);
+            // A cached packet must suit every current consumer. Otherwise only
+            // the server can resolve which saved timezone still matches this city.
+            if ([...ownedRequest.consumers].every(consumer => compatibleTimezone(day, consumer.timezone))) return remember(key, day);
+          } catch { /* Invalid cached bytes can be replaced by a fresh response. */ }
+          forget(key);
         }
         let timedOut = false;
         const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
@@ -59,9 +71,14 @@ export function createChartDayClient({
           bytes = await response.arrayBuffer();
           if (controller.signal.aborted) throw aborted();
           const day = validate(bytes);
-          // Disk writes are best effort and never delay an interactive result.
-          Promise.resolve().then(() => persistentCache?.put(key, bytes)).catch(() => {});
-          return remember(key, day);
+          // One stale caller must not reject a valid shared result for another.
+          // Incompatible callers still fail independently below; without a
+          // compatible consumer, the fresh packet is never retained.
+          if ([...ownedRequest.consumers].some(consumer => compatibleTimezone(day, consumer.timezone))) {
+            Promise.resolve().then(() => persistentCache?.put(key, bytes)).catch(() => {});
+            remember(key, day);
+          }
+          return day;
         } catch (error) {
           if (timedOut) throw new Error('День рождения не успел загрузиться. Повторите попытку.');
           if (controller.signal.aborted || error.name === 'AbortError') throw aborted();
@@ -74,7 +91,7 @@ export function createChartDayClient({
     // Multiple consumers share a request; cancellation only stops transport once
     // none of them need it. Navigation still invalidates its own result at once.
     return forChart(await new Promise((resolve, reject) => {
-      const consumer = {};
+      const consumer = { timezone };
       request.consumers.add(consumer);
       const release = () => { signal?.removeEventListener('abort', cancel); request.consumers.delete(consumer); };
       const cancel = () => {

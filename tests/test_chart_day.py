@@ -99,7 +99,7 @@ class ChartDayTests(unittest.TestCase):
                 time=f'{minute // 60:02d}:{minute % 60:02d}', city=dict(id='test', name='Test', timezone=zone)))['chart']
             for side_index, side in enumerate(('personality', 'design')):
                 expected = {item['planet']: item['longitude'] for item in chart['activations'][side]}
-                for column, planet in enumerate(chart_day.PLANETS):
+                for column, (planet, _) in enumerate(astro.PLANET_BODIES):
                     self.assertEqual(day['columns'][side_index * 11 + column][minute].hex(), expected[planet].hex())
             self.assertEqual(civil.iso(dt.datetime.fromtimestamp(day['columns'][22][minute], civil.UTC)), chart['designUtc'])
             self.assertEqual(day['columns'][23][minute].hex(), chart['designArcResidualDegrees'].hex())

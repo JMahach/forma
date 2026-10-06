@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { activationDetails } from '../src/views/activation-details.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { renderActivationColumns } from '../src/scene/activation-columns.js';
-import { renderVariableArrows } from '../src/scene/variable-arrows.js';
+import { renderVariableArrows, visibleVariables } from '../src/scene/variable-arrows.js';
 import { calculateVariables } from '../src/domain/variables.js';
+import { overlayFixture } from './helpers/chart-composition.mjs';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { CENTERS, GATES, CHANNELS } from '../src/scene/geometry/chart-geometry.js';
 
@@ -91,6 +92,28 @@ test('a prepared domain snapshot produces the exact chart API markup without rer
     }
   }
   assert.equal(renderVariableArrows(chartFor(), []), '', 'an explicitly absent prepared state stays absent');
+});
+
+test('the shared Variable visibility rule avoids domain reads in hidden modes', () => {
+  const chart = chartFor();
+  assert.deepEqual(visibleVariables(chart, { showActivations: true }), calculateVariables(chart));
+  let reads = 0;
+  Object.defineProperty(chart, 'activations', { get() { reads++; throw new Error('hidden Variables must not inspect activations'); } });
+  for (const options of [{}, { showActivations: false }, { showActivations: true, showMandala: true }]) {
+    assert.deepEqual(visibleVariables(chart, options), []);
+  }
+  const overlay = overlayFixture(chart, chartFor(), { kind: 'return', event: { id: 'fixture-return', body: 'saturn', cycle: 1 } });
+  assert.deepEqual(visibleVariables(overlay, { showActivations: true }), []);
+  assert.equal(reads, 0);
+  assert.doesNotMatch(renderBodygraph(chartFor(), null, { profile: 'thumbnail', showActivations: true }), /bodygraph-variables/);
+});
+
+test('direct Variable formatting suppresses return and transit compositions', () => {
+  const chart = chartFor();
+  for (const options of [{ kind: 'return', event: { id: 'fixture-return', body: 'saturn', cycle: 1 } }, { kind: 'transit' }]) {
+    const overlay = overlayFixture(chart, chart, options);
+    assert.equal(Boolean(renderVariableArrows(overlay)), false, 'an overlay never borrows the primary chart Variable decoration');
+  }
 });
 
 function parseSvg(markup) {
@@ -282,8 +305,9 @@ test('calculated, manual and transit headings retain only the approved rule span
   const chart = chartFor();
   for (const source of ['calculated', 'manual', 'transit']) {
     const current = { ...chart, source, ...(source === 'transit' ? { design: [], activations: { ...chart.activations, design: [] } } : {}) };
-    const columns = parseSvg(renderActivationColumns(current)).children;
-    assert.deepEqual(columns.map(node => node.attrs['data-source']), source === 'transit' ? ['personality'] : ['design', 'personality']);
+    const columnMarkup = renderActivationColumns(current);
+    const columns = columnMarkup ? parseSvg(columnMarkup).children : [];
+    assert.deepEqual(columns.map(node => node.attrs['data-source']), source === 'manual' ? [] : source === 'transit' ? ['personality'] : ['design', 'personality']);
     for (const column of columns) {
       const side = column.attrs['data-source'];
       assert.ok(hasClass(column, 'activation-column'));
@@ -308,7 +332,7 @@ test('calculated, manual and transit headings retain only the approved rule span
     }
     const full = renderBodygraph(current, null, { showActivations: true });
     const headings = [...full.matchAll(/<text\b[^>]*>/g)].filter(([tag]) => hasClass({ attrs: attributes(tag) }, 'activation-heading'));
-    const expectedCount = source === 'calculated' ? 6 : source === 'manual' ? 2 : 1;
+    const expectedCount = source === 'calculated' ? 6 : source === 'manual' ? 0 : 1;
     assert.equal(headings.length, expectedCount, 'each visible word retains exactly one heading, including transit');
     const paths = [...full.matchAll(/<path\b[^>]*>/g)].map(([tag]) => ({ attrs: attributes(tag) }));
     const rules = paths.filter(node => hasClass(node, 'activation-header-rule') || hasClass(node, 'variable-header-rule'));
@@ -325,7 +349,7 @@ test('calculated, manual and transit headings retain only the approved rule span
     }).sort((a, b) => a[0] - b[0]);
     assert.deepEqual(spans, source === 'calculated'
       ? [[-34, 24], [24, 198], [437, 582], [582, 656]]
-      : source === 'manual' ? [[-34, 24], [582, 656]] : [[582, 640]], 'calculated headings connect on both sides; manual and transit retain only their own column underlines');
+      : source === 'manual' ? [] : [[582, 640]], 'calculated headings connect on both sides; manual charts omit stale columns and transit retains its own underline');
     if (source !== 'calculated') assert.equal(renderVariableArrows(current), '');
     assert.doesNotMatch(renderBodygraph(current), /activation-heading|activation-header-rule|variable-header-rule/, 'hidden activation columns also omit their headings and short rules');
   }
@@ -576,17 +600,17 @@ test('adding Color/Tone data changes only its decorative layer and preserves ful
   for (let state = 0; state < 16; state++) {
     const tones = EXPECTED.map((_, index) => state & (1 << index) ? 6 : 1);
     const colors = EXPECTED.map((_, index) => (state + index) % 6 + 1);
-    const chart = freeze(chartFor(tones, colors)), manual = { ...chart, source: 'manual' };
+    const chart = freeze(chartFor(tones, colors)), withoutVariables = { ...chart, source: undefined };
     const before = JSON.stringify(chart), layer = renderVariableArrows(chart);
     assert.ok(layer);
     for (const mode of modes) {
       const options = { ...mode, showActivations: true };
-      const actual = renderBodygraph(chart, null, options), expected = renderBodygraph(manual, null, options);
+      const actual = renderBodygraph(chart, null, options), expected = renderBodygraph(withoutVariables, null, options);
       assert.equal(actual.split(layer).length, 2, 'the full drawing includes the complete Variable group exactly once');
       assert.equal(actual.replace(layer, ''), expected, 'removing only the Variable group preserves every remaining SVG byte');
       for (const showActivations of [undefined, false]) {
         const hiddenOptions = { ...mode, showActivations };
-        assert.equal(renderBodygraph(chart, null, hiddenOptions), renderBodygraph(manual, null, hiddenOptions), 'hidden activations also omit Variable glyphs without any other SVG change');
+        assert.equal(renderBodygraph(chart, null, hiddenOptions), renderBodygraph(withoutVariables, null, hiddenOptions), 'hidden activations also omit Variable glyphs without any other SVG change');
       }
     }
     assert.equal(JSON.stringify(chart), before, 'rendering does not mutate saved data');

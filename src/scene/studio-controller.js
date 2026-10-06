@@ -9,7 +9,7 @@ export function createStudioLayout({ canvas, panels, drawing = null, art = null,
   const phone = () => media.matches;
   let current;
   function refresh() {
-    const rect = canvas.getBoundingClientRect(), style = readStyle(canvas);
+    const rect = canvas.getBoundingClientRect(), style = readStyle(canvas), offsetLeft = canvas.offsetLeft || 0;
     current = computeStudioLayout({ width: rect.width, height: rect.height,
       side: parseFloat(style.scrollPaddingLeft) || 4,
       top: parseFloat(style.scrollPaddingTop) || 112,
@@ -23,9 +23,10 @@ export function createStudioLayout({ canvas, panels, drawing = null, art = null,
       Object.assign(art.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, visibility: 'visible' });
     }
     const { panel, placement } = current;
+    const left = `${panel.x + offsetLeft}px`;
     for (const element of panels) {
       element.dataset.placement = placement;
-      element.style.left = `${panel.x}px`;
+      element.style.left = left;
       element.style.top = `${panel.y}px`;
       element.style.width = `${panel.width}px`;
     }

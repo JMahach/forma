@@ -8,7 +8,7 @@ const PAGE_YEARS = 25;
 
 // A non-modal calendar: typed input remains independent, and Tab can leave the
 // popup. Only its active grid choice is tabbable; arrows move between choices.
-export function attachDatePicker({ input, button, getBounds, onSelect }) {
+export function attachDatePicker({ input, button, getBounds, onSelect, precision = 'day' }) {
   const document = input.ownerDocument, window = document.defaultView;
   const popup = document.createElement('section');
   popup.className = 'date-picker'; popup.id = `${input.id}-calendar`; popup.hidden = true;
@@ -16,12 +16,14 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
   popup.setAttribute('aria-label', input.getAttribute('aria-label') || 'Выбор даты');
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', popup.id); button.setAttribute('aria-expanded', 'false');
   document.body.append(popup);
-  let view = 'years', selected = '', year = 0, month = 1, page = 0, minimum = '', maximum = '';
+  let view = 'years', selected = '', cursor = '', pending = '', year = 0, month = 1, page = 0, minimum = '', maximum = '';
   let choices = [], positions = [], columns = 5, firstHeader = null;
   const minYear = () => Number(minimum.slice(0, 4)), maxYear = () => Number(maximum.slice(0, 4));
   const pageFor = value => minYear() + Math.floor((value - minYear()) / PAGE_YEARS) * PAGE_YEARS;
   const allowed = value => value >= minimum && value <= maximum;
   const overlaps = (start, end) => start <= maximum && end >= minimum;
+  const bounded = value => value < minimum ? minimum : value > maximum ? maximum : value;
+  const lastDay = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
   function node(tag, text, className) {
     const result = document.createElement(tag);
     if (text) result.textContent = text;
@@ -53,15 +55,28 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
     window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true);
     window.visualViewport?.removeEventListener('resize', position);
     window.visualViewport?.removeEventListener('scroll', position);
+    const value = pending; pending = '';
+    if (value) onSelect(value);
     if (restoreFocus) button.focus({ preventScroll: true });
   }
   function outside(event) { if (!popup.contains(event.target) && !button.contains(event.target)) close(); }
   function focusOutside(event) { if (!popup.contains(event.target) && !button.contains(event.target)) close(); }
   function choose(value, next) {
-    if (!allowed(value)) return;
-    selected = value; [year, month] = value.split('-').map(Number);
-    onSelect(value);
-    if (next) { view = next; render(); } else close(true);
+    const [chosenYear, chosenMonth] = value.split('-').map(Number);
+    if (next) {
+      const end = next === 'months' ? isoDate(chosenYear, 12, 31) : isoDate(chosenYear, chosenMonth, lastDay(chosenYear, chosenMonth));
+      if (!overlaps(value, end)) return;
+      // Keep a browsing cursor without copying the actual selected date. Only dismissal
+      // commits the coarse year/month choice; a final day replaces it.
+      const previewMonth = next === 'months' ? Number(cursor.slice(5, 7)) : chosenMonth;
+      const previewDay = Math.min(Number(cursor.slice(8, 10)), lastDay(chosenYear, previewMonth));
+      cursor = bounded(isoDate(chosenYear, previewMonth, previewDay));
+      pending = bounded(value); [year, month] = cursor.split('-').map(Number);
+      view = next; render();
+    } else {
+      if (!allowed(value)) return;
+      selected = pending = value; close(true);
+    }
   }
   function focusChoice(index) {
     const target = choices[clamp(index, 0, choices.length - 1)];
@@ -99,7 +114,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
     columns = view === 'days' ? 7 : view === 'months' ? 3 : view === 'periods' ? 4 : 5;
     grid.style.setProperty('--calendar-columns', columns);
     let row = null, count = 0, focused = -1;
-    function cell(text, label, action, { enabled = true, active = false, current = false, empty = false, weekday = false } = {}) {
+    function cell(text, label, action, { enabled = true, active = false, preferred = active, current = false, empty = false, weekday = false } = {}) {
       if (count++ % columns === 0) { row = node('div', '', 'date-picker-row'); row.setAttribute('role', 'row'); grid.append(row); }
       const wrapper = node('div'); wrapper.setAttribute('role', weekday ? 'columnheader' : 'gridcell'); row.append(wrapper);
       if (empty || weekday) { wrapper.textContent = text; if (label) wrapper.setAttribute('aria-label', label); return; }
@@ -108,25 +123,26 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
       if (active) choice.dataset.selected = 'true';
       if (current) choice.setAttribute('aria-current', view === 'days' ? 'date' : 'true');
       wrapper.append(choice);
-      if (enabled) { if (active) focused = choices.length; choices.push(choice); positions.push(count - 1); }
+      if (enabled) { if (preferred) focused = choices.length; choices.push(choice); positions.push(count - 1); }
     }
     if (view === 'periods') {
       for (let start = minYear(); start <= maxYear(); start += PAGE_YEARS) {
         const end = Math.min(start + PAGE_YEARS - 1, maxYear());
         cell(`${start}–${end}`, `Годы ${start}–${end}`, () => { page = start; view = 'years'; render(); },
-          { active: year >= start && year <= end, current: currentYear >= start && currentYear <= end });
+          { active: Number(selected.slice(0, 4)) >= start && Number(selected.slice(0, 4)) <= end, preferred: year >= start && year <= end, current: currentYear >= start && currentYear <= end });
       }
     } else if (view === 'years') {
       for (let value = page; value <= Math.min(page + PAGE_YEARS - 1, maxYear()); value++) {
         const date = isoDate(value);
-        cell(String(value), `${value} год, 1 января`, () => choose(date, 'months'),
-          { enabled: allowed(date), active: Number(selected.slice(0, 4)) === value, current: currentYear === value });
+        cell(String(value), precision === 'year' ? `${value} год` : `${value} год, 1 января`,
+          () => precision === 'year' ? choose(bounded(date)) : choose(date, 'months'),
+          { enabled: overlaps(date, isoDate(value, 12, 31)), active: Number(selected.slice(0, 4)) === value, preferred: Number(cursor.slice(0, 4)) === value, current: currentYear === value });
       }
     } else if (view === 'months') {
       MONTHS.forEach((name, index) => {
         const date = isoDate(year, index + 1);
         cell(name, `${name} ${year}, первое число`, () => choose(date, 'days'),
-          { enabled: allowed(date), active: selected.slice(0, 7) === date.slice(0, 7), current: today.slice(0, 7) === date.slice(0, 7) });
+          { enabled: overlaps(date, isoDate(year, index + 1, lastDay(year, index + 1))), active: selected.slice(0, 7) === date.slice(0, 7), preferred: cursor.slice(0, 7) === date.slice(0, 7), current: today.slice(0, 7) === date.slice(0, 7) });
       });
     } else {
       WEEKDAYS.forEach(name => cell(name.slice(0, 2), name, null, { weekday: true }));
@@ -135,7 +151,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
       const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
       for (let day = 1; day <= days; day++) {
         const date = isoDate(year, month, day);
-        cell(String(day), formatDateInput(date), () => choose(date), { enabled: allowed(date), active: selected === date, current: today === date });
+        cell(String(day), formatDateInput(date), () => choose(date), { enabled: allowed(date), active: selected === date, preferred: cursor === date, current: today === date });
       }
     }
     popup.append(grid);
@@ -144,9 +160,12 @@ export function attachDatePicker({ input, button, getBounds, onSelect }) {
   function open() {
     const bounds = getBounds(); minimum = bounds?.min; maximum = bounds?.max;
     if (!minimum || !maximum || minimum > maximum || button.disabled) return;
-    try { selected = normalizeDate(input.value); } catch { selected = minimum; }
-    selected = selected < minimum ? minimum : selected > maximum ? maximum : selected;
-    [year, month] = selected.split('-').map(Number); page = pageFor(year); view = 'years';
+    try { selected = precision === 'year'
+      ? /^\d{4}$/.test(input.value.trim()) ? isoDate(Number(input.value)) : ''
+      : normalizeDate(input.value); } catch { selected = ''; }
+    if (selected && !allowed(selected)) selected = '';
+    cursor = bounded(selected || minimum); pending = '';
+    [year, month] = cursor.split('-').map(Number); page = pageFor(year); view = 'years';
     popup.hidden = false; button.setAttribute('aria-expanded', 'true'); render();
     document.addEventListener('pointerdown', outside, true); document.addEventListener('focusin', focusOutside);
     window.addEventListener('resize', position); window.addEventListener('scroll', position, true);

@@ -8,7 +8,10 @@ import { createMandalaPreviewPainter } from '../src/scene/mandala-preview-painte
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
+import { overlayFixture } from './helpers/chart-composition.mjs';
+import { createChartComposition } from '../src/domain/chart-composition.js';
 import { SVG_NS, SvgElement, svgDocument, significantDOM } from './helpers/svg-dom.mjs';
+const RETURN_OVERLAY = { kind: 'return', event: { id: 'fixture-return', body: 'saturn', cycle: 1 } };
 
 // Matrix-based heading positioning is measured by the browser parity harness.
 SvgElement.prototype.getCTM = () => null;
@@ -44,6 +47,41 @@ function assertSameNodes(actual, expected) {
   assert.equal(actual.length, expected.length);
   actual.forEach((node, index) => assert.equal(node, expected[index], `node ${index} retains identity`));
 }
+
+test('single composition renders its primary chart facts and preserves scene targets on raw-to-composition updates', () => {
+  const primary = variableChart(), composition = createChartComposition(primary);
+  for (const showMandala of [false, true]) {
+    const h = fixture(), options = { showActivations: true, showBackdrop: true, showMandala };
+    h.renderer.update(primary, null, options);
+    const initial = h.root.querySelectorAll('[data-type]');
+    const state = h.renderer.update(composition, null, options);
+    assert.ok(state.personality.has(41));
+    assert.ok(state.design.has(41));
+    assert.equal(h.root.querySelectorAll('.activation-row').length, 26);
+    assert.equal(h.root.querySelectorAll('.bodygraph-variable').length, showMandala ? 0 : 4);
+    assert.equal(h.root.querySelectorAll('.mandala-planet-marker').length, showMandala ? 26 : 0);
+    assertSameNodes(h.root.querySelectorAll('[data-type]'), initial);
+    assertRendered(h.root, primary, null, options);
+    assertRendered(h.root, composition, null, options);
+  }
+});
+
+test('manual chart topology never promotes stale planetary metadata into scene rows or mandala marks', () => {
+  const manual = { ...variableChart(), source: 'manual', personality: [63], design: [4] };
+  const calculated = chartAt();
+  for (const composition of [createChartComposition(manual), overlayFixture(manual, calculated, RETURN_OVERLAY)]) {
+    const h = fixture(), options = { showActivations: true, showMandala: true };
+    const state = h.renderer.update(composition, null, options);
+    assert.ok(state.definedChannels.has('4-63'), 'manually entered gates still own the definition');
+    assert.equal(h.root.querySelectorAll('.activation-row').length, 0);
+    assert.equal(h.root.querySelectorAll('[data-cycle-origin="natal"] .cycle-activation-value').length, 0);
+    assert.equal(h.root.querySelectorAll('.mandala-planet-marker[data-source="natal-personality"]').length, 0);
+    assert.equal(h.root.querySelectorAll('.mandala-planet-marker[data-source="natal-design"]').length, 0);
+    assert.equal(h.root.querySelectorAll('.mandala-planet-marker').length, composition.secondary ? 26 : 0);
+    assert.equal(h.root.querySelectorAll('.cycle-activation-value').length, composition.secondary ? 26 : 0);
+    assertRendered(h.root, composition, null, options);
+  }
+});
 
 test('first mount parses one complete SVG, adopts its caches and retains every initial node on an identical update', () => {
   for (const mode of [{}, { showMandala: true }, { showMandalaLayer: true }]) {
@@ -173,6 +211,7 @@ test('variable decoration snapshots retain nodes for equal values and follow mut
   }
   const invalidCharts = [
     { ...valid, source: 'manual' }, { ...valid, source: 'transit' }, { ...valid, source: undefined },
+    overlayFixture(valid, valid, RETURN_OVERLAY),
     { ...valid, activations: undefined },
     { ...valid, activations: { ...valid.activations, design: valid.activations.design.slice(1) } },
     { ...valid, activations: { ...valid.activations, design: [...valid.activations.design, valid.activations.design[0]] } },
@@ -241,4 +280,66 @@ test('equal variable state skips SVG generation before string formatting', async
     await post('Profiler.stopPreciseCoverage');
     session.disconnect();
   }
+});
+
+test('overlay mount prepares columns once and adopts the rendered input for unchanged updates', async () => {
+  const session = new Session(); session.connect();
+  const post = promisify(session.post.bind(session));
+  try {
+    await post('Profiler.enable');
+    await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+    const count = async work => {
+      await post('Profiler.takePreciseCoverage');
+      work();
+      const { result } = await post('Profiler.takePreciseCoverage');
+      const script = result.find(script => script.url.endsWith('/src/scene/overlay-activation-columns.js'));
+      return script?.functions.find(fn => fn.functionName === 'describeOverlayActivationColumns')?.ranges[0].count || 0;
+    };
+    for (const showMandala of [false, true]) {
+      const h = fixture(), chart = overlayFixture(chartAt(), chartAt(10), RETURN_OVERLAY);
+      const options = { showActivations: true, showMandala };
+      assert.equal(await count(() => h.renderer.update(chart, null, options)), 1, 'the initial SVG already contains its exact columns');
+      assertRendered(h.root, chart, null, options);
+      const initial = h.root.querySelectorAll('.cycle-activation-value');
+      assert.equal(await count(() => h.renderer.update(chart, null, options)), 0);
+      assertSameNodes(h.root.querySelectorAll('.cycle-activation-value'), initial);
+      const selection = { type: 'gate', id: chart.primary.activations.personality[0].gate };
+      assert.equal(await count(() => h.renderer.update(chart, selection, options)), 1);
+      assertRendered(h.root, chart, selection, options);
+      assert.equal(await count(() => h.renderer.update(chart, selection, { ...options, idPrefix: 'remount' })), 1);
+      assertRendered(h.root, chart, selection, { ...options, idPrefix: 'remount' });
+    }
+  } finally {
+    await post('Profiler.stopPreciseCoverage');
+    session.disconnect();
+  }
+});
+
+
+test('single mount builds column models once and still performs its initial heading alignment', async () => {
+  const session = new Session(); session.connect();
+  const post = promisify(session.post.bind(session));
+  try {
+    await post('Profiler.enable');
+    await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+    const count = async work => {
+      await post('Profiler.takePreciseCoverage'); work();
+      const { result } = await post('Profiler.takePreciseCoverage');
+      const script = result.find(script => script.url.endsWith('/src/scene/activation-columns.js'));
+      const calls = name => script?.functions.find(fn => fn.functionName === name)?.ranges[0].count || 0;
+      return [calls('describeActivationColumns'), calls('alignPersonalityHeading')];
+    };
+    const h = fixture(), chart = chartAt(), options = { profile: 'studio', showActivations: true };
+    assert.deepEqual(await count(() => h.renderer.update(chart, null, options)), [1, 1]);
+    assertRendered(h.root, chart, null, options);
+    const initial = h.root.querySelectorAll('.activation-row');
+    assert.deepEqual(await count(() => h.renderer.update(chart, null, options)), [0, 0]);
+    assertSameNodes(h.root.querySelectorAll('.activation-row'), initial);
+    const selection = { type: 'gate', id: chart.activations.personality[0].gate };
+    assert.deepEqual(await count(() => h.renderer.update(chart, selection, options)), [1, 0]);
+    assertRendered(h.root, chart, selection, options);
+    chart.activations.personality[0].line = chart.activations.personality[0].line % 6 + 1;
+    assert.deepEqual(await count(() => h.renderer.update(chart, selection, options)), [1, 1]);
+    assertRendered(h.root, chart, selection, options);
+  } finally { await post('Profiler.stopPreciseCoverage'); session.disconnect(); }
 });

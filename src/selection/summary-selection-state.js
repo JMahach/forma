@@ -1,7 +1,7 @@
 import { createSelectionState } from './selection-state.js';
 import { GATES } from '../domain/topology.js';
 import { selectionKey as key, gatesForSelection as ownedGates } from './selection-targets.js';
-import { buildChartFacts } from '../domain/chart-facts.js';
+import { chartLineGates } from '../domain/chart-facts.js';
 
 const validGates = values => [...new Set(values.filter(id => Number.isInteger(id) && id >= 1 && id <= 64))];
 const sameGroup = (first, second) => first.line === second.line && first.source === second.source;
@@ -49,7 +49,6 @@ export function createSummarySelectionState() {
     }
     const id = Number(value.id);
     const matchingGroups = value.type === 'gate' ? groups.filter(group => group.gates.includes(id)) : [];
-    let effect = { popoverActivation: null };
     if (matchingGroups.length) {
       // Shift on a selected individual gate subtracts it from every line group
       // that owns it, without broadening the other rows to whole-gate selection.
@@ -59,12 +58,11 @@ export function createSummarySelectionState() {
       }
       const gateCenter = GATES.find(gate => gate.id === id)?.center;
       if (ordinary.items.some(item => item.type === 'gate' && item.id === id
-        || item.type === 'center' && item.id === gateCenter)) effect = ordinary.choose(value);
+        || item.type === 'center' && item.id === gateCenter)) ordinary.choose(value);
     } else {
-      effect = ordinary.choose(value);
+      ordinary.choose(value);
     }
     rebuild();
-    return combined.items.length === 1 ? effect : { popoverActivation: null };
   }
 
   function chooseSummary(gates, filter, { additive = false } = {}) {
@@ -90,10 +88,9 @@ export function createSummarySelectionState() {
 
   function refresh(chart) {
     if (!groups.length) return;
-    const summary = buildChartFacts(chart);
     let changed = false;
     for (const group of groups) {
-      const gates = summary.lines[group.line - 1].gates[group.source].filter(id => !group.excluded.has(id));
+      const gates = chartLineGates(chart, group.line, group.source).filter(id => !group.excluded.has(id));
       if (gates.length !== group.gates.length || gates.some((id, index) => id !== group.gates[index])) {
         group.gates = gates; changed = true;
       }

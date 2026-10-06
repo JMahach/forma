@@ -1,4 +1,3 @@
-import { alignPersonalityHeading } from './activation-columns.js';
 import { createSelectionModel } from '../selection/selection-model.js';
 import { createSceneRenderer } from './renderer.js';
 import { createMandalaPreviewPainter } from './mandala-preview-painter.js';
@@ -10,13 +9,10 @@ export function createGraphController({
   viewport, getActiveElement = () => null, activationPopover,
   getShowActivations = () => true,
   getHoverPreview = () => null, getSummary = () => null, getMandala = () => null,
-  renderChart = null, alignHeading = alignPersonalityHeading,
+  scene = createSceneRenderer(viewport),
   onChartChange = () => {},
 }) {
-  // A renderer can be supplied by export/preview harnesses. The interactive
-  // application always owns a persistent scene.
-  const scene = renderChart ? { update(chart, selection, options) { viewport.innerHTML = renderChart(chart, selection, options); }, clear() { viewport.innerHTML = ''; } } : createSceneRenderer(viewport);
-  let summaryInput = null, popoverChart = null;
+  let popoverChart = null;
   const previewPainter = createMandalaPreviewPainter(viewport);
   let rendered = null;
 
@@ -26,14 +22,7 @@ export function createGraphController({
     const chart = getChart();
     selectionState.refresh?.(chart);
     const activationFilter = selectionState.activationFilter || null;
-    const summaryKey = JSON.stringify([chart.id, chart.source, chart.personality, chart.design,
-      ['design', 'personality'].map(source => chart.activations?.[source]?.map(a => [a.planet, a.gate, a.line])),
-      selectionState.items, activationFilter]);
-    if (summaryKey !== summaryInput) {
-      getSummary()?.update(chart, { items: selectionState.items, filter: activationFilter });
-      summaryInput = summaryKey;
-      getSummary()?.layout();
-    }
+    getSummary()?.update(chart, { items: selectionState.items, filter: activationFilter });
     if (!hasChart()) { scene.clear(); activationPopover.close(); return; }
     const focused = getActiveElement()?.closest?.('#viewport [data-type]');
     const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation, mandala: focused.classList.contains('mandala-gate') } : null;
@@ -45,9 +34,8 @@ export function createGraphController({
       previewSelection: getHoverPreview()?.currentSelection, activationFilter,
     };
     scene.update(chart, selectionState.primary, renderOptions);
-    if (renderChart) alignHeading(viewport);
     if (focusTarget && getActiveElement() !== focused) viewport.querySelector(focusTarget.activation ? `[data-activation="${focusTarget.activation}"]` : `${focusTarget.mandala ? '.mandala-gate' : '.bodygraph-drawing .bg-interactive'}[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
-    if (chart !== popoverChart || renderChart) { activationPopover.refresh(chart); popoverChart = chart; }
+    if (chart !== popoverChart) { activationPopover.refresh(chart); popoverChart = chart; }
     rendered = {
       chart, items: selectionState.items, primary: selectionState.primary,
       filter: selectionState.activationFilter, crosses: selectionState.crosses,
@@ -105,7 +93,7 @@ export function createGraphController({
 
   function reset() {
     rendered = null;
-    summaryInput = null; popoverChart = null;
+    popoverChart = null;
     previewPainter.clear();
     activationPopover.close();
     getHoverPreview()?.clear({ notify: false });

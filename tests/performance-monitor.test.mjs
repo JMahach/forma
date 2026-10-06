@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachPerformanceMonitor } from '../src/views/performance-monitor.js';
-import { attachDayRange } from '../src/views/day-range.js';
+import { attachTimelineRange } from '../src/views/timeline-range.js';
 
 function eventTarget() {
   const listeners = [], attributes = new Map();
@@ -215,7 +215,7 @@ test('reference dragging on either day range measures motion even when no native
       Object.assign(range, { min: '0', max: '100', value: '50', step: '1',
         getBoundingClientRect: () => ({ left: 0, width: 244 }),
       });
-      const day = attachDayRange({ range, marker, onScrub: value => scrubbed.push(value), onReference() {} });
+      const day = attachTimelineRange({ range, marker, onScrub: value => scrubbed.push(value), onReference() {} });
       day.updateReference({ value: 50, visible: true, label: 'Reference' });
       range.addEventListener('input', () => { nativeInputCount += 1; });
       const pointer = (type, clientX) => range.emit(type, {

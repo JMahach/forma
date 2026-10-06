@@ -4,6 +4,8 @@ import { createTransitDayClient } from '../src/data/transit-day-client.js';
 import { encodeTransitDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
 import { createLiveTransit } from '../src/state/live-transit.js';
+import { createLifetimeClient } from '../src/data/lifetime-client.js';
+import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
@@ -115,7 +117,7 @@ test('an early failure reaches the existing live retry policy without an automat
   assert.deepEqual(requests, ['2026-09-24', '2026-09-23', '2026-09-24'], 'explicit retry reuses the successful edge');
 });
 
-test('a changed UTC date discards the one-shot startup result instead of retaining an obsolete failure', async () => {
+test('another UTC date cannot consume the one-shot startup failure', async () => {
   const requests = [];
   const client = createTransitDayClient({ initialDate: '2026-09-24', fetch: async url => {
     const date = new URL(url, 'https://example.test').searchParams.get('date');
@@ -125,6 +127,114 @@ test('a changed UTC date discards the one-shot startup result instead of retaini
   } });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal((await client.getDay('2026-09-25')).date, '2026-09-25');
+  await assert.rejects(client.getDay('2026-09-24'), /Не удалось загрузить транзит дня/);
+  assert.deepEqual(requests, ['2026-09-24', '2026-09-25'], 'the first matching consumer receives the initial failure');
   assert.equal((await client.getDay('2026-09-24')).date, '2026-09-24');
   assert.deepEqual(requests, ['2026-09-24', '2026-09-25', '2026-09-24']);
+});
+
+test('the active local day stays visible to shared lookup while unrelated days rotate through LRU', async () => {
+  let requests = 0;
+  const client = createTransitDayClient({ capacity: 2, fetch: async url => {
+    requests++;
+    return response(new URL(url, 'https://example.test').searchParams.get('date'));
+  } });
+  const live = createLiveTransit({ dayClient: client, now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'Europe/Moscow' });
+  await live.refresh();
+  const active = client.peekDay('2026-09-24'), edge = client.peekDay('2026-09-23');
+  for (const date of ['2026-09-20', '2026-09-19', '2026-09-18']) await client.getDay(date);
+  assert.equal(client.peekDay('2026-09-24'), active);
+  assert.equal(client.peekDay('2026-09-23'), edge);
+  assert.equal(await client.getDay('2026-09-24'), active);
+  assert.equal(requests, 5, 'shared lookup reuses the same active object without a request');
+  live.setWanted(false);
+  for (const date of ['2026-09-17', '2026-09-16']) await client.getDay(date);
+  assert.equal(client.peekDay('2026-09-24'), active, 'Years can use the packets still owned by the last live day');
+  const lifetime = createLifetimeClient({ dayClient: client, fetch: async url => {
+    assert.equal(url, '/api/lifetime/meta', 'a minute or archive point already held by Day needs no transport');
+    return { ok: true, json: async () => ({ startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
+      stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, source: 'Swiss Ephemeris' }) };
+  } });
+  await lifetime.getMeta();
+  assert.ok(lifetime.peekMinute(Date.parse('2026-09-24T12:31:00Z')));
+  assert.equal((await lifetime.getPoint(23 * 144 + 72)).utc, '2026-09-24T12:00:00Z');
+  live.setWanted(true);
+  assert.equal(client.peekDay('2026-09-24'), active, 'resuming exposes the already-held packet without fetching it again');
+  live.stop();
+  for (const date of ['2026-09-15', '2026-09-14']) await client.getDay(date);
+  assert.equal(client.peekDay('2026-09-24'), null, 'stop releases retention');
+  await live.refresh();
+  const refreshed = client.peekDay('2026-09-24');
+  for (const date of ['2026-09-13', '2026-09-12', '2026-09-11']) await client.getDay(date);
+  assert.equal(client.peekDay('2026-09-24'), refreshed, 'a fresh refresh owns packets again even without start');
+  live.stop();
+});
+
+test('day rollover releases every earlier pin, and late stopped loads cannot pin again', async () => {
+  let timestamp = Date.parse('2026-09-01T12:00:00Z');
+  const client = createTransitDayClient({ capacity: 2, fetch: async url => response(new URL(url, 'https://example.test').searchParams.get('date')) });
+  const live = createLiveTransit({ dayClient: client, now: () => timestamp, timeZone: () => 'UTC' });
+  for (let offset = 0; offset < 20; offset++) { await live.refresh(); timestamp += 86400000; }
+  for (let date = 1; date < 18; date++) assert.equal(client.peekDay(`2026-09-${String(date).padStart(2, '0')}`), null);
+  live.stop();
+  let finish;
+  const delayedClient = createTransitDayClient({ capacity: 1, fetch: url => {
+    const date = new URL(url, 'https://example.test').searchParams.get('date');
+    return date === '2026-09-24' ? new Promise(resolve => { finish = () => resolve(response(date)); }) : Promise.resolve(response(date));
+  } });
+  const delayed = createLiveTransit({ dayClient: delayedClient, now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'UTC' });
+  const loading = delayed.refresh(); delayed.stop(); finish(); await loading;
+  assert.equal(delayed.state.status, 'idle', 'completion after stop has no right to change loading or error state');
+  assert.equal(delayed.state.loading, false);
+  await delayedClient.getDay('2026-09-25');
+  assert.equal(delayedClient.peekDay('2026-09-24'), null);
+});
+
+for (const [zone, index, selectedUtc] of [
+  ['Europe/Moscow', 12, '2026-09-23T21:12:00Z'],
+  ['America/New_York', 1439, '2026-09-25T03:59:00Z'],
+]) test(`a restored pause in ${zone} consumes the early failure once and retains its retry backoff`, async t => {
+  const requests = [], initialDate = '2026-09-24';
+  let timestamp = Date.parse('2026-09-24T12:00:20Z'), fail = true;
+  const client = createTransitDayClient({ initialDate, fetch: async url => {
+    const date = new URL(url, 'https://example.test').searchParams.get('date');
+    requests.push(date);
+    return date === initialDate && fail ? { ok: false, json: async () => ({ message: 'Initial packet unavailable' }) } : response(date);
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  let renders = 0;
+  const live = createLiveTransit({ dayClient: client, now: () => timestamp, timeZone: () => zone, onRender: () => renders++ });
+  t.after(() => live.stop());
+  await live.start({ live: false, date: initialDate, timeZone: zone, index });
+  assert.deepEqual(requests, [initialDate, selectedUtc.slice(0, 10)], 'loading the selected adjacent UTC packet must not retry the initial failure');
+  assert.equal(live.state.status, 'error');
+  assert.equal(live.state.error, 'Initial packet unavailable');
+  assert.equal(live.current.utc, selectedUtc, 'an available selected minute remains usable while the full range has failed');
+  const accepted = live.current;
+  await live.refresh(); timestamp += 29_999; await live.refresh();
+  assert.equal(requests.length, 2, 'the first 30 seconds perform no retry');
+  timestamp++; await live.refresh();
+  assert.deepEqual(requests, [initialDate, selectedUtc.slice(0, 10), initialDate]);
+  timestamp += 59_999; await live.refresh();
+  assert.equal(requests.length, 3, 'a second failure doubles the automatic backoff');
+  fail = false;
+  await live.retry();
+  assert.equal(requests.length, 4, 'explicit retry bypasses backoff and fetches only the missing packet');
+  assert.equal(live.state.status, 'ready');
+  assert.equal(live.state.live, false); assert.equal(live.state.index, index);
+  assert.equal(live.current, accepted); assert.equal(renders, 1, 'range recovery does not recreate or redraw the selected minute');
+  assert.equal(client.peekDay(selectedUtc.slice(0, 10)).date, selectedUtc.slice(0, 10));
+});
+
+test('a different UTC packet does not disturb a pending startup handoff or its successful cache', async () => {
+  const requests = []; let finish;
+  const client = createTransitDayClient({ initialDate: '2026-09-24', fetch: url => {
+    const date = new URL(url, 'https://example.test').searchParams.get('date'); requests.push(date);
+    return date === '2026-09-24' ? new Promise(resolve => { finish = () => resolve(response(date)); }) : Promise.resolve(response(date));
+  } });
+  await client.getDay('2026-09-23');
+  const first = client.getDay('2026-09-24'), shared = client.getDay('2026-09-24');
+  finish(); const [a, b] = await Promise.all([first, shared]);
+  assert.equal(a, b); assert.equal(await client.getDay('2026-09-24'), a);
+  assert.deepEqual(requests, ['2026-09-24', '2026-09-23']);
 });

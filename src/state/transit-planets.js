@@ -6,7 +6,7 @@ import { PLANET_IDS } from '../domain/planets.js';
 // shows all red when the shared Design selection contains any planet.
 export function createTransitPlanetFilter() {
   const selections = { personality: new Set(PLANET_IDS), design: new Set() };
-  let revision = 0, expanded = false, cachedChart = null, cachedRevision = -1, cachedResult = null;
+  let expanded = false, projections = new WeakMap();
   const ordered = source => PLANET_IDS.filter(planet => selections[source].has(planet));
   const state = () => expanded
     ? { selectedPlanets: ordered('personality'), selectedDesignPlanets: ordered('design') }
@@ -17,7 +17,7 @@ export function createTransitPlanetFilter() {
     const selected = selections[source];
     if (selected.has(planet) === enabled) return true;
     if (enabled) selected.add(planet); else selected.delete(planet);
-    revision++;
+    projections = new WeakMap();
     return true;
   }
   function setAllPlanets(enabled, source = 'personality') {
@@ -27,15 +27,30 @@ export function createTransitPlanetFilter() {
     if (selected.size === (enabled ? PLANET_IDS.length : 0)) return true;
     selected.clear();
     if (enabled) PLANET_IDS.forEach(planet => selected.add(planet));
-    revision++;
+    projections = new WeakMap();
     return true;
   }
   return {
     get state() { return state(); },
+    get snapshot() { return { selectedPlanets: ordered('personality'), selectedDesignPlanets: ordered('design') }; },
+    restore(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return false;
+      const pairs = [['personality', snapshot.selectedPlanets], ['design', snapshot.selectedDesignPlanets]];
+      if (pairs.some(([, values]) => !Array.isArray(values)
+          || values.length !== new Set(values).size
+          || Array.from(values).some(planet => !PLANET_IDS.includes(planet)))) return false;
+      const changed = pairs.some(([source, values]) => values.length !== selections[source].size
+        || values.some(planet => !selections[source].has(planet)));
+      if (changed) {
+        for (const [source, values] of pairs) selections[source] = new Set(values);
+        projections = new WeakMap();
+      }
+      return true;
+    },
     setPlanet, setAllPlanets,
     setExpanded(value) {
       if (typeof value !== 'boolean') return false;
-      if (expanded !== value) { expanded = value; revision++; }
+      if (expanded !== value) { expanded = value; projections = new WeakMap(); }
       return true;
     },
     togglePlanet(planet, source = 'personality') {
@@ -48,20 +63,23 @@ export function createTransitPlanetFilter() {
     },
     filter(chart) {
       if (!chart || chart.source !== 'transit') return chart;
-      if (chart === cachedChart && revision === cachedRevision) return cachedResult;
+      if (projections.has(chart)) return projections.get(chart);
       const fullPersonality = chart.planetFilter?.activations || chart.activations?.personality || [];
       const fullDesign = chart.planetFilter?.designActivations || chart.activations?.design || [];
       const selected = state(), black = new Set(selected.selectedPlanets), red = new Set(selected.selectedDesignPlanets);
       const personality = fullPersonality.filter(entry => black.has(entry.planet)).map(entry => ({ ...entry }));
       const design = fullDesign.filter(entry => red.has(entry.planet)).map(entry => ({ ...entry }));
-      cachedChart = chart; cachedRevision = revision;
-      cachedResult = { ...chart,
+      const result = { ...chart,
         personality: [...new Set(personality.map(entry => entry.gate))].sort((a, b) => a - b),
         design: [...new Set(design.map(entry => entry.gate))].sort((a, b) => a - b),
         activations: { ...chart.activations, personality, design },
         planetFilter: { ...selected, perPlanetControls: expanded,
           activations: fullPersonality, designActivations: fullDesign } };
-      return cachedResult;
+      // Reuse each live chart within this selection without retaining old days.
+      // A projection carries its full rows and is already filtered until reset.
+      projections.set(chart, result);
+      projections.set(result, result);
+      return result;
     },
   };
 }

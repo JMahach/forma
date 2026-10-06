@@ -1,4 +1,7 @@
+import { primaryChart } from '../domain/chart-composition.js';
+import { resolveOverlayActivation, OVERLAY_PALETTE } from '../domain/chart-overlay.js';
 import { activationDetails } from './activation-details.js';
+import { escapeHtml as esc } from '../ui/html.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
@@ -26,6 +29,8 @@ export function placeActivationPopover(anchor, size, viewport, source) {
 export function attachActivationPopover(panel, svg) {
   let currentId = null, maxHeight = null, arrowOffset = null;
   const anchor = () => currentId ? svg.querySelector(`[data-activation="${currentId}"]`) : null;
+  const overlayId = () => /^(natal|cycle)-/.test(currentId || '');
+  const sideSource = () => currentId?.startsWith('natal-') ? 'design' : currentId?.startsWith('cycle-') ? 'personality' : currentId?.split('-')[0];
   const positionAnchor = () => currentId?.startsWith('design-')
     ? svg.querySelector(`[data-activation="${currentId}-planet"]`) || anchor() : anchor();
   function close(restoreFocus = false) {
@@ -51,7 +56,7 @@ export function attachActivationPopover(panel, svg) {
     if (panel.style.maxWidth !== width) panel.style.maxWidth = width;
     if (maxHeight !== height) { panel.style.setProperty('--popover-max-height', height); maxHeight = height; }
     const size = panel.getBoundingClientRect();
-    const position = placeActivationPopover(rect, size, viewport, currentId.split('-')[0]);
+    const position = placeActivationPopover(rect, size, viewport, sideSource());
     // A fixed origin plus 2D translation moves the popup without changing its
     // layout coordinates. Keep actual measurements and unrounded CSS pixels.
     const transform = `translate(${position.left}px, ${position.top}px)`;
@@ -62,13 +67,15 @@ export function attachActivationPopover(panel, svg) {
   function refresh(chart) {
     if (!currentId) return;
     const [source, planet] = currentId.split('-');
-    const entries = chart.planetFilter
-      ? source === 'design' ? chart.planetFilter.designActivations : chart.planetFilter.activations
-      : chart.activations?.[source];
-    const entry = entries?.find(item => item.planet === planet);
+    const owner = primaryChart(chart);
+    const entries = owner.planetFilter
+      ? source === 'design' ? owner.planetFilter.designActivations : owner.planetFilter.activations
+      : owner.activations?.[source];
+    const provenance = resolveOverlayActivation(chart, currentId);
+    const entry = overlayId() ? provenance?.entry : owner.source === 'manual' ? null : entries?.find(item => item.planet === planet);
     const rows = activationDetails(entry);
     if (!rows || !anchor()) { close(); return; }
-    panel.innerHTML = `<div class="activation-detail-content">${rows.map(row => `<div class="activation-detail-row"><span class="activation-detail-label">${row.label}</span><span class="activation-detail-value">${row.value}</span><span class="activation-detail-meter" aria-hidden="true"><i style="width:${row.percent}%"></i></span><span class="activation-detail-percent">${row.percent.toFixed(2)}%</span></div>`).join('')}</div>`;
+    panel.innerHTML = `${provenance ? `<p class="cycle-activation-caption"><span class="cycle-activation-swatch" style="--cycle-source-color:${OVERLAY_PALETTE[provenance.origin]}" aria-hidden="true"></span>${esc(provenance.label)}</p>` : ''}<div class="activation-detail-content">${rows.map(row => `<div class="activation-detail-row"><span class="activation-detail-label">${row.label}</span><span class="activation-detail-value">${row.value}</span><span class="activation-detail-meter" aria-hidden="true"><i style="width:${row.percent}%"></i></span><span class="activation-detail-percent">${row.percent.toFixed(2)}%</span></div>`).join('')}</div>`;
     panel.hidden = false;
     anchor().setAttribute('aria-describedby', panel.id);
     reposition();
@@ -76,7 +83,7 @@ export function attachActivationPopover(panel, svg) {
   function show(chart, id) {
     close();
     // IDs are a source and a known planetary key, never arbitrary selectors.
-    if (!/^(design|personality)-(sun|earth|moon|north_node|south_node|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto)$/.test(id)) return;
+    if (!/^(?:(?:natal|cycle)-)?(design|personality)-(sun|earth|moon|north_node|south_node|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto)$/.test(id)) return;
     currentId = id;
     refresh(chart);
   }

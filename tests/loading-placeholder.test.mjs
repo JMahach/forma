@@ -118,7 +118,7 @@ test('startup positions the loading SVG before importing the app and passes the 
   assert.match(startup, /createStudioLayout\(\{[^}]*art: element\('chartLoadingArt'\)/);
   assert.ok(startup.indexOf('const layout = createStudioLayout(') < startup.indexOf("await import('./app.js')"));
   assert.ok(startup.indexOf('loadingLayoutObserver.disconnect()') < startup.indexOf('app.startApp('));
-  assert.match(startup, /app\.startApp\(\{ dayClient, layout \}\)/);
-  assert.match(app, /startApp\(\{ dayClient, layout \}\)/);
+  assert.match(startup, /app\.startApp\(\{ dayClient, layout, toast, viewStore, savedView \}\)/);
+  assert.match(app, /startApp\(\{ dayClient, layout, toast, viewStore, savedView \}\)/);
   assert.doesNotMatch(app, /createStudioLayout/);
 });

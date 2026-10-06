@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createGraphController } from '../src/scene/updates.js';
 import { attachHoverPreview } from '../src/selection/hover-preview.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
-import { alignPersonalityHeading } from '../src/scene/activation-columns.js';
 import { createSummarySelectionState as createSelectionState } from '../src/selection/summary-selection-state.js';
 import { buildChartSummary } from '../src/views/chart-summary-data.js';
 import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.js';
@@ -402,7 +401,7 @@ function graphHarness(t, selection, selectedActivation = null) {
     hasChart: () => context.savedCharts.some(item => item.id === context.selectedChartId),
     getHoverPreview: () => hover.controller,
     getSummary: () => ({ update(value, state) { summaryUpdates.push({ chart: value, items: state.items, filter: state.filter }); }, layout() {} }),
-    renderChart: renderBodygraph, alignHeading: alignPersonalityHeading,
+    scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } },
     onChartChange(id) {
       context.selectedChartId = id;
       context.liveWanted = id === 'current-transit';

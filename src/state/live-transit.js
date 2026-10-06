@@ -5,13 +5,14 @@ import { createLocalDayTimeline, localDateAt, timelineIndexAt, timelineMinute } 
 // The current day is ephemeral. Cached minute samples never mutate the saved
 // chart collection, and completion of a request never navigates between charts.
 export function createLiveTransit({
-  isVisible = () => true, isSuspended = () => false, onMoment = () => {}, onRender = () => {},
+  isVisible = () => true, isSuspended = () => false, onRender = () => {},
   onStateChange = () => {}, dayClient = createTransitDayClient(),
   now = () => Date.now(), timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
 }) {
   let wanted = true, live = true, timeline = null, days = null, current = null, index = 0;
   let status = 'idle', error = '', activeLoad = null, sequence = 0, failures = 0, nextRetry = 0;
-  let timer = null, running = false, loading = false, unavailable = false;
+  let timer = null, running = false, activated = false, loading = false, unavailable = false;
+  const retained = new Map();
 
   const state = () => {
     const utc = now();
@@ -28,44 +29,58 @@ export function createLiveTransit({
   const isCurrentTimeline = () => timeline && timeline.timeZone === timeZone()
     && now() >= timeline.startUtc && now() < timeline.endUtc;
 
+  function retainActiveDays() {
+    // Years may need this day while live publication is disabled. Retention
+    // follows ownership of the packet objects, not which tool is visible.
+    const active = days;
+    for (const [date, release] of retained) {
+      if (!active || !days?.has(date)) { release(); retained.delete(date); }
+    }
+    if (active && dayClient.retainDay) {
+      for (const [date, packet] of days || []) {
+        if (!retained.has(date)) retained.set(date, dayClient.retainDay(packet));
+      }
+    }
+  }
+
   function publish(nextIndex) {
     if (!visible() || !days || !isCurrentTimeline()) return;
     const minute = timelineMinute(timeline, nextIndex);
     if (!days.has(minute.date)) return;
     index = minute.index;
-    const previous = current;
-    if (!previous || Date.parse(previous.utc) !== minute.utc) {
-      const next = transitChartAt(days.get(minute.date), minute.packetIndex);
-      current = next;
-      onMoment(next, previous);
+    if (!current || Date.parse(current.utc) !== minute.utc) {
+      current = transitChartAt(days.get(minute.date), minute.packetIndex);
       // Exact longitudes move even when gate and line stay the same.
       onRender();
     }
     notify();
   }
 
-  async function load(target, force) {
+  async function load(target) {
     const key = keyOf(target);
     if (activeLoad?.key === key) return activeLoad.promise;
     const requestSequence = ++sequence;
     // Keep successful packets on retry, but never mix different local days.
-    days = keyOf(timeline) === key ? days || new Map() : new Map();
+    const sameDay = keyOf(timeline) === key;
+    days = sameDay ? days || new Map() : new Map();
     timeline = target;
-    index = timelineIndexAt(target, now());
+    retainActiveDays();
+    if (!sameDay || live) index = timelineIndexAt(target, now());
     status = 'loading'; error = '';
     loading = true;
     notify();
     const promise = (async () => {
       try {
-        // Ask for the current UTC packet first. It can draw an exact current
-        // chart while the other end of the local day's range is still loading.
+        // Ask for the selected minute first. Its chart can appear before the
+        // other end of the local day is ready, including a restored pause.
         const currentDate = timelineMinute(target, index).date;
         const dates = [currentDate, ...target.packetDates.filter(date => date !== currentDate)];
         const results = await Promise.allSettled(dates.map(async date => {
           const packet = days.get(date) || await dayClient.getDay(date);
           if (requestSequence !== sequence) return;
           days.set(date, packet);
-          if (live) publish(timelineIndexAt(target, now()));
+          retainActiveDays();
+          publish(live ? timelineIndexAt(target, now()) : index);
         }));
         if (requestSequence !== sequence) return false;
         if (!isCurrentTimeline()) { status = 'idle'; return false; }
@@ -95,6 +110,7 @@ export function createLiveTransit({
   }
 
   async function refresh(resume = false) {
+    activated = true;
     if (resume) live = true;
     if (!visible()) { notify(); return; }
     const utc = now(), zone = timeZone();
@@ -104,10 +120,10 @@ export function createLiveTransit({
     const changedDay = timeline && keyOf(target) !== keyOf(timeline);
     if (changedDay) live = true;
     // A partial range must not stop the minute clock for a packet we do have.
-    if (!changedDay && live) publish(timelineIndexAt(target, utc));
+    if (!changedDay && live && status !== 'ready') publish(timelineIndexAt(target, utc));
     if (!days || changedDay || status !== 'ready') {
       if (!resume && utc < nextRetry) { notify(); return; }
-      if (!await load(target, resume)) return;
+      if (!await load(target)) return;
     }
     if (!visible() || keyOf(target) !== keyOf(timeline)) return;
     publish(live ? timelineIndexAt(timeline, now()) : index);
@@ -123,6 +139,7 @@ export function createLiveTransit({
   }
 
   function visibilityChanged() {
+    if (!activated) return;
     if (isSuspended()) clearTimeout(timer);
     else { refresh(); schedule(); }
   }
@@ -133,8 +150,9 @@ export function createLiveTransit({
     refresh, visibilityChanged,
     setWanted(value) {
       wanted = value;
+      retainActiveDays();
       notify();
-      if (wanted) refresh();
+      if (wanted && activated) refresh();
     },
     scrub(value) {
       if (!Number.isFinite(value) || !visible() || status !== 'ready') return;
@@ -142,7 +160,21 @@ export function createLiveTransit({
       publish(value);
     },
     goNow() { return refresh(true); },
-    start() { running = true; schedule(); return refresh(true); },
-    stop() { running = false; clearTimeout(timer); timer = null; },
+    start(saved = null) {
+      if (saved?.live === false) {
+        const target = createLocalDayTimeline(now(), timeZone());
+        if (saved.date === target.date && saved.timeZone === target.timeZone && Number.isSafeInteger(saved.index) && saved.index >= 0) {
+          if (keyOf(timeline) !== keyOf(target)) days = null;
+          timeline = target; index = timelineMinute(target, saved.index).index; live = false;
+        }
+      }
+      retainActiveDays();
+      running = true; schedule(); return refresh();
+    },
+    retry() { nextRetry = 0; return refresh(); },
+    stop() {
+      sequence++; activeLoad = null; loading = false; status = 'idle';
+      running = false; days = null; retainActiveDays(); clearTimeout(timer); timer = null;
+    },
   };
 }

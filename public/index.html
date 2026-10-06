@@ -26,12 +26,12 @@
           <button class="new-chart-button" id="newChartButton"><span aria-hidden="true">＋</span> Новая карта</button>
           <div class="chart-list" id="chartList"></div>
         </section>
-        <div class="sidebar-footer"><button type="button" class="performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button><p>Карты сохраняются в этом браузере.</p></div>
+        <div class="sidebar-footer"><button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button><p>Карты сохраняются в этом браузере.</p></div>
       </aside>
       <main class="studio">
         <div class="chart-tools" aria-label="Вид схемы">
           <button type="button" class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема" hidden><svg width="21" height="21" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 9 7-6 7 6M5 7.3V17h10V7.3M8 17v-5h4v5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          <button type="button" class="icon-button lifetime-toggle" id="lifetimeToggle" aria-label="Шкала годов" title="Шкала годов" aria-expanded="false" aria-pressed="false" aria-controls="lifetimeControls" hidden><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5.5" width="15" height="15" rx="2"/><path d="M8 3.5v4m8-4v4M4.5 10h15M8 15h8"/><circle cx="8" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="15" r="1" fill="currentColor" stroke="none"/></g></svg></button>
+          <button type="button" class="icon-button" id="lifetimeToggle" aria-label="Летопись" title="Летопись" aria-expanded="false" aria-pressed="false" aria-controls="lifetimeControls" hidden><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5.5" width="15" height="15" rx="2"/><path d="M8 3.5v4m8-4v4M4.5 10h15M8 15h8"/><circle cx="8" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="15" r="1" fill="currentColor" stroke="none"/></g></svg></button>
           <button type="button" class="icon-button" id="chartDayToggle" aria-label="Шкала дня" title="Шкала дня" aria-expanded="false" aria-controls="chartDayControls" hidden><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.4"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           <button type="button" class="mandala-switch" id="mandalaSwitch" role="switch" aria-checked="false" aria-label="Мандала" title="Мандала" aria-controls="bodygraph">
             <svg class="mandala-switch-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
@@ -63,13 +63,13 @@
           <noscript><p>Для показа карты включите JavaScript в браузере.</p></noscript>
         </div>
         <div class="day-controls transit-controls" id="transitControls" role="group" aria-label="Транзит сегодня" hidden>
-          <div class="transit-controls-heading"><span id="transitDate">Сегодня</span><time id="transitMoment">—</time><button type="button" id="transitNow" aria-pressed="true">Сейчас</button></div>
+          <div class="transit-controls-heading"><time id="transitMoment">—</time><button type="button" id="transitNow" aria-pressed="true">Сейчас</button></div>
           <label class="visually-hidden" for="transitTime">Шкала дня: время транзита</label>
           <div class="day-range"><input id="transitTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="transitReference" aria-label="Вернуться к текущему времени" hidden></button></span></div>
           <p class="transit-status" id="transitStatus" role="status"></p>
         </div>
         <div class="day-controls chart-day-controls" id="chartDayControls" role="group" aria-label="День рождения по минутам" hidden>
-          <div class="transit-controls-heading"><span id="chartDayDate">День рождения</span><time id="chartDayMoment">—</time><button type="button" id="chartDayReset" title="Вернуться к сохранённому времени рождения">К рождению</button></div>
+          <div class="transit-controls-heading"><time id="chartDayMoment">—</time><button type="button" id="chartDayReset" title="Вернуться к сохранённому времени рождения">К рождению</button></div>
           <label class="visually-hidden" for="chartDayTime">Шкала дня: время рождения</label>
           <div class="day-range"><input id="chartDayTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="chartDayReference" aria-label="Вернуться к сохранённому времени рождения" hidden></button></span></div>
           <p class="transit-status" id="chartDayStatus" role="status"></p>
@@ -82,10 +82,33 @@
           <p class="lifetime-status" id="lifetimeStatus" role="status"></p>
           <button type="button" id="lifetimeRetry" hidden>Повторить</button>
         </div>
+        <aside class="returns-panel" id="returnsPanel" aria-labelledby="returnsTitle" aria-hidden="true" hidden inert>
+          <h2 id="returnsTitle" class="visually-hidden">Возвраты</h2>
+          <div class="returns-content" id="returnsContent"></div>
+          <p class="returns-status" id="returnsStatus" role="status"></p>
+          <button type="button" class="returns-retry" id="returnsRetry" hidden>Повторить расчёт</button>
+          <div class="returns-panel-controls">
+            <div class="returns-filters">
+              <label id="returnsBodyField" hidden><span class="visually-hidden">Планета</span><select id="returnsBody" aria-label="Вид возврата"></select></label>
+              <div class="returns-year-field" id="returnsYearField" hidden><label class="visually-hidden" for="returnsYear">Год возвратов</label><input id="returnsYear" type="text" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="Год возвратов"><button type="button" class="lifetime-calendar-toggle returns-calendar-toggle" id="returnsYearCalendar" aria-label="Календарь: год возвратов" title="Выбрать год"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button></div>
+            </div>
+            <div class="returns-control-bar">
+              <div class="returns-groups" role="group" aria-label="Структура возвратов"><button type="button" data-returns-group="major" aria-pressed="true">Жизнь</button><button type="button" data-returns-group="year" aria-pressed="false">Год</button><button type="button" data-returns-group="planet" aria-pressed="false">Планета</button></div>
+              <button type="button" class="returns-close" id="returnsClose" aria-label="Закрыть возвраты">×</button>
+            </div>
+            <div class="returns-overlay-key" aria-label="Цвета наложения"><span><i aria-hidden="true"></i><span id="returnsNatalName"></span></span><span><i aria-hidden="true"></i><span id="returnsMomentName">Возврат</span></span></div>
+          </div>
+          <p class="visually-hidden" id="returnsNote"></p>
+        </aside>
+        <div class="returns-controls" id="returnsControls" aria-label="Возвраты личной карты" hidden>
+          <div class="returns-clock"><time id="returnsDate"></time><div class="returns-clock-meta"><small id="returnsDetail"></small></div></div>
+          <button type="button" class="returns-toggle" id="returnsToggle" aria-expanded="false" aria-controls="returnsPanel"><span id="returnsButtonLabel">Возвраты</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 10 4-4 4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </div>
       </main>
     </div>
   </div>
   <div class="mobile-backdrop" id="libraryBackdrop" hidden></div>
+  <div class="returns-backdrop" id="returnsBackdrop" hidden></div>
   <div class="summary-backdrop" id="summaryBackdrop" hidden></div>
   <dialog id="chartDialog" aria-labelledby="dialogTitle">
     <div class="dialog-content">
@@ -118,7 +141,7 @@
     <div class="dialog-content">
       <div class="dialog-header"><h2 id="deleteChartTitle">Удалить карту?</h2></div>
       <p id="deleteChartName" class="delete-chart-name"></p>
-      <p id="deleteChartDescription" class="form-note">Карта будет удалена безвозвратно.</p>
+      <p id="deleteChartDescription" class="form-note">Карта будет удалена из библиотеки.</p>
       <p id="deleteChartError" class="form-error" role="alert"></p>
       <div class="dialog-actions"><button class="secondary-button" id="cancelDeleteChart">Оставить</button><button class="primary-button danger-button" id="confirmDeleteChart">Удалить</button></div>
     </div>

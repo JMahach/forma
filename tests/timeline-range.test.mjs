@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachDayRange } from '../src/views/day-range.js';
+import { attachTimelineRange } from '../src/views/timeline-range.js';
 
 function element() {
   const listeners = new Map(), attributes = new Map(), captured = new Set();
@@ -21,12 +21,12 @@ function element() {
   };
 }
 
-function harness({ value = 200, reference = 500, withMarker = true } = {}) {
+function harness({ value = 200, reference = 500, withMarker = true, resolveTap } = {}) {
   const range = element(), marker = withMarker ? element() : null, scrubs = [], returns = [];
   range.value = String(value);
   let time = 0;
-  const control = attachDayRange({ range, marker, now: () => time,
-    onScrub: value => scrubs.push(value), onReference: () => returns.push(true) });
+  const control = attachTimelineRange({ range, marker, now: () => time,
+    onScrub: value => scrubs.push(value), onReference: () => returns.push(true), resolveTap });
   const update = (extra = {}) => control.updateReference({ value: reference, visible: true,
     label: 'К исходному моменту', active: false, ...extra });
   update();
@@ -242,4 +242,146 @@ test('marker updates change no selected value and zero-length days remain finite
   assert.equal(h.range.value, '0');
   assert.deepEqual(h.scrubs, []);
   assert.deepEqual(h.returns, []);
+});
+
+test('an exact event tap waits for release and never publishes the sampled minute', () => {
+  const selected = [], h = harness({ withMarker: false, resolveTap: () => ({ select: () => selected.push('exact'), valid: () => true }) });
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 192 });
+  assert.deepEqual(h.scrubs, []); assert.deepEqual(selected, []);
+  h.range.send('pointerup', { pointerType: 'touch', clientX: 194 });
+  assert.deepEqual(h.scrubs, []); assert.deepEqual(selected, ['exact']);
+});
+
+test('dragging from an event keeps the ordinary rail and never activates that event', () => {
+  const selected = [], h = harness({ withMarker: false, resolveTap: () => ({ select: () => selected.push('exact'), valid: () => true }) });
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 192 });
+  h.range.send('pointermove', { pointerType: 'touch', clientX: 212 });
+  h.range.send('pointerup', { pointerType: 'touch', clientX: 214 });
+  assert.deepEqual(h.scrubs, [900, 910]); assert.deepEqual(selected, []);
+});
+
+test('cancelled, stale and long event taps never select or scrub a different chart', () => {
+  for (const ending of ['cancel', 'stale', 'long']) {
+    let valid = true;
+    const selected = [], h = harness({ withMarker: false, resolveTap: () => ({ select: () => selected.push('exact'), valid: () => valid }) });
+    h.range.send('pointerdown', { pointerType: 'touch', clientX: 192 });
+    if (ending === 'cancel') h.range.send('pointercancel');
+    if (ending === 'stale') valid = false;
+    if (ending === 'long') h.advance(501);
+    h.range.send('pointerup', { pointerType: 'touch', clientX: 192 });
+    assert.deepEqual(h.scrubs, [], ending); assert.deepEqual(selected, [], ending);
+  }
+});
+
+
+test('reference and event clicks keep the pointer through press, small movement and refreshed state', () => {
+  for (const kind of ['reference', 'event']) {
+    let selected = 0;
+    const h = harness({ withMarker: kind === 'reference', resolveTap: kind === 'event'
+      ? () => ({ valid: () => true, select: () => selected++ }) : undefined });
+    const pointer = { pointerType: 'mouse', buttons: 0 };
+    h.range.send('pointermove', pointer);
+    assert.equal(h.range.getAttribute('data-event-hovered'), 'true', kind);
+    h.range.send('pointerdown', { ...pointer, buttons: 1 });
+    assert.equal(h.range.getAttribute('data-event-pressed'), 'true', kind);
+    h.range.send('pointermove', { ...pointer, buttons: 1, clientX: 138 });
+    h.update();
+    assert.equal(h.range.getAttribute('data-event-pressed'), 'true', kind);
+    assert.deepEqual(h.scrubs, []);
+    h.range.send('pointerup', { ...pointer, clientX: 138 });
+    assert.equal(h.range.getAttribute('data-event-pressed'), 'false', kind);
+    assert.equal(h.range.getAttribute('data-event-hovered'), 'true', kind);
+    // The browser delivers capture loss after an ordinary release, too.
+    h.range.send('lostpointercapture', pointer);
+    h.update();
+    assert.equal(h.range.getAttribute('data-event-hovered'), 'true', kind);
+    assert.equal(kind === 'event' ? selected : h.returns.length, 1);
+  }
+});
+
+test('event press becomes a drag only after the threshold without hover-time geometry reads', () => {
+  const h = harness();
+  let geometryReads = 0;
+  const rect = h.range.getBoundingClientRect;
+  h.range.getBoundingClientRect = () => { geometryReads++; return rect(); };
+  const pointer = { pointerType: 'mouse', buttons: 1 };
+  h.range.send('pointerdown', pointer);
+  const beforeMove = geometryReads;
+  h.range.send('pointermove', { ...pointer, clientX: 140 });
+  assert.equal(h.range.getAttribute('data-event-pressed'), 'true');
+  h.range.send('pointermove', { ...pointer, clientX: 141 });
+  assert.equal(h.range.getAttribute('data-event-pressed'), 'false');
+  assert.notEqual(h.range.getAttribute('data-event-hovered'), 'true');
+  assert.equal(geometryReads, beforeMove);
+  h.range.send('pointerup', { ...pointer, buttons: 0, clientX: 141 });
+  assert.deepEqual(h.returns, []);
+  assert.equal(h.scrubs.length, 1);
+});
+
+test('cancelled or unavailable events release their pressed cursor', () => {
+  for (const ending of ['pointercancel', 'lostpointercapture', 'blur', 'keydown', 'disabled', 'hidden']) {
+    const h = harness(), pointer = { pointerType: 'mouse', buttons: 1 };
+    h.range.send('pointerdown', pointer);
+    assert.equal(h.range.getAttribute('data-event-pressed'), 'true', ending);
+    if (ending === 'disabled') { h.range.disabled = true; h.update(); }
+    else if (ending === 'hidden') h.update({ visible: false });
+    else h.range.send(ending, pointer);
+    assert.equal(h.range.getAttribute('data-event-pressed'), 'false', ending);
+    assert.notEqual(h.range.getAttribute('data-event-hovered'), 'true', ending);
+    h.range.send('pointerup', { ...pointer, buttons: 0 });
+    assert.deepEqual(h.returns, [], ending);
+  }
+});
+
+test('hover is recomputed for changed markers and cannot survive leaving, disabled state or an outside release', () => {
+  const h = harness(), pointer = { pointerType: 'mouse', buttons: 0 };
+  h.range.send('pointermove', pointer);
+  h.update({ value: 900 });
+  assert.equal(h.range.getAttribute('data-event-hovered'), 'false');
+  h.update();
+  assert.equal(h.range.getAttribute('data-event-hovered'), 'true');
+  h.range.send('pointerleave', pointer);
+  h.update();
+  assert.equal(h.range.getAttribute('data-event-hovered'), 'false');
+  h.range.send('pointermove', pointer);
+  h.range.disabled = true; h.update();
+  assert.equal(h.range.getAttribute('data-event-hovered'), 'false');
+  h.range.disabled = false; h.update();
+  h.range.send('pointerdown', { ...pointer, buttons: 1 });
+  h.range.send('pointerup', { ...pointer, clientY: 100 });
+  assert.equal(h.range.getAttribute('data-event-hovered'), 'false');
+  assert.deepEqual(h.returns, []);
+});
+
+
+test('captured touch input keeps the accepted snapped thumb through late native input and release', () => {
+  const range = element(), selected = [];
+  attachTimelineRange({ range, onScrub(value) { selected.push(value); range.value = '600'; } });
+  range.send('pointerdown', { pointerType: 'touch', clientX: 156 });
+  assert.deepEqual(selected, [620]); assert.equal(range.value, '600');
+  range.value = '620'; range.send('input');
+  assert.equal(range.value, '600', 'native input retains the resolved value, not the pointer target');
+  range.send('pointerup', { pointerType: 'touch', clientX: 156 });
+  assert.deepEqual(selected, [620], 'release compares the last pointer target independently of snapping');
+  range.value = '620'; range.send('input');
+  assert.equal(range.value, '600', 'a queued compatibility input after release cannot undo resolution');
+  assert.deepEqual(selected, [620]);
+  range.send('keydown', { key: 'ArrowRight' });
+  range.value = '601'; range.send('input');
+  assert.deepEqual(selected, [620, 601], 'new keyboard input is never suppressed with the completed gesture');
+});
+
+test('directional keyboard values use the normal scrub command while Home and End reach exact bounds', () => {
+  const range = element(), selected = [], directions = [];
+  range.min = '101.25'; range.max = '2000.75'; range.step = 'any';
+  attachTimelineRange({ range, onScrub(value) { selected.push(value); range.value = String(value); },
+    onStep(direction) { directions.push(direction); return direction > 0 ? 601 : 590; } });
+  for (const key of ['ArrowRight', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'Home', 'End']) {
+    assert.equal(range.send('keydown', { key }).defaultPrevented, true);
+  }
+  assert.deepEqual(directions, [1, 1, -1, -1]);
+  assert.deepEqual(selected, [601, 601, 590, 590, 101.25, 2000.75]);
+  range.send('keydown', { key: 'ArrowRight', ctrlKey: true });
+  range.disabled = true; range.send('keydown', { key: 'ArrowRight' });
+  assert.equal(selected.length, 6);
 });

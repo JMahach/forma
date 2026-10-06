@@ -71,7 +71,8 @@ test('thumbnail profile excludes interaction-only geometry and is unaffected by 
     selections: [{ type: 'channel', id: '20-34' }], previewSelection: { type: 'center', id: 'root' },
   }), expected);
   assert.doesNotMatch(expected, /<style\b|<mask\b|<clipPath\b|tabindex=|role="button"|bg-interactive|bg-focus-shape|bg-center-highlight|bg-channel-highlight|data-highlight-gate|bg-integration-(?:hover|focus|selection)|stroke="transparent"/);
-  assert.match(expected, /<linearGradient id="thumbnail-dual"/);
+  assert.doesNotMatch(expected, /<linearGradient id="thumbnail-dual"/);
+  assert.match(expected, /<linearGradient id="thumbnail-chart-backdrop"/, 'the visible backdrop retains its own gradient');
   assert.equal(decodeURIComponent(renderChartThumbnail(chart).split(',').slice(1).join(',')).includes(expected), true);
 });
 

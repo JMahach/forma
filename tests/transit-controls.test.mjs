@@ -5,6 +5,7 @@ import { createLocalDayTimeline } from '../src/domain/day-timeline.js';
 
 function element() {
   const attributes = new Map(), listeners = new Map();
+  let captured = null;
   return {
     hidden: false, disabled: false, dataset: {}, style: {}, value: '', textContent: '', title: '', dateTime: '',
     setAttribute(name, value) { attributes.set(name, String(value)); },
@@ -13,12 +14,17 @@ function element() {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(callback);
     },
-    dispatch(type) { for (const callback of listeners.get(type) || []) callback({ target: this }); },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1044, height: 44 }),
+    setPointerCapture(id) { captured = id; }, hasPointerCapture: id => captured === id,
+    releasePointerCapture() { captured = null; },
+    dispatch(type, options = {}) { for (const callback of listeners.get(type) || []) callback({ target: this,
+      pointerId: 1, pointerType: 'mouse', button: 0, buttons: 0, clientX: 22, clientY: 22, preventDefault() {}, ...options }); },
   };
 }
 
 function harness(withMarker = true) {
-  const elements = Object.fromEntries(['panel', 'range', 'date', 'time', 'status', 'nowButton', ...(withMarker ? ['marker'] : [])].map(name => [name, element()]));
+  const elements = Object.fromEntries(['panel', 'range', 'time', 'status', 'nowButton', ...(withMarker ? ['marker'] : [])].map(name => [name, element()]));
+  elements.range.closest = () => elements.panel.hidden ? elements.panel : null;
   const scrubCalls = [], nowCalls = [];
   const controls = attachTransitControls({
     ...elements,
@@ -38,9 +44,11 @@ test('controls are visible only when transit is wanted, independently of readine
       for (const live of [false, true]) {
         h.update(state({ status, wanted, live }));
         assert.equal(h.panel.hidden, !wanted);
-        assert.equal(h.panel.dataset.live, String(live));
-        assert.equal(h.panel.dataset.status, status);
-        assert.equal(h.nowButton.getAttribute('aria-pressed'), String(live));
+        if (wanted) {
+          assert.equal(h.panel.dataset.live, String(live));
+          assert.equal(h.panel.dataset.status, status);
+          assert.equal(h.nowButton.getAttribute('aria-pressed'), String(live));
+        }
       }
     }
   }
@@ -56,13 +64,62 @@ test('Years coverage hides the ordinary panel while retaining the latest exact d
   const next = Object.freeze(state({ timeline: day, index: 150, referenceIndex: 901, live: false, status: 'error' }));
   h.update(next);
   assert.equal(h.panel.hidden, true);
-  assert.equal(h.range.value, '150'); assert.equal(h.time.textContent, '01:30 · UTC-5');
-  assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
-  assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.nowButton.textContent, 'Повторить');
   h.setCoveredByYears(false);
   assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '150');
+  assert.equal(h.time.textContent, '01:30 · UTC-5');
+  assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
+  assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.nowButton.textContent, 'Повторить');
   assert.equal(h.range.disabled, true); assert.equal(h.status.textContent, 'День не загрузился');
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+});
+
+test('hidden Day updates perform zero DOM writes or time formatting and reveal only the latest state', () => {
+  const h = harness(), writes = [];
+  h.update(state({ index: 754 })); h.setCoveredByYears(true);
+  for (const name of ['panel', 'range', 'time', 'status', 'nowButton', 'marker']) {
+    const element = h[name];
+    for (const key of ['hidden', 'disabled', 'value', 'min', 'max', 'step', 'textContent', 'title', 'dateTime']) {
+      let value = element[key];
+      Object.defineProperty(element, key, { get: () => value, set(next) { value = next; writes.push(`${name}.${key}`); } });
+    }
+    for (const key of ['dataset', 'style']) element[key] = new Proxy(element[key], {
+      set(target, property, value) { target[property] = value; writes.push(`${name}.${key}.${property}`); return true; },
+    });
+    const setAttribute = element.setAttribute;
+    element.setAttribute = (key, value) => { writes.push(`${name}.${key}`); setAttribute(key, value); };
+  }
+  let formattingReads = 0;
+  const day = timeline('2026-11-01', 'America/New_York');
+  const hiddenDay = { ...day, get timeZone() { formattingReads++; return day.timeZone; } };
+  for (let index = 119; index <= 150; index++) h.update(state({ timeline: hiddenDay, index, live: false, status: index === 150 ? 'error' : 'ready' }));
+  assert.equal(writes.length, 0, '32 hidden updates must only replace latestState');
+  assert.equal(formattingReads, 0);
+  h.setCoveredByYears(false);
+  assert.equal(h.range.value, '150'); assert.equal(h.time.textContent, '01:30 · UTC-5');
+  assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
+  assert.equal(h.range.getAttribute('aria-valuetext'), '1 ноября, 01:30, UTC-5');
+  assert.equal(h.nowButton.textContent, 'Повторить'); assert.equal(h.status.textContent, 'День не загрузился');
+  assert.equal(writes.filter(key => key === 'time.dateTime').length, 1, 'reveal projects the latest state once');
+  assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+});
+
+for (const hiddenBy of ['Years', 'owner']) test(`hiding Day by ${hiddenBy} releases a captured reference and hover before late pointer events`, () => {
+  const h = harness(), ready = state({ index: 800, referenceIndex: 400, live: false });
+  h.update(ready);
+  const pointer = { clientX: 22 + 400 / 1439 * 1000, clientY: 22 };
+  h.range.dispatch('pointermove', pointer);
+  assert.equal(h.marker.getAttribute('data-hovered'), 'true');
+  h.range.dispatch('pointerdown', pointer); assert.equal(h.range.hasPointerCapture(1), true);
+  if (hiddenBy === 'Years') h.setCoveredByYears(true); else h.update({ ...ready, wanted: false });
+  assert.equal(h.range.hasPointerCapture(1), false);
+  assert.equal(h.marker.hidden, true); assert.equal(h.marker.disabled, true);
+  assert.equal(h.range.getAttribute('data-event-pressed'), 'false');
+  assert.equal(h.marker.getAttribute('data-hovered'), 'false');
+  h.range.dispatch('pointermove', { ...pointer, clientX: pointer.clientX + 200 });
+  h.range.dispatch('pointerup', pointer); h.range.dispatch('input'); h.marker.dispatch('click');
+  assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
+  if (hiddenBy === 'Years') h.setCoveredByYears(false); else h.update(ready);
+  h.marker.dispatch('click'); assert.deepEqual(h.nowCalls, [[]]);
 });
 
 test('ending Years coverage reveals the ordinary panel only when its latest owner state wants transit', () => {
@@ -142,12 +199,10 @@ test('repeated autumn clock times have distinct UTC offsets in visible and acces
   const h = harness();
   const day = timeline('2026-11-01', 'America/New_York');
   h.update(state({ timeline: day, index: 90, live: false }));
-  assert.equal(h.date.textContent, '1 ноября');
   assert.equal(h.time.textContent, '01:30 · UTC-4');
   assert.equal(h.time.dateTime, '2026-11-01T05:30:00.000Z');
   assert.equal(h.range.getAttribute('aria-valuetext'), '1 ноября, 01:30, UTC-4');
   h.update(state({ timeline: day, index: 150, live: false }));
-  assert.equal(h.date.textContent, '1 ноября');
   assert.equal(h.time.textContent, '01:30 · UTC-5');
   assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
   assert.equal(h.range.getAttribute('aria-valuetext'), '1 ноября, 01:30, UTC-5');
@@ -179,7 +234,6 @@ test('initial and loading states disable unavailable minutes without requiring a
   assert.equal(h.range.disabled, true);
   assert.equal(h.nowButton.disabled, true);
   assert.equal(h.status.textContent, 'Загружаем день…');
-  assert.equal(h.date.textContent, '');
   assert.equal(h.time.textContent, '');
   assert.equal(h.range.getAttribute('aria-valuetext'), null);
 });
@@ -254,7 +308,7 @@ test('unchanged visible text survives marker, coverage and readiness updates wit
   const h = harness(), ready = state({ index: 754, referenceIndex: 800, live: false });
   h.update(ready);
   const writes = [];
-  for (const name of ['date', 'time', 'status', 'nowButton']) {
+  for (const name of ['time', 'status', 'nowButton']) {
     let value = h[name].textContent;
     Object.defineProperty(h[name], 'textContent', { get: () => value, set(next) { value = next; writes.push(name); } });
   }

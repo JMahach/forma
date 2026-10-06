@@ -15,18 +15,29 @@ export const PUBLIC_FILES = new Map([
   ['love.css', 'public/love.css'],
   ...[
     'shared/lifetime-format.js',
+    'shared/cycles-format.js',
     'shared/day-packets/decode.js',
     'shared/day-packets/float64-codec.js',
     'shared/day-packets/natal-format.js',
     'shared/day-packets/transit-format.js',
     'src/app.js',
+    'src/views/returns-markers.js',
+    'src/views/returns-panel.js',
+    'src/views/returns-clock.js',
+    'src/state/returns.js',
+    'src/data/cycles-client.js',
+    'src/domain/cycles.js',
+    'src/domain/chart-overlay.js',
+    'src/domain/chart-composition.js',
+    'src/scene/overlay-activation-columns.js',
     'src/startup.js',
     'src/views/chart-loading.js',
     'src/data/api-client.js',
     'src/data/chart-store.js',
-    'src/data/natal-day-cache.js',
+    'src/data/binary-cache.js',
     'src/data/natal-day-client.js',
     'src/data/storage.js',
+    'src/data/view-store.js',
     'src/data/transit-day-client.js',
     'src/data/lifetime-client.js',
     'src/diagnostics/frame-monitor.js',
@@ -42,8 +53,10 @@ export const PUBLIC_FILES = new Map([
     'src/domain/topology.js',
     'src/domain/transit-day.js',
     'src/domain/lifetime.js',
+    'src/domain/moment-projection.js',
     'src/domain/variables.js',
     'src/reference/catalog.js',
+    'src/reference/gate-descriptions.js',
     'src/scene/activation-columns.js',
     'src/scene/activation-painter.js',
     'src/scene/backdrop.js',
@@ -62,6 +75,7 @@ export const PUBLIC_FILES = new Map([
     'src/scene/geometry/mandala-geometry.js',
     'src/scene/geometry/mandala-planets.js',
     'src/scene/gestures.js',
+    'src/scene/pointer-target.js',
     'src/scene/layout.js',
     'src/scene/mandala-painter.js',
     'src/scene/mandala-preview-painter.js',
@@ -82,6 +96,8 @@ export const PUBLIC_FILES = new Map([
     'src/selection/selection-targets.js',
     'src/selection/summary-selection-state.js',
     'src/state/chart-session.js',
+    'src/state/chart-exploration.js',
+    'src/state/view-session.js',
     'src/state/live-transit.js',
     'src/state/natal-day.js',
     'src/state/lifetime.js',
@@ -100,8 +116,9 @@ export const PUBLIC_FILES = new Map([
     'src/views/chart-summary-panel.js',
     'src/views/date-input.js',
     'src/views/date-picker.js',
-    'src/views/day-range.js',
+    'src/views/timeline-range.js',
     'src/views/knowledge.js',
+    'src/views/knowledge-entry.js',
     'src/views/library.js',
     'src/views/live-transit.js',
     'src/views/natal-day-controls.js',
@@ -134,14 +151,13 @@ export async function readReleaseManifest(directory) {
   return files;
 }
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, lifetimeEnabled = false }) {
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, lifetimeEnabled = false, cyclesVersion = null }) {
+  const cycleAttribute = typeof cyclesVersion === 'string' && /^[a-f0-9]{64}$/.test(cyclesVersion) ? ` data-cycles-version="${cyclesVersion}"` : '';
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
     let html = prepareLoadingPage(bytes.toString('utf8'));
-    if (lifetimeEnabled) {
-      html = html.replace('<body>', '<body data-lifetime-enabled="true">')
-        .replace(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/, tag => tag.replace(/\s+hidden(?=\s|>)/, ''));
-    }
+    html = html.replace('<body>', `<body${lifetimeEnabled ? ' data-lifetime-enabled="true"' : ''}${cycleAttribute}>`);
+    if (lifetimeEnabled) html = html.replace(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/, tag => tag.replace(/\s+hidden(?=\s|>)/, ''));
     return Buffer.from(html);
   } });
   return async function servePublicFile(req, res, pathname) {

@@ -1,4 +1,5 @@
 import { escapeHtml as escape } from '../ui/html.js';
+import { GATE_DESCRIPTIONS } from '../reference/gate-descriptions.js';
 import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../reference/catalog.js';
 
 const catalog = { gate: GATES, center: CENTERS, channel: CHANNELS };
@@ -19,15 +20,25 @@ export function attachKnowledge(dialog, onSelect) {
   dialog.addEventListener('pointercancel', () => { pressedOutside = false; });
   dialog.addEventListener('close', () => { pressedOutside = false; });
   function render() {
-    dialog.querySelectorAll('[data-knowledge-category]').forEach(button => button.setAttribute('aria-pressed', button.dataset.knowledgeCategory === type));
-    index.dataset.category = type;
-    index.setAttribute('aria-label', names[type]);
-    index.innerHTML = catalog[type].map(item => `<button data-topic-id="${item.id}" aria-label="${escape(type === 'gate' ? `Ворота ${item.id}: ${item.name}` : item.name)}" aria-pressed="${String(item.id) === String(id)}">${type === 'gate' ? item.id : type === 'channel' ? `<span>${item.id}</span><small>${escape(item.name)}</small>` : escape(item.name)}</button>`).join('');
+    // Topics share their category's index, including its scroll and focus nodes.
+    if (index.dataset.category !== type) {
+      dialog.querySelectorAll('[data-knowledge-category]').forEach(button => button.setAttribute('aria-pressed', button.dataset.knowledgeCategory === type));
+      index.dataset.category = type;
+      index.setAttribute('aria-label', names[type]);
+      index.innerHTML = catalog[type].map(item => `<button data-topic-id="${item.id}" aria-label="${escape(type === 'gate' ? `Ворота ${item.id}: ${item.name}` : item.name)}" aria-pressed="${String(item.id) === String(id)}">${type === 'gate' ? item.id : type === 'channel' ? `<span>${item.id}</span><small>${escape(item.name)}</small>` : escape(item.name)}</button>`).join('');
+    } else {
+      const previous = index.querySelector('[aria-pressed="true"]');
+      const selected = index.querySelector(`[data-topic-id="${id}"]`);
+      if (previous !== selected) {
+        previous?.setAttribute('aria-pressed', 'false');
+        selected?.setAttribute('aria-pressed', 'true');
+      }
+    }
     let title, text = '', links = '';
     if (type === 'gate') {
       const gate = getGate(id);
       title = `${gate.id} · ${gate.name}`;
-      text = `<p>${escape(gate.summary)}</p>`;
+      text = `<p>${escape(GATE_DESCRIPTIONS[gate.id])}</p>`;
       links = `<h4>Центр</h4>${jump('center', gate.center, getCenter(gate.center).name)}<h4>Связи</h4>${CHANNELS.filter(channel => channel.gates.includes(gate.id)).map(channel => jump('channel', channel.id, `${channel.id} · ${channel.name}`)).join('')}`;
     } else if (type === 'center') {
       const center = getCenter(id);

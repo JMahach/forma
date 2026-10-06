@@ -30,7 +30,7 @@ class TransitDayTests(unittest.TestCase):
             def julian(moment):
                 moments.append(moment)
                 return 0
-            values = {planet: index + .125 for index, planet in enumerate(transit_day.PLANETS)}
+            values = {planet: index + .125 for index, (planet, _) in enumerate(astro.PLANET_BODIES)}
             design_moment = dt.datetime(2026, 1, 1, tzinfo=civil.UTC)
             with mock.patch.object(astro, 'julian_tt', side_effect=julian), mock.patch.object(astro, 'longitudes', return_value=values), mock.patch.object(astro, 'design_time', return_value=(-88, 1e-12)), mock.patch.object(astro, 'tt_to_datetime', return_value=design_moment):
                 day = transit_day.calculate_day(date)
@@ -56,7 +56,7 @@ class TransitDayTests(unittest.TestCase):
                 time=moment.strftime('%H:%M'), city=dict(id='utc', name='UTC', timezone='UTC')))['chart']
             for side, name in enumerate(('personality', 'design')):
                 values = {entry['planet']: entry['longitude'] for entry in reference['activations'][name]}
-                for index, planet in enumerate(transit_day.PLANETS):
+                for index, (planet, _) in enumerate(astro.PLANET_BODIES):
                     self.assertEqual(day['columns'][side * 11 + index][minute].hex(), values[planet].hex())
             self.assertEqual(civil.iso(dt.datetime.fromtimestamp(day['columns'][22][minute], civil.UTC)), reference['designUtc'])
             self.assertEqual(day['columns'][23][minute].hex(), reference['designArcResidualDegrees'].hex())

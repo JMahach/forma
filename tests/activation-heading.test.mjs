@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGraphController } from '../src/scene/updates.js';
 import { alignPersonalityHeading } from '../src/scene/activation-columns.js';
+import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
 
 // Independent affine matrices reproduce SVG's multiply/inverse contract without
 // a browser or a camera-specific shortcut in the test expectations.
@@ -213,31 +214,43 @@ test('fresh font metrics and replacement charts are measured again instead of re
   assert.deepEqual(active.snapshot(), transit);
 });
 
-test('actual renderGraph aligns each newly inserted chart before refreshing its unchanged popover', () => {
-  const charts = [{ id: 'first' }, { id: 'second' }], calls = [];
-  let selectedId = 'first';
-  let active, markup = '';
-  const viewport = {
-    get innerHTML() { return markup; },
-    set innerHTML(value) {
-      markup = value;
-      active = headingHarness(value === 'second' ? { bounds: { x: 35, y: -9, width: 28.75, height: 18 } } : {});
-      calls.push('insert:' + value);
-    },
-    querySelector(selector) { assert.ok(active, 'alignment must follow insertion'); return active.root.querySelector(selector); },
+test('persistent scene aligns the retained heading before changed-chart popover refresh without measuring unchanged renders', () => {
+  const charts = [12, 1].map((gate, index) => ({ id: String(index), source: 'calculated', personality: [gate], design: [],
+    activations: { personality: [{ planet: 'sun', gate, line: index ? 1 : 2 }], design: [] } }));
+  let current = charts[0], measurements = 0;
+  const viewport = svgDocument().createElementNS(SVG_NS, 'svg');
+  const query = viewport.querySelector.bind(viewport), calls = [];
+  viewport.querySelector = selector => {
+    const result = query(selector);
+    if (selector === '.activation-column[data-source="personality"]' && result) {
+      const heading = result.querySelector('.activation-heading');
+      const value = result.querySelector('[data-activation="personality-sun"] > text');
+      heading.getCTM = () => new Matrix();
+      heading.getBBox = () => ({ x: Number(heading.getAttribute('x')) - (heading.getAttribute('text-anchor') === 'end' ? 74 : 0), y: 64, width: 74, height: 14 });
+      value.getCTM = () => new Matrix(1, 0, 0, 1, 584, 118);
+      value.getBBox = () => { measurements++; return { x: 35, y: -9, width: value.textContent === '12.2' ? 43.25 : 28.75, height: 18 }; };
+    }
+    return result;
   };
-  const controller = createGraphController({
-    selectionState: { primary: null, items: [] }, viewport,
-    getChart: () => charts.find(chart => chart.id === selectedId),
-    renderChart: chart => chart.id, alignHeading: alignPersonalityHeading,
+  const controller = createGraphController({ viewport, getChart: () => current,
     activationPopover: {
-      refresh(chart) { assertAligned(active, chart.id === 'first' ? 661.875 : 647.75); calls.push('refresh:' + chart.id); },
-      close() { calls.push('close'); },
+      refresh(chart) {
+        const heading = query('.activation-column[data-source="personality"] .activation-heading');
+        assert.equal(Number(heading.getAttribute('x')), chart === charts[0] ? 662.25 : 647.75);
+        calls.push(chart.id);
+      }, close() {},
     },
   });
   controller.render();
+  const heading = query('.activation-column[data-source="personality"] .activation-heading');
+  assert.equal(measurements, 1);
   controller.render();
-  selectedId = 'second';
+  assert.equal(measurements, 1, 'unchanged chart does not repeat SVG geometry reads');
+  current = charts[1];
   controller.render();
-  assert.deepEqual(calls, ['insert:first', 'refresh:first', 'insert:first', 'refresh:first', 'insert:second', 'refresh:second']);
+  assert.equal(query('.activation-column[data-source="personality"] .activation-heading'), heading);
+  assert.equal(query('[data-activation="personality-sun"] > text').textContent, '1.1');
+  assert.equal(measurements, 2, 'new Sun width updates the existing heading');
+  assert.equal(viewport.innerHTMLWrites, 1, 'chart changes do not remount the scene');
+  assert.deepEqual(calls, ['0', '1']);
 });

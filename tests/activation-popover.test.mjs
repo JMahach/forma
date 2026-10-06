@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachActivationPopover, placeActivationPopover } from '../src/views/activation-popover.js';
+import { overlayFixture } from './helpers/chart-composition.mjs';
+import { createChartComposition } from '../src/domain/chart-composition.js';
 import { activationDetails } from '../src/views/activation-details.js';
 
 const rectAt = (left, top, width = 68, height = 40) => ({ left, top, width, height, right: left + width, bottom: top + height });
@@ -548,4 +550,61 @@ test('panning an anchor out of view or removing it dismisses the popup without c
   assert.equal(harness.panel.hidden, true);
   assert.deepEqual(harness.focusCalls, []);
   assert.deepEqual(harness.cameraMutations, []);
+});
+
+
+test('overlay popovers resolve four exact origins rather than borrowing the natal gate line', t => {
+  const h = popoverHarness(t), natal = chartFixture(), cycle = chartFixture();
+  cycle.activations.personality[0] = { planet: 'mercury', gate: 41, line: 6, longitude: 307.1 };
+  const chart = overlayFixture(natal, cycle, { kind: 'return', event: { id: 'saturn:1:1' } });
+  for (const [id, caption, line] of [
+    ['natal-personality-mercury', 'Личная карта · Личность', 1],
+    ['natal-design-mercury', 'Личная карта · Дизайн', 6],
+    ['cycle-personality-mercury', 'Возврат · Личность', 6],
+    ['cycle-design-mercury', 'Возврат · Дизайн', 6],
+  ]) {
+    h.addAnchor(id); h.controller.show(chart, id);
+    assert.equal(h.panel.hidden, false, id);
+    assert.ok(h.panel.innerHTML.includes(caption));
+    assert.equal(renderedRows(h.panel)[1].value, line);
+  }
+  cycle.activations.design = [];
+  h.controller.refresh(chart); assert.equal(h.panel.hidden, true, 'a missing original entry closes rather than falling back to natal');
+});
+
+
+test('source caption leaves its text readable on the dark popup and keeps origin color in a separate decorative swatch', t => {
+  const h = popoverHarness(t), natal = chartFixture(), cycle = chartFixture();
+  const chart = overlayFixture(natal, cycle, { kind: 'return', event: { id: 'saturn:1:1' } });
+  for (const [id, color, label] of [['natal-personality-mercury', '#c32d35', 'Личная карта · Личность'], ['cycle-design-mercury', '#202020', 'Возврат · Дизайн']]) {
+    h.addAnchor(id); h.controller.show(chart, id);
+    const caption = h.panel.innerHTML.match(/<p class="cycle-activation-caption"([^>]*)>([\s\S]*?)<\/p>/);
+    assert.ok(caption);
+    assert.doesNotMatch(caption[1], /(?:^|[;"\s])color\s*:/, 'dark source color must not override the light popup text');
+    assert.match(caption[2], /class="cycle-activation-swatch"/);
+    assert.ok(caption[2].includes(`--cycle-source-color:${color}`));
+    assert.match(caption[2], /aria-hidden="true"/);
+    assert.ok(caption[2].includes(label));
+    assert.equal(renderedRows(h.panel).length, 5, 'exact numeric details remain available');
+  }
+});
+
+test('overlay popover names are escaped as user text and refresh when the natal chart is renamed', t => {
+  const h = popoverHarness(t), natal = { ...chartFixture(), name: 'Марат <img src=x> & "друг"' }, cycle = chartFixture();
+  const chart = overlayFixture(natal, cycle, { kind: 'return', event: { id: 'saturn:1:1' } });
+  h.addAnchor('natal-personality-mercury'); h.controller.show(chart, 'natal-personality-mercury');
+  assert.ok(h.panel.innerHTML.includes('Марат &lt;img src=x&gt; &amp; &quot;друг&quot; · Личность'));
+  assert.doesNotMatch(h.panel.innerHTML, /<img/);
+  h.controller.refresh(overlayFixture({ ...natal, name: 'Анна <svg>' }, cycle, { kind: 'return', event: { id: 'saturn:1:1' } }));
+  assert.ok(h.panel.innerHTML.includes('Анна &lt;svg&gt; · Личность'));
+  assert.doesNotMatch(h.panel.innerHTML, /Марат|<svg/);
+});
+
+
+test('single composition popovers use the exact primary row without copying or reprojection', t => {
+  const h = popoverHarness(t), raw = chartFixture();
+  h.addAnchor('personality-mercury');
+  h.controller.show(createChartComposition(raw), 'personality-mercury');
+  assert.equal(h.panel.hidden, false);
+  assert.deepEqual(renderedRows(h.panel), expectedRows(raw.activations.personality[0]));
 });

@@ -77,6 +77,16 @@ test('real release build preserves sources and produces complete deterministic c
   const lifetimeChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('/api/lifetime/meta'))?.[0];
   assert.ok(lifetimeChunk, 'the optional century view can be loaded on demand');
   assert.ok(!contents.get('index.html').includes(`href="/${lifetimeChunk}"`), 'ordinary startup never preloads the optional century view');
+  const returnsChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('returns-timeline-now'))?.[0];
+  assert.ok(returnsChunk, 'the return event list remains available as a browser module');
+  assert.ok(!contents.get('index.html').includes(`href="/${returnsChunk}"`), 'the return drawer is not downloaded before it opens');
+
+  const knowledgeChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('knowledge-connections'))?.[0];
+  assert.ok(knowledgeChunk, 'the full knowledge dialog remains available on demand');
+  assert.ok(!contents.get('index.html').includes(`href="/${knowledgeChunk}"`), 'startup never preloads the knowledge dialog or its articles');
+  const articleChunks = [...contents].filter(([name, source]) => name.endsWith('.js') && source.includes('Human Design:'));
+  assert.ok(articleChunks.length, 'all descriptions remain in the release');
+  for (const [name] of articleChunks) assert.ok(!contents.get('index.html').includes(`/${name}`), 'no article-bearing chunk loads with the page');
 
   const resolve = (reference, parent) => {
     const url = new URL(reference, `https://forma.test/${parent}`);

@@ -1,14 +1,21 @@
 import { formatTimelineMinute } from '../domain/day-timeline.js';
-import { attachDayRange } from './day-range.js';
+import { attachTimelineRange } from './timeline-range.js';
 import { setText } from '../ui/html.js';
 
-export function attachTransitControls({ panel, range, date, time, status, nowButton, marker = null, onScrub, onNow }) {
-  const dayRange = attachDayRange({ range, marker, onScrub, onReference: onNow });
+export function attachTransitControls({ panel, range, time, status, nowButton, marker = null, onScrub, onNow }) {
+  const dayRange = attachTimelineRange({ range, marker, onScrub, onReference: onNow });
   let coveredByYears = false, latestState = null;
   nowButton.addEventListener('click', () => onNow());
   function update(state) {
     latestState = state;
-    panel.hidden = coveredByYears || !state.wanted;
+    if (coveredByYears || !state.wanted) {
+      if (!panel.hidden) {
+        panel.hidden = true;
+        dayRange.updateReference({ visible: false, label: 'Вернуться к текущему времени' });
+      }
+      return;
+    }
+    panel.hidden = false;
     panel.setAttribute('aria-busy', String(state.status === 'loading'));
     panel.dataset.live = String(state.live);
     panel.dataset.status = state.status;
@@ -23,11 +30,10 @@ export function attachTransitControls({ panel, range, date, time, status, nowBut
       range.value = String(state.index);
     }
     dayRange.updateReference({ value: state.referenceIndex,
-      visible: !coveredByYears && state.wanted && state.status === 'ready' && Boolean(state.timeline),
+      visible: state.status === 'ready' && Boolean(state.timeline),
       label: 'Вернуться к текущему времени', active: state.live });
     if (!state.timeline) return;
     const label = formatTimelineMinute(state.timeline, state.index);
-    setText(date, label.date);
     setText(time, `${label.time} · ${label.offset}`);
     time.dateTime = label.utc;
     time.title = state.timeline.timeZone;

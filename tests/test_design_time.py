@@ -159,7 +159,7 @@ class DesignTimeReuseTests(unittest.TestCase):
         self.assertIsNone(calls.call_args.kwargs['hint'])
 
     def test_design_seconds_floor_before_epoch_without_string_roundtrip(self):
-        values = {planet: index + .125 for index, planet in enumerate(transit_day.PLANETS)}
+        values = {planet: index + .125 for index, (planet, _) in enumerate(astro.PLANET_BODIES)}
         for moment in (dt.datetime(1800, 10, 5, 12, 34, 56, 999999, tzinfo=astro.UTC),
                        dt.datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=astro.UTC),
                        dt.datetime(1970, 1, 1, 0, 0, 0, 999999, tzinfo=astro.UTC),

@@ -103,3 +103,17 @@ test('encoder refuses incomplete days, nonfinite coordinates and invalid predict
   }
   const oldShape = fixture(); oldShape.columns.length = 11; assert.throws(() => encodeTransitDay(oldShape));
 });
+
+test('full packets validate each indexed value once before encoding, including sparse input', () => {
+  const day = fixture(); let reads = 0;
+  day.columns[0] = new Proxy(Array.from(day.columns[0]), { get(target, key, receiver) {
+    if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  encodeTransitDay(day);
+  assert.equal(reads, 1440 * 2, 'one range validation and one numerical encoding read');
+  const sparse = fixture(); sparse.columns[0] = Array.from(sparse.columns[0]); delete sparse.columns[0][12];
+  assert.throws(() => encodeTransitDay(sparse));
+  const missing = fixture(); delete missing.columns[0];
+  assert.throws(() => encodeTransitDay(missing));
+});

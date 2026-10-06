@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { overlayFixture } from './helpers/chart-composition.mjs';
+import { renderSummarySections } from '../src/views/chart-summary-panel.js';
 import { buildChartSummary } from '../src/views/chart-summary-data.js';
 import { CENTERS, CHANNELS, GATES, getChannel } from '../src/reference/catalog.js';
 import { getDefinition } from '../src/domain/topology.js';
@@ -149,4 +151,23 @@ test('summary building and returned lists do not mutate inputs or canonical geom
   assert.deepEqual(chart, before);
   assert.deepEqual(CHANNELS.find(channel => channel.id === '20-34').gates, channelGates);
   assert.deepEqual(buildChartSummary(chart).lines[1].gates.design, [34]);
+});
+
+
+test('a real personal transit summary labels natal lines and counts the union topology', () => {
+  const natal = { ...chartFromRows([row('sun', 34, 4)], [row('sun', 10, 1)]), id: 'anna', name: 'Анна' };
+  const moment = chartFromRows([], [row('sun', 20, 6)], 'transit');
+  const chart = overlayFixture(natal, moment, { kind: 'transit' });
+  const summary = buildChartSummary(chart);
+  assert.equal(summary.isTransit, false, 'summary rows belong to the natal chart');
+  assert.equal(summary.profile, '1/4');
+  assert.deepEqual(summary.lines[3].gates.design, [34]);
+  assert.equal(summary.lines[5].total, 0, 'the secondary line is not part of the natal summary');
+  assert.equal(summary.totals.gates, 3);
+  assert.equal(summary.totals.channels, 3);
+  assert.equal(summary.totals.activations, 2);
+  const markup = renderSummarySections(summary);
+  assert.match(markup, /Дизайн/);
+  assert.match(markup, /Личность/);
+  assert.doesNotMatch(markup, /Транзит/);
 });

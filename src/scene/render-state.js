@@ -1,4 +1,6 @@
 import { CHANNELS, getChannel, getDefinition } from '../domain/topology.js';
+import { createOverlaySourceState } from '../domain/chart-overlay.js';
+import { chartTopology } from '../domain/chart-composition.js';
 import { gatesForSelection } from '../selection/selection-targets.js';
 
 // One render snapshot: preview paint stays separate from committed selection.
@@ -9,9 +11,10 @@ export function createRenderState(chart, selection, options) {
   // Hover adds a temporary layer. Only the committed selection owns pressed
   // state; moving the pointer must never erase or broaden that selection.
   const visualSelections = [...committedSelections, options.previewSelection].filter(Boolean);
-  const personality = new Set((chart.personality || []).map(Number));
-  const design = new Set((chart.design || []).map(Number));
-  const definition = getDefinition(chart);
+  const topology = chartTopology(chart);
+  const personality = new Set((topology.personality || []).map(Number));
+  const design = new Set((topology.design || []).map(Number));
+  const definition = getDefinition(topology);
   const definedChannels = new Set(definition.channels.map(({ id }) => id));
   const interactive = options.interactive !== false;
   const prefix = String(options.idPrefix || 'bodygraph').replace(/[^a-zA-Z0-9_-]/g, '') || 'bodygraph';
@@ -45,6 +48,7 @@ export function createRenderState(chart, selection, options) {
     committedSelection, committedSelections, visualSelections,
     hasExplicitSelection: Boolean(options.previewSelection || options.selections),
     personality, design, definition, definedChannels, interactive, prefix,
+    overlaySources: createOverlaySourceState(chart),
     relatedChannels, relatedGates, halfGates, selectedGates, selectedCenters,
     selectedChannels, committedGates, previewGates,
   };

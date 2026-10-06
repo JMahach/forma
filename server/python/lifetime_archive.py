@@ -28,24 +28,42 @@ UTC = dt.timezone.utc
 MIN_DATE, MAX_DATE = dt.date(1801, 1, 1), dt.date(2400, 1, 1)
 
 
-def archive_format():
+def shared_literal(name):
     """Read only literal declarations, without evaluating JavaScript or Node."""
     source = (ROOT / 'shared/lifetime-format.js').read_text()
-    def literal(name):
-        match = re.search(r'export const ' + re.escape(name) + r' = (.+);', source)
-        if not match:
-            raise ValueError('Missing shared lifetime format constant: ' + name)
-        value = match.group(1)
-        if value.startswith('Object.freeze(') and value.endswith(')'):
-            value = value[len('Object.freeze('):-1]
-        return ast.literal_eval(value)
-    planets = literal('LIFETIME_PLANETS')
-    step = literal('LIFETIME_STEP_SECONDS')
+    match = re.search(r'export const ' + re.escape(name) + r' = (.+);', source)
+    if not match:
+        raise ValueError('Missing shared lifetime format constant: ' + name)
+    value = match.group(1)
+    if value.startswith('Object.freeze(') and value.endswith(')'):
+        value = value[len('Object.freeze('):-1]
+    return ast.literal_eval(value)
+
+
+def calculation_fingerprint():
+    digest = hashlib.sha256()
+    def add(name):
+        file = ROOT / name
+        if file.is_dir():
+            for child in sorted(file.iterdir(), key=lambda entry: entry.name.encode('utf-8')):
+                add(f'{name}/{child.name}')
+        else:
+            payload = file.read_bytes()
+            digest.update(f'{name}\0{len(payload)}\0'.encode('utf-8'))
+            digest.update(payload)
+    for name in shared_literal('LIFETIME_PROVENANCE_INPUTS'):
+        add(name)
+    return digest.hexdigest()
+
+
+def archive_format():
+    planets = shared_literal('LIFETIME_PLANETS')
+    step = shared_literal('LIFETIME_STEP_SECONDS')
     if not isinstance(planets, list) or not planets or len(set(planets)) != len(planets):
         raise ValueError('Invalid shared planet order')
     if not isinstance(step, int) or step < 1 or 86400 % step:
         raise ValueError('Invalid shared sample interval')
-    return planets, step, literal('LIFETIME_ARCHIVE_VERSION'), literal('LIFETIME_ARCHIVE_FORMAT')
+    return planets, step, shared_literal('LIFETIME_ARCHIVE_VERSION'), shared_literal('LIFETIME_ARCHIVE_FORMAT')
 
 
 def bodies_for(planets):
@@ -92,7 +110,7 @@ def publish_new(temporary, destination):
     os.unlink(temporary)
 
 
-def copy_reused_columns(destination, file, planets, samples, first, last, step, version, format_text):
+def copy_reused_columns(destination, file, planets, samples, first, last, step, version, format_text, provenance):
     """Copy compatible columns into the temporary output, verifying all source bytes.
 
     Version 1 is accepted only here for migrating the earlier subset archive.
@@ -105,6 +123,8 @@ def copy_reused_columns(destination, file, planets, samples, first, last, step, 
     metadata = json.loads(metadata_file.read_text())
     if not isinstance(metadata, dict):
         raise ValueError('Invalid reuse metadata')
+    if 'provenance' in metadata and metadata['provenance'] != provenance:
+        raise ValueError('Incompatible reuse provenance')
     columns = metadata.get('columns')
     if (metadata.get('version') not in ('1', version) or metadata.get('format') != format_text
         or not isinstance(columns, list) or not columns or any(name not in planets for name in columns)
@@ -137,7 +157,10 @@ def copy_reused_columns(destination, file, planets, samples, first, last, step, 
                 remaining -= len(payload)
         if stream.read(1) or digest.hexdigest() != metadata['sha256']:
             raise ValueError('Reuse archive SHA256 mismatch')
-    return dict(version=metadata['version'], columns=columns, sha256=metadata['sha256'])
+    result = dict(version=metadata['version'], columns=columns, sha256=metadata['sha256'])
+    if 'provenance' in metadata:
+        result['provenance'] = metadata['provenance']
+    return result
 
 
 def generate_archive(file, start='1801-01-01', end='2400-01-01', workers=3, progress=None, reuse_file=None):
@@ -151,6 +174,7 @@ def generate_archive(file, start='1801-01-01', end='2400-01-01', workers=3, prog
         raise ValueError('Use between one and eight preparation workers')
     first, last = interval(start, end)
     planets, step, version, format_text = archive_format()
+    provenance = dict(version='1', calculationFingerprint=calculation_fingerprint())
     boundary = boundary_check(first, last, planets, step)
     samples = int((last - first).total_seconds()) // step
     chunk_samples = 90 * 86400 // step
@@ -168,7 +192,7 @@ def generate_archive(file, start='1801-01-01', end='2400-01-01', workers=3, prog
     try:
         with os.fdopen(data_fd, 'w+b') as stream:
             stream.truncate(byte_count)
-            reused = copy_reused_columns(stream, reuse_file, planets, samples, first, last, step, version, format_text) if reuse_file else None
+            reused = copy_reused_columns(stream, reuse_file, planets, samples, first, last, step, version, format_text, provenance) if reuse_file else None
             computed_planets = [name for name in planets if not reused or name not in reused['columns']]
             computed_offsets = [planets.index(name) for name in computed_planets]
             def save(result):
@@ -225,6 +249,11 @@ def generate_archive(file, start='1801-01-01', end='2400-01-01', workers=3, prog
         if reused:
             metadata['reusedArchive'] = reused
             metadata['computedColumns'] = computed_planets
+        if calculation_fingerprint() != provenance['calculationFingerprint']:
+            raise ValueError('Calculation inputs changed during archive generation')
+        # Unknown copied columns must never acquire the current fingerprint.
+        if not reused or reused.get('provenance') == provenance:
+            metadata['provenance'] = provenance
         meta_fd, metadata_temporary = tempfile.mkstemp(prefix=metadata_file.name + '.', suffix='.tmp', dir=destination.parent)
         with os.fdopen(meta_fd, 'w') as stream:
             json.dump(metadata, stream, ensure_ascii=False, indent=2)

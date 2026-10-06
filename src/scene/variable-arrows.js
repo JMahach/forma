@@ -1,4 +1,5 @@
 import { calculateVariables } from '../domain/variables.js';
+import { isChartOverlay, primaryChart } from '../domain/chart-composition.js';
 import { ACTIVATION_COLUMN_LAYOUT, activationBlockTransform, activationHeadingX } from './geometry/activation-layout.js';
 
 // A separate, non-interactive layer within the existing drawing bounds.
@@ -17,8 +18,10 @@ const ARROWS = Object.freeze({
   down: 'M-10 -19V2H-20L0 21L20 2H10V-19Z',
 });
 
+export const visibleVariables = (chart, options) => options.showActivations && !options.showMandala && !isChartOverlay(chart) ? calculateVariables(primaryChart(chart)) : [];
+
 // Persistent scenes pass the same domain snapshot they compared before drawing.
-export function renderVariableArrows(chart, variables = calculateVariables(chart)) {
+export function renderVariableArrows(chart, variables = isChartOverlay(chart) ? [] : calculateVariables(primaryChart(chart))) {
   if (!variables.length || variables.some(variable => !ARROWS[variable.colorDirection])) return '';
   const headings = Object.entries(SIDES).map(([source, side]) => `<g class="variable-block" data-source="${source}" transform="${activationBlockTransform(source)}"><g class="bodygraph-variable-headings" data-source="${source}" fill="${side.color}" aria-hidden="true">
     <text class="activation-heading" x="${side.x - GLYPH_OFFSET}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" text-anchor="middle" font-size="16" font-weight="500">Цвет</text>

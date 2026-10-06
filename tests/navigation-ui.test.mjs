@@ -20,7 +20,7 @@ test('transit is consistently named without renaming saved personal charts', () 
   assert.match(button, /<span>Транзит<\/span>/);
   assert.match(button, /title="Транзит"/);
   assert.doesNotMatch(pageSource + appSource, /Текущий момент/);
-  assert.match(bootstrapSource, /headingLayout\.updateText\(chartTitle\(chart\), chartSubtitle\(chart\)\)/, 'the caption owner receives the public title and subtitle policies');
+  assert.match(bootstrapSource, /headingLayout\.updateText\(caption\.title, caption\.subtitle\)/, 'the caption owner receives the selected-chart caption policy');
   for (const [c, expected] of [
     [{ id: 'current-transit', name: 'Текущий момент', source: 'transit' }, 'Транзит'],
     [{ id: 'current-transit', name: 'Legacy moment' }, 'Транзит'],
@@ -246,21 +246,19 @@ test('current moment is active independently of the saved list, including before
   }
 });
 
-test('current-moment navigation selects the transit view immediately even before its first day packet arrives', () => {
+test('the current-moment adapter immediately forwards the transit navigation command', () => {
   assert.match(bootstrapSource, /attachTransitNavigation\(\$\('nowButton'\)/, 'the application connects the public transit navigation adapter');
-  for (const cached of [false, true]) {
-    const calls = [];
-    let handler;
-    const button = { addEventListener(type, callback) { assert.equal(type, 'click'); handler = callback; } };
-    attachTransitNavigation(button, {
-      closeLibrary() { calls.push('close'); },
-      onSelect(id) { calls.push(`select:${id}`); },
-      refresh(open) { calls.push(`refresh:${open}`); },
-    });
-    assert.equal(typeof handler, 'function');
-    handler();
-    assert.deepEqual(calls, ['close', 'select:current-transit', 'refresh:true']);
-  }
+  const calls = [];
+  let handler;
+  const button = { addEventListener(type, callback) { assert.equal(type, 'click'); handler = callback; } };
+  attachTransitNavigation(button, {
+    closeLibrary() { calls.push('close'); },
+    onSelect(id) { calls.push(`select:${id}`); },
+    refresh(open) { calls.push(`refresh:${open}`); },
+  });
+  assert.equal(typeof handler, 'function');
+  handler();
+  assert.deepEqual(calls, ['close', 'select:current-transit', 'refresh:true']);
 });
 
 test('the fit control uses a decorative home icon and retains its accessible label and camera-reset action', () => {

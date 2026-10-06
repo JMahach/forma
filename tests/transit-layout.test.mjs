@@ -274,7 +274,69 @@ test('coarse pointers gain a 56px invisible range target without moving the rail
   }
 });
 
-test('compact range thumbs have a 44px native hit area but only a 14px crisp visible dot', () => {
+test('compact range nodes retain a transparent 44px native hit area around crisp bounded SVG artwork', () => {
+  function graphicBounds(svg) {
+    const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    const include = (x, y) => {
+      assert.ok(Number.isFinite(x) && Number.isFinite(y), 'SVG geometry has finite coordinates');
+      bounds.minX = Math.min(bounds.minX, x); bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.minY = Math.min(bounds.minY, y); bounds.maxY = Math.max(bounds.maxY, y);
+    };
+    const tags = [], pathLengths = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7 };
+    let paths = 0;
+    for (const [, closing, tag, attributes] of svg.matchAll(/<(\/?)([\w:-]+)\b([^>]*)>/g)) {
+      if (closing) { assert.equal(tags.pop(), tag, 'inline SVG elements are balanced'); continue; }
+      if (!/\/\s*$/.test(attributes)) tags.push(tag);
+      const attrs = Object.fromEntries([...attributes.matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/g)].map(([, name, , value]) => [name, value]));
+      if (tag === 'svg') {
+        assert.equal(attrs.xmlns, 'http://www.w3.org/2000/svg');
+        assert.deepEqual(attrs.viewBox?.trim().split(/\s+/).map(Number), [0, 0, 44, 44]);
+        assert.equal(Number(attrs.width), 44); assert.equal(Number(attrs.height), 44);
+      }
+      if (tag === 'rect') { include(Number(attrs.x || 0), Number(attrs.y || 0)); include(Number(attrs.x || 0) + Number(attrs.width), Number(attrs.y || 0) + Number(attrs.height)); }
+      if (tag !== 'path') continue;
+      paths++;
+      const tokens = attrs.d?.match(/[a-df-zA-DF-Z]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?/g) || [];
+      let cursor = 0, command, x = 0, y = 0, startX = 0, startY = 0;
+      while (cursor < tokens.length) {
+        if (/^[a-z]$/i.test(tokens[cursor])) command = tokens[cursor++];
+        const type = command?.toUpperCase(), relative = command === command?.toLowerCase();
+        if (type === 'Z') { x = startX; y = startY; include(x, y); command = null; continue; }
+        const length = pathLengths[type];
+        assert.ok(length && cursor + length <= tokens.length, 'SVG path commands are complete');
+        const values = tokens.slice(cursor, cursor += length).map(Number);
+        assert.ok(values.every(Number.isFinite), 'SVG path parameters are finite');
+        const baseX = relative ? x : 0, baseY = relative ? y : 0;
+        if (type === 'H') { x = baseX + values[0]; include(x, y); }
+        else if (type === 'V') { y = baseY + values[0]; include(x, y); }
+        else if (type === 'A') {
+          const nextX = baseX + values[5], nextY = baseY + values[6];
+          let rx = Math.abs(values[0]), ry = Math.abs(values[1]);
+          assert.ok([0, 1].includes(values[3]) && [0, 1].includes(values[4]), 'SVG arc flags are valid');
+          if (rx && ry && (nextX !== x || nextY !== y)) {
+            const angle = values[2] * Math.PI / 180, cos = Math.cos(angle), sin = Math.sin(angle);
+            const dx = (x - nextX) / 2, dy = (y - nextY) / 2;
+            const px = cos * dx + sin * dy, py = -sin * dx + cos * dy;
+            const scale = Math.max(1, Math.sqrt(px * px / (rx * rx) + py * py / (ry * ry))); rx *= scale; ry *= scale;
+            const factor = (values[3] === values[4] ? -1 : 1) * Math.sqrt(Math.max(0,
+              (rx * rx * ry * ry - rx * rx * py * py - ry * ry * px * px) / (rx * rx * py * py + ry * ry * px * px)));
+            const cx = factor * rx * py / ry, cy = -factor * ry * px / rx;
+            const centerX = cos * cx - sin * cy + (x + nextX) / 2, centerY = sin * cx + cos * cy + (y + nextY) / 2;
+            const radiusX = Math.hypot(rx * cos, ry * sin), radiusY = Math.hypot(rx * sin, ry * cos);
+            include(centerX - radiusX, centerY - radiusY); include(centerX + radiusX, centerY + radiusY);
+          }
+          x = nextX; y = nextY; include(x, y);
+        } else {
+          // Bézier curves stay inside the convex hull of their control points.
+          for (let index = 0; index < values.length; index += 2) include(baseX + values[index], baseY + values[index + 1]);
+          x = baseX + values.at(-2); y = baseY + values.at(-1);
+          if (type === 'M') { startX = x; startY = y; command = relative ? 'l' : 'L'; }
+        }
+      }
+    }
+    assert.deepEqual(tags, [], 'inline SVG closes its root'); assert.ok(paths > 0, 'the node contains vector artwork');
+    return bounds;
+  }
   for (const [width, height, coarse] of [[320, 568, true], [699, 500, false], [824, 675, false], [844, 390, true], [1099, 900, false]]) {
     for (const pseudo of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
       const thumb = declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height, { coarse });
@@ -282,7 +344,14 @@ test('compact range thumbs have a 44px native hit area but only a 14px crisp vis
       assert.equal(thumb.height, '44px');
       assert.equal(thumb.border, '0');
       assert.equal(thumb['box-shadow'], 'none');
-      assert.equal(thumb.background, 'radial-gradient(circle, #8e9b8b 0 4px, #fffefa 4px 6px, #8e9b8b50 6px 7px, transparent 7px)');
+      const range = declarationsAt(".day-controls input[type='range']", width, height, { coarse });
+      const background = thumb.background.replace('var(--timeline-thumb)', range['--timeline-thumb']);
+      const image = /url\(["']data:image\/svg\+xml,([^"']+)["']\)/.exec(background);
+      assert.ok(image, 'the visible node uses a crisp inline SVG');
+      assert.ok(!thumb['background-color'] || thumb['background-color'] === 'transparent', 'the native hit target remains transparent');
+      const bounds = graphicBounds(decodeURIComponent(image[1]));
+      assert.ok(bounds.minX > 0 && bounds.maxX < 44 && bounds.minY > 0 && bounds.maxY < 44, 'transparent space surrounds the visible artwork');
+      assert.ok(bounds.maxX - bounds.minX <= 32 && bounds.maxY - bounds.minY <= 26, 'the visible node occupies a compact part of its larger native hit target');
       if (pseudo.includes('webkit')) assert.equal(thumb['margin-top'], '-21px');
     }
   }

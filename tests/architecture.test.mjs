@@ -116,7 +116,8 @@ test('production cache is the only writable service directory and API timeout co
   assert.match(service, /^ProtectSystem=strict$/m);
   assert.match(service, /^CacheDirectory=forma$/m);
   assert.match(service, /^CacheDirectoryMode=0700$/m);
-  assert.match(service, /^Environment=TRANSIT_CACHE_DIR=\/var\/cache\/forma\/transit\/v1$/m);
+  assert.match(service, /^Environment=TRANSIT_CACHE_DIR=\/var\/cache\/forma\/transit$/m);
+  assert.match(service, /^Environment=FORMA_LIFETIME_CORPUS=\/var\/cache\/forma\/lifetime\/lifetime-1801-2400\.f64le$/m);
   assert.match(source('server/server.mjs'), /cacheDir:\s*process\.env\.TRANSIT_CACHE_DIR/);
   assert.match(proxy, /location \/api\/\s*\{[^}]*proxy_read_timeout 65s;/);
 });
