@@ -56,11 +56,11 @@ export function createMandalaMotion({
     if (!disposed && current === generation) onFinish(enabled);
   }
 
-  function setExpanded(expanded) {
+  function setExpanded(expanded, { animate = true } = {}) {
     if (disposed) return;
     const next = expanded ? 1 : 0;
     if (next === target) {
-      if (motion && reducedMotion()) {
+      if (motion && (!animate || reducedMotion())) {
         cancel(); finish();
       }
       return;
@@ -73,7 +73,7 @@ export function createMandalaMotion({
     const current = generation;
     paint(from);
     if (disposed || current !== generation) return;
-    if (!requestFrame || reducedMotion() || durationMs <= 0 || from === target) {
+    if (!animate || !requestFrame || reducedMotion() || durationMs <= 0 || from === target) {
       finish();
       return;
     }

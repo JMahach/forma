@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SVG_NS, svgDocument, significantDOM } from './helpers/svg-dom.mjs';
+import { SvgElement, SVG_NS, svgDocument, significantDOM } from './helpers/svg-dom.mjs';
 import { createMandalaPainter } from '../src/scene/mandala-painter.js';
 import { createMandalaPreviewPainter } from '../src/scene/mandala-preview-painter.js';
 import { renderMandala } from '../src/scene/mandala.js';
@@ -506,4 +506,28 @@ test('display changes and input snapshots stay caller-owned, including reused mu
   assert.deepEqual([...options.selectedGates], [64]);
   assert.deepEqual([...options.relatedGates], [64]);
   assert.equal(options.pinnedCrosses.length, 1);
+});
+
+
+test('unchanged mandala updates do not walk or mutate the retained field sibling list', () => {
+  const chart = chartAt(), h = harness(chart, {}, { groupRoot: true });
+  h.painter.update(chart);
+  const field = h.group.querySelector('.mandala-field'), nodes = [...field.children];
+  const before = significantDOM(h.group);
+  const sibling = Object.getOwnPropertyDescriptor(SvgElement.prototype, 'nextElementSibling').get;
+  let reads = 0, mutations = 0;
+  for (const node of nodes) Object.defineProperty(node, 'nextElementSibling', { configurable: true,
+    get() { reads++; return sibling.call(this); } });
+  const insert = field.insertBefore, remove = field.removeChild;
+  field.insertBefore = function(...args) { mutations++; return insert.apply(this, args); };
+  field.removeChild = function(...args) { mutations++; return remove.apply(this, args); };
+  try { for (let index = 0; index < 10; index++) assert.equal(h.painter.update(chart), true); }
+  finally {
+    for (const node of nodes) delete node.nextElementSibling;
+    field.insertBefore = insert; field.removeChild = remove;
+  }
+  assert.equal(reads, 0);
+  assert.equal(mutations, 0);
+  assert.deepEqual([...field.children], nodes);
+  assert.deepEqual(significantDOM(h.group), before);
 });

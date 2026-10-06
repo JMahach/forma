@@ -16,15 +16,15 @@ const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve()
 
 function harness({ getDay = async date => day(date), zone = 'UTC', utc = '2026-09-24T12:00:20Z' } = {}) {
   const listeners = new Map(), attributes = new Map(), requests = [], events = [], states = [], messages = [];
-  let timestamp = Date.parse(utc), formOpen = false;
+  let timestamp = Date.parse(utc), formOpen = false, previous = null;
   const document = { hidden: false, addEventListener: (name, listener) => listeners.set(name, listener) };
   const button = { title: '', setAttribute: (name, value) => attributes.set(name, value), removeAttribute: name => attributes.delete(name) };
   const live = createLiveTransit({
     document, button, now: () => timestamp, timeZone: () => zone,
     isFormOpen: () => formOpen,
     dayClient: { getDay(date) { requests.push(date); return getDay(date); } },
-    onMoment: (chart, previous) => events.push(['moment', chart, previous]),
-    onRender: () => events.push(['render']), onStateChange: state => states.push(state),
+    onRender: () => { events.push(['render', live.current, previous]); previous = live.current; },
+    onStateChange: state => states.push(state),
     toast: message => messages.push(message),
   });
   return {
@@ -55,7 +55,8 @@ test('live view loads a local day once and redraws exact coordinate changes from
   assert.equal(h.live.current.utc, '2026-09-24T12:01:00Z');
   assert.deepEqual(h.live.current.personality, initial.personality, 'small coordinate movement can leave gates unchanged');
   assert.notEqual(h.live.current.activations.personality[0].longitude, initial.activations.personality[0].longitude);
-  assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render'], 'mandala rays still receive exact minute positions');
+  assert.deepEqual(h.events.map(event => event[0]), ['render'], 'mandala rays still receive exact minute positions');
+  assert.equal(h.events[0][1], h.live.current); assert.equal(h.events[0][2], initial);
 });
 
 test('repeated publication keeps state notifications without reading the same minute again', async () => {
@@ -79,7 +80,7 @@ test('repeated publication keeps state notifications without reading the same mi
   assert.equal(columnReads, 24);
   assert.equal(h.live.current, first);
   assert.deepEqual(h.events, []);
-  assert.equal(h.states.length, 2, 'refresh still publishes reference and loading state');
+  assert.equal(h.states.length, 1, 'a ready refresh publishes reference once, without repeating an identical loading state');
 
   h.states.length = 0;
   h.live.scrub(h.live.state.index);
@@ -92,7 +93,7 @@ test('repeated publication keeps state notifications without reading the same mi
   await h.live.goNow();
   assert.equal(columnReads, 48, 'the next minute is materialized exactly once');
   assert.deepEqual(h.live.current, transitChartAt(day('2026-09-24'), 721));
-  assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render']);
+  assert.deepEqual(h.events.map(event => event[0]), ['render']);
   assert.equal(h.live.state.live, true);
 });
 
@@ -111,7 +112,7 @@ test('scrubbing is entirely local, pauses live, and Now resumes without selectin
   assert.equal(h.live.state.index, 0);
   for (const index of [500, 800, 1100, 1439, 0]) h.live.scrub(index);
   assert.equal(h.requests.length, 2, 'every slider position reuses the same two packets');
-  assert.ok(h.events.every(event => ['moment', 'render'].includes(event[0])));
+  assert.ok(h.events.every(event => ['render'].includes(event[0])));
   await h.live.goNow();
   assert.equal(h.live.state.live, true);
   assert.equal(h.live.current.utc, '2026-09-24T12:05:00Z');
@@ -266,7 +267,7 @@ test('the running clock waits for the next minute boundary and uses no per-secon
   await settle();
   assert.equal(h.live.current.utc, '2026-09-24T12:01:00Z');
   assert.equal(h.requests.length, 1);
-  assert.deepEqual(h.events.map(event => event[0]), ['moment', 'render']);
+  assert.deepEqual(h.events.map(event => event[0]), ['render']);
   h.document.hidden = true;
   h.listeners.get('visibilitychange')();
   h.utc += 10 * 60_000;
@@ -282,11 +283,11 @@ test('the running clock waits for the next minute boundary and uses no per-secon
 
 test('scrubbing through the real graph controller preserves pinned selection, camera transform and stored charts', async () => {
   const personal = { id: 'personal', name: 'Saved chart', source: 'manual', personality: [1], design: [8] };
-  const fallback = transitChartAt(day('2026-09-23'), 720);
+  const complete = transitChartAt(day('2026-09-23'), 720);
   // Older saved transit fallbacks contain only Personality. Live two-sided
   // charts remain ephemeral and never rewrite that legacy stored record.
-  fallback.design = []; fallback.designUtc = null; fallback.designArcResidualDegrees = null;
-  fallback.activations.design = [];
+  const fallback = { ...complete, design: [], designUtc: null, designArcResidualDegrees: null,
+    activations: { ...complete.activations, design: [] } };
   const writes = [], stored = JSON.stringify([personal, fallback]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => stored, setItem: (...args) => writes.push(args) }) });
   const originalCharts = store.charts, originalValues = JSON.stringify(store.charts);
@@ -294,9 +295,9 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
   const popoverCharts = [];
   let live;
   const graph = createGraphController({
-    renderChart: renderBodygraph,
+    scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } },
     getChart: () => live?.current || store.get('current-transit'), hasChart: () => true, viewport,
-    getMandala: () => ({ enabled: true }), alignHeading() {},
+    getMandala: () => ({ enabled: true }),
     activationPopover: { close() {}, show() {}, refresh(chart) { popoverCharts.push(chart); } },
   });
   graph.render();
@@ -304,7 +305,7 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
   live = createLiveTransit({
     document: { hidden: false, addEventListener() {} }, button: { setAttribute() {}, removeAttribute() {} },
     now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'UTC', dayClient: { getDay: async date => day(date) },
-    onMoment() {}, onRender: graph.render, toast() {},
+    onRender: graph.render, toast() {},
   });
   await live.refresh(true);
   graph.choose({ type: 'gate', id: 41 });
@@ -466,7 +467,7 @@ test('a partial range can cross UTC midnight without clamping to the previous pa
   assert.equal(h.live.state.timeline.date, '2026-09-24', 'UTC midnight does not advance the local date');
   assert.equal(h.live.state.live, true);
   assert.equal(h.live.current.utc, '2026-09-25T00:00:00Z');
-  assert.deepEqual(h.events.filter(([type]) => type === 'moment').map(([, chart]) => chart.utc), [
+  assert.deepEqual(h.events.filter(([type]) => type === 'render').map(([, chart]) => chart.utc), [
     '2026-09-24T23:59:00Z', '2026-09-25T00:00:00Z',
   ]);
 });
@@ -549,4 +550,29 @@ test('a failed current packet retries without rerequesting the successful local-
   assert.equal(h.requests.filter(date => date === '2026-09-23').length, 1);
   assert.equal(h.requests.filter(date => date === '2026-09-24').length, 2);
   assert.deepEqual(h.messages, [], 'partial failures and successful retries do not open toasts');
+});
+
+
+test('initial selection does not race a paused startup target, and retry preserves it', async t => {
+  let fail = true;
+  const h = harness({ getDay: async date => { if (fail) throw new Error('Offline'); return day(date); } });
+  t.after(() => h.live.stop());
+  h.live.setWanted(true);
+  assert.deepEqual(h.requests, []);
+  await h.live.start({ live: false, date: '2026-09-24', timeZone: 'UTC', index: 12 });
+  assert.equal(h.live.state.live, false);
+  assert.equal(h.live.state.index, 12);
+  fail = false; await h.live.retry();
+  assert.equal(h.live.current.utc, '2026-09-24T00:12:00Z');
+  assert.equal(h.live.state.live, false);
+  await h.live.goNow();
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  assert.equal(h.live.state.live, true);
+});
+
+test('an expired paused startup target follows the current local day', async t => {
+  const h = harness(); t.after(() => h.live.stop());
+  await h.live.start({ live: false, date: '2026-09-23', timeZone: 'UTC', index: 0 });
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  assert.equal(h.live.state.live, true);
 });

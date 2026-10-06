@@ -20,7 +20,10 @@ export function createCityCatalog(cities) {
       if (q.length < 2) return [];
       const exact = [], prefix = [], rest = [];
       for (const { city, names } of searchable) {
-        if (names.some(name => name === q)) exact.push(city);
+        if (names.some(name => name === q)) {
+          exact.push(city);
+          if (exact.length === 12) break;
+        }
         else if (prefix.length < 12 && names.some(name => name.startsWith(q))) prefix.push(city);
         else if (rest.length < 12 && names.some(name => name.includes(q))) rest.push(city);
       }

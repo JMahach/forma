@@ -7,14 +7,14 @@ import { createCameraView } from '../../src/scene/camera-view.js';
 
 // A synthetic chart and its own controllers; no application globals, storage,
 // calculation requests, or function extraction from app.js.
-export function mountPreview({ chart, controls }, { renderChart = null } = {}) {
+export function mountPreview({ chart, controls }, { scene } = {}) {
   const element = id => document.getElementById(id);
   const svg = element('preview'), viewport = element('viewport');
   const selectionState = createSelectionState();
   const activationPopover = attachActivationPopover(element('activationPopover'), svg);
   let hoverPreview = null;
   const graph = createGraphController({
-    renderChart, selectionState, getChart: () => chart, viewport, activationPopover,
+    scene, selectionState, getChart: () => chart, viewport, activationPopover,
     getActiveElement: () => document.activeElement, getHoverPreview: () => hoverPreview,
   });
   const gestures = attachGestures(svg, {

@@ -1,7 +1,7 @@
 import { CENTERS, GATES } from './geometry/chart-geometry.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
 import { paintOrder } from './geometry/drawing-geometry.js';
-import { PALETTE, CHANNEL_WIDTH, paintActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
+import { PALETTE, CHANNEL_WIDTH, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
   integrationOutlineMask, integrationChannels, armPaintPoints } from './bodygraph-paint.js';
 import { isSelectionPressed } from './render-state.js';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.js';
@@ -10,7 +10,9 @@ const coreKey = (state, options) => [state.personality, state.design, state.rela
   state.relatedGates, state.halfGates, state.selectedGates, state.selectedCenters,
   state.selectedChannels].map(set => [...set].join(',')).join('|')
   + JSON.stringify([state.committedSelections, state.visualSelections.some(v => v.type === 'integration'),
-    Boolean(options.previewSelection || options.selections), options.dimInactive]);
+    Boolean(options.previewSelection || options.selections), options.dimInactive,
+    state.overlaySources ? [state.overlaySources.kind, state.overlaySources.sources.map(source => source.label),
+      [...state.overlaySources.masks].sort((a, b) => a[0] - b[0])] : null]);
 
 // Targets never change identity when a minute, activation or selection changes.
 // Only a channel's variable lanes and the small integration masks are fragments.
@@ -37,8 +39,7 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
   const background = [...integration.children].slice(0, 10);
   const arms = [...integration.querySelectorAll('.bg-integration-arm')].map(node => ({
     gate: Number(node.dataset.arm), node, lanes: fragmentSlot(node, null, [...node.childNodes],
-      initialState ? paintActivation(armPaintPoints.get(Number(node.dataset.arm)),
-        initialState.personality.has(Number(node.dataset.arm)), initialState.design.has(Number(node.dataset.arm))) : undefined),
+      initialState ? paintGateActivation(armPaintPoints.get(Number(node.dataset.arm)), initialState, Number(node.dataset.arm)) : undefined),
   }));
   const integrationChildren = [...integration.children], hit = integrationChildren.at(-1);
   const lastArm = integrationChildren.indexOf(arms.at(-1).node);
@@ -109,7 +110,7 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
       for (const arm of arms) {
         const part = integrationArmState.find(part => part.gate === arm.gate);
         setAttributes(arm.node, { 'data-related': part.highlighted, opacity: part.opacity });
-        arm.lanes(paintActivation(armPaintPoints.get(arm.gate), part.black, part.red));
+        arm.lanes(paintGateActivation(armPaintPoints.get(arm.gate), state, arm.gate));
       }
       stem(integrationStemPaint(state, paint));
       if (selectionPath) {

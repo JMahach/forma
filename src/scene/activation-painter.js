@@ -1,3 +1,5 @@
+import { createOverlayActivationPainter } from './overlay-activation-columns.js';
+import { isChartOverlay, primaryChart } from '../domain/chart-composition.js';
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.js';
 import { setAttribute, setAttributes, svgNodes } from './svg-patches.js';
 import { ACTIVATION_COLUMN_LAYOUT, activationHeadingX } from './geometry/activation-layout.js';
@@ -11,6 +13,8 @@ const activationValues = entries => Array.isArray(entries) ? entries.map(entry =
 // longitudes continue through the separate mandala, Variable and detail owners.
 function columnInput(chart, state, options) {
   if (!options.showActivations) return 'hidden';
+  chart = primaryChart(chart);
+  if (chart.source === 'manual') return 'manual';
   const filter = chart.planetFilter;
   return JSON.stringify([chart.source,
     activationValues(chart.activations?.design), activationValues(chart.activations?.personality),
@@ -47,11 +51,23 @@ function updatePlanetFilter(control, checked, name) {
 
 // Numeric and planet targets keep their identity when gates, lines, selection or
 // fixing change. Structural changes affect only the relevant source/planet row.
-export function createActivationPainter(root) {
+export function createActivationPainter(root, rendered = null) {
   const drawing = root.querySelector('.bodygraph-drawing');
-  let group = drawing.querySelector('.activation-columns'), headingKey = null;
+  const cycleColumns = createOverlayActivationPainter(drawing, rendered);
+  let group = [...drawing.querySelectorAll('.activation-columns')].find(node => !node.classList.contains('cycle-activation-columns')) || null, headingKey = null;
   let previousInput = null;
-  const columns = new Map([...drawing.querySelectorAll('.activation-column')].map(node => [node.dataset.source, captureColumn(node)]));
+  const columns = new Map([...drawing.querySelectorAll('.activation-column')].filter(node => !node.dataset.cycleOrigin).map(node => [node.dataset.source, captureColumn(node)]));
+  if (rendered && !isChartOverlay(rendered.chart)) {
+    previousInput = columnInput(rendered.chart, rendered.state, rendered.options);
+    if (group) {
+      for (const column of columns.values()) column.label = column.heading.textContent;
+      const personality = columns.get('personality'), sun = personality?.rows.get('personality-sun');
+      headingKey = `${personality?.label || ''}:${sun?.value.textContent || '.'}`;
+      // Static markup already contains these rows; only real DOM measurement
+      // remains on mount. Adopting its input avoids a second model build.
+      alignPersonalityHeading(root);
+    }
+  }
 
   function updateRow(entry, row) {
     const key = JSON.stringify([row.gate, row.line, row.selected, row.pressed, row.fixing, row.planetSelected, row.planetPressed, row.label, row.hasPlanetControl, row.planetEnabled]);
@@ -86,6 +102,12 @@ export function createActivationPainter(root) {
 
   return {
     update(chart, state, options = {}) {
+      if (isChartOverlay(chart)) {
+        group?.remove(); group = null; columns.clear(); previousInput = null; headingKey = null;
+        cycleColumns.update(chart, state, options.showActivations, options);
+        return;
+      }
+      cycleColumns.clear();
       const input = columnInput(chart, state, options);
       if (input === previousInput) return;
       const models = options.showActivations ? describeActivationColumns(chart, state.relatedGates, state.committedSelection, {

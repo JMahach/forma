@@ -58,8 +58,7 @@ function selectionHarness({ getActiveElement = () => null } = {}) {
     selectionState, getChart: () => currentChart, viewport: panel('viewport'), getActiveElement,
     activationPopover,
     getHoverPreview: () => ({ clear(options) { calls.hoverClears.push(options); } }),
-    renderChart() { calls.graph++; calls.events.push('graph'); return ''; },
-    alignHeading() {},
+    scene: { update() { calls.graph++; calls.events.push('graph'); }, clear() {} },
     onChartChange(id) {
       selectedChartId = id;
       liveWanted = id === 'current-transit';

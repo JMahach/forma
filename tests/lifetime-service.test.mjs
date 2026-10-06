@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createLifetimeArchive, createLifetimeMoments } from '../server/services/lifetime.mjs';
+import * as lifetimeService from '../server/services/lifetime.mjs';
 import { createLifetimeHandler } from '../server/http/lifetime.mjs';
+import { createRequestHandler } from '../server/http/app.mjs';
 import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_ARCHIVE_VERSION, LIFETIME_ARCHIVE_FORMAT } from '../shared/lifetime-format.js';
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -158,4 +161,153 @@ test('HTTP validates one canonical bounded index and sanitizes unavailable error
   assert.equal((await request(null, '/api/lifetime/meta')).status, 503);
   const failure = await request({ getPoint() { throw new Error('/private/secret ENOENT'); } }, '/api/lifetime?index=0');
   assert.equal(failure.status, 503); assert.deepEqual(JSON.parse(failure.body), { error: 'lifetime_unavailable', message: 'Данные шкалы лет недоступны.' });
+});
+
+async function versionedHandler(t, input, fingerprint = 'a'.repeat(64)) {
+  const source = await archive(t, input), reads = [];
+  const handler = createRequestHandler({ root: '/unused', lifetime: { ...source,
+    getPoint(index) { reads.push(index); return source.getPoint(index); } }, lifetimeFingerprint: fingerprint,
+    calculate: async ({ utc }) => ({ ...design(utc), engine: source.metadata.source }), publicFiles() { throw Error('unexpected static'); } });
+  const send = async url => {
+    const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
+    await handler({ method: 'GET', url, headers: { host: 'localhost' } }, res);
+    return res;
+  };
+  const meta = await send('/api/lifetime/meta');
+  return { send, meta, version: JSON.parse(meta.body).cacheVersion, reads };
+}
+
+test('only a matching complete-moment version gets immutable HTTP caching', async t => {
+  const input = await fixture(t), { send, meta, version, reads } = await versionedHandler(t, input);
+  assert.match(version, /^[a-f0-9]{64}$/);
+  assert.equal(meta.headers['Cache-Control'], 'no-store');
+  const first = await send(`/api/lifetime?index=2&v=${version}`), repeat = await send(`/api/lifetime?index=2&v=${version}`);
+  assert.equal(first.status, 200); assert.equal(repeat.body, first.body);
+  assert.equal(first.headers['Cache-Control'], 'public, max-age=31536000, immutable');
+  assert.deepEqual(reads, [2]);
+  assert.equal((await send('/api/lifetime?index=2')).headers['Cache-Control'], 'no-store');
+  for (const query of [`index=3&v=${'b'.repeat(64)}`, 'index=3&v=', 'index=3&v=bad',
+    `index=3&v=${version.toUpperCase()}`, `index=3&v=${version}&v=${version}`, `index=3&v=${version}&extra=1`]) {
+    const result = await send(`/api/lifetime?${query}`);
+    assert.equal(result.status, 400, query); assert.equal(result.headers['Cache-Control'], 'no-store');
+  }
+  assert.deepEqual(reads, [2], 'stale and malformed versions do not read or publish a point');
+  const invalid = await send(`/api/lifetime?index=17&v=${version}`);
+  assert.equal(invalid.status, 400); assert.equal(invalid.headers['Cache-Control'], 'no-store');
+  await fs.truncate(input.file, 0);
+  const failure = await send(`/api/lifetime?index=3&v=${version}`);
+  assert.equal(failure.status, 503); assert.equal(failure.headers['Cache-Control'], 'no-store');
+});
+
+test('moment versions bind verified corpus bytes, index-to-UTC metadata and calculation inputs', async t => {
+  const input = await fixture(t), first = await versionedHandler(t, input);
+  assert.match(first.version, /^[a-f0-9]{64}$/);
+  assert.equal((await versionedHandler(t, input)).version, first.version);
+  assert.notEqual((await versionedHandler(t, input, 'b'.repeat(64))).version, first.version);
+  const shifted = { ...input.metadata, startUtc: '1900-01-02T00:00:00Z',
+    endExclusiveUtc: new Date(Date.parse(input.metadata.endExclusiveUtc) + 86400000).toISOString().replace('.000Z', 'Z') };
+  await fs.writeFile(input.metadataFile, JSON.stringify(shifted));
+  const changedMetadata = await versionedHandler(t, input);
+  assert.notEqual(changedMetadata.version, first.version, 'same bytes at another UTC origin must never share immutable URLs');
+  const stale = await changedMetadata.send(`/api/lifetime?index=0&v=${first.version}`);
+  assert.equal(stale.status, 400); assert.equal(stale.headers['Cache-Control'], 'no-store');
+  assert.deepEqual(changedMetadata.reads, []);
+  const changed = Buffer.from(input.bytes); changed.writeDoubleLE(42, 0);
+  await fs.writeFile(input.file, changed);
+  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, sha256: createHash('sha256').update(changed).digest('hex') }));
+  assert.notEqual((await versionedHandler(t, input)).version, first.version);
+});
+
+test('calculation fingerprints follow exact inputs but ignore paths, timestamps and interface files', async t => {
+  assert.equal(typeof lifetimeService.lifetimeCalculationFingerprint, 'function');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-moment-fingerprint-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const names = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
+    'server/python/calculator.py', 'server/python/design_worker.py', 'requirements.txt',
+    'shared/lifetime-format.js', 'server/services/lifetime.mjs', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'];
+  for (const name of names) {
+    await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
+    await fs.copyFile(new URL(`../${name}`, import.meta.url), path.join(directory, name));
+  }
+  const fingerprint = () => lifetimeService.lifetimeCalculationFingerprint(directory);
+  const original = await fingerprint(); assert.match(original, /^[a-f0-9]{64}$/);
+  assert.equal(await lifetimeService.lifetimeCalculationFingerprint(fileURLToPath(new URL('../', import.meta.url))), original);
+  for (const name of names) {
+    const file = path.join(directory, name), before = await fs.readFile(file), stat = await fs.stat(file);
+    const changed = Buffer.from(before); changed[0] ^= 1;
+    await fs.writeFile(file, changed); await fs.utimes(file, stat.atime, stat.mtime);
+    assert.notEqual(await fingerprint(), original, `${name}: same-sized changed inputs invalidate the revision`);
+    await fs.writeFile(file, before);
+  }
+  await fs.mkdir(path.join(directory, 'src')); await fs.writeFile(path.join(directory, 'src/app.js'), 'interface update');
+  assert.equal(await fingerprint(), original, 'an interface deployment leaves astronomical URLs reusable');
+});
+
+test('declared archive provenance must match current calculation inputs; legacy remains explicitly unverified', async t => {
+  const input = await fixture(t), legacy = await archive(t, input);
+  assert.equal(legacy.provenanceVerified, false);
+  const calculationFingerprint = await lifetimeService.lifetimeArchiveFingerprint(fileURLToPath(new URL('../', import.meta.url)));
+  const provenance = { version: '1', calculationFingerprint };
+  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance }));
+  const verified = await archive(t, input);
+  assert.equal(verified.provenanceVerified, true);
+  for (const invalid of [null, {}, { version: '2', calculationFingerprint }, { version: '1', calculationFingerprint: '0'.repeat(64) }]) {
+    await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance: invalid }));
+    await assert.rejects(createLifetimeArchive(input), unavailable);
+  }
+});
+
+test('real Python archive provenance is accepted by the Node startup verifier', async t => {
+  const input = await fixture(t), file = path.join(path.dirname(input.file), 'generated.f64le');
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-m', 'server.python.lifetime_archive', '--file', file,
+    '--start', '2026-10-02', '--end', '2026-10-03', '--workers', '1'], { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+  const metadataFile = file.replace('.f64le', '.metadata.json');
+  const service = await archive(t, { file, metadataFile });
+  assert.equal(service.provenanceVerified, true);
+  assert.equal((await service.getPoint(75)).utc, '2026-10-02T12:30:00Z');
+});
+
+
+test('optional ephemeris input presence and bytes invalidate archive provenance and exact URLs in both languages', async t => {
+  const input = await fixture(t), directory = path.dirname(input.file), root = fileURLToPath(new URL('../', import.meta.url));
+  for (const name of ['server/python', 'server/services/lifetime.mjs', 'requirements.txt', 'shared/lifetime-format.js', 'data/ephe']) {
+    await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
+    await fs.cp(path.join(root, name), path.join(directory, name), { recursive: true });
+  }
+  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util');
+  async function fingerprints() {
+    const archiveFingerprint = await lifetimeService.lifetimeArchiveFingerprint(directory);
+    const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-B', '-c',
+      'from server.python.lifetime_archive import calculation_fingerprint; print(calculation_fingerprint())'], { cwd: directory });
+    assert.equal(stdout.trim(), archiveFingerprint, 'Python preparation and Node verification use identical names, ordering and bytes');
+    return [archiveFingerprint, await lifetimeService.lifetimeCalculationFingerprint(directory)];
+  }
+  const original = await fingerprints();
+  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance: { version: '1', calculationFingerprint: original[0] } }));
+  const verified = await createLifetimeArchive({ ...input, root: directory });
+  assert.equal(verified.provenanceVerified, true); await verified.close();
+  const optional = path.join(directory, 'data/ephe/seleapsec.txt');
+  let before = original;
+  for (const contents of ['', '20261231\n', '20271231\n']) {
+    await fs.writeFile(optional, contents);
+    const changed = await fingerprints();
+    changed.forEach((value, index) => assert.notEqual(value, before[index], 'new or changed optional bytes cannot reuse a numerical revision'));
+    await assert.rejects(createLifetimeArchive({ ...input, root: directory }), unavailable);
+    before = changed;
+  }
+  await fs.unlink(optional);
+  assert.deepEqual(await fingerprints(), original, 'removal restores the original complete input set');
+  const restored = await createLifetimeArchive({ ...input, root: directory }); await restored.close();
+  const nested = path.join(directory, 'data/ephe/extra');
+  await fs.mkdir(nested);
+  // Deliberately create these in reverse byte order. Empty contents still bind the file name.
+  await fs.writeFile(path.join(nested, '💫.txt'), ''); await fs.writeFile(path.join(nested, 'я.txt'), '');
+  const withNested = await fingerprints();
+  withNested.forEach((value, index) => assert.notEqual(value, original[index], 'all ephemeris directory files participate, including nested names'));
+  await assert.rejects(createLifetimeArchive({ ...input, root: directory }), unavailable);
+  await fs.rm(nested, { recursive: true });
+  assert.deepEqual(await fingerprints(), original);
 });

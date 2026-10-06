@@ -1,15 +1,15 @@
-import { MANDALA_PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint } from './mandala-paint-rules.js';
+import { MANDALA_PALETTE, MANDALA_OPACITY, mandalaGateSets, mandalaSectorPaint, mandalaPlanetEntries, mandalaPlanetPaint, mandalaEndpointPath } from './mandala-paint-rules.js';
 import { normalizeLongitude } from '../domain/gate-wheel.js';
 import { MANDALA_GEOMETRY, mandalaPoint, mandalaCrossKey, mandalaCrossGeometry, MANDALA_CENTER as center, MANDALA_SECTORS as sectors } from './geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from './geometry/mandala-planets.js';
 
 function planetMarkers(planets) {
-  return planets.map(({ source, planet, longitude, leaderPath }) => {
+  return planets.map(({ source, planet, longitude, leaderPath, shared }) => {
       const paint = mandalaPlanetPaint(source, planet);
       const [x, y] = mandalaPoint(longitude, MANDALA_GEOMETRY.innerRadius);
       return `<g class="mandala-planet-marker" data-mandala-planet="${planet}" data-source="${source}" data-longitude="${longitude}">
         <path class="${paint.rayClass}" d="M ${center} L ${x} ${y}" fill="none" stroke="${paint.color}" stroke-opacity="${paint.rayOpacity}" stroke-width="${paint.rayWidth}"/>
-        <circle class="mandala-planet-endpoint" cx="${x}" cy="${y}" r="${paint.radius}" fill="${paint.color}" fill-opacity="${paint.endpointOpacity}"/>
+        ${paint.origin ? `<path class="mandala-planet-endpoint" d="${mandalaEndpointPath(paint, x, y, shared)}" fill="${paint.color}" fill-opacity="${paint.endpointOpacity}"/>` : `<circle class="mandala-planet-endpoint" cx="${x}" cy="${y}" r="${paint.radius}" fill="${paint.color}" fill-opacity="${paint.endpointOpacity}"/>`}
         <path class="mandala-planet-leader" d="${leaderPath}" fill="none" stroke="${paint.color}" stroke-opacity="${paint.leaderOpacity}" stroke-width="${paint.leaderWidth}"/>
       </g>`;
   }).join('');
@@ -77,17 +77,16 @@ export function renderCrossPreview(cross, { pinned = false } = {}) {
 // The persistent painter already prepared these coordinates. It needs markup
 // only when creating an overlay or replacing a changed/damaged structure.
 export function renderCrossOverlay(geometry, { pinned = false } = {}) {
-  const colors = { design: '#ae6259', personality: '#4b514e' };
   const marks = geometry.positions.map((p, index) => {
     const sector = sectors.find(s => s.gate === p.gate);
     const [x, y] = geometry.points[index];
     return `<g class="mandala-cross-position" data-cross-gate="${p.gate}" data-source="${p.source}" data-cross-planet="${p.planet}" data-longitude="${p.longitude}">
-      <path class="mandala-cross-sector" d="${sector.ring}" fill="${colors[p.source]}" fill-opacity=".15" stroke="${colors[p.source]}" stroke-opacity=".7" stroke-width=".8"/>
-      <path class="mandala-cross-preview-ray" d="M ${center} L ${x} ${y}" fill="none" stroke="${colors[p.source]}" stroke-opacity=".85" stroke-width="1.45"/>
-      <circle cx="${x}" cy="${y}" r="2.5" fill="${colors[p.source]}"/>
+      <path class="mandala-cross-sector" d="${sector.ring}" fill="${MANDALA_PALETTE[p.source]}" fill-opacity=".15" stroke="${MANDALA_PALETTE[p.source]}" stroke-opacity=".7" stroke-width=".8"/>
+      <path class="mandala-cross-preview-ray" d="M ${center} L ${x} ${y}" fill="none" stroke="${MANDALA_PALETTE[p.source]}" stroke-opacity=".85" stroke-width="1.45"/>
+      <circle cx="${x}" cy="${y}" r="2.5" fill="${MANDALA_PALETTE[p.source]}"/>
     </g>`;
   }).join('');
   const cursor = geometry.positions[geometry.cursorIndex];
-  const indicator = `<path class="mandala-cross-cursor" d="${geometry.cursorPath}" fill="none" stroke="${colors[cursor.source]}" stroke-width="2" stroke-linecap="round"/>`;
+  const indicator = `<path class="mandala-cross-cursor" d="${geometry.cursorPath}" fill="none" stroke="${MANDALA_PALETTE[cursor.source]}" stroke-width="2" stroke-linecap="round"/>`;
   return `<g class="${pinned ? 'mandala-cross-pinned' : 'mandala-cross-preview'}" data-cross-type="${geometry.type}" pointer-events="none" aria-hidden="true">${marks}${indicator}</g>`;
 }

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachBirthForm } from '../src/views/birth-form.js';
+import { createChartStore } from '../src/data/chart-store.js';
+import { STORAGE_KEY, CHART_RECORD_PREFIX, readCharts } from '../src/data/storage.js';
+import { chartAtMinute } from '../src/domain/natal-day.js';
+import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
 
 const city = (id, name) => ({ id, name, country: 'DE', region: '', timezone: 'Europe/Berlin' });
 const manualChart = () => ({ id: 'manual-1', name: 'Исходная карта', source: 'manual', birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин', personality: [20], design: [57], note: 'Заметка', createdAt: '2020-01-01T00:00:00.000Z' });
@@ -8,10 +12,17 @@ const natalChart = () => ({ ...manualChart(), id: 'natal-1', source: 'calculated
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
 
-function formHarness(t, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true } = {}) {
+function persistentStore(charts) {
+  const values = new Map([[STORAGE_KEY, JSON.stringify(charts)]]);
+  const storage = { get length() { return values.size; }, key: index => [...values.keys()][index],
+    getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  return { values, storage, chartStore: createChartStore({ getStorage: () => storage }) };
+}
+
+function formHarness(t, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map(), requests = [];
-  const calls = { beforeOpen: 0, saved: [], persisted: [], replaced: [], toasts: [] };
+  const calls = { beforeOpen: 0, saved: [], saveOptions: [], persisted: [], replaced: [], toasts: [] };
   const fields = { name: 'chartName', birthDate: 'birthDate', birthTime: 'birthTime', birthPlace: 'birthPlace', note: 'chartNote', personality: 'personalityGates', design: 'designGates' };
   const document = {
     activeElement: null,
@@ -59,14 +70,15 @@ function formHarness(t, { charts = [], selectedId = charts[0]?.id || 'current-tr
   element('chartForm').elements = Object.fromEntries(Object.entries(fields).map(([name, id]) => [name, element(id)]));
   const modes = ['calculated', 'manual'].map(mode => { const node = element(`mode-${mode}`); node.dataset.calculationMode = mode; return node; });
   let records = charts;
-  const store = {
+  const store = chartStore || {
     get charts() { return records; }, get selectedId() { return selectedId; },
     get current() { return records.find(chart => chart.id === selectedId) || { id: 'current-transit', source: 'transit', personality: [], design: [] }; },
     persist(next) { calls.persisted.push(next); if (persist) records = next; return persist; },
     replace(next) { calls.replaced.push(next); records = next; },
   };
   const form = attachBirthForm({
-    document, store, session: { get selectedId() { return store.selectedId; }, get original() { return store.current; } }, onSave: id => calls.saved.push(id), beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
+    document, store, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } },
+    onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])),
     requestJSON(url, options = {}) {
       let resolve, reject;
@@ -230,12 +242,13 @@ test('late city responses cannot reopen suggestions or show errors after the dia
 test('new manual cards get distinct UUIDs while a later edit preserves their identity and creation time', async t => {
   const h = formHarness(t);
   const ids = [];
-  for (const name of ['Первая карта', 'Вторая карта']) {
+  for (const name of ['первая карта', 'вторая карта']) {
     h.form.open(); await h.mode('manual');
     h.element('chartName').value = name;
     h.element('personalityGates').value = '20';
     h.element('designGates').value = '57';
     await h.submit();
+    assert.equal(h.store.charts.at(-1).name, name[0].toUpperCase() + name.slice(1));
     const id = h.calls.saved.at(-1);
     assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     ids.push(id);
@@ -245,7 +258,7 @@ test('new manual cards get distinct UUIDs while a later edit preserves their ide
   const original = h.store.charts.find(chart => chart.id === ids[0]);
   assert.ok(Number.isFinite(Date.parse(original.createdAt)));
   h.form.open(true, original.id);
-  h.element('chartName').value = 'Переименованная карта';
+  h.element('chartName').value = 'переименованная карта';
   await h.submit();
   const updated = h.store.charts.find(chart => chart.id === ids[0]);
   assert.equal(updated.name, 'Переименованная карта');
@@ -261,7 +274,7 @@ test('manual editing retains identity and creation time while normalizing fields
   h.form.open(true, original.id);
   assert.equal(h.element('birthDate').value, '02.01.2000');
   assert.equal(h.element('manualFields').hidden, false);
-  h.element('chartName').value = '  Новое имя  ';
+  h.element('chartName').value = '  новое имя  ';
   h.element('birthDate').value = '29022000'; h.element('birthTime').value = '7:05';
   h.element('birthPlace').value = '  Казань  '; h.element('chartNote').value = '  Новая заметка  ';
   h.element('personalityGates').value = '34, 20; 34'; h.element('designGates').value = '57 10';
@@ -276,7 +289,7 @@ test('manual editing retains identity and creation time while normalizing fields
   assert.equal(original.name, 'Исходная карта');
   assert.deepEqual(h.calls.saved, [original.id]);
   assert.equal(h.form.opened, false);
-  assert.match(h.calls.toasts[0], /сохранена на этом устройстве/);
+  assert.deepEqual(h.calls.toasts, []);
 });
 
 test('failed browser persistence keeps the edited chart only in memory and explicitly warns instead of claiming success', async t => {
@@ -291,6 +304,20 @@ test('failed browser persistence keeps the edited chart only in memory and expli
   assert.deepEqual(h.calls.saved, [original.id]);
   assert.equal(h.form.opened, false);
   assert.deepEqual(h.calls.toasts, ['Карта открыта, но не сохранена в браузере.']);
+});
+
+for (const failure of ['deleted', 'corrupt']) test(`a ${failure} chart cannot become an in-memory save from a stale editor`, async t => {
+  const original = manualChart(), { chartStore, storage, values } = persistentStore([original]);
+  const h = formHarness(t, { chartStore, selectedId: original.id });
+  h.form.open(true, original.id); h.element('chartName').value = 'Несохранённая правка';
+  if (failure === 'deleted') createChartStore({ getStorage: () => storage }).remove(original.id);
+  else values.set(`${CHART_RECORD_PREFIX}${original.id}`, '{damaged record');
+  await h.submit();
+  assert.equal(h.form.opened, true, 'the action error stays inside the open form');
+  assert.match(h.element('formError').textContent, failure === 'deleted' ? /удалена/ : /повреждена/);
+  assert.notEqual(chartStore.get(original.id)?.name, 'Несохранённая правка');
+  assert.deepEqual(h.calls.saved, []); assert.deepEqual(h.calls.toasts, []);
+  assert.deepEqual(readCharts(storage), [], 'the rejected edit cannot restore the record');
 });
 
 test('ambiguous local time exposes only valid DST choices and retries with the explicit fold', async t => {
@@ -319,5 +346,72 @@ test('ambiguous local time exposes only valid DST choices and retries with the e
   assert.deepEqual(h.store.charts[0].city, original.city); assert.equal(h.store.charts[0].source, 'calculated');
   assert.deepEqual(h.calls.saved, [original.id]);
   assert.equal(h.form.opened, false);
-  assert.deepEqual(h.calls.toasts, ['Карта рассчитана и сохранена']);
+  assert.deepEqual(h.calls.toasts, []);
+});
+
+test('calculated names are normalized before the request and retained when a response supplies another name', async t => {
+  const original = natalChart(), h = formHarness(t, { charts: [original] });
+  h.form.open(true, original.id); h.element('chartName').value = '  мАРат & "друг"  ';
+  const submitting = h.submit(), request = h.requests.at(-1);
+  assert.equal(JSON.parse(request.options.body).name, 'МАРат & "друг"');
+  request.resolve({ chart: { ...original, name: 'серверное имя' } });
+  await submitting;
+  assert.equal(h.store.charts[0].name, 'МАРат & "друг"');
+  assert.equal(h.store.charts[0].id, original.id);
+});
+
+test('editing only the name and note preserves the full exact calculated chart without a new calculation or success notice', async t => {
+  const original = Object.freeze({ ...natalChart(), utc: '2025-10-26T01:30:43.321Z', birthTime: '02:30:43',
+    fold: 1, utcOffset: 'UTC+01:00', timezone: 'Europe/Berlin', updatedAt: '2020-01-01T00:00:00.000Z',
+    designUtc: '2025-07-30T03:24:15.678Z', activations: { personality: [{ planet: 'sun', longitude: 217.345 }], design: [{ planet: 'sun', longitude: 129.345 }] },
+    calculation: { engine: 'swiss', version: 'fixture', residual: 1e-11 } });
+  const h = formHarness(t, { charts: [original] });
+  h.form.open(true, original.id);
+  h.element('chartName').value = 'Новое имя'; h.element('chartNote').value = 'Новая заметка';
+  const submitting = h.submit();
+  assert.equal(h.requests.length, 0, 'descriptive fields do not invalidate the astronomical calculation');
+  await submitting;
+  const saved = h.store.charts[0];
+  assert.equal(saved.name, 'Новое имя'); assert.equal(saved.note, 'Новая заметка');
+  for (const key of ['utc', 'birthTime', 'fold', 'utcOffset', 'timezone', 'designUtc', 'activations', 'calculation', 'personality', 'design', 'createdAt']) assert.deepEqual(saved[key], original[key], key);
+  assert.notEqual(saved.updatedAt, original.updatedAt);
+  assert.deepEqual(h.calls.saved, [original.id]); assert.deepEqual(h.calls.toasts, []);
+  assert.deepEqual(h.calls.saveOptions, [{ metadataOnly: true }]);
+});
+
+test('metadata editing with the real store retains every supported saved calculation field and exact UTC', async t => {
+  const exact = { ...chartAtMinute(chartDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:45.321Z', birthTime: '12:34:45', city: city('test-city', 'Берлин'), calculation: { unknown: true } };
+  const { chartStore, storage } = persistentStore([exact]);
+  const original = chartStore.get(exact.id);
+  assert.equal(original.birthTime, '12:34:45'); assert.deepEqual(original.calculation, exact.calculation);
+  const h = formHarness(t, { chartStore, selectedId: exact.id });
+  h.form.open(true, exact.id); h.element('chartName').value = 'Новое имя'; h.element('chartNote').value = 'Новая заметка';
+  await h.submit();
+  assert.equal(h.requests.length, 0);
+  const saved = readCharts(storage)[0];
+  for (const key of Object.keys(original).filter(key => !['name', 'note', 'updatedAt'].includes(key))) assert.deepEqual(saved[key], original[key], key);
+  assert.equal(saved.utc, exact.utc); assert.equal(saved.name, 'Новое имя'); assert.equal(saved.note, 'Новая заметка');
+  assert.equal(saved.birthTime, exact.birthTime); assert.deepEqual(saved.calculation, exact.calculation);
+  assert.deepEqual(h.calls.saveOptions, [{ metadataOnly: true }]);
+});
+
+for (const field of ['birthDate', 'birthTime', 'city']) test(`changing calculated ${field} still requests and saves a fresh calculation`, async t => {
+  const original = { ...natalChart(), utc: '2025-10-26T01:30:00Z' };
+  const h = formHarness(t, { charts: [original] });
+  h.form.open(true, original.id);
+  if (field === 'city') {
+    const search = await h.search('Гамбург'); search.resolve({ cities: [city(2, 'Гамбург')] }); await settle(); await h.chooseCity();
+  } else h.element(field).value = field === 'birthDate' ? '27.10.2025' : '02:31';
+  const submitting = h.submit();
+  const requests = h.requests.filter(request => request.url === '/api/calculate');
+  assert.equal(requests.length, 1);
+  const payload = JSON.parse(requests[0].options.body);
+  assert.equal(payload.date, field === 'birthDate' ? '2025-10-27' : '2025-10-26');
+  assert.equal(payload.time, field === 'birthTime' ? '02:31' : '02:30');
+  assert.equal(payload.cityId, field === 'city' ? '2' : '1');
+  requests[0].resolve({ chart: { ...original, utc: '2025-10-27T01:31:00Z', personality: [25], design: [10] } });
+  await submitting;
+  assert.equal(h.store.charts[0].utc, '2025-10-27T01:31:00Z');
+  assert.deepEqual(h.store.charts[0].personality, [25]);
+  assert.deepEqual(h.calls.toasts, []);
 });

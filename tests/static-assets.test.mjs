@@ -31,6 +31,16 @@ async function request(handler, url, { method = 'GET', headers = {} } = {}) {
 function handler(root, options) {
   return createRequestHandler({ root, publicFiles: createPublicFileHandler({ root, ...options }) });
 }
+
+test('HTML supplies the current cycle calculation revision without another request and changes its ETag', async t => {
+  const root = await directory(t); await write(root, 'public/index.html', '<html><body>Форма</body></html>');
+  const first = await request(handler(root, { cyclesVersion: 'a'.repeat(64), lifetimeEnabled: true }), '/');
+  assert.match(first.body.toString(), /<body data-lifetime-enabled="true" data-cycles-version="a{64}">/);
+  const next = await request(handler(root, { cyclesVersion: 'b'.repeat(64) }), '/');
+  assert.match(next.body.toString(), /data-cycles-version="b{64}"/); assert.notEqual(next.headers.ETag, first.headers.ETag);
+  assert.equal(first.headers['Cache-Control'], 'no-cache');
+  const legacy = await request(handler(root), '/'); assert.doesNotMatch(legacy.body.toString(), /data-cycles-version/);
+});
 function releaseEntry(file, immutable = false) {
   return { file, br: `${file}.br`, gzip: `${file}.gz`, immutable };
 }
@@ -130,9 +140,10 @@ test('archive availability exposes Years in the first development/release HTML i
     }
     const tags = new Map();
     for (const lifetimeEnabled of [false, true]) {
-      const serve = handler(root, { files, precompressed, lifetimeEnabled });
-      const expected = lifetimeEnabled ? source.replace('<body>', '<body data-lifetime-enabled="true">')
-        .replace('id="lifetimeToggle" hidden', 'id="lifetimeToggle"') : source;
+      const cyclesVersion = 'a'.repeat(64);
+      const serve = handler(root, { files, precompressed, lifetimeEnabled, cyclesVersion });
+      const page = source.replace('<body>', `<body${lifetimeEnabled ? ' data-lifetime-enabled="true"' : ''} data-cycles-version="${cyclesVersion}">`);
+      const expected = lifetimeEnabled ? page.replace('id="lifetimeToggle" hidden', 'id="lifetimeToggle"') : page;
       for (const [encoding, unpack] of [['identity', bytes => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]]) {
         const headers = { 'accept-encoding': encoding };
         const get = await request(serve, '/', { headers });

@@ -13,7 +13,7 @@ export const MANDALA_PLANET_LAYOUT = Object.freeze({
 });
 
 const difference = (left, right) => normalizeLongitude(left - right + 180) - 180;
-const comparePlanet = (left, right) => left.planet < right.planet ? -1 : left.planet > right.planet ? 1 : 0;
+const comparePlanet = (left, right) => left.planet < right.planet ? -1 : left.planet > right.planet ? 1 : (left.origin || '').localeCompare(right.origin || '');
 
 // Project the ordered angles onto a minimum spacing. Pooling only overlapping
 // neighbours leaves isolated labels exactly at their astronomical longitude.
@@ -86,7 +86,7 @@ function leaderPath(longitude, labelLongitude, radius, source) {
 export function layoutMandalaPlanets(entries) {
   const result = new Array(entries.length);
   for (const source of ['design', 'personality']) {
-    const lane = entries.map((entry, index) => ({ ...entry, index })).filter(entry => entry.source === source);
+    const lane = entries.map((entry, index) => ({ ...entry, index })).filter(entry => (entry.lane || entry.source) === source);
     const radius = MANDALA_PLANET_LAYOUT[`${source}Radius`];
     const longitudes = laneLongitudes(lane, radius);
     lane.forEach(({ index }, position) => {

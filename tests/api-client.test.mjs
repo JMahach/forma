@@ -20,6 +20,21 @@ test('JSON client keeps aborts distinguishable while explaining unavailable tran
   await assert.rejects(requestJSON('/api/cities'), /Локальный сервер недоступен/);
 });
 
+test('JSON client preserves cancellation after headers while reading the response body', async t => {
+  const cancel = new AbortController();
+  let stream;
+  t.mock.method(globalThis, 'fetch', async (_url, { signal }) => new Response(new ReadableStream({
+    start(controller) {
+      stream = controller;
+      signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+    },
+  })));
+  const response = requestJSON('/api/cycles/events', { signal: cancel.signal });
+  stream.enqueue(new TextEncoder().encode('{'));
+  cancel.abort();
+  await assert.rejects(response, error => error === cancel.signal.reason);
+});
+
 test('JSON client preserves structured DST error choices for the birth form', async t => {
   const choices = [{ fold: 0, label: 'First' }, { fold: 1, label: 'Second' }];
   t.mock.method(globalThis, 'fetch', async () => ({ ok: false, json: async () => ({ message: 'Ambiguous time', error: 'ambiguous_time', choices }) }));

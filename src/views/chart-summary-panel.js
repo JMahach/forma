@@ -1,3 +1,4 @@
+import { primaryChart, chartTopology } from '../domain/chart-composition.js';
 import { escapeHtml as esc } from '../ui/html.js';
 import { buildChartSummary } from './chart-summary-data.js';
 
@@ -7,19 +8,22 @@ const matches = (query, ...values) => !query || normalize(values.join(' ')).incl
 
 function lineRows(model, query) {
   if (!model.hasLines) return matches(query, 'линии') ? '<p class="summary-note">Для подсчёта линий нужны планетарные активации. В этой карте они пока недоступны.</p>' : '';
-  const sources = model.isTransit ? ['personality'] : ['design', 'personality', 'all'];
+  const sources = ['design', 'personality'].filter(source => !model.isTransit || model.lines.some(row => row[source] > 0));
+  const singleSource = sources.length === 1;
+  if (!singleSource) sources.push('all');
+  const sourceLabel = source => model.isTransit && singleSource && source === 'personality' ? 'Транзит' : labels[source];
   const rows = model.lines.filter(row => matches(query, 'линии', row.line));
   if (!rows.length) return '';
-  return `<div class="summary-lines ${model.isTransit ? 'is-transit' : ''}" role="table" aria-label="Количество активаций по линиям">
-    <div class="summary-line-head" role="row"><span role="columnheader">Линия</span>${sources.map(source => `<span role="columnheader" class="summary-${source}">${model.isTransit ? 'Транзит' : labels[source]}</span>`).join('')}</div>
+  return `${model.rowsLabel ? `<p class="summary-note">Линии: ${esc(model.rowsLabel)}</p>` : ''}<div class="summary-lines ${singleSource ? 'is-transit' : ''}" role="table" aria-label="Количество активаций по линиям">
+    <div class="summary-line-head" role="row"><span role="columnheader">Линия</span>${sources.map(source => `<span role="columnheader" class="summary-${source}">${sourceLabel(source)}</span>`).join('')}</div>
     ${rows.map(row => `<div class="summary-line-row" role="row"><span role="rowheader">${row.line}</span>${sources.map(source => {
       const count = source === 'all' ? row.total : row[source];
-      return `<span role="cell"><button type="button" class="summary-count summary-${source}" data-summary-line="${row.line}" data-summary-source="${source}" aria-label="Линия ${row.line}, ${model.isTransit ? 'Транзит' : labels[source]}: ${count}" aria-pressed="false" ${count ? '' : 'disabled'}>${count}</button></span>`;
+      return `<span role="cell"><button type="button" class="summary-count summary-${source}" data-summary-line="${row.line}" data-summary-source="${source}" aria-label="Линия ${row.line}, ${sourceLabel(source)}: ${count}" aria-pressed="false" ${count ? '' : 'disabled'}>${count}</button></span>`;
     }).join('')}</div>`).join('')}
     </div><p class="summary-note">Каждая активация считается отдельно, включая лунные узлы. Клик — выделить; Shift — добавить или убрать.</p>`;
 }
 
-const entityButton = (type, id, title, detail, extra = '') => `<button type="button" class="summary-entity" data-summary-type="${type}" data-summary-id="${esc(id)}" aria-pressed="false"><span>${esc(title)}</span><span class="summary-entity-detail">${detail}</span>${extra}</button>`;
+const entityButton = (type, id, title, detail) => `<button type="button" class="summary-entity" data-summary-type="${type}" data-summary-id="${esc(id)}" aria-pressed="false"><span>${esc(title)}</span><span class="summary-entity-detail">${detail}</span></button>`;
 
 // New sections supply only data presentation. Disclosure, search, scrolling,
 // selection and drawer behaviour remain shared panel behaviour.
@@ -45,7 +49,7 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
   const document = panel.ownerDocument;
   const window = document.defaultView;
   let opened = false, model = null, fingerprint = '', expanded = new Set(['lines']);
-  let currentItems = [], currentFilter = null, lastId = null, appliedOpen = null;
+  let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedOpen = null, currentChart = null;
   function layout() {
     // This view owns the drawer state; camera and resize callbacks can repeat it.
     if (appliedOpen === opened) return;
@@ -63,7 +67,7 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
     if (opened === value) return;
     if (!value && (focus || panel.contains(document.activeElement))) switcher.focus({ preventScroll: true });
     opened = value;
-    if (opened) onOpen();
+    if (opened) { onOpen(); updateVisible(); }
     layout();
     if (opened) search.focus({ preventScroll: true });
     else onClose();
@@ -71,7 +75,10 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
   const open = () => setOpen(true);
   const close = ({ focus = false } = {}) => setOpen(false, focus);
   const toggle = () => setOpen(!opened);
-  function syncSelection() {
+  function syncSelection(force = false) {
+    const key = JSON.stringify([currentItems, currentFilter]);
+    if (!force && key === selectionFingerprint) return;
+    selectionFingerprint = key;
     const groups = currentFilter?.groups || (currentFilter ? [currentFilter] : []);
     content.querySelectorAll('[data-summary-line]').forEach(button => {
       const line = Number(button.dataset.summaryLine), source = button.dataset.summarySource;
@@ -88,15 +95,23 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
   function render() {
     if (!model) return;
     content.innerHTML = renderSummarySections(model, search.value, expanded);
-    syncSelection();
+    syncSelection(true);
   }
   function update(chart, { items = [], filter = null } = {}) {
-    currentItems = items; currentFilter = filter;
-    const key = JSON.stringify([chart.id, chart.source, chart.personality, chart.design, ['design', 'personality'].map(source => chart.activations?.[source]?.map(a => [a.planet, a.gate, a.line]))]);
+    currentChart = chart; currentItems = items; currentFilter = filter;
+    // Keep only the latest inputs while closed. The existing markup can finish
+    // its exit animation; chart facts and controls are prepared on opening.
+    if (opened) updateVisible();
+  }
+  function updateVisible() {
+    const chart = currentChart;
+    if (!chart) return;
+    const rowsChart = primaryChart(chart), topology = chartTopology(chart);
+    const key = JSON.stringify([chart.id, chart.kind, rowsChart.source, rowsChart.name, topology.personality, topology.design, ['design', 'personality'].map(source => rowsChart.activations?.[source]?.map(a => [a.planet, a.gate, a.line]))]);
     if (lastId !== chart.id) { search.value = ''; content.scrollTop = 0; lastId = chart.id; }
     if (key !== fingerprint) {
       fingerprint = key; model = buildChartSummary(chart);
-      overview.innerHTML = `<span>${model.isTransit ? 'Транзит' : model.profile ? `Профиль <strong>${esc(model.profile)}</strong>` : 'Обзор карты'}</span><span><strong>${model.totals.centers}</strong> / 9 центров · <strong>${model.totals.channels}</strong> каналов</span>`;
+      overview.innerHTML = `<span>${model.scope === 'overlay' ? 'Топология наложения' : model.isTransit ? 'Транзит' : model.profile ? `Профиль <strong>${esc(model.profile)}</strong>` : 'Обзор карты'}</span><span><strong>${model.totals.centers}</strong> / 9 центров · <strong>${model.totals.channels}</strong> каналов</span>`;
       render();
     } else syncSelection();
     if (opened) layout();

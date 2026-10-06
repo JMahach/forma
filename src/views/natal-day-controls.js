@@ -1,6 +1,6 @@
 import { createChartDayExplorer } from '../state/natal-day.js';
 import { formatDateInput } from './date-input.js';
-import { attachDayRange } from './day-range.js';
+import { attachTimelineRange } from './timeline-range.js';
 import { setText } from '../ui/html.js';
 
 function savedClock(chart) {
@@ -12,12 +12,12 @@ function savedClock(chart) {
   return clock.endsWith(':00') && (chart.birthTime || '').length <= 5 ? clock.slice(0, 5) : clock;
 }
 
-export function attachChartDayExplorer({ toggle, panel, range, date, time, status, resetButton, marker = null, ...options }) {
+export function attachChartDayExplorer({ toggle, panel, range, time, status, resetButton, marker = null, onMomentInput = () => {}, ...options }) {
   function update(state) {
     toggle.hidden = !state.available;
     toggle.setAttribute('aria-expanded', String(state.opened));
     toggle.setAttribute('aria-pressed', String(state.opened));
-    toggle.title = state.opened ? 'Шкала дня · закрыть' : 'Шкала дня';
+    toggle.title = 'Шкала дня';
     panel.hidden = !state.opened;
     panel.setAttribute('aria-busy', String(state.status === 'loading'));
     panel.dataset.original = String(state.exactOriginal);
@@ -29,7 +29,7 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     resetButton.setAttribute('aria-pressed', String(state.exactOriginal));
     setText(status, state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '');
     const chart = state.current;
-    setText(date, chart?.birthDate ? formatDateInput(chart.birthDate) : '');
+    const date = chart?.birthDate ? formatDateInput(chart.birthDate) : '';
     if (state.day) {
       range.min = '0'; range.max = String(state.day.samples - 1); range.step = '1'; range.value = String(state.index);
     } else { range.min = '0'; range.max = '1439'; range.value = '0'; }
@@ -45,13 +45,14 @@ export function attachChartDayExplorer({ toggle, panel, range, date, time, statu
     time.dateTime = chart?.utc || '';
     time.title = [zone, state.exactOriginal ? 'Сохранённое время рождения' : 'Просмотр другой минуты'].filter(Boolean).join(' · ');
     time.setAttribute('aria-label', [clock, utcOffset, zone].filter(Boolean).join(', '));
-    range.setAttribute('aria-valuetext', [date.textContent, clock, utcOffset, zone, state.exactOriginal ? 'сохранённое время рождения' : ''].filter(Boolean).join(', '));
+    range.setAttribute('aria-valuetext', [date, clock, utcOffset, zone, state.exactOriginal ? 'сохранённое время рождения' : ''].filter(Boolean).join(', '));
     options.onStateChange?.(state);
   }
   const explorer = createChartDayExplorer({ ...options, onStateChange: update });
-  const dayRange = attachDayRange({ range, marker, onScrub: value => explorer.scrub(value), onReference: () => explorer.reset() });
-  toggle.addEventListener('click', () => explorer.toggle());
-  resetButton.addEventListener('click', () => explorer.state.status === 'error' ? explorer.retry() : explorer.reset());
+  const reset = () => { onMomentInput(); return explorer.reset(); };
+  const dayRange = attachTimelineRange({ range, marker,
+    onScrub: value => { onMomentInput(); return explorer.scrub(value); }, onReference: reset });
+  resetButton.addEventListener('click', () => explorer.state.status === 'error' ? explorer.retry() : reset());
   update(explorer.state);
   return explorer;
 }

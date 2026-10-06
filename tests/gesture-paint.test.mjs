@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.js';
-import { COMPACT_TEST_FRAME, EXPANDED_TEST_FRAME } from './fixtures/camera-frames.js';
+import { pointerTarget } from '../src/scene/pointer-target.js';
+import { COMPACT_TEST_FRAME } from './fixtures/camera-frames.js';
 
 let originalDOMPoint;
 test.beforeEach(() => {
@@ -18,11 +19,11 @@ test.afterEach(() => {
   else delete globalThis.DOMPoint;
 });
 
-function harness({ deferred = true, animated = false } = {}) {
-  const listeners = new Map(), captures = new Set(), queued = new Map(), motionFrames = new Map();
+function harness({ deferred = true, resolvePointerTarget } = {}) {
+  const listeners = new Map(), captures = new Set(), queued = new Map();
   const changes = [], transforms = [], selections = [], cursorChanges = [];
-  let nextId = 0, time = 0, width = 640, height = 820, mandala = false, projectionReads = 0;
-  const frame = () => mandala ? EXPANDED_TEST_FRAME : COMPACT_TEST_FRAME;
+  let nextId = 0, time = 0, width = 640, height = 820, projectionReads = 0;
+  const frame = () => COMPACT_TEST_FRAME;
   const svg = {
     addEventListener: (name, handler) => listeners.set(name, handler),
     getScreenCTM: () => { projectionReads++; return { inverse() {
@@ -36,36 +37,27 @@ function harness({ deferred = true, animated = false } = {}) {
     releasePointerCapture: id => captures.delete(id),
   };
   const controls = attachGestures(svg, { setAttribute: (name, value) => transforms.push(value) }, {
-    getFrame: frame, getHomeFrame: frame,
+    getFrame: frame, getHomeFrame: frame, resolvePointerTarget,
     onSelect: value => selections.push(value), onChange: view => changes.push(view),
     requestPaint: deferred ? callback => { queued.set(++nextId, callback); return nextId; } : null,
     cancelPaint: id => queued.delete(id),
-    cameraMotion: {
-      now: () => time, reducedMotion: () => false,
-      requestFrame: animated ? callback => { motionFrames.set(++nextId, callback); return nextId; } : null,
-      cancelFrame: id => motionFrames.delete(id),
-    },
   });
   controls.reset();
   transforms.length = changes.length = cursorChanges.length = 0;
   return {
-    controls, queued, motionFrames, changes, transforms, selections, cursorChanges,
+    controls, queued, changes, transforms, selections, cursorChanges,
     send(type, extra = {}) {
       listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0,
         clientX: width / 2, clientY: height / 2, target: svg, preventDefault() {}, ...extra });
     },
-    tick(ms = 16, motionFirst = true) {
+    tick(ms = 16) {
       time += ms;
-      const paints = [...queued.values()], motions = [...motionFrames.values()];
-      queued.clear(); motionFrames.clear();
-      // Exercise either ordering, including callbacks already copied by a browser
-      // before another callback cancels them during the same animation frame.
-      for (const callback of motionFirst ? [...motions, ...paints] : [...paints, ...motions]) callback(time);
+      const paints = [...queued.values()]; queued.clear();
+      paints.forEach(callback => callback(time));
     },
     resize(w, h) { width = w; height = h; controls.resize(); },
     setSurfaceSize(w, h) { width = w; height = h; },
     get projectionReads() { return projectionReads; },
-    toggle() { mandala = !mandala; controls.transitionHome(); },
   };
 }
 
@@ -180,6 +172,44 @@ test('cancelled touch and pinch cannot turn a tolerant control press into a tap'
     } else h.send(cancel, { clientX: 328 });
     h.send('pointerup', { clientX: 328 });
     assert.equal(h.selections.length, 0, cancel);
+  }
+});
+
+test('expanded touch target selects on a tap and never toggles after drag, pinch or cancellation', () => {
+  for (const action of ['tap', 'drag', 'pinch', 'pointercancel', 'lostpointercapture']) {
+    let measurements = 0;
+    const control = { dataset: { type: 'planet-filter', id: 'design:sun' } }, column = {};
+    const hit = { parentElement: control, closest: () => column,
+      getBoundingClientRect() {
+        measurements++;
+        return { left: 320, right: 332, top: 401.5, bottom: 418.5, width: 12, height: 17 };
+      },
+    };
+    const svg = { querySelectorAll: () => [hit] };
+    const h = harness({ resolvePointerTarget: event => pointerTarget(svg, event) });
+    h.resize(390, 844); h.controls.zoom(2);
+    const start = h.controls.getView();
+    // The press is 20px left of the painted hit, inside its empty touch margin.
+    h.send('pointerdown', { clientX: 300, clientY: 410 });
+    if (action === 'tap') {
+      h.send('pointermove', { clientX: 309, clientY: 410 });
+      h.send('pointerup', { clientX: 309, clientY: 410 });
+      assert.deepEqual(h.selections, [{ type: 'planet-filter', id: 'design:sun', pointerType: 'touch' }]);
+      assert.deepEqual(h.controls.getView(), start, 'finger roll does not move the camera');
+    } else {
+      if (action === 'drag') {
+        h.send('pointermove', { clientX: 312, clientY: 410 });
+        h.send('pointermove', { clientX: 300, clientY: 410 });
+      } else if (action === 'pinch') {
+        h.send('pointerdown', { pointerId: 2, clientX: 370, clientY: 410 });
+        h.send('pointermove', { pointerId: 2, clientX: 380, clientY: 410 });
+        h.send('pointerup', { pointerId: 2, clientX: 380, clientY: 410 });
+      } else h.send(action, { clientX: 300, clientY: 410 });
+      h.send('pointerup', { clientX: 300, clientY: 410 });
+      assert.deepEqual(h.selections, [], action);
+    }
+    assert.equal(measurements, 1, `${action}: touch bounds are read only at the initial press`);
+    assert.equal(h.queued.size, 0);
   }
 });
 
@@ -396,6 +426,28 @@ test('Home cancels a pending gesture paint and an obsolete callback cannot steal
   assert.deepEqual(h.changes.at(-1), h.controls.getView());
 });
 
+test('keyboard Home publishes only the fitted pose and discards pending gesture paint', () => {
+  for (const [width, height] of [[640, 820], [390, 844]]) for (const deferred of [false, true]) {
+    const h = harness({ deferred });
+    h.resize(width, height);
+    const home = h.controls.getView();
+    h.send('keydown', { key: '+' });
+    assert.ok(h.controls.getView().k > home.k);
+    h.send('wheel', { deltaY: -50 });
+    const stale = [...h.queued.values()][0];
+    h.changes.length = h.transforms.length = 0;
+    h.send('keydown', { key: '0' });
+    assert.deepEqual(h.controls.getView(), home);
+    assert.deepEqual(h.changes, [home], 'Home cannot first publish the abandoned zoomed pose');
+    assert.equal(h.transforms.length, 1);
+    assert.equal(h.queued.size, 0);
+    stale?.();
+    h.tick();
+    assert.deepEqual(h.changes, [home]);
+    assert.deepEqual(h.selections, []);
+  }
+});
+
 test('cancel and lost pointer capture flush the final camera state', () => {
   for (const release of ['pointercancel', 'lostpointercapture']) {
     const h = harness();
@@ -423,42 +475,6 @@ test('resize publishes the rebased live camera immediately and cancels the pre-r
   const count = deferred.transforms.length;
   stale();
   assert.equal(deferred.transforms.length, count, 'the old viewport cannot reappear after resize');
-});
-
-test('gesture paints and animated Home reversal share the live camera in either frame order', () => {
-  for (const motionFirst of [true, false]) {
-    const deferred = harness({ animated: true }), immediate = harness({ animated: true, deferred: false });
-    for (const h of [deferred, immediate]) {
-      h.toggle(); h.tick(40, motionFirst);
-      h.send('wheel', { deltaY: -80 });
-    }
-    assert.equal(deferred.queued.size, 1);
-    assert.equal(deferred.motionFrames.size, 1, 'the gesture does not stop the Home transition');
-    for (const h of [deferred, immediate]) h.tick(40, motionFirst);
-    assert.deepEqual(deferred.controls.getView(), immediate.controls.getView());
-    assert.deepEqual(deferred.changes.at(-1), deferred.controls.getView());
-
-    for (const h of [deferred, immediate]) h.send('wheel', { deltaY: -20 });
-    const stalePaint = [...deferred.queued.values()][0];
-    const staleMotion = [...deferred.motionFrames.values()][0];
-    const beforeReversal = deferred.controls.getView();
-    for (const h of [deferred, immediate]) h.toggle();
-    assert.deepEqual(deferred.controls.getView(), beforeReversal, 'reversal starts at the latest input, without jumping');
-    assert.deepEqual(deferred.changes.at(-1), beforeReversal, 'reversal flushes pending input immediately');
-    assert.equal(deferred.queued.size, 0);
-
-    for (const h of [deferred, immediate]) h.send('wheel', { deltaY: -10 });
-    const count = deferred.transforms.length;
-    stalePaint(); staleMotion();
-    assert.equal(deferred.transforms.length, count, 'neither obsolete queue can repaint');
-    assert.equal(deferred.queued.size, 1, 'the newer gesture paint stays queued');
-    assert.equal(deferred.motionFrames.size, 1, 'the reversed transition stays queued');
-    for (const h of [deferred, immediate]) h.tick(200, motionFirst);
-    assert.deepEqual(deferred.controls.getView(), immediate.controls.getView());
-    assert.deepEqual(deferred.changes.at(-1), deferred.controls.getView());
-    assert.equal(deferred.queued.size, 0);
-    assert.equal(deferred.motionFrames.size, 0);
-  }
 });
 
 test('a tap keeps its pressed object when pointerup flushes a pending camera paint', () => {

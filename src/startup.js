@@ -1,12 +1,19 @@
 import { createTransitDayClient } from './data/transit-day-client.js';
+import { createViewStore } from './data/view-store.js';
+import { createToast } from './ui/toast.js';
 import { createStudioLayout } from './scene/studio-controller.js';
 
-// Start the current UTC packet before loading the main application. The live view
-// receives this same client and owns the local-day range, retry and visibility.
-const dayClient = createTransitDayClient({
-  initialDate: document.hidden ? null : new Date().toISOString().slice(0, 10),
-});
 const element = id => document.getElementById(id);
+const toast = createToast(element('toast'));
+const viewStore = createViewStore({ onStorageError: toast }), savedView = viewStore.read();
+// Read the tab once before prefetching. A saved archive, natal or exact return
+// owns its own data; only Day and an explicitly live personal view need today.
+const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-transit'
+  ? savedView?.lifetime?.mode !== 'archive'
+  : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
+const dayClient = createTransitDayClient({
+  initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
+});
 const layout = createStudioLayout({ canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
   panels: [element('transitControls'), element('chartDayControls'), element('lifetimeControls')] });
 // The shared layout positions the preview while the larger application loads.
@@ -25,5 +32,5 @@ const app = await import('./app.js').catch(() => {
 });
 if (app) {
   loadingLayoutObserver.disconnect();
-  app.startApp({ dayClient, layout });
+  app.startApp({ dayClient, layout, toast, viewStore, savedView });
 }

@@ -1,5 +1,5 @@
-// Presentation only: the session owns whether a chart exists; transit owns
-// loading/errors. A ready chart must never wait for the rest of the day packet.
+// Presentation only: the session owns whether a chart exists; its active
+// moment source owns loading/errors. A ready chart must never wait for the rest of the day packet.
 export function attachChartLoading({ canvas, drawing, art, message, status, retry, heading, onRetry }) {
   let previous = null;
   retry.addEventListener('click', onRetry);

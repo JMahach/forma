@@ -57,6 +57,16 @@ export const paintActivation = (points, black, red) => black && red
   ? stroke(points, PALETTE.ink, CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, PALETTE.design, CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
   : black || red ? stroke(points, black ? PALETTE.ink : PALETTE.design, CHANNEL_WIDTH.paint) : '';
 
+// General graph paint shows two origins. The four independent source bits
+// remain in the snapshot for exact activation details and cache ownership.
+export function paintGateActivation(points, state, gates) {
+  const ids = Array.isArray(gates) ? gates : [gates];
+  if (!state.overlaySources) return paintActivation(points,
+    ids.some(gate => state.personality.has(gate)), ids.some(gate => state.design.has(gate)));
+  const mask = ids.reduce((value, gate) => value | (state.overlaySources.masks.get(gate) || 0), 0);
+  return paintActivation(points, Boolean(mask & 12), Boolean(mask & 3));
+}
+
 // The static SVG and persistent painter use the same visual decisions.
 export function channelPaint(channel, state, options = {}) {
   const selected = state.selectedChannels.has(channel.id), related = state.relatedChannels.has(channel.id);
@@ -65,8 +75,7 @@ export function channelPaint(channel, state, options = {}) {
     opacity: options.dimInactive && !active && !related ? .2 : 1,
     highlight: selected ? '' : channelHalves.get(channel.id).map((points, index) => state.halfGates.has(channel.gates[index])
       ? `<g data-highlight-gate="${channel.gates[index]}">${stroke(points, PALETTE.halo, CHANNEL_WIDTH.halo)}</g>` : '').join(''),
-    lanes: channelHalves.get(channel.id).map((points, index) => paintActivation(points,
-      state.personality.has(channel.gates[index]), state.design.has(channel.gates[index]))).join(''),
+    lanes: channelHalves.get(channel.id).map((points, index) => paintGateActivation(points, state, channel.gates[index])).join(''),
   };
 }
 
@@ -75,16 +84,24 @@ export function centerPaint(center, state, options = {}) {
   const selected = state.selectedCenters.has(center.id)
     || GATES.filter(gate => gate.center === center.id).every(gate => state.selectedGates.has(gate.id));
   const defined = state.definition.centers.has(center.id);
-  return { selected, defined, label: `${center.name} центр, ${defined ? 'определён' : 'не определён'}`,
+  const secondOrigin = state.overlaySources?.kind === 'transit' ? 'транзита' : 'возврата';
+  const ownership = !state.overlaySources || !defined ? '' : state.overlaySources.natal.centers.has(center.id)
+    ? ', определён в натале' : state.overlaySources.cycle.centers.has(center.id)
+      ? `, определён в карте ${secondOrigin}` : `, определён только в соединении натала и ${secondOrigin}`;
+  return { selected, defined, label: `${center.name} центр, ${defined ? 'определён' : 'не определён'}${ownership}`,
     opacity: options.dimInactive && !defined && !selected ? .45 : 1,
     fill: defined ? PALETTE[center.id] : PALETTE.paper, stroke: defined ? '#84715b' : '#b4b0a7' };
 }
 
 export function gatePaint(gate, state, options = {}) {
-  const black = state.personality.has(gate.id), red = state.design.has(gate.id), active = black || red;
+  const mask = state.overlaySources?.masks.get(gate.id) || 0;
+  const black = state.overlaySources ? Boolean(mask & 12) : state.personality.has(gate.id);
+  const red = state.overlaySources ? Boolean(mask & 3) : state.design.has(gate.id);
+  const active = black || red;
   const selected = state.selectedGates.has(gate.id), related = state.relatedGates.has(gate.id);
   const fill = black && red ? `url(#${state.prefix}-dual)` : black ? PALETTE.ink : red ? PALETTE.design : PALETTE.paper;
-  const source = black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
+  const source = state.overlaySources ? state.overlaySources.sources.filter(source => source.gates.has(gate.id)).map(source => source.label).join('; ') || 'не активированы'
+    : black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
   return { active, selected, related, label: `Ворота ${gate.id}: ${gate.name}, ${source}`,
     opacity: options.dimInactive && !active && !selected && !related ? .3 : 1,
     fill: active ? fill : 'transparent', stroke: 'none',
@@ -96,7 +113,7 @@ export function gatePaint(gate, state, options = {}) {
 export function integrationStemPaint(state, paint) {
   return paint.crossesStem ? stemHalves.map((points, index) => {
     const gates = index ? [34, 57] : [20, 10];
-    return paintActivation(points, gates.some(gate => state.personality.has(gate)), gates.some(gate => state.design.has(gate)));
+    return paintGateActivation(points, state, gates);
   }).join('') : '';
 }
 export function integrationPaint(state, options) {

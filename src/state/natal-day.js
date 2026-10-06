@@ -24,7 +24,7 @@ export function createChartDayExplorer({
     const promise = (async () => {
       try {
         const result = await dayClient.getDay(chart, { signal: controller.signal });
-        if (requestSequence !== sequence || !opened || chart !== original) return false;
+        if (requestSequence !== sequence || !opened) return false;
         day = result; referenceIndex = chartDayIndexAt(day, chart.utc); index = referenceIndex; status = 'ready';
         return true;
       } catch (failure) {
@@ -62,13 +62,17 @@ export function createChartDayExplorer({
       cancel(); original = chart; current = chart; day = null; index = 0; referenceIndex = null;
       opened = false; status = 'idle'; error = ''; exactOriginal = true; notify();
     },
+    updateMetadata(chart) {
+      original = chart;
+      current = exactOriginal ? chart : { ...current, name: chart.name, note: chart.note, updatedAt: chart.updatedAt };
+      notify();
+    },
     async open() {
       if (!canExploreChartDay(original)) return false;
       opened = true; notify();
       return day ? true : load();
     },
     close,
-    toggle() { if (opened) close(); else return this.open(); },
     retry: load,
     reset,
     scrub(value) {

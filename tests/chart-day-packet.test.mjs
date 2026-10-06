@@ -101,3 +101,17 @@ test('bounded shapes, timeline validation and value ranges reject corrupt packet
     const day = makeDay(); day.columns[column][0] = value; assert.throws(() => encodeChartDay(day));
   }
 });
+
+test('natal packet validation visits holes once instead of scanning dense values twice', () => {
+  const day = makeDay(); let reads = 0;
+  day.columns[0] = new Proxy(day.columns[0], { get(target, key, receiver) {
+    if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  encodeChartDay(day);
+  assert.equal(reads, 1440 * 2);
+  const sparse = makeDay(); delete sparse.columns[0][12];
+  assert.throws(() => encodeChartDay(sparse));
+  const missing = makeDay(); delete missing.columns[0];
+  assert.throws(() => encodeChartDay(missing));
+});

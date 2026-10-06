@@ -46,6 +46,23 @@ test('five duplicate HTTP moments share one calculator process and reuse its com
   results.forEach(result => assert.deepEqual(result.value, { ...point(3), design: design(utcAt(3)) }));
   await httpRequest(handler, '/api/lifetime?index=3');
   assert.equal(workers.length, 1, 'later moments reuse the completed Design without starting another process');
+  assert.deepEqual(reads, [3], 'the complete moment also reuses its eleven stored longitudes');
+});
+
+test('complete moments share the Design object and the same bounded LRU budget', async () => {
+  const reads = [], calls = [];
+  const service = createLifetimeMoments({ capacity: 2,
+    archive: { metadata, getPoint(index) { reads.push(index); return point(index); } },
+    calculate({ utc }) { calls.push(utc); return calculatedDesign(utc); } });
+  const first = await service.getMoment(0);
+  assert.equal(first.design, await service.getDesign(utcAt(0)));
+  assert.equal(first, await service.getMoment(0));
+  assert.ok(Object.isFrozen(first)); assert.ok(Object.isFrozen(first.longitudes));
+  await service.getMoment(1); await service.getMoment(0); await service.getDesign(utcAt(2));
+  assert.equal(await service.getMoment(0), first, 'a Design-only entry shares the complete-moment capacity');
+  await service.getMoment(1);
+  assert.deepEqual(reads, [0, 1, 1]);
+  assert.deepEqual(calls, [utcAt(0), utcAt(1), utcAt(2), utcAt(1)]);
 });
 
 test('Design LRU is bounded, aliases share entries, immutable results and new services do not share caches', async () => {

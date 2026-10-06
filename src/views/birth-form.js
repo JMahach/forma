@@ -1,4 +1,4 @@
-import { createChartId, parseGates } from '../data/storage.js';
+import { createChartId, normalizeChartName, parseGates } from '../data/storage.js';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
 import { canManageChart } from './chart-display.js';
 import { escapeHtml as esc } from '../ui/html.js';
@@ -109,33 +109,45 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     const controller = new AbortController(); calculationController = controller;
     try {
       const form = getFormData(e.target), now = new Date().toISOString();
-      const name = String(form.get('name') || '').trim();
+      const name = normalizeChartName(form.get('name'));
       if (!name) { $('chartName').focus(); throw new Error('Добавьте имя карты.'); }
       if (name.length > 80) throw new Error('Имя карты должно быть не длиннее 80 символов.');
       const dateValue = String(form.get('birthDate') || '').trim(), timeValue = String(form.get('birthTime') || '').trim();
       const birthDate = dateValue || calculationMode === 'calculated' ? normalizeDate(dateValue) : '';
       const birthTime = timeValue || calculationMode === 'calculated' ? normalizeTime(timeValue) : '';
-      let result;
+      const previous = store.charts.find(item => item.id === editingId);
+      let result, metadataOnly = false;
       if (calculationMode === 'calculated') {
         if (!selectedCity) { $('birthPlace').focus(); throw new Error('Выберите город рождения из найденного списка.'); }
         if (!$('foldField').hidden && $('foldChoice').value === '') { $('foldChoice').focus(); throw new Error('Выберите один из двух вариантов местного времени.'); }
-        const payload = { name, date: birthDate, time: birthTime, cityId: String(selectedCity.id), cityName: selectedCity.name, mode: 'natal' };
-        if (!$('foldField').hidden) payload.fold = Number($('foldChoice').value);
-        setFormBusy(true);
-        const data = await requestJSON('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
-        // A cancelled or replaced dialog no longer owns this response, even if
-        // the request happened to finish before transport cancellation arrived.
-        if (controller.signal.aborted || calculationController !== controller) return;
-        if (!data.chart || !Array.isArray(data.chart.personality) || !Array.isArray(data.chart.design)) throw new Error('Сервер вернул неполный расчёт. Карта не сохранена.');
-        result = { ...data.chart, source: 'calculated', cityId: String(selectedCity.id), city: { ...selectedCity } };
+        // Names and notes describe the saved calculation. Compare the fields
+        // this form actually edits; an untouched minute display must retain
+        // stored seconds, the DST fold and every calculation metadata field.
+        const unchanged = previous?.source === 'calculated' && Number.isFinite(Date.parse(previous.utc))
+          && birthDate === previous.birthDate && birthTime === formatTimeInput(previous.birthTime)
+          && String(selectedCity.id) === String(previous.cityId ?? previous.city?.id)
+          && $('foldField').hidden;
+        if (unchanged) { result = previous; metadataOnly = true; }
+        else {
+          const payload = { name, date: birthDate, time: birthTime, cityId: String(selectedCity.id), cityName: selectedCity.name, mode: 'natal' };
+          if (!$('foldField').hidden) payload.fold = Number($('foldChoice').value);
+          setFormBusy(true);
+          const data = await requestJSON('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
+          // A cancelled or replaced dialog no longer owns this response, even if
+          // the request happened to finish before transport cancellation arrived.
+          if (controller.signal.aborted || calculationController !== controller) return;
+          if (!data.chart || !Array.isArray(data.chart.personality) || !Array.isArray(data.chart.design)) throw new Error('Сервер вернул неполный расчёт. Карта не сохранена.');
+          result = { ...data.chart, source: 'calculated', cityId: String(selectedCity.id), city: { ...selectedCity } };
+        }
       } else result = { name, birthDate, birthTime, birthPlace: String(form.get('birthPlace') || '').trim(), personality: parseGates(form.get('personality')), design: parseGates(form.get('design')), source: 'manual' };
-      const previous = store.charts.find(item => item.id === editingId);
-      const c = { ...result, id: editingId || createChartId(), name, note: String(form.get('note') || '').trim(), createdAt: previous?.createdAt || now, updatedAt: result.updatedAt || now };
+      const c = { ...result, id: editingId || createChartId(), name, note: String(form.get('note') || '').trim(), createdAt: previous?.createdAt || now, updatedAt: metadataOnly ? now : result.updatedAt || now };
       const next = editingId ? store.charts.map(item => item.id === editingId ? c : item) : [...store.charts, c];
       if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
       const persisted = store.persist(next);
+      if (!persisted && store.saveError?.canKeepInMemory === false) throw new Error(store.saveError.message);
       if (!persisted) store.replace(next);
-      $('chartDialog').close(); onSave(c.id); toast(persisted ? calculationMode === 'calculated' ? 'Карта рассчитана и сохранена' : 'Карта сохранена на этом устройстве' : 'Карта открыта, но не сохранена в браузере.');
+      $('chartDialog').close(); onSave(c.id, { metadataOnly });
+      if (!persisted) toast('Карта открыта, но не сохранена в браузере.');
     } catch (error) {
       if (controller.signal.aborted || calculationController !== controller || error.name === 'AbortError') return;
       if (error.code === 'ambiguous_time' && Array.isArray(error.choices)) {

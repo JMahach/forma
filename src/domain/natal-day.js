@@ -1,5 +1,4 @@
-import { gatePositionAtLongitude } from './gate-wheel.js';
-import { PLANET_IDS as DISPLAY_PLANETS } from './planets.js';
+import { projectLongitudes } from './moment-projection.js';
 import { CHART_DAY_PLANETS, failChartDayPacket as fail } from '../../shared/day-packets/natal-format.js';
 const iso = value => new Date(value).toISOString().replace('.000Z', 'Z');
 
@@ -25,15 +24,12 @@ export function chartDayIndexAt(day, utc) {
 }
 export function chartAtMinute(day, index, originalChart) {
   const minute = chartDayMinute(day, index);
-  const activations = Object.fromEntries(['personality', 'design'].map((side, sideIndex) => {
-    const values = Object.fromEntries(CHART_DAY_PLANETS.map((planet, column) => [planet, day.columns[sideIndex * 11 + column][index]]));
-    values.earth = (values.sun + 180) % 360; values.south_node = (values.north_node + 180) % 360;
-    return [side, DISPLAY_PLANETS.map(planet => ({ planet, ...gatePositionAtLongitude(values[planet]) }))];
-  }));
+  const [personality, design] = [0, 11].map(offset => projectLongitudes(
+    CHART_DAY_PLANETS.map((_, column) => day.columns[offset + column][index]), CHART_DAY_PLANETS));
+  const activations = { personality: personality.activations, design: design.activations };
   return { ...originalChart, source: 'calculated', birthDate: day.date, timezone: day.timezone,
     utc: minute.utc, birthTime: minute.birthTime, utcOffset: minute.utcOffset, fold: minute.fold,
-    activations, personality: [...new Set(activations.personality.map(a => a.gate))].sort((a, b) => a - b),
-    design: [...new Set(activations.design.map(a => a.gate))].sort((a, b) => a - b),
+    activations, personality: personality.gates, design: design.gates,
     designUtc: iso(day.columns[22][index] * 1000), designArcResidualDegrees: day.columns[23][index],
     engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac };
 }

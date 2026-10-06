@@ -24,6 +24,9 @@ test('city catalogue preserves exact-prefix-substring ranking, normalization and
   assert.ok(!Object.hasOwn(cities.find('524901'), 'aliases'));
   assert.ok(!Object.hasOwn(cities.find('524901'), 'population'));
   assert.equal(createCityCatalog(Array.from({ length: 20 }, (_, index) => city(String(index), `Moscow ${index}`))).search('Moscow').length, 12);
+  const exacts = Array.from({ length: 13 }, (_, index) => city(`exact-${index}`, 'Moscow'));
+  const crowded = createCityCatalog([...Array.from({ length: 12 }, (_, index) => city(`prefix-${index}`, 'Moscow Heights')), ...exacts]);
+  assert.deepEqual(crowded.search('Moscow').map(value => value.id), exacts.slice(0, 12).map(value => value.id), 'later exact matches retain priority over an already full prefix list');
 });
 
 async function request(handler, url, { method = 'GET', value, body = value === undefined ? '' : JSON.stringify(value), headers = {} } = {}) {

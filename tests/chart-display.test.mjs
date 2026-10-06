@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chartSubtitle } from '../src/views/chart-display.js';
+import { overlayFixture } from './helpers/chart-composition.mjs';
+import { chartSubtitle, chartCaption } from '../src/views/chart-display.js';
 
 function localZone(t, zone) {
   const previous = process.env.TZ;
@@ -28,6 +29,13 @@ test('century preview caption uses the same UTC grid as its slider, including hi
   localZone(t, 'Europe/Moscow');
   assert.equal(chartSubtitle({ id: 'lifetime-preview', source: 'transit', utc: '1900-01-01T00:10:00Z' }),
     '1 января 1900 г. · 00:10 · UTC');
+});
+
+test('an archive can display a shared day minute in UTC without cloning or renaming that chart', t => {
+  localZone(t, 'Europe/Moscow');
+  const minute = Object.freeze({ id: 'current-transit', source: 'transit', utc: '2026-10-05T12:01:00Z' });
+  assert.equal(chartCaption(minute, minute, false, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');
+  assert.equal(chartCaption(minute).subtitle, '5 октября 2026 г. · 15:01');
 });
 
 test('legacy transit placeholders never fabricate a time when UTC is missing or invalid', () => {
@@ -82,4 +90,23 @@ test('120 selected minutes reuse two formatters, including after changing the de
     }
     assert.equal(constructors, 2);
   } finally { Intl.DateTimeFormat = original; }
+});
+
+
+test('personal life preview retains its selected chart caption while transit keeps its own identity', () => {
+  const owner = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '12:00' };
+  const preview = { id: 'lifetime-preview', source: 'transit', name: 'Транзит', utc: '2050-01-01T00:00:00Z' };
+  assert.deepEqual(chartCaption(preview, owner, true), { title: 'Марат', subtitle: '18.08.1998 · 12:00' });
+  assert.equal(chartCaption(preview, { id: 'current-transit', source: 'transit' }, true).title, 'Транзит');
+  const event = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:2:1', body: 'saturn', cycle: 2, utc: preview.utc } });
+  assert.equal(chartCaption(event, owner, false).title, 'Марат · Возврат Сатурна 2');
+  assert.match(chartCaption(event, owner, false).subtitle, /2050/);
+});
+
+
+test('a personal transit overlay names both context and moment while preserving the natal birth facts', () => {
+  const natal = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '18:00' };
+  const moment = { source: 'transit', utc: '2050-01-01T00:10:00Z', personality: [20], design: [] };
+  const chart = overlayFixture(natal, moment, { kind: 'transit' });
+  assert.deepEqual(chartCaption(chart, natal, true), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
 });

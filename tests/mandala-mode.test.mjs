@@ -23,7 +23,7 @@ test('navigation includes enlarged columns and the complete outer planet envelop
   assert.ok(Object.isFrozen(MANDALA_FRAME) && Object.isFrozen(bounds));
 });
 
-function harness({ animate = false, immediate = false } = {}) {
+function harness({ animate = false, immediate = false, layout = null } = {}) {
   const callbacks = {}, attributes = {}, classes = new Set(), calls = [];
   let view = { x: -150, y: -100, k: 2 }, mode;
   mode = attachMandalaMode({
@@ -37,7 +37,7 @@ function harness({ animate = false, immediate = false } = {}) {
       setView() { assert.fail('a toggle must never restore another camera'); },
     },
     motion: animate ? { setExpanded(value) { calls.push(`motion ${value}`); if (immediate) mode.finishTransition(value); } } : null,
-    beforeChange: () => calls.push('close preview'), render: () => calls.push('render'),
+    layout, beforeChange: () => calls.push('close preview'), render: () => calls.push('render'),
   });
   return { mode, callbacks, attributes, classes, calls, getView: () => view, move: next => { view = next; } };
 }
@@ -91,4 +91,26 @@ test('rapid reversal never removes an enabled ring and reduced motion completes 
   reduced.callbacks.click(); reduced.callbacks.click();
   assert.equal(reduced.mode.visible, false);
   assert.deepEqual(reduced.calls.slice(-5), ['close preview', 'render', 'refresh frame', 'motion false', 'render']);
+});
+
+test('fixed Studio layout keeps its Home frame without measuring camera bounds on toggles', () => {
+  const h = harness({ animate: true, layout: { frame: () => STUDIO_FRAME } }), original = { ...h.getView() };
+  assert.equal(h.mode.homeFrame, STUDIO_FRAME);
+  assert.equal(h.mode.frame, MANDALA_FRAME);
+  h.callbacks.click(); h.callbacks.click(); h.callbacks.click();
+  h.mode.finishTransition(false);
+  assert.equal(h.mode.enabled, true);
+  assert.equal(h.mode.visible, true);
+  assert.equal(h.attributes['aria-checked'], 'true');
+  assert.equal(h.mode.homeFrame, STUDIO_FRAME);
+  assert.equal(h.mode.frame, MANDALA_FRAME);
+  assert.deepEqual(h.getView(), original);
+  assert.deepEqual(h.calls, [
+    'close preview', 'render', 'motion true',
+    'close preview', 'render', 'motion false',
+    'close preview', 'render', 'motion true',
+  ], 'Studio does not refresh or fit the camera on either direction or reversal');
+  const count = h.calls.length;
+  h.mode.finishTransition(true);
+  assert.equal(h.calls.length, count, 'desktop completion keeps columns without an extra render');
 });

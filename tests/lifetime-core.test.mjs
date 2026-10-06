@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
-import { LIFETIME_PLANETS, lifetimeChartAt, validateLifetimeMetadata, validateLifetimeMoment } from '../src/domain/lifetime.js';
+import { lifetimeChartAt, validateLifetimeMetadata, validateLifetimeMoment } from '../src/domain/lifetime.js';
+import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
+import { createChartSession } from '../src/state/chart-session.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 import { PLANET_IDS } from '../src/domain/planets.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
@@ -31,19 +33,66 @@ function dayChart(utc = '2026-09-30T09:34:56.789Z') {
   return { ...chart, id: 'day-preview', birthDate: '2026-09-30', birthTime: '12:34:56',
     timezone: 'Europe/Moscow', utcOffset: 'UTC+03:00', verification: 'Exact current day sample.' };
 }
-function explorerHarness(metadata = fullMeta, { planetFilter } = {}) {
+function explorerHarness(metadata = fullMeta, { planetFilter, getMomentState } = {}) {
   const calls = [], metaCalls = [], renders = [], states = [];
   let day = { current: dayChart(), timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } };
   let time = Date.parse('2026-09-30T09:34:56.789Z');
   const explorer = createLifetimeExplorer({ client: {
     getMeta: async options => { metaCalls.push(options); return metadata; },
     getPoint(index, { signal }) { const waiting = deferred(); calls.push({ index, signal, ...waiting }); return waiting.promise; },
-  }, getDayState: () => day, now: () => time, planetFilter,
+  }, getDayState: () => day, getMomentState, now: () => time, planetFilter,
   onRender: () => renders.push(explorer.current), onStateChange: state => states.push(state) });
-  return { explorer, calls, metaCalls, renders, states, get day() { return day; },
+  return { explorer, calls, metaCalls, renders, states, get day() { return day; }, utc: index => Date.parse(metadata.startUtc) + index * 600000,
     setNow(value) { time = Date.parse(value); },
     setDay(current, timeline = { date: current.birthDate, timeZone: current.timezone }) { day = { current, timeline }; } };
 }
+
+test('aligning an existing exact moment cancels an invisible archive request and same-slot manual scrub still loads the grid', async () => {
+  const h = explorerHarness(); await h.explorer.open();
+  const loading = h.explorer.setDateRange('1801-01-01', '2399-12-31'); await tick();
+  const exact = dayChart('2026-09-30T09:37:29.432Z'), calls = h.calls.length;
+  assert.equal(h.explorer.alignMoment(exact), true);
+  assert.equal(h.calls.length, calls); assert.equal(h.calls[0].signal.aborted, true);
+  assert.equal(h.explorer.current.utc, exact.utc); assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.explorer.state.displayedUtc, Date.parse(exact.utc));
+  const aligned = h.explorer.state.requestedUtc;
+  assert.equal(aligned, Date.parse(exact.utc));
+  h.calls[0].resolve(moment(h.calls[0].index, fullMeta)); await loading;
+  assert.equal(h.explorer.current.utc, exact.utc, 'a completed abandoned point cannot replace the exact owner');
+  const manual = h.explorer.scrub(aligned); await tick();
+  assert.equal(h.calls.length, calls + 1);
+  h.calls.at(-1).resolve(moment(Math.round(archiveIndex(new Date(aligned).toISOString())), fullMeta)); await manual;
+  assert.equal(h.explorer.current.utc, point(Math.round(archiveIndex(new Date(aligned).toISOString())), fullMeta).utc);
+  assert.equal(h.explorer.state.displayedUtc, Date.parse('2026-09-30T09:40:00Z'));
+  assert.equal(h.explorer.scrub(aligned), undefined); assert.equal(h.calls.length, calls + 1);
+});
+
+test('opening an archive around a live or exact owner uses its existing chart without any archive point', async () => {
+  for (const live of [true, false]) {
+    let owner = { current: dayChart('2026-09-30T09:37:29.432Z'), status: 'ready', live };
+    const h = explorerHarness(fullMeta, { getMomentState: () => owner });
+    await h.explorer.open();
+    const restored = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(archiveIndex(owner.current.utc)) });
+    await tick();
+    assert.equal(h.calls.length, 0, 'position alignment must not calculate an unseen rounded moment');
+    assert.equal(await restored, true); assert.equal(h.explorer.current.utc, owner.current.utc);
+    const aligned = h.explorer.state.requestedUtc; owner = null;
+    const manual = h.explorer.scrub(aligned); await tick();
+    assert.equal(h.calls.length, 1); h.calls[0].resolve(moment(Math.round(archiveIndex(new Date(aligned).toISOString())), fullMeta)); await manual;
+    assert.equal(h.explorer.current.utc, point(Math.round(archiveIndex(new Date(aligned).toISOString())), fullMeta).utc);
+  }
+});
+
+test('a live owner still waiting for its minute packet never falls back to an invisible archive calculation', async () => {
+  let owner = { current: null, status: 'loading', live: true };
+  const h = explorerHarness(fullMeta, { getMomentState: () => owner });
+  await h.explorer.open();
+  const restored = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(archiveIndex('2026-09-30T09:37:00Z')) });
+  await tick(); assert.equal(h.calls.length, 0); assert.equal(await restored, true);
+  owner = { current: dayChart('2026-09-30T09:38:00Z'), status: 'ready', live: true };
+  h.explorer.alignMoment(owner.current);
+  assert.equal(h.explorer.current.utc, owner.current.utc); assert.equal(h.calls.length, 0);
+});
 
 test('lifetime chart contains all13 planets including Moon with exact derived boundary values', () => {
   const chart = lifetimeChartAt(meta, point(0));
@@ -208,9 +257,9 @@ test('default Years client receives the shared day cache through controller opti
   await explorer.open();
   await explorer.setDateRange('2025-01-01', '2027-01-01');
   assert.equal(explorer.state.status, 'ready');
-  assert.equal(explorer.current.utc, '2026-09-30T09:30:00Z');
-  assert.equal(explorer.current.activations.personality[0].longitude, day.columns[0][570]);
-  assert.equal(explorer.current.activations.design[0].longitude, day.columns[11][570]);
+  assert.equal(explorer.current.utc, '2026-09-30T09:35:00Z');
+  assert.equal(explorer.current.activations.personality[0].longitude, day.columns[0][575]);
+  assert.equal(explorer.current.activations.design[0].longitude, day.columns[11][575]);
   assert.deepEqual(requests, ['/api/lifetime/meta']); assert.deepEqual(peeks, [day.date]);
 });
 
@@ -257,7 +306,7 @@ test('a custom full archive range uses the current shown moment at the ten-minut
   const h = explorerHarness(); await openArchive(h);
   assert.equal(h.calls.length, 1); assert.equal(h.explorer.state.mode, 'archive');
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], ['1801-01-01', '2399-12-31']);
-  assert.deepEqual([h.explorer.state.minIndex, h.explorer.state.maxIndex], [0, fullMeta.samples - 1]);
+  assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], [Date.parse('1801-01-01T00:00:00Z'), Date.parse('2399-12-31T23:59:59.999Z')]);
   assert.equal(h.explorer.current.utc, '2026-09-30T09:30:00Z');
   const chart = h.explorer.current, renders = h.renders.length;
   h.setDay(dayChart('2026-09-30T13:45:00Z')); h.explorer.syncDay();
@@ -269,37 +318,37 @@ test('a custom full archive range uses the current shown moment at the ten-minut
 
 test('one request at a time publishes progress and follows the latest scrub', async () => {
   const h = explorerHarness(); await openArchive(h);
-  const pending = h.explorer.scrub(1); await tick();
-  for (let i = 2; i <= 100; i++) h.explorer.scrub(i);
+  const pending = h.explorer.scrub(h.utc(1)); await tick();
+  for (let i = 2; i <= 100; i++) h.explorer.scrub(h.utc(i));
   assert.equal(h.calls.length, 2); h.calls[1].resolve(moment(1, fullMeta)); await tick();
-  assert.equal(h.explorer.state.displayedIndex, 1); assert.equal(h.calls[2].index, 100);
-  h.explorer.scrub(200); h.calls[2].resolve(moment(100, fullMeta)); await tick();
-  assert.equal(h.explorer.state.displayedIndex, 100); assert.equal(h.calls[3].index, 200);
+  assert.equal(h.explorer.state.displayedUtc, h.utc(1)); assert.equal(h.calls[2].index, 100);
+  h.explorer.scrub(h.utc(200)); h.calls[2].resolve(moment(100, fullMeta)); await tick();
+  assert.equal(h.explorer.state.displayedUtc, h.utc(100)); assert.equal(h.calls[3].index, 200);
   h.calls[3].resolve(moment(200, fullMeta)); await pending;
-  assert.equal(h.explorer.state.displayedIndex, 200); assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.explorer.state.displayedUtc, h.utc(200)); assert.equal(h.explorer.state.status, 'ready');
 });
 
 test('stale errors cannot starve the latest target; failed targets keep the visible chart', async () => {
   const h = explorerHarness(); await openArchive(h); const shown = h.explorer.current;
-  const pending = h.explorer.scrub(2); await tick(); h.explorer.scrub(3);
+  const pending = h.explorer.scrub(h.utc(2)); await tick(); h.explorer.scrub(h.utc(3));
   h.calls[1].reject(new Error('old failure')); await tick(); assert.equal(h.calls[2].index, 3);
   h.calls[2].reject(new Error('latest failure')); await pending;
   assert.equal(h.explorer.current, shown); assert.equal(h.explorer.state.error, 'latest failure');
-  await settle(h, h.explorer.retry()); assert.equal(h.explorer.state.displayedIndex, 3);
+  await settle(h, h.explorer.retry()); assert.equal(h.explorer.state.displayedUtc, h.utc(3));
 });
 
 test('narrowed ranges reject in-flight outside points, clamp the requested moment and include the whole leap day', async () => {
   const h = explorerHarness(); await openArchive(h);
-  const pending = h.explorer.scrub(0); await tick();
+  const pending = h.explorer.scrub(h.utc(0)); await tick();
   h.explorer.setDateRange('2000-02-29', '2000-02-29');
   h.calls[1].resolve(moment(0, fullMeta)); await tick();
   const target = archiveIndex('2000-02-29'); assert.equal(h.calls[2].index, target);
-  assert.equal(h.explorer.state.maxIndex - h.explorer.state.minIndex + 1, 144);
+  assert.equal(h.explorer.state.maxUtc - h.explorer.state.minUtc + 1, 86400000);
   h.calls[2].resolve(moment(target, fullMeta)); await pending;
   assert.equal(h.explorer.current.utc, '2000-02-29T00:00:00Z');
   await settle(h, h.explorer.scrub(Number.MAX_SAFE_INTEGER));
   assert.equal(h.explorer.current.utc, '2000-02-29T23:50:00Z');
-  await settle(h, h.explorer.scrub(-1)); assert.equal(h.explorer.current.utc, '2000-02-29T00:00:00Z');
+  await settle(h, h.explorer.scrub(-Number.MAX_SAFE_INTEGER)); assert.equal(h.explorer.current.utc, '2000-02-29T00:00:00Z');
 });
 
 test('invalid, incomplete, out of bounds, reversed and non-leap dates leave the day range unchanged', async () => {
@@ -316,7 +365,7 @@ test('invalid, incomplete, out of bounds, reversed and non-leap dates leave the 
 test('close cancels pending work; reopen borrows the latest day and retains planet choices', async () => {
   const h = explorerHarness(); await openArchive(h, '2000-01-01', '2000-01-02');
   h.explorer.setPlanet('moon', false);
-  const pending = h.explorer.scrub(h.explorer.state.minIndex); await tick(); const stale = h.calls.at(-1), requests = h.calls.length;
+  const pending = h.explorer.scrub(h.explorer.state.minUtc); await tick(); const stale = h.calls.at(-1), requests = h.calls.length;
   h.explorer.close(); assert.equal(stale.signal.aborted, true); assert.equal(h.explorer.current, null);
   h.setDay(dayChart('2026-09-30T15:42:11.000Z')); await h.explorer.open();
   stale.resolve(moment(stale.index, fullMeta)); await pending;
@@ -328,7 +377,7 @@ test('close cancels pending work; reopen borrows the latest day and retains plan
 
 test('selecting the current local day returns to day mode and ignores the cancelled archive completion', async () => {
   const h = explorerHarness(); await openArchive(h);
-  const pending = h.explorer.scrub(0); await tick(); const stale = h.calls.at(-1);
+  const pending = h.explorer.scrub(h.utc(0)); await tick(); const stale = h.calls.at(-1);
   assert.equal(h.explorer.setDateRange('2026-09-30', '2026-09-30'), true);
   assert.equal(stale.signal.aborted, true); assert.equal(h.explorer.state.mode, 'day');
   assert.equal(h.explorer.current.utc, h.day.current.utc);
@@ -339,16 +388,16 @@ test('selecting the current local day returns to day mode and ignores the cancel
 
 test('the archive marker tracks actual now without moving the chosen chart and goNow stays inside the range', async () => {
   const h = explorerHarness(); await openArchive(h);
-  const nowIndex = archiveIndex('2026-09-30T09:30:00Z'); assert.equal(h.explorer.state.referenceIndex, nowIndex);
-  await settle(h, h.explorer.scrub(nowIndex - 10));
+  const nowIndex = archiveIndex('2026-09-30T09:30:00Z'); assert.equal(h.explorer.state.referenceUtc, Date.parse('2026-09-30T09:34:00Z'));
+  await settle(h, h.explorer.scrub(h.utc(nowIndex - 10)));
   const chart = h.explorer.current, renders = h.renders.length, points = h.calls.length, notices = h.states.length;
   h.setNow('2026-09-30T09:44:56.789Z'); h.explorer.syncClock();
-  assert.equal(h.explorer.state.referenceIndex, nowIndex + 1); assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.state.referenceUtc, Date.parse('2026-09-30T09:44:00Z')); assert.equal(h.explorer.current, chart);
   assert.equal(h.renders.length, renders); assert.equal(h.calls.length, points); assert.equal(h.states.length, notices + 1);
   h.explorer.syncClock(); assert.equal(h.states.length, notices + 1);
-  await settle(h, h.explorer.goNow()); assert.equal(h.explorer.state.displayedIndex, nowIndex + 1);
+  await settle(h, h.explorer.goNow()); assert.equal(h.explorer.state.displayedUtc, h.utc(nowIndex + 1));
   await settle(h, h.explorer.setDateRange('1900-01-01', '1900-01-02'));
-  assert.equal(h.explorer.state.referenceIndex, null); assert.equal(h.explorer.goNow(), undefined);
+  assert.equal(h.explorer.state.referenceUtc, null); assert.equal(h.explorer.goNow(), undefined);
 });
 
 test('metadata failure retries while retaining the day chart, and closed metadata cannot publish', async () => {
@@ -420,7 +469,7 @@ test('Years and day remember the shared Design selection while restoring all day
   assert.equal(h.explorer.current.planetFilter.perPlanetControls, true);
   const renders = h.renders.length;
   h.explorer.close();
-  assert.equal(h.states.at(-1).current.planetFilter.perPlanetControls, false);
+  assert.equal(h.states.at(-1).current, null, 'closed Years no longer own a filtered chart');
   assert.equal(owner.filter(h.day.current).planetFilter.perPlanetControls, false);
   assert.equal(h.renders.length, renders + 1, 'the session is rendered after compact metadata is restored');
   assert.deepEqual(owner.state, { selectedPlanets: PLANET_IDS, selectedDesignPlanets: PLANET_IDS });
@@ -430,18 +479,49 @@ test('Years and day remember the shared Design selection while restoring all day
   assert.deepEqual(owner.state, selected); assert.equal(h.calls.length, 1, 'reopening only borrows the current day');
 });
 
+test('closed Years state reads retain one filtered live chart per minute without evicting its owner', async () => {
+  const owner = createTransitPlanetFilter(), h = explorerHarness(fullMeta, { planetFilter: owner });
+  const session = createChartSession({ store: { get: () => null, has: () => false },
+    getLifetime: () => h.explorer, getTransit: () => ({ current: h.day.current }), filterTransit: owner.filter });
+  await openArchive(h);
+  h.explorer.setPlanet('moon', false); h.explorer.setPlanet('sun', true, 'design');
+  const selection = owner.snapshot, requests = h.calls.length;
+  h.explorer.close();
+  for (const utc of [h.day.current.utc, '2026-09-30T09:35:00Z']) {
+    if (utc !== h.day.current.utc) h.setDay(dayChart(utc));
+    session.publish('transit', h.day.current);
+    const charts = new Set(), states = [];
+    for (let index = 0; index < 50; index++) {
+      states.push(h.explorer.state);
+      charts.add(session.current);
+    }
+    assert.equal(charts.size, 1, 'closed-state notifications cannot recreate the unchanged live projection');
+    assert.ok(states.every(state => state.current === null));
+    assert.equal(session.current.utc, utc);
+    assert.equal(session.current.primary.activations.personality.length, 13);
+    assert.equal(session.current.primary.activations.design.length, 13);
+  }
+  assert.equal(h.calls.length, requests);
+  await h.explorer.open();
+  assert.equal(h.explorer.current.utc, h.day.current.utc);
+  assert.deepEqual(owner.snapshot, selection, 'closing keeps raw selections for the next opening');
+  assert.equal(h.explorer.current.activations.personality.length, 12);
+  assert.deepEqual(h.explorer.current.activations.design.map(entry => entry.planet), ['sun']);
+  assert.equal(h.calls.length, requests);
+});
+
 test('a complete archive response publishes both sides once and uses selections made while pending', async () => {
   const h = explorerHarness(); await h.explorer.open();
   const shown = h.explorer.current, renders = h.renders.length;
   const pending = h.explorer.setDateRange('1801-01-01', '2399-12-31'); await tick();
   const index = h.calls[0].index;
   assert.equal(h.explorer.current, shown); assert.equal(h.renders.length, renders);
-  assert.equal(h.explorer.state.displayedIndex, null); assert.equal(h.explorer.state.status, 'loading');
+  assert.equal(h.explorer.state.displayedUtc, Date.parse(shown.utc)); assert.equal(h.explorer.state.status, 'loading');
   h.explorer.setAllPlanets(false); h.explorer.setPlanet('venus', true, 'design');
   const beforeCompletion = h.renders.length;
   h.calls[0].resolve(moment(index, fullMeta)); await pending;
   assert.equal(h.renders.length, beforeCompletion + 1);
-  assert.equal(h.explorer.state.displayedIndex, index); assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.explorer.state.displayedUtc, h.utc(index)); assert.equal(h.explorer.state.status, 'ready');
   assert.deepEqual(h.explorer.current.activations.personality, []);
   assert.deepEqual(h.explorer.current.activations.design.map(e => e.planet), ['venus']);
   assert.equal(h.explorer.current.designUtc, designAt(point(index, fullMeta).utc).designUtc);
@@ -452,13 +532,13 @@ test('superseded invalid pairs advance the latest target; a mismatched latest De
   const h = explorerHarness(); await h.explorer.open();
   const shown = h.explorer.current;
   const pending = h.explorer.setDateRange('1801-01-01', '2399-12-31'); await tick();
-  h.explorer.scrub(1); h.calls[0].resolve(point(h.calls[0].index, fullMeta)); await tick();
+  h.explorer.scrub(h.utc(1)); h.calls[0].resolve(point(h.calls[0].index, fullMeta)); await tick();
   assert.equal(h.calls[1].index, 1); assert.equal(h.explorer.current, shown);
   h.calls[1].resolve({ ...moment(1, fullMeta), design: designAt(point(2, fullMeta).utc) }); await pending;
   assert.equal(h.explorer.state.status, 'error'); assert.equal(h.explorer.current, shown);
-  assert.equal(h.explorer.state.displayedIndex, null);
+  assert.equal(h.explorer.state.displayedUtc, Date.parse(shown.utc));
   const retry = h.explorer.retry(); await tick(); h.calls[2].resolve(moment(1, fullMeta)); await retry;
-  assert.equal(h.explorer.state.displayedIndex, 1); assert.equal(h.explorer.current.utc, point(1, fullMeta).utc);
+  assert.equal(h.explorer.state.displayedUtc, h.utc(1)); assert.equal(h.explorer.current.utc, point(1, fullMeta).utc);
 });
 
 test('closing or switching to the day cancels the complete request and its late pair cannot replace the day', async () => {
@@ -472,5 +552,142 @@ test('closing or switching to the day cancels the complete request and its late 
     const current = h.explorer.current; stale.resolve(moment(stale.index, fullMeta)); await pending;
     assert.equal(h.explorer.current, current); assert.equal(h.explorer.current.utc, h.day.current.utc);
     assert.equal(h.explorer.state.mode, 'day');
+  }
+});
+
+test('archive restoration fetches the saved index first after loading metadata and clamping the range', async () => {
+  for (const [saved, wanted] of [[200, 200], [-99, 144], [999, 287]]) {
+    const h = explorerHarness(meta);
+    const pending = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-02', index: saved });
+    await tick();
+    assert.deepEqual(h.calls.map(c => c.index), [wanted], 'restore must not load the current day or range start before the saved point');
+    assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], [Date.parse('1900-01-02T00:00:00Z'), Date.parse('1900-01-02T23:59:59.999Z')]);
+    h.calls[0].resolve(moment(wanted));
+    assert.equal(await pending, true);
+    assert.equal(h.explorer.current.utc, point(wanted).utc);
+    assert.equal(h.explorer.state.displayedUtc, h.utc(wanted));
+  }
+});
+
+test('day restoration borrows the live day while malformed or closed snapshots stay unopened', async () => {
+  const valid = { opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 };
+  for (const invalid of [null, {}, { ...valid, opened: false }, { ...valid, mode: 'unknown' },
+    { ...valid, index: 1.5 }, { ...valid, index: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, fromDate: '1900-02-30' }, { ...valid, fromDate: '1900-01-03' }]) {
+    const h = explorerHarness(meta);
+    assert.equal(await h.explorer.restore(invalid), false);
+    assert.equal(h.explorer.state.opened, false); assert.equal(h.calls.length, 0);
+  }
+  const h = explorerHarness(meta);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(h.explorer.current.utc, h.day.current.utc);
+  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.calls.length, 0);
+  assert.equal(h.renders.length, 1, 'a restored day publishes its borrowed chart');
+});
+
+test('invalid archive bounds load no moment and preserve the borrowed day', async () => {
+  const h = explorerHarness(meta);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1800-01-01', toDate: '1900-01-02', index: 200 }), false);
+  assert.equal(h.calls.length, 0); assert.equal(h.explorer.state.mode, 'day');
+  assert.equal(h.explorer.current.utc, h.day.current.utc);
+});
+
+test('closing during restore metadata prevents stale metadata and archive publication', async () => {
+  const waiting = deferred(), points = [];
+  const explorer = createLifetimeExplorer({ client: { getMeta: () => waiting.promise, getPoint: async i => { points.push(i); return moment(i); } } });
+  const pending = explorer.restore({ opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 });
+  await tick(); explorer.close(); waiting.resolve(meta);
+  assert.equal(await pending, false); assert.equal(explorer.state.metadata, null);
+  assert.equal(explorer.current, null); assert.deepEqual(points, []);
+});
+
+test('later user range cancels a restore point before it can replace the chosen range', async () => {
+  const h = explorerHarness(meta);
+  const pending = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-03', index: 200 });
+  await tick(); const stale = h.calls[0];
+  const changed = h.explorer.setDateRange('1900-01-03', '1900-01-03'); await tick();
+  assert.equal(stale.signal.aborted, true);
+  stale.resolve(moment(200)); await pending;
+  assert.notEqual(h.explorer.state.displayedUtc, h.utc(200));
+  h.calls.at(-1).resolve(moment(288)); await changed;
+  assert.equal(h.explorer.current.utc, '1900-01-03T00:00:00Z');
+});
+
+test('an empty archive end keeps the slider active through the final available moment', async () => {
+  for (const end of [null, '', undefined]) {
+    const h = explorerHarness(meta); await h.explorer.open();
+    const pending = h.explorer.setDateRange('1900-01-02', end);
+    assert.notEqual(pending, false);
+    await tick();
+    assert.equal(h.explorer.state.mode, 'archive'); assert.equal(h.explorer.state.openEnded, true);
+    assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate, h.explorer.state.minUtc, h.explorer.state.maxUtc],
+      ['1900-01-02', '1900-01-03', Date.parse('1900-01-02T00:00:00Z'), Date.parse('1900-01-03T23:59:59.999Z')]);
+    h.calls[0].resolve(moment(h.calls[0].index)); await pending;
+    const final = h.explorer.scrub(h.utc(431)); await tick();
+    h.calls.at(-1).resolve(moment(431)); await final;
+    assert.equal(h.explorer.current.utc, '1900-01-03T23:50:00Z');
+    assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.explorer.state.requestedUtc, h.utc(431));
+  }
+});
+
+test('the same effective archive end switches between open and explicit bounds without another point', async () => {
+  const h = explorerHarness(meta); await h.explorer.open();
+  const pending = h.explorer.setDateRange('1900-01-02', null); await tick();
+  assert.notEqual(pending, false); h.calls[0].resolve(moment(h.calls[0].index)); await pending;
+  assert.equal(h.explorer.setDateRange('1900-01-02', '1900-01-03'), true);
+  assert.equal(h.explorer.state.openEnded, false); assert.equal(h.calls.length, 1);
+  assert.equal(h.explorer.setDateRange('1900-01-02', null), true);
+  assert.equal(h.explorer.state.openEnded, true); assert.equal(h.calls.length, 1);
+  h.explorer.close(); await h.explorer.open();
+  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.explorer.state.openEnded, false);
+});
+
+test('open-ended archive restoration uses current metadata edge rather than the stored old end', async () => {
+  const h = explorerHarness(meta);
+  const pending = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-02', openEnded: true, index: 431 });
+  await tick();
+  assert.deepEqual(h.calls.map(c => c.index), [431]);
+  assert.deepEqual([h.explorer.state.toDate, h.explorer.state.maxUtc, h.explorer.state.openEnded], ['1900-01-03', Date.parse('1900-01-03T23:59:59.999Z'), true]);
+  h.calls[0].resolve(moment(431)); assert.equal(await pending, true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(h.explorer.state.openEnded, false);
+});
+
+test('a personal birth boundary clips the archive range and clamps restored pre-birth indices to the same endpoint', async () => {
+  const h = explorerHarness(meta);
+  const pending = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1900-01-02', toDate: '1900-01-03',
+    minimumUtc: '1900-01-02T12:34:56Z', index: 144 });
+  await tick();
+  assert.equal(h.explorer.state.minUtc, Date.parse('1900-01-02T12:34:56Z'));
+  assert.deepEqual(h.calls.map(call => call.index), [220]);
+  h.calls[0].resolve(moment(220)); await pending;
+  h.explorer.scrub(h.utc(0));
+  assert.equal(h.explorer.state.requestedUtc, h.utc(220));
+  assert.equal(h.calls.length, 1);
+});
+
+test('cold Now supersedes a queued archive scrub before a late response or failure can load another point', async () => {
+  for (const fail of [false, true]) {
+    let owner = null;
+    const h = explorerHarness(meta, { getMomentState: () => owner });
+    await h.explorer.open();
+    const initial = h.explorer.setDateRange('1900-01-01', '1900-01-03');
+    await tick(); h.calls[0].resolve(moment(h.calls[0].index)); await initial; h.calls.length = 0; h.renders.length = 0;
+    const previous = h.explorer.current;
+    const loading = h.explorer.scrub(h.utc(10)); await tick(); h.explorer.scrub(h.utc(11));
+    owner = { current: null, status: 'loading', live: true };
+    if (fail) h.calls[0].reject(new Error('Old point failed'));
+    else h.calls[0].resolve(moment(10));
+    await tick();
+    assert.deepEqual(h.calls.map(call => call.index), [10], 'the superseded coalesced point is never requested');
+    assert.equal(await loading, true);
+    assert.equal(h.explorer.state.status, 'loading');
+    assert.equal(h.explorer.state.error, '');
+    assert.equal(h.explorer.current, previous, 'the obsolete result never becomes a visible frame');
+    assert.deepEqual(h.renders, []);
+    owner = { current: dayChart('1900-01-02T00:01:00Z'), status: 'ready', live: true };
+    h.explorer.alignMoment(owner.current);
+    assert.equal(h.explorer.current.utc, owner.current.utc);
+    assert.equal(h.calls.length, 1);
   }
 });

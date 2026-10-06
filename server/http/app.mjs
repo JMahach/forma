@@ -1,6 +1,7 @@
 import { createTransitDayHandler } from './transit-days.mjs';
 import { createNatalDayHandler } from './natal-days.mjs';
 import { createPublicFileHandler } from './public-files.mjs';
+import { createCyclesHandler } from './cycles.mjs';
 import { createLifetimeHandler } from './lifetime.mjs';
 import { createLifetimeMoments } from '../services/lifetime.mjs';
 
@@ -12,10 +13,11 @@ function json(res, status, data) {
 
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, lifetime, now, publicFiles = createPublicFileHandler({ root }) }) {
+export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, lifetime, lifetimeFingerprint, cycles, now, publicFiles = createPublicFileHandler({ root }) }) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
   const natalDay = chartDays && createNatalDayHandler(chartDays);
-  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ archive: lifetime, calculate }));
+  const cycleHandler = cycles && createCyclesHandler(cycles);
+  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ archive: lifetime, calculate, calculationFingerprint: lifetimeFingerprint }));
   return async function handleRequest(req, res) {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -23,7 +25,11 @@ export function createRequestHandler({ root, cities, calculate, transitDays, cha
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) {
         json(res, 403, { error: 'origin', message: 'Откройте сайт с адреса локального сервера.' }); return;
       }
-      if (url.pathname === '/api/lifetime' || url.pathname === '/api/lifetime/meta') {
+      if (url.pathname === '/api/cycles/events' || url.pathname === '/api/cycles/chart') {
+        if (!cycleHandler) { json(res, 503, { error: 'cycles_unavailable', message: 'Расчёт циклов недоступен.' }); return; }
+        await cycleHandler(req, res, url); return;
+      }
+      if (url.pathname === '/api/lifetime' || url.pathname === '/api/lifetime/meta' || url.pathname === '/api/lifetime/moment') {
         await lifetimePoint(req, res, url); return;
       }
       if (url.pathname === '/api/transit/day') {

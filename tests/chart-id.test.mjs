@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { createChartId, readCharts, writeCharts, validateChart } from '../src/data/storage.js';
+import { createChartId, readCharts, writeChartChanges, validateChart } from '../src/data/storage.js';
 
 const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -42,8 +42,9 @@ test('HTTP fallback creates distinct IDs that survive storage validation', () =>
     assert.equal(validateChart(chart).id, chart.id);
   }
   const values = new Map();
-  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
-  writeCharts(storage, charts.slice(0, 500));
+  const storage = { get length() { return values.size; }, key: index => [...values.keys()][index] ?? null,
+    getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  assert.equal(writeChartChanges(storage, charts.slice(0, 500), []), 500);
   assert.deepEqual(readCharts(storage).map(chart => chart.id), charts.slice(0, 500).map(chart => chart.id));
 });
 

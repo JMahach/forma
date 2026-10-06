@@ -4,8 +4,7 @@ import { createBodygraphPainter } from './bodygraph-painter.js';
 import { createMandalaPainter } from './mandala-painter.js';
 import { createActivationPainter } from './activation-painter.js';
 import { renderMandala } from './mandala.js';
-import { renderVariableArrows } from './variable-arrows.js';
-import { calculateVariables } from '../domain/variables.js';
+import { renderVariableArrows, visibleVariables } from './variable-arrows.js';
 import { renderChartBackdrop } from './backdrop.js';
 import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.js';
 import { setAttribute, svgNodes } from './svg-patches.js';
@@ -15,7 +14,6 @@ const mandalaOptions = (state, options) => ({ interactive: state.interactive && 
   selectedGates: state.committedGates, relatedGates: state.relatedGates, pinnedCrosses: options.pinnedCrosses,
   previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null });
 const backdropSignature = (state, options) => JSON.stringify([Boolean(options.showMandala), Boolean(options.showBackdrop), state.prefix]);
-const visibleVariables = (chart, options) => options.showActivations && !options.showMandala ? calculateVariables(chart) : [];
 
 // One SVG skeleton per view. Decorative modes leave all body layers in place;
 // changing the minute only paints their current values.
@@ -29,7 +27,7 @@ export function createSceneRenderer(root) {
     drawing = root.querySelector('.bodygraph-drawing');
     body = createBodygraphPainter(root, state, options);
     wheel = createMandalaPainter(root);
-    columns = createActivationPainter(root);
+    columns = createActivationPainter(root, { chart, state, options });
     backdropKey = backdropSignature(state, options);
   }
   function decorations(chart, state, options) {
@@ -59,8 +57,11 @@ export function createSceneRenderer(root) {
         ring.setAttribute('transform', MANDALA_SCENE_TRANSFORM);
         ring.innerHTML = renderMandala(chart, mandalaOptions(state, options));
         root.insertBefore(ring, drawing);
+      } else {
+        // The new scaffold already contains this exact snapshot. The painter
+        // adopts it on the next real update instead of preparing it twice.
+        wheel.update(chart, mandalaOptions(state, options));
       }
-      wheel.update(chart, mandalaOptions(state, options));
     } else if (ring) { ring.remove(); wheel.reset(); }
   }
   return {

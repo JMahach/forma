@@ -13,9 +13,6 @@ else:
     import civil_time as civil
     from errors import ChartError
 
-PLANETS = ('sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter',
-           'saturn', 'uranus', 'neptune', 'pluto')
-
 
 def calculate_day(date):
     if not isinstance(date, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date):
@@ -26,20 +23,7 @@ def calculate_day(date):
         raise ChartError('invalid_date', 'Некорректная дата UTC.')
     if not 1801 <= start.year <= 2399:
         raise ChartError('unsupported_date', 'Доступны даты с 1801 по 2399 год.')
-    columns = [[] for _ in range(24)]
-    design_search = astro.DesignTimeSearch()
-    for minute in range(1440):
-        moment = start + dt.timedelta(minutes=minute)
-        jd = astro.julian_tt(moment)
-        design_jd, residual = design_search(jd)
-        for side, side_jd in enumerate((jd, design_jd)):
-            values = astro.longitudes(side_jd)
-            for column, planet in enumerate(PLANETS):
-                columns[side * 11 + column].append(values[planet])
-        # Match the API's UTC second precision, including dates before 1970.
-        # Planet positions still use the unrounded Julian instant above.
-        columns[22].append(int(astro.tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
-        columns[23].append(residual)
+    columns = astro.sample_columns(start + dt.timedelta(minutes=minute) for minute in range(1440))
     return dict(
         date=date, startUtc=civil.iso(start), stepSeconds=60, samples=1440,
         columns=columns, engine='Swiss Ephemeris ' + astro.swe.version,

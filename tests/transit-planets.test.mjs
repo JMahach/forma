@@ -45,7 +45,7 @@ test('black and red individual/all toggles are independent, preserve exact recor
   assert.deepEqual(chart, original);
 });
 
-test('unchanged/invalid selections reuse memoized projection; a new full chart invalidates it', () => {
+test('unchanged/invalid selections reuse memoized projection; a new full chart has its own projection', () => {
   const owner = createTransitPlanetFilter(), chart = chartAt(); owner.setExpanded(true);
   const first = owner.filter(chart);
   assert.equal(owner.setPlanet('sun', true), true); assert.equal(owner.setAllPlanets(false, 'design'), true);
@@ -58,6 +58,50 @@ test('unchanged/invalid selections reuse memoized projection; a new full chart i
   assert.notEqual(filtered, first); assert.deepEqual(filtered.activations.personality, next.activations.personality);
   const detachedFilter = owner.filter;
   assert.equal(detachedFilter(next), filtered, 'session can use filter as a callback');
+});
+
+test('alternating displayed and borrowed charts retain each projection for the current selection', () => {
+  const owner = createTransitPlanetFilter(), first = chartAt(), next = chartAt(0.125);
+  const filteredFirst = owner.filter(first), filteredNext = owner.filter(next);
+  assert.equal(owner.filter(first), filteredFirst, 'reading the borrowed chart cannot evict the displayed projection');
+  assert.equal(owner.filter(next), filteredNext);
+  assert.equal(owner.filter(filteredFirst), filteredFirst, 'an already filtered result is reused');
+  assert.equal(owner.filter(filteredNext), filteredNext);
+});
+
+test('selection and controls revisions reproject both charts without losing full or previously filtered records', () => {
+  const owner = createTransitPlanetFilter(), charts = [chartAt(), chartAt(0.125)];
+  const originals = structuredClone(charts);
+  owner.setExpanded(true);
+  const previous = charts.map(owner.filter), previousValues = structuredClone(previous);
+  owner.setPlanet('moon', false); owner.setPlanet('venus', true, 'design');
+  const partial = charts.map(owner.filter);
+  for (let i = 0; i < charts.length; i++) {
+    assert.notEqual(partial[i], previous[i]);
+    assert.deepEqual(partial[i].activations.personality, charts[i].activations.personality.filter(e => e.planet !== 'moon'));
+    assert.deepEqual(partial[i].activations.design, charts[i].activations.design.filter(e => e.planet === 'venus'));
+    assert.equal(owner.filter(charts[i]), partial[i]);
+  }
+  owner.setExpanded(false);
+  const compact = partial.map(owner.filter);
+  for (let i = 0; i < charts.length; i++) {
+    assert.equal(compact[i].planetFilter.perPlanetControls, false);
+    assert.deepEqual(compact[i].activations, charts[i].activations, 'compact mode restores both complete columns');
+  }
+  owner.setExpanded(true);
+  owner.restore({ selectedPlanets: [], selectedDesignPlanets: [] });
+  const hidden = compact.map(owner.filter);
+  for (const chart of hidden) assert.deepEqual(chart.activations, { personality: [], design: [] });
+  owner.setAllPlanets(true); owner.setAllPlanets(true, 'design');
+  for (let i = 0; i < charts.length; i++) {
+    const restored = owner.filter(hidden[i]);
+    assert.deepEqual(restored.activations, charts[i].activations);
+    assert.equal(restored.planetFilter.activations, charts[i].activations.personality);
+    assert.equal(restored.planetFilter.designActivations, charts[i].activations.design);
+  }
+  assert.deepEqual(charts, originals);
+  assert.deepEqual(previous, previousValues);
+  for (const chart of hidden) assert.deepEqual(chart.activations, { personality: [], design: [] });
 });
 
 test('filter leaves natal, returns and missing charts untouched', () => {
@@ -73,7 +117,7 @@ test('reprojecting a filtered chart retains both full columns and can restore ev
   owner.setExpanded(true);
   owner.setAllPlanets(false);
   const hidden = owner.filter(chart), repeated = owner.filter(hidden);
-  assert.deepEqual(repeated, hidden);
+  assert.equal(repeated, hidden);
   owner.setAllPlanets(true); owner.setAllPlanets(true, 'design');
   const restored = owner.filter(repeated);
   assert.deepEqual(restored.activations, chart.activations);
@@ -114,4 +158,33 @@ test('day permits only the red master and restores all black planets regardless 
   owner.setAllPlanets(true, 'design'); owner.setExpanded(true);
   assert.deepEqual(owner.state.selectedDesignPlanets, PLANET_IDS, 'the explicit day master ON selects every red planet for Years');
   assert.deepEqual(owner.state.selectedPlanets, []);
+});
+
+test('raw planet snapshot restores partial choices while compact day projection stays all-or-none', () => {
+  const first = createTransitPlanetFilter(); first.setExpanded(true);
+  first.setAllPlanets(false); first.setPlanet('moon', true); first.setPlanet('venus', true, 'design');
+  first.setExpanded(false);
+  assert.deepEqual(first.snapshot, { selectedPlanets: ['moon'], selectedDesignPlanets: ['venus'] });
+  const restored = createTransitPlanetFilter();
+  assert.equal(restored.restore(first.snapshot), true);
+  assert.deepEqual(restored.state, { selectedPlanets: PLANET_IDS, selectedDesignPlanets: PLANET_IDS });
+  restored.setExpanded(true);
+  assert.deepEqual(restored.filter(chartAt()).activations.personality.map(e => e.planet), ['moon']);
+  assert.deepEqual(restored.filter(chartAt()).activations.design.map(e => e.planet), ['venus']);
+  first.snapshot.selectedPlanets.push('sun');
+  assert.deepEqual(first.snapshot.selectedPlanets, ['moon']);
+});
+
+test('malformed planet restoration is atomic and valid empty choices invalidate cached projection', () => {
+  const owner = createTransitPlanetFilter(); owner.setExpanded(true);
+  const chart = chartAt(), original = owner.filter(chart);
+  for (const invalid of [null, {}, { selectedPlanets: ['moon'], selectedDesignPlanets: ['unknown'] },
+    { selectedPlanets: ['moon', 'moon'], selectedDesignPlanets: [] },
+    { selectedPlanets: 'moon', selectedDesignPlanets: [] },
+    { selectedPlanets: Array(1), selectedDesignPlanets: [] }]) {
+    assert.equal(owner.restore(invalid), false);
+    assert.equal(owner.filter(chart), original);
+  }
+  assert.equal(owner.restore({ selectedPlanets: [], selectedDesignPlanets: [] }), true);
+  assert.deepEqual(owner.filter(chart).activations, { personality: [], design: [] });
 });

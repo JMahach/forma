@@ -104,7 +104,7 @@ function browserHarness(t, config) {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('Preview must not read saved charts'); } });
-  const controller = mountPreview(config, { renderChart: renderBodygraph });
+  const controller = mountPreview(config, { scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } } });
   return { controller, viewport, panel, svg, click: id => nodes.get(id).send('click'), anchor: id => anchors.get(`[data-activation="${id}"]`) };
 }
 

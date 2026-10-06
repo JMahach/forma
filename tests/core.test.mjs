@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseGates, validateChart,
-  readCharts, writeCharts, STORAGE_KEY, TRASH_KEY, deleteChart
+  readCharts, writeChartChanges, STORAGE_KEY, TRASH_KEY, CHART_DELETED_PREFIX, deleteChart
 } from '../src/data/storage.js';
 import { zoomAt, validView, fitView } from '../src/scene/camera.js';
 import { attachGestures } from './fixtures/gesture-harness.js';
@@ -31,14 +31,14 @@ const exampleChart = (extra = {}) => ({
 
 function createMemoryStorage() {
   const entries = new Map();
-  return { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  return { get length() { return entries.size; }, key: index => [...entries.keys()][index] ?? null,
+    getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value), removeItem: key => entries.delete(key) };
 }
 
 test('permanent deletion removes only the selected card without creating a recovery copy', () => {
-  const values = new Map();
-  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const storage = createMemoryStorage();
   const charts = [validateChart(exampleChart()), validateChart(exampleChart({ id: 'other', name: 'Другая' }))];
-  writeCharts(storage, charts);
+  writeChartChanges(storage, charts, []);
   const removed = deleteChart(storage, charts, 'chart-test');
   assert.deepEqual(removed.map(c => c.id), ['other']);
   assert.deepEqual(readCharts(storage), [charts[1]]);
@@ -47,20 +47,23 @@ test('permanent deletion removes only the selected card without creating a recov
   assert.throws(() => deleteChart(storage, [exampleChart({ id: 'current-transit' })], 'current-transit'));
 });
 
-test('permanent deletion clears legacy copies of the target and preserves live data if writing fails', () => {
+test('permanent deletion commits its tombstone before cleanup and preserves live data when that commit fails', () => {
   const values = new Map();
   let failKey = null;
-  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => { if (key === failKey) throw new Error('full'); values.set(key, value); } };
+  const storage = { get length() { return values.size; }, key: index => [...values.keys()][index] ?? null,
+    getItem: key => values.get(key) ?? null, setItem: (key, value) => { if (key === failKey) throw new Error('full'); values.set(key, value); } };
   const charts = [validateChart(exampleChart())];
-  writeCharts(storage, charts);
-  writeCharts(storage, charts, TRASH_KEY);
+  storage.setItem(STORAGE_KEY, JSON.stringify(charts));
+  storage.setItem(TRASH_KEY, JSON.stringify(charts));
+  failKey = `${CHART_DELETED_PREFIX}chart-test`;
+  assert.throws(() => deleteChart(storage, charts, 'chart-test'));
+  assert.deepEqual(readCharts(storage), charts);
   failKey = TRASH_KEY;
-  assert.throws(() => deleteChart(storage, charts, 'chart-test'));
-  assert.deepEqual(readCharts(storage), charts);
-  failKey = STORAGE_KEY;
-  assert.throws(() => deleteChart(storage, charts, 'chart-test'));
-  assert.deepEqual(readCharts(storage), charts);
-  assert.deepEqual(readCharts(storage, TRASH_KEY), []);
+  const warnings = [];
+  assert.deepEqual(deleteChart(storage, charts, 'chart-test', message => warnings.push(message)), []);
+  assert.deepEqual(readCharts(storage), []);
+  assert.deepEqual(readCharts(storage, TRASH_KEY), charts, 'failed historical cleanup remains explicit');
+  assert.match(warnings[0], /не удалось очистить/);
   failKey = null;
   deleteChart(storage, charts, 'chart-test');
   assert.deepEqual(readCharts(storage), []);
@@ -83,7 +86,7 @@ test('gate input rejects out-of-range, non-integer, and non-numeric tokens', () 
 test('chart storage preserves Unicode and script-looking strings as data', () => {
   const storage = createMemoryStorage();
   const original = exampleChart();
-  writeCharts(storage, [original]);
+  writeChartChanges(storage, [original], []);
   const [roundtrip] = readCharts(storage);
   assert.deepEqual(roundtrip, validateChart(original));
   assert.equal(roundtrip.name, original.name);
@@ -113,15 +116,18 @@ test('chart limits reject oversized input; bounded note fields are trimmed', () 
   assert.equal(chart.birthPlace.length, 120);
 });
 
-test('local chart library roundtrips data and rejects corrupt or oversized libraries', () => {
+test('legacy chart library reads valid data and preserves corrupt or oversized source data while reporting it', () => {
   const entries = new Map();
   const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
   assert.deepEqual(readCharts(storage), []);
-  writeCharts(storage, [exampleChart()]);
+  storage.setItem(STORAGE_KEY, JSON.stringify([exampleChart()]));
   assert.deepEqual(readCharts(storage), [validateChart(exampleChart())]);
   for (const content of ['{invalid', 'null', '{}', '[null]', '[{}]', '[[]]', JSON.stringify(Array(501).fill(exampleChart()))]) {
     storage.setItem(STORAGE_KEY, content);
-    assert.throws(() => readCharts(storage), Error);
+    const invalid = [];
+    assert.deepEqual(readCharts(storage, STORAGE_KEY, key => invalid.push(key)), []);
+    assert.ok(invalid.length > 0);
+    assert.equal(storage.getItem(STORAGE_KEY), content, 'read failure never replaces its source');
   }
 });
 
@@ -727,12 +733,12 @@ function calculatedChart() {
 test('calculated chart storage retains both activation streams and calculation provenance', () => {
   const storage = createMemoryStorage();
   const original = calculatedChart();
-  writeCharts(storage, [original]);
+  writeChartChanges(storage, [original], []);
   const [roundtrip] = readCharts(storage);
   for (const key of ['source', 'personality', 'design', 'activations', 'timezone', 'utc', 'utcOffset', 'fold', 'designUtc', 'cityId', 'city', 'engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac', 'designArcResidualDegrees', 'verification']) {
     assert.deepEqual(roundtrip[key], original[key], `preserve ${key}`);
   }
-  writeCharts(storage, [roundtrip]);
+  assert.equal(writeChartChanges(storage, [roundtrip], [roundtrip]), 0);
   assert.deepEqual(readCharts(storage), [roundtrip], 'repeated saves remain stable');
 });
 
@@ -744,7 +750,7 @@ test('transit chart storage keeps its source and absence of design activations',
     city: null, cityId: null, timezone: 'UTC', utcOffset: 'UTC+00:00'
   });
   original.activations.design = [];
-  writeCharts(storage, [original]);
+  writeChartChanges(storage, [original], []);
   const [roundtrip] = readCharts(storage);
   assert.equal(roundtrip.source, 'transit');
   assert.deepEqual(roundtrip.design, []);

@@ -15,6 +15,12 @@ else:
 
 def calculate(request):
     mode = request.get('mode', 'natal')
+    if mode == 'transit_moment':
+        moment = civil.transit_utc(request.get('utc'))
+        point = dict(utc=request['utc'], longitudes=list(astro.longitudes(astro.julian_tt(moment)).values()),
+                     engine='Swiss Ephemeris ' + astro.swe.version)
+        point['design'] = calculate(dict(mode='transit_design', utc=request['utc']))
+        return point
     if mode == 'transit_design':
         moment = civil.transit_utc(request.get('utc'))
         design_jd, residual = astro.design_time(astro.julian_tt(moment))

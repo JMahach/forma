@@ -1,4 +1,5 @@
 import { createFrameMonitor } from '../diagnostics/frame-monitor.js';
+import { setText } from '../ui/html.js';
 
 // This view observes input without owning gestures, camera state or rendering.
 // Sampling and its bounded statistics belong to diagnostics/frame-monitor.
@@ -10,13 +11,12 @@ export function attachPerformanceMonitor({ document, button, panel, drawing, inp
   const closeButton = panel.querySelector('[data-performance-close]');
   let enabled = false, destroyed = false;
   const pointers = new Map(), listeners = [];
-  const text = (element, value) => { if (element.textContent !== value) element.textContent = value; };
   const milliseconds = value => value === null ? '—' : `${value.toFixed(1)} мс`;
 
   function render(state) {
-    text(fields.fps, state.recentSampleCount < 3 ? '—' : `≈${Math.round(state.recentFps)}`);
-    text(fields.pauses, state.sampleCount ? String(state.longGapCount) : '—');
-    text(fields.max, milliseconds(state.maxIntervalMs));
+    setText(fields.fps, state.recentSampleCount < 3 ? '—' : `≈${Math.round(state.recentFps)}`);
+    setText(fields.pauses, state.sampleCount ? String(state.longGapCount) : '—');
+    setText(fields.max, milliseconds(state.maxIntervalMs));
   }
   const monitor = createFrameMonitor({ ...monitorOptions, onUpdate: render });
   const activity = () => { if (enabled && !document.hidden) monitor.activity(); };

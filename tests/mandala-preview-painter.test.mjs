@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMandalaPreviewPainter } from '../src/scene/mandala-preview-painter.js';
 import { createGraphController } from '../src/scene/updates.js';
+import { createSceneRenderer } from '../src/scene/renderer.js';
+import { SVG_NS, SvgElement, svgDocument, significantDOM } from './helpers/svg-dom.mjs';
+
+SvgElement.prototype.getCTM = () => null;
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
 import { renderMandala } from '../src/scene/mandala.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
@@ -150,17 +154,18 @@ test('pinned overlap and absent or explicitly cleared caches require a full rend
 });
 
 function graphHarness() {
-  const viewport = new SvgNode();
+  const viewport = svgDocument().createElementNS(SVG_NS, 'svg');
+  const scene = createSceneRenderer(viewport);
+  viewport.snapshot = () => significantDOM(viewport);
   const state = { chart: { id: 'test', personality: [20, 34], design: [10, 57] }, current: preview(305.65), enabled: true, hasChart: true };
-  const calls = { render: 0, align: 0, summary: 0, layout: 0, popover: 0 };
+  const calls = { render: 0, summary: 0, layout: 0, popover: 0 };
   const controller = createGraphController({
     viewport, getChart: () => state.chart, hasChart: () => state.hasChart,
     getHoverPreview: () => ({ currentSelection: state.current, clear() { state.current = null; } }),
     getMandala: () => ({ enabled: state.enabled }),
     getSummary: () => ({ update() { calls.summary++; }, layout() { calls.layout++; } }),
     activationPopover: { close() {}, refresh() { calls.popover++; }, show() {} },
-    alignHeading() { calls.align++; },
-    renderChart(...args) { calls.render++; return renderBodygraph(...args); },
+    scene: { update(...args) { calls.render++; scene.update(...args); }, clear: scene.clear },
   });
   controller.render();
   return { controller, viewport, state, calls };
@@ -172,12 +177,12 @@ test('controller fast preview updates only cross marks without redrawing the cha
   const ring = viewport.querySelector('.mandala-gate');
   state.current = preview(305.75);
   controller.preview();
-  assert.deepEqual(calls, { render: 1, align: 1, summary: 1, layout: 1, popover: 1 });
+  assert.deepEqual(calls, { render: 1, summary: 1, layout: 0, popover: 1 });
   assert.equal(controller.selectionState.items, snapshot);
   assert.equal(viewport.querySelector('.mandala-gate'), ring);
-  const expected = new SvgNode();
+  const expected = svgDocument().createElementNS(SVG_NS, 'svg');
   expected.innerHTML = renderBodygraph(state.chart, null, { profile: 'studio', showMandala: true, showActivations: true, showBackdrop: true, selections: [], pinnedCrosses: [], previewSelection: state.current });
-  assert.deepEqual(viewport.snapshot(), expected.snapshot());
+  assert.deepEqual(viewport.snapshot(), significantDOM(expected));
 });
 
 test('controller falls back after gate change, chart replacement, selection change and mode change', () => {
@@ -193,7 +198,7 @@ test('controller falls back after gate change, chart replacement, selection chan
     const harness = graphHarness();
     mutate(harness);
     harness.controller.preview();
-    assert.equal(harness.calls.summary, harness.controller.selectionState.items.length ? 2 : 1, 'summary updates only when its chart facts or committed selection change');
+    assert.equal(harness.calls.summary, 2, 'full renders forward current inputs; the panel owns fact and selection comparisons');
     assert.equal(harness.calls.render, harness.state.hasChart ? 2 : 1);
   }
 });
@@ -218,12 +223,13 @@ test('controller pinned overlap transitions neither duplicate nor lose the movin
   assert.equal(viewport.querySelectorAll('.mandala-cross-pinned').length, 1);
 });
 
-test('ordinary render remains a full redraw and reset invalidates the hover cache', () => {
+test('ordinary render retains the persistent scene and reset invalidates the hover cache', () => {
   const { controller, viewport, state, calls } = graphHarness();
   const ring = viewport.querySelector('.mandala-gate');
   controller.render();
   assert.equal(calls.render, 2);
-  assert.notEqual(viewport.querySelector('.mandala-gate'), ring);
+  assert.equal(viewport.querySelector('.mandala-gate'), ring);
+  assert.equal(viewport.innerHTMLWrites, 1);
   controller.reset();
   state.current = preview(305.7);
   controller.preview();

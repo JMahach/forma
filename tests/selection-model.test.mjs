@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Session } from 'node:inspector';
+import { promisify } from 'node:util';
 import { createSelectionModel } from '../src/selection/selection-model.js';
 import { createSummarySelectionState } from '../src/selection/summary-selection-state.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
@@ -20,7 +22,7 @@ const chart = (gates = [46, 29, 8]) => ({
   activations: { design: gates.map((gate, i) => ({ planet: ['sun', 'earth', 'moon'][i], gate, line: 2 })), personality: [] },
 });
 
-test('without crosses the wrapper keeps ordinary selection, metadata, effects and line-group behavior identical', () => {
+test('without crosses the wrapper keeps ordinary selection, metadata and line-group behavior identical', () => {
   const actual = createSelectionModel(), expected = createSummarySelectionState();
   const actions = [
     ['choose', gate(20, false, 'personality-sun')], ['choose', gate(34, true)],
@@ -33,7 +35,7 @@ test('without crosses the wrapper keeps ordinary selection, metadata, effects an
     ['clear'],
   ];
   for (const [method, ...args] of actions) {
-    assert.deepEqual(actual[method](...args), expected[method](...args), `${method} returns existing effects`);
+    actual[method](...args); expected[method](...args);
     assert.deepEqual(stateView(actual), stateView(expected), `${method} keeps existing state`);
     assert.deepEqual(actual.crosses, []);
   }
@@ -41,7 +43,7 @@ test('without crosses the wrapper keeps ordinary selection, metadata, effects an
 
 test('normal cross click pins four gates and a deeply immutable exact-angle snapshot', () => {
   const state = createSelectionModel(), value = cross(180.123456789);
-  assert.deepEqual(state.choose(value), { popoverActivation: null });
+  state.choose(value);
   assertGates(state, value.cross.gates);
   assert.equal(state.crosses.length, 1);
   assert.deepEqual(state.crosses[0], value.cross);
@@ -242,7 +244,7 @@ test('malformed cross or summary input never clears valid selection and derived 
   state.choose(cross(180));
   const items = state.items;
   for (const bad of [null, {}, { longitude: NaN }, { longitude: Infinity }, { longitude: '180' }, { longitude: 180, source: 'both' }, { longitude: 180, source: null }]) {
-    assert.deepEqual(state.choose({ type: 'mandala-cross', cross: bad }), { popoverActivation: null });
+    state.choose({ type: 'mandala-cross', cross: bad });
     assert.equal(state.items, items);
   }
   state.chooseSummary([20], { line: 7, source: 'design' });
@@ -263,15 +265,71 @@ test('clear discards cross axes, partial exclusions, expanded gates, line filter
   state.clear();
   assert.deepEqual(stateView(state), { items: [], primary: null, activation: null, activationFilter: null });
   assert.deepEqual(state.crosses, []);
-  assert.deepEqual(state.choose(gate(20, false, 'personality-sun')), { popoverActivation: 'personality-sun' });
+  state.choose(gate(20, false, 'personality-sun'));
+  assert.equal(state.activation, 'personality-sun');
+  assertGates(state, [20]);
 });
 
-test('activation popovers remain suppressed for any multi-item cross selection', () => {
+test('activation identity survives multi-item cross selection and ordinary replacement', () => {
   const state = createSelectionModel();
   state.choose(cross(180));
-  assert.deepEqual(state.choose(gate(20, true, 'personality-sun')), { popoverActivation: null });
+  state.choose(gate(20, true, 'personality-sun'));
   state.choose(cross(180.1, true));
   assertGates(state, [20]);
   assert.equal(state.activation, 'personality-sun');
-  assert.deepEqual(state.choose(gate(20, false, 'personality-mars')), { popoverActivation: 'personality-mars' });
+  state.choose(gate(20, false, 'personality-mars'));
+  assert.equal(state.activation, 'personality-mars');
+  assertGates(state, [20]);
+});
+
+
+test('refreshing selected lines reads only requested gates without full line counts or topology', async () => {
+  const state = createSelectionModel(), current = chart();
+  state.chooseSummary([46, 29, 8], lineFilter);
+  const session = new Session(); session.connect();
+  const post = promisify(session.post.bind(session));
+  try {
+    await post('Profiler.enable');
+    await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
+    for (let i = 0; i < 10; i++) state.refresh(current);
+    const { result } = await post('Profiler.takePreciseCoverage');
+    const calls = name => result.flatMap(script => script.functions).filter(fn => fn.functionName === name).reduce((count, fn) => count + fn.ranges[0].count, 0);
+    assert.equal(calls('buildChartFacts'), 0);
+    assert.equal(calls('getDefinition'), 0);
+    assert.equal(calls('lineFacts'), 0);
+    assert.equal(calls('buildChartLines'), 0);
+    assert.equal(calls('sortedUnique'), 10, 'one sorted gate set per requested line and source');
+    assertGates(state, [46, 29, 8]);
+    current.activations.design[0].line = 1;
+    state.refresh(current);
+    assertGates(state, [29, 8]);
+  } finally { await post('Profiler.stopPreciseCoverage'); session.disconnect(); }
+});
+
+test('refresh preserves excluded overlapping line gates and appends new gates after retained action order', () => {
+  const state = createSelectionModel();
+  const current = { source: 'calculated', design: [8, 29], personality: [8, 46], activations: {
+    design: [{ gate: 8, line: 2 }, { gate: 29, line: 2 }],
+    personality: [{ gate: 8, line: 3 }, { gate: 46, line: 3 }],
+  } };
+  state.chooseSummary([8, 29], { line: 2, source: 'design' });
+  state.chooseSummary([8, 46], { line: 3, source: 'personality' }, { additive: true });
+  state.choose(gate(8, true));
+  assert.deepEqual(state.items.map(item => item.id), [29, 46]);
+  const items = state.items, filter = state.activationFilter;
+  state.refresh(current);
+  assert.equal(state.items, items); assert.equal(state.activationFilter, filter);
+  current.design.push(3, 63);
+  current.activations.design.push({ gate: 63, line: 2 }, { gate: 3, line: 2 }, { gate: 3, line: 2 });
+  state.refresh(current);
+  assert.deepEqual(state.items.map(item => item.id), [29, 46, 3, 63]);
+  assert.deepEqual(state.activationFilter.groups, [
+    { line: 2, source: 'design', gates: [3, 29, 63] },
+    { line: 3, source: 'personality', gates: [46] },
+  ]);
+  current.activations.design[1].line = 4;
+  state.refresh(current);
+  assert.deepEqual(state.items.map(item => item.id), [46, 3, 63]);
+  current.source = 'manual'; state.refresh(current);
+  assert.deepEqual(state.items, []);
 });

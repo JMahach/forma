@@ -5,7 +5,6 @@ and the user's library never enter this process; no files are written.
 """
 import datetime as dt
 import json
-import re
 import sys
 
 if __package__:
@@ -17,32 +16,18 @@ else:
     import civil_time as civil
     from errors import ChartError
 
-PLANETS = ('sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter',
-           'saturn', 'uranus', 'neptune', 'pluto')
-
 
 def calculate_day(date, timezone):
     minutes = civil.local_minutes(date, timezone)
-    columns = [[] for _ in range(24)]
     segments = []
     previous = None
-    design_search = astro.DesignTimeSearch()
     for index, (moment, offset, fold, offset_seconds) in enumerate(minutes):
         if (previous is None or moment - previous[0] != dt.timedelta(minutes=1)
                 or (offset, fold) != previous[1:3]):
             segments.append(dict(index=index, startUtc=civil.iso(moment),
                                  utcOffset=offset, offsetSeconds=offset_seconds, fold=fold))
-        jd = astro.julian_tt(moment)
-        design_jd, residual = design_search(jd)
-        for side, side_jd in enumerate((jd, design_jd)):
-            values = astro.longitudes(side_jd)
-            for column, planet in enumerate(PLANETS):
-                columns[side * 11 + column].append(values[planet])
-        # Match the API's UTC second precision, including dates before 1970.
-        # Planet positions still use the unrounded Julian instant above.
-        columns[22].append(int(astro.tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
-        columns[23].append(residual)
         previous = (moment, offset, fold)
+    columns = astro.sample_columns(item[0] for item in minutes)
     return dict(date=date, timezone=timezone, startUtc=civil.iso(minutes[0][0]),
                 stepSeconds=60, samples=len(minutes), segments=segments, columns=columns,
                 engine='Swiss Ephemeris ' + astro.swe.version,

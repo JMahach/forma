@@ -45,7 +45,6 @@ export function createSelectionState() {
         : repeated ? [] : [item];
     }
     current = snapshot(items);
-    return { popoverActivation: activation && !repeated && items.length === 1 ? activation : null };
   }
 
   return {

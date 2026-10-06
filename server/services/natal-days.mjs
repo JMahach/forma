@@ -45,7 +45,31 @@ export function createChartDays({ root, generateDay = (date, timezone) => genera
   now = Date.now, capacity = 4, ttlMs = 600_000, maxQueued = 3 } = {}) {
   const memory = new Map(), pending = new Map(), queue = [];
   let running = false;
+  const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
   function prune() { for (const [key, entry] of memory) if (entry.expires <= now()) memory.delete(key); }
+  function consume(job, signal) {
+    if (!signal) { job.uncancellable = true; return job.promise; }
+    job.consumers++;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true; job.consumers--; signal.removeEventListener('abort', cancel); callback(value);
+      };
+      const cancel = () => {
+        finish(reject, aborted());
+        const index = queue.indexOf(job);
+        // Keep active work and shared consumers; only abandoned waiting days
+        // can release admission without interfering with a live process.
+        if (!job.uncancellable && job.consumers === 0 && index !== -1) {
+          queue.splice(index, 1); pending.delete(job.key); job.reject(aborted());
+        }
+      };
+      signal.addEventListener('abort', cancel, { once: true });
+      job.promise.then(value => finish(resolve, value), error => finish(reject, error));
+      if (signal.aborted) cancel();
+    });
+  }
   async function drain() {
     if (running || !queue.length) return;
     running = true;
@@ -61,7 +85,8 @@ export function createChartDays({ root, generateDay = (date, timezone) => genera
     } catch (error) { job.reject(error); }
     finally { pending.delete(job.key); running = false; void drain(); }
   }
-  function get(date, timezone) {
+  function get(date, timezone, { signal } = {}) {
+    if (signal?.aborted) return Promise.reject(aborted());
     try { validateNatalDate(date); validateNatalZone(timezone); } catch (error) { return Promise.reject(error); }
     const key = `${date}@${timezone}`;
     prune();
@@ -69,12 +94,14 @@ export function createChartDays({ root, generateDay = (date, timezone) => genera
       const entry = memory.get(key); memory.delete(key); memory.set(key, entry);
       return Promise.resolve(entry.packet);
     }
-    if (pending.has(key)) return pending.get(key);
+    if (pending.has(key)) return consume(pending.get(key), signal);
     if (queue.length >= maxQueued) return Promise.reject(new ChartDayError('chart_day_busy', 'Подождите завершения расчёта дня рождения и повторите попытку.', 503, 2));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    pending.set(key, promise); queue.push({ key, date, timezone, resolve, reject }); void drain();
-    return promise;
+    const job = { key, date, timezone, resolve, reject, promise, consumers: 0, uncancellable: false };
+    pending.set(key, job); queue.push(job);
+    const result = consume(job, signal); void drain();
+    return result;
   }
   return { get, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
 }

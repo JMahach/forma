@@ -26,5 +26,5 @@ export function renderLoadingPlaceholder() {
 }
 
 export function prepareLoadingPage(html) {
-  return html.replace('<!-- chart-loading-placeholder -->', renderLoadingPlaceholder());
+  return html.replace('<!-- chart-loading-placeholder -->', () => renderLoadingPlaceholder());
 }

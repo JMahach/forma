@@ -39,9 +39,9 @@ export function constrainView(view, fitted, bounds = DRAWING_BOUNDS) {
   };
 }
 
-// The camera owns only transforms, navigation bounds and Home transitions.
+// The camera owns only transforms, navigation bounds and the Home baseline.
 // Screen measurement and painting arrive through explicit callbacks.
-export function createCamera({ getFrame = () => null, getHomeFrame = null, measureFit, onChange, cameraMotion = {} }) {
+export function createCamera({ getFrame = () => null, getHomeFrame = null, measureFit, onChange }) {
   let view = { x: 0, y: 0, k: 1 };
   let fittedView = { ...view };
   const activeFrame = () => getFrame() ?? CHART_FRAME;
@@ -51,23 +51,11 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   // navigation admits the larger visible drawing without moving that camera.
   let navigationFrame = activeFrame(), navigationFit = { ...view };
   const sameView = (a, b) => a.x === b.x && a.y === b.y && a.k === b.k;
-  const {
-    durationMs = 200, now = () => globalThis.performance?.now() ?? Date.now(),
-    requestFrame = globalThis.requestAnimationFrame?.bind(globalThis),
-    cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis),
-    reducedMotion = () => false,
-  } = cameraMotion;
-  let motion = null, animationFrame = null, generation = 0;
   const rebase = (value, from, to) => {
     if (sameView(from, to)) return { ...value };
     if (isHomeView(value, from)) return { ...to };
     const ratio = to.k / from.k;
     return { x: to.x + (value.x - from.x) * ratio, y: to.y + (value.y - from.y) * ratio, k: value.k * ratio };
-  };
-  const interpolate = (from, to, progress) => progress === 1 ? { ...to } : {
-    x: from.x + (to.x - from.x) * progress,
-    y: from.y + (to.y - from.y) * progress,
-    k: from.k + (to.k - from.k) * progress,
   };
   // Studio Home is the zoom floor even when wider navigation bounds permit
   // panning around a ring. Standalone diagrams keep their existing frame floor.
@@ -88,7 +76,6 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     return fitView(frame.bounds, area, { min });
   }
   function fit() {
-    cancelAnimation();
     navigationFrame = homeFrame();
     fittedView = defaultView(navigationFrame);
     navigationFit = { ...fittedView };
@@ -110,56 +97,13 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
       navigationFit = nextFit;
     }
   }
-  function cancelAnimation() {
-    generation++;
-    if (animationFrame !== null) cancelFrame?.(animationFrame);
-    animationFrame = null; motion = null;
-  }
-  function paintMotion(progress) {
-    const nextHome = interpolate(motion.fromHome, motion.toHome, progress);
-    // Rebase the *live* camera, not a captured starting view: wheel/pinch/pan
-    // remain usable during the transition and keep their relative zoom/pan.
-    view = rebase(view, fittedView, nextHome);
-    fittedView = nextHome;
-    navigationFit = interpolate(motion.fromNavigation, motion.toNavigation, progress);
-    apply();
-  }
-  function finishAnimation() {
-    if (motion) paintMotion(1);
-    cancelAnimation();
-  }
-  function scheduleAnimation() {
-    const current = generation;
-    animationFrame = requestFrame(() => {
-      if (current !== generation || !motion) return;
-      animationFrame = null;
-      const fraction = reducedMotion() ? 1 : clamp((now() - motion.start) / durationMs, 0, 1);
-      paintMotion(fraction * fraction * (3 - 2 * fraction));
-      if (current !== generation) return;
-      if (fraction === 1) motion = null;
-      else scheduleAnimation();
-    });
-  }
-  function transitionHome(animate) {
-    // A reversal starts from the last painted camera/Home, including any user
-    // input since that frame. No intermediate baseline survives completion.
-    cancelAnimation();
-    const fromHome = { ...fittedView }, fromNavigation = { ...navigationFit }, fromView = { ...view };
-    const toHome = defaultView(homeFrame());
-    view = rebase(view, fromHome, toHome);
-    navigationFit = rebase(navigationFit, fromHome, toHome);
-    fittedView = toHome;
+  function rebaseHome() {
+    const previous = fittedView, next = defaultView(homeFrame());
+    view = rebase(view, previous, next);
+    navigationFit = rebase(navigationFit, previous, next);
+    fittedView = next;
     expandNavigation();
-    const toNavigation = { ...navigationFit };
-    if (!animate || !requestFrame || reducedMotion() || durationMs <= 0 || sameView(fromHome, toHome)) {
-      apply(); return;
-    }
-    view = fromView; fittedView = fromHome; navigationFit = fromNavigation;
-    motion = { fromHome, toHome, fromNavigation, toNavigation, start: now() };
-    // Home and the live view travel together, so a 100% mode change does not
-    // briefly expose Home or a false zoom percentage while it is animating.
-    publish();
-    scheduleAnimation();
+    apply();
   }
   const controls = {
     minimumScale,
@@ -168,20 +112,12 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     zoom(factor) { view = zoom({ x: 320, y: 410 }, factor); apply(); },
     reset() { fit(); },
     refreshFrame() {
-      finishAnimation();
       fittedView = defaultView(homeFrame());
       expandNavigation();
       publish();
     },
-    transitionHome() { transitionHome(true); },
     resize() {
-      if (studioHome) {
-        // A delayed observer notification with unchanged geometry must not
-        // cut short an in-flight mode transition or jump to its endpoint.
-        if (motion && sameView(defaultView(homeFrame()), motion.toHome)) return;
-        transitionHome(false); return;
-      }
-      finishAnimation();
+      if (studioHome) { rebaseHome(); return; }
       // Responsive presentation can replace Home with a larger or smaller
       // frame. Adopt it before constraining an unchanged Home camera.
       if (isHomeView(view, fittedView)) { fit(); return; }
@@ -196,7 +132,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     },
     getView() { return { ...view }; },
     getFittedView() { return { ...fittedView }; },
-    setView(value) { finishAnimation(); if (validView(value, { min: Math.min(navigationFrame.minScale, navigationFit.k) })) { view = { ...value }; apply(); } else fit(); }
+    setView(value) { if (validView(value, { min: Math.min(navigationFrame.minScale, navigationFit.k) })) { view = { ...value }; apply(); } else fit(); }
   };
   apply();
   return controls;
