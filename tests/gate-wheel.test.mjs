@@ -1,33 +1,46 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   GATE_ORDER, GATE_LONGITUDE_START, GATE_WIDTH, LINE_WIDTH,
   normalizeLongitude, gatePositionAtLongitude,
 } from '../src/domain/gate-wheel.js';
 
-const calculator = readFileSync(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
-const serverOrder = JSON.parse(calculator.match(/^GATE_WHEEL = (\[[^\n]+\])/m)[1]);
-const serverStart = Number(calculator.match(/position = \(lon - ([\d.]+)\) % 360/)[1]);
-const serverGateWidth = Number(calculator.match(/index = int\(position \/ ([\d.]+)\)/)[1]);
-const serverLineWidth = Number(calculator.match(/line = min\(6, int\(\(position - index \* [\d.]+\) \/ ([\d.]+)\)/)[1]);
 const finiteCanonical = value => {
   const remainder = value % 360;
   return remainder < 0 ? remainder + 360 : remainder === 0 ? 0 : remainder;
 };
 
-test('the domain wheel has exactly the immutable calculator order and equal gate and line widths', () => {
-  assert.deepEqual(GATE_ORDER, serverOrder);
+test('the domain wheel is immutable and divides the circle into 64 gates of six lines', () => {
   assert.deepEqual([...GATE_ORDER].sort((a, b) => a - b), Array.from({ length: 64 }, (_, i) => i + 1));
   assert.ok(Object.isFrozen(GATE_ORDER));
   assert.throws(() => { GATE_ORDER[0] = 1; }, TypeError);
   assert.throws(() => GATE_ORDER.push(65), TypeError);
-  assert.equal(GATE_LONGITUDE_START, serverStart);
   assert.equal(GATE_LONGITUDE_START, 302);
-  assert.equal(GATE_WIDTH, serverGateWidth);
   assert.equal(GATE_WIDTH, 360 / 64);
-  assert.equal(LINE_WIDTH, serverLineWidth);
   assert.equal(LINE_WIDTH, GATE_WIDTH / 6);
+});
+
+test('Python and browser agree at every gate and line boundary, on either side and across complete turns', () => {
+  const angles = [0, 180, 302, 307.625, 301.5, -0, -Number.MIN_VALUE, Number.MIN_VALUE];
+  for (let gate = 0; gate < 64; gate++) {
+    for (let line = 0; line < 6; line++) {
+      for (const turns of [-2, 0, 3]) {
+        const boundary = 302 + gate * (360 / 64) + line * (360 / 64 / 6) + turns * 360;
+        angles.push(boundary - 2 ** -35, boundary, boundary + 2 ** -35, boundary + .125);
+      }
+    }
+  }
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const results = JSON.parse(execFileSync(`${root}.venv/bin/python`, ['-c',
+    'import json, sys; from server.python.astronomy import gate_line; print(json.dumps([gate_line(value) for value in json.load(sys.stdin)]))'],
+  { cwd: root, input: JSON.stringify(angles), encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 }));
+  assert.equal(results.length, angles.length);
+  angles.forEach((angle, index) => {
+    const { gate, line } = gatePositionAtLongitude(angle);
+    assert.deepEqual(results[index], [gate, line], `Python/browser mismatch at longitude ${angle}`);
+  });
 });
 
 test('known positions produce only normalized longitude, gate and line without presentation data', () => {
@@ -37,12 +50,12 @@ test('known positions produce only normalized longitude, gate and line without p
 });
 
 test('all 64 gates contain six complete line intervals with stable interior values', () => {
-  for (let index = 0; index < serverOrder.length; index++) {
+  for (let index = 0; index < GATE_ORDER.length; index++) {
     for (let line = 0; line < 6; line++) {
       for (const fraction of [.125, .5, .875]) {
-        const raw = serverStart + index * serverGateWidth + (line + fraction) * serverLineWidth;
+        const raw = GATE_LONGITUDE_START + index * GATE_WIDTH + (line + fraction) * LINE_WIDTH;
         assert.deepEqual(gatePositionAtLongitude(raw), {
-          longitude: finiteCanonical(raw), gate: serverOrder[index], line: line + 1,
+          longitude: finiteCanonical(raw), gate: GATE_ORDER[index], line: line + 1,
         });
       }
     }
@@ -53,19 +66,19 @@ test('every exact gate and line boundary is half-open, with no epsilon snapping 
   // Exact binary fractions keep the distinction after subtraction and wrapping.
   // This is deliberately much smaller than a visible subdivision or 1e-8.
   const epsilon = 2 ** -35;
-  for (let index = 0; index < serverOrder.length; index++) {
+  for (let index = 0; index < GATE_ORDER.length; index++) {
     for (let line = 0; line < 6; line++) {
-      const boundary = serverStart + index * serverGateWidth + line * serverLineWidth;
+      const boundary = GATE_LONGITUDE_START + index * GATE_WIDTH + line * LINE_WIDTH;
       for (const turns of [-2, 0, 3]) {
         const value = boundary + turns * 360;
         const current = gatePositionAtLongitude(value);
         const before = gatePositionAtLongitude(value - epsilon);
         const after = gatePositionAtLongitude(value + epsilon);
-        assert.deepEqual(current, { longitude: finiteCanonical(value), gate: serverOrder[index], line: line + 1 });
-        assert.deepEqual(after, { longitude: finiteCanonical(value + epsilon), gate: serverOrder[index], line: line + 1 });
+        assert.deepEqual(current, { longitude: finiteCanonical(value), gate: GATE_ORDER[index], line: line + 1 });
+        assert.deepEqual(after, { longitude: finiteCanonical(value + epsilon), gate: GATE_ORDER[index], line: line + 1 });
         assert.deepEqual(before, {
           longitude: finiteCanonical(value - epsilon),
-          gate: serverOrder[(index + (line === 0 ? 63 : 0)) % 64],
+          gate: GATE_ORDER[(index + (line === 0 ? 63 : 0)) % 64],
           line: line === 0 ? 6 : line,
         });
         assert.notEqual(before.longitude, current.longitude, 'the exact cursor position is never rounded onto the boundary');

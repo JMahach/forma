@@ -26,6 +26,8 @@ function normalize(value) {
     && (returns.eventId === null || typeof returns.eventId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(returns.eventId))
     ? { opened: returns.opened, group: returns.group, year: returns.year, body: returns.body, eventId: returns.eventId, ...(event ? { event } : {}) } : null;
   const camera = value.camera, lifetime = value.lifetime, transit = value.transit, natalDay = value.natalDay, planets = value.planets;
+  // Read the former saved name once; the application uses only lifetime.
+  const lifetimeMode = lifetime?.mode === 'archive' ? 'lifetime' : lifetime?.mode;
   const choices = list => Array.isArray(list) && list.length <= PLANET_IDS.length
     && list.every(id => PLANET_IDS.includes(id)) && new Set(list).size === list.length;
   return {
@@ -36,11 +38,11 @@ function normalize(value) {
     camera: object(camera) && ['x', 'y', 'k'].every(key => Number.isFinite(camera[key]))
       && Math.abs(camera.x) <= 20000 && Math.abs(camera.y) <= 20000 && camera.k >= 1 && camera.k <= 100
       ? { x: camera.x, y: camera.y, k: camera.k } : null,
-    lifetime: object(lifetime) && lifetime.opened === true && ['day', 'archive'].includes(lifetime.mode)
-      && (lifetime.mode === 'day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
-      ? { opened: true, mode: lifetime.mode, fromDate: date(lifetime.fromDate) ? lifetime.fromDate : null,
+    lifetime: object(lifetime) && lifetime.opened === true && ['day', 'lifetime'].includes(lifetimeMode)
+      && (lifetimeMode === 'day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
+      ? { opened: true, mode: lifetimeMode, fromDate: date(lifetime.fromDate) ? lifetime.fromDate : null,
         toDate: date(lifetime.toDate) ? lifetime.toDate : null,
-        ...(utc(lifetime.requestedUtc) ? { requestedUtc: lifetime.requestedUtc } : lifetime.mode === 'archive' ? { index: lifetime.index } : {}), ...(lifetime.openEnded === true ? { openEnded: true } : {}), ...(typeof lifetime.personalPreview === 'boolean' ? { personalPreview: lifetime.personalPreview } : {}), ...(typeof lifetime.personalLive === 'boolean' ? { personalLive: lifetime.personalLive } : {}) } : null,
+        ...(utc(lifetime.requestedUtc) ? { requestedUtc: lifetime.requestedUtc } : lifetimeMode === 'lifetime' ? { index: lifetime.index } : {}), ...(lifetime.openEnded === true ? { openEnded: true } : {}), ...(typeof lifetime.personalPreview === 'boolean' ? { personalPreview: lifetime.personalPreview } : {}), ...(typeof lifetime.personalLive === 'boolean' ? { personalLive: lifetime.personalLive } : {}) } : null,
     transit: object(transit) && typeof transit.live === 'boolean' && date(transit.date)
       && typeof transit.timeZone === 'string' && transit.timeZone.length <= 80 && index(transit.index)
       ? { live: transit.live, date: transit.date, timeZone: transit.timeZone, index: transit.index } : null,

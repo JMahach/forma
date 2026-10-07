@@ -365,16 +365,16 @@ test('disk fingerprint follows calculation bytes, not deployment timestamps or i
     assert.equal(await transitCacheFingerprint(sourceRoot), baseline, file);
   }
   const ephemerides = ['data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1'];
-  const archivedTime = new Date('2026-09-30T12:00:00Z');
+  const preservedTime = new Date('2026-09-30T12:00:00Z');
   for (const file of ephemerides) {
     const name = path.join(sourceRoot, file), content = await fs.readFile(name);
-    await fs.utimes(name, archivedTime, archivedTime);
+    await fs.utimes(name, preservedTime, preservedTime);
     assert.equal(await transitCacheFingerprint(sourceRoot), baseline, `${file}: identical bytes after deployment`);
     const changed = Buffer.from(content); changed[0] ^= 1;
     await fs.writeFile(name, changed);
-    await fs.utimes(name, archivedTime, archivedTime);
+    await fs.utimes(name, preservedTime, preservedTime);
     assert.equal((await fs.stat(name)).size, content.length);
-    assert.equal((await fs.stat(name)).mtimeMs, archivedTime.getTime());
+    assert.equal((await fs.stat(name)).mtimeMs, preservedTime.getTime());
     assert.notEqual(await transitCacheFingerprint(sourceRoot), baseline, `${file}: changed bytes with identical metadata`);
     await fs.writeFile(name, content);
     assert.equal(await transitCacheFingerprint(sourceRoot), baseline);
@@ -385,7 +385,7 @@ test('disk fingerprint follows calculation bytes, not deployment timestamps or i
   const options = { root: sourceRoot, cacheDir, generateDay: async date => { calculations++; return makeDay(date); } };
   const first = await createTransitDays(options);
   const original = await first.get('2026-09-24'); await first.close();
-  for (const file of [...inputs, ...ephemerides]) await fs.utimes(path.join(sourceRoot, file), archivedTime, archivedTime);
+  for (const file of [...inputs, ...ephemerides]) await fs.utimes(path.join(sourceRoot, file), preservedTime, preservedTime);
   await fs.mkdir(path.join(sourceRoot, 'public'));
   await fs.writeFile(path.join(sourceRoot, 'public/index.html'), 'new interface');
   const redeployed = await createTransitDays(options);
@@ -395,7 +395,7 @@ test('disk fingerprint follows calculation bytes, not deployment timestamps or i
 
   const name = path.join(sourceRoot, ephemerides[0]), changed = await fs.readFile(name);
   changed[0] ^= 1;
-  await fs.writeFile(name, changed); await fs.utimes(name, archivedTime, archivedTime);
+  await fs.writeFile(name, changed); await fs.utimes(name, preservedTime, preservedTime);
   const changedData = await createTransitDays(options);
   await changedData.get('2026-09-24'); await changedData.close();
   assert.equal(calculations, 2, 'real ephemeris changes invalidate the disk packet');

@@ -7,12 +7,12 @@ import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const event = { id: 'saturn:2050-01-01T12:00:00Z', body: 'saturn', utc: '2050-01-01T12:00:00Z', cycle: 1 };
 const moment = utc => ({ id: `moment:${utc}`, utc, source: 'transit', personality: [4], design: [63] });
 function harness() {
-  const natal = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...natal, id: 'second', name: 'Вторая карта' };
   let returns, exploration;
   const jobs = [];
@@ -29,19 +29,19 @@ function harness() {
   return { session, returns, exploration, jobs, natal, second };
 }
 
-test('pending and canceled exact selection keeps the rail clock on the accepted archive result', async () => {
+test('pending and canceled exact selection keeps the rail clock on the accepted lifetime result', async () => {
   const h = harness();
-  const archive = moment('2040-01-01T01:20:00Z');
-  h.session.publish(h.session.expect('archive'), archive);
+  const lifetime = moment('2040-01-01T01:20:00Z');
+  h.session.publish(h.session.expect('lifetime'), lifetime);
   await h.returns.open();
   const pending = h.returns.selectEvent(event.id);
   await tick();
-  assert.equal(h.exploration.momentState()?.current, archive);
+  assert.equal(h.exploration.momentState()?.current, lifetime);
   h.returns.close();
-  assert.equal(h.exploration.momentState()?.current, archive);
+  assert.equal(h.exploration.momentState()?.current, lifetime);
   h.jobs[0]({ chart: moment(event.utc), event });
   assert.equal(await pending, false);
-  assert.equal(h.session.current.secondary, archive);
+  assert.equal(h.session.current.secondary, lifetime);
 });
 
 test('late exact data from the previous person is rejected even after the same result kind is requested again', async () => {
@@ -61,7 +61,7 @@ test('late exact data from the previous person is rejected even after the same r
   assert.equal(shown.secondary, accepted);
 });
 
-test('covered global Day keeps its minute owner active and archive explicitly suspends that owner', () => {
+test('covered global Day keeps its minute owner active and lifetime explicitly suspends that owner', () => {
   let wanted = true;
   const transit = { current: moment('2026-10-05T12:00:00Z'), get state() { return { wanted }; }, setWanted(value) { wanted = value; } };
   const session = createChartSession({ store: { get: () => null, has: () => false } });
@@ -70,23 +70,23 @@ test('covered global Day keeps its minute owner active and archive explicitly su
   exploration.acceptLifetimeMode({ opened: true, mode: 'day' });
   assert.equal(wanted, true);
   assert.equal(session.current.primary, transit.current);
-  exploration.acceptLifetimeMode({ opened: true, mode: 'archive' });
+  exploration.acceptLifetimeMode({ opened: true, mode: 'lifetime' });
   assert.equal(wanted, false);
-  assert.equal(session.owner, 'archive');
-  exploration.acceptLifetimeMode({ opened: false, mode: 'archive' });
+  assert.equal(session.owner, 'lifetime');
+  exploration.acceptLifetimeMode({ opened: false, mode: 'lifetime' });
   assert.equal(wanted, true);
   assert.equal(session.owner, 'transit');
 });
 
 
-test('an initial closed lazy rail notification cannot override a pending archive restoration', () => {
+test('an initial closed lazy rail notification cannot override a pending lifetime restoration', () => {
   let wanted = false;
   const session = createChartSession({ store: { get: () => null, has: () => false } });
-  session.expect('archive');
+  session.expect('lifetime');
   const exploration = createChartExploration({ session, getTransit: () => ({ state: { wanted }, setWanted(value) { wanted = value; } }),
     getReturns: () => null, getLifetime: () => null, getNatalDay: () => null });
   exploration.lifetimeChanged({ opened: false, mode: 'day' });
-  assert.equal(session.owner, 'archive');
+  assert.equal(session.owner, 'lifetime');
   assert.equal(wanted, false);
 });
 
@@ -94,12 +94,12 @@ test('ordinary rail notifications never choose a different source of the visible
   let wanted = false;
   const transit = { current: moment('2026-10-05T12:00:00Z'), get state() { return { wanted }; }, setWanted(value) { wanted = value; } };
   const session = createChartSession({ store: { get: () => null, has: () => false } });
-  session.expect('archive');
+  session.expect('lifetime');
   const exploration = createChartExploration({ session, getTransit: () => transit,
     getReturns: () => null, getLifetime: () => null, getNatalDay: () => null });
   const shown = session.current;
   exploration.lifetimeChanged({ opened: true, mode: 'day' });
-  assert.equal(session.owner, 'archive');
+  assert.equal(session.owner, 'lifetime');
   assert.equal(wanted, false);
   assert.equal(session.current, shown);
 });
@@ -119,11 +119,11 @@ test('turning off a still-loading global rail retains the already accepted trans
   assert.equal(session.current.primary, transit);
 });
 
-for (const explicitPreview of [undefined, true]) test(`real restoration at birth preserves ${explicitPreview ? 'explicit sampled archive' : 'legacy exact original'} before the first publication`, async () => {
-  const natal = { ...chartAtMinute(chartDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:56.789Z' };
+for (const explicitPreview of [undefined, true]) test(`real restoration at birth preserves ${explicitPreview ? 'explicit sampled lifetime' : 'legacy exact original'} before the first publication`, async () => {
+  const natal = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:56.789Z' };
   const metadata = { startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] };
   const saved = { selectedId: natal.id, natalDay: { opened: false },
-    lifetime: { opened: true, mode: 'archive', fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, index: 75,
+    lifetime: { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, index: 75,
       ...(explicitPreview === undefined ? {} : { personalPreview: explicitPreview }) } };
   const points = [], frames = [];
   let exploration, returns, lifetime;
@@ -140,7 +140,7 @@ for (const explicitPreview of [undefined, true]) test(`real restoration at birth
     points.push(index); const utc = new Date(Date.parse(metadata.startUtc) + index * 600000).toISOString();
     return { index, utc, longitudes: Array(11).fill(1), design: { utc, designUtc: '2026-06-28T12:30:00Z', designArcResidualDegrees: 0, longitudes: Array(11).fill(2) } };
   } }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
-    onStateChange: exploration.lifetimeChanged, onRender: exploration.publishArchive });
+    onStateChange: exploration.lifetimeChanged, onRender: exploration.publishLifetime });
   const view = createViewSession({ store: { read: () => saved, write() {} }, chartStore, session,
     mandala: { setEnabled() {}, enabled: false }, camera: { reset() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
     transit, natalDay, planetFilter: { snapshot: {} }, getReturns: () => returns, getLifetime: () => lifetime,

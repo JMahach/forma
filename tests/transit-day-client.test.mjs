@@ -149,11 +149,11 @@ test('the active local day stays visible to shared lookup while unrelated days r
   assert.equal(requests, 5, 'shared lookup reuses the same active object without a request');
   live.setWanted(false);
   for (const date of ['2026-09-17', '2026-09-16']) await client.getDay(date);
-  assert.equal(client.peekDay('2026-09-24'), active, 'Years can use the packets still owned by the last live day');
+  assert.equal(client.peekDay('2026-09-24'), active, 'Lifetime can use the packets still owned by the last live day');
   const lifetime = createLifetimeClient({ dayClient: client, fetch: async url => {
-    assert.equal(url, '/api/lifetime/meta', 'a minute or archive point already held by Day needs no transport');
+    assert.equal(url, '/api/lifetime/meta', 'a minute or lifetime point already held by Day needs no transport');
     return { ok: true, json: async () => ({ startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
-      stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, source: 'Swiss Ephemeris' }) };
+      stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris' }) };
   } });
   await lifetime.getMeta();
   assert.ok(lifetime.peekMinute(Date.parse('2026-09-24T12:31:00Z')));

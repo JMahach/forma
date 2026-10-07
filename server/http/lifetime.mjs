@@ -13,7 +13,7 @@ export function createLifetimeHandler(service) {
   return async function handle(req, res, suppliedUrl) {
     if (req.method !== 'GET') { res.writeHead(405, { ...headers, Allow: 'GET' }); res.end(); return; }
     try {
-      if (!service) throw new LifetimeError('lifetime_unavailable', 'Данные шкалы лет недоступны.');
+      if (!service) throw new LifetimeError('lifetime_unavailable', 'Данные летописи недоступны.');
       const url = suppliedUrl || new URL(req.url, 'http://localhost');
       if (url.pathname === '/api/lifetime/meta') {
         if (url.searchParams.size) throw new LifetimeError('invalid_request', 'Некорректный запрос шкалы.', 400);
@@ -36,7 +36,7 @@ export function createLifetimeHandler(service) {
     } catch (error) {
       const known = error instanceof LifetimeError;
       json(res, known ? error.status : 503, { error: known ? error.code : 'lifetime_unavailable',
-        message: known ? error.message : 'Данные шкалы лет недоступны.' });
+        message: known ? error.message : 'Данные летописи недоступны.' });
     }
   };
 }

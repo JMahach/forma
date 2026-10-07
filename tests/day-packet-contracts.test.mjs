@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { encodeTransitDay, encodeChartDay } from '../server/packets/encode.mjs';
+import { encodeTransitDay, encodeNatalDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION, TRANSIT_PLANETS } from '../shared/day-packets/transit-format.js';
-import { CHART_DAY_VERSION, CHART_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
-import { decodeTransitDay, decodeChartDay } from '../shared/day-packets/decode.js';
+import { NATAL_DAY_VERSION, NATAL_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
+import { decodeTransitDay, decodeNatalDay } from '../shared/day-packets/decode.js';
 import { shuffle } from '../shared/day-packets/float64-codec.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
-import { createChartDayClient } from '../src/data/natal-day-client.js';
+import { createNatalDayClient } from '../src/data/natal-day-client.js';
 
 // Captured from the published pre-refactor implementation before extracting
 // the codecs. Covers every predictor, header ordering and float boundary bits.
@@ -24,7 +24,7 @@ const natal = { ...base, timezone: 'UTC', segments: [{ index: 0, startUtc: base.
 for (const day of [transit, natal]) day.columns[0].splice(0, 7, -0, 0, Number.MIN_VALUE, 307.62499999999994, 307.625, 359.99999999999994, 0.0000000000001);
 const bits = values => Buffer.from(new Float64Array(values).buffer).toString('hex');
 
-for (const [name, day, encode, decode] of [['natal', natal, encodeChartDay, decodeChartDay]]) {
+for (const [name, day, encode, decode] of [['natal', natal, encodeNatalDay, decodeNatalDay]]) {
   test(`${name} packets remain byte-identical to the pre-refactor release for all five predictors`, () => {
     for (let order = 0; order < 5; order++) {
       const packet = encode(day, { orders: Array(day.columns.length).fill(order) });
@@ -36,15 +36,15 @@ for (const [name, day, encode, decode] of [['natal', natal, encodeChartDay, deco
 
 test('adding transit Design changes only its public service/client version; natal stays version 1', async () => {
   assert.equal(TRANSIT_DAY_VERSION, '2');
-  assert.equal(CHART_DAY_VERSION, '1');
+  assert.equal(NATAL_DAY_VERSION, '1');
   const transitClient = createTransitDayClient({ fetch: async url => {
     assert.equal(new URL(url, 'https://example.test').searchParams.get('v'), '2');
     return { ok: true, arrayBuffer: async () => encodeTransitDay(transit) };
   } });
-  const natalClient = createChartDayClient({ persistentCache: null, fetch: async (url, options) => {
+  const natalClient = createNatalDayClient({ persistentCache: null, fetch: async (url, options) => {
     assert.equal(url, '/api/chart/day');
     assert.equal(JSON.parse(options.body).v, '1');
-    return { ok: true, arrayBuffer: async () => encodeChartDay(natal) };
+    return { ok: true, arrayBuffer: async () => encodeNatalDay(natal) };
   } });
   assert.deepEqual((await transitClient.getDay(base.date)).columns.map(bits), transit.columns.map(bits));
   assert.deepEqual((await natalClient.getDay({ birthDate: base.date, cityId: 'synthetic', timezone: 'UTC' })).columns.map(bits), natal.columns.map(bits));
@@ -71,7 +71,7 @@ test('version 2 preserves all 24 columns and explicitly rejects genuine cached v
 test('binary planet column order matches the shared Python sampler independently of UI order', async () => {
   const protocol = ['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
   assert.deepEqual(TRANSIT_PLANETS, protocol);
-  assert.deepEqual(CHART_DAY_PLANETS, protocol);
+  assert.deepEqual(NATAL_DAY_PLANETS, protocol);
   const python = await readFile(new URL('../server/python/astronomy.py', import.meta.url), 'utf8');
   const tuple = python.match(/PLANET_BODIES = \(([\s\S]*?)\n\)/)?.[1];
   assert.ok(tuple);

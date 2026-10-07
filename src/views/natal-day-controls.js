@@ -1,4 +1,4 @@
-import { createChartDayExplorer } from '../state/natal-day.js';
+import { createNatalDayExplorer } from '../state/natal-day.js';
 import { formatDateInput } from './date-input.js';
 import { attachTimelineRange } from './timeline-range.js';
 import { setText } from '../ui/html.js';
@@ -12,7 +12,7 @@ function savedClock(chart) {
   return clock.endsWith(':00') && (chart.birthTime || '').length <= 5 ? clock.slice(0, 5) : clock;
 }
 
-export function attachChartDayExplorer({ toggle, panel, range, time, status, resetButton, marker = null, onMomentInput = () => {}, ...options }) {
+export function attachNatalDayExplorer({ toggle, panel, range, time, status, resetButton, marker = null, onMomentInput = () => {}, ...options }) {
   function update(state) {
     toggle.hidden = !state.available;
     toggle.setAttribute('aria-expanded', String(state.opened));
@@ -48,7 +48,7 @@ export function attachChartDayExplorer({ toggle, panel, range, time, status, res
     range.setAttribute('aria-valuetext', [date, clock, utcOffset, zone, state.exactOriginal ? 'сохранённое время рождения' : ''].filter(Boolean).join(', '));
     options.onStateChange?.(state);
   }
-  const explorer = createChartDayExplorer({ ...options, onStateChange: update });
+  const explorer = createNatalDayExplorer({ ...options, onStateChange: update });
   const reset = () => { onMomentInput(); return explorer.reset(); };
   const dayRange = attachTimelineRange({ range, marker,
     onScrub: value => { onMomentInput(); return explorer.scrub(value); }, onReference: reset });

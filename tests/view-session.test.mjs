@@ -11,14 +11,14 @@ import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createLiveTransit } from '../src/state/live-transit.js';
-import { createChartDayExplorer } from '../src/state/natal-day.js';
+import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { createMandalaMotion } from '../src/scene/modes/mandala-motion.js';
 import { createCamera } from '../src/scene/camera.js';
 import { STUDIO_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { transitChartAt } from '../src/domain/transit-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { dateDom } from './helpers/date-dom.mjs';
 
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
@@ -39,11 +39,11 @@ const point = (index, source = metadata) => {
 };
 function harness(storage = new Map(), { size = 1000, transitDay = async date => day(date), loadLifetime = null, canRestoreLifetime = null,
     returnsClient = null, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
-    zone = 'UTC', normalizeSavedView = value => value, archiveClient = { getMeta: async () => metadata, getPoint: async index => point(index) } } = {}) {
+    zone = 'UTC', normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async index => point(index) } } = {}) {
   const frames = [], writes = [], pending = new Map(), attributes = {}, styles = new Map();
   const storagePort = { getItem: key => storage.get(key) ?? null,
     setItem(key, value) { storage.set(key, value); writes.push([key, value]); } };
-  const saved = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const saved = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   if (!storage.has('liniya.charts.v1')) storage.set('liniya.charts.v1', JSON.stringify([saved, { ...saved, id: 'second' }]));
   const chartStore = createChartStore({ getStorage: () => storagePort });
   const viewStore = createViewStore({ getStorage: () => storagePort });
@@ -64,7 +64,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
   }, onStateChange: changed, onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
   transit = createLiveTransit({ now: getNow, timeZone: () => zone,
     dayClient: { getDay: transitDay }, onStateChange: changed, onRender: exploration.publishTransit });
-  natalDay = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onStateChange: changed, onRender: exploration.publishDay });
+  natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onStateChange: changed, onRender: exploration.publishDay });
   const camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: () => STUDIO_FRAME,
     measureFit: () => ({ area: { x: 0, y: 0, width: size, height: size }, min: .1 }), onChange: changed });
   const motion = createMandalaMotion({ viewport: { style: { setProperty: (name, value) => styles.set(name, value) } },
@@ -75,8 +75,8 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
     motion, render() {}, onStateChange: changed });
   function ensureLifetime() {
     if (!lifetime) {
-      lifetime = createLifetimeExplorer({ client: archiveClient, planetFilter: planets,
-        getDayState: () => transit.state, onRender: exploration.publishArchive,
+      lifetime = createLifetimeExplorer({ client: lifetimeClient, planetFilter: planets,
+        getDayState: () => transit.state, onRender: exploration.publishLifetime,
         getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
         onStateChange(state) { exploration.lifetimeChanged(state); changed(); } });
       lifetime.setAvailable = value => { if (!value) lifetime.close(); };
@@ -173,16 +173,16 @@ test('coalesced camera updates save the latest position and page hiding flushes 
 });
 
 
-test('reload restores the years range, requested archive moment and raw planet choices before fetching a point', async t => {
+test('reload restores the lifetime range, requested lifetime moment and raw planet choices before fetching a point', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03');
-  years.setAllPlanets(false); years.setPlanet('moon', true); years.setPlanet('sun', true, 'design');
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
-  const calls = []; const second = harness(first.storage, { archiveClient: { getMeta: async () => metadata,
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03');
+  lifetime.setAllPlanets(false); lifetime.setPlanet('moon', true); lifetime.setPlanet('sun', true, 'design');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const calls = []; const second = harness(first.storage, { lifetimeClient: { getMeta: async () => metadata,
     getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); await second.view.restore();
   const restored = second.ensureLifetime();
-  assert.equal(restored.state.opened, true); assert.equal(restored.state.mode, 'archive');
+  assert.equal(restored.state.opened, true); assert.equal(restored.state.mode, 'lifetime');
   assert.equal(restored.state.fromDate, '2020-01-01'); assert.equal(restored.state.toDate, '2020-01-03');
   assert.equal(restored.state.requestedUtc, Date.parse('2020-01-02T09:20:00Z')); assert.deepEqual(calls, [200]);
   assert.equal(second.session.current.utc, '2020-01-02T09:20:00Z');
@@ -191,23 +191,23 @@ test('reload restores the years range, requested archive moment and raw planet c
   assert.equal(second.transit.state.wanted, false);
 });
 
-test('failed archive metadata keeps the saved range and moment so retry resumes the same view', async t => {
+test('failed lifetime metadata keeps the saved range and moment so retry resumes the same view', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03');
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   let fail = true; const calls = [];
-  const second = harness(first.storage, { archiveClient: { getMeta: async () => { if (fail) throw new Error('Offline'); return metadata; },
+  const second = harness(first.storage, { lifetimeClient: { getMeta: async () => { if (fail) throw new Error('Offline'); return metadata; },
     getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); await second.view.restore();
   const saved = JSON.parse(second.storage.get('liniya.view.v1'));
-  assert.equal(saved.lifetime.mode, 'archive'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
+  assert.equal(saved.lifetime.mode, 'lifetime'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
   assert.equal(saved.lifetime.fromDate, '2020-01-01');
   assert.equal(second.ensureLifetime().state.status, 'error');
-  assert.equal(second.ensureLifetime().state.mode, 'archive');
+  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
   assert.equal(second.transit.state.wanted, false);
   assert.equal(second.session.hasCurrent, false);
   const retained = second.view.pendingLifetime;
-  assert.deepEqual([retained.mode, retained.fromDate, retained.toDate, retained.requestedUtc], ['archive', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
+  assert.deepEqual([retained.mode, retained.fromDate, retained.toDate, retained.requestedUtc], ['lifetime', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
   retained.requestedUtc = 1; retained.fromDate = '2020-01-03';
   assert.deepEqual([second.view.pendingLifetime.fromDate, second.view.pendingLifetime.requestedUtc], ['2020-01-01', Date.parse('2020-01-02T09:20:00Z')]);
   fail = false; await second.ensureLifetime().retry();
@@ -225,19 +225,19 @@ test('failed transit loading retains its paused target and applies it on a succe
   assert.equal(second.transit.state.live, false); assert.equal(second.transit.current.utc, '2026-10-04T00:00:00Z');
 });
 
-test('missing Years module keeps its saved range for another reload', async t => {
+test('missing Lifetime module keeps its saved range for another reload', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03'); await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03'); await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   const second = harness(first.storage, { loadLifetime: async () => null }); t.after(() => second.transit.stop()); await second.view.restore();
   const saved = JSON.parse(second.storage.get('liniya.view.v1'));
-  assert.equal(saved.lifetime.mode, 'archive'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
+  assert.equal(saved.lifetime.mode, 'lifetime'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
 });
 
 
-test('reload preserves an empty end as the full available archive range', async t => {
+test('reload preserves an empty end as the full available lifetime range', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-02', null);
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-02', null);
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
   const restored = second.ensureLifetime();
   assert.equal(restored.state.openEnded, true); assert.equal(restored.state.fromDate, '2020-01-02');
@@ -245,26 +245,26 @@ test('reload preserves an empty end as the full available archive range', async 
 });
 
 
-async function savePersonalYears(t) {
+async function savePersonalLifetime(t) {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const personalId = JSON.parse(first.storage.get('liniya.charts.v1'))[0].id;
   first.session.select(personalId); await first.natalDay.open(); first.natalDay.scrub(800);
   first.exploration.restorePreview(true);
-  const years = first.ensureLifetime(); await years.open();
-  await years.setDateRange('2020-01-01', '2020-01-03'); await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open();
+  await lifetime.setDateRange('2020-01-01', '2020-01-03'); await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   return { storage: first.storage, personalId };
 }
 
-test('eligible personal Years restores exact saved range and moment ahead of an opened natal-day preview', async t => {
-  const { storage, personalId } = await savePersonalYears(t), calls = [];
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+test('eligible personal Lifetime restores exact saved range and moment ahead of an opened natal-day preview', async t => {
+  const { storage, personalId } = await savePersonalLifetime(t), calls = [];
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => metadata, getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
   assert.equal(second.view.pendingLifetime, null);
   assert.equal(second.session.selectedId, personalId); assert.equal(second.natalDay.state.opened, false);
-  const years = second.ensureLifetime().state;
-  assert.deepEqual([years.mode, years.fromDate, years.toDate, years.requestedUtc], ['archive', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
+  const lifetime = second.ensureLifetime().state;
+  assert.deepEqual([lifetime.mode, lifetime.fromDate, lifetime.toDate, lifetime.requestedUtc], ['lifetime', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
   assert.deepEqual(calls, [200]); assert.equal(second.session.current.utc, '2020-01-02T09:20:00Z');
   assert.equal(second.session.current.kind, 'transit');
   assert.equal(second.session.current.primary, second.session.original);
@@ -272,9 +272,9 @@ test('eligible personal Years restores exact saved range and moment ahead of an 
   assert.equal(second.returns.current, null, 'an intermediate moment restores without inventing a return event');
 });
 
-test('delayed personal Years metadata cannot overwrite the saved target with a borrowed day', async t => {
-  const { storage } = await savePersonalYears(t), calls = []; let release;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+test('delayed personal Lifetime metadata cannot overwrite the saved target with a borrowed day', async t => {
+  const { storage } = await savePersonalLifetime(t), calls = []; let release;
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: () => new Promise(resolve => { release = resolve; }), getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); const pending = second.view.restore();
   await new Promise(resolve => setImmediate(resolve)); second.view.flush();
@@ -284,9 +284,9 @@ test('delayed personal Years metadata cannot overwrite the saved target with a b
   release(metadata); assert.equal(await pending, true); assert.deepEqual(calls, [200]);
 });
 
-test('navigation while personal Years metadata is pending cancels restoration before any point', async t => {
-  const { storage } = await savePersonalYears(t), calls = []; let release;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+test('navigation while personal Lifetime metadata is pending cancels restoration before any point', async t => {
+  const { storage } = await savePersonalLifetime(t), calls = []; let release;
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: () => new Promise(resolve => { release = resolve; }), getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); const pending = second.view.restore();
   await new Promise(resolve => setImmediate(resolve));
@@ -296,9 +296,9 @@ test('navigation while personal Years metadata is pending cancels restoration be
   assert.deepEqual(calls, []);
 });
 
-test('personal Years remains opt-in and a deleted saved personal chart cannot restore its archive', async t => {
+test('personal Lifetime remains opt-in and a deleted saved personal chart cannot restore its lifetime', async t => {
   for (const missing of [false, true]) {
-    const { storage, personalId } = await savePersonalYears(t);
+    const { storage, personalId } = await savePersonalLifetime(t);
     if (missing) storage.set('liniya.charts.v1', JSON.stringify(JSON.parse(storage.get('liniya.charts.v1')).filter(chart => chart.id !== personalId)));
     let loads = 0;
     const second = harness(storage, { ...(missing ? { canRestoreLifetime: () => true } : {}), loadLifetime: async () => { loads++; return null; } });
@@ -310,14 +310,14 @@ test('personal Years remains opt-in and a deleted saved personal chart cannot re
 });
 
 
-test('successful personal Years restore acknowledges a UTC target clamped by the normalized lifespan', async t => {
-  const { storage, personalId } = await savePersonalYears(t), calls = [];
+test('successful personal Lifetime restore acknowledges a UTC target clamped by the normalized lifespan', async t => {
+  const { storage, personalId } = await savePersonalLifetime(t), calls = [];
   // The composition root normalizes a legacy custom range before restoration.
   // Its formerly selected moment can precede the newly fixed birth boundary.
   const saved = JSON.parse(storage.get('liniya.view.v1'));
   saved.lifetime.fromDate = '2020-01-03';
   storage.set('liniya.view.v1', JSON.stringify(saved));
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => metadata, getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
@@ -380,23 +380,23 @@ test('selected Saturn survives refresh after list changes to Year and the panel 
 const returnMetadata = { ...metadata, startUtc: '2026-01-01T00:00:00Z', endExclusiveUtc: '2127-01-01T00:00:00Z',
   samples: (Date.parse('2127-01-01T00:00:00Z') - Date.parse('2026-01-01T00:00:00Z')) / 600000 };
 const nextTurn = () => new Promise(setImmediate);
-async function saveExactYears(t) {
+async function saveExactLifetime(t) {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0]; first.session.select(source.id);
   const event = { ...first.returnEvent, utc: '2055-10-01T12:03:07.123456Z', id: 'saturn:2055-10-01T12:03:07.123456Z' };
   await first.returns.selectEvent(event.id, { restoredEvent: event });
   await first.returns.setGroup('planet'); await first.returns.setBody('moon'); first.returns.close(); first.view.flush();
   const snapshot = JSON.parse(first.storage.get('liniya.view.v1'));
-  snapshot.lifetime = { opened: true, mode: 'archive', fromDate: source.utc.slice(0, 10), toDate: '2126-09-24',
+  snapshot.lifetime = { opened: true, mode: 'lifetime', fromDate: source.utc.slice(0, 10), toDate: '2126-09-24',
     requestedUtc: Date.parse(event.utc), personalPreview: false, personalLive: false };
   first.storage.set('liniya.view.v1', JSON.stringify(snapshot));
   return { storage: first.storage, source, event, target: snapshot.lifetime };
 }
 
-test('known exact reload owns the Years moment before restoration without a rounded point or hidden filter search', async t => {
-  const { storage, source, event, target } = await saveExactYears(t), points = [], lists = [], order = [];
+test('known exact reload owns the Lifetime moment before restoration without a rounded point or hidden filter search', async t => {
+  const { storage, source, event, target } = await saveExactLifetime(t), points = [], lists = [], order = [];
   let releaseChart, restored;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => { order.push('metadata'); return returnMetadata; },
     getPoint: index => { points.push(index); return new Promise(() => {}); },
   }, returnsClient: {
@@ -405,7 +405,7 @@ test('known exact reload owns the Years moment before restoration without a roun
   } });
   t.after(() => second.transit.stop());
   const restoring = second.view.restore().then(value => { restored = value; return value; }); await nextTurn();
-  assert.deepEqual(points, [], 'the saved event must load before any rounded archive work');
+  assert.deepEqual(points, [], 'the saved event must load before any rounded lifetime work');
   assert.deepEqual(order, ['chart']);
   second.interactionTarget.dispatch('wheel', { target: second.cameraSurface }); second.camera.zoom(2);
   const pose = second.camera.getView();
@@ -423,9 +423,9 @@ test('known exact reload owns the Years moment before restoration without a roun
   assert.equal(lists.length, 6); assert.ok(lists.every(job => job.input.body !== 'moon'));
 });
 
-test('navigation while a known return reloads prevents starting its saved Years restoration', async t => {
-  const { storage, source, event } = await saveExactYears(t); let releaseChart, metadataCalls = 0;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+test('navigation while a known return reloads prevents starting its saved Lifetime restoration', async t => {
+  const { storage, source, event } = await saveExactLifetime(t); let releaseChart, metadataCalls = 0;
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => { metadataCalls++; return returnMetadata; }, getPoint: async index => point(index, returnMetadata),
   }, returnsClient: { events: async () => ({ events: [] }),
     chart: () => new Promise(resolve => { releaseChart = resolve; }),
@@ -440,8 +440,8 @@ test('navigation while a known return reloads prevents starting its saved Years 
 
 test('an early exact failure is not retried twice and metadata failure keeps its own pending target', async t => {
   for (const failure of ['chart', 'metadata']) {
-    const { storage, source, event, target } = await saveExactYears(t), points = []; let charts = 0;
-    const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+    const { storage, source, event, target } = await saveExactLifetime(t), points = []; let charts = 0;
+    const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
       getMeta: async () => { if (failure === 'metadata') throw Error('Metadata unavailable'); return returnMetadata; },
       getPoint: async index => { points.push(index); return point(index, returnMetadata); },
     }, returnsClient: { events: async () => ({ events: [] }), chart: async () => {
@@ -464,10 +464,10 @@ test('an early exact failure is not retried twice and metadata failure keeps its
 });
 
 test('legacy return IDs restore through event lookup while the original remains accepted', async t => {
-  const { storage, source, event } = await saveExactYears(t), order = [];
+  const { storage, source, event } = await saveExactLifetime(t), order = [];
   const snapshot = JSON.parse(storage.get('liniya.view.v1')); delete snapshot.returns.event;
   snapshot.returns.group = 'major'; storage.set('liniya.view.v1', JSON.stringify(snapshot));
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => returnMetadata, getPoint: async index => { order.push('point'); return point(index, returnMetadata); },
   }, returnsClient: { events: async input => ({ events: input.body === event.body ? [event] : [] }),
     chart: async () => { order.push('chart'); return { event, chart: { ...source, utc: event.utc } }; },
@@ -491,17 +491,17 @@ async function saveColdReturns(t) {
   return first.storage;
 }
 
-test('reload during a cold Returns opening restores its rail even before a Years snapshot exists', async t => {
+test('reload during a cold Returns opening restores its rail even before a Lifetime snapshot exists', async t => {
   const storage = await saveColdReturns(t);
   const second = harness(storage, { canRestoreLifetime: () => true,
-    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'archive',
+    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
       fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 }) });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
   assert.equal(second.returns.state.opened, true);
   assert.equal(second.natalDay.state.opened, false);
   assert.equal(second.ensureLifetime().state.opened, true);
-  assert.equal(second.ensureLifetime().state.mode, 'archive');
+  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
   assert.equal(JSON.parse(storage.get('liniya.view.v1')).lifetime.opened, true);
 });
 
@@ -514,7 +514,7 @@ test('an open Returns menu owns restoration ahead of a stale natal Day snapshot'
   const second = harness(storage, { canRestoreLifetime: () => true,
     openReturnsTimeline: async () => {
       if (second.natalDay.state.opened) return false;
-      return second.ensureLifetime().restore({ opened: true, mode: 'archive',
+      return second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
         fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 });
     } });
   t.after(() => second.transit.stop());
@@ -531,14 +531,14 @@ test('a selected return with its phone menu closed restores a missing cold rail'
   await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   first.returns.close(); first.view.flush();
   const second = harness(first.storage, { canRestoreLifetime: () => true,
-    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'archive',
+    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
       fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 }) });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
   assert.equal(second.returns.state.opened, false);
   assert.equal(second.returns.state.selectedEvent.id, first.returnEvent.id);
   assert.equal(second.ensureLifetime().state.opened, true);
-  assert.equal(second.ensureLifetime().state.mode, 'archive');
+  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
   assert.equal(second.view.pendingReturns, null);
 });
 
@@ -554,10 +554,10 @@ test('a failed cold rail leaves the Returns target pending for another reload', 
   assert.equal(persisted.lifetime, null);
 });
 
-test('camera gestures during personal Years loading preserve the archive target and the new camera position', async t => {
-  const { storage } = await savePersonalYears(t);
+test('camera gestures during personal Lifetime loading preserve the lifetime target and the new camera position', async t => {
+  const { storage } = await savePersonalLifetime(t);
   let releaseMetadata;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: () => new Promise(resolve => { releaseMetadata = resolve; }), getPoint: async index => point(index),
   } });
   t.after(() => second.transit.stop());
@@ -600,10 +600,10 @@ test('wheel zoom during an exact return restoration keeps that event and the new
   assert.deepEqual(second.camera.getView(), pose);
 });
 
-test('a new archive scrub still supersedes a pending restored point', async t => {
-  const { storage } = await savePersonalYears(t);
+test('a new lifetime scrub still supersedes a pending restored point', async t => {
+  const { storage } = await savePersonalLifetime(t);
   let releasePoint;
-  const second = harness(storage, { canRestoreLifetime: () => true, archiveClient: {
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => metadata,
     getPoint: index => index === 200 ? new Promise(resolve => { releasePoint = resolve; }) : Promise.resolve(point(index)),
   } });
@@ -619,7 +619,7 @@ test('a new archive scrub still supersedes a pending restored point', async t =>
 
 test('restored personal live mode uses the shared minute timer and the new current minute', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { storage } = await savePersonalYears(t);
+  const { storage } = await savePersonalLifetime(t);
   const saved = JSON.parse(storage.get('liniya.view.v1'));
   saved.lifetime.personalLive = true;
   saved.transit.live = false; saved.transit.index = 0;
@@ -641,8 +641,8 @@ test('restored personal live mode uses the shared minute timer and the new curre
   assert.equal(JSON.parse(storage.get('liniya.view.v1')).transit.live, true, 'following Now supersedes an older paused day');
 });
 
-test('a paused personal archive reload never becomes live because its slider is near Now', async t => {
-  const { storage } = await savePersonalYears(t);
+test('a paused personal lifetime reload never becomes live because its slider is near Now', async t => {
+  const { storage } = await savePersonalLifetime(t);
   const saved = JSON.parse(storage.get('liniya.view.v1'));
   saved.lifetime.personalLive = false;
   storage.set('liniya.view.v1', JSON.stringify(saved));
@@ -673,17 +673,17 @@ test('reload paints the paused minute first while the unrelated local-day packet
   assert.deepEqual(second.frames, ['2026-10-03T21:00:00Z'], 'neighbor completion never flashes Now');
 });
 
-test('archive reload requests only its saved point and switching back to Day starts the minute clock', async t => {
+test('lifetime reload requests only its saved point and switching back to Day starts the minute clock', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03');
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   const requests = [], modes = [];
   const second = harness(first.storage, { transitDay: async date => { requests.push(date); return day(date); },
-    archiveClient: { getMeta: async () => { modes.push(second.ensureLifetime().state.mode); return metadata; }, getPoint: async index => point(index) } });
+    lifetimeClient: { getMeta: async () => { modes.push(second.ensureLifetime().state.mode); return metadata; }, getPoint: async index => point(index) } });
   t.after(() => second.transit.stop());
   await second.view.restore();
   assert.deepEqual(requests, []);
-  assert.deepEqual(modes, ['archive']);
+  assert.deepEqual(modes, ['lifetime']);
   assert.deepEqual(second.frames, ['2020-01-02T09:20:00Z']);
   second.ensureLifetime().close(); await drain();
   assert.deepEqual(requests, ['2026-10-04']);
@@ -691,8 +691,8 @@ test('archive reload requests only its saved point and switching back to Day sta
   assert.equal(second.session.current.utc, '2026-10-04T12:00:00Z');
 });
 
-test('a ready personal archive appears before its unrelated return list finishes', async t => {
-  const { storage } = await savePersonalYears(t);
+test('a ready personal lifetime appears before its unrelated return list finishes', async t => {
+  const { storage } = await savePersonalLifetime(t);
   const snapshot = JSON.parse(storage.get('liniya.view.v1'));
   snapshot.lifetime.personalPreview = true; snapshot.lifetime.personalLive = false;
   snapshot.returns = { opened: true, group: 'major', year: 2026, body: 'saturn', eventId: null };
@@ -710,7 +710,7 @@ test('a ready personal archive appears before its unrelated return list finishes
 });
 
 test('keyboard activity without a moment command preserves restoration', async t => {
-  const { storage } = await savePersonalYears(t);
+  const { storage } = await savePersonalLifetime(t);
   for (const key of ['Tab', 'Shift', 'Alt', 'Control', 'Meta', 'Escape', 'Enter', 'ArrowRight']) {
     let release;
     const second = harness(new Map(storage), { canRestoreLifetime: () => true,
@@ -724,11 +724,11 @@ test('keyboard activity without a moment command preserves restoration', async t
   }
 });
 
-test('an inactive saved Day pause does not hold archive restoration pending', async t => {
+test('an inactive saved Day pause does not hold lifetime restoration pending', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   first.transit.scrub(0);
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03');
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   let dayRequests = 0;
   const second = harness(first.storage, { transitDay: async date => { dayRequests++; return day(date); } });
   t.after(() => second.transit.stop());
@@ -740,10 +740,10 @@ test('an inactive saved Day pause does not hold archive restoration pending', as
 });
 
 
-test('a legacy archive index becomes UTC after metadata loads and never returns to new snapshots', async t => {
+test('a legacy lifetime index becomes UTC after metadata loads and never returns to new snapshots', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1'));
-  saved.lifetime = { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const second = harness(first.storage); t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
@@ -754,14 +754,14 @@ test('a legacy archive index becomes UTC after metadata loads and never returns 
 });
 
 
-test('a saved archive minute restores its exact UTC before writing a fresh snapshot', async t => {
+test('a saved lifetime minute restores its exact UTC before writing a fresh snapshot', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1'));
-  saved.lifetime = { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03',
+  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03',
     requestedUtc: Date.parse('2020-01-02T09:21:00Z') };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const minutes = [], points = [];
-  const second = harness(first.storage, { archiveClient: { getMeta: async () => metadata,
+  const second = harness(first.storage, { lifetimeClient: { getMeta: async () => metadata,
     getPoint: async index => { points.push(index); return point(index); },
     getMinute: async utc => { minutes.push(utc); return transitChartAt(day('2020-01-02'), 561); },
   } });
@@ -774,21 +774,21 @@ test('a saved archive minute restores its exact UTC before writing a fresh snaps
 });
 
 
-for (const personalPreview of [undefined, true]) test(`metadata retry consumes the legacy birth target for ${personalPreview ? 'an explicit archive sample' : 'the exact original'}`, async t => {
+for (const personalPreview of [undefined, true]) test(`metadata retry consumes the legacy birth target for ${personalPreview ? 'an explicit lifetime sample' : 'the exact original'}`, async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const charts = JSON.parse(first.storage.get('liniya.charts.v1'));
   charts[0].utc = '2026-09-24T12:34:56.789Z';
   first.storage.set('liniya.charts.v1', JSON.stringify(charts));
   const saved = JSON.parse(first.storage.get('liniya.view.v1'));
   saved.selectedId = charts[0].id;
-  saved.lifetime = { opened: true, mode: 'archive', fromDate: '2026-09-24', toDate: '2026-09-26', index: 75,
+  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', index: 75,
     personalLive: false, ...(personalPreview === undefined ? {} : { personalPreview }) };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const source = { ...metadata, startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z' };
   let unavailable = true; const points = [];
   const second = harness(first.storage, { canRestoreLifetime: () => true,
     normalizeSavedView: view => ({ ...view, lifetime: { ...view.lifetime, minimumUtc: charts[0].utc } }),
-    archiveClient: { getMeta: async () => { if (unavailable) throw Error('Metadata unavailable'); return source; },
+    lifetimeClient: { getMeta: async () => { if (unavailable) throw Error('Metadata unavailable'); return source; },
       getPoint: async index => { points.push(index); return point(index, source); } },
   });
   t.after(() => second.transit.stop());
@@ -802,7 +802,7 @@ for (const personalPreview of [undefined, true]) test(`metadata retry consumes t
   assert.equal(second.ensureLifetime().state.status, 'ready');
   assert.equal(second.ensureLifetime().state.requestedUtc, Date.parse(utc));
   assert.equal(second.session.current.utc, utc);
-  assert.equal(second.session.owner, personalPreview ? 'archive' : 'original');
+  assert.equal(second.session.owner, personalPreview ? 'lifetime' : 'original');
   assert.deepEqual(points, personalPreview ? [76] : []);
   assert.equal(second.view.pendingLifetime, null, 'the accepted core result consumes the pre-birth legacy target');
   second.view.flush();
@@ -814,8 +814,8 @@ for (const personalPreview of [undefined, true]) test(`metadata retry consumes t
 
 test('a ready matching range cannot consume a saved target before the loader returns its controller', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const years = first.ensureLifetime(); await years.open(); await years.setDateRange('2020-01-01', '2020-01-03');
-  await years.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   let second;
   second = harness(first.storage, { loadLifetime: async () => {
     const available = second.ensureLifetime();
@@ -834,12 +834,12 @@ test('a ready matching range cannot consume a saved target before the loader ret
 for (const activation of ['pointerdown', 'Enter', ' ']) test(`Retry by ${activation === ' ' ? 'Space' : activation} retains a legacy target while metadata is pending and the page hides`, async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1'));
-  saved.lifetime = { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const document = dateDom(), retryButton = document.createElement('button'), retryIcon = document.createElement('svg');
   retryButton.append(retryIcon);
   let attempts = 0, release; const points = [];
-  const second = harness(first.storage, { archiveClient: {
+  const second = harness(first.storage, { lifetimeClient: {
     getMeta: () => ++attempts === 1 ? Promise.reject(Error('Offline')) : new Promise(resolve => { release = resolve; }),
     getPoint: async index => { points.push(index); return point(index); },
   } });
@@ -865,11 +865,11 @@ for (const activation of ['pointerdown', 'Enter', ' ']) test(`Retry by ${activat
 test('choosing another person during a retried metadata request still supersedes the saved target', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1'));
-  saved.lifetime = { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const document = dateDom(), retryButton = document.createElement('button');
   let attempts = 0, release; const points = [];
-  const second = harness(first.storage, { archiveClient: {
+  const second = harness(first.storage, { lifetimeClient: {
     getMeta: () => ++attempts === 1 ? Promise.reject(Error('Offline')) : new Promise(resolve => { release = resolve; }),
     getPoint: async index => { points.push(index); return point(index); },
   } });
@@ -891,10 +891,10 @@ test('choosing another person during a retried metadata request still supersedes
 for (const phase of ['import', 'metadata']) for (const [id, activation] of [
   ['openLibrary', 'pointerdown'], ['openKnowledge', 'Enter'], ['togglePerformance', ' '],
   ['chartTitle', 'pointerdown'], ['topbar-empty-space', 'pointerdown'],
-]) test(`passive ${id} activation during archive ${phase} preserves the saved UTC through pagehide`, async t => {
+]) test(`passive ${id} activation during lifetime ${phase} preserves the saved UTC through pagehide`, async t => {
   const target = Date.parse('2020-01-02T09:20:00Z');
   const saved = { version: 1, selectedId: 'current-transit', mandala: false,
-    lifetime: { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: target } };
+    lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: target } };
   const storage = new Map([['liniya.view.v1', JSON.stringify(saved)]]);
   const document = dateDom(), control = document.createElement('button'), icon = document.createElement('svg');
   control.id = id; control.append(icon);
@@ -902,20 +902,20 @@ for (const phase of ['import', 'metadata']) for (const [id, activation] of [
   const h = harness(storage, {
     transitDay: async date => { dayRequests++; return day(date); },
     ...(phase === 'import' ? { loadLifetime: () => new Promise(resolve => { release = () => resolve(h.ensureLifetime()); }) } : {}),
-    archiveClient: {
+    lifetimeClient: {
       getMeta: () => phase === 'metadata' ? new Promise(resolve => { release = () => resolve(metadata); }) : Promise.resolve(metadata),
       getPoint: async index => { points.push(index); return point(index); },
     },
   });
   t.after(() => h.transit.stop());
   const restoring = h.view.restore(); await nextTurn();
-  assert.equal(typeof release, 'function'); assert.equal(h.session.owner, 'archive');
+  assert.equal(typeof release, 'function'); assert.equal(h.session.owner, 'lifetime');
   const pointer = activation === 'pointerdown';
   h.interactionTarget.dispatch(pointer ? 'pointerdown' : 'keydown', { target: pointer ? icon : control, key: pointer ? undefined : activation });
   h.tick(); h.eventTarget.dispatch('pagehide');
   const waiting = JSON.parse(storage.get('liniya.view.v1')).lifetime;
   release();
-  assert.equal(await restoring, true, 'opening an auxiliary tool cannot abandon the archive owner without a chart');
+  assert.equal(await restoring, true, 'opening an auxiliary tool cannot abandon the lifetime owner without a chart');
   assert.equal(h.view.interrupted, false); assert.equal(waiting?.requestedUtc, target);
   assert.equal(h.session.hasCurrent, true); assert.equal(h.session.current.utc, '2020-01-02T09:20:00Z');
   assert.equal(h.ensureLifetime().state.opened, true); assert.equal(h.view.pendingLifetime, null);
@@ -923,16 +923,16 @@ for (const phase of ['import', 'metadata']) for (const [id, activation] of [
   h.view.flush(); assert.equal(JSON.parse(storage.get('liniya.view.v1')).lifetime.requestedUtc, target);
 });
 
-for (const action of ['choose-chart', 'archive-off']) test(`passive tools do not exempt ${action} from superseding archive restoration`, async t => {
+for (const action of ['choose-chart', 'lifetime-off']) test(`passive tools do not exempt ${action} from superseding lifetime restoration`, async t => {
   const storage = new Map([['liniya.view.v1', JSON.stringify({ version: 1, selectedId: 'current-transit',
-    lifetime: { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: Date.parse('2020-01-02T09:20:00Z') } })]]);
+    lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: Date.parse('2020-01-02T09:20:00Z') } })]]);
   const document = dateDom(), passive = document.createElement('button'), choice = document.createElement('button');
-  passive.id = 'openLibrary'; choice.id = action === 'archive-off' ? 'lifetimeToggle' : '';
+  passive.id = 'openLibrary'; choice.id = action === 'lifetime-off' ? 'lifetimeToggle' : '';
   if (action === 'choose-chart') choice.dataset.chartId = 'second';
   let release; const points = [];
   const h = harness(storage, {
     ...(action === 'choose-chart' ? { loadLifetime: () => new Promise(resolve => { release = () => resolve(h.ensureLifetime()); }) } : {}),
-    archiveClient: { getMeta: () => action === 'archive-off' ? new Promise(resolve => { release = () => resolve(metadata); }) : Promise.resolve(metadata),
+    lifetimeClient: { getMeta: () => action === 'lifetime-off' ? new Promise(resolve => { release = () => resolve(metadata); }) : Promise.resolve(metadata),
       getPoint: async index => { points.push(index); return point(index); } },
   });
   t.after(() => h.transit.stop());
@@ -947,6 +947,6 @@ for (const action of ['choose-chart', 'archive-off']) test(`passive tools do not
   assert.equal(h.ensureLifetime().state.opened, false); assert.deepEqual(points, []);
   assert.equal(h.session.selectedId, action === 'choose-chart' ? 'second' : 'current-transit');
   assert.equal(h.session.hasCurrent, true);
-  assert.equal(h.transit.state.wanted, action === 'archive-off');
+  assert.equal(h.transit.state.wanted, action === 'lifetime-off');
   h.view.flush(); assert.equal(JSON.parse(storage.get('liniya.view.v1')).lifetime, null);
 });

@@ -19,7 +19,7 @@ function clock(utc, timeZone = null) {
 
 export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, date, time, status,
   retryButton = null, fromCalendar = null, toCalendar = null, marker = null, enabled = true, available = true,
-  onDayScrub = () => {}, onDayNow = () => {}, onArchiveNow = () => false, beforeScrub = () => {},
+  onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, resolveTap, ...options }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
@@ -41,14 +41,14 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
   }
   const dayRange = attachTimelineRange({ range, marker, resolveTap, onScrub: scrub,
     onStep(direction) {
-      if (explorer.state.mode === 'archive') return explorer.adjacentUtc(direction);
+      if (explorer.state.mode === 'lifetime') return explorer.adjacentUtc(direction);
       const day = options.getDayState?.();
       return Math.max(0, Math.min((day?.timeline?.minutes ?? 1) - 1, (day?.index ?? 0) + direction));
     },
     onReference() {
       if (!explorer.state.opened) return;
       onMomentInput();
-      if (explorer.state.mode === 'archive' && onArchiveNow() === true) return;
+      if (explorer.state.mode === 'lifetime' && onLifetimeNow() === true) return;
       const reference = explorer.state.mode === 'day' ? options.getDayState?.()?.referenceIndex : explorer.state.referenceUtc;
       if (beforeScrub(reference) === false) return;
       if (explorer.state.mode === 'day') onDayNow();
@@ -64,14 +64,14 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     }
     toDate.placeholder = state.openEnded ? 'До конца' : 'ДД.ММ.ГГГГ';
     for (const [input, value] of [[fromDate, state.fromDate], [toDate, state.toDate]]) {
-      // Live minute updates and archive completions must not replace either
+      // Live minute updates and lifetime completions must not replace either
       // unfinished input, including the first field after the user presses Tab.
       if (!dirty.has(input) && panel.ownerDocument.activeElement !== input && value) {
         const formatted = input === toDate && state.openEnded ? '' : formatDateInput(value);
         if (input.value !== formatted) input.value = formatted;
       }
     }
-    const endpoints = state.opened && state.mode === 'archive' ? formatEndpoints(state)
+    const endpoints = state.opened && state.mode === 'lifetime' ? formatEndpoints(state)
       ?? [formatDateInput(state.fromDate), formatDateInput(state.toDate)] : ['', ''];
     if (marks[0]) setText(marks[0], endpoints[0]);
     if (marks[1]) setText(marks[1], endpoints[1]);
@@ -127,7 +127,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       episode.timer = setTimeout(() => {
         if (momentLoading !== episode) return;
         const current = explorer.state;
-        if (!current.opened || current.mode !== 'archive' || (options.getMomentState?.()?.status ?? current.status) !== 'loading') return;
+        if (!current.opened || current.mode !== 'lifetime' || (options.getMomentState?.()?.status ?? current.status) !== 'loading') return;
         episode.visible = true;
         if (!inputError && !waitingForMetadata) setText(status, 'Загружаем момент…');
       }, 400);
@@ -257,7 +257,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const momentState = options.getMomentState?.();
     if (state.opened && (state.mode === 'day' || momentState || momentClockShown)) update(state, momentState);
   };
-  retryButton?.addEventListener('click', () => options.getMomentState?.()?.status === 'error' ? onArchiveNow()
+  retryButton?.addEventListener('click', () => options.getMomentState?.()?.status === 'error' ? onLifetimeNow()
     : explorer.state.mode === 'day' && options.getDayState?.()?.status === 'error' ? onDayNow() : explorer.retry());
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]]) {
     if (!button) continue;

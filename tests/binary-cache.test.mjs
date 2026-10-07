@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBinaryCache } from '../src/data/binary-cache.js';
-import { createChartDayClient } from '../src/data/natal-day-client.js';
-import { CHART_DAY_VERSION } from '../shared/day-packets/natal-format.js';
-import { encodeChartDay } from '../server/packets/encode.mjs';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { createNatalDayClient } from '../src/data/natal-day-client.js';
+import { NATAL_DAY_VERSION } from '../shared/day-packets/natal-format.js';
+import { encodeNatalDay } from '../server/packets/encode.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 // Exercise asynchronous transaction completion and eviction with a small
 // IndexedDB-compatible in-memory adapter, without requiring a browser session.
@@ -102,9 +102,9 @@ test('a separate device cache preserves existing natal client records without ex
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
   Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: natal.indexedDB });
   t.after(() => previous ? Object.defineProperty(globalThis, 'indexedDB', previous) : delete globalThis.indexedDB);
-  const chart = personalChartFixture(), key = `${CHART_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
-  natal.records.set(key, { key, bytes: encodeChartDay(chartDayFixture()).buffer, createdAt: Date.now(), accessedAt: Date.now() });
-  const client = createChartDayClient({ fetch: () => { throw new Error('Existing natal packet must not need a request'); } });
+  const chart = personalChartFixture(), key = `${NATAL_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
+  natal.records.set(key, { key, bytes: encodeNatalDay(natalDayFixture()).buffer, createdAt: Date.now(), accessedAt: Date.now() });
+  const client = createNatalDayClient({ fetch: () => { throw new Error('Existing natal packet must not need a request'); } });
   assert.equal((await client.getDay(chart)).date, chart.birthDate);
   const cache = createBinaryCache({ indexedDB: cycles.indexedDB, databaseName: 'bodygraph-cycles', maxAgeMs: Infinity, now: () => now });
   await cache.put('version:birth:event', new ArrayBuffer(12)); now = 10 * 365 * 86400000;

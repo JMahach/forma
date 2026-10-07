@@ -72,7 +72,7 @@ test('only accepted timeline gestures interrupt restoration while opening and re
   await tick(); await complete(h);
 });
 
-test('Years view updates its panel without overwriting the navigation-owned toolbar action', async () => {
+test('Lifetime view updates its panel without overwriting the navigation-owned toolbar action', async () => {
   const h = harness();
   h.toggle.title = 'Возвраты';
   h.toggle.setAttribute('aria-expanded', 'true'); h.toggle.setAttribute('aria-pressed', 'true');
@@ -83,7 +83,7 @@ test('Years view updates its panel without overwriting the navigation-owned tool
   assert.equal(h.toggle.getAttribute('aria-pressed'), 'true');
 });
 
-test('opening owns a visible day slider and delegates exact minute/Now actions with no archive point request', async () => {
+test('opening owns a visible day slider and delegates exact minute/Now actions with no lifetime point request', async () => {
   const h = harness(); assert.equal(h.panel.hidden, true); await open(h);
   assert.equal(h.panel.hidden, false); assert.equal(h.panel.dataset.mode, 'day');
   assert.equal(h.range.disabled, false); assert.equal(h.range.hidden, false); assert.equal(h.range.parentElement.hidden, false);
@@ -108,7 +108,7 @@ test('one transit update synchronizes the borrowed day and notifies the controls
   assert.equal(h.time.dateTime, '2026-09-30T12:38:00.000Z');
   assert.equal(h.notifications.length, 1);
 });
-test('archive range owns its sampled clock and current marker; today-to-today restores the exact day', async () => {
+test('lifetime range owns its sampled clock and current marker; today-to-today restores the exact day', async () => {
   const h = harness(); await open(h); await dates(h, '29092026', '01102026'); await complete(h);
   assert.equal(h.range.disabled, false); assert.equal(h.range.hidden, false); assert.equal(h.range.parentElement.hidden, false);
   assert.equal(h.time.textContent, '12:30 · UTC'); assert.equal(h.marker.hidden, false);
@@ -119,14 +119,14 @@ test('archive range owns its sampled clock and current marker; today-to-today re
   assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.time.textContent, '15:37 · UTC+3');
   assert.equal(h.range.hidden, false); assert.equal(h.marker.hidden, false); assert.equal(h.requests.length, requests);
   assert.deepEqual([h.range.min, h.range.max, h.range.value], ['0', '1439', '937']);
-  assert.deepEqual(h.dayScrubs, []); assert.deepEqual(h.dayReturns, [], 'archive reference never invokes day Now');
+  assert.deepEqual(h.dayScrubs, []); assert.deepEqual(h.dayReturns, [], 'lifetime reference never invokes day Now');
   h.range.value = '120'; h.range.dispatch('input'); assert.deepEqual(h.dayScrubs, [120]);
 });
 
-test('personal live archive clock borrows each exact day minute without requesting archive points', async () => {
+test('personal live lifetime clock borrows each exact day minute without requesting lifetime points', async () => {
   let liveState = null, nowCalls = 0;
   const h = harness({ getMomentState: () => liveState,
-    onArchiveNow: () => { nowCalls++; return true; } });
+    onLifetimeNow: () => { nowCalls++; return true; } });
   await open(h); await dates(h, '29092026', '01102026'); await complete(h);
   assert.equal(h.marker.hidden, false, 'the current-time reference remains on the rail');
   const requests = h.requests.length;
@@ -140,26 +140,26 @@ test('personal live archive clock borrows each exact day minute without requesti
   assert.equal(h.requests.length, requests);
   h.marker.dispatch('click', { detail: 0 });
   assert.equal(nowCalls, 1);
-  assert.equal(h.requests.length, requests, 'live Now is not an archive scrub');
+  assert.equal(h.requests.length, requests, 'live Now is not a lifetime scrub');
   liveState = { ...liveState, status: 'error', error: 'Текущий день недоступен' }; h.explorer.syncTransit();
   assert.equal(h.status.textContent, 'Текущий день недоступен');
   h.retryButton.dispatch('click'); assert.equal(nowCalls, 2);
   assert.equal(h.requests.length, requests, 'retry stays with the failed live owner');
   liveState = null; h.explorer.syncTransit();
-  assert.equal(h.time.textContent, '12:30 · UTC', 'leaving live ownership repaints even when the archive index does not change');
+  assert.equal(h.time.textContent, '12:30 · UTC', 'leaving live ownership repaints even when the lifetime index does not change');
   h.range.value = String(h.explorer.state.requestedUtc + 600000); h.range.dispatch('input');
   await tick(); await complete(h);
-  assert.equal(h.time.textContent, '12:40 · UTC', 'manual scrubbing returns ownership to the archive');
+  assert.equal(h.time.textContent, '12:40 · UTC', 'manual scrubbing returns ownership to the lifetime');
 });
 
-test('an exact return aligns the archive and its precise clock without fetching a rounded point', async () => {
+test('an exact return aligns the lifetime and its precise clock without fetching a rounded point', async () => {
   let owner = null;
   const h = harness({ getMomentState: () => owner, beforeScrub: () => { owner = null; } });
   await open(h);
   const utc = '2026-09-30T12:37:29.432Z';
   owner = { current: { ...h.day.current, utc }, status: 'ready', live: false };
   const index = Math.round((Date.parse(utc) - Date.parse(metadata.startUtc)) / 600000);
-  const restoring = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-10-01', index });
+  const restoring = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', index });
   await tick(); assert.equal(h.requests.length, 0); assert.equal(await restoring, true);
   assert.equal(h.range.value, String(Date.parse(utc))); assert.equal(h.time.dateTime, utc);
   assert.equal(h.time.textContent, '12:37:29.432 · UTC');
@@ -173,12 +173,12 @@ test('an exact return aligns the archive and its precise clock without fetching 
   assert.equal(h.time.dateTime, point(index).utc);
 });
 
-test('a borrowed live minute has the same exact UTC position in the control and archive state', async () => {
+test('a borrowed live minute has the same exact UTC position in the control and lifetime state', async () => {
   let owner = null;
   const h = harness({ getMomentState: () => owner });
   await open(h); owner = h.day;
   const index = Math.round((Date.parse(owner.current.utc) - Date.parse(metadata.startUtc)) / 600000);
-  await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-10-01', index });
+  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', index });
   assert.equal(h.time.textContent, '12:37 · UTC');
   assert.equal(h.explorer.state.requestedUtc, Date.parse(owner.current.utc)); assert.equal(Number(h.range.value), h.explorer.state.requestedUtc);
   owner = { ...owner, current: { ...owner.current, utc: '2026-09-30T12:38:00Z' } };
@@ -187,7 +187,7 @@ test('a borrowed live minute has the same exact UTC position in the control and 
   assert.equal(h.requests.length, 0);
 });
 
-test('Years day range follows real short/long local days and readiness/reference updates without a new chart', async () => {
+test('Lifetime day range follows real short/long local days and readiness/reference updates without a new chart', async () => {
   const h = harness(); await open(h);
   for (const [utc, minutes] of [['2026-03-08T16:00:00Z', 1380], ['2026-11-01T17:00:00Z', 1500]]) {
     h.setDay(utc, 'America/New_York');
@@ -213,7 +213,7 @@ test('Years day range follows real short/long local days and readiness/reference
   }
 });
 
-test('the ready day slider works before archive metadata arrives and closed controls never delegate input', async () => {
+test('the ready day slider works before lifetime metadata arrives and closed controls never delegate input', async () => {
   const meta = deferred(), h = harness({ metaPromise: meta.promise });
   const opening = h.explorer.open();
   assert.equal(h.range.hidden, false); assert.equal(h.range.disabled, false); assert.equal(h.fromCalendar.disabled, true);
@@ -225,7 +225,7 @@ test('the ready day slider works before archive metadata arrives and closed cont
   assert.deepEqual(h.dayScrubs, [42]); assert.deepEqual(h.dayReturns, []);
   meta.resolve(metadata); await opening;
 });
-test('day date follows local midnight rather than the archive UTC date', async () => {
+test('day date follows local midnight rather than the lifetime UTC date', async () => {
   const h = harness(); await open(h); h.setDay('2026-09-30T23:57:00Z', 'Asia/Tokyo');
   assert.equal(h.date.textContent, '01.10.2026'); assert.equal(h.time.textContent, '08:57 · UTC+9');
   assert.equal(h.fromDate.value, '01.10.2026'); assert.equal(h.toDate.value, '01.10.2026'); assert.equal(h.requests.length, 0);
@@ -328,7 +328,7 @@ test('scrub loading/error label stays on the displayed point and retry keeps the
   assert.equal(h.fromDate.value, '11.08.1998'); assert.equal(h.toDate.value, '12.08.1998');
 });
 
-test('quick archive requests keep the shown clock and never flash a loading message', async t => {
+test('quick lifetime requests keep the shown clock and never flash a loading message', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h); await complete(h);
   const shown = [h.date.textContent, h.time.textContent, h.time.dateTime];
@@ -384,10 +384,10 @@ test('errors, close and returning to today cancel delayed labels, including stal
   firstTimer.callback(); assert.equal(h.status.textContent, '', 'an old episode cannot reveal the retry label early');
   h.explorer.close(); assert.equal(retryTimer.cancelled, true); assert.equal(h.panel.hidden, true);
   retryTimer.callback(); assert.equal(h.status.textContent, '');
-  await open(h); await dates(h); const archiveTimer = timers.at(-1);
+  await open(h); await dates(h); const lifetimeTimer = timers.at(-1);
   await dates(h, '30092026', '30092026');
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(archiveTimer.cancelled, true);
-  archiveTimer.callback(); assert.equal(h.status.textContent, '');
+  assert.equal(h.explorer.state.mode, 'day'); assert.equal(lifetimeTimer.cancelled, true);
+  lifetimeTimer.callback(); assert.equal(h.status.textContent, '');
   assert.equal(h.time.textContent, '15:37 · UTC+3');
 });
 
@@ -424,7 +424,7 @@ test('unavailable/closed controls dismiss calendars and reopen with the current 
   h.explorer.setAvailable(true); h.toggle.focus(); await open(h);
   assert.equal(h.toDate.value, '30.09.2026'); assert.equal(h.toDate.getAttribute('aria-invalid'), 'false'); assert.equal(h.status.textContent, '');
 });
-test('Years owns one visible range in either mode without overlapping the ordinary transit panel', async () => {
+test('Lifetime owns one visible range in either mode without overlapping the ordinary transit panel', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const css = await fs.readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
   for (const name of ['From', 'To']) {
@@ -435,7 +435,7 @@ test('Years owns one visible range in either mode without overlapping the ordina
   assert.match(toggle, /aria-label="Летопись"/);
   assert.match(toggle, /<svg width="21" height="21"/);
   assert.doesNotMatch(toggle, /<span/);
-  const dayToggle = html.match(/<button[^>]*id="chartDayToggle"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  const dayToggle = html.match(/<button[^>]*id="natalDayToggle"[^>]*>[\s\S]*?<\/button>/)?.[0];
   assert.match(dayToggle, /aria-label="Шкала дня"/);
   assert.doesNotMatch(dayToggle, /<span/);
   assert.doesNotMatch(html, /id="lifetimeClose"/);
@@ -476,7 +476,7 @@ test('calendar start after end resets the end without committing an inverted ran
   assert.equal(h.explorer.state.openEnded, true); assert.equal(h.range.disabled, false);
 });
 
-test('equal dates and incomplete, impossible or outside-archive start drafts never clear the end', async () => {
+test('equal dates and incomplete, impossible or outside-lifetime start drafts never clear the end', async () => {
   const h = harness(); await open(h);
   for (const value of ['30092026', '0410', '31022027', '01012400']) {
     h.type(h.fromDate, value); assert.equal(h.toDate.value, '30.09.2026', value);
@@ -495,7 +495,7 @@ test('clearing the end deliberately means the final available date and entering 
   assert.equal(h.toDate.value, '07.10.2026'); assert.equal(h.toDate.placeholder, 'ДД.ММ.ГГГГ');
 });
 
-test('touch scrubbing calls beforeScrub before day/archive actions without a native input event', async () => {
+test('touch scrubbing calls beforeScrub before day/lifetime actions without a native input event', async () => {
   const actions = []; let h;
   h = harness({ beforeScrub: () => actions.push({ mode: h.explorer.state.mode, index: h.explorer.state.requestedUtc, dayScrubs: h.dayScrubs.length }) });
   h.range.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 44, bottom: 44 });
@@ -506,12 +506,12 @@ test('touch scrubbing calls beforeScrub before day/archive actions without a nat
   assert.equal(actions[0].dayScrubs, 0); assert.equal(h.dayScrubs.length, 1);
   await dates(h); await complete(h); const initial = h.explorer.state.requestedUtc;
   h.range.dispatch('pointerdown', { ...pointer, pointerId: 2 }); h.range.dispatch('pointerup', { ...pointer, pointerId: 2 });
-  assert.equal(nativeInputs, 0); assert.equal(actions.length, 2); assert.equal(actions[1].mode, 'archive');
+  assert.equal(nativeInputs, 0); assert.equal(actions.length, 2); assert.equal(actions[1].mode, 'lifetime');
   assert.equal(actions[1].index, initial); assert.notEqual(h.explorer.state.requestedUtc, initial);
   const userActions = actions.length; h.explorer.scrub(h.explorer.state.requestedUtc + 600000);
   assert.equal(actions.length, userActions, 'programmatic marker alignment does not activate manual preview');
 });
-test('reference actions invoke beforeScrub before day Now and archive return to the current moment', async () => {
+test('reference actions invoke beforeScrub before day Now and lifetime return to the current moment', async () => {
   const actions = []; let h;
   h = harness({ beforeScrub: () => actions.push({ mode: h.explorer.state.mode, index: h.explorer.state.requestedUtc, returns: h.dayReturns.length }) });
   await open(h); h.marker.dispatch('click', { detail: 0 });
@@ -519,7 +519,7 @@ test('reference actions invoke beforeScrub before day Now and archive return to 
   await dates(h, '29092026', '01102026'); await complete(h);
   h.explorer.scrub(h.explorer.state.minUtc); await tick(); await complete(h); const oldIndex = h.explorer.state.requestedUtc;
   h.marker.dispatch('click', { detail: 0 });
-  assert.equal(actions.length, 2); assert.equal(actions[1].mode, 'archive'); assert.equal(actions[1].index, oldIndex);
+  assert.equal(actions.length, 2); assert.equal(actions[1].mode, 'lifetime'); assert.equal(actions[1].index, oldIndex);
   assert.equal(h.explorer.state.requestedUtc, Date.parse('2026-09-30T12:40:00Z'));
 });
 
@@ -530,7 +530,7 @@ test('an exact birth endpoint can own a scrub while the Now marker still supplie
   const index = h.explorer.state.requestedUtc, requests = h.requests.length;
   h.range.value = h.range.min; h.range.dispatch('input');
   assert.equal(targets[0], h.explorer.state.minUtc);
-  assert.equal(h.explorer.state.requestedUtc, index, 'the exact endpoint owner prevents an extra archive sample');
+  assert.equal(h.explorer.state.requestedUtc, index, 'the exact endpoint owner prevents an extra lifetime sample');
   assert.equal(h.requests.length, requests);
   h.setNow('2026-09-30T12:48:00Z');
   h.marker.dispatch('click', { detail: 0 });
@@ -539,7 +539,7 @@ test('an exact birth endpoint can own a scrub while the Now marker still supplie
 });
 
 
-test('loading feedback follows the live owner even when the archive is ready', async t => {
+test('loading feedback follows the live owner even when the lifetime is ready', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let live = null;
   const h = harness({ getMomentState: () => live });
@@ -553,7 +553,7 @@ test('loading feedback follows the live owner even when the archive is ready', a
 });
 
 test('endpoint labels have one owner for personal and standalone ranges and unchanged refreshes make no text writes', async t => {
-  for (const personal of [false, true]) await t.test(personal ? 'personal life' : 'standalone archive', async () => {
+  for (const personal of [false, true]) await t.test(personal ? 'personal life' : 'standalone lifetime', async () => {
     let borrowed = null;
     const natal = { utc: '1998-08-11T12:34:56Z', timezone: 'UTC' };
     const h = harness({ getMomentState: () => borrowed,
@@ -576,13 +576,13 @@ test('endpoint labels have one owner for personal and standalone ranges and unch
 });
 
 
-test('archive UTC keeps cached minute keyboard steps, exact boundaries and the birth owner reachable', async () => {
+test('lifetime UTC keeps cached minute keyboard steps, exact boundaries and the birth owner reachable', async () => {
   const targets = [], minimumUtc = Date.parse('1998-08-11T12:34:56Z');
   let ready = null;
   const h = harness({ client: { peekMinute: utc => ready && Math.floor(utc / 60000) * 60000 === Date.parse(ready.utc) ? ready : null },
     beforeScrub: utc => { targets.push(utc); return utc !== minimumUtc; } });
   await open(h);
-  const restoring = h.explorer.restore({ opened: true, mode: 'archive', fromDate: '1998-08-11', toDate: '1998-08-12',
+  const restoring = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-11', toDate: '1998-08-12',
     minimumUtc: '1998-08-11T12:34:56Z', requestedUtc: Date.parse('1998-08-12T12:30:00Z') });
   await tick(); await complete(h); await restoring;
   assert.equal(h.range.min, String(minimumUtc)); assert.equal(h.range.max, String(Date.parse('1998-08-12T23:59:59.999Z')));
@@ -597,7 +597,7 @@ test('archive UTC keeps cached minute keyboard steps, exact boundaries and the b
   assert.equal(h.range.value, String(utc + 60000)); assert.equal(h.requests.length, requests);
   assert.equal(targets.at(-1), utc + 60000);
   h.range.dispatch('keydown', { key: 'Home' });
-  assert.equal(targets.at(-1), minimumUtc, 'Home is offered to the exact birth owner before archive snapping');
+  assert.equal(targets.at(-1), minimumUtc, 'Home is offered to the exact birth owner before lifetime snapping');
   assert.equal(h.requests.length, requests);
   h.range.dispatch('keydown', { key: 'End' });
   assert.equal(targets.at(-1), Date.parse('1998-08-12T23:59:59.999Z'));

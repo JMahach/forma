@@ -10,10 +10,19 @@ function memory(value = null) {
 }
 const snapshot = { version: 1, selectedId: 'saved-chart', mandala: true,
   camera: { x: -320, y: -410, k: 2 },
-  lifetime: { opened: true, mode: 'archive', fromDate: '2020-10-04', toDate: '2027-10-04', requestedUtc: 1604811600000 },
+  lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-10-04', toDate: '2027-10-04', requestedUtc: 1604811600000 },
   transit: { live: false, date: '2026-10-04', timeZone: 'Europe/Moscow', index: 400 },
   natalDay: { opened: false, exactOriginal: true, index: 0 },
   planets: { selectedPlanets: ['sun', 'moon'], selectedDesignPlanets: ['earth'] } };
+
+test('legacy archive mode alias restores as lifetime without losing the saved moment or rewriting storage on read', () => {
+  const old = { ...snapshot, lifetime: { ...snapshot.lifetime, mode: 'archive' } };
+  const storage = memory(old), store = createViewStore({ getStorage: () => storage });
+  assert.deepEqual(store.read(), snapshot);
+  assert.equal(storage.writes.length, 0);
+  assert.equal(store.write({ ...snapshot, mandala: false }), true);
+  assert.equal(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)).lifetime.mode, 'lifetime');
+});
 
 test('a fresh view store restores presentation without touching chart-library records', () => {
   const storage = memory(); storage.records.set('liniya.charts.v1', 'personal library');
@@ -31,7 +40,7 @@ test('malformed and obsolete stored views fall back safely and cannot inject cha
     storage.records.set(VIEW_STORAGE_KEY, value); assert.equal(store.read(), null);
   }
   storage.records.set(VIEW_STORAGE_KEY, JSON.stringify({ ...snapshot, camera: { x: 'bad', y: 0, k: 0 },
-    selectedId: '../bad', lifetime: { opened: true, mode: 'archive', fromDate: '2020-02-31', toDate: '2027-10-04', index: -4 },
+    selectedId: '../bad', lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-02-31', toDate: '2027-10-04', index: -4 },
     arbitrary: { library: 'replace' } }));
   const read = store.read();
   assert.equal(read.mandala, true); assert.equal(read.selectedId, 'current-transit');
@@ -96,7 +105,7 @@ test('personal timeline distinguishes birth view from a scrubbed preview across 
   }
 });
 
-test('following the current minute remains distinct from a manually selected archive moment', () => {
+test('following the current minute remains distinct from a manually selected lifetime moment', () => {
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
   for (const personalLive of [true, false]) {
     store.write({ ...snapshot, lifetime: { ...snapshot.lifetime, personalPreview: true, personalLive } });
@@ -108,7 +117,7 @@ test('following the current minute remains distinct from a manually selected arc
 });
 
 
-test('archive UTC survives storage exactly and supersedes a legacy transport index', () => {
+test('lifetime UTC survives storage exactly and supersedes a legacy transport index', () => {
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
   const requestedUtc = Date.parse('2026-10-04T12:37:29.432Z');
   store.write({ ...snapshot, lifetime: { ...snapshot.lifetime, requestedUtc, index: 5040 } });
@@ -117,13 +126,13 @@ test('archive UTC survives storage exactly and supersedes a legacy transport ind
   assert.equal('index' in JSON.parse(storage.records.get(VIEW_STORAGE_KEY)).lifetime, false);
 });
 
-test('legacy archive indices remain readable until metadata can convert them', () => {
+test('legacy lifetime indices remain readable until metadata can convert them', () => {
   const legacy = { ...snapshot, lifetime: { ...snapshot.lifetime, requestedUtc: undefined, index: 5040 } };
   const storage = memory(legacy), saved = createViewStore({ getStorage: () => storage }).read();
   assert.equal(saved.lifetime.index, 5040); assert.equal('requestedUtc' in saved.lifetime, false);
 });
 
-test('archive UTC rejects invalid timestamps while accepting dates before the Unix epoch', () => {
+test('lifetime UTC rejects invalid timestamps while accepting dates before the Unix epoch', () => {
   for (const requestedUtc of [Infinity, NaN, '2026-10-04', 8640000000000001]) {
     const storage = memory({ ...snapshot, lifetime: { ...snapshot.lifetime, requestedUtc } });
     assert.equal(createViewStore({ getStorage: () => storage }).read().lifetime, null);

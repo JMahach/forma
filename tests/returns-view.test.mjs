@@ -267,7 +267,7 @@ test('Returns uses the existing year calendar beside manual entry and closes it 
   assert.equal(h.document.body.children.filter(node => node.className === 'date-picker').length, 1);
 });
 
-test('return footer and drawer require an explicit visible Years owner', () => {
+test('return footer and drawer require an explicit visible Lifetime owner', () => {
   const h = panelHarness(); h.update({ opened: true });
   assert.equal(h.nodes.returnsControls.hidden, true);
   assert.equal(h.nodes.returnsPanel.hidden, true); assert.equal(h.nodes.returnsPanel.inert, true);
@@ -275,7 +275,7 @@ test('return footer and drawer require an explicit visible Years owner', () => {
   assert.equal(h.layouts, 0, 'an opened state without a visible drawer cannot move the studio');
 });
 
-test('closing only the return drawer keeps the Years footer and reopens the same selected exact event', () => {
+test('closing only the return drawer keeps the Lifetime footer and reopens the same selected exact event', () => {
   const h = panelHarness(), selectedEvent = event('saturn', '2076-10-03T22:30:00Z');
   h.update({ timelineVisible: true, selectedEvent });
   assert.equal(h.nodes.returnsControls.hidden, false); assert.equal(h.nodes.returnsPanel.hidden, true);
@@ -289,7 +289,7 @@ test('closing only the return drawer keeps the Years footer and reopens the same
   assert.equal(h.layouts, 3); assert.equal(h.document.activeElement, h.nodes.returnsClose);
 });
 
-test('hiding Years while its return drawer is open hides both views and backdrop, requests layout and releases Escape', () => {
+test('hiding Lifetime while its return drawer is open hides both views and backdrop, requests layout and releases Escape', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true });
   assert.equal(h.layouts, 1); assert.equal(h.nodes.returnsPanel.hidden, false);
   h.update({ timelineVisible: false });

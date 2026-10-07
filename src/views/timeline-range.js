@@ -97,7 +97,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     range.value = String(value);
     onScrub(value);
     // Keep the accepted position when the owner resolves a continuous UTC
-    // target to a cached minute or archive sample.
+    // target to a cached minute or lifetime sample.
     if (gesture) gesture.lastValue = Number(range.value);
   }
   range.addEventListener('pointerdown', event => {

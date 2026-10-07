@@ -343,7 +343,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-controls[data-status='error'] .transit-status { top: 17px; right: 86px; }
 
 /* The year preview shares the studio's panel placement and range geometry. */
-/* The Years backing also contains its lower date/time labels. */
+/* The lifetime backing also contains its lower date/time labels. */
 .lifetime-controls::before { bottom: 0; }
 .lifetime-heading { position: absolute; z-index: 1; left: 0; right: 0; top: -13px; display: flex; align-items: center; justify-content: center; gap: 5px; height: 22px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lifetime-date-control { display: flex; align-items: center; gap: 3px; }

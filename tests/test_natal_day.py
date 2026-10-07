@@ -10,10 +10,10 @@ from server.python import calculator as calc
 from server.python import astronomy as astro
 from server.python import civil_time as civil
 from server.python.errors import ChartError
-from server.python import chart_day
+from server.python import natal_day
 
 
-class ChartDayTests(unittest.TestCase):
+class NatalDayTests(unittest.TestCase):
     def test_grid_matches_scalar_fold_policy_for_every_local_minute(self):
         for date, zone in (
             ('1801-01-01', 'UTC'), ('2399-12-31', 'UTC'),
@@ -90,7 +90,7 @@ class ChartDayTests(unittest.TestCase):
     def test_every_minute_matches_original_personality_design_and_residual(self):
         date, zone = '1990-06-15', 'Europe/Moscow'
         with mock.patch.object(astro, 'activations', side_effect=AssertionError('No chart formatting')), mock.patch.object(astro, 'gate_line', side_effect=AssertionError('No gate/line work')):
-            day = chart_day.calculate_day(date, zone)
+            day = natal_day.calculate_day(date, zone)
         self.assertEqual(day['samples'], 1440)
         self.assertEqual(len(day['columns']), 24)
         self.assertEqual(day['segments'], [dict(index=0, startUtc='1990-06-14T20:00:00Z', utcOffset='UTC+04:00', offsetSeconds=14400, fold=0)])
@@ -108,7 +108,7 @@ class ChartDayTests(unittest.TestCase):
     def test_segments_reconstruct_exact_historical_and_dst_utc_grid(self):
         for date, zone in (('1900-01-01', 'Europe/Paris'), ('1911-03-10', 'Europe/Paris'), ('2024-11-03', 'America/New_York')):
             with self.subTest(date=date, zone=zone):
-                day = chart_day.calculate_day(date, zone)
+                day = natal_day.calculate_day(date, zone)
                 for index, (moment, offset, fold, offset_seconds) in enumerate(civil.local_minutes(date, zone)):
                     segment = next(item for item in reversed(day['segments']) if item['index'] <= index)
                     actual = dt.datetime.fromisoformat(segment['startUtc'].replace('Z', '+00:00')) + dt.timedelta(minutes=index - segment['index'])

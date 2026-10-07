@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeChartDay } from '../server/packets/encode.mjs';
-import { decodeChartDay } from '../shared/day-packets/decode.js';
-import { chartDayMinute, chartDayIndexAt, chartAtMinute } from '../src/domain/natal-day.js';
+import { encodeNatalDay } from '../server/packets/encode.mjs';
+import { decodeNatalDay } from '../shared/day-packets/decode.js';
+import { natalDayMinute, natalDayIndexAt, chartAtMinute } from '../src/domain/natal-day.js';
 import { validateChart } from '../src/data/storage.js';
 
 export function makeDay(date = '1990-06-15', timezone = 'UTC', samples = 1440) {
@@ -27,8 +27,8 @@ test('all predictors preserve every bit in both sides, design seconds and exact 
   day.columns[0].splice(0, 7, -0, 0, Number.MIN_VALUE, 307.62499999999994, 307.625, 359.99999999999994, 0.0000000000001);
   const expected = day.columns.map(bits);
   for (let order = 0; order < 5; order++) {
-    const packet = encodeChartDay(day, { orders: Array(24).fill(order) });
-    assert.deepEqual(decodeChartDay(packet).columns.map(bits), expected);
+    const packet = encodeNatalDay(day, { orders: Array(24).fill(order) });
+    assert.deepEqual(decodeNatalDay(packet).columns.map(bits), expected);
   }
   assert.deepEqual(day.columns.map(bits), expected);
 });
@@ -41,16 +41,16 @@ test('historical seconds and repeated folds preserve unique sample instants with
     { index: 120, startUtc: '2024-11-03T06:00:00Z', offsetSeconds: -18000, utcOffset: 'UTC−05:00', fold: 1 },
     { index: 180, startUtc: '2024-11-03T07:00:00Z', offsetSeconds: -18000, utcOffset: 'UTC−05:00', fold: 0 },
   ];
-  const decoded = decodeChartDay(encodeChartDay(day));
-  assert.deepEqual(chartDayMinute(decoded, 90), { index: 90, utc: '2024-11-03T05:30:00Z', birthTime: '01:30', utcOffset: 'UTC−04:00', fold: 0 });
-  assert.deepEqual(chartDayMinute(decoded, 150), { index: 150, utc: '2024-11-03T06:30:00Z', birthTime: '01:30', utcOffset: 'UTC−05:00', fold: 1 });
-  assert.equal(chartDayIndexAt(decoded, '2024-11-03T06:30:45Z'), 150);
-  assert.equal(chartDayIndexAt(decoded, 0), 0);
-  assert.equal(chartDayIndexAt(decoded, Date.parse('2025-01-01')), 1499);
+  const decoded = decodeNatalDay(encodeNatalDay(day));
+  assert.deepEqual(natalDayMinute(decoded, 90), { index: 90, utc: '2024-11-03T05:30:00Z', birthTime: '01:30', utcOffset: 'UTC−04:00', fold: 0 });
+  assert.deepEqual(natalDayMinute(decoded, 150), { index: 150, utc: '2024-11-03T06:30:00Z', birthTime: '01:30', utcOffset: 'UTC−05:00', fold: 1 });
+  assert.equal(natalDayIndexAt(decoded, '2024-11-03T06:30:45Z'), 150);
+  assert.equal(natalDayIndexAt(decoded, 0), 0);
+  assert.equal(natalDayIndexAt(decoded, Date.parse('2025-01-01')), 1499);
   const historical = makeDay('1900-01-01', 'Europe/Paris');
   historical.startUtc = '1899-12-31T23:50:39Z';
   historical.segments = [{ index: 0, startUtc: historical.startUtc, offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 }];
-  assert.equal(chartDayMinute(decodeChartDay(encodeChartDay(historical)), 1).utc, '1899-12-31T23:51:39Z');
+  assert.equal(natalDayMinute(decodeNatalDay(encodeNatalDay(historical)), 1).utc, '1899-12-31T23:51:39Z');
 });
 
 test('minute lookup keeps exact second boundaries, gaps and endpoint clamping', () => {
@@ -60,7 +60,7 @@ test('minute lookup keeps exact second boundaries, gaps and endpoint clamping', 
     { index: 0, startUtc: day.startUtc, offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 },
     { index: 2, startUtc: '1899-12-31T23:54:39Z', offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 },
   ];
-  const decoded = decodeChartDay(encodeChartDay(day));
+  const decoded = decodeNatalDay(encodeNatalDay(day));
   for (const [utc, index] of [
     ['1899-12-31T23:49:00Z', 0], ['1899-12-31T23:50:38.999Z', 0],
     ['1899-12-31T23:50:39Z', 0], ['1899-12-31T23:51:38.999Z', 0],
@@ -68,17 +68,17 @@ test('minute lookup keeps exact second boundaries, gaps and endpoint clamping', 
     ['1899-12-31T23:54:39Z', 2], ['1899-12-31T23:55:38.999Z', 2],
     ['1899-12-31T23:55:39Z', 3], ['1900-01-02T00:00:00Z', 3],
   ]) {
-    assert.equal(chartDayIndexAt(decoded, utc), index, utc);
-    assert.equal(chartDayIndexAt(decoded, Date.parse(utc)), index, `numeric ${utc}`);
+    assert.equal(natalDayIndexAt(decoded, utc), index, utc);
+    assert.equal(natalDayIndexAt(decoded, Date.parse(utc)), index, `numeric ${utc}`);
   }
-  for (const invalid of [undefined, null, '', 'invalid', NaN, Infinity]) assert.equal(chartDayIndexAt(decoded, invalid), 0);
+  for (const invalid of [undefined, null, '', 'invalid', NaN, Infinity]) assert.equal(natalDayIndexAt(decoded, invalid), 0);
   for (const invalid of [-1, 4, 0.5, '1', NaN, Infinity]) {
-    assert.throws(() => chartDayMinute(decoded, invalid), /Некорректный пакет дня рождения/);
+    assert.throws(() => natalDayMinute(decoded, invalid), /Некорректный пакет дня рождения/);
   }
 });
 
 test('materialization retains original identity and never mutates the saved chart', () => {
-  const day = decodeChartDay(encodeChartDay(makeDay()));
+  const day = decodeNatalDay(encodeNatalDay(makeDay()));
   const original = Object.freeze({ id: 'saved-id', name: 'My chart', note: 'Keep', createdAt: 'original', updatedAt: 'original', cityId: '123' });
   const chart = chartAtMinute(day, 41, original);
   assert.equal(chart.id, original.id); assert.equal(chart.name, original.name); assert.equal(chart.updatedAt, original.updatedAt);
@@ -90,15 +90,15 @@ test('materialization retains original identity and never mutates the saved char
 });
 
 test('bounded shapes, timeline validation and value ranges reject corrupt packets', () => {
-  const packet = encodeChartDay(makeDay());
-  for (const bad of [null, {}, packet.subarray(0, -1), new Uint8Array(1_000_000)]) assert.throws(() => decodeChartDay(bad));
+  const packet = encodeNatalDay(makeDay());
+  for (const bad of [null, {}, packet.subarray(0, -1), new Uint8Array(1_000_000)]) assert.throws(() => decodeNatalDay(bad));
   for (const update of [h => h.version = '2', h => h.samples = 2881, h => h.samples = 0, h => h.orders.pop(), h => h.orders[0] = 9,
     h => h.segments[0].index = 1, h => h.segments[0].offsetSeconds = 1, h => h.segments[0].fold = 2,
     h => h.segments[0].startUtc = '2000-01-01T00:00:00Z', h => h.date = '1990-02-30', h => h.timezone = 'x'.repeat(161)]) {
-    assert.throws(() => decodeChartDay(rewriteHeader(packet, update)));
+    assert.throws(() => decodeNatalDay(rewriteHeader(packet, update)));
   }
   for (const [column, value] of [[0, NaN], [21, 360], [22, 1.5], [23, 1e-6]]) {
-    const day = makeDay(); day.columns[column][0] = value; assert.throws(() => encodeChartDay(day));
+    const day = makeDay(); day.columns[column][0] = value; assert.throws(() => encodeNatalDay(day));
   }
 });
 
@@ -108,10 +108,10 @@ test('natal packet validation visits holes once instead of scanning dense values
     if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
     return Reflect.get(target, key, receiver);
   } });
-  encodeChartDay(day);
+  encodeNatalDay(day);
   assert.equal(reads, 1440 * 2);
   const sparse = makeDay(); delete sparse.columns[0][12];
-  assert.throws(() => encodeChartDay(sparse));
+  assert.throws(() => encodeNatalDay(sparse));
   const missing = makeDay(); delete missing.columns[0];
-  assert.throws(() => encodeChartDay(missing));
+  assert.throws(() => encodeNatalDay(missing));
 });

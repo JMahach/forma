@@ -1,23 +1,23 @@
-import { createChartDayClient } from '../data/natal-day-client.js';
-import { chartAtMinute, chartDayIndexAt } from '../domain/natal-day.js';
+import { createNatalDayClient } from '../data/natal-day-client.js';
+import { chartAtMinute, natalDayIndexAt } from '../domain/natal-day.js';
 
-export const canExploreChartDay = chart => Boolean(chart?.source === 'calculated'
+export const canExploreNatalDay = chart => Boolean(chart?.source === 'calculated'
   && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
   && String(chart.cityId ?? chart.city?.id ?? '').length > 0 && Number.isFinite(Date.parse(chart.utc)));
 
 // The saved chart is the source of truth. A selected minute is a temporary view
 // and does not navigate, persist, clear graph selections or move the camera.
-export function createChartDayExplorer({
-  dayClient = createChartDayClient(), onStateChange = () => {}, onRender = () => {},
+export function createNatalDayExplorer({
+  dayClient = createNatalDayClient(), onStateChange = () => {}, onRender = () => {},
 } = {}) {
   let original = null, current = null, day = null, index = 0, referenceIndex = null;
   let opened = false, status = 'idle', error = '', exactOriginal = true, sequence = 0, active = null;
-  const state = () => ({ original, current, day, index, referenceIndex, opened, status, error, exactOriginal, available: canExploreChartDay(original) });
+  const state = () => ({ original, current, day, index, referenceIndex, opened, status, error, exactOriginal, available: canExploreNatalDay(original) });
   const notify = () => onStateChange(state());
   const cancel = () => { sequence += 1; active?.controller.abort(); active = null; };
 
   async function load() {
-    if (!opened || !canExploreChartDay(original)) return false;
+    if (!opened || !canExploreNatalDay(original)) return false;
     if (active) return active.promise;
     const requestSequence = ++sequence, chart = original, controller = new AbortController();
     status = 'loading'; error = ''; notify();
@@ -25,7 +25,7 @@ export function createChartDayExplorer({
       try {
         const result = await dayClient.getDay(chart, { signal: controller.signal });
         if (requestSequence !== sequence || !opened) return false;
-        day = result; referenceIndex = chartDayIndexAt(day, chart.utc); index = referenceIndex; status = 'ready';
+        day = result; referenceIndex = natalDayIndexAt(day, chart.utc); index = referenceIndex; status = 'ready';
         return true;
       } catch (failure) {
         if (requestSequence !== sequence || controller.signal.aborted) return false;
@@ -68,7 +68,7 @@ export function createChartDayExplorer({
       notify();
     },
     async open() {
-      if (!canExploreChartDay(original)) return false;
+      if (!canExploreNatalDay(original)) return false;
       opened = true; notify();
       return day ? true : load();
     },

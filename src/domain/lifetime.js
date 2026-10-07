@@ -1,7 +1,7 @@
 import { projectMomentChart, snapshotLongitudes } from './moment-projection.js';
 import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_EXACT_VERSION } from '../../shared/lifetime-format.js';
 
-const fail = () => { throw new Error('Некорректные данные шкалы лет.'); };
+const fail = () => { throw new Error('Некорректные данные летописи.'); };
 const utcText = milliseconds => new Date(milliseconds).toISOString().replace('.000Z', 'Z');
 // Only snapshots made here can skip repeated validation. Weak references do not
 // keep visited dates alive, and a moment is trusted only for its own metadata.
@@ -45,7 +45,7 @@ export function lifetimeChartAt(metadata, point) {
   point = point?.design ? validateLifetimeMoment(point, metadata) : validateLifetimePoint(point, metadata);
   if (projectedCharts.has(point)) return projectedCharts.get(point);
   const chart = projectMomentChart(point, metadata.planets, { id: 'lifetime-preview', createdAt: metadata.startUtc,
-    engine: metadata.engine || metadata.source, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
+    engine: metadata.engine, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
     nodeModel: metadata.nodeModel, zodiac: metadata.zodiac,
     verification: 'Exact Swiss Ephemeris longitudes on a ten-minute grid.' });
   projectedCharts.set(point, chart);
@@ -61,8 +61,8 @@ export function validateLifetimeMoment(value, metadata, expectedIndex = value?.i
   return moment;
 }
 
-// A precise UTC result is not an archive index. Keep both timestamps and all
-// Float64 values; projection derives the same 26 activations as Day and Years.
+// A precise UTC result is not a lifetime index. Keep both timestamps and all
+// Float64 values; projection derives the same 26 activations as Day and Lifetime.
 export function lifetimeExactChartAt(value, metadata, milliseconds) {
   metadata = validateLifetimeMetadata(metadata);
   if (!Number.isSafeInteger(milliseconds) || milliseconds < Date.parse(metadata.startUtc)
@@ -71,7 +71,7 @@ export function lifetimeExactChartAt(value, metadata, milliseconds) {
   const moment = Object.freeze({ utc: value.utc, longitudes: snapshotLongitudes(value.longitudes),
     design: validateLifetimeDesign(value.design, value.utc) });
   return projectMomentChart(moment, metadata.planets, { id: 'lifetime-preview', createdAt: metadata.startUtc,
-    engine: metadata.engine || metadata.source, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
+    engine: metadata.engine, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
     nodeModel: metadata.nodeModel, zodiac: metadata.zodiac,
     verification: 'Exact Swiss Ephemeris longitudes for the selected UTC instant.' });
 }

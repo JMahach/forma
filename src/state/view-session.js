@@ -15,11 +15,11 @@ export function createViewSession({
   let pendingLifetime = saved?.lifetime || null, startedLifetime = null;
   let pendingReturns = saved?.returns || null;
   let pendingNatal = saved?.natalDay?.opened ? saved.natalDay : null;
-  function lifetimeUtc(target, years) {
+  function lifetimeUtc(target, lifetimeState) {
     if (Number.isFinite(target?.requestedUtc)) return target.requestedUtc;
-    // A legacy index has meaning only after the archive supplies its origin.
-    if (Number.isSafeInteger(target?.index) && years?.metadata) {
-      return Date.parse(years.metadata.startUtc) + target.index * years.metadata.stepSeconds * 1000;
+    // A legacy index has meaning only after the lifetime supplies its origin.
+    if (Number.isSafeInteger(target?.index) && lifetimeState?.metadata) {
+      return Date.parse(lifetimeState.metadata.startUtc) + target.index * lifetimeState.metadata.stepSeconds * 1000;
     }
     return null;
   }
@@ -28,14 +28,14 @@ export function createViewSession({
       const target = pendingNatal; pendingNatal = null;
       if (!target.exactOriginal) natalDay.scrub(target.index);
     }
-    const years = getLifetime()?.state;
+    const lifetimeState = getLifetime()?.state;
     // The explorer alone normalizes legacy indices and exact birth bounds.
     // Its ready result acknowledges this started restoration, including retry;
     // a pre-existing ready range cannot consume a target we have not sent yet.
-    if (pendingLifetime && pendingLifetime === startedLifetime && years?.opened
-        && years.status === 'ready' && years.mode === pendingLifetime.mode
-        && (years.mode === 'day' || years.fromDate === pendingLifetime.fromDate
-          && (pendingLifetime.openEnded ? years.openEnded : years.toDate === pendingLifetime.toDate))) pendingLifetime = null;
+    if (pendingLifetime && pendingLifetime === startedLifetime && lifetimeState?.opened
+        && lifetimeState.status === 'ready' && lifetimeState.mode === pendingLifetime.mode
+        && (lifetimeState.mode === 'day' || lifetimeState.fromDate === pendingLifetime.fromDate
+          && (pendingLifetime.openEnded ? lifetimeState.openEnded : lifetimeState.toDate === pendingLifetime.toDate))) pendingLifetime = null;
   }
   function snapshot() {
     const view = camera.getView(), home = camera.getFittedView();
@@ -43,14 +43,14 @@ export function createViewSession({
     const personalLive = getPersonalLive();
     const cycles = getReturns()?.state;
     const returnView = pendingReturns || (cycles?.available && (cycles.opened || cycles.selectedEvent) ? { opened: cycles.opened, group: cycles.group, year: cycles.year, body: cycles.body, eventId: cycles.selectedEvent?.id || null, ...(cycles.selectedEvent ? { event: cycles.selectedEvent } : {}) } : null);
-    const years = getLifetime()?.state, day = natalDay.state, live = transit.state;
-    const pendingUtc = lifetimeUtc(pendingLifetime, years);
+    const lifetimeState = getLifetime()?.state, day = natalDay.state, live = transit.state;
+    const pendingUtc = lifetimeUtc(pendingLifetime, lifetimeState);
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)
       ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) : pendingLifetime;
     return {
       version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId, mandala: mandala.enabled,
       camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k },
-      lifetime: lifetimeTarget || (years?.opened ? { opened: true, mode: years.mode, fromDate: years.fromDate, toDate: years.toDate, ...(Number.isFinite(years.requestedUtc) ? { requestedUtc: years.requestedUtc } : {}), ...(years.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
+      lifetime: lifetimeTarget || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
       transit: pendingTransit || (live.timeline ? { live: live.live, date: live.timeline.date, timeZone: live.timeline.timeZone, index: live.index } : null),
       natalDay: pendingNatal || { opened: day.opened, exactOriginal: day.exactOriginal, index: day.index },
       planets: planetFilter.snapshot,
@@ -102,8 +102,8 @@ export function createViewSession({
         if (followNow) pendingTransit = null;
         restorePersonalLive(followNow);
       }
-      if (selectedId === 'current-transit' && pendingLifetime?.mode === 'archive') {
-        acceptLifetimeMode({ opened: true, mode: 'archive' });
+      if (selectedId === 'current-transit' && pendingLifetime?.mode === 'lifetime') {
+        acceptLifetimeMode({ opened: true, mode: 'lifetime' });
       }
       await transit.start(pendingTransit);
       // The day controller now owns its accepted pause, including retries.
@@ -113,7 +113,7 @@ export function createViewSession({
       let returnRestoration;
       const restoreReturn = () => returnRestoration ??= getReturns().restore(pendingReturns,
         { valid: () => valid() && session.selectedId === selectedId });
-      // A saved exact event owns the moment. Restore it before Years so the
+      // A saved exact event owns the moment. Restore it before Lifetime so the
       // rail can borrow its chart instead of calculating a rounded point.
       if (pendingReturns?.eventId && pendingReturns.event?.id === pendingReturns.eventId
           && Number.isFinite(Date.parse(pendingReturns.event.utc)) && getReturns()?.state.available) {
@@ -121,7 +121,7 @@ export function createViewSession({
         if (!valid() || session.selectedId !== selectedId) return false;
       }
       if (pendingLifetime?.opened && canRestoreLifetime()) {
-        // An opened Years view owns the saved moment ahead of natal-day preview.
+        // An opened Lifetime view owns the saved moment ahead of natal-day preview.
         pendingNatal = null;
         const target = pendingLifetime;
         const lifetime = await loadLifetime();
@@ -145,13 +145,13 @@ export function createViewSession({
         const target = pendingReturns;
         const restored = await restoreReturn();
         if (!valid() || session.selectedId !== selectedId) return false;
-        // The menu or exact return can be saved before lazy Years controls
+        // The menu or exact return can be saved before lazy Lifetime controls
         // exist. Resume the normal opening path and retain its target on failure.
         if ((target.opened || getReturns().state.selectedEvent) && !getLifetime()?.state.opened && canRestoreLifetime()) {
           await openReturnsTimeline();
           if (!valid() || session.selectedId !== selectedId) return false;
-          const years = getLifetime()?.state;
-          if (!years?.opened || years.mode !== 'archive') return false;
+          const lifetimeState = getLifetime()?.state;
+          if (!lifetimeState?.opened || lifetimeState.mode !== 'lifetime') return false;
         }
         if (restored && pendingReturns === target) pendingReturns = null;
       }

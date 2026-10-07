@@ -1,6 +1,6 @@
 export const LIFE_SPAN_YEARS = 100;
 const DAY_MS = 86400000, ELAPSED_YEAR_MS = 365.2425 * DAY_MS;
-const ARCHIVE_START = Date.UTC(1801, 0, 1), ARCHIVE_END = Date.UTC(2400, 0, 1) - 1;
+const SUPPORTED_START = Date.UTC(1801, 0, 1), SUPPORTED_END = Date.UTC(2400, 0, 1) - 1;
 
 // Labels describe the event; astronomical searching belongs to the server.
 export const CYCLE_BODIES = Object.freeze([
@@ -13,15 +13,15 @@ export const CYCLE_BODIES = Object.freeze([
 export const cycleLabel = body => CYCLE_BODIES.find(item => item.id === body)?.label || 'Возврат';
 export const cycleEventLabel = event => `${cycleLabel(event?.body)}${Number.isInteger(event?.cycle) && event.cycle > 0 ? ` ${event.cycle}` : ''}`;
 export const eligibleCycleChart = chart => Boolean(chart?.source === 'calculated' && chart.id
-  && Date.parse(chart.utc) >= ARCHIVE_START && Date.parse(chart.utc) < ARCHIVE_END
+  && Date.parse(chart.utc) >= SUPPORTED_START && Date.parse(chart.utc) < SUPPORTED_END
   && chart.activations?.personality?.length === 13 && chart.activations?.design?.length === 13);
 
 export function cycleRangeForChart(chart) {
   if (!chart) return null;
-  const available = (ARCHIVE_END - Date.parse(chart.utc)) / ELAPSED_YEAR_MS;
+  const available = (SUPPORTED_END - Date.parse(chart.utc)) / ELAPSED_YEAR_MS;
   return { fromAge: 0, toAge: Math.max(0, Math.min(LIFE_SPAN_YEARS, available)) };
 }
-const cycleSearchEnd = chart => Math.min(ARCHIVE_END, Date.parse(chart.utc) + cycleRangeForChart(chart).toAge * ELAPSED_YEAR_MS);
+const cycleSearchEnd = chart => Math.min(SUPPORTED_END, Date.parse(chart.utc) + cycleRangeForChart(chart).toAge * ELAPSED_YEAR_MS);
 
 // Search ages are elapsed UTC time; the chosen year is a local calendar year.
 // A day's UTC padding covers its timezone edges, including the date line.

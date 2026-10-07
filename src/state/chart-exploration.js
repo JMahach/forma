@@ -7,9 +7,9 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   let timelineOpening = null, restoreBirthBoundary = false;
   const personal = () => Boolean(getReturns()?.state.available);
   const live = () => personal() && session.owner === 'transit';
-  // Archive requests must resume even before their first result. A pending or
+  // Lifetime requests must resume even before their first result. A pending or
   // failed Return instead keeps the previously accepted preview.
-  const preview = () => personal() && ['archive', 'transit'].includes(session.owner === 'return' ? session.shownSource : session.owner);
+  const preview = () => personal() && ['lifetime', 'transit'].includes(session.owner === 'return' ? session.shownSource : session.owner);
   function syncTransitWanted() {
     const transit = getTransit();
     if (!transit) return;
@@ -48,8 +48,8 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     session.showOriginal(getNatalDay().state.opened ? 'natal-day' : 'original');
     syncTransitWanted();
     getReturns()?.reset(); getNatalDay().reset();
-    const lifetime = getLifetime(), archive = lifetime?.state;
-    if (archive?.opened && archive.mode === 'archive' && archive.metadata) lifetime.alignMoment(session.original);
+    const lifetime = getLifetime(), lifetimeState = lifetime?.state;
+    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' && lifetimeState.metadata) lifetime.alignMoment(session.original);
     // Birth may already have the same UTC as the preview; still repaint its
     // exact saved chart when child controllers have nothing left to reset.
     session.refresh();
@@ -88,7 +88,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   function requestReturn() {
     restoreBirthBoundary = false; session.expect('return'); syncTransitWanted();
     // Keep the saved rail UTC on the accepted chart as soon as this command
-    // supersedes an archive request, rather than waiting for its stale reply.
+    // supersedes an lifetimeState request, rather than waiting for its stale reply.
     getLifetime()?.alignMoment(momentState().current);
   }
   function publishReturn(moment, event) {
@@ -99,26 +99,26 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     session.publish('transit', getTransit()?.current);
     if (live() && getTransit()?.current) getLifetime()?.alignMoment(getTransit().current);
   }
-  function publishArchive() {
-    const years = getLifetime();
-    if (years?.state.mode === 'day') publishTransit();
-    else session.publish('archive', years?.current);
+  function publishLifetime() {
+    const lifetime = getLifetime();
+    if (lifetime?.state.mode === 'day') publishTransit();
+    else session.publish('lifetime', lifetime?.current);
   }
   function beforeScrub(value) {
     if (!personal()) return;
     invalidateTimeline();
-    const years = getLifetime();
-    if (years.state.mode === 'archive' && value <= years.state.minUtc) {
+    const lifetime = getLifetime();
+    if (lifetime.state.mode === 'lifetime' && value <= lifetime.state.minUtc) {
       resetMoment(); getReturns().close(); return false;
     }
-    session.expect('archive'); syncTransitWanted();
+    session.expect('lifetime'); syncTransitWanted();
     getReturns().reset(); getReturns().close();
   }
   // Called by accepted open/close/range commands, and before restoring a saved
   // global range. Ordinary loading/clock/filter notifications never navigate.
   function acceptLifetimeMode(state) {
     if (session.selectedId === 'current-transit') {
-      const kind = state.opened && state.mode === 'archive' ? 'archive' : 'transit';
+      const kind = state.opened && state.mode === 'lifetime' ? 'lifetime' : 'transit';
       session.expect(kind);
       if (kind === 'transit') publishTransit();
     }
@@ -128,7 +128,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     // Old saved views did not distinguish exact birth from a sampled preview.
     // The accepted range supplies that boundary after metadata is available.
     if (session.selectedId !== 'current-transit' && restoreBirthBoundary
-        && state.opened && state.mode === 'archive' && state.metadata && state.minUtc !== null) {
+        && state.opened && state.mode === 'lifetime' && state.metadata && state.minUtc !== null) {
       const target = restoreBirthBoundary, birth = Date.parse(session.original.utc);
       restoreBirthBoundary = false;
       const atBirth = Number.isSafeInteger(target.index)
@@ -140,7 +140,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   function restorePreview(value, target = {}) {
     if (session.owner === 'return' || live()) return;
     restoreBirthBoundary = value === undefined ? target : false;
-    if (value !== false) session.expect('archive');
+    if (value !== false) session.expect('lifetime');
     else session.showOriginal();
   }
   function restoreLive(value) { if (value) followNow(); }
@@ -174,7 +174,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       const start = live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc : natal.utc);
       const lastDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
       const toDate = span.toDate < lastDate ? span.toDate : lastDate;
-      const restored = await controller.restore({ opened: true, mode: 'archive', fromDate: span.fromDate, toDate, minimumUtc: natal.utc, requestedUtc: start });
+      const restored = await controller.restore({ opened: true, mode: 'lifetime', fromDate: span.fromDate, toDate, minimumUtc: natal.utc, requestedUtc: start });
       if (!valid() || !restored) return false;
       onTimelineReady(); return true;
     } catch { return false; }
@@ -184,15 +184,15 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   function finishRestore({ saved, pendingLifetime, pendingReturns, interrupted }) {
     if (interrupted || !personal()) return;
-    const years = getLifetime()?.state;
-    if (years?.opened && years.mode === 'archive' || pendingLifetime?.opened && pendingLifetime.mode === 'archive') {
+    const lifetimeState = getLifetime()?.state;
+    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime') {
       const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns().state.selectedEvent);
       if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.original); }
       else if (session.owner !== 'return' && !live()) {
-        const atBirth = years?.metadata && years.requestedUtc === years.minUtc
-          && years.minUtc === Date.parse(session.original.utc);
+        const atBirth = lifetimeState?.metadata && lifetimeState.requestedUtc === lifetimeState.minUtc
+          && lifetimeState.minUtc === Date.parse(session.original.utc);
         if (!atBirth && saved?.lifetime?.personalPreview !== false) {
-          session.expect('archive'); publishArchive();
+          session.expect('lifetime'); publishLifetime();
         }
       }
       getReturns().enableMarkers(true); session.refresh();
@@ -208,7 +208,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     get returnsEnabled() { return personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened); },
     get transitEnabled() { return session.selectedId === 'current-transit' && Boolean(timelineOpening || getLifetime()?.state.opened); },
     followNow, requestReturn, publishReturn, publishDay,
-    publishTransit, publishArchive, beforeScrub, acceptLifetimeMode, lifetimeChanged, restorePreview, restoreLive,
+    publishTransit, publishLifetime, beforeScrub, acceptLifetimeMode, lifetimeChanged, restorePreview, restoreLive,
     momentState, openTimeline, finishRestore, invalidateTimeline,
     get live() { return live(); }, get preview() { return preview(); } };
 }

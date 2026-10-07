@@ -1,0 +1,53 @@
+name: Project checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: pip
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -c "import swisseph, tzdata; print(swisseph.version, tzdata.__version__)"
+      - name: Python calculations
+        run: npm run test:python
+      - name: JavaScript and live HTTP
+        env:
+          HOST: 127.0.0.1
+          PORT: 4176
+          RUN_API_TESTS: '1'
+        run: |
+          node server/server.mjs > /tmp/forma-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; cat /tmp/forma-server.log' EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            kill -0 "$server_pid"
+            if curl --fail --silent --output /dev/null http://127.0.0.1:4176/; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          npm test
+      - name: Release build
+        run: npm run build

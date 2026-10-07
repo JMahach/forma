@@ -4,11 +4,11 @@ import { setText } from '../ui/html.js';
 
 export function attachTransitControls({ panel, range, time, status, nowButton, marker = null, onScrub, onNow }) {
   const dayRange = attachTimelineRange({ range, marker, onScrub, onReference: onNow });
-  let coveredByYears = false, latestState = null;
+  let coveredByLifetime = false, latestState = null;
   nowButton.addEventListener('click', () => onNow());
   function update(state) {
     latestState = state;
-    if (coveredByYears || !state.wanted) {
+    if (coveredByLifetime || !state.wanted) {
       if (!panel.hidden) {
         panel.hidden = true;
         dayRange.updateReference({ visible: false, label: 'Вернуться к текущему времени' });
@@ -40,11 +40,11 @@ export function attachTransitControls({ panel, range, time, status, nowButton, m
     range.setAttribute('aria-valuetext', `${label.date}, ${label.time}, ${label.offset}`);
   }
   return { update,
-    setCoveredByYears(value) {
-      if (coveredByYears === Boolean(value)) return;
-      coveredByYears = Boolean(value);
+    setCoveredByLifetime(value) {
+      if (coveredByLifetime === Boolean(value)) return;
+      coveredByLifetime = Boolean(value);
       if (latestState) update(latestState);
-      else if (coveredByYears) panel.hidden = true;
+      else if (coveredByLifetime) panel.hidden = true;
     },
   };
 }

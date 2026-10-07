@@ -8,27 +8,27 @@ import { createCalculator } from '../server/services/calculate.mjs';
 import { createRequestHandler } from '../server/http/app.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 
-const source = 'Swiss Ephemeris 2.10.03', start = Date.parse('2026-10-01T00:00:00Z');
+const engine = 'Swiss Ephemeris 2.10.03', start = Date.parse('2026-10-01T00:00:00Z');
 const metadata = { startUtc: '2026-10-01T00:00:00Z', endExclusiveUtc: '2026-10-04T00:00:00Z',
-  stepSeconds: 600, samples: 432, planets: LIFETIME_PLANETS, source };
+  stepSeconds: 600, samples: 432, planets: LIFETIME_PLANETS, engine };
 const utc = '2026-10-02T12:31:00Z', milliseconds = Date.parse(utc);
-const design = utc => ({ utc, engine: source, designUtc: new Date(Date.parse(utc) - 88 * 86400000).toISOString().replace('.000Z', 'Z'),
+const design = utc => ({ utc, engine, designUtc: new Date(Date.parse(utc) - 88 * 86400000).toISOString().replace('.000Z', 'Z'),
   longitudes: Array(11).fill(34.123456789), designArcResidualDegrees: 1e-11 });
-const full = utc => ({ utc, engine: source, longitudes: Array(11).fill(12.345678901), design: design(utc) });
-const point = index => ({ index, utc: new Date(start + index * 600000).toISOString().replace('.000Z', 'Z'), longitudes: Array(11).fill(21) });
-const archive = { metadata, cacheIdentity: 'a'.repeat(64), getPoint: async index => point(index) };
+const full = utc => ({ utc, engine, longitudes: Array(11).fill(12.345678901), design: design(utc) });
+const point = index => ({ index, utc: new Date(start + index * 600000).toISOString().replace('.000Z', 'Z'), longitudes: Array(11).fill(21), design: design(new Date(start + index * 600000).toISOString().replace('.000Z', 'Z')) });
+const lifetimeFile = { metadata, cacheIdentity: 'a'.repeat(64), getPoint: async index => point(index) };
 const root = fileURLToPath(new URL('../', import.meta.url));
 const tick = () => new Promise(setImmediate);
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
-function service(options = {}) { return createLifetimeMoments({ archive, calculate: ({ mode, utc }) => mode === 'transit_design' ? design(utc) : full(utc),
+function service(options = {}) { return createLifetimeMoments({ lifetimeFile, calculate: ({ utc }) => full(utc),
   calculationFingerprint: 'b'.repeat(64), ...options }); }
 function http(handler, url, method = 'GET') {
   const res = { writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, end(body) { this.body = body; } };
   return handler({ method, url, headers: { host: 'localhost' } }, res).then(() => ({ ...res, value: res.body ? JSON.parse(res.body) : null }));
 }
-function harness(calculate = ({ mode, utc }) => mode === 'transit_design' ? design(utc) : full(utc)) {
+function harness(calculate = ({ utc }) => full(utc)) {
   const requests = [], dayRequests = [];
-  const handler = createRequestHandler({ root, lifetime: archive, lifetimeFingerprint: 'b'.repeat(64), calculate,
+  const handler = createRequestHandler({ root, lifetime: lifetimeFile, lifetimeFingerprint: 'b'.repeat(64), calculate,
     now: () => new Date('2026-10-06T00:00:00Z'), transitDays: { get: async date => { dayRequests.push(date); throw new Error('No day'); } },
     publicFiles: async (_req, res) => { res.writeHead(404, {}); res.end(); } });
   const client = createLifetimeClient({ dayClient: { peekDay: () => null, getDay: async date => {
@@ -39,10 +39,10 @@ function harness(calculate = ({ mode, utc }) => mode === 'transit_design' ? desi
   return { handler, client, requests, dayRequests };
 }
 
-test('cold historical 12:31 restores both sides outside Day window; 12:30 keeps archive path', async () => {
-  const calls = [], h = harness(input => { calls.push(input); return input.mode === 'transit_design' ? design(input.utc) : full(input.utc); });
+test('cold historical 12:31 restores both sides outside Day window; 12:30 reads the full file', async () => {
+  const calls = [], h = harness(input => { calls.push(input); return full(input.utc); });
   const explorer = createLifetimeExplorer({ client: h.client });
-  assert.equal(await explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-10-01', toDate: '2026-10-03', requestedUtc: milliseconds }), true);
+  assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-10-01', toDate: '2026-10-03', requestedUtc: milliseconds }), true);
   assert.equal(explorer.current.utc, utc);
   assert.equal(explorer.current.activations.personality.length, 13);
   assert.equal(explorer.current.planetFilter.designActivations.length, 13);
@@ -56,25 +56,25 @@ test('cold historical 12:31 restores both sides outside Day window; 12:30 keeps 
   assert.deepEqual(h.dayRequests, []);
 });
 
-test('exact moments share bounded admission and LRU with designs, aliases and grid requests', async () => {
+test('exact moments share bounded calculation admission and complete-moment LRU; grid reads remain available', async () => {
   const calls = [], pending = deferred();
   const s = service({ maxPending: 1, capacity: 2, calculate: input => { calls.push(input); return pending.promise; } });
   const first = s.getUtcMoment(utc), same = s.getUtcMoment(utc.replace('Z', '.000Z'));
   await assert.rejects(s.getUtcMoment('2026-10-02T12:32:00Z'), { code: 'busy' });
-  await assert.rejects(s.getMoment(1), { code: 'busy' });
+  assert.equal((await s.getMoment(1)).index, 1, 'file reads remain available while scalar work is busy');
   assert.equal(calls.length, 1);
   pending.resolve(full(utc));
   const result = await first;
   assert.equal(await same, result); assert.equal(await s.getUtcMoment(utc), result);
   assert.ok(Object.isFrozen(result.longitudes));
   assert.equal(calls.length, 1);
-  const values = [], reuse = service({ calculate: input => { values.push(input.mode); return input.mode === 'transit_design' ? design(input.utc) : full(input.utc); } });
+  const values = [], reuse = service({ calculate: input => { values.push(input.mode); return full(input.utc); } });
   const exact = await reuse.getUtcMoment(utc);
   assert.equal(await reuse.getUtcMoment(utc), exact);
   assert.deepEqual(values, ['transit_moment']);
   const grid = await reuse.getUtcMoment('2026-10-02T12:30:00Z');
   assert.equal(await reuse.getMoment(219), grid);
-  assert.deepEqual(values, ['transit_moment', 'transit_design']);
+  assert.deepEqual(values, ['transit_moment']);
 });
 
 test('exact handler validates version, shape and range before calculator admission', async () => {
@@ -96,7 +96,7 @@ test('exact handler validates version, shape and range before calculator admissi
 
 test('malformed exact response is rejected and retry never reuses the failed result', async () => {
   for (const mutate of [value => ({ ...value, utc: '2026-10-02T12:30:00Z' }), value => ({ ...value, longitudes: [1] }),
-    value => ({ ...value, engine: 'other' }), value => ({ ...value, design: { ...value.design, designArcResidualDegrees: -1 } })]) {
+    value => ({ ...value, engine: 'other' }), value => ({ ...value, design: { ...value.design, engine: 'other' } }), value => ({ ...value, design: { ...value.design, designArcResidualDegrees: -1 } })]) {
     let calls = 0;
     const s = service({ calculate: () => ++calls === 1 ? mutate(full(utc)) : full(utc) });
     await assert.rejects(s.getUtcMoment(utc), { code: 'lifetime_unavailable' });
@@ -144,7 +144,7 @@ test('HTTP exact requests share four calculation slots and repeated UTC without 
   const overflow = await http(h.handler, '/api/lifetime/moment?utc=2026-10-02T12:35:00Z');
   assert.equal(overflow.status, 503); assert.equal(overflow.value.error, 'busy');
   const gridWhileBusy = await http(h.handler, '/api/lifetime?index=0');
-  assert.equal(gridWhileBusy.status, 503); assert.equal(jobs.length, 4);
+  assert.equal(gridWhileBusy.status, 200); assert.equal(jobs.length, 4);
   jobs.forEach(job => job.resolve(full(job.input.utc)));
   const responses = await Promise.all(active), duplicate = await repeated;
   responses.forEach((response, index) => {
@@ -155,18 +155,16 @@ test('HTTP exact requests share four calculation slots and repeated UTC without 
   assert.equal(duplicate.body, responses[0].body);
   assert.equal((await http(h.handler, `/api/lifetime/moment?utc=${moments[0]}`)).body, responses[0].body);
   assert.equal(jobs.length, 4);
-  const grid = http(h.handler, '/api/lifetime?index=0'); await tick();
-  assert.deepEqual(jobs[4].input, { mode: 'transit_design', utc: metadata.startUtc });
-  jobs[4].resolve(design(metadata.startUtc));
-  assert.equal((await grid).status, 200);
+  assert.equal((await http(h.handler, '/api/lifetime?index=0')).status, 200);
+  assert.equal(jobs.length, 4, 'grid reads do not enter the scalar calculator');
 });
 
 test('exact and grid entries share server and client eviction limits', async () => {
   const calls = [], s = service({ capacity: 1, calculate: input => {
-    calls.push(input.mode); return input.mode === 'transit_design' ? design(input.utc) : full(input.utc);
+    calls.push(input.mode); return full(input.utc);
   } });
   await s.getUtcMoment(utc); await s.getMoment(0); await s.getUtcMoment(utc);
-  assert.deepEqual(calls, ['transit_moment', 'transit_design', 'transit_moment']);
+  assert.deepEqual(calls, ['transit_moment', 'transit_moment']);
   const h = harness(), requests = [];
   const client = createLifetimeClient({ capacity: 1, fetch: async (url, options) => {
     requests.push({ url, cache: options.cache }); const result = await http(h.handler, url);

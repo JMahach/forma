@@ -11,9 +11,9 @@ Environment=HOST=127.0.0.1
 Environment=PORT=4173
 # Packet filenames contain the calculation fingerprint; no manual v1/v2 path.
 Environment=TRANSIT_CACHE_DIR=/var/cache/forma/transit
-# Provision the verified corpus and adjacent .metadata.json before starting.
-# This service reads the archive; it never generates or replaces its 2.77 GB.
-Environment=FORMA_LIFETIME_CORPUS=/var/cache/forma/lifetime/lifetime-1801-2400.f64le
+# Provision the verified lifetime file and adjacent .metadata.json before starting.
+# This service reads the lifetime file; it never generates or replaces its 6.05 GB.
+Environment=FORMA_LIFETIME_FILE=/var/cache/forma/lifetime/lifetime-1801-2400.f64le
 CacheDirectory=forma
 CacheDirectoryMode=0700
 ExecStart=/opt/forma/node/bin/node server/server.mjs --release
