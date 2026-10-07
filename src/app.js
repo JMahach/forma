@@ -299,15 +299,15 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     updateReturnClock(returnsClock, viewState);
     if (returnsView) returnsView.update(viewState);
     else if (timelineVisible && state.opened) void loadReturnsView();
-    const yearsToggle = $('lifetimeToggle');
+    const lifetimeToggle = $('lifetimeToggle');
     const reloadLabel = 'Обновить страницу и загрузить летопись';
-    yearsToggle.title = lifetimeLoadFailed ? reloadLabel : state.available ? 'Возвраты' : 'Летопись';
-    yearsToggle.setAttribute('aria-label', lifetimeLoadFailed ? reloadLabel : state.available ? 'Возвраты' : 'Летопись');
-    yearsToggle.setAttribute('aria-controls', 'lifetimeControls');
+    lifetimeToggle.title = lifetimeLoadFailed ? reloadLabel : state.available ? 'Возвраты' : 'Летопись';
+    lifetimeToggle.setAttribute('aria-label', lifetimeLoadFailed ? reloadLabel : state.available ? 'Возвраты' : 'Летопись');
+    lifetimeToggle.setAttribute('aria-controls', 'lifetimeControls');
     const enabled = state.available ? exploration?.returnsEnabled ?? timelineVisible
       : exploration?.transitEnabled ?? false;
-    yearsToggle.setAttribute('aria-expanded', String(enabled));
-    yearsToggle.setAttribute('aria-pressed', String(enabled));
+    lifetimeToggle.setAttribute('aria-expanded', String(enabled));
+    lifetimeToggle.setAttribute('aria-pressed', String(enabled));
     const valid = timelineVisible && metadata;
     returnMarkers?.update({ events: state.majorEvents, natal: state.natal, selectedEvent: state.selectedEvent,
       fromUtc: valid ? lifetimeState.minUtc : NaN,

@@ -10,13 +10,13 @@ function transitWords(values, order) {
   for (let row = 0; row < values.length; row++) if (!Number.isFinite(values[row])) return failTransitPacket();
   return encodeFloat64Words(values, order);
 }
-function chartWords(values, order) {
+function natalWords(values, order) {
   if (!validOrder(order) || !values || !Number.isInteger(values.length) || values.length < 1 || values.length > MAX_SAMPLES) return failNatalDayPacket();
   for (let row = 0; row < values.length; row++) if (!Number.isFinite(values[row])) return failNatalDayPacket();
   return encodeFloat64Words(values, order);
 }
 export const encodeNumericColumn = (values, order) => shuffle(transitWords(values, order));
-export const encodeNatalDayColumn = (values, order) => shuffle(chartWords(values, order));
+export const encodeNatalDayColumn = (values, order) => shuffle(natalWords(values, order));
 
 export function encodeTransitDay(day, { orders = Array(TRANSIT_DAY_COLUMNS).fill(3) } = {}) {
   const header = validateTransitMetadata({ version: TRANSIT_DAY_VERSION, date: day.date, startUtc: day.startUtc,
