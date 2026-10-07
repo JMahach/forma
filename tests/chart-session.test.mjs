@@ -3,22 +3,22 @@ import assert from 'node:assert/strict';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { createChartStore } from '../src/data/chart-store.js';
-import { createChartDayExplorer } from '../src/state/natal-day.js';
+import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createLiveTransit } from '../src/state/live-transit.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 function harness(charts) {
   const writes = [], changes = [];
-  charts = charts.map(chart => chartAtMinute(chartDayFixture(), 754, chart));
+  charts = charts.map(chart => chartAtMinute(natalDayFixture(), 754, chart));
   const store = createChartStore({ getStorage: () => ({ getItem: () => JSON.stringify(charts), setItem: (...value) => writes.push(value) }) });
   let natal, transit;
   const session = createChartSession({ store, getNatalDay: () => natal, getTransit: () => transit,
     onChange: () => changes.push({ id: session.selectedId, chart: session.current }) });
-  natal = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: () => session.publish('natal-day', natal.current) });
+  natal = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', natal.current) });
   return { store, session, natal, changes, writes, set transit(value) { transit = value; } };
 }
 
@@ -53,7 +53,7 @@ test('lifetime is a temporary view and selecting a chart closes it without chang
   const store = { get: id => id === 'saved' ? original : null, has: id => id === 'saved' };
   const session = createChartSession({ store, getLifetime: () => lifetime, onChange: () => changes.push(session.current) });
   session.select('saved');
-  current = preview; session.publish(session.expect('archive'), current);
+  current = preview; session.publish(session.expect('lifetime'), current);
   assert.equal(session.current.primary, original); assert.equal(session.current.secondary, preview); assert.equal(session.original, original);
   assert.equal(session.selectedId, 'saved'); assert.equal(session.hasCurrent, true);
   changes.length = 0;
@@ -117,23 +117,23 @@ function scaleHarness() {
     reset() { cycle = null; }, enableMarkers() {},
     close() { this.state.opened = false; },
     async open() { calls.push('returns-open'); this.state.opened = true; return true; } };
-  const natal = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() },
+  const natal = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() },
     onRender: () => session.publish('natal-day', natal.current) });
   h.natal = natal;
   const lifetime = createLifetimeExplorer({ client: {
     getMeta: async () => ({ startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z', stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }),
-    getPoint: () => assert.fail('personal mode entry borrows exact birth, never a rounded archive point'),
+    getPoint: () => assert.fail('personal mode entry borrows exact birth, never a rounded lifetime point'),
   }, getMomentState: () => scales.momentState() });
   const open = lifetime.open, close = lifetime.close;
-  lifetime.open = () => { calls.push('years-open'); return open(); };
-  lifetime.close = () => { calls.push('years-close'); close(); };
+  lifetime.open = () => { calls.push('lifetime-open'); return open(); };
+  lifetime.close = () => { calls.push('lifetime-close'); close(); };
   const session = createChartSession({ store: h.store, getNatalDay: () => h.natal,
     getLifetime: () => lifetime, getReturns: () => returns });
   scales = createChartExploration({ session, getNatalDay: () => h.natal, getTransit: () => null,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime: async () => lifetime });
   return { ...h, session, returns, lifetime, scales, calls,
     set cycle(value) { cycle = value; session.publish(session.expect('return'), cycle, { id: cycle.id, body: 'saturn', utc: cycle.utc }); },
-    set years(value) { session.publish(session.expect('archive'), value); } };
+    set lifetimeMoment(value) { session.publish(session.expect('lifetime'), value); } };
 }
 
 test('normal personal navigation always shows the original chart with an active day strip', async () => {
@@ -147,9 +147,9 @@ test('normal personal navigation always shows the original chart with an active 
 });
 
 test('card selection leaves each previous scale once, including reselecting a previewed card', async () => {
-  const charts = [personalChartFixture(), personalChartFixture({ id: 'second' })].map(chart => chartAtMinute(chartDayFixture(), 754, chart));
+  const charts = [personalChartFixture(), personalChartFixture({ id: 'second' })].map(chart => chartAtMinute(natalDayFixture(), 754, chart));
   let counts = { exit: 0, close: 0, changes: 0 }, session;
-  const natalDay = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: () => session.publish('natal-day', natalDay.current) });
+  const natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', natalDay.current) });
   const returns = createReturnsController({ onRender: () => session.publish('natal-day', natalDay.current) });
   const exit = returns.exit;
   returns.exit = () => { counts.exit++; exit(); };
@@ -171,7 +171,7 @@ test('card selection cancels a pending day load and its late completion cannot r
   const charts = [personalChartFixture(), personalChartFixture({ id: 'second' })];
   const requests = [], changes = [];
   let session;
-  const natalDay = createChartDayExplorer({ dayClient: { getDay(chart, { signal }) {
+  const natalDay = createNatalDayExplorer({ dayClient: { getDay(chart, { signal }) {
     return new Promise(resolve => requests.push({ chart, signal, resolve }));
   } }, onRender: () => session.publish('natal-day', natalDay.current) });
   session = createChartSession({ store: { get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) },
@@ -180,10 +180,10 @@ test('card selection cancels a pending day load and its late completion cannot r
   const first = navigation.select(charts[0].id);
   const latest = navigation.select(charts[1].id);
   assert.equal(requests[0].signal.aborted, true);
-  requests[1].resolve(chartDayFixture()); assert.equal(await latest, true);
+  requests[1].resolve(natalDayFixture()); assert.equal(await latest, true);
   natalDay.scrub(100);
   const selected = session.current, published = changes.length;
-  requests[0].resolve(chartDayFixture()); assert.equal(await first, false);
+  requests[0].resolve(natalDayFixture()); assert.equal(await first, false);
   assert.equal(session.selectedId, charts[1].id); assert.equal(session.current, selected);
   assert.equal(natalDay.state.opened, true); assert.equal(natalDay.state.index, 100);
   assert.equal(changes.length, published, 'an obsolete day load cannot repaint the selected card');
@@ -208,25 +208,25 @@ test('opening Returns closes Day and opening Day restores natal without opening 
 test('reopening the returns menu keeps the current lifetime position and exact selected event', async () => {
   const h = scaleHarness(); await h.scales.select(h.store.charts[0].id);
   await h.scales.toggleReturns(); h.cycle = { id: 'exact-return', utc: '2050-01-01T03:24:55Z' };
-  const selected = h.session.current, opens = h.calls.filter(call => call === 'years-open').length;
+  const selected = h.session.current, opens = h.calls.filter(call => call === 'lifetime-open').length;
   h.returns.state.opened = false; await h.returns.open();
   assert.equal(h.session.current, selected);
-  assert.equal(h.calls.filter(call => call === 'years-open').length, opens);
+  assert.equal(h.calls.filter(call => call === 'lifetime-open').length, opens);
 });
 
-test('Transit Years never become personal Returns when navigating back', async () => {
-  const h = birthArchiveHarness();
+test('Transit Lifetime never becomes personal Returns when navigating back', async () => {
+  const h = birthLifetimeHarness();
   await h.navigation.toggleReturns();
   await h.navigation.select('current-transit');
   assert.equal(await h.navigation.toggleTransit(), true);
   assert.equal(await h.lifetime.setDateRange('2026-09-24', '2026-09-26'), true);
   assert.equal(h.session.selectedId, 'current-transit');
-  assert.equal(h.lifetime.state.opened, true, 'precondition: the global archive is actually open');
-  assert.equal(h.lifetime.state.mode, 'archive');
+  assert.equal(h.lifetime.state.opened, true, 'precondition: the global lifetime is actually open');
+  assert.equal(h.lifetime.state.mode, 'lifetime');
   assert.equal(h.lifetime.state.status, 'ready');
   assert.equal(h.session.current.primary, h.lifetime.current);
-  assert.equal(h.session.owner, 'archive');
-  assert.equal(h.calls.length, 1, 'the public range command fetched a real archive point');
+  assert.equal(h.session.owner, 'lifetime');
+  assert.equal(h.calls.length, 1, 'the public range command fetched a real lifetime point');
   await h.navigation.select(h.natal.id);
   assert.equal(h.session.current.primary, h.natal);
   assert.equal(h.session.current.secondary, null);
@@ -249,8 +249,8 @@ test('a return selected during a cold metadata load becomes the rail target, whi
   let finishMetadata, metadataCalls = 0;
   const metadata = new Promise(resolve => { finishMetadata = resolve; });
   const event = { id: 'saturn:2026-09-25T12:00:29.432Z', body: 'saturn', utc: '2026-09-25T12:00:29.432Z', cycle: 1 };
-  const exact = { ...chartAtMinute(chartDayFixture({ date: '2026-09-25' }), 720, personalChartFixture()), utc: event.utc };
-  const h = birthArchiveHarness({ getMeta: () => { metadataCalls++; return metadata; },
+  const exact = { ...chartAtMinute(natalDayFixture({ date: '2026-09-25' }), 720, personalChartFixture()), utc: event.utc };
+  const h = birthLifetimeHarness({ getMeta: () => { metadataCalls++; return metadata; },
     returnClient: { events: async () => ({ events: [event] }), chart: async () => ({ chart: exact, event }) } });
   const opening = h.navigation.toggleReturns();
   await new Promise(resolve => setImmediate(resolve));
@@ -262,24 +262,24 @@ test('a return selected during a cold metadata load becomes the rail target, whi
   finishMetadata({ startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z',
     stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] });
   assert.equal(await opening, true);
-  assert.equal(h.lifetime.state.mode, 'archive'); assert.equal(h.lifetime.state.status, 'ready');
+  assert.equal(h.lifetime.state.mode, 'lifetime'); assert.equal(h.lifetime.state.status, 'ready');
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(event.utc));
   assert.equal(h.lifetime.state.displayedUtc, Date.parse(event.utc));
   assert.equal(h.lifetime.current, exact);
   assert.equal(h.session.original, h.natal); assert.equal(h.session.current.primary, h.natal);
   assert.equal(h.session.current.secondary, exact); assert.equal(h.session.current.utc, event.utc);
-  assert.deepEqual(h.calls, [], 'metadata completion borrows the exact return without requesting a rounded archive point');
+  assert.deepEqual(h.calls, [], 'metadata completion borrows the exact return without requesting a rounded lifetime point');
 });
 
 
-test('personal archive moments compose a stable overlay without changing natal, exact returns or standalone transit', () => {
+test('personal lifetime moments compose a stable overlay without changing natal, exact returns or standalone transit', () => {
   const natal = Object.freeze({ id: 'saved', name: 'Марат', source: 'calculated', utc: '1998-08-18T15:00:00Z', personality: [63], design: [41] });
   const transit = Object.freeze({ id: 'lifetime-preview', source: 'transit', utc: '2050-01-01T12:10:00Z', personality: [4], design: [] });
   let moment = null, exact = null;
   const session = createChartSession({ store: { get: id => id === natal.id ? natal : null, has: id => id === natal.id },
     getLifetime: () => ({ get current() { return moment; }, close() { moment = null; } }),
     getReturns: () => ({ get current() { return exact; }, exit() { exact = null; }, select() {} }) });
-  session.select(natal.id); moment = transit; session.publish(session.expect('archive'), moment);
+  session.select(natal.id); moment = transit; session.publish(session.expect('lifetime'), moment);
   const overlay = session.current;
   assert.equal(overlay.kind, 'transit'); assert.equal(overlay.primary, natal); assert.equal(overlay.secondary, transit);
   assert.deepEqual(overlay.topology.personality, [4, 63]); assert.deepEqual(overlay.topology.design, [41]);
@@ -289,16 +289,16 @@ test('personal archive moments compose a stable overlay without changing natal, 
   session.publish(session.expect('return'), exact, { id: exact.id, body: 'saturn', utc: exact.utc });
   assert.equal(session.current.secondary, exact, 'an exact return owns its seconds and design calculation');
   exact = null; moment = { ...transit, utc: '2050-01-01T12:20:00Z', personality: [64] };
-  session.publish(session.expect('archive'), moment);
+  session.publish(session.expect('lifetime'), moment);
   assert.notEqual(session.current, overlay); assert.deepEqual(session.current.topology.personality, [63, 64]);
   assert.equal(session.original, natal); assert.deepEqual(natal.personality, [63]);
-  session.select('current-transit'); moment = transit; session.publish(session.expect('archive'), moment);
+  session.select('current-transit'); moment = transit; session.publish(session.expect('lifetime'), moment);
   assert.equal(session.current.primary, transit, 'global transit stays a standalone chart');
   session.select(natal.id); assert.equal(session.current.primary, natal, 'returning to a personal chart rests at exact birth');
 });
 
-function birthArchiveHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, returnClient } = {}) {
-  const natal = { ...chartAtMinute(chartDayFixture(), 754, personalChartFixture()), utc: birthUtc };
+function birthLifetimeHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, returnClient } = {}) {
+  const natal = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: birthUtc };
   const metadata = { startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z',
     stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] };
   const calls = [], frames = [];
@@ -311,7 +311,7 @@ function birthArchiveHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, r
   });
   exploration = createChartExploration({ session, getLifetime: () => lifetime, getReturns: () => returns,
     getTransit: () => transit, getNatalDay: () => natalDay, loadLifetime: async () => lifetime });
-  natalDay = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: exploration.publishDay });
+  natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: exploration.publishDay });
   returns = createReturnsController({ client: returnClient || { events: async () => ({ events: [] }) },
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
   lifetime = createLifetimeExplorer({ client: {
@@ -325,17 +325,17 @@ function birthArchiveHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, r
     },
   }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
   onStateChange: exploration.lifetimeChanged,
-  onRender: exploration.publishArchive });
+  onRender: exploration.publishLifetime });
   navigation = exploration;
   session.select(natal.id); session.showOriginal();
   return { session, lifetime, navigation, exploration, natal, natalDay, returns, calls, frames, get painted() { return frames.at(-1); },
     setPreview: exploration.restorePreview,
-    restore(requestedUtc = Date.parse(natal.utc), overrides = {}) { return lifetime.restore({ opened: true, mode: 'archive',
+    restore(requestedUtc = Date.parse(natal.utc), overrides = {}) { return lifetime.restore({ opened: true, mode: 'lifetime',
       fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, requestedUtc, ...overrides }); } };
 }
 
-test('choosing birth at its already selected archive UTC paints the exact natal chart again', async () => {
-  const h = birthArchiveHarness({ birthUtc: '2026-09-24T12:30:00Z' });
+test('choosing birth at its already selected lifetime UTC paints the exact natal chart again', async () => {
+  const h = birthLifetimeHarness({ birthUtc: '2026-09-24T12:30:00Z' });
   h.setPreview(true); await h.restore();
   assert.equal(h.painted.kind, 'transit');
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(h.natal.utc));
@@ -344,12 +344,12 @@ test('choosing birth at its already selected archive UTC paints the exact natal 
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(h.natal.utc));
   assert.equal(h.lifetime.state.opened, true); assert.equal(h.session.current.primary, h.natal);
   assert.equal(h.painted.primary, h.natal); assert.equal(h.painted.secondary, null);
-  assert.ok(h.frames.length > count, 'birth must repaint even when the archive UTC already matches');
+  assert.ok(h.frames.length > count, 'birth must repaint even when the lifetime UTC already matches');
   assert.equal(JSON.stringify(h.natal), original); assert.deepEqual(h.calls, [75]);
 });
 
-test('Birth resets from another archive slot using its saved chart with no rounded point request', async () => {
-  const h = birthArchiveHarness(), saved = JSON.stringify(h.natal);
+test('Birth resets from another lifetime slot using its saved chart with no rounded point request', async () => {
+  const h = birthLifetimeHarness(), saved = JSON.stringify(h.natal);
   h.setPreview(true); await h.restore(Date.parse('2026-09-24T13:20:00Z'));
   assert.deepEqual(h.calls, [80]); assert.equal(h.painted.kind, 'transit');
   h.navigation.resetMoment(); await new Promise(resolve => setImmediate(resolve));
@@ -360,12 +360,12 @@ test('Birth resets from another archive slot using its saved chart with no round
   assert.equal(h.painted.primary, h.natal, 'birth retains Design and the personality transit at the exact birth time');
   assert.equal(JSON.stringify(h.natal), saved);
   h.setPreview(true); await h.lifetime.scrub(Date.parse(h.natal.utc));
-  assert.deepEqual(h.calls, [80, 76], 'explicit manual archive selection starts at its first legal grid sample');
+  assert.deepEqual(h.calls, [80, 76], 'explicit manual lifetime selection starts at its first legal grid sample');
   assert.equal(h.lifetime.state.displayedUtc, Date.parse('2026-09-24T12:40:00Z')); assert.equal(h.painted.kind, 'transit');
 });
 
-test('restoring the exact birth boundary borrows its saved chart without an archive request', async () => {
-  const h = birthArchiveHarness();
+test('restoring the exact birth boundary borrows its saved chart without a lifetime request', async () => {
+  const h = birthLifetimeHarness();
   assert.equal(h.lifetime.state.opened, false);
   await h.lifetime.open(); assert.equal(h.lifetime.state.mode, 'day');
   assert.equal(await h.restore(), true);
@@ -377,7 +377,7 @@ test('restoring the exact birth boundary borrows its saved chart without an arch
 });
 
 test('manual birth-range ownership and a later custom range do not borrow Birth', async () => {
-  const h = birthArchiveHarness(); h.setPreview(true); await h.restore(Date.parse('2026-09-24T12:40:00Z'));
+  const h = birthLifetimeHarness(); h.setPreview(true); await h.restore(Date.parse('2026-09-24T12:40:00Z'));
   assert.deepEqual(h.calls, [76]); assert.equal(h.painted.kind, 'transit');
   assert.notEqual(h.lifetime.current, h.natal, 'an explicitly sampled birth range retains its sampled owner');
   await h.lifetime.setDateRange('2026-09-25', '2026-09-26');
@@ -449,15 +449,15 @@ test('switching between Day and Returns is exclusive and switching Returns off l
 
 
 function lazyTransitScaleHarness({ metadataPending = false } = {}) {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   let session, lifetime = null, finishImport, finishMetadata;
   const imported = new Promise(resolve => { finishImport = resolve; });
   const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
     stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] };
   const meta = metadataPending ? new Promise(resolve => { finishMetadata = resolve; }) : Promise.resolve(metadata);
   const controller = createLifetimeExplorer({ client: { getMeta: () => meta,
-    getPoint: () => assert.fail('opening standalone Years starts in Day and needs no archive point') } });
-  const natalDay = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: () => session.publish('natal-day', natalDay.current) });
+    getPoint: () => assert.fail('opening standalone Lifetime starts in Day and needs no lifetime point') } });
+  const natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', natalDay.current) });
   const returns = createReturnsController();
   session = createChartSession({ store: { get: id => id === chart.id ? chart : null, has: id => id === chart.id },
     getNatalDay: () => natalDay, getLifetime: () => lifetime, getReturns: () => returns });
@@ -467,7 +467,7 @@ function lazyTransitScaleHarness({ metadataPending = false } = {}) {
     finishMetadata() { finishMetadata(metadata); } };
 }
 
-for (const destination of ['saved-person', 'current-transit']) test(`navigation to ${destination} cancels pending standalone Years before its module loads`, async () => {
+for (const destination of ['saved-person', 'current-transit']) test(`navigation to ${destination} cancels pending standalone Lifetime before its module loads`, async () => {
   const h = lazyTransitScaleHarness();
   const opening = h.scales.toggleTransit();
   assert.equal(h.scales.transitEnabled, true);
@@ -480,7 +480,7 @@ for (const destination of ['saved-person', 'current-transit']) test(`navigation 
   assert.equal(h.session.selectedId, destination);
 });
 
-for (const phase of ['module', 'metadata']) test(`second standalone Years click cancels the pending ${phase} and leaves both rails closed`, async () => {
+for (const phase of ['module', 'metadata']) test(`second standalone Lifetime click cancels the pending ${phase} and leaves both rails closed`, async () => {
   const h = lazyTransitScaleHarness({ metadataPending: phase === 'metadata' });
   const opening = h.scales.toggleTransit();
   if (phase === 'metadata') { h.finishImport(); await Promise.resolve(); }
@@ -493,7 +493,7 @@ for (const phase of ['module', 'metadata']) test(`second standalone Years click 
   assert.equal(h.natalDay.state.opened, false);
 });
 
-test('a cancelled standalone Years continuation cannot clear a later click sharing the same module', async () => {
+test('a cancelled standalone Lifetime continuation cannot clear a later click sharing the same module', async () => {
   const h = lazyTransitScaleHarness();
   const first = h.scales.toggleTransit();
   await h.scales.toggleTransit();

@@ -115,7 +115,7 @@ function dualFilteredChart(base, selectedPlanets, selectedDesignPlanets, designA
     planetFilter: { ...chart.planetFilter, selectedDesignPlanets, designActivations } };
 }
 
-test('Years black and red controls have independent all, mixed and empty states while retaining ordinary targets', () => {
+test('Lifetime black and red controls have independent all, mixed and empty states while retaining ordinary targets', () => {
   const base = chartAt(), all = PLANETS.map(([planet]) => planet);
   const h = fixture(base), painter = createActivationPainter(h.root), initial = targets(h.root);
   let controls;
@@ -147,7 +147,7 @@ test('Years black and red controls have independent all, mixed and empty states 
   for (const [id, node] of initial) assert.equal(targets(h.root).get(id), node);
 });
 
-test('ordinary day exposes only the Design master and keeps it and every selection target across Years transitions', () => {
+test('ordinary day exposes only the Design master and keeps it and every selection target across Lifetime transitions', () => {
   const base = chartAt(), all = PLANETS.map(([planet]) => planet);
   const dayChart = selectedDesignPlanets => {
     const chart = dualFilteredChart(base, all, selectedDesignPlanets);
@@ -174,11 +174,11 @@ test('ordinary day exposes only the Design master and keeps it and every selecti
       assert.equal(targets(h.root).get(`personality-${planet}`).getAttribute('opacity'), null);
     }
   }
-  const years = dualFilteredChart(base, ['sun'], ['moon']);
-  update(painter, years); assertEquivalent(h.root, years);
+  const lifetime = dualFilteredChart(base, ['sun'], ['moon']);
+  update(painter, lifetime); assertEquivalent(h.root, lifetime);
   assert.equal(h.root.querySelectorAll('.activation-planet-filter').length, 28);
   assert.equal(h.root.querySelector('.activation-planet-filter[data-id="design:all"]'), master);
-  const returnedDay = { ...years, planetFilter: { ...years.planetFilter, perPlanetControls: false } };
+  const returnedDay = { ...lifetime, planetFilter: { ...lifetime.planetFilter, perPlanetControls: false } };
   update(painter, returnedDay); assertEquivalent(h.root, returnedDay);
   assert.deepEqual(h.root.querySelectorAll('.activation-planet-filter'), [master]);
   assert.equal(master.getAttribute('aria-checked'), 'mixed', 'presentation changes do not reset either selected set');
@@ -339,8 +339,8 @@ test('column memo observes mutated filtered contributors, full rows, both planet
   chart.activations.design.pop(); check('fixed contributor repaired');
   chart.planetFilter.selectedDesignPlanets.push('moon'); check('mutated red enabled set');
   chart.planetFilter.selectedPlanets.splice(0, 1); check('mutated black enabled set');
-  chart.planetFilter.perPlanetControls = false; check('Years to ordinary day controls');
-  chart.planetFilter.perPlanetControls = true; check('ordinary day to Years controls');
+  chart.planetFilter.perPlanetControls = false; check('Lifetime to ordinary day controls');
+  chart.planetFilter.perPlanetControls = true; check('ordinary day to Lifetime controls');
   opt.selections.push({ type: 'planet', id: 'design-moon' }); check('planet selection');
   opt.previewSelection = { type: 'gate', id: 61 }; check('independent hovered gate');
   opt.selections.push({ type: 'gate', id: 61 }); check('committed gate');

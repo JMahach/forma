@@ -10,7 +10,7 @@ __pycache__/
 .cache/transit/
 dist/
 
-# Generated lifetime archives and their completion metadata.
+# Generated lifetime files and their completion metadata.
 *.f64le
 *.f64le.*.tmp
 .cache/lifetime/

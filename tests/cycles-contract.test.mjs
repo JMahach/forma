@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createCycles } from '../server/services/cycles.mjs';
 import { createCyclesClient } from '../src/data/cycles-client.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const utc = '2028-07-21T12:36:05.920740Z';
@@ -12,7 +12,7 @@ const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'saturn', eventUtc: utc,
 function result() {
   const event = { id: `saturn:${utc}`, cycleId: 'saturn:1', body: 'saturn', utc,
     age: (Date.parse(utc) - Date.parse(input.birthUtc)) / (365.2425 * 86400000), cycle: 1, pass: 1, direction: 'direct' };
-  return { event, chart: { ...chartAtMinute(chartDayFixture({ date: '2028-07-21' }), 0, personalChartFixture()), utc } };
+  return { event, chart: { ...chartAtMinute(natalDayFixture({ date: '2028-07-21' }), 0, personalChartFixture()), utc } };
 }
 
 test('worker refinement within one second reaches the client and keeps the exact resolved chart UTC', async () => {

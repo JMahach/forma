@@ -5,7 +5,7 @@ const snapshots = new WeakSet(), projections = new WeakMap();
 const empty = Object.freeze([]);
 
 // Only owned numeric snapshots are reusable; a frozen caller object can still
-// contain mutable children or accessors. Day and Years share these exact arrays.
+// contain mutable children or accessors. Day and Lifetime share these exact arrays.
 export function snapshotLongitudes(values) {
   if (snapshots.has(values)) return values;
   const snapshot = Object.freeze([...values]);
@@ -26,7 +26,7 @@ export function projectLongitudes(longitudes, planets) {
   return result;
 }
 
-// Day and Years present the same UTC chart. Their adapters own validation,
+// Day and Lifetime present the same UTC chart. Their adapters own validation,
 // cache lifetime and provenance; the moment keeps its exact timestamp.
 export function projectMomentChart(moment, planets, metadata) {
   const personality = projectLongitudes(moment.longitudes, planets);

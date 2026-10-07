@@ -43,9 +43,9 @@ test('transit renders one column without natal design or total columns', () => {
 for (const scenario of [
   { name: 'Day P-only', expanded: false, design: false, personality: true },
   { name: 'Day P+D', expanded: false, design: true, personality: true },
-  { name: 'Years P-only', expanded: true, design: false, personality: true },
-  { name: 'Years P+D', expanded: true, design: true, personality: true },
-  { name: 'Years D-only', expanded: true, design: true, personality: false },
+  { name: 'Lifetime P-only', expanded: true, design: false, personality: true },
+  { name: 'Lifetime P+D', expanded: true, design: true, personality: true },
+  { name: 'Lifetime D-only', expanded: true, design: true, personality: false },
 ]) test(`transit line summary follows accepted sources: ${scenario.name}`, () => {
   const activations = {
     personality: PLANET_IDS.map((planet, index) => ({ planet, gate: 1 + index % 3, line: 1 + index % 6 })),

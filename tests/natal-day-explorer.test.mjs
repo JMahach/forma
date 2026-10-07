@@ -1,19 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartDayExplorer, canExploreChartDay } from '../src/state/natal-day.js';
-import { attachChartDayExplorer } from '../src/views/natal-day-controls.js';
+import { createNatalDayExplorer, canExploreNatalDay } from '../src/state/natal-day.js';
+import { attachNatalDayExplorer } from '../src/views/natal-day-controls.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { createChartStore } from '../src/data/chart-store.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createGraphController } from '../src/scene/updates.js';
-import { chartAtMinute, chartDayMinute } from '../src/domain/natal-day.js';
+import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.js';
 import { attachBirthForm } from '../src/views/birth-form.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
-function harness(getDay = async () => chartDayFixture()) {
+function harness(getDay = async () => natalDayFixture()) {
   const requests = [], states = [], renders = [];
-  const explorer = createChartDayExplorer({
+  const explorer = createNatalDayExplorer({
     dayClient: { getDay: (chart, options) => { requests.push({ chart, options }); return getDay(chart, options); } },
     onStateChange: state => states.push(state), onRender: () => renders.push(explorer.current),
   });
@@ -23,7 +23,7 @@ function harness(getDay = async () => chartDayFixture()) {
 test('only calculated personal charts opt into a day and selecting one never starts a calculation', async () => {
   const h = harness(), chart = personalChartFixture();
   for (const candidate of [null, { ...chart, source: 'manual' }, { ...chart, source: 'transit' }, { ...chart, cityId: '' }, { ...chart, utc: '' }]) {
-    assert.equal(canExploreChartDay(candidate), false);
+    assert.equal(canExploreNatalDay(candidate), false);
     h.explorer.select(candidate);
     assert.equal(await h.explorer.open(), false);
   }
@@ -85,7 +85,7 @@ test('switching chart or closing cancels the active view; stale completion canno
     assert.equal(h.explorer.state.status, 'loading');
     if (change === 'select') h.explorer.select(next); else h.explorer.close();
     assert.equal(h.requests[0].options.signal.aborted, true);
-    complete(chartDayFixture()); await pending;
+    complete(natalDayFixture()); await pending;
     assert.equal(h.explorer.state.opened, false);
     assert.equal(h.explorer.state.original, change === 'select' ? next : chart);
     assert.equal(h.explorer.state.day, null);
@@ -96,7 +96,7 @@ test('switching chart or closing cancels the active view; stale completion canno
 
 test('day failures retain the saved chart and explicit retry recovers without navigation', async () => {
   let fail = true;
-  const h = harness(async () => { if (fail) throw new Error('Нет соединения'); return chartDayFixture(); });
+  const h = harness(async () => { if (fail) throw new Error('Нет соединения'); return natalDayFixture(); });
   const chart = personalChartFixture();
   h.explorer.select(chart); await h.explorer.open();
   assert.equal(h.explorer.state.status, 'error');
@@ -120,13 +120,13 @@ function element() {
 }
 function uiHarness(getDay, withMarker = true, options = {}) {
   const elements = Object.fromEntries(['toggle', 'panel', 'range', 'time', 'status', 'resetButton', ...(withMarker ? ['marker'] : [])].map(key => [key, element()]));
-  const explorer = attachChartDayExplorer({ ...elements, dayClient: { getDay }, ...options });
+  const explorer = attachNatalDayExplorer({ ...elements, dayClient: { getDay }, ...options });
   return { ...elements, explorer };
 }
 
 test('only user natal scrubs and birth choices interrupt restoration; open, internal reset and retry do not', async () => {
   let fail = true, interruptions = 0;
-  const h = uiHarness(async () => { if (fail) throw Error('Offline'); return chartDayFixture(); }, true,
+  const h = uiHarness(async () => { if (fail) throw Error('Offline'); return natalDayFixture(); }, true,
     { onMomentInput: () => { interruptions++; } });
   const chart = personalChartFixture(); h.explorer.select(chart); await h.explorer.open();
   fail = false; await h.resetButton.dispatch('click');
@@ -140,7 +140,7 @@ test('only user natal scrubs and birth choices interrupt restoration; open, inte
 });
 
 test('controls distinguish repeated local minutes by offset and select the original fold using its UTC instant', async () => {
-  const day = chartDayFixture({ date: '2026-11-01', timezone: 'America/New_York', samples: 1500, segments: [
+  const day = natalDayFixture({ date: '2026-11-01', timezone: 'America/New_York', samples: 1500, segments: [
     { index: 0, startUtc: '2026-11-01T04:00:00Z', utcOffset: 'UTC−04:00', offsetSeconds: -14400, fold: 0 },
     { index: 120, startUtc: '2026-11-01T06:00:00Z', utcOffset: 'UTC−05:00', offsetSeconds: -18000, fold: 1 },
     { index: 180, startUtc: '2026-11-01T07:00:00Z', utcOffset: 'UTC−05:00', offsetSeconds: -18000, fold: 0 },
@@ -215,7 +215,7 @@ test('metadata replacement during a pending birth Day keeps its request valid an
   h.explorer.updateMetadata(updated);
   assert.equal(h.explorer.current, updated); assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].options.signal.aborted, false);
-  complete(chartDayFixture()); assert.equal(await loading, true);
+  complete(natalDayFixture()); assert.equal(await loading, true);
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.explorer.state.referenceIndex, 754);
   h.explorer.scrub(800);
   assert.equal(h.explorer.current.name, updated.name); assert.equal(h.explorer.current.note, updated.note);
@@ -223,10 +223,10 @@ test('metadata replacement during a pending birth Day keeps its request valid an
 });
 
 test('refreshing the accepted natal metadata retains real graph pins, crosses and camera transform', async () => {
-  let original = chartAtMinute(chartDayFixture(), 754, personalChartFixture()), graph, explorer;
+  let original = chartAtMinute(natalDayFixture(), 754, personalChartFixture()), graph, explorer;
   const viewport = { innerHTML: '', transform: 'translate(-70,25) scale(1.4)', querySelector: () => null };
   const session = createChartSession({ store: { get: () => original, has: () => true }, getNatalDay: () => explorer, onChange: () => graph?.render() });
-  explorer = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: () => session.publish('natal-day', explorer.state.current) });
+  explorer = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', explorer.state.current) });
   session.select(original.id); await explorer.open();
   graph = createGraphController({ getChart: () => session.current, viewport,
     scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() {} },
@@ -242,7 +242,7 @@ test('refreshing the accepted natal metadata retains real graph pins, crosses an
 
 test('controls expose loading, error and retry without enabling unavailable minutes', async () => {
   let fail = true;
-  const h = uiHarness(async () => { if (fail) throw new Error('Расчёт недоступен'); return chartDayFixture(); });
+  const h = uiHarness(async () => { if (fail) throw new Error('Расчёт недоступен'); return natalDayFixture(); });
   assert.equal(h.toggle.hidden, true);
   h.explorer.select(personalChartFixture());
   assert.equal(h.toggle.hidden, false);
@@ -272,11 +272,11 @@ test('controls expose loading, error and retry without enabling unavailable minu
 
 test('saved birth marker has exact endpoints for different day lengths and never follows a scrubbed minute', async () => {
   for (const samples of [1, 1380, 1410, 1440, 1470, 1500]) {
-    const day = chartDayFixture({ samples });
+    const day = natalDayFixture({ samples });
     let requests = 0;
     const h = uiHarness(async () => { requests++; return day; });
     for (const index of new Set([0, Math.floor((samples - 1) / 2), samples - 1])) {
-      const utc = new Date(Date.parse(chartDayMinute(day, index).utc) + 45_000).toISOString();
+      const utc = new Date(Date.parse(natalDayMinute(day, index).utc) + 45_000).toISOString();
       const original = personalChartFixture({ utc });
       h.explorer.select(original);
       assert.equal(h.marker.hidden, true);
@@ -307,18 +307,18 @@ test('closed, changed and stale birth-day loads cannot show an old reference mar
   assert.equal(h.marker.hidden, true);
   assert.equal(h.explorer.state.referenceIndex, null);
   h.explorer.select(personalChartFixture({ id: 'next' }));
-  complete(chartDayFixture()); await first;
+  complete(natalDayFixture()); await first;
   assert.equal(h.marker.hidden, true);
   assert.equal(h.marker.style.left, '');
   assert.equal(h.panel.dataset.status, 'idle');
   assert.equal(h.explorer.state.referenceIndex, null, 'a stale load cannot supply a birth reference');
   const second = h.explorer.open();
   h.explorer.close();
-  complete(chartDayFixture()); await second;
+  complete(natalDayFixture()); await second;
   assert.equal(h.marker.hidden, true);
   assert.equal(h.marker.style.left, '');
   const third = h.explorer.open();
-  complete(chartDayFixture()); await third;
+  complete(natalDayFixture()); await third;
   assert.equal(h.marker.hidden, false);
   h.explorer.select(personalChartFixture({ id: 'third' }));
   assert.equal(h.marker.hidden, true, 'selecting another saved chart removes the previous marker immediately');
@@ -327,7 +327,7 @@ test('closed, changed and stale birth-day loads cannot show an old reference mar
 });
 
 test('birth controls remain usable when the optional marker is omitted', async () => {
-  const h = uiHarness(async () => chartDayFixture(), false);
+  const h = uiHarness(async () => natalDayFixture(), false);
   h.explorer.select(personalChartFixture());
   await h.explorer.open();
   h.explorer.scrub(800);
@@ -336,7 +336,7 @@ test('birth controls remain usable when the optional marker is omitted', async (
 });
 
 test('personal scrubbing keeps real graph pins, camera transform and saved storage intact', async () => {
-  const original = chartAtMinute(chartDayFixture(), 754, personalChartFixture()), writes = [], values = JSON.stringify([original]);
+  const original = chartAtMinute(natalDayFixture(), 754, personalChartFixture()), writes = [], values = JSON.stringify([original]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => values, setItem: (...args) => writes.push(args) }) });
   const session = createChartSession({ store });
   session.select(original.id);
@@ -349,7 +349,7 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
     getMandala: () => ({ enabled: true }), activationPopover: { close() {}, show() {}, refresh() {} },
     onChartChange(id) { explorer.close(); session.select(id); explorer.select(session.original); graph.render(); },
   });
-  explorer = createChartDayExplorer({ dayClient: { getDay: async () => chartDayFixture() }, onRender: graph.render });
+  explorer = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: graph.render });
   explorer.select(session.original); await explorer.open();
   graph.choose({ type: 'gate', id: 41 });
   graph.choose({ type: 'mandala-cross', cross: { longitude: 0, source: 'personality' }, additive: true });

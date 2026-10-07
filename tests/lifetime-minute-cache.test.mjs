@@ -10,9 +10,9 @@ import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
 const start = Date.parse('2026-09-29T00:00:00Z');
 const utc = text => Date.parse(`2026-09-${text}Z`);
 const metadata = { startUtc: '2026-09-29T00:00:00Z', endExclusiveUtc: '2026-10-02T00:00:00Z', stepSeconds: 600,
-  samples: 432, planets: LIFETIME_PLANETS, source: 'Swiss Ephemeris 2.10.03' };
+  samples: 432, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris 2.10.03' };
 const dayAt = date => ({ version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
-  engine: metadata.source, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
+  engine: metadata.engine, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 60 : 1e-11)),
 });
@@ -41,7 +41,7 @@ function harness({ capacity = 1, getMomentState = () => null } = {}) {
     onRender: () => renders.push(explorer.current) });
   return { client, dayClient, explorer, requests, exactRequests, dayRequests, renders };
 }
-async function archive(h) {
+async function openLifetime(h) {
   await h.explorer.open(); const pending = h.explorer.setDateRange('2026-09-29', '2026-10-01');
   await tick(); h.requests.at(-1)?.resolve(); await pending;
 }
@@ -55,7 +55,7 @@ test('compatible minute lookup is synchronous, shares day projection, validates 
   assert.deepEqual(h.dayRequests, ['2026-09-30']); assert.equal(h.requests.length, 0);
 });
 
-test('minute lookup rejects incompatible day contracts and days outside archive metadata', async () => {
+test('minute lookup rejects incompatible day contracts and days outside lifetime metadata', async () => {
   const raw = dayAt('2026-09-30');
   for (const patch of [{ engine: 'other' }, { version: 'old' }, { stepSeconds: 600 }, { nodeModel: 'mean' }, { zodiac: 'other' }, { startUtc: '2026-10-01T00:00:00Z' }]) {
     const client = createLifetimeClient({ dayClient: { peekDay: () => ({ ...raw, ...patch }) }, fetch: () => response(metadata) });
@@ -66,7 +66,7 @@ test('minute lookup rejects incompatible day contracts and days outside archive 
 });
 
 test('cached scrub synchronously replaces and aborts cold work; late completion cannot replace the minute', async () => {
-  const h = harness(); await archive(h); await h.dayClient.getDay('2026-09-30');
+  const h = harness(); await openLifetime(h); await h.dayClient.getDay('2026-09-30');
   const pending = h.explorer.scrub(utc('29T01:00:00')); await tick(); const cold = h.requests.at(-1);
   const next = utc('30T09:37:00'); const result = h.explorer.scrub(next);
   assert.equal(h.explorer.state.requestedUtc, next); assert.equal(h.explorer.state.displayedUtc, next);
@@ -77,7 +77,7 @@ test('cached scrub synchronously replaces and aborts cold work; late completion 
 });
 
 test('cache growth never moves target and manual minute survives day eviction without a reload', async () => {
-  const h = harness(); await archive(h); const before = h.explorer.state.requestedUtc;
+  const h = harness(); await openLifetime(h); const before = h.explorer.state.requestedUtc;
   await h.dayClient.getDay('2026-09-30'); assert.equal(h.explorer.state.requestedUtc, before);
   const minute = utc('30T09:37:00'); await h.explorer.scrub(minute); const chart = h.explorer.current;
   await h.dayClient.getDay('2026-10-01'); assert.equal(h.client.peekMinute(minute), null);
@@ -86,8 +86,8 @@ test('cache growth never moves target and manual minute survives day eviction wi
   assert.equal(h.requests.length, 1); assert.equal(h.dayRequests.length, 2);
 });
 
-test('borrowed exact return at the same UTC still requires manual archive acquisition', async () => {
-  const h = harness(); await archive(h);
+test('borrowed exact return at the same UTC still requires manual lifetime acquisition', async () => {
+  const h = harness(); await openLifetime(h);
   const exact = { ...transitChartAt(dayAt('2026-09-29'), 60), id: 'exact-return' };
   h.explorer.alignMoment(exact);
   const pending = h.explorer.scrub(utc('29T01:00:00')); await tick();
@@ -96,7 +96,7 @@ test('borrowed exact return at the same UTC still requires manual archive acquis
 });
 
 test('cold scrubs preserve intermediate progress and admit one point at a time', async () => {
-  const h = harness(); await archive(h);
+  const h = harness(); await openLifetime(h);
   const pending = h.explorer.scrub(utc('29T01:00:00')); await tick();
   h.explorer.scrub(utc('29T02:00:00')); h.explorer.scrub(utc('29T03:00:00'));
   assert.equal(h.requests.length, 2); h.requests[1].resolve(); await tick();
@@ -109,17 +109,17 @@ test('cold scrubs preserve intermediate progress and admit one point at a time',
 
 test('explicit UTC restore loads one missing minute exactly and legacy index remains readable', async () => {
   const h = harness();
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: utc('30T09:37:00') }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: utc('30T09:37:00') }), true);
   assert.equal(h.explorer.state.displayedUtc, utc('30T09:37:00')); assert.equal(h.requests.length, 0);
   assert.deepEqual(h.dayRequests, []); assert.deepEqual(h.exactRequests, ['2026-09-30T09:37:00Z']);
-  const old = harness(); const pending = old.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-10-01', index: 6 });
+  const old = harness(); const pending = old.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', index: 6 });
   await tick(); assert.equal(old.requests[0].index, 6); old.requests[0].resolve(); assert.equal(await pending, true);
   assert.equal(old.explorer.state.displayedUtc, utc('29T01:00:00'));
 });
 
 test('UTC bounds retain exact birth, keyboard neighbors are pure and reach minute/grid boundaries', async () => {
   const h = harness(); await h.dayClient.getDay('2026-09-30');
-  await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-30', toDate: '2026-10-01', minimumUtc: '2026-09-30T09:34:56Z', requestedUtc: utc('30T09:37:00') });
+  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-10-01', minimumUtc: '2026-09-30T09:34:56Z', requestedUtc: utc('30T09:37:00') });
   assert.equal(h.explorer.state.minUtc, utc('30T09:34:56')); assert.equal(h.explorer.state.maxUtc, Date.parse('2026-10-01T23:59:59.999Z'));
   const before = h.explorer.state.requestedUtc;
   assert.equal(h.explorer.adjacentUtc(-1), utc('30T09:36:00')); assert.equal(h.explorer.adjacentUtc(1), utc('30T09:38:00'));
@@ -133,7 +133,7 @@ test('a birth in the final seconds keeps its exact endpoint beyond the final who
   const birth = '2026-09-30T23:59:56.789Z';
   const original = { ...transitChartAt(dayAt('2026-09-30'), 1439), utc: birth };
   const h = harness({ getMomentState: () => ({ current: original, status: 'ready' }) });
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-30', toDate: '2026-09-30', minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30', minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
   assert.equal(h.explorer.state.minUtc, Date.parse(birth));
   assert.equal(h.explorer.state.maxUtc, utc('30T23:59:59.999'));
   assert.equal(h.explorer.state.requestedUtc, Date.parse(birth));
@@ -143,17 +143,17 @@ test('a birth in the final seconds keeps its exact endpoint beyond the final who
 
 test('restoring a minute beyond the chosen range loads its final valid minute', async () => {
   const h = harness();
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-09-30', requestedUtc: Date.parse('2026-10-01T09:37:00Z') }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-09-30', requestedUtc: Date.parse('2026-10-01T09:37:00Z') }), true);
   assert.equal(h.explorer.state.requestedUtc, utc('30T23:59:00'));
   assert.equal(h.explorer.current.utc, '2026-09-30T23:59:00Z');
   assert.deepEqual(h.dayRequests, []); assert.deepEqual(h.exactRequests, ['2026-09-30T23:59:00Z']); assert.equal(h.requests.length, 0);
 });
 
-test('End resolves the last cached minute and otherwise the final cold archive slot', async () => {
-  const h = harness(); await archive(h); await h.dayClient.getDay('2026-10-01');
+test('End resolves the last cached minute and otherwise the final cold lifetime slot', async () => {
+  const h = harness(); await openLifetime(h); await h.dayClient.getDay('2026-10-01');
   await h.explorer.scrub(h.explorer.state.maxUtc);
   assert.equal(h.explorer.state.requestedUtc, Date.parse('2026-10-01T23:59:00Z'));
-  const cold = harness(); await archive(cold); const end = cold.explorer.scrub(cold.explorer.state.maxUtc);
+  const cold = harness(); await openLifetime(cold); const end = cold.explorer.scrub(cold.explorer.state.maxUtc);
   await tick(); assert.equal(cold.requests.at(-1).index, 431); cold.requests.at(-1).resolve(); await end;
   assert.equal(cold.explorer.state.requestedUtc, Date.parse('2026-10-01T23:50:00Z'));
 });
@@ -170,7 +170,7 @@ test('failed minute restoration retries the same UTC and a newer scrub invalidat
   } });
   const explorer = createLifetimeExplorer({ client });
   const saved = utc('30T09:37:00');
-  assert.equal(await explorer.restore({ opened: true, mode: 'archive', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved }), false);
+  assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved }), false);
   assert.equal(explorer.state.status, 'error'); assert.equal(explorer.state.requestedUtc, saved);
   const retry = explorer.retry(); await tick(); assert.equal(attempts, 2);
   await explorer.scrub(utc('29T01:00:00'));
@@ -181,7 +181,7 @@ test('failed minute restoration retries the same UTC and a newer scrub invalidat
 });
 
 test('changing only open-ended range after a borrowed exact chart requests a valid manual grid point', async () => {
-  const h = harness(); await archive(h);
+  const h = harness(); await openLifetime(h);
   const exact = { ...transitChartAt(dayAt('2026-09-30'), 577), utc: '2026-09-30T09:37:29.432Z', id: 'exact-return' };
   h.explorer.alignMoment(exact);
   const pending = h.explorer.setDateRange('2026-09-29', null); await tick();

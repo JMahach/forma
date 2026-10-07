@@ -138,28 +138,28 @@ test('both day sliders are separate studio children after the full drawing viewp
   assert.doesNotMatch(page, /mandalaCrossReadout/, 'the chart has no textual cross caption');
   assert.equal(byId('transitTime').parent.parent, controls, 'the native range wrapper remains in its own control panel');
   assert.match(controls.attributes, /\bhidden(?:\s|$)/, 'the transit controller owns visibility after bootstrap');
-  const natal = byId('chartDayControls'), toggle = byId('chartDayToggle');
+  const natal = byId('natalDayControls'), toggle = byId('natalDayToggle');
   assert.equal(natal.parent, canvas.parent, 'the optional birth-day slider uses the same separate interface area');
   assert.ok(natal.index > canvas.index);
-  assert.equal(byId('chartDayTime').parent.parent, natal);
+  assert.equal(byId('natalDayTime').parent.parent, natal);
   assert.match(natal.attributes, /\bhidden(?:\s|$)/, 'birth-day exploration starts closed');
-  assert.match(toggle.attributes, /aria-controls="chartDayControls"/);
+  assert.match(toggle.attributes, /aria-controls="natalDayControls"/);
   assert.match(toggle.attributes, /aria-expanded="false"/);
   for (const node of [controls, natal]) assert.match(node.attributes, /\bclass="[^"]*\bday-controls\b/);
-  for (const [id, context] of [['transitTime', 'транзита'], ['chartDayTime', 'рождения']]) {
+  for (const [id, context] of [['transitTime', 'транзита'], ['natalDayTime', 'рождения']]) {
     assert.match(byId(id).attributes, /type="range"/);
     assert.match(byId(id).attributes, /step="1"/);
     assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
     assert.match(page, new RegExp(`<label[^>]*for="${id}"[^>]*>Шкала дня: время ${context}</label>`));
   }
-  assert.match(page, /id="chartDayReset" title="Вернуться к сохранённому времени рождения">К рождению<\/button>/);
+  assert.match(page, /id="natalDayReset" title="Вернуться к сохранённому времени рождения">К рождению<\/button>/);
 });
 
 test('permanent studio insets retain the full drawing viewport independently of slider visibility', () => {
   assert.equal(declarationsAt('.studio', 390, 844).display, 'block');
   assert.ok(rules.some(rule => rule.declarations['--studio-top-space']));
   assert.ok(rules.some(rule => rule.declarations['--studio-bottom-space']));
-  for (const rule of rules.filter(rule => /hidden|day-controls|transitControls|chartDayControls/.test(rule.selector))) {
+  for (const rule of rules.filter(rule => /hidden|day-controls|transitControls|natalDayControls/.test(rule.selector))) {
     assert.equal(rule.declarations['--studio-top-space'], undefined);
     assert.equal(rule.declarations['--studio-bottom-space'], undefined);
     assert.equal(rule.declarations['scroll-padding'], undefined);
@@ -267,7 +267,7 @@ test('coarse pointers gain a 56px invisible range target without moving the rail
     const heading = declarationsAt('.lifetime-heading', width, height, { coarse: true });
     assert.equal(heading['z-index'], '1', 'date inputs remain above the invisible touch target');
     assert.equal(coarse['z-index'], undefined, 'the expanded hit area never covers date buttons or inputs');
-    for (const id of ['transitTime', 'chartDayTime', 'lifetimeTime']) {
+    for (const id of ['transitTime', 'natalDayTime', 'lifetimeTime']) {
       assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
       assert.match(byId(id).parent.parent.attributes, /\bday-controls\b/);
     }
@@ -358,7 +358,7 @@ test('compact range nodes retain a transparent 44px native hit area around crisp
 });
 
 test('integrated reference buttons and track endpoints share the native thumb travel without covering it', () => {
-  for (const [rangeId, referenceId] of [['transitTime', 'transitReference'], ['chartDayTime', 'chartDayReference']]) {
+  for (const [rangeId, referenceId] of [['transitTime', 'transitReference'], ['natalDayTime', 'natalDayReference']]) {
     const range = byId(rangeId), reference = byId(referenceId), rail = reference.parent;
     assert.equal(rail.parent, range.parent);
     assert.equal(reference.tag, 'button');
@@ -413,7 +413,7 @@ test('loading errors keep retry accessible inside the same 48px slot', () => {
     assert.equal(retry.height, '44px');
     assert.equal(retry['pointer-events'], 'auto');
   }
-  for (const id of ['transitStatus', 'chartDayStatus']) assert.ok(byId(id).attributes.includes('role="status"'));
+  for (const id of ['transitStatus', 'natalDayStatus']) assert.ok(byId(id).attributes.includes('role="status"'));
 });
 
 test('desktop and mobile expose identical thumb dimensions and reference styling', () => {
@@ -448,13 +448,13 @@ test('the title stays centered across portrait, landscape and toolbar breakpoint
   assert.equal(byId('chartTitle').parent.parent.parent.parent, byId('canvasWrap').parent, 'the title and drawing use the same studio coordinate space');
 });
 
-test('Home is the first toolbar control, before Years, Day and Mandala', () => {
+test('Home is the first toolbar control, before Lifetime, Day and Mandala', () => {
   const tools = byId('fitButton').parent;
   assert.deepEqual(nodes.filter(node => node.parent === tools && node.tag === 'button')
-    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'chartDayToggle', 'mandalaSwitch', 'summarySwitch']);
-  assert.match(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'the server exposes Years in its first HTML only when available');
+    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'natalDayToggle', 'mandalaSwitch', 'summarySwitch']);
+  assert.match(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'the server exposes Lifetime in its first HTML only when available');
   assert.match(byId('fitButton').attributes, /\bhidden(?:\s|$)/, 'the fitted initial chart starts without Home');
-  assert.equal(byId('chartDayToggle').parent, byId('mandalaSwitch').parent);
+  assert.equal(byId('natalDayToggle').parent, byId('mandalaSwitch').parent);
 });
 
 test('the compact mandala icon belongs to the same named, keyboard-accessible switch', () => {

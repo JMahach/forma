@@ -31,7 +31,7 @@ test('century preview caption uses the same UTC grid as its slider, including hi
     '1 января 1900 г. · 00:10 · UTC');
 });
 
-test('an archive can display a shared day minute in UTC without cloning or renaming that chart', t => {
+test('a lifetime can display a shared day minute in UTC without cloning or renaming that chart', t => {
   localZone(t, 'Europe/Moscow');
   const minute = Object.freeze({ id: 'current-transit', source: 'transit', utc: '2026-10-05T12:01:00Z' });
   assert.equal(chartCaption(minute, minute, false, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');

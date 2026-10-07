@@ -4,7 +4,7 @@ import { createChartStore } from '../src/data/chart-store.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { STORAGE_KEY, TRASH_KEY, CHART_RECORD_PREFIX, CHART_DELETED_PREFIX, readCharts } from '../src/data/storage.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const personal = { id: 'personal', name: 'Test chart', source: 'manual', personality: [1], design: [8] };
 
@@ -271,7 +271,7 @@ test('deleting another card preserves an explicitly retained unsaved chart and i
 });
 
 test('real-store saves, reloads, and edits retain exact time and opaque calculation metadata', () => {
-  const exact = { ...chartAtMinute(chartDayFixture(), 754, personalChartFixture()),
+  const exact = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()),
     utc: '2026-09-24T12:34:45.321Z', birthTime: '12:34:45', calculation: { unknown: true, precision: [1e-14, 0.123456789012345] } };
   const storage = storageHarness([]), store = createChartStore({ getStorage: () => storage });
   assert.equal(store.persist([exact]), true);

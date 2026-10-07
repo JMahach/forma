@@ -144,7 +144,7 @@ test('touching anywhere on the track scrubs immediately and dragging reaches bot
   assert.deepEqual(h.returns, []);
 });
 
-test('touch reference taps retain release arbitration while no-reference archive drags remain available', () => {
+test('touch reference taps retain release arbitration while no-reference lifetime drags remain available', () => {
   const h = harness();
   h.range.send('pointerdown', { pointerType: 'touch' });
   assert.deepEqual(h.scrubs, []); assert.deepEqual(h.returns, []);

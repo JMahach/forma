@@ -94,7 +94,7 @@ test('domain rules and packet contracts are pure and do not import presentation,
   }
   visit('shared/day-packets/decode.js');
   assert.ok([...decoderDependencies].every(file => file.startsWith('shared/day-packets/')));
-  assert.doesNotMatch(source('shared/day-packets/decode.js'), /\b(?:encodeTransitDay|encodeChartDay|encodeNumericColumn|compressDayPacket)\b/);
+  assert.doesNotMatch(source('shared/day-packets/decode.js'), /\b(?:encodeTransitDay|encodeNatalDay|encodeNumericColumn|compressDayPacket)\b/);
 });
 
 test('server separates HTTP, service policies, process adapters and private encoders', () => {
@@ -117,7 +117,7 @@ test('production cache is the only writable service directory and API timeout co
   assert.match(service, /^CacheDirectory=forma$/m);
   assert.match(service, /^CacheDirectoryMode=0700$/m);
   assert.match(service, /^Environment=TRANSIT_CACHE_DIR=\/var\/cache\/forma\/transit$/m);
-  assert.match(service, /^Environment=FORMA_LIFETIME_CORPUS=\/var\/cache\/forma\/lifetime\/lifetime-1801-2400\.f64le$/m);
+  assert.match(service, /^Environment=FORMA_LIFETIME_FILE=\/var\/cache\/forma\/lifetime\/lifetime-1801-2400\.f64le$/m);
   assert.match(source('server/server.mjs'), /cacheDir:\s*process\.env\.TRANSIT_CACHE_DIR/);
   assert.match(proxy, /location \/api\/\s*\{[^}]*proxy_read_timeout 65s;/);
 });

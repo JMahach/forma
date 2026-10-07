@@ -13,11 +13,11 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
   for (const [savedView, needsDay] of [
     [null, true],
     [{ selectedId: 'current-transit', transit: { live: false } }, true],
-    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'archive' } }, false],
+    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'lifetime' } }, false],
     [{ selectedId: 'personal' }, false],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'archive', personalPreview: true, personalLive: false } }, false],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'archive', personalLive: true } }, true],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'archive', personalLive: true }, returns: { eventId: 'exact' } }, false],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalPreview: true, personalLive: false } }, false],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalLive: true } }, true],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalLive: true }, returns: { eventId: 'exact' } }, false],
   ]) {
     let reads = 0, creates = 0, options, received;
     const toast = () => {}, layout = {}, client = {};

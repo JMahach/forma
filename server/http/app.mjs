@@ -13,11 +13,11 @@ function json(res, status, data) {
 
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, cities, calculate, transitDays, chartDays, lifetime, lifetimeFingerprint, cycles, now, publicFiles = createPublicFileHandler({ root }) }) {
+export function createRequestHandler({ root, cities, calculate, transitDays, natalDays, lifetime, lifetimeFingerprint, cycles, now, publicFiles = createPublicFileHandler({ root }) }) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
-  const natalDay = chartDays && createNatalDayHandler(chartDays);
+  const natalDay = natalDays && createNatalDayHandler(natalDays);
   const cycleHandler = cycles && createCyclesHandler(cycles);
-  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ archive: lifetime, calculate, calculationFingerprint: lifetimeFingerprint }));
+  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ lifetimeFile: lifetime, calculate, calculationFingerprint: lifetimeFingerprint }));
   return async function handleRequest(req, res) {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -37,7 +37,7 @@ export function createRequestHandler({ root, cities, calculate, transitDays, cha
         await transitDay(req, res, url); return;
       }
       if (url.pathname === '/api/chart/day') {
-        if (!chartDays) { json(res, 503, { error: 'chart_day_unavailable', message: 'День рождения недоступен.' }); return; }
+        if (!natalDays) { json(res, 503, { error: 'natal_day_unavailable', message: 'День рождения недоступен.' }); return; }
         await natalDay(req, res, cities); return;
       }
       if (url.pathname === '/api/cities' && req.method === 'GET') {

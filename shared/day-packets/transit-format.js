@@ -1,18 +1,18 @@
+import { MOMENT_PLANETS, MOMENT_COLUMN_COUNT, validMomentValue } from './moment-columns.js';
 import { validOrder } from './float64-codec.js';
 
 // Version the calculation AND binary contract together. Bump when ephemerides,
 // calculation flags or reconstruction rules change: HTTP/disk caches use it.
 export const TRANSIT_DAY_VERSION = '2';
-export const TRANSIT_PLANETS = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']);
+export const TRANSIT_PLANETS = MOMENT_PLANETS;
 // Protocol column order is fixed; never derive it from the UI catalogue.
 export const TRANSIT_SAMPLES = 1440;
 // Personality, Design, Design UTC seconds and the exact 88° search residual.
-export const TRANSIT_DAY_COLUMNS = 24;
+export const TRANSIT_DAY_COLUMNS = MOMENT_COLUMN_COUNT;
 export const TRANSIT_PAYLOAD_BYTES = TRANSIT_SAMPLES * TRANSIT_DAY_COLUMNS * 8;
 export const TRANSIT_MAX_HEADER_BYTES = 4096;
 export const failTransitPacket = () => { throw new Error('Некорректный пакет дневного транзита.'); };
-export const validTransitValue = (value, column = 0) => Number.isFinite(value) && (column < 22 ? value >= 0 && value < 360
-  : column === 22 ? Number.isInteger(value) && value > -10_000_000_000 && value < 20_000_000_000 : value >= 0 && value <= 1e-7);
+export const validTransitValue = validMomentValue;
 
 export function validateTransitMetadata(header) {
   if (!header || header.version !== TRANSIT_DAY_VERSION || header.samples !== TRANSIT_SAMPLES || header.stepSeconds !== 60

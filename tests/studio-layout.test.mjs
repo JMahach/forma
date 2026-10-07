@@ -451,7 +451,7 @@ test('application rerenders geometric column changes without imposing a phone-on
   assert.match(app, /attachMandalaMode\(\{[\s\S]*?motion: mandalaMotion, layout,/);
   assert.match(app, /mandalaColumns !== layout\.showMandalaColumns[\s\S]*?graph\.render\(\)[\s\S]*?gestures\.resize\(\)/);
   assert.match(app, /layoutObserver\.observe\(\$\('canvasWrap'\)\)/);
-  assert.doesNotMatch(app, /\[\$\('bodygraph'\), \$\('transitControls'\), \$\('chartDayControls'\)\]/, 'day panel content is not a camera resize source');
+  assert.doesNotMatch(app, /\[\$\('bodygraph'\), \$\('transitControls'\), \$\('natalDayControls'\)\]/, 'day panel content is not a camera resize source');
 });
 
 test('narrow Home uses a four-pixel outer planet margin without shrinking either mode', () => {

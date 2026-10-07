@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCyclesClient } from '../src/data/cycles-client.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'saturn', fromAge: 28, toAge: 30 };
 const event = { id: 'saturn:2028-07-21T12:36:05.920740Z', body: 'saturn', utc: '2028-07-21T12:36:05.920740Z', age: 28.5550697647, cycle: 1, pass: 1, cycleId: 'saturn:1', direction: 'direct' };
 const events = () => ({ events: [{ ...event }], range: { fromAge: 28, toAge: 30 } });
 const chartInput = { birthUtc: input.birthUtc, body: input.body, eventUtc: event.utc, timezone: 'UTC' };
 function chartResult(selected = event) {
-  return { event: { ...selected }, chart: { ...chartAtMinute(chartDayFixture({ date: '2028-07-21' }), 0, personalChartFixture()), utc: selected.utc } };
+  return { event: { ...selected }, chart: { ...chartAtMinute(natalDayFixture({ date: '2028-07-21' }), 0, personalChartFixture()), utc: selected.utc } };
 }
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 

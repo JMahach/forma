@@ -125,7 +125,7 @@ test('reprojecting a filtered chart retains both full columns and can restore ev
   assert.equal(restored.planetFilter.designActivations, chart.activations.design);
 });
 
-test('day permits only the red master and restores all black planets regardless of Years choices', () => {
+test('day permits only the red master and restores all black planets regardless of Lifetime choices', () => {
   const owner = createTransitPlanetFilter(), chart = chartAt();
   const originalDay = owner.filter(chart);
   for (const action of [() => owner.setPlanet('moon', false), () => owner.setPlanet('sun', true, 'design'),
@@ -135,7 +135,7 @@ test('day permits only the red master and restores all black planets regardless 
   owner.toggleAllPlanets('design');
   assert.deepEqual(owner.filter(chart).activations, chart.activations);
   owner.setExpanded(true);
-  assert.deepEqual(owner.state.selectedDesignPlanets, PLANET_IDS, 'Years remembers the day Design master');
+  assert.deepEqual(owner.state.selectedDesignPlanets, PLANET_IDS, 'Lifetime remembers the day Design master');
   owner.setAllPlanets(false, 'design');
   owner.setPlanet('moon', false); owner.setPlanet('earth', true, 'design');
   const expanded = owner.filter(chart), chosen = owner.state;
@@ -145,18 +145,18 @@ test('day permits only the red master and restores all black planets regardless 
   owner.setExpanded(false);
   const restored = owner.filter(expanded);
   assert.notEqual(restored, expanded); assert.equal(restored.planetFilter.perPlanetControls, false);
-  assert.deepEqual(restored.activations, chart.activations, 'day restores all black and shows all red for a nonempty Years selection');
-  owner.setExpanded(true); assert.deepEqual(owner.state, chosen, 'Years retains the exact partial selection across a day visit');
+  assert.deepEqual(restored.activations, chart.activations, 'day restores all black and shows all red for a nonempty Lifetime selection');
+  owner.setExpanded(true); assert.deepEqual(owner.state, chosen, 'Lifetime retains the exact partial selection across a day visit');
   owner.setExpanded(false); owner.toggleAllPlanets('design');
   assert.deepEqual(owner.state.selectedDesignPlanets, []);
   owner.setExpanded(true);
   assert.deepEqual(owner.state.selectedDesignPlanets, [], 'the explicit day master OFF clears the shared Design selection');
-  assert.deepEqual(owner.state.selectedPlanets, chosen.selectedPlanets, 'the Design master cannot change Years black choices');
+  assert.deepEqual(owner.state.selectedPlanets, chosen.selectedPlanets, 'the Design master cannot change Lifetime black choices');
   owner.setAllPlanets(false); owner.setPlanet('sun', true, 'design'); owner.setExpanded(false);
   assert.deepEqual(owner.filter(chart).activations.personality, chart.activations.personality);
   assert.deepEqual(owner.filter(chart).activations.design, chart.activations.design);
   owner.setAllPlanets(true, 'design'); owner.setExpanded(true);
-  assert.deepEqual(owner.state.selectedDesignPlanets, PLANET_IDS, 'the explicit day master ON selects every red planet for Years');
+  assert.deepEqual(owner.state.selectedDesignPlanets, PLANET_IDS, 'the explicit day master ON selects every red planet for Lifetime');
   assert.deepEqual(owner.state.selectedPlanets, []);
 });
 

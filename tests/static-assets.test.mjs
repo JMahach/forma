@@ -127,7 +127,7 @@ test('development revalidates source files while sharing concurrent encoding wor
   assert.notEqual(next.headers.ETag, previous.headers.ETag);
 });
 
-test('archive availability exposes Years in the first development/release HTML in every encoding without changing build files', async t => {
+test('lifetime availability exposes Lifetime in the first development/release HTML in every encoding without changing build files', async t => {
   for (const precompressed of [false, true]) {
     const root = await directory(t);
     const source = '<html><body><button id="fitButton" hidden>Домой</button><button id="lifetimeToggle" hidden>Годы</button><main id="lifetimeControls" hidden>Форма</main></body></html>';
@@ -152,7 +152,7 @@ test('archive availability exposes Years in the first development/release HTML i
         assert.equal(html, expected);
         const toggle = html.match(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/)?.[0];
         assert.ok(toggle);
-        assert.equal(/\s+hidden(?=\s|>)/.test(toggle), !lifetimeEnabled, 'Years availability is resolved before JavaScript');
+        assert.equal(/\s+hidden(?=\s|>)/.test(toggle), !lifetimeEnabled, 'Lifetime availability is resolved before JavaScript');
         assert.match(html, /<button id="fitButton" hidden>/, 'Home still waits for actual camera movement');
         assert.match(html, /<main id="lifetimeControls" hidden>/, 'the optional panel starts closed');
         assert.equal(get.headers.ETag, digest(get.body));

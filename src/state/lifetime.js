@@ -9,7 +9,7 @@ function dateStart(value) {
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString().slice(0, 10) === value ? milliseconds : NaN;
 }
 
-// Today reuses the existing transit. A custom date range uses the archive.
+// Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
 export function createLifetimeExplorer({
   dayClient = null, client = createLifetimeClient({ dayClient }), getDayState = () => null, now = () => Date.now(),
@@ -35,7 +35,7 @@ export function createLifetimeExplorer({
     maxUtc = Math.min(Date.parse(metadata.endExclusiveUtc), end) - 1;
   }
   function referenceUtc() {
-    if (mode !== 'archive' || !metadata || minUtc === null) return null;
+    if (mode !== 'lifetime' || !metadata || minUtc === null) return null;
     const value = Math.floor(now() / 60000) * 60000;
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc ? value : null;
   }
@@ -67,10 +67,10 @@ export function createLifetimeExplorer({
     return true;
   }
   // A return or live minute already owns its calculated chart. Moving the rail
-  // to that moment must not calculate a second, rounded archive chart.
+  // to that moment must not calculate a second, rounded lifetime chart.
   function alignMoment(chart) {
     const utc = Date.parse(chart?.utc);
-    if (!opened || mode !== 'archive' || !metadata || !Number.isFinite(utc)) return false;
+    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(utc)) return false;
     const next = clampUtc(utc);
     if (chart === fullChart && next === requestedUtc && !manualChart && status === 'ready' && !active) return true;
     cancel(); requestedUtc = next; fullChart = chart; manualChart = null;
@@ -81,13 +81,13 @@ export function createLifetimeExplorer({
     cancel(); requestedUtc = utc; fullChart = manualChart = chart;
     status = 'ready'; error = '';
     const generation = sequence; notify();
-    if (generation === sequence && opened && mode === 'archive') onRender();
+    if (generation === sequence && opened && mode === 'lifetime') onRender();
     return Promise.resolve(true);
   }
   function chooseTarget(value, round = Math.round) {
     const clamped = clampUtc(value);
     // A selected manual snapshot survives eviction. A borrowed natal/return
-    // chart never becomes an archive snapshot merely by sharing its UTC.
+    // chart never becomes an lifetime snapshot merely by sharing its UTC.
     if (manualChart && shownUtc() === clamped) return { utc: clamped, chart: manualChart };
     const minute = Math.max(Math.ceil(minUtc / 60000) * 60000,
       Math.min(Math.floor(maxUtc / 60000) * 60000, Math.round(clamped / 60000) * 60000));
@@ -110,7 +110,7 @@ export function createLifetimeExplorer({
           minDate = metadata.startUtc.slice(0, 10);
           maxDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
         }
-        if (restoration?.mode === 'archive') {
+        if (restoration?.mode === 'lifetime') {
           const through = restoration.openEnded ? maxDate : restoration.toDate;
           const start = dateStart(restoration.fromDate), end = dateStart(through) + dayMilliseconds;
           if (restoration.fromDate < minDate || through > maxDate || restoration.fromDate > through) {
@@ -121,11 +121,11 @@ export function createLifetimeExplorer({
           }
           setBounds(start, end, restoration.minimumUtc);
           requestedUtc = clampUtc(restoration.requestedUtc ?? utcAt(restoration.index));
-          // Old snapshots only knew archive slots. New UTC snapshots retain
+          // Old snapshots only knew lifetime slots. New UTC snapshots retain
           // their selected minute even when its day must be loaded explicitly.
           if (restoration.requestedUtc === undefined) requestedUtc = gridUtc(requestedUtc);
           else if (restoration.requestedUtc > maxUtc) requestedUtc = Math.max(minUtc, Math.floor(maxUtc / 60000) * 60000);
-          mode = 'archive'; fromDate = restoration.fromDate; toDate = through; openEnded = restoration.openEnded;
+          mode = 'lifetime'; fromDate = restoration.fromDate; toDate = through; openEnded = restoration.openEnded;
           status = 'loading';
         }
         if (restoration) onModeAccepted({ opened, mode });
@@ -139,7 +139,7 @@ export function createLifetimeExplorer({
           pendingRestore = null;
           return true;
         }
-        while (generation === sequence && opened && mode === 'archive') {
+        while (generation === sequence && opened && mode === 'lifetime') {
           const momentState = getMomentState();
           if (momentState) {
             if (momentState.current) alignMoment(momentState.current);
@@ -160,12 +160,12 @@ export function createLifetimeExplorer({
               const point = await client.getPoint(requestedIndex, { signal: request.controller.signal });
               chart = lifetimeChartAt(metadata, validateLifetimeMoment(point, metadata, requestedIndex));
             }
-            if (generation !== sequence || !opened || mode !== 'archive') return false;
+            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
             // A live/exact owner can take over while this point is pending.
             // Do not publish it or continue a superseded coalesced scrub.
             if (getMomentState()) continue;
           } catch (failure) {
-            if (generation !== sequence || !opened || mode !== 'archive') return false;
+            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
             if (getMomentState() || target !== requestedUtc) continue;
             throw failure;
           }
@@ -174,14 +174,14 @@ export function createLifetimeExplorer({
           if (target < minUtc || target > maxUtc) continue;
           fullChart = manualChart = chart;
           status = target === requestedUtc ? 'ready' : 'loading'; error = ''; notify();
-          if (generation !== sequence || !opened || mode !== 'archive') return false;
+          if (generation !== sequence || !opened || mode !== 'lifetime') return false;
           onRender();
           if (target === requestedUtc) { pendingRestore = null; return true; }
         }
         return false;
       } catch (failure) {
         if (generation !== sequence || request.controller.signal.aborted) return false;
-        status = 'error'; error = failure?.message || 'Не удалось загрузить шкалу лет.'; notify();
+        status = 'error'; error = failure?.message || 'Не удалось загрузить летопись.'; notify();
         return false;
       } finally { if (active === request) { active = null; restoring = false; } }
     });
@@ -204,9 +204,9 @@ export function createLifetimeExplorer({
 
   function restore(snapshot) {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
-        || snapshot.opened !== true || !['day', 'archive'].includes(snapshot.mode)
+        || snapshot.opened !== true || !['day', 'lifetime'].includes(snapshot.mode)
         || snapshot.openEnded !== undefined && typeof snapshot.openEnded !== 'boolean') return Promise.resolve(false);
-    if (snapshot.mode === 'archive' && (!(snapshot.requestedUtc === undefined ? Number.isSafeInteger(snapshot.index)
+    if (snapshot.mode === 'lifetime' && (!(snapshot.requestedUtc === undefined ? Number.isSafeInteger(snapshot.index)
         : Number.isSafeInteger(snapshot.requestedUtc) && Number.isFinite(new Date(snapshot.requestedUtc).getTime()))
         || !Number.isFinite(dateStart(snapshot.fromDate))
         || !snapshot.openEnded && (!Number.isFinite(dateStart(snapshot.toDate)) || snapshot.fromDate > snapshot.toDate))) return Promise.resolve(false);
@@ -233,7 +233,7 @@ export function createLifetimeExplorer({
     notify(); onRender();
   }
   function scrub(value) {
-    if (!opened || mode !== 'archive' || !metadata || !Number.isFinite(value)) return;
+    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)) return;
     const next = chooseTarget(value);
     if (next.utc === requestedUtc && status !== 'error' && (manualChart && shownUtc() === next.utc || active && !next.chart)) return;
     if (restoring || pendingRestore) cancel();
@@ -246,7 +246,7 @@ export function createLifetimeExplorer({
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
     adjacentUtc(direction) {
-      if (!opened || mode !== 'archive' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
+      if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
       const forward = direction > 0;
       const minute = (forward ? Math.floor(requestedUtc / 60000) + 1 : Math.ceil(requestedUtc / 60000) - 1) * 60000;
       if (!forward && minute <= minUtc) return minUtc;
@@ -282,7 +282,7 @@ export function createLifetimeExplorer({
         notify(); onRender();
         return true;
       }
-      if (mode === 'archive' && from === fromDate && through === toDate) {
+      if (mode === 'lifetime' && from === fromDate && through === toDate) {
         if (openEnded === nextOpenEnded) return true;
         if (restoring || pendingRestore) cancel();
         openEnded = nextOpenEnded;
@@ -300,9 +300,9 @@ export function createLifetimeExplorer({
       if (restoring || pendingRestore) cancel();
       setBounds(start, end);
       const shown = Date.parse(fullChart?.utc);
-      const target = chooseTarget(mode === 'archive' ? requestedUtc : Number.isFinite(shown) ? shown : minUtc, Math.floor);
+      const target = chooseTarget(mode === 'lifetime' ? requestedUtc : Number.isFinite(shown) ? shown : minUtc, Math.floor);
       requestedUtc = target.utc;
-      mode = 'archive'; fromDate = from; toDate = through; openEnded = nextOpenEnded;
+      mode = 'lifetime'; fromDate = from; toDate = through; openEnded = nextOpenEnded;
       const generation = sequence;
       onModeAccepted({ opened, mode });
       if (generation !== sequence || !opened) return false;

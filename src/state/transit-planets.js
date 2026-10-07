@@ -1,8 +1,8 @@
 import { PLANET_IDS } from '../domain/planets.js';
 
-// One selection owner serves ordinary transit, its day slider and the archive.
+// One selection owner serves ordinary transit, its day slider and the lifetime.
 // Source charts remain complete so either side can be restored without a fetch.
-// Years retain individual choices. The day always shows all black planets and
+// Lifetime retain individual choices. The day always shows all black planets and
 // shows all red when the shared Design selection contains any planet.
 export function createTransitPlanetFilter() {
   const selections = { personality: new Set(PLANET_IDS), design: new Set() };

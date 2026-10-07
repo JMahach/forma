@@ -21,6 +21,15 @@ PLANET_BODIES = (
     ('neptune', swe.NEPTUNE), ('pluto', swe.PLUTO),
 )
 
+PERSONALITY_COLUMN = 0
+DESIGN_COLUMN = len(PLANET_BODIES)
+DESIGN_UNIX_SECONDS_COLUMN = DESIGN_COLUMN + len(PLANET_BODIES)
+DESIGN_RESIDUAL_COLUMN = DESIGN_UNIX_SECONDS_COLUMN + 1
+MOMENT_COLUMN_COUNT = DESIGN_RESIDUAL_COLUMN + 1
+MOMENT_FIELDS = tuple(f'{side}.{planet}' for side in ('personality', 'design') for planet, _ in PLANET_BODIES) + (
+    'exactDesignUnixSeconds', 'designArcResidualDegrees',
+)
+
 
 def julian_tt(moment):
     moment = moment.astimezone(UTC)
@@ -100,7 +109,7 @@ def design_time(birth_jd, *, hint=None):
 
 
 class DesignTimeSearch:
-    """One day owns two exact results; a prediction is never an output."""
+    """A sample sequence owns two exact results; a prediction is never an output."""
     def __init__(self):
         self.previous = self.older = None
 
@@ -121,8 +130,8 @@ def longitudes(jd):
 
 
 def sample_columns(moments):
-    """Exact P/D columns for an already selected UTC minute grid."""
-    columns = [[] for _ in range(24)]
+    """Exact P/D columns for an already selected UTC sample grid."""
+    columns = [[] for _ in range(MOMENT_COLUMN_COUNT)]
     design_search = DesignTimeSearch()
     for moment in moments:
         jd = julian_tt(moment)
@@ -130,11 +139,11 @@ def sample_columns(moments):
         for side, side_jd in enumerate((jd, design_jd)):
             values = longitudes(side_jd)
             for column, (planet, _) in enumerate(PLANET_BODIES):
-                columns[side * 11 + column].append(values[planet])
+                columns[side * len(PLANET_BODIES) + column].append(values[planet])
         # Match API UTC seconds, including dates before 1970. Positions above
         # still use the unrounded Julian instant.
-        columns[22].append(int(tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
-        columns[23].append(residual)
+        columns[DESIGN_UNIX_SECONDS_COLUMN].append(int(tt_to_datetime(design_jd).replace(microsecond=0).timestamp()))
+        columns[DESIGN_RESIDUAL_COLUMN].append(residual)
     return columns
 
 

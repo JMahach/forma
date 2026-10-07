@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from server.python import astronomy as astro
-from server.python import chart_day, transit_day
+from server.python import natal_day, transit_day
 from server.python.errors import ChartError
 
 
@@ -165,7 +165,7 @@ class DesignTimeReuseTests(unittest.TestCase):
                        dt.datetime(1970, 1, 1, 0, 0, 0, 999999, tzinfo=astro.UTC),
                        dt.datetime(2399, 9, 30, 23, 59, 59, 999999, tzinfo=astro.UTC)):
             expected = int(dt.datetime.fromisoformat(moment.isoformat(timespec='seconds')).timestamp())
-            for calculate, args in ((chart_day.calculate_day, ('2026-09-30', 'UTC')),
+            for calculate, args in ((natal_day.calculate_day, ('2026-09-30', 'UTC')),
                                     (transit_day.calculate_day, ('2026-09-30',))):
                 with self.subTest(moment=moment, worker=calculate.__module__), \
                         mock.patch.object(astro, 'julian_tt', return_value=0), \
@@ -180,13 +180,13 @@ class DesignTimeReuseTests(unittest.TestCase):
 
     def test_complete_days_retain_every_float_and_metadata(self):
         cases = [
-            (chart_day.calculate_day, ('1801-01-01', 'UTC')),
-            (chart_day.calculate_day, ('2399-12-31', 'UTC')),
-            (chart_day.calculate_day, ('2024-03-10', 'America/New_York')),
-            (chart_day.calculate_day, ('2024-11-03', 'America/New_York')),
-            (chart_day.calculate_day, ('2026-10-04', 'Australia/Lord_Howe')),
-            (chart_day.calculate_day, ('1900-01-01', 'Europe/Paris')),
-            (chart_day.calculate_day, ('1892-07-04', 'Pacific/Apia')),
+            (natal_day.calculate_day, ('1801-01-01', 'UTC')),
+            (natal_day.calculate_day, ('2399-12-31', 'UTC')),
+            (natal_day.calculate_day, ('2024-03-10', 'America/New_York')),
+            (natal_day.calculate_day, ('2024-11-03', 'America/New_York')),
+            (natal_day.calculate_day, ('2026-10-04', 'Australia/Lord_Howe')),
+            (natal_day.calculate_day, ('1900-01-01', 'Europe/Paris')),
+            (natal_day.calculate_day, ('1892-07-04', 'Pacific/Apia')),
             (transit_day.calculate_day, ('1801-01-01',)),
             (transit_day.calculate_day, ('2024-02-29',)),
             (transit_day.calculate_day, ('2399-12-31',)),

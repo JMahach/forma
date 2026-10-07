@@ -30,7 +30,7 @@ export function createLiveTransit({
     && now() >= timeline.startUtc && now() < timeline.endUtc;
 
   function retainActiveDays() {
-    // Years may need this day while live publication is disabled. Retention
+    // Lifetime may need this day while live publication is disabled. Retention
     // follows ownership of the packet objects, not which tool is visible.
     const active = days;
     for (const [date, release] of retained) {

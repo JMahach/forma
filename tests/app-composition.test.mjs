@@ -5,14 +5,14 @@ import { createChartSession } from '../src/state/chart-session.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 import { createReturnsController } from '../src/state/returns.js';
-import { createChartDayExplorer } from '../src/state/natal-day.js';
+import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { eligibleCycleChart, lifeTimelineForChart } from '../src/domain/cycles.js';
 import { attachChartLibrary } from '../src/views/library.js';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.js';
 import { ageText, returnAge } from '../src/views/returns-clock.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 
 // Execute the whole composition root, preserving declaration and attachment
@@ -52,7 +52,7 @@ function browser(lifetimeEnabled) {
   return { document, element };
 }
 
-function harness({ lifetimeEnabled = false, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request archive points') } = {}) {
+function harness({ lifetimeEnabled = false, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser(lifetimeEnabled);
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
   let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
@@ -79,8 +79,8 @@ function harness({ lifetimeEnabled = false, charts = [], getReturn = () => asser
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
     attachLiveTransit: () => ({ state: { wanted: true }, current: null, refresh: noop, setWanted: noop }),
     attachTransitNavigation: noop,
-    attachTransitControls: () => ({ update: noop, setCoveredByYears: noop }),
-    attachChartDayExplorer: options => natalDay = createChartDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return chartDayFixture(); } } }),
+    attachTransitControls: () => ({ update: noop, setCoveredByLifetime: noop }),
+    attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: () => ({ close: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
     attachChartLoading: () => ({ update: noop }), createCyclesClient: () => ({ events: async () => ({ events: [] }), chart: getReturn }), ageText, returnAge,
     updateReturnClock: noop, attachReturnMarkers: () => ({ update: noop }),
@@ -128,7 +128,7 @@ test('raw range editing supersedes restoration and a cold opening before the dat
   assert.equal(h.interruptions, 3, 'an explicit chart command reaches the same restoration owner');
 });
 
-test('archive planet gestures publish the owner projection once and retain both full columns', async () => {
+test('lifetime planet gestures publish the owner projection once and retain both full columns', async () => {
   let requests = 0;
   const h = harness({ lifetimeEnabled: true, getPoint: async index => {
     requests++;
@@ -138,7 +138,7 @@ test('archive planet gestures publish the owner projection once and retain both 
         longitudes: Array.from({ length: 11 }, (_, i) => i * 23 + 10) } };
   } });
   await tick(); await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
-  await h.lifetime.restore({ opened: true, mode: 'archive', fromDate: '1900-01-01', toDate: '1900-01-03',
+  await h.lifetime.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03',
     requestedUtc: Date.parse('1900-01-02T12:00:00Z') });
   const full = h.shown.primary, calls = requests, before = h.renders;
   assert.equal(full, h.lifetime.current);
@@ -162,7 +162,7 @@ test('application starts before the lazy knowledge entry closes its initialized 
   assert.equal(element('knowledgeDialog').open, true, 'the reference opens after successful application composition');
 });
 
-test('two real toolbar clicks cancel cold Years without reopening it after module arrival', async () => {
+test('two real toolbar clicks cancel cold Lifetime without reopening it after module arrival', async () => {
   const h = harness({ lifetimeEnabled: true });
   await tick();
   await h.element('lifetimeToggle').click();
@@ -181,7 +181,7 @@ test('two real toolbar clicks cancel cold Years without reopening it after modul
 });
 
 test('a pending toolbar click cannot switch a newly selected personal card from Day to Returns', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ lifetimeEnabled: true, charts: [chart] });
   await tick();
   await h.element('lifetimeToggle').click();
@@ -192,7 +192,7 @@ test('a pending toolbar click cannot switch a newly selected personal card from 
   assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'false');
 });
 
-test('failed Years import keeps the reload action visible after its opening intent settles', async () => {
+test('failed Lifetime import keeps the reload action visible after its opening intent settles', async () => {
   const h = harness({ lifetimeEnabled: true });
   await tick(); await h.element('lifetimeToggle').click();
   h.failModule(new Error('offline')); await tick();
@@ -203,12 +203,12 @@ test('failed Years import keeps the reload action visible after its opening inte
   assert.equal(h.reloads, 1);
 });
 
-test('the personal rail endpoint uses the shared completed-age wording at a truncated archive boundary', async () => {
-  const chart = chartAtMinute(chartDayFixture({ date: '2378-01-01' }), 0,
+test('the personal rail endpoint uses the shared completed-age wording at a truncated lifetime boundary', async () => {
+  const chart = chartAtMinute(natalDayFixture({ date: '2378-01-01' }), 0,
     personalChartFixture({ birthDate: '2378-01-01', utc: '2378-01-01T00:00:00Z' }));
   const h = harness({ lifetimeEnabled: true, charts: [chart] });
   await tick(); await h.element('lifetimeToggle').click();
-  h.select(chart.id); await h.element('chartDayToggle').click();
+  h.select(chart.id); await h.element('natalDayToggle').click();
   assert.equal(h.natalDay.state.opened, false, 'the app owns the Day toggle after its view binding is removed');
   h.finishModule(); await tick();
   assert.deepEqual(h.lifetimeOptions.formatEndpoints({ toDate: '2399-12-31' }), ['Рождение', '21 год']);
@@ -216,7 +216,7 @@ test('the personal rail endpoint uses the shared completed-age wording at a trun
 
 
 test('a real day publication reaches the scene once without repeating navigation or changing the accepted source during reads', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick();
   const count = h.renders;
@@ -230,8 +230,8 @@ test('a real day publication reaches the scene once without repeating navigation
   assert.equal(h.renders, count + 1);
 });
 
-test('entering personal Years closes the Day controller only once', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+test('entering personal Lifetime closes the Day controller only once', async () => {
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ lifetimeEnabled: true, charts: [chart] });
   await tick(); h.select(chart.id); await tick();
   let closes = 0;
@@ -240,14 +240,14 @@ test('entering personal Years closes the Day controller only once', async () => 
   await h.element('lifetimeToggle').click();
   h.finishModule(); await tick();
   assert.equal(h.lifetime.state.opened, true);
-  assert.equal(h.lifetime.state.mode, 'archive');
+  assert.equal(h.lifetime.state.mode, 'lifetime');
   assert.equal(h.natalDay.state.opened, false);
   assert.equal(h.shown.primary, chart);
   assert.equal(closes, 1, 'the command closes Day; a loading notification must not repeat that command');
 });
 
 test('metadata editing retains a personal minute and updates future scrubs without another Day request or chart selection', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick(); h.natalDay.scrub(800);
   const selectedUtc = h.shown.utc, requests = h.dayRequests, selections = h.chartSelections;
@@ -266,7 +266,7 @@ test('metadata editing retains a personal minute and updates future scrubs witho
 });
 
 test('renaming keeps the confirmed exact return and list filters while updating its natal source', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   let returnRequests = 0;
@@ -287,7 +287,7 @@ test('renaming keeps the confirmed exact return and list filters while updating 
 });
 
 test('opening the editor still cancels a pending return and its late answer cannot overwrite renamed birth', async () => {
-  const chart = chartAtMinute(chartDayFixture(), 754, personalChartFixture());
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   let complete, signal;
   const h = harness({ lifetimeEnabled: true, charts: [chart], getReturn: (_query, requestSignal) => {

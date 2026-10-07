@@ -7,10 +7,10 @@ import { chartCaption } from '../src/views/chart-display.js';
 const shown = control => createChartComposition(control.state.natal, { secondary: control.current, kind: 'return', event: control.state.selectedEvent });
 const caption = control => chartCaption(shown(control), control.state.natal).title;
 import { chartAtMinute } from '../src/domain/natal-day.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-function natal(overrides = {}) { return { ...chartAtMinute(chartDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal', name: 'Анна' })), ...overrides }; }
+function natal(overrides = {}) { return { ...chartAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal', name: 'Анна' })), ...overrides }; }
 function event(body = 'saturn', utc = '2028-07-21T12:36:05.920740Z') { return { id: `${body}:${utc}`, body, utc, age: (Date.parse(utc) - Date.parse('2000-01-01T00:00:00Z')) / (365.2425 * 86400000), cycle: 1, pass: 1, cycleId: `${body}:1`, direction: 'direct' }; }
 const packet = (input, events = [event(input.body)]) => ({ events, range: { fromAge: input.fromAge, toAge: input.toAge } });
 const chartPacket = selected => ({ event: selected, chart: { ...natal(), utc: selected.utc, timezone: 'UTC', engine: 'Exact worker', designArcResidualDegrees: 1e-12 } });
@@ -53,7 +53,7 @@ test('year searches use a birth-relative fractional window, local-year filter an
   await control.setGroup('planet'); await control.setBody('moon'); assert.equal(calls.at(-1).body, 'moon'); assert.equal(calls.at(-1).fromAge, 0); assert.equal(calls.at(-1).toAge, 100);
   assert.equal(await control.setBody('earth'), false); assert.equal(await control.setYear(NaN), false);
 });
-test('selected years clamp to birth and archive; major range cannot exceed available ephemerides', async () => {
+test('selected years clamp to birth and the supported date range; major range cannot exceed available ephemerides', async () => {
   const { control, calls } = fast(); control.select(natal({ utc: '2380-06-01T12:00:00Z' })); await control.open();
   assert.equal(control.state.year, 2380); assert.ok(calls.every(input => input.toAge < 20 && input.toAge > 19));
   await control.setYear(1801); assert.equal(control.state.year, 2380); await control.setYear(9999); assert.equal(control.state.year, 2399);
@@ -421,11 +421,11 @@ test('return range includes the final available day without crossing the ephemer
 });
 
 test('one return policy separates elapsed search ages from local calendar years and saved-event bounds', () => {
-  const yearMs = 365.2425 * 86400000, dayMs = 86400000, archiveEnd = Date.UTC(2400, 0, 1) - 1;
+  const yearMs = 365.2425 * 86400000, dayMs = 86400000, supportedEnd = Date.UTC(2400, 0, 1) - 1;
   for (const [utc, timezone] of [['2000-01-01T00:00:00Z', 'UTC'], ['2000-01-01T00:00:00Z', 'America/Los_Angeles'],
     ['2300-12-31T00:00:00Z', 'Pacific/Kiritimati'], ['2399-12-31T23:59:00Z', 'UTC']]) {
     const chart = { utc, timezone }, birth = Date.parse(utc), life = cycles.cycleRangeForChart(chart);
-    const end = Math.min(archiveEnd, birth + life.toAge * yearMs);
+    const end = Math.min(supportedEnd, birth + life.toAge * yearMs);
     const localYear = value => Number(new Intl.DateTimeFormat('en', { timeZone: timezone, year: 'numeric' }).format(new Date(value)));
     assert.deepEqual(cycles.cycleYearBoundsForChart(chart), { minYear: localYear(birth), maxYear: Math.min(2399, localYear(end)) });
     for (const year of [localYear(birth), localYear(end)]) {

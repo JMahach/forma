@@ -1,7 +1,7 @@
 import { createChartComposition } from '../domain/chart-composition.js';
 
 const emptyMoment = Object.freeze({ id: 'current-transit', name: 'Транзит', source: 'transit', personality: [], design: [], utc: '' });
-const owners = new Set(['original', 'natal-day', 'transit', 'archive', 'return']);
+const owners = new Set(['original', 'natal-day', 'transit', 'lifetime', 'return']);
 
 // The accepted result is a value, not a priority search through tool state.
 // A request can outlive its data job; only its owner may publish to this view.
@@ -20,7 +20,7 @@ export function createChartSession({ store, getTransit = () => null, getNatalDay
   function accept(kind, chart, event = null) {
     if (!chart) return false;
     const filtered = kind === 'transit' ? filterTransit(chart) : chart;
-    const overlay = kind === 'return' || (kind === 'transit' || kind === 'archive') && selectedId !== 'current-transit' && original.source !== 'transit';
+    const overlay = kind === 'return' || (kind === 'transit' || kind === 'lifetime') && selectedId !== 'current-transit' && original.source !== 'transit';
     const primary = overlay ? original : filtered, secondary = overlay ? filtered : null;
     const compositionKind = overlay ? kind === 'return' ? 'return' : 'transit' : 'single';
     acceptedSource = chart; acceptedKind = kind; hasCurrent = chart !== emptyMoment;
@@ -44,7 +44,7 @@ export function createChartSession({ store, getTransit = () => null, getNatalDay
     get hasCurrent() { return hasCurrent; },
     get owner() { return owner; },
     expect, publish, showOriginal, refresh,
-    refilter() { return accept(acceptedKind, acceptedKind === 'archive' ? filterTransit(acceptedSource) : acceptedSource, accepted.event); },
+    refilter() { return accept(acceptedKind, acceptedKind === 'lifetime' ? filterTransit(acceptedSource) : acceptedSource, accepted.event); },
     refreshOriginal() {
       const next = store.get(selectedId);
       if (!next) return false;

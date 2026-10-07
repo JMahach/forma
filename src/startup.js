@@ -6,16 +6,16 @@ import { createStudioLayout } from './scene/studio-controller.js';
 const element = id => document.getElementById(id);
 const toast = createToast(element('toast'));
 const viewStore = createViewStore({ onStorageError: toast }), savedView = viewStore.read();
-// Read the tab once before prefetching. A saved archive, natal or exact return
+// Read the tab once before prefetching. A saved lifetime, natal or exact return
 // owns its own data; only Day and an explicitly live personal view need today.
 const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-transit'
-  ? savedView?.lifetime?.mode !== 'archive'
+  ? savedView?.lifetime?.mode !== 'lifetime'
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
 const dayClient = createTransitDayClient({
   initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
 const layout = createStudioLayout({ canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
-  panels: [element('transitControls'), element('chartDayControls'), element('lifetimeControls')] });
+  panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')] });
 // The shared layout positions the preview while the larger application loads.
 // Its temporary observer hands resize ownership to the app without recreating
 // the layout or starting a second camera.

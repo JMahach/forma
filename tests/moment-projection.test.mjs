@@ -7,12 +7,12 @@ import { chartAtMinute } from '../src/domain/natal-day.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 import { PLANET_IDS } from '../src/domain/planets.js';
 import * as momentProjection from '../src/domain/moment-projection.js';
-import { CHART_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
-import { chartDayFixture, personalChartFixture } from './fixtures/chart-day.mjs';
+import { NATAL_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
+import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const startUtc = '2026-10-05T00:00:00Z';
 const metadata = () => validateLifetimeMetadata({ startUtc, endExclusiveUtc: '2026-10-06T00:00:00Z',
-  stepSeconds: 600, samples: 144, planets: [...LIFETIME_PLANETS], source: 'Swiss Ephemeris 2.10.03' });
+  stepSeconds: 600, samples: 144, planets: [...LIFETIME_PLANETS], engine: 'Swiss Ephemeris 2.10.03' });
 const packet = () => ({ startUtc, samples: 1440, engine: 'Swiss Ephemeris 2.10.03',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, index) => column < 22
     ? (302 + column * 7 + index / 10000) % 360 : column === 22 ? Date.parse(startUtc) / 1000 - 88 * 86400 + index * 60 : 1e-10)),
@@ -25,7 +25,7 @@ function previousNatalProjection(day, index, original) {
   const segment = day.segments.findLast(value => value.index <= index);
   const moment = Date.parse(segment.startUtc) + (index - segment.index) * 60000;
   const activations = Object.fromEntries(['personality', 'design'].map((side, sideIndex) => {
-    const values = Object.fromEntries(CHART_DAY_PLANETS.map((planet, column) => [planet, day.columns[sideIndex * 11 + column][index]]));
+    const values = Object.fromEntries(NATAL_DAY_PLANETS.map((planet, column) => [planet, day.columns[sideIndex * 11 + column][index]]));
     values.earth = (values.sun + 180) % 360; values.south_node = (values.north_node + 180) % 360;
     return [side, PLANET_IDS.map(planet => ({ planet, ...gatePositionAtLongitude(values[planet]) }))];
   }));
@@ -39,9 +39,9 @@ function previousNatalProjection(day, index, original) {
 
 test('every natal minute and both activation sides match the prior projection across ordinary, historical and folded days', () => {
   const original = Object.freeze(personalChartFixture());
-  const days = [chartDayFixture(), chartDayFixture({ date: '1900-01-01', timezone: 'Europe/Paris', segments: [
+  const days = [natalDayFixture(), natalDayFixture({ date: '1900-01-01', timezone: 'Europe/Paris', segments: [
     { index: 0, startUtc: '1899-12-31T23:50:39Z', utcOffset: 'UTC+00:09:21', offsetSeconds: 561, fold: 0 },
-  ] }), chartDayFixture({ date: '2026-11-01', timezone: 'America/New_York', samples: 1500, segments: [
+  ] }), natalDayFixture({ date: '2026-11-01', timezone: 'America/New_York', samples: 1500, segments: [
     { index: 0, startUtc: '2026-11-01T04:00:00Z', utcOffset: 'UTC−04:00', offsetSeconds: -14400, fold: 0 },
     { index: 120, startUtc: '2026-11-01T06:00:00Z', utcOffset: 'UTC−05:00', offsetSeconds: -18000, fold: 1 },
     { index: 180, startUtc: '2026-11-01T07:00:00Z', utcOffset: 'UTC−05:00', offsetSeconds: -18000, fold: 0 },
@@ -69,7 +69,7 @@ test('revisiting a day minute reuses its sample and all 26 projected activations
   }
 });
 
-test('revisiting an immutable Years moment reuses its chart without changing the chart contract', () => {
+test('revisiting an immutable Lifetime moment reuses its chart without changing the chart contract', () => {
   const day = packet(), meta = metadata();
   const firstPoint = validateLifetimeMoment({ index: 0, ...transitSampleAt(day, 0) }, meta);
   const secondPoint = validateLifetimeMoment({ index: 1, ...transitSampleAt(day, 10) }, meta);
@@ -82,7 +82,7 @@ test('revisiting an immutable Years moment reuses its chart without changing the
   assert.deepEqual(first.activations.personality[0], { planet: 'sun', longitude: 302, gate: 41, line: 1 });
 });
 
-test('Years reuses the exact Day longitude snapshots and activation projection', () => {
+test('Lifetime reuses the exact Day longitude snapshots and activation projection', () => {
   const day = packet(), sample = transitSampleAt(day, 20), dayChart = transitChartAt(day, 20), meta = metadata();
   const point = validateLifetimeMoment({ index: 2, ...sample }, meta), yearChart = lifetimeChartAt(meta, point);
   assert.equal(point.longitudes, sample.longitudes);
@@ -93,35 +93,35 @@ test('Years reuses the exact Day longitude snapshots and activation projection',
   assert.equal(yearChart.id, 'lifetime-preview');
 });
 
-test('Day and Years keep identical chart facts while adapters retain their own identity and provenance', () => {
+test('Day and Lifetime keep identical chart facts while adapters retain their own identity and provenance', () => {
   const provenance = { engine: 'Swiss Ephemeris test', ephemeris: 'test ephemeris', timezoneDatabase: 'test tzdata',
     nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
   const day = Object.assign(packet(), provenance), minute = 20;
   day.columns[22][minute] += 37.125;
   day.columns[23][minute] = 7.654321e-11;
-  const meta = validateLifetimeMetadata({ ...metadata(), ...provenance, engine: undefined, source: provenance.engine,
+  const meta = validateLifetimeMetadata({ ...metadata(), ...provenance,
     startUtc: '2026-10-01T00:00:00Z', samples: 5 * 144 });
   const sample = transitSampleAt(day, minute);
   const point = validateLifetimeMoment({ index: 4 * 144 + 2, ...sample }, meta);
-  const current = transitChartAt(day, minute), archive = lifetimeChartAt(meta, point);
+  const current = transitChartAt(day, minute), lifetime = lifetimeChartAt(meta, point);
   assert.equal(current.utc, '2026-10-05T00:20:00Z');
   assert.equal(current.designUtc, '2026-07-09T00:20:37.125Z');
   assert.equal(current.designArcResidualDegrees, 7.654321e-11);
-  assert.equal(current.createdAt, day.startUtc); assert.equal(archive.createdAt, meta.startUtc);
+  assert.equal(current.createdAt, day.startUtc); assert.equal(lifetime.createdAt, meta.startUtc);
   assert.equal(current.verification, 'Lossless minute-grid Swiss Ephemeris transit; official Human Design reference-chart validation pending.');
-  assert.equal(archive.verification, 'Exact Swiss Ephemeris longitudes on a ten-minute grid.');
-  assert.deepEqual({ ...archive, id: current.id, createdAt: current.createdAt, verification: current.verification }, current);
+  assert.equal(lifetime.verification, 'Exact Swiss Ephemeris longitudes on a ten-minute grid.');
+  assert.deepEqual({ ...lifetime, id: current.id, createdAt: current.createdAt, verification: current.verification }, current);
   for (const side of ['personality', 'design']) {
-    assert.equal(current[side], archive[side]); assert.equal(current.activations[side], archive.activations[side]);
+    assert.equal(current[side], lifetime[side]); assert.equal(current.activations[side], lifetime.activations[side]);
   }
-  assert.equal(transitChartAt(day, minute), current); assert.equal(lifetimeChartAt(meta, point), archive);
+  assert.equal(transitChartAt(day, minute), current); assert.equal(lifetimeChartAt(meta, point), lifetime);
   const explicit = lifetimeChartAt({ ...meta, engine: 'Explicit engine' }, point);
   assert.equal(explicit.engine, 'Explicit engine');
   day.source = 'not a transit fallback'; delete day.engine;
-  assert.equal(transitChartAt(day, minute).engine, undefined, 'Day does not inherit the archive engine fallback');
+  assert.equal(transitChartAt(day, minute).engine, undefined, 'Day does not inherit the lifetime engine fallback');
 });
 
-test('a standalone archive point retains an empty immutable Design and its explicit metadata contract', () => {
+test('a standalone lifetime point retains an empty immutable Design and its explicit metadata contract', () => {
   const meta = metadata(), sample = transitSampleAt(packet(), 0);
   const chart = lifetimeChartAt(meta, { index: 0, utc: sample.utc, longitudes: sample.longitudes });
   assert.deepEqual(chart.design, []); assert.deepEqual(chart.activations.design, []);
@@ -185,7 +185,7 @@ test('mutable day input invalidates only its changed sample and refreshed metada
   assert.equal(transitChartAt(day, 0).utc, '2026-10-06T00:00:00Z');
 });
 
-test('mutable Years input is copied and revalidated, including externally frozen shells', () => {
+test('mutable Lifetime input is copied and revalidated, including externally frozen shells', () => {
   const meta = metadata(), sample = transitSampleAt(packet(), 0);
   const raw = { index: 0, ...sample, longitudes: [...sample.longitudes], design: { ...sample.design, longitudes: [...sample.design.longitudes] } };
   Object.freeze(raw);
@@ -207,7 +207,7 @@ test('day projections retain only a bounded set of visited minutes and refresh r
   assert.notEqual(transitChartAt(day, 0), oldest);
 });
 
-test('archive cache versions accept only the complete lowercase content digest', () => {
+test('lifetime cache versions accept only the complete lowercase content digest', () => {
   const meta = metadata();
   assert.equal(validateLifetimeMetadata({ ...meta, cacheVersion: 'a'.repeat(64) }).cacheVersion, 'a'.repeat(64));
   for (const cacheVersion of ['', 'a'.repeat(63), 'A'.repeat(64), 'g'.repeat(64), 123, null]) {

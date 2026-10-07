@@ -56,15 +56,15 @@ test('controls are visible only when transit is wanted, independently of readine
   assert.deepEqual(h.nowCalls, [], 'rendering state never requests a live refresh');
 });
 
-test('Years coverage hides the ordinary panel while retaining the latest exact day state without owner callbacks', () => {
+test('Lifetime coverage hides the ordinary panel while retaining the latest exact day state without owner callbacks', () => {
   const h = harness();
   h.update(state({ index: 754, live: false }));
-  h.setCoveredByYears(true); assert.equal(h.panel.hidden, true);
+  h.setCoveredByLifetime(true); assert.equal(h.panel.hidden, true);
   const day = timeline('2026-11-01', 'America/New_York');
   const next = Object.freeze(state({ timeline: day, index: 150, referenceIndex: 901, live: false, status: 'error' }));
   h.update(next);
   assert.equal(h.panel.hidden, true);
-  h.setCoveredByYears(false);
+  h.setCoveredByLifetime(false);
   assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '150');
   assert.equal(h.time.textContent, '01:30 · UTC-5');
   assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
@@ -75,7 +75,7 @@ test('Years coverage hides the ordinary panel while retaining the latest exact d
 
 test('hidden Day updates perform zero DOM writes or time formatting and reveal only the latest state', () => {
   const h = harness(), writes = [];
-  h.update(state({ index: 754 })); h.setCoveredByYears(true);
+  h.update(state({ index: 754 })); h.setCoveredByLifetime(true);
   for (const name of ['panel', 'range', 'time', 'status', 'nowButton', 'marker']) {
     const element = h[name];
     for (const key of ['hidden', 'disabled', 'value', 'min', 'max', 'step', 'textContent', 'title', 'dateTime']) {
@@ -94,7 +94,7 @@ test('hidden Day updates perform zero DOM writes or time formatting and reveal o
   for (let index = 119; index <= 150; index++) h.update(state({ timeline: hiddenDay, index, live: false, status: index === 150 ? 'error' : 'ready' }));
   assert.equal(writes.length, 0, '32 hidden updates must only replace latestState');
   assert.equal(formattingReads, 0);
-  h.setCoveredByYears(false);
+  h.setCoveredByLifetime(false);
   assert.equal(h.range.value, '150'); assert.equal(h.time.textContent, '01:30 · UTC-5');
   assert.equal(h.time.dateTime, '2026-11-01T06:30:00.000Z');
   assert.equal(h.range.getAttribute('aria-valuetext'), '1 ноября, 01:30, UTC-5');
@@ -103,14 +103,14 @@ test('hidden Day updates perform zero DOM writes or time formatting and reveal o
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
 });
 
-for (const hiddenBy of ['Years', 'owner']) test(`hiding Day by ${hiddenBy} releases a captured reference and hover before late pointer events`, () => {
+for (const hiddenBy of ['Lifetime', 'owner']) test(`hiding Day by ${hiddenBy} releases a captured reference and hover before late pointer events`, () => {
   const h = harness(), ready = state({ index: 800, referenceIndex: 400, live: false });
   h.update(ready);
   const pointer = { clientX: 22 + 400 / 1439 * 1000, clientY: 22 };
   h.range.dispatch('pointermove', pointer);
   assert.equal(h.marker.getAttribute('data-hovered'), 'true');
   h.range.dispatch('pointerdown', pointer); assert.equal(h.range.hasPointerCapture(1), true);
-  if (hiddenBy === 'Years') h.setCoveredByYears(true); else h.update({ ...ready, wanted: false });
+  if (hiddenBy === 'Lifetime') h.setCoveredByLifetime(true); else h.update({ ...ready, wanted: false });
   assert.equal(h.range.hasPointerCapture(1), false);
   assert.equal(h.marker.hidden, true); assert.equal(h.marker.disabled, true);
   assert.equal(h.range.getAttribute('data-event-pressed'), 'false');
@@ -118,17 +118,17 @@ for (const hiddenBy of ['Years', 'owner']) test(`hiding Day by ${hiddenBy} relea
   h.range.dispatch('pointermove', { ...pointer, clientX: pointer.clientX + 200 });
   h.range.dispatch('pointerup', pointer); h.range.dispatch('input'); h.marker.dispatch('click');
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
-  if (hiddenBy === 'Years') h.setCoveredByYears(false); else h.update(ready);
+  if (hiddenBy === 'Lifetime') h.setCoveredByLifetime(false); else h.update(ready);
   h.marker.dispatch('click'); assert.deepEqual(h.nowCalls, [[]]);
 });
 
-test('ending Years coverage reveals the ordinary panel only when its latest owner state wants transit', () => {
-  const h = harness(); h.update(state()); h.setCoveredByYears(true);
-  h.update(state({ wanted: false })); h.setCoveredByYears(false);
-  assert.equal(h.panel.hidden, true, 'closing Years cannot restore a panel after navigating away');
-  h.setCoveredByYears(true); h.update(state({ wanted: true, index: 755 }));
-  assert.equal(h.panel.hidden, true, 'a ready day cannot uncover the Years rail');
-  h.setCoveredByYears(false); assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '755');
+test('ending Lifetime coverage reveals the ordinary panel only when its latest owner state wants transit', () => {
+  const h = harness(); h.update(state()); h.setCoveredByLifetime(true);
+  h.update(state({ wanted: false })); h.setCoveredByLifetime(false);
+  assert.equal(h.panel.hidden, true, 'closing Lifetime cannot restore a panel after navigating away');
+  h.setCoveredByLifetime(true); h.update(state({ wanted: true, index: 755 }));
+  assert.equal(h.panel.hidden, true, 'a ready day cannot uncover the Lifetime rail');
+  h.setCoveredByLifetime(false); assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '755');
   h.update(state({ wanted: false })); assert.equal(h.panel.hidden, true);
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
 });
@@ -136,8 +136,8 @@ test('ending Years coverage reveals the ordinary panel only when its latest owne
 test('repeated coverage changes never duplicate ordinary slider or Now event delegation', () => {
   const h = harness(); h.update(state({ index: 120, referenceIndex: 754, live: false }));
   for (let index = 0; index < 5; index++) {
-    h.setCoveredByYears(true); h.setCoveredByYears(true);
-    h.setCoveredByYears(false); h.setCoveredByYears(false);
+    h.setCoveredByLifetime(true); h.setCoveredByLifetime(true);
+    h.setCoveredByLifetime(false); h.setCoveredByLifetime(false);
   }
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
   h.range.value = '121'; h.range.dispatch('input'); h.marker.dispatch('click'); h.nowButton.dispatch('click');
@@ -313,7 +313,7 @@ test('unchanged visible text survives marker, coverage and readiness updates wit
     Object.defineProperty(h[name], 'textContent', { get: () => value, set(next) { value = next; writes.push(name); } });
   }
   h.update({ ...ready, referenceIndex: 801 });
-  h.setCoveredByYears(true); h.setCoveredByYears(false);
+  h.setCoveredByLifetime(true); h.setCoveredByLifetime(false);
   assert.deepEqual(writes, []);
   assert.equal(h.marker.style.left, `${801 / 1439 * 100}%`);
   assert.equal(h.panel.hidden, false);

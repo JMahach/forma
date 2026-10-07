@@ -4,17 +4,17 @@ import { createChartSession } from '../src/state/chart-session.js';
 
 function harness() {
   const natal = { id: 'natal', name: 'Марат', source: 'calculated', utc: '1998-08-18T15:00:00Z', personality: [63], design: [41] };
-  let archive = null;
+  let lifetime = null;
   const session = createChartSession({ store: { get: id => id === natal.id ? natal : null, has: id => id === natal.id },
-    getLifetime: () => ({ get current() { return archive; }, close() {} }) });
+    getLifetime: () => ({ get current() { return lifetime; }, close() {} }) });
   session.select(natal.id);
-  return { session, natal, set archive(value) { archive = value; } };
+  return { session, natal, set lifetime(value) { lifetime = value; } };
 }
 const moment = utc => ({ id: `moment:${utc}`, source: 'transit', utc, personality: [4], design: [] });
 
 test('controller data and repaint notifications cannot replace the accepted result without publication', () => {
   const h = harness(), accepted = h.session.current;
-  h.archive = moment('2050-01-01T12:10:00Z');
+  h.lifetime = moment('2050-01-01T12:10:00Z');
   h.session.refresh();
   assert.equal(h.session.current, accepted);
   assert.equal(h.session.current.primary, h.natal);
@@ -22,11 +22,11 @@ test('controller data and repaint notifications cannot replace the accepted resu
 
 test('pending exact return retains the accepted subject and UTC until its verified event arrives atomically', () => {
   const { session, natal } = harness();
-  const archive = session.expect('archive');
+  const lifetime = session.expect('lifetime');
   const first = moment('2050-01-01T12:10:00Z');
-  session.publish(archive, first);
+  session.publish(lifetime, first);
   const accepted = session.current, request = session.expect('return');
-  assert.equal(session.shownSource, 'archive');
+  assert.equal(session.shownSource, 'lifetime');
   assert.equal(session.current, accepted);
   assert.equal(accepted.primary, natal);
   assert.equal(accepted.utc, first.utc);
@@ -41,7 +41,7 @@ test('pending exact return retains the accepted subject and UTC until its verifi
 
 test('a canceled owner cannot publish after another mode or another selection has claimed the view', () => {
   const { session, natal } = harness();
-  const old = session.expect('archive');
+  const old = session.expect('lifetime');
   session.expect('natal-day');
   assert.equal(session.publish(old, moment('2050-01-01T12:10:00Z')), false);
   assert.equal(session.current.primary, natal);
@@ -52,8 +52,8 @@ test('a canceled owner cannot publish after another mode or another selection ha
   assert.equal(session.current, selected);
 });
 
-test('one archive owner accepts intermediate ready progress and keeps references on repeated publications', () => {
-  const { session, natal } = harness(), owner = session.expect('archive');
+test('one lifetime owner accepts intermediate ready progress and keeps references on repeated publications', () => {
+  const { session, natal } = harness(), owner = session.expect('lifetime');
   const first = moment('2050-01-01T12:10:00Z'), next = moment('2050-01-01T12:20:00Z');
   assert.equal(session.publish(owner, first), true);
   const accepted = session.current;
