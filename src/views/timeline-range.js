@@ -14,7 +14,7 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // width and 22px rail inset keep the visible endpoints and value mapping stable.
 export function attachTimelineRange({ range, marker = null, onScrub, onReference, onStep = null,
   thumbSize = 44, movementThreshold = 8, tapDuration = 500,
-  now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null,
+  now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null, resolveEdge = () => null,
 }) {
   let reference = null, available = false, gesture = null, suppressClickUntil = -Infinity, suppressedInputValue = null;
   const bounds = () => {
@@ -23,6 +23,12 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   };
   const canScrub = () => !range.disabled && !range.hidden && !range.closest?.('[hidden]');
   const canReturn = () => marker && available && canScrub() && !marker.disabled;
+  function updateThumbEdge() {
+    const { min, max } = bounds(), value = Number(range.value);
+    const edge = max <= min ? 'none' : value === min ? 'start' : value === max ? 'end'
+      : resolveEdge({ min, max, value }) || 'none';
+    if (range.getAttribute('data-edge') !== edge) range.setAttribute('data-edge', edge);
+  }
   function geometry() {
     const rect = range.getBoundingClientRect();
     const inset = Math.min(thumbSize / 2, rect.width / 2);
@@ -119,6 +125,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     gesture.lastInput = value;
     range.value = String(value);
     onScrub(value);
+    updateThumbEdge();
     // Keep the accepted position when the owner resolves a continuous UTC
     // target to a cached minute or lifetime sample.
     if (gesture) gesture.lastValue = Number(range.value);
@@ -193,6 +200,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     event.preventDefault();
     const value = direction ? onStep(direction) : event.key === 'Home' ? bounds().min : bounds().max;
     if (Number.isFinite(value)) onScrub(value);
+    updateThumbEdge();
   });
   range.addEventListener('input', () => {
     if (gesture) { range.value = String(gesture.lastValue); return; }
@@ -200,6 +208,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     // publishing the pointer target again. A new gesture/key clears this.
     if (suppressedInputValue !== null && now() <= suppressClickUntil) { range.value = String(suppressedInputValue); return; }
     if (canScrub()) onScrub(Number(range.value));
+    updateThumbEdge();
   });
   marker?.addEventListener('click', event => {
     // Keyboard and assistive technology activate the semantic button. Pointer
@@ -208,6 +217,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   });
 
   function refreshTargets() {
+    updateThumbEdge();
     if (!canScrub() || gesture?.referenceTap && !canReturn()
         || !gesture?.dragging && gesture?.tapTarget?.valid?.() === false) clearGesture();
     updateContact();

@@ -802,10 +802,18 @@ test('personal decade marks use real birthdays and the clipped window without re
   const h = harness({ getPersonalChart: () => personal });
   await open(h);
   await dates(h, '29022000', '01032100');
-  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10', '20', '30', '40', '50', '60', '70', '80', '90', '100']);
+  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100']);
   const first = h.hourMarks.children[0];
+  assert.match(first.className, /is-major/);
+  const birth = Date.parse(personal.utc);
+  h.explorer.setVisibleWindow({ minUtc: birth, maxUtc: birth + 86400000 });
+  assert.equal(h.hourMarks.children[0].style['--hour-position'], '0%');
+  h.explorer.setVisibleWindow({ minUtc: birth + 1, maxUtc: birth + 86400000 });
+  assert.equal(h.hourMarks.children.length, 0, 'birth uses its actual instant, not midnight or a rounded minute');
+  h.explorer.setVisibleWindow(null);
+  const restored = h.hourMarks.children[0];
   h.explorer.setVisibleWindow({ minUtc: Number(h.range.min), maxUtc: Number(h.range.max) });
-  assert.equal(h.hourMarks.children[0], first, 'unchanged span reuses marks');
+  assert.equal(h.hourMarks.children[0], restored, 'unchanged span reuses marks');
   const minUtc = Date.parse('2010-01-01T00:00:00Z'), maxUtc = Date.parse('2011-01-01T00:00:00Z');
   h.explorer.setVisibleWindow({ minUtc, maxUtc });
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10']);
@@ -840,7 +848,7 @@ test('personal marks honour the birth timezone and clear when returning to the d
   assert.equal(writes, 0, 'unchanged day updates reuse the same marks');
   void h.explorer.setDateRange('2000-01-01', '2020-12-31');
   await tick();
-  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10', '20']);
+  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['0', '10', '20']);
   assert.equal(writes, 1, 'returning to the same life span restores its marks in one replacement');
 });
 
@@ -855,7 +863,7 @@ test('reference titles distinguish the current moment from a personal transit', 
 });
 
 
-test('preparing replaces the lifetime rail and stays visible through live-day updates until a fresh request succeeds', async () => {
+test('preparing keeps the disabled lifetime rail and stays visible through live-day updates until a fresh request succeeds', async () => {
   let ready = false, requests = 0;
   const h = harness({ client: { async getMeta() {
     requests++;
@@ -868,9 +876,18 @@ test('preparing replaces the lifetime rail and stays visible through live-day up
   assert.equal(h.explorer.state.status, 'preparing');
   assert.equal(h.status.textContent, 'Создаём летопись');
   assert.equal(h.panel.getAttribute('aria-busy'), 'true');
-  assert.equal(h.range.parentElement.hidden, true);
+  assert.equal(h.range.parentElement.hidden, false);
+  assert.equal(h.range.hidden, false);
+  assert.equal(h.marker.hidden, true);
   assert.equal(h.range.disabled, true);
+  h.range.dispatch('input');
+  assert.deepEqual(h.dayScrubs, [], 'the visible rail is not interactive before preparation finishes');
   assert.equal(h.fromDate.disabled, true);
+  assert.equal(h.toDate.disabled, true);
+  assert.equal(h.fromCalendar.disabled, true);
+  assert.equal(h.toCalendar.disabled, true);
+  assert.equal(h.fromDate.value, '30.09.2026');
+  assert.equal(h.toDate.value, '30.09.2026');
   assert.equal(h.retryButton.hidden, true);
   h.setDay('2026-09-30T12:38:00Z');
   h.setDayState({ status: 'loading' });
@@ -915,4 +932,76 @@ test('a personal range accepted before metadata preserves an unfinished date dra
   assert.equal(h.explorer.state.fromDate, '1998-08-18');
   assert.equal(h.explorer.current, natal);
   assert.deepEqual(h.requests, [], 'opening a personal range reuses its original chart');
+});
+
+
+test('preparing previews the current transit day without overwriting a saved lifetime range', async () => {
+  const h = harness({ client: { async getMeta() {
+    throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
+  } } });
+  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
+    requestedUtc: Date.parse('2000-01-01T00:00:00Z') });
+  assert.equal(h.fromDate.value, '30.09.2026');
+  assert.equal(h.toDate.value, '30.09.2026');
+  assert.equal(h.range.min, '0');
+  assert.equal(h.range.max, '1439');
+  assert.equal(h.range.value, '937');
+  assert.equal(h.range.disabled, true);
+  assert.equal(h.hourMarks.children.length, 25);
+  assert.equal(h.explorer.state.fromDate, '1998-08-18', 'the preview does not replace the pending restore target');
+  h.setDay('2026-09-30T22:05:00Z');
+  assert.equal(h.fromDate.value, '01.10.2026', 'the disabled date follows the transit timezone across midnight');
+  assert.equal(h.toDate.value, '01.10.2026');
+  assert.equal(h.range.value, '65');
+});
+
+
+test('the last selectable lifetime sample rounds the right edge for both grid and cached minute data', async () => {
+  for (const cached of [false, true]) {
+    const finalMinute = Date.parse('2000-01-02T23:59:00Z');
+    const h = harness({ client: { peekMinute(utc) {
+      return cached && utc >= Date.parse('2000-01-02T00:00:00Z') && utc <= finalMinute ? { ...lifetimeChartAt(metadata, point(0)), utc: new Date(utc).toISOString() } : null;
+    } } });
+    await open(h); await dates(h, '01012000', '02012000');
+    if (!cached) await complete(h);
+    h.range.dispatch('keydown', { key: 'End' }); await tick();
+    if (!cached) await complete(h);
+    assert.equal(h.range.value, String(Date.parse(cached ? '2000-01-02T23:59:00Z' : '2000-01-02T23:50:00Z')));
+    assert.equal(h.range.getAttribute('data-edge'), 'end');
+    assert.equal(h.explorer.state.maxUtc, Date.parse('2000-01-02T23:59:59.999Z'));
+    h.range.dispatch('keydown', { key: 'ArrowLeft' }); await tick();
+    if (!cached) await complete(h);
+    assert.equal(h.range.getAttribute('data-edge'), 'none');
+  }
+});
+
+test('thumb edges follow available neighbors inside a clipped lifetime window', async () => {
+  const h = harness(); await open(h); await dates(h, '01012000', '02012000'); await complete(h);
+  const select = async utc => { void h.explorer.scrub(Date.parse(utc)); await tick(); await complete(h); };
+  await select('2000-01-01T12:00:00Z');
+  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:05:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
+  assert.equal(h.range.getAttribute('data-edge'), 'end');
+  await select('2000-01-01T00:10:00Z');
+  assert.equal(h.range.getAttribute('data-edge'), 'start');
+  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-02T00:00:00Z'), maxUtc: Date.parse('2000-01-02T12:00:00Z') });
+  assert.equal(h.range.getAttribute('data-edge'), 'none');
+  assert.equal(h.range.getAttribute('data-cursor-visible'), 'false');
+});
+
+
+test('preparing dates do not acknowledge an unaccepted user range while metadata is pending', async () => {
+  const meta = deferred(); let calls = 0;
+  const h = harness({ client: { getMeta() { return ++calls === 1 ? meta.promise : Promise.resolve(metadata); } } });
+  const opening = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
+    requestedUtc: Date.parse('2000-01-01T00:00:00Z') });
+  await tick(); await dates(h, '30092026', '30092026');
+  meta.reject(Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' }));
+  await opening;
+  assert.equal(h.explorer.state.fromDate, '1998-08-18');
+  void h.explorer.retry(); await tick();
+  assert.equal(h.explorer.state.fromDate, '2026-09-30');
+  assert.equal(h.explorer.state.toDate, '2026-09-30');
+  assert.equal(h.fromDate.value, '30.09.2026');
+  assert.equal(h.toDate.value, '30.09.2026');
+  assert.equal(h.explorer.state.mode, 'day');
 });

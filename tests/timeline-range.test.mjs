@@ -424,3 +424,32 @@ test('directional keyboard values use the normal scrub command while Home and En
   range.disabled = true; range.send('keydown', { key: 'ArrowRight' });
   assert.equal(selected.length, 6);
 });
+
+
+test('thumb shape follows exact endpoints and resets when the visible interval changes', () => {
+  const h = harness({ value: 0, withMarker: false });
+  h.range.getBoundingClientRect = () => { throw new Error('edge shape needs no layout read'); };
+  assert.equal(h.range.getAttribute('data-edge'), 'start');
+  for (const [value, edge] of [[1, 'none'], [999, 'none'], [1000, 'end']]) {
+    h.range.value = String(value); h.update();
+    assert.equal(h.range.getAttribute('data-edge'), edge);
+  }
+  h.range.min = '1000'; h.range.max = '2000'; h.update();
+  assert.equal(h.range.getAttribute('data-edge'), 'start');
+  h.range.max = '1000'; h.update();
+  assert.equal(h.range.getAttribute('data-edge'), 'none', 'a pending zero-length rail has no selected end');
+});
+
+test('native input and touch drag update the thumb edge without a parent render', () => {
+  const h = harness({ withMarker: false });
+  for (const [value, edge] of [[1000, 'end'], [0, 'start'], [200, 'none']]) {
+    h.range.value = String(value); h.range.send('input');
+    assert.equal(h.range.getAttribute('data-edge'), edge);
+  }
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 72 });
+  for (const [clientX, edge] of [[-100, 'start'], [400, 'end'], [140, 'none']]) {
+    h.range.send('pointermove', { pointerType: 'touch', clientX });
+    assert.equal(h.range.getAttribute('data-edge'), edge);
+  }
+  assert.deepEqual(h.scrubs, [1000, 0, 200, 0, 1000, 540]);
+});
