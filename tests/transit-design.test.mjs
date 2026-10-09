@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createLifetimeFile } from '../server/services/lifetime.mjs';
+import { createLifetimeFile, createLifetimeMoments } from '../server/services/lifetime.mjs';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createRequestHandler } from '../server/http/app.mjs';
@@ -27,7 +27,8 @@ const lifetimeFile = { metadata, getPoint: async index => storedPoint(index) };
 async function request({ index = indexAt('2026-09-30T12:30:00Z'), url, method = 'GET', headers = {}, lifetime = lifetimeFile,
   calculate = async ({ utc }) => calculatedPoint(utc) } = {}) {
   const res = { status: null, headers: {}, body: '', writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, end(body) { this.body = body || ''; } };
-  const handler = createRequestHandler({ root, lifetime, calculate, cities: {}, publicFiles: async (_req, response) => { response.writeHead(404, {}); response.end(); } });
+  const moments = createLifetimeMoments({ lifetimeFile: lifetime, calculate });
+  const handler = createRequestHandler({ root, lifetime: moments && { ...moments, getMetadata: async () => moments.metadata }, calculate, cities: {}, publicFiles: async (_req, response) => { response.writeHead(404, {}); response.end(); } });
   await handler({ method, url: url || `/api/lifetime?${new URLSearchParams({ index })}`, headers: { host: 'localhost', ...headers } }, res);
   return res;
 }

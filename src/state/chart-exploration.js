@@ -3,7 +3,7 @@ import { lifeTimelineForChart } from '../domain/cycles.js';
 // One owner for chart navigation and moment commands. Tools retain their
 // ranges, jobs and local cancellation; the session accepts their visible result.
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
-  loadLifetime, enabled = true, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }) {
+  loadLifetime, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }) {
   let timelineOpening = null, restoreBirthBoundary = false;
   const personal = () => Boolean(getReturns()?.state.available);
   const live = () => personal() && session.owner === 'transit';
@@ -55,7 +55,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     session.refresh();
   }
   async function toggleTransit() {
-    if (!enabled || session.selectedId !== 'current-transit') return false;
+    if (session.selectedId !== 'current-transit') return false;
     if (timelineOpening || getLifetime()?.state.opened) return closeScales();
     const request = {};
     timelineOpening = request; onModeChange();
@@ -69,7 +69,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     }
   }
   async function toggleReturns() {
-    if (!enabled || !personal()) return false;
+    if (!personal()) return false;
     if (timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened) return closeScales();
     session.showOriginal();
     return openTimeline();
@@ -155,7 +155,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     return null;
   }
   async function openTimeline() {
-    if (!enabled || !personal()) return false;
+    if (!personal()) return false;
     const natal = session.original, span = lifeTimelineForChart(natal);
     if (!span) return false;
     const request = {};
@@ -167,14 +167,9 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     try {
       const controller = getLifetime() || await loadLifetime();
       if (!controller || !valid()) return false;
-      await controller.open();
-      if (!valid() || !controller.state.metadata) return false;
-      const metadata = controller.state.metadata;
       const shown = session.current;
       const start = live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc : natal.utc);
-      const lastDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
-      const toDate = span.toDate < lastDate ? span.toDate : lastDate;
-      const restored = await controller.restore({ opened: true, mode: 'lifetime', fromDate: span.fromDate, toDate, minimumUtc: natal.utc, requestedUtc: start });
+      const restored = await controller.restore({ opened: true, mode: 'lifetime', ...span, minimumUtc: natal.utc, requestedUtc: start });
       if (!valid() || !restored) return false;
       onTimelineReady(); return true;
     } catch { return false; }

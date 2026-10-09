@@ -17,7 +17,7 @@ export function createLifetimeHandler(service) {
       const url = suppliedUrl || new URL(req.url, 'http://localhost');
       if (url.pathname === '/api/lifetime/meta') {
         if (url.searchParams.size) throw new LifetimeError('invalid_request', 'Некорректный запрос шкалы.', 400);
-        json(res, 200, service.metadata); return;
+        json(res, 200, await service.getMetadata()); return;
       }
       const exact = url.pathname === '/api/lifetime/moment';
       if (!exact && url.pathname !== '/api/lifetime') throw new LifetimeError('not_found', 'Страница не найдена.', 404);
@@ -27,7 +27,8 @@ export function createLifetimeHandler(service) {
           || !exact && !/^(?:0|[1-9]\d{0,15})$/.test(values[0])) {
         throw new LifetimeError(exact ? 'invalid_utc' : 'invalid_index', 'Выберите момент в пределах шкалы.', 400);
       }
-      if (versions.length && (!/^[a-f0-9]{64}$/.test(versions[0]) || versions[0] !== service.metadata?.cacheVersion)) {
+      const metadata = await service.getMetadata();
+      if (versions.length && (!/^[a-f0-9]{64}$/.test(versions[0]) || versions[0] !== metadata?.cacheVersion)) {
         throw new LifetimeError('unsupported_version', 'Данные шкалы обновились. Обновите страницу.', 400);
       }
       const value = exact ? { version: LIFETIME_EXACT_VERSION, ...await service.getUtcMoment(values[0]) }

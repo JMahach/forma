@@ -19,7 +19,7 @@ function clock(utc, timeZone = null) {
 }
 
 export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, status, fromError = null, toError = null,
-  retryButton = null, hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, enabled = true, available = true,
+  retryButton = null, hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, available = true,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, resolveTap, ...options }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
@@ -87,21 +87,24 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
   function update(state, momentState = options.getMomentState?.(), notify = true) {
     if (wasOpened && !state.opened) { calendars.forEach(calendar => calendar.close()); dirty.clear(); clearInputError(); submitted = null; waitingForMetadata = false; }
     wasOpened = state.opened;
-    toggle.hidden = !enabled || !available;
+    toggle.hidden = !available;
     panel.hidden = !state.opened;
-    const dayMode = state.mode === 'day';
+    const dayMode = state.mode === 'day', preparing = state.status === 'preparing';
     if (rangeLabel) setText(rangeLabel, dayMode ? 'Шкала дня: время транзита' : 'Шкала выбранных лет: время UTC');
     if (dayMode || !state.opened) momentState = null;
     momentClockShown = Boolean(momentState);
     const day = dayMode ? options.getDayState?.() : null;
     const dayReady = day?.status === 'ready' && Boolean(day.timeline);
-    const displayStatus = momentState ? momentState.status : dayMode && ['idle', 'loading', 'error'].includes(day?.status) ? day.status : state.status;
+    // A ready chart cannot acknowledge a file that has not opened yet.
+    const fileStatus = !state.metadata && ['loading', 'preparing', 'error'].includes(state.status);
+    const displayStatus = fileStatus ? state.status : momentState ? momentState.status : dayMode && ['idle', 'loading', 'error'].includes(day?.status) ? day.status : state.status;
     panel.dataset.status = displayStatus;
     panel.dataset.mode = state.mode;
-    panel.setAttribute('aria-busy', String(displayStatus === 'loading'));
-    range.hidden = false;
-    if (range.parentElement) range.parentElement.hidden = false;
-    range.disabled = dayMode ? !dayReady : !state.metadata;
+    panel.setAttribute('aria-busy', String(displayStatus === 'loading' || preparing));
+    range.hidden = preparing;
+    if (range.parentElement) range.parentElement.hidden = preparing;
+    range.disabled = preparing || (dayMode ? !dayReady : !state.metadata);
+    for (const input of inputs) input.disabled = preparing;
     if (fromCalendar) fromCalendar.disabled = !state.metadata;
     if (toCalendar) toCalendar.disabled = !state.metadata;
     const window = !dayMode && visibleWindow ? visibleWindow : state;
@@ -128,7 +131,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const referenceUtc = dayMode ? day?.timeline && Number.isFinite(reference)
       ? timelineMinute(day.timeline, reference).utc : null : reference;
     const displayedUtc = dayMode ? day?.current?.utc : momentState ? momentState.current?.utc : state.displayedUtc;
-    dayRange.updateReference({ value: reference, visible: state.opened && (!dayMode || dayReady) && Number.isFinite(reference)
+    dayRange.updateReference({ value: reference, visible: state.opened && !preparing && (!dayMode || dayReady) && Number.isFinite(reference)
       && reference >= Number(range.min) && reference <= Number(range.max),
       label: 'Вернуться к текущему времени',
       title: !dayMode && options.getPersonalChart?.() ? 'Текущий транзит' : 'Текущий момент',
@@ -158,7 +161,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       pending ? 'загружается' : unshown ? 'не показано' : '',
       unshown && shown ? `на карте ${shown.date}, ${shown.time} ${shown.zone}` : ''].filter(Boolean).join('; '));
     const momentMessage = momentLoading?.visible ? 'Загружаем момент…' : '';
-    setText(status, requestError || (displayStatus === 'error' ? momentState
+    setText(status, preparing ? 'Создаём летопись' : requestError || (displayStatus === 'error' ? fileStatus ? state.error : momentState
       ? momentState.error || 'Не удалось загрузить текущий транзит' : dayMode && day?.status === 'error'
         ? day.error || 'День не загрузился' : state.error || 'Не удалось загрузить момент'
       : inputError ? '' : waitingForMetadata ? 'Загружаем диапазон дат…'
@@ -265,7 +268,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (typeof value !== 'boolean' || value === available) return;
     available = value;
     if (!available) explorer.close();
-    toggle.hidden = !enabled || !available;
+    toggle.hidden = !available;
   };
   explorer.refreshTargets = dayRange.refreshTargets;
   explorer.setVisibleWindow = value => {
@@ -283,7 +286,8 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const momentState = options.getMomentState?.();
     if (state.opened && (state.mode === 'day' || momentState || momentClockShown)) update(state, momentState);
   };
-  retryButton?.addEventListener('click', () => options.getMomentState?.()?.status === 'error' ? onLifetimeNow()
+  retryButton?.addEventListener('click', () => !explorer.state.metadata ? explorer.retry()
+    : options.getMomentState?.()?.status === 'error' ? onLifetimeNow()
     : explorer.state.mode === 'day' && options.getDayState?.()?.status === 'error' ? onDayNow() : explorer.retry());
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]]) {
     if (!button) continue;

@@ -567,7 +567,10 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 
 
 .lifetime-controls:not([data-personal-life='true']) .lifetime-scale > [data-lifetime-date] { visibility: hidden; }
+.lifetime-controls[data-status='preparing'] > :is(.lifetime-heading, .lifetime-scale) { visibility: hidden; }
 .transit-status, .lifetime-status { top: 4px; }
+/* Loading belongs to the rail: 4 px range offset + its 22 px center. */
+.day-controls[aria-busy='true'] > :is(.transit-status, .lifetime-status) { position: absolute; z-index: 3; top: 26px; left: 50%; right: auto; width: max-content; max-width: calc(100% - 8px); max-height: none; margin: 0; padding: 2px 10px; transform: translate(-50%, -50%); background: var(--timeline-background); color: #555555; font-size: 13px; font-weight: 500; line-height: 18px; text-align: center; white-space: normal; text-wrap: balance; pointer-events: none; }
 
 /* Small event nodes share the line; the selected moment has its own droplet. */
 .returns-markers { position: absolute; inset: 0 22px; z-index: 2; pointer-events: none; }

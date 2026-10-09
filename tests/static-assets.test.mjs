@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { brotliCompressSync, brotliDecompressSync, constants, gzipSync, gunzipSync } from 'node:zlib';
 import { createStaticAssets } from '../server/http/static-assets.mjs';
@@ -34,8 +35,8 @@ function handler(root, options) {
 
 test('HTML supplies the current cycle calculation revision without another request and changes its ETag', async t => {
   const root = await directory(t); await write(root, 'public/index.html', '<html><body>Форма</body></html>');
-  const first = await request(handler(root, { cyclesVersion: 'a'.repeat(64), lifetimeEnabled: true }), '/');
-  assert.match(first.body.toString(), /<body data-lifetime-enabled="true" data-cycles-version="a{64}">/);
+  const first = await request(handler(root, { cyclesVersion: 'a'.repeat(64) }), '/');
+  assert.match(first.body.toString(), /<body data-cycles-version="a{64}">/);
   const next = await request(handler(root, { cyclesVersion: 'b'.repeat(64) }), '/');
   assert.match(next.body.toString(), /data-cycles-version="b{64}"/); assert.notEqual(next.headers.ETag, first.headers.ETag);
   assert.equal(first.headers['Cache-Control'], 'no-cache');
@@ -127,10 +128,10 @@ test('development revalidates source files while sharing concurrent encoding wor
   assert.notEqual(next.headers.ETag, previous.headers.ETag);
 });
 
-test('lifetime availability exposes Lifetime in the first development/release HTML in every encoding without changing build files', async t => {
+test('development and release HTML keep the timeline entry visible in every encoding without changing build files', async t => {
   for (const precompressed of [false, true]) {
     const root = await directory(t);
-    const source = '<html><body><button id="fitButton" hidden>Домой</button><button id="lifetimeToggle" hidden>Годы</button><main id="lifetimeControls" hidden>Форма</main></body></html>';
+    const source = '<html><body><button id="fitButton" hidden>Домой</button><button id="lifetimeToggle">Летопись</button><main id="lifetimeControls" hidden>Форма</main></body></html>';
     const file = precompressed ? 'index.html' : 'public/index.html';
     const files = precompressed ? await release(root) : undefined;
     await write(root, file, source);
@@ -138,34 +139,23 @@ test('lifetime availability exposes Lifetime in the first development/release HT
       await write(root, `${file}.br`, brotli(Buffer.from(source)));
       await write(root, `${file}.gz`, gzipSync(source));
     }
-    const tags = new Map();
-    for (const lifetimeEnabled of [false, true]) {
-      const cyclesVersion = 'a'.repeat(64);
-      const serve = handler(root, { files, precompressed, lifetimeEnabled, cyclesVersion });
-      const page = source.replace('<body>', `<body${lifetimeEnabled ? ' data-lifetime-enabled="true"' : ''} data-cycles-version="${cyclesVersion}">`);
-      const expected = lifetimeEnabled ? page.replace('id="lifetimeToggle" hidden', 'id="lifetimeToggle"') : page;
-      for (const [encoding, unpack] of [['identity', bytes => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]]) {
-        const headers = { 'accept-encoding': encoding };
-        const get = await request(serve, '/', { headers });
-        assert.equal(get.status, 200);
-        const html = unpack(get.body).toString();
-        assert.equal(html, expected);
-        const toggle = html.match(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/)?.[0];
-        assert.ok(toggle);
-        assert.equal(/\s+hidden(?=\s|>)/.test(toggle), !lifetimeEnabled, 'Lifetime availability is resolved before JavaScript');
-        assert.match(html, /<button id="fitButton" hidden>/, 'Home still waits for actual camera movement');
-        assert.match(html, /<main id="lifetimeControls" hidden>/, 'the optional panel starts closed');
-        assert.equal(get.headers.ETag, digest(get.body));
-        assert.equal(get.headers['Content-Length'], get.body.length);
-        const head = await request(serve, '/', { method: 'HEAD', headers });
-        assert.deepEqual(head.headers, get.headers); assert.equal(head.body, undefined);
-        const tag = get.headers.ETag;
-        assert.equal((await request(serve, '/', { headers: { ...headers, 'if-none-match': tag } })).status, 304);
-        if (lifetimeEnabled) {
-          assert.notEqual(tag, tags.get(encoding));
-          assert.equal((await request(serve, '/', { headers: { ...headers, 'if-none-match': tags.get(encoding) } })).status, 200);
-        } else tags.set(encoding, tag);
-      }
+    const cyclesVersion = 'a'.repeat(64);
+    const serve = handler(root, { files, precompressed, cyclesVersion });
+    const expected = source.replace('<body>', `<body data-cycles-version="${cyclesVersion}">`);
+    for (const [encoding, unpack] of [['identity', bytes => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]]) {
+      const headers = { 'accept-encoding': encoding };
+      const get = await request(serve, '/', { headers });
+      assert.equal(get.status, 200);
+      const html = unpack(get.body).toString();
+      assert.equal(html, expected);
+      assert.match(html, /<button id="lifetimeToggle">/);
+      assert.match(html, /<button id="fitButton" hidden>/, 'Home still waits for actual camera movement');
+      assert.match(html, /<main id="lifetimeControls" hidden>/, 'the panel starts closed');
+      assert.equal(get.headers.ETag, digest(get.body));
+      assert.equal(get.headers['Content-Length'], get.body.length);
+      const head = await request(serve, '/', { method: 'HEAD', headers });
+      assert.deepEqual(head.headers, get.headers); assert.equal(head.body, undefined);
+      assert.equal((await request(serve, '/', { headers: { ...headers, 'if-none-match': get.headers.ETag } })).status, 304);
     }
     assert.equal(await fs.readFile(path.join(root, file), 'utf8'), source);
     if (precompressed) {
@@ -259,4 +249,13 @@ test('startup rejects a release missing an identity, Brotli or gzip file, or nam
   const file = path.join(root, entries['index.html'].br);
   await fs.unlink(file); await fs.mkdir(file);
   await assert.rejects(readReleaseManifest(root));
+});
+
+
+test('the actual initial page exposes the timeline button without a file availability flag', async () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const page = await request(handler(root), '/');
+  const tag = page.body.toString().match(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/)?.[0];
+  assert.ok(tag);
+  assert.doesNotMatch(tag, /\s+hidden(?=\s|>)/);
 });

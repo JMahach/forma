@@ -41,3 +41,17 @@ test('unversioned metadata keeps safe no-store transport', async () => {
   await createLifetimeClient({ fetch }).getPoint(3);
   assert.deepEqual(requests, [{ url: '/api/lifetime/meta', cache: 'no-store' }, { url: '/api/lifetime?index=3', cache: 'no-store' }]);
 });
+
+
+test('preparation status reaches the caller and is not cached when the completed file later appears', async () => {
+  let ready = false, requests = 0;
+  const client = createLifetimeClient({ fetch: async () => {
+    requests++;
+    return ready ? { ok: true, json: async () => meta }
+      : { ok: false, json: async () => ({ error: 'lifetime_preparing', message: 'Создаём летопись' }) };
+  } });
+  await assert.rejects(client.getMeta(), error => error.code === 'lifetime_preparing');
+  ready = true;
+  assert.equal((await client.getMeta()).samples, 144);
+  assert.equal(requests, 2);
+});

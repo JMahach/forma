@@ -168,16 +168,22 @@ for (const phase of ['module', 'metadata']) test(`A to B to A cannot revive the 
   assert.deepEqual(h.points, []);
 });
 
-test('beginning an unfinished range edit cancels automatic personal range installation before metadata arrives', async () => {
+test('interrupting a pending personal opening retains its accepted range and original chart without a second opening', async () => {
   const h = lazyPersonalHarness({ phase: 'metadata' });
   await h.exploration.select('person-a');
   const opening = h.exploration.toggleReturns(); await tick();
+  assert.equal(h.controller.state.mode, 'lifetime', 'the requested range already exists before metadata');
+  assert.equal(h.controller.state.fromDate, '2026-09-24');
   h.exploration.invalidateTimeline();
   h.metadataJobs[0].resolve(metadata);
   assert.equal(await opening, false);
   assert.equal(h.controller.state.opened, true);
-  assert.equal(h.controller.state.mode, 'day');
-  assert.equal(h.controller.state.minUtc, null);
+  assert.equal(h.controller.state.mode, 'lifetime');
+  assert.equal(h.controller.state.fromDate, '2026-09-24');
+  assert.equal(h.controller.state.toDate, '2050-12-31', 'the file bounds limit the personal range');
+  assert.equal(h.controller.state.minUtc, Date.parse(h.people[0].utc));
+  assert.equal(h.controller.current, h.people[0]);
+  assert.equal(h.metadataJobs.length, 1);
   assert.deepEqual(h.points, []);
 });
 

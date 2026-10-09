@@ -23,9 +23,9 @@ const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 const imports = [...source.matchAll(/^import \{ (.*?) \} from .*;$/gm)].flatMap(match => match[1].split(', '));
 const body = source.replace(/^import .*;\n/gm, '').replace('export function startApp', 'function startApp');
 const noop = () => {};
-function browser(lifetimeEnabled) {
+function browser() {
   const elements = new Map(), listeners = new Map();
-  const document = { body: { dataset: { lifetimeEnabled: String(lifetimeEnabled) } }, activeElement: null,
+  const document = { body: { dataset: {} }, activeElement: null,
     getElementById: element, querySelector: () => null, querySelectorAll: () => [],
     addEventListener(type, handler) { listeners.set(type, handler); } };
   function element(id) {
@@ -54,8 +54,8 @@ function browser(lifetimeEnabled) {
   return { document, element };
 }
 
-function harness({ lifetimeEnabled = false, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
-  const { document, element } = browser(lifetimeEnabled);
+function harness({ metaError = null, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
+  const { document, element } = browser();
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
   let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, transitOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
@@ -105,8 +105,8 @@ function harness({ lifetimeEnabled = false, charts = [], getReturn = () => asser
     finishModule() { finishModule({ attachLifetimeControls(options) {
       lifetimeOptions = options;
       lifetime = createLifetimeExplorer({ ...options, client: {
-        getMeta: async () => ({ startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
-          stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }),
+        getMeta: async () => { if (metaError) throw metaError; return { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
+          stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }; },
         getPoint,
       } });
       lifetime.setAvailable = value => { if (!value) lifetime.close(); };
@@ -121,7 +121,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 test('the natal caption keeps todays age across day, life and closed rails while events keep their moment', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-09-23T23:59:59Z') });
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
-  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  const h = harness({ charts: [chart] });
   await h.select(chart.id);
   assert.match(h.element('chartSubtitle').textContent, /12:34.*1\u00a0год$/);
   t.mock.timers.setTime(Date.parse('2028-09-24T00:00:00Z'));
@@ -146,7 +146,7 @@ test('the natal caption keeps todays age across day, life and closed rails while
 });
 
 test('raw range editing supersedes restoration and a cold opening before the date is valid', async () => {
-  const h = harness({ lifetimeEnabled: true }); await tick();
+  const h = harness({}); await tick();
   await h.element('lifetimeToggle').click();
   assert.equal(h.interruptions, 1); assert.equal(h.loads, 1);
   const field = h.element('lifetimeFromDate'); field.value = '1';
@@ -161,7 +161,7 @@ test('raw range editing supersedes restoration and a cold opening before the dat
 
 test('lifetime planet gestures publish the owner projection once and retain both full columns', async () => {
   let requests = 0;
-  const h = harness({ lifetimeEnabled: true, getPoint: async index => {
+  const h = harness({ getPoint: async index => {
     requests++;
     const utc = new Date(Date.parse('1801-01-01T00:00:00Z') + index * 600000).toISOString();
     return { index, utc, longitudes: Array.from({ length: 11 }, (_, i) => i * 23),
@@ -194,7 +194,7 @@ test('application starts before the lazy knowledge entry closes its initialized 
 });
 
 test('two real toolbar clicks cancel cold Lifetime without reopening it after module arrival', async () => {
-  const h = harness({ lifetimeEnabled: true });
+  const h = harness({});
   await tick();
   await h.element('lifetimeToggle').click();
   assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'true');
@@ -213,7 +213,7 @@ test('two real toolbar clicks cancel cold Lifetime without reopening it after mo
 
 test('a pending toolbar click cannot switch a newly selected personal card from Day to Returns', async () => {
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
-  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  const h = harness({ charts: [chart] });
   await tick();
   await h.element('lifetimeToggle').click();
   h.select(chart.id);
@@ -224,7 +224,7 @@ test('a pending toolbar click cannot switch a newly selected personal card from 
 });
 
 test('failed Lifetime import keeps the reload action visible after its opening intent settles', async () => {
-  const h = harness({ lifetimeEnabled: true });
+  const h = harness({});
   await tick(); await h.element('lifetimeToggle').click();
   h.failModule(new Error('offline')); await tick();
   assert.equal(h.element('lifetimeToggle').title, 'Обновить страницу и загрузить летопись');
@@ -237,7 +237,7 @@ test('failed Lifetime import keeps the reload action visible after its opening i
 test('the personal rail endpoint uses the shared completed-age wording at a truncated lifetime boundary', async () => {
   const chart = chartAtMinute(natalDayFixture({ date: '2378-01-01' }), 0,
     personalChartFixture({ birthDate: '2378-01-01', utc: '2378-01-01T00:00:00Z' }));
-  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  const h = harness({ charts: [chart] });
   await tick(); await h.element('lifetimeToggle').click();
   h.select(chart.id); await h.element('natalDayToggle').click();
   assert.equal(h.natalDay.state.opened, false, 'the app owns the Day toggle after its view binding is removed');
@@ -263,7 +263,7 @@ test('a real day publication reaches the scene once without repeating navigation
 
 test('entering personal Lifetime closes the Day controller only once', async () => {
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
-  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick();
   let closes = 0;
   const close = h.natalDay.close;
@@ -301,7 +301,7 @@ test('renaming keeps the confirmed exact return and list filters while updating 
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   let returnRequests = 0;
-  const h = harness({ lifetimeEnabled: true, charts: [chart], getReturn: async () => { returnRequests++; return { event, chart: exact }; } });
+  const h = harness({ charts: [chart], getReturn: async () => { returnRequests++; return { event, chart: exact }; } });
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   await h.returns.selectEvent(event.id, { restoredEvent: event });
@@ -323,7 +323,7 @@ test('opening the editor still cancels a pending return and its late answer cann
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   let complete, signal;
-  const h = harness({ lifetimeEnabled: true, charts: [chart], getReturn: (_query, requestSignal) => {
+  const h = harness({ charts: [chart], getReturn: (_query, requestSignal) => {
     signal = requestSignal; return new Promise(resolve => { complete = resolve; });
   } });
   await tick(); h.select(chart.id); await tick();
@@ -347,7 +347,7 @@ test('pending personal life data retains todays natal age until the new moment i
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   let resolve;
   const response = new Promise(done => { resolve = done; });
-  const h = harness({ lifetimeEnabled: true, charts: [chart], getPoint: async index => {
+  const h = harness({ charts: [chart], getPoint: async index => {
     await response;
     const utc = new Date(Date.parse('1801-01-01T00:00:00Z') + index * 600000).toISOString();
     return { index, utc, longitudes: Array.from({ length: 11 }, (_, i) => i * 23),
@@ -371,11 +371,35 @@ test('pending personal life data retains todays natal age until the new moment i
 
 test('year endpoint captions also use UTC when a saved timezone is obsolete', async () => {
   const chart = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), timezone: 'Obsolete/Zone' };
-  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  const h = harness({ charts: [chart] });
   await tick(); await h.element('lifetimeToggle').click();
   h.select(chart.id); await h.element('natalDayToggle').click();
   h.finishModule(); await tick(); await h.returns.setYear(2027);
   const bounds = { minUtc: Date.parse('2026-01-01T00:00:00Z'), maxUtc: Date.parse('2028-01-01T00:00:00Z') };
   const labels = h.lifetimeOptions.formatEndpoints(bounds);
   assert.match(labels[0], /янв.*2027/); assert.match(labels[1], /дек.*2027/);
+});
+
+
+test('timeline entry stays available without a server HTML availability flag', async () => {
+  const h = harness(); await tick();
+  assert.equal(h.element('lifetimeToggle').hidden, false);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.loads, 1);
+  h.finishModule(); await tick();
+  assert.equal(h.lifetime.state.opened, true);
+});
+
+
+test('opening a personal timeline before its file is ready retains a restorable life range and the natal chart', async () => {
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ charts: [chart], metaError: Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' }) });
+  await h.select(chart.id);
+  await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  assert.equal(h.lifetime.state.status, 'preparing');
+  assert.equal(h.lifetime.state.mode, 'lifetime');
+  assert.equal(h.lifetime.state.fromDate, '2026-09-24');
+  assert.equal(h.lifetime.state.toDate, '2126-09-24');
+  assert.equal(h.shown.primary, chart);
+  assert.equal(h.natalDay.state.opened, false);
 });

@@ -29,12 +29,46 @@ export function lifetimeFileFingerprint(root) {
   return inputFingerprint(root, LIFETIME_PROVENANCE_INPUTS);
 }
 
-// Hash calculation inputs once at startup. UI releases keep the same URLs;
+// Hash calculation inputs once when opening the completed file. UI releases keep the same URLs;
 // changed ephemerides, exact-search rules or moment contracts cannot reuse them.
 export function lifetimeCalculationFingerprint(root) {
   return inputFingerprint(root, ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
     'server/python/calculator.py', 'requirements.txt',
     'shared/lifetime-format.js', 'shared/day-packets/moment-columns.js', 'server/services/lifetime.mjs', 'data/ephe']);
+}
+
+// One owner opens the completed file on demand. A later request can find it
+// after preparation; ready requests share one verified file and moment cache.
+export function createLifetimeService({ root = fileURLToPath(new URL('../../', import.meta.url)),
+  file = path.join(root, '.cache/lifetime/lifetime-1801-2400.f64le'), calculate } = {}) {
+  let source = null, moments = null, opening = null, closing = null, closed = false;
+  function ready() {
+    if (closed) return Promise.reject(unavailable());
+    if (moments) return Promise.resolve(moments);
+    if (!opening) opening = (async () => {
+      const opened = await createLifetimeFile({ file, metadataFile: file.replace(/\.f64le$/, '.metadata.json'), root });
+      try {
+        const calculationFingerprint = await lifetimeCalculationFingerprint(root);
+        if (closed) throw unavailable();
+        moments = createLifetimeMoments({ lifetimeFile: opened, calculate, calculationFingerprint });
+        source = opened;
+        return moments;
+      } catch (error) { await opened.close(); throw error; }
+    })().finally(() => { opening = null; });
+    return opening;
+  }
+  return {
+    async getMetadata() { return (await ready()).metadata; },
+    async getMoment(index) { return (await ready()).getMoment(index); },
+    async getUtcMoment(utc) { return (await ready()).getUtcMoment(utc); },
+    close() {
+      if (!closing) {
+        closed = true;
+        closing = (async () => { await opening?.catch(() => {}); await source?.close(); })();
+      }
+      return closing;
+    },
+  };
 }
 
 export class LifetimeError extends Error {
@@ -235,6 +269,8 @@ export async function createLifetimeFile({ file, metadataFile, root = fileURLToP
     };
   } catch (error) {
     if (handle) await handle.close().catch(() => {});
+    if (error?.code === 'ENOENT' && [file, metadataFile].includes(error.path))
+      throw new LifetimeError('lifetime_preparing', 'Создаём летопись');
     throw error instanceof LifetimeError ? error : unavailable();
   }
 }
