@@ -158,6 +158,61 @@ test('requesting a queued background day promotes its existing job and preserves
   assert.equal(calls.filter(date => date === '2026-09-25').length, 1);
 });
 
+test('disk lookup backlog stays bounded and duplicate readers join before admission', async t => {
+  const entered = deferred(), release = deferred(), stat = fs.lstat.bind(fs);
+  let active = 0, maximum = 0, calls = 0;
+  t.mock.method(fs, 'lstat', async (...args) => {
+    active++; maximum = Math.max(maximum, active);
+    try {
+      if (++calls === 1) { entered.resolve(); await release.promise; }
+      return await stat(...args);
+    } finally { active--; }
+  });
+  const service = await cache(t, { maxPendingReads: 32 });
+  const date = index => new Date(Date.UTC(2026, 8, 1 + index)).toISOString().slice(0, 10);
+  const requests = Array.from({ length: 32 }, (_, index) => service.get(date(index)));
+  const settled = Promise.allSettled(requests);
+  try {
+    await entered.promise;
+    assert.equal(service.get(date(31)), requests[31]);
+    await assert.rejects(service.get(date(32)), error => error.code === 'transit_busy');
+    assert.equal(calls, 1, 'waiting disk requests do not fan out decompression work');
+  } finally { release.resolve(); await settled; }
+  assert.equal(maximum, 1);
+});
+
+for (const saturated of [false, true]) test(`a ready disk day bypasses ${saturated ? 'a full calculation queue' : 'an active calculation'}`, async t => {
+  const cacheDir = await directory(t);
+  const options = { root, cacheDir, now, fingerprint };
+  const seed = await createTransitDays({ ...options, generateDay: async date => makeDay(date) });
+  const expected = await seed.get('2026-09-24'); await seed.close();
+  const entered = deferred(), release = deferred(), calls = [];
+  const service = await createTransitDays({ ...options, generateDay: async date => {
+    calls.push(date);
+    if (date === '2026-09-20') { entered.resolve(); await release.promise; }
+    return makeDay(date);
+  } });
+  const active = service.get('2026-09-20'), waiting = [];
+  let timer;
+  try {
+    await entered.promise;
+    if (saturated) waiting.push(...['21', '22', '23', '25', '26'].map(day => service.get(`2026-09-${day}`)));
+    const started = performance.now(), hit = service.get('2026-09-24');
+    const readers = Array.from({ length: 100 }, () => service.get('2026-09-24'));
+    readers.forEach(request => assert.equal(request, hit, 'concurrent readers share the same disk lookup'));
+    const packet = await Promise.race([hit, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Ready disk day waited for the blocked calculation')), 1000);
+    })]);
+    assert.deepEqual(packet.bytes, expected.bytes);
+    assert.equal((await Promise.all(readers)).length, 100);
+    t.diagnostic(`100 coalesced ready day reads: ${(performance.now() - started).toFixed(2)} ms with ${saturated ? 'full' : 'active'} compute queue`);
+    assert.deepEqual(calls, ['2026-09-20'], 'the ready day must finish before any calculation is released');
+  } finally {
+    clearTimeout(timer); release.resolve();
+    await Promise.allSettled([active, ...waiting]); await service.close();
+  }
+});
+
 test('restart reuses gzip without astronomy; corrupt packets and changed fingerprints regenerate', async t => {
   const cacheDir = await directory(t);
   let calls = 0;
@@ -176,7 +231,7 @@ test('restart reuses gzip without astronomy; corrupt packets and changed fingerp
   assert.deepEqual(await fs.readdir(cacheDir), ['2026-09-24.abcdef0123456789.gz']);
 });
 
-test('RAM and disk retain at most seven days and pruning leaves unrelated files and directories intact', async t => {
+test('RAM retains seven days while disk preserves prepared days within its byte budget and leaves unrelated files intact', async t => {
   const cacheDir = await directory(t);
   const service = await cache(t, { cacheDir });
   await fs.writeFile(path.join(cacheDir, 'notes.txt'), 'keep');
@@ -185,7 +240,7 @@ test('RAM and disk retain at most seven days and pruning leaves unrelated files 
   await service.close();
   assert.equal(service.size, 7);
   const entries = await fs.readdir(cacheDir, { withFileTypes: true });
-  assert.equal(entries.filter(entry => entry.isFile() && entry.name.endsWith('.gz')).length, 7);
+  assert.equal(entries.filter(entry => entry.isFile() && entry.name.endsWith('.gz')).length, 9);
   assert.equal(await fs.readFile(path.join(cacheDir, 'notes.txt'), 'utf8'), 'keep');
   assert.ok((await fs.stat(path.join(cacheDir, `2026-08-01.${fingerprint}.gz`))).isDirectory());
   assert.ok(!entries.some(entry => entry.name.endsWith('.tmp')));
@@ -193,12 +248,12 @@ test('RAM and disk retain at most seven days and pruning leaves unrelated files 
 
 test('query validation is exact, version aware and uses UTC dates through month/year boundaries', () => {
   const query = value => new URLSearchParams(value);
-  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '2' }), now()), { date, versioned: true });
+  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '2' }), now()), { date, versioned: true, allowCalculate: true });
   assert.equal(validateTransitDayQuery(query({ date: '2026-09-24' }), now()).versioned, false);
   for (const value of [{}, { date: '2026-9-24' }, { date: '2026-02-30' }, { date: '../2026-09-24' }, { date: '2026-09-24', v: '0' }, { date: '2026-09-24', v: '' }]) {
     assert.throws(() => validateTransitDayQuery(query(value), now()), error => error.status === 400);
   }
-  assert.throws(() => validateTransitDayQuery(query({ date: '2026-09-27' }), now()), error => error.status === 422);
+  assert.equal(validateTransitDayQuery(query({ date: '2026-09-27' }), now()).allowCalculate, false);
   assert.equal(validateTransitDayQuery(query({ date: '2027-01-01', v: '2' }), new Date('2026-12-31T23:59:59Z')).date, '2027-01-01');
   assert.equal(validateTransitDayQuery(query({ date: '2026-09-30', v: '2' }), new Date('2026-10-01T00:00:00Z')).date, '2026-09-30');
 });
@@ -267,7 +322,7 @@ async function request(service, url, { method = 'GET', headers = {} } = {}) {
 test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and version-scoped immutable caching', async t => {
   let calls = 0;
   const service = await cache(t, { generateDay: async date => { calls++; return makeDay(date); } });
-  const url = '/api/transit/day?date=2026-09-24&v=2';
+  const url = `/api/transit/day?date=2026-09-24&v=2&r=${service.calculationVersion}`;
   for (const [accept, encoding, unpack] of [['gzip, br', 'br', brotliDecompressSync], ['gzip', 'gzip', gunzipSync], ['identity', undefined, value => value]]) {
     const result = await request(service, url, { headers: { 'accept-encoding': accept } });
     assert.equal(result.status, 200); assert.equal(result.headers['Content-Encoding'], encoding);
@@ -281,6 +336,8 @@ test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and versi
     assert.equal(head.status, 200); assert.equal(head.body, undefined); assert.deepEqual(head.headers, result.headers);
   }
   assert.equal(calls, 1);
+  assert.equal((await request(service, '/api/transit/day?date=2026-09-24&v=2')).headers['Cache-Control'], 'no-cache');
+  assert.equal((await request(service, `${url.slice(0, -64)}${'f'.repeat(64)}`)).status, 409);
   assert.equal((await request(service, '/api/transit/day?date=2026-09-24')).headers['Cache-Control'], 'no-cache');
   assert.equal((await request(service, url, { method: 'POST' })).status, 405);
   assert.equal((await request(service, url, { headers: { origin: 'https://unrelated.example' } })).status, 403);
@@ -298,7 +355,7 @@ test('encoding preference honors exclusions and transient HTTP failures remain r
   assert.equal(negotiateEncoding('*'), 'br');
   let calls = 0;
   const service = await cache(t, { generateDay: async date => { if (++calls === 1) throw new Error('temporary'); return makeDay(date); } });
-  const url = '/api/transit/day?date=2026-09-24&v=2';
+  const url = `/api/transit/day?date=2026-09-24&v=2&r=${service.calculationVersion}`;
   const failed = await request(service, url);
   assert.equal(failed.status, 503); assert.equal(failed.headers['Cache-Control'], 'no-store'); assert.equal(failed.headers['Retry-After'], '5');
   assert.equal((await request(service, url)).status, 200); assert.equal(calls, 2);
@@ -347,8 +404,8 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
 
 test('disk fingerprint follows calculation bytes, not deployment timestamps or interface changes', async t => {
   const sourceRoot = await directory(t);
-  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py',
-    'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
+  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py', 'server/python/calculator.py',
+    'shared/day-packets/moment-columns.js', 'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
     'shared/day-packets/decode.js', 'server/packets/encode.mjs'];
   for (const file of [...inputs, 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {
     await fs.mkdir(path.dirname(path.join(sourceRoot, file)), { recursive: true });
@@ -399,4 +456,36 @@ test('disk fingerprint follows calculation bytes, not deployment timestamps or i
   const changedData = await createTransitDays(options);
   await changedData.get('2026-09-24'); await changedData.close();
   assert.equal(calculations, 2, 'real ephemeris changes invalidate the disk packet');
+});
+
+test('HTTP serves a prepared historical day before applying the new-calculation window', async t => {
+  const cacheDir = await directory(t), seed = await cache(t, { cacheDir });
+  await seed.get('2020-01-01'); await seed.close();
+  const service = await cache(t, { cacheDir, generateDay() { throw Error('old days must never calculate'); } });
+  const ready = await request(service, '/api/transit/day?date=2020-01-01');
+  assert.equal(ready.status, 200);
+  assert.equal((await request(service, '/api/transit/day?date=2020-01-02')).status, 422);
+});
+
+test('one HTTP consumer can cancel a shared day without interrupting its neighbour', async t => {
+  const entered = deferred(), release = deferred(); let calls = 0;
+  const service = await cache(t, { generateDay: async date => { calls++; entered.resolve(); await release.promise; return makeDay(date); } });
+  const a = new AbortController(), b = new AbortController();
+  const first = service.get('2026-09-24', { signal: a.signal }), rejected = assert.rejects(first, { name: 'AbortError' });
+  const second = service.get('2026-09-24', { signal: b.signal }); await entered.promise;
+  a.abort(); await rejected; release.resolve(); assert.ok((await second).bytes.gzip); assert.equal(calls, 1);
+});
+
+test('a new HTTP consumer never joins an abandoned day while its worker is closing', async t => {
+  const entered = deferred(), release = deferred(); let calls = 0;
+  const service = await cache(t, { generateDay: async date => {
+    if (++calls === 1) { entered.resolve(); await release.promise; throw new DOMException('cancelled', 'AbortError'); }
+    return makeDay(date);
+  } });
+  const controller = new AbortController(), first = service.get('2026-09-24', { signal: controller.signal });
+  const cancelled = assert.rejects(first, { name: 'AbortError' });
+  await entered.promise; controller.abort(); await cancelled;
+  const next = request(service, '/api/transit/day?date=2026-09-24');
+  release.resolve();
+  const response = await next; assert.equal(response.status, 200); assert.equal(calls, 2);
 });

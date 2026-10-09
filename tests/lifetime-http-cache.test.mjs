@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 
-const meta = { startUtc: '2000-01-01T00:00:00Z', endExclusiveUtc: '2000-01-02T00:00:00Z',
+const meta = { calculationVersion: 'a'.repeat(64), startUtc: '2000-01-01T00:00:00Z', endExclusiveUtc: '2000-01-02T00:00:00Z',
   samples: 144, stepSeconds: 600, planets: LIFETIME_PLANETS };
 const value = index => {
   const utc = new Date(Date.parse(meta.startUtc) + index * 600000).toISOString().replace('.000Z', 'Z');

@@ -18,6 +18,7 @@ export function validateLifetimeMetadata(value) {
       || value.startUtc !== utcText(start) || value.endExclusiveUtc !== utcText(end)
       || value.stepSeconds !== LIFETIME_STEP_SECONDS || !Number.isSafeInteger(value.samples) || value.samples < 1
       || end - start !== value.samples * value.stepSeconds * 1000
+      || value.calculationVersion !== undefined && (typeof value.calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(value.calculationVersion))
       || value.cacheVersion !== undefined && (typeof value.cacheVersion !== 'string' || !/^[a-f0-9]{64}$/.test(value.cacheVersion))
       || !Array.isArray(value.planets) || value.planets.length !== LIFETIME_PLANETS.length
       || LIFETIME_PLANETS.some((planet, index) => planet !== value.planets[index])) return fail();

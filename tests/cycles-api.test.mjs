@@ -139,14 +139,14 @@ test('abandoning every queued consumer frees admission for the latest request wi
   jobs[1].finish(); await latest; await service.close();
 });
 
-test('cancelled running consumers retain the worker slot until completion and a new consumer can reuse it', async () => {
+test('abandoned running work retains its slot until close and a new consumer starts fresh work', async () => {
   const hold = deferred(); let calls = 0;
   const service = createCycles({ limits: { concurrency: 1 }, generate: async input => { calls++; await hold.promise; return emptyEvents(input); } });
   const cancel = new AbortController(), first = service.events(requestInput, { signal: cancel.signal });
   await expectCancellation(first, cancel);
   assert.equal(service.active, 1);
   const resumed = service.events(requestInput); hold.resolve(); await resumed;
-  assert.equal(calls, 1); assert.equal(service.active, 0); assert.equal(service.size, 1);
+  assert.equal(calls, 2); assert.equal(service.active, 0); assert.equal(service.size, 1);
   await service.close();
 });
 

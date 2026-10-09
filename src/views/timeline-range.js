@@ -7,15 +7,40 @@ export function isReferenceMoment(displayedUtc, referenceUtc) {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+// The visible 22 × 8.5px lens shrinks into a centered 8.5px circle over its
+// final 11px of travel. All timelines share at most 65 small SVG images.
+const THUMB_TIP_REACH = 11, THUMB_ROUNDING_STEPS = 64;
+const thumbImages = [];
+function thumbImage(frame) {
+  if (thumbImages[frame]) return thumbImages[frame];
+  const progress = frame / THUMB_ROUNDING_STEPS;
+  const between = (lens, circle) => Number((lens + (circle - lens) * progress).toFixed(3));
+  const radius = 4.25, arc = radius * 4 * (Math.SQRT2 - 1) / 3;
+  const left = 22 - radius, right = 22 + radius, upper = 22 - arc, lower = 22 + arc;
+  const path = `M${between(11, left)} 22
+    C${between(16, left)} ${between(22, upper)} ${between(16.5, upper)} 17.75 ${between(22.5, 22)} 17.75
+    C${between(28, lower)} 17.75 ${between(27.5, right)} ${between(22, upper)} ${between(33, right)} 22
+    C${between(28, right)} ${between(22, lower)} ${between(27, lower)} 26.25 ${between(21.5, 22)} 26.25
+    C${between(16, upper)} 26.25 ${between(16, left)} ${between(22, lower)} ${between(11, left)} 22Z`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+    <defs><linearGradient id="a" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#aaaaaa"/><stop offset="1" stop-color="#777777"/></linearGradient></defs>
+    <path d="${path}" fill="url(#a)"/>
+    <path d="M19.5 20.5Q22 19.5 24 20.5" stroke="#ffffff" stroke-opacity=".32" stroke-width=".8" stroke-linecap="round" fill="none"/>
+  </svg>`;
+  return thumbImages[frame] = `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, ' '))}")`;
+}
+
 // Mouse and keyboard retain the native range. Touch/pen use its entire transparent
 // input rectangle, including the larger coarse-pointer hit area, so grabbing the
 // small visible dot does not depend on browser-specific native thumb hit testing.
 // A reference tap still waits for release; dragging always scrubs. The 44px thumb
 // width and 22px rail inset keep the visible endpoints and value mapping stable.
 export function attachTimelineRange({ range, marker = null, onScrub, onReference, onStep = null,
-  thumbSize = 44, movementThreshold = 8, tapDuration = 500,
+  onInteractionChange = () => {}, thumbSize = 44, movementThreshold = 8, tapDuration = 500,
   now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null, resolveEdge = () => null,
 }) {
+  let interacting = false;
+  const interaction = value => { if (value !== interacting) { interacting = value; onInteractionChange(value); } };
   let reference = null, available = false, gesture = null, suppressClickUntil = -Infinity, suppressedInputValue = null;
   const bounds = () => {
     const min = Number(range.min || 0), max = Number(range.max || 100);
@@ -23,11 +48,29 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   };
   const canScrub = () => !range.disabled && !range.hidden && !range.closest?.('[hidden]');
   const canReturn = () => marker && available && canScrub() && !marker.disabled;
+  let railWidth = Math.max(0, range.getBoundingClientRect().width - thumbSize), thumbFrame = null;
   function updateThumbEdge() {
     const { min, max } = bounds(), value = Number(range.value);
     const edge = max <= min ? 'none' : value === min ? 'start' : value === max ? 'end'
       : resolveEdge({ min, max, value }) || 'none';
     if (range.getAttribute('data-edge') !== edge) range.setAttribute('data-edge', edge);
+    const distance = max > min && railWidth > 0
+      ? Math.min(value - min, max - value) / (max - min) * railWidth : Infinity;
+    const progress = edge === 'start' || edge === 'end' ? 1 : clamp(1 - distance / THUMB_TIP_REACH, 0, 1);
+    const frame = Math.round(progress * THUMB_ROUNDING_STEPS);
+    if (frame === thumbFrame) return;
+    thumbFrame = frame;
+    range.style.setProperty('--timeline-thumb', thumbImage(frame));
+    range.style.setProperty('--timeline-thumb-rounding', String(frame / THUMB_ROUNDING_STEPS));
+  }
+  // Width belongs to layout, not the selected minute. Observe it once instead
+  // of forcing a fresh layout on each scrub, clock tick or chart response.
+  const ResizeObserver = range.ownerDocument?.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
+  if (ResizeObserver) {
+    new ResizeObserver(([entry]) => {
+      railWidth = Math.max(0, entry.contentRect.width - thumbSize);
+      updateThumbEdge();
+    }).observe(range);
   }
   function geometry() {
     const rect = range.getBoundingClientRect();
@@ -99,6 +142,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   function clearGesture() {
     const previous = gesture;
     gesture = null;
+    interaction(false);
     updateContact();
     setEventPress(false);
     if (previous && range.hasPointerCapture?.(previous.pointerId)) range.releasePointerCapture(previous.pointerId);
@@ -141,6 +185,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
       return;
     }
     if (!canScrub() || event.isPrimary === false || event.button !== 0) return;
+    interaction(true);
     const metrics = geometry();
     const touch = event.pointerType === 'touch' || event.pointerType === 'pen';
     const { tapTarget, referenceTap } = targetAt(event, metrics);
@@ -167,7 +212,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   range.addEventListener('blur', () => { clearGesture(); hoverPointer = null; setEventHover(false); });
   range.addEventListener('pointerup', event => {
     rememberPointer(event);
-    if (!gesture) { updateHover(event); return; }
+    if (!gesture) { interaction(false); updateHover(event); return; }
     if (gesture.pointerId !== event.pointerId) return;
     move(event);
     const completed = clearGesture();
@@ -180,12 +225,16 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     updateHover(event);
   });
   range.addEventListener('pointercancel', event => {
+    interaction(false);
     if (gesture?.pointerId === event.pointerId) { suppressClickUntil = now() + 500; clearGesture(); }
     hoverPointer = null; setEventHover(false);
   });
   range.addEventListener('lostpointercapture', event => {
+    interaction(false);
     if (gesture?.pointerId === event.pointerId) { clearGesture(); hoverPointer = null; setEventHover(false); }
   });
+  range.ownerDocument?.addEventListener?.('pointerup', () => interaction(false));
+  range.addEventListener('change', () => interaction(false));
   range.addEventListener('click', event => {
     if (event.detail > 0 && now() <= suppressClickUntil) event.preventDefault();
   });

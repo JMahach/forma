@@ -8,7 +8,7 @@ function element() {
   const attributes = new Map(), listeners = new Map();
   let captured = null;
   return {
-    hidden: false, disabled: false, dataset: {}, style: {}, value: '', textContent: '', title: '', dateTime: '',
+    hidden: false, disabled: false, dataset: {}, style: { setProperty(name, value) { this[name] = value; } }, value: '', textContent: '', title: '', dateTime: '',
     setAttribute(name, value) { attributes.set(name, String(value)); },
     getAttribute(name) { return attributes.get(name) ?? null; },
     addEventListener(type, callback) {

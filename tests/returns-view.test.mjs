@@ -40,7 +40,7 @@ test('a yearly window never promotes later touches when the first touch was in t
 
   h.update({ events: [third, second] });
   assert.doesNotMatch(h.nodes.returnsContent.innerHTML, /data-return-event/);
-  assert.equal(h.nodes.returnsStatus.textContent, 'В этом периоде первых касаний нет.');
+  assert.equal(h.nodes.returnsStatus.textContent, '');
 
 });
 test('return list safely prints names and marks the chronological present without fabricated events', () => {
@@ -215,6 +215,31 @@ function panelHarness({ rows = false, pageOwned = true, getLayout = () => 'sheet
   return { document, nodes, view, summary, update, escape, selected, years, moments, bodySelections, backs, get layouts() { return layouts; } };
 }
 
+test('opening planets by pointer focuses its dialog without suggesting the first planet is selected', () => {
+  for (const pointerType of ['mouse', 'touch']) {
+    const h = panelHarness(); h.update({ timelineVisible: true, opened: true, bodies: ['saturn'] });
+    h.nodes.returnsBodiesToggle.dispatch('click', { detail: 1, pointerType });
+    assert.equal(h.document.activeElement === h.nodes.returnsBodyMenu, true, 'pointer opening must not focus a planet');
+    assert.equal(h.nodes.returnsBodyMenu.tabIndex, -1, 'the dialog receives programmatic focus without joining the Tab order');
+    assert.equal(h.nodes.returnsBody.all(node => node.tagName === 'input' && node.dataset.cycleBody === 'sun')[0].checked, false);
+    assert.deepEqual(h.bodySelections, []);
+    h.escape();
+    assert.equal(h.nodes.returnsBodyMenu.hidden, true);
+    assert.equal(h.document.activeElement, h.nodes.returnsBodiesToggle);
+  }
+});
+
+test('opening planets from the keyboard still enters the first checkbox and Escape restores its trigger', () => {
+  const h = panelHarness(); h.update({ timelineVisible: true, opened: true, bodies: ['saturn'] });
+  h.nodes.returnsBodiesToggle.focus();
+  h.nodes.returnsBodiesToggle.dispatch('click', { detail: 0 });
+  assert.equal(h.document.activeElement.dataset.cycleBody, 'sun');
+  assert.equal(h.document.activeElement.checked, false);
+  h.escape();
+  assert.equal(h.document.activeElement, h.nodes.returnsBodiesToggle);
+  assert.equal(h.nodes.returnsBodyMenu.hidden, true);
+});
+
 test('planet checkboxes combine selections and clear/default preserve the menu and current year', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true, year: 2028, bodies: ['saturn'] });
   h.nodes.returnsBodiesToggle.dispatch('click');
@@ -262,20 +287,22 @@ test('selecting a lunar return preserves all 1336 rows and changes only the old 
   h.document.activeElement = rows[15];
   h.update({ events: [...events], pendingEvent: events[15] });
   assert.ok(content.querySelectorAll('[data-return-event]')[15] === rows[15], 'the pressed row remains the same focused node while loading');
-  assert.equal(rows[15].disabled, true); assert.equal(rows[15].querySelector('small').textContent, 'Открываем…');
-  const firstStatus = rows[15].querySelector('small');
+  assert.equal(rows[15].disabled, true); assert.equal(rows[15].querySelector('small'), null);
   h.update({ pendingEvent: null, selectedEvent: events[15] });
   assert.equal(rows[15].disabled, false); assert.equal(rows[15].getAttribute('aria-pressed'), 'true');
   assert.equal(rows[15].querySelector('small').textContent, 'На карте');
-  assert.ok(rows[15].querySelector('small') === firstStatus);
+  const firstStatus = rows[15].querySelector('small');
   h.update({ pendingEvent: events[16] });
   assert.equal(rows[15].querySelector('small').textContent, 'На карте');
-  assert.equal(rows[16].querySelector('small').textContent, 'Открываем…');
+  assert.equal(rows[16].querySelector('small'), null);
   h.update({ pendingEvent: null, selectedEvent: events[16] });
   assert.equal(rows[15].querySelector('small'), null); assert.equal(rows[15].classList.contains('is-selected'), false);
   assert.equal(rows[15].getAttribute('aria-pressed'), 'false'); assert.equal(rows[16].getAttribute('aria-pressed'), 'true');
   h.update({ pendingEvent: events[15] });
-  assert.ok(rows[15].querySelector('small') === firstStatus, 'returning to a row reuses its status node');
+  assert.equal(rows[15].querySelector('small'), null);
+  h.update({ pendingEvent: null, selectedEvent: events[15] });
+  assert.ok(rows[15].querySelector('small') === firstStatus, 'returning to a selected row reuses its status node');
+  h.update({ selectedEvent: events[16] });
   h.update({ pendingEvent: null });
   assert.equal(rows[15].querySelector('small'), null); assert.equal(rows[15].disabled, false);
   h.update({ selectedEvent: null });
@@ -447,11 +474,14 @@ test('Birth and explicit live selection preserve all lunar rows and never infer 
   h.update({ timelineVisible: true, opened: true, bodies: ['moon'], events, birthSelected: true, live: false, cursorUtc: natal.utc });
   const content = h.nodes.returnsContent, birth = content.querySelector('[data-return-birth]'), now = content.querySelector('[data-return-now]');
   const rows = content.querySelectorAll('[data-return-event]');
+  assert.equal(birth.querySelector('small')?.textContent, 'На карте', 'the initially displayed birth chart has the same badge as a return');
+  assert.equal(birth.querySelector('.returns-event-action > span')?.textContent, '0 лет');
   assert.equal(birth.getAttribute('aria-pressed'), 'true'); assert.equal(now.getAttribute('aria-pressed'), 'false');
   content.scrollTop = 18000; birth.focus();
   const utc = new Date().toISOString();
   h.update({ birthSelected: false, live: true, cursorUtc: utc });
   assert.equal(birth.getAttribute('aria-pressed'), 'false'); assert.equal(now.getAttribute('aria-pressed'), 'true');
+  assert.equal(birth.querySelector('small'), null, 'leaving birth removes its badge without rebuilding the list');
   assert.equal(now.classList.contains('is-selected'), true);
   h.update({ live: false, cursorUtc: utc });
   assert.equal(now.getAttribute('aria-pressed'), 'false', 'a manually selected moment at the same UTC is not live');
@@ -461,6 +491,7 @@ test('Birth and explicit live selection preserve all lunar rows and never infer 
   assert.equal(rows[10].getAttribute('aria-pressed'), 'true');
   h.update({ selectedEvent: null, birthSelected: true });
   assert.equal(rows[10].getAttribute('aria-pressed'), 'false'); assert.equal(birth.getAttribute('aria-pressed'), 'true');
+  assert.equal(birth.querySelector('small')?.textContent, 'На карте', 'returning to birth restores the badge on the existing row');
   const retainedRows = content.querySelectorAll('[data-return-event]');
   assert.ok(rows.every((row, index) => row === retainedRows[index]));
   assert.equal(content.querySelector('[data-return-birth]'), birth); assert.equal(content.querySelector('[data-return-now]'), now);

@@ -4,8 +4,9 @@ import { lifeTimelineForChart } from '../domain/cycles.js';
 // ranges, jobs and local cancellation; the session accepts their visible result.
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
   loadLifetime, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }) {
-  let timelineOpening = null, restoreBirthBoundary = false;
+  let timelineOpening = null, restoreBirthBoundary = false, returnsPreferred = false;
   const personal = () => Boolean(getReturns()?.state.available);
+  const returnsEnabled = () => personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened);
   const live = () => personal() && session.owner === 'transit';
   // Lifetime requests must resume even before their first result. A pending or
   // failed Return instead keeps the previously accepted preview.
@@ -18,15 +19,24 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   function invalidateTimeline() { timelineOpening = null; restoreBirthBoundary = false; }
   function selected() {
+    if (session.selectedId === 'current-transit') returnsPreferred = false;
     invalidateTimeline();
     getLifetime()?.setAvailable(session.selectedId === 'current-transit' || personal());
   }
   function select(id) {
+    // Keep the chosen tool through unsupported charts, without opening it there
+    // or carrying another person's moment/range. Transit clears that preference.
+    returnsPreferred = id !== 'current-transit' && (returnsPreferred || returnsEnabled());
     invalidateTimeline();
     session.select(id);
+    if (returnsPreferred && personal()) {
+      session.showOriginal();
+      return openTimeline();
+    }
     return getNatalDay().state.available ? getNatalDay().open() : false;
   }
   function openDay() {
+    returnsPreferred = false;
     invalidateTimeline();
     session.showOriginal('natal-day'); syncTransitWanted();
     getReturns()?.exit(); getLifetime()?.close();
@@ -34,6 +44,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     return getNatalDay().open();
   }
   function closeScales() {
+    returnsPreferred = false;
     invalidateTimeline();
     if (session.selectedId === 'current-transit') session.expect('transit');
     else session.showOriginal();
@@ -70,7 +81,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   async function toggleReturns() {
     if (!personal()) return false;
-    if (timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened) return closeScales();
+    if (returnsEnabled()) return closeScales();
     session.showOriginal();
     return openTimeline();
   }
@@ -158,6 +169,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     if (!personal()) return false;
     const natal = session.original, span = lifeTimelineForChart(natal);
     if (!span) return false;
+    returnsPreferred = true;
     const request = {};
     const valid = () => timelineOpening === request;
     timelineOpening = request;
@@ -180,7 +192,9 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   function finishRestore({ saved, pendingLifetime, pendingReturns, interrupted }) {
     if (interrupted || !personal()) return;
     const lifetimeState = getLifetime()?.state;
-    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime') {
+    returnsPreferred = Boolean(lifetimeState?.opened && lifetimeState.mode === 'lifetime'
+      || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime');
+    if (returnsPreferred) {
       const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns().state.selectedEvent);
       if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.original); }
       else if (session.owner !== 'return' && !live()) {
@@ -200,7 +214,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   return { select, selected, openDay, resetMoment, toggleTransit, toggleReturns,
     toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
-    get returnsEnabled() { return personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened); },
+    get returnsEnabled() { return returnsEnabled(); },
     get transitEnabled() { return session.selectedId === 'current-transit' && Boolean(timelineOpening || getLifetime()?.state.opened); },
     followNow, requestReturn, publishReturn, publishDay,
     publishTransit, publishLifetime, beforeScrub, acceptLifetimeMode, lifetimeChanged, restorePreview, restoreLive,

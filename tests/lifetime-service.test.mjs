@@ -63,6 +63,32 @@ test('concurrent point requests use independent positional reads', async t => {
   points.forEach((point, request) => assert.deepEqual(point.longitudes, input.columns.slice(0, LIFETIME_PLANETS.length).map(column => column[indices[request]])));
 });
 
+test('one hundred ready file moments complete while all exact calculation slots are occupied', async t => {
+  const input = await fixture(t, 144), file = await openLifetime(t, input), calculations = [];
+  const service = createLifetimeMoments({ lifetimeFile: file, calculate: ({ utc }) => {
+    const task = deferred(); calculations.push({ utc, ...task }); return task.promise;
+  } });
+  const exact = [1, 2, 3, 4].map(minute => service.getUtcMoment(`1900-01-01T00:0${minute}:00Z`));
+  try {
+    await new Promise(setImmediate);
+    assert.equal(calculations.length, 4);
+    await assert.rejects(service.getUtcMoment('1900-01-01T00:05:00Z'), { code: 'busy' });
+    const started = performance.now();
+    const points = await Promise.all(Array.from({ length: 100 }, (_, index) => service.getMoment(index)));
+    const diskMs = performance.now() - started;
+    assert.deepEqual(points.map(point => point.index), Array.from({ length: 100 }, (_, index) => index));
+    const cachedAt = performance.now();
+    const cached = await Promise.all(Array.from({ length: 100 }, (_, index) => service.getMoment(index)));
+    const cacheMs = performance.now() - cachedAt;
+    cached.forEach((point, index) => assert.equal(point, points[index]));
+    assert.equal(calculations.length, 4, 'prepared points never enter scalar calculation');
+    t.diagnostic(`100 distinct ready disk reads: ${diskMs.toFixed(2)} ms; 100 RAM hits: ${cacheMs.toFixed(2)} ms (temporary real file, verification excluded)`);
+  } finally {
+    for (const task of calculations) task.resolve({ error: 'busy' });
+    await Promise.allSettled(exact);
+  }
+});
+
 test('invalid point indices never become file offsets', async t => {
   const input = await fixture(t), service = await openLifetime(t, input);
   for (const index of [-1, 17, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '1', null, undefined]) {
@@ -232,9 +258,8 @@ test('calculation fingerprints follow exact inputs but ignore paths, timestamps 
   assert.equal(typeof lifetimeService.lifetimeCalculationFingerprint, 'function');
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-moment-fingerprint-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  const names = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
-    'server/python/calculator.py', 'requirements.txt',
-    'shared/lifetime-format.js', 'shared/day-packets/moment-columns.js', 'server/services/lifetime.mjs', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'];
+  const { CALCULATION_INPUTS } = await import('../server/runtime/calculation-version.mjs');
+  const names = CALCULATION_INPUTS.flatMap(name => name === 'data/ephe' ? ['data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'] : [name]);
   for (const name of names) {
     await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
     await fs.copyFile(new URL(`../${name}`, import.meta.url), path.join(directory, name));

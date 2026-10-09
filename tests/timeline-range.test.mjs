@@ -4,9 +4,15 @@ import { attachTimelineRange } from '../src/views/timeline-range.js';
 
 function element() {
   const listeners = new Map(), attributes = new Map(), captured = new Set();
+  let width = 244, resized = null;
   return {
-    min: '0', max: '1000', step: '1', value: '200', disabled: false, hidden: false, style: {},
-    getBoundingClientRect: () => ({ left: 10, top: 30, width: 244, height: 44 }),
+    min: '0', max: '1000', step: '1', value: '200', disabled: false, hidden: false, style: { setProperty(name, value) { this[name] = value; } },
+    getBoundingClientRect: () => ({ left: 10, top: 30, width, height: 44 }),
+    ownerDocument: { defaultView: { ResizeObserver: class {
+      constructor(callback) { resized = callback; }
+      observe() {}
+    } } },
+    resize(value) { width = value; resized?.([{ contentRect: { width } }]); },
     addEventListener(type, callback) { listeners.set(type, callback); },
     setAttribute(name, value) { attributes.set(name, value); },
     getAttribute(name) { return attributes.get(name); },
@@ -452,4 +458,76 @@ test('native input and touch drag update the thumb edge without a parent render'
     assert.equal(h.range.getAttribute('data-edge'), edge);
   }
   assert.deepEqual(h.scrubs, [1000, 0, 200, 0, 1000, 540]);
+});
+
+
+test('the thumb narrows symmetrically within one visible tip of either endpoint and opens on the way back', () => {
+  const h = harness({ withMarker: false });
+  h.range.max = '200'; h.range.step = 'any';
+  for (const [value, rounding] of [[100, 0], [11, 0], [5.5, .5], [0, 1], [5.5, .5], [11, 0],
+    [189, 0], [194.5, .5], [200, 1], [194.5, .5], [189, 0]]) {
+    h.range.value = String(value); h.update();
+    assert.equal(Number(h.range.style['--timeline-thumb-rounding']), rounding, `at ${value}`);
+    assert.equal(h.range.value, String(value), 'only the visible shape changes');
+  }
+  assert.deepEqual(h.scrubs, []);
+});
+
+test('thumb geometry reaches a centered circle at either end and retains its original lens in the middle', () => {
+  const h = harness({ withMarker: false });
+  function contour(value) {
+    h.range.value = String(value); h.update();
+    const image = h.range.style['--timeline-thumb'];
+    assert.ok(image, 'the shared controller supplies the visible thumb');
+    const svg = decodeURIComponent(image.slice(image.indexOf(',') + 1, -2));
+    return svg.match(/<path d="([^"]+)"/)[1].match(/-?\d+(?:\.\d+)?/g).map(Number);
+  }
+  const lens = contour(500), left = contour(0), right = contour(1000);
+  assert.deepEqual(right, left, 'both endpoints use the same circular contour');
+  assert.deepEqual(lens.slice(0, 2), [11, 22]);
+  assert.deepEqual(lens.slice(12, 14), [33, 22]);
+  assert.deepEqual(left.slice(0, 2), [17.75, 22]);
+  assert.deepEqual(left.slice(6, 8), [22, 17.75]);
+  assert.deepEqual(left.slice(12, 14), [26.25, 22]);
+  assert.deepEqual(left.slice(18, 20), [22, 26.25]);
+});
+
+test('rounding follows physical rail width after resize without measuring every selected moment', () => {
+  const h = harness({ withMarker: false });
+  h.range.value = '27.5'; h.update(); // 5.5px from the start on a 200px rail.
+  assert.equal(Number(h.range.style['--timeline-thumb-rounding']), .5);
+  h.range.getBoundingClientRect = () => { throw new Error('resizing and scrubbing use cached rail width'); };
+  h.range.resize(444); // Same time is now 11px from the start.
+  assert.equal(Number(h.range.style['--timeline-thumb-rounding']), 0);
+  h.range.resize(244);
+  assert.equal(Number(h.range.style['--timeline-thumb-rounding']), .5);
+  h.range.value = '1000'; h.range.send('input');
+  assert.equal(Number(h.range.style['--timeline-thumb-rounding']), 1);
+  h.range.resize(0); h.range.resize(244);
+  assert.equal(Number(h.range.style['--timeline-thumb-rounding']), 1);
+  assert.deepEqual(h.scrubs, [1000], 'resize does not choose a different moment');
+});
+
+test('the final available sample becomes circular even before the nominal range bound', () => {
+  const range = element();
+  range.value = '970';
+  const control = attachTimelineRange({ range, onScrub() {}, resolveEdge: ({ value }) => value === 970 ? 'end' : null });
+  control.refreshTargets();
+  assert.equal(Number(range.style['--timeline-thumb-rounding']), 1);
+  range.value = '950'; control.refreshTargets();
+  assert.ok(Number(range.style['--timeline-thumb-rounding']) < 1);
+  range.max = '0'; range.value = '0'; control.refreshTargets();
+  assert.equal(Number(range.style['--timeline-thumb-rounding']), 0, 'a preparing range has no selected endpoint');
+});
+
+test('gesture ownership ends once for release, cancellation and focus loss', () => {
+  for (const pointerType of ['touch', 'mouse']) {
+    for (const ending of ['pointerup', 'pointercancel', 'blur', 'lostpointercapture']) {
+      const range = element(), changes = [];
+      attachTimelineRange({ range, onScrub() {}, onInteractionChange: value => changes.push(value) });
+      range.send('pointerdown', { pointerType });
+      range.send(ending, { pointerType }); range.send('change'); range.send('blur');
+      assert.deepEqual(changes, [true, false], pointerType + ' ' + ending);
+    }
+  }
 });

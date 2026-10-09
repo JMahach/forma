@@ -379,7 +379,6 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
           fromDate: $('lifetimeFromDate'), toDate: $('lifetimeToDate'),
           fromError: $('lifetimeFromError'), toError: $('lifetimeToError'),
           fromCalendar: $('lifetimeFromCalendar'), toCalendar: $('lifetimeToCalendar'),
-          retryButton: $('lifetimeRetry'),
           onRender: exploration.publishLifetime,
           onModeAccepted: exploration.acceptLifetimeMode,
           onStateChange(state) {

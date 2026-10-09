@@ -38,8 +38,9 @@ export function groupReturnMarkers(events, { fromUtc, toUtc, width } = {}, separ
     const half = Math.max(10, (14 + ((SYMBOLS[group.events[0].body]?.length || 1) - 1 + digits) * 7) / 2);
     const center = Math.max(half, Math.min(pixels - half, x));
     const gap = Math.max(distance, half * 2 + 3);
-    const belowFits = center >= 48 && center <= pixels - 48 && center - last[1] >= gap;
-    const lane = center - last[0] >= gap || !belowFits ? 0 : 1;
+    // Prefer the lower row; its whole label must clear the endpoint captions.
+    const belowFits = center - half >= 48 && center + half <= pixels - 48 && center - last[1] >= gap;
+    const lane = belowFits ? 1 : 0;
     const placed = Math.max(center, last[lane] + gap);
     group.labelLane = lane ? 'below' : 'above';
     group.labelHidden = pixels > 0 && (placed > pixels - half || Math.abs(placed - x) > gap);

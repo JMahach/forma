@@ -6,41 +6,21 @@ import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_FILE_VERSION, LIFETIM
 
 import { PERSONALITY_COLUMN, DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN, DESIGN_RESIDUAL_COLUMN, validMomentValue } from '../../shared/day-packets/moment-columns.js';
 
-const MAX_METADATA_BYTES = 16_384;
+import { consumeJob, aborted } from '../runtime/job-consumers.mjs';
+import { inputFingerprint, calculationVersion } from '../runtime/calculation-version.mjs';
 
-async function inputFingerprint(root, names) {
-  const hash = createHash('sha256');
-  async function add(name) {
-    const file = path.join(root, name), info = await fs.stat(file);
-    if (info.isDirectory()) {
-      const children = await fs.readdir(file);
-      children.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-      for (const child of children) await add(`${name}/${child}`);
-    } else {
-      const bytes = await fs.readFile(file);
-      hash.update(`${name}\0${bytes.length}\0`).update(bytes);
-    }
-  }
-  for (const name of names) await add(name);
-  return hash.digest('hex');
-}
+const MAX_METADATA_BYTES = 16_384;
 
 export function lifetimeFileFingerprint(root) {
   return inputFingerprint(root, LIFETIME_PROVENANCE_INPUTS);
 }
 
-// Hash calculation inputs once when opening the completed file. UI releases keep the same URLs;
-// changed ephemerides, exact-search rules or moment contracts cannot reuse them.
-export function lifetimeCalculationFingerprint(root) {
-  return inputFingerprint(root, ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
-    'server/python/calculator.py', 'requirements.txt',
-    'shared/lifetime-format.js', 'shared/day-packets/moment-columns.js', 'server/services/lifetime.mjs', 'data/ephe']);
-}
+export const lifetimeCalculationFingerprint = calculationVersion;
 
 // One owner opens the completed file on demand. A later request can find it
 // after preparation; ready requests share one verified file and moment cache.
 export function createLifetimeService({ root = fileURLToPath(new URL('../../', import.meta.url)),
-  file = path.join(root, '.cache/lifetime/lifetime-1801-2400.f64le'), calculate } = {}) {
+  file = path.join(root, '.cache/lifetime/lifetime-1801-2400.f64le'), calculate, calculationVersion: version = null } = {}) {
   let source = null, moments = null, opening = null, closing = null, closed = false;
   function ready() {
     if (closed) return Promise.reject(unavailable());
@@ -48,7 +28,7 @@ export function createLifetimeService({ root = fileURLToPath(new URL('../../', i
     if (!opening) opening = (async () => {
       const opened = await createLifetimeFile({ file, metadataFile: file.replace(/\.f64le$/, '.metadata.json'), root });
       try {
-        const calculationFingerprint = await lifetimeCalculationFingerprint(root);
+        const calculationFingerprint = version || await calculationVersion(root);
         if (closed) throw unavailable();
         moments = createLifetimeMoments({ lifetimeFile: opened, calculate, calculationFingerprint });
         source = opened;
@@ -59,8 +39,8 @@ export function createLifetimeService({ root = fileURLToPath(new URL('../../', i
   }
   return {
     async getMetadata() { return (await ready()).metadata; },
-    async getMoment(index) { return (await ready()).getMoment(index); },
-    async getUtcMoment(utc) { return (await ready()).getUtcMoment(utc); },
+    async getMoment(index, options) { return (await ready()).getMoment(index, options); },
+    async getUtcMoment(utc, options) { return (await ready()).getUtcMoment(utc, options); },
     close() {
       if (!closing) {
         closed = true;
@@ -81,7 +61,7 @@ const invalidIndex = () => new LifetimeError('invalid_index', 'Выберите 
 const designUnavailable = () => new LifetimeError('lifetime_unavailable', 'Не удалось рассчитать Дизайн. Повторите попытку.');
 const busy = () => new LifetimeError('busy', 'Подождите завершения текущего расчёта и повторите попытку.');
 
-export const LIFETIME_MOMENT_LIMITS = Object.freeze({ cacheEntries: 1024, pending: 4 });
+export const LIFETIME_MOMENT_LIMITS = Object.freeze({ cacheEntries: 1024, pending: 4, readConcurrency: 4, pendingReads: 1024 });
 
 function momentUtc(value) {
   const milliseconds = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) ? Date.parse(value) : NaN;
@@ -118,51 +98,81 @@ export function createLifetimeMoments({ lifetimeFile, calculate, capacity = LIFE
       || !Number.isInteger(maxPending) || maxPending < 1 || maxPending > LIFETIME_MOMENT_LIMITS.pending) throw new RangeError('Invalid lifetime cache limits');
   if (calculationFingerprint !== null && !/^[a-f0-9]{64}$/.test(calculationFingerprint)) throw new RangeError('Invalid calculation fingerprint');
   const metadata = calculationFingerprint && lifetimeFile.cacheIdentity
-    ? Object.freeze({ ...lifetimeFile.metadata, cacheVersion: createHash('sha256')
+    ? Object.freeze({ ...lifetimeFile.metadata, calculationVersion: calculationFingerprint, cacheVersion: createHash('sha256')
       .update(`lifetime-moment-v1\0${lifetimeFile.cacheIdentity}\0${calculationFingerprint}`).digest('hex') })
     : lifetimeFile.metadata;
-  const completed = new Map(), reads = new Map(), exact = new Map();
+  const completed = new Map(), reads = new Map(), exact = new Map(), readQueue = [];
+  let activeReads = 0;
   function remember(utc, value) {
     completed.delete(utc); completed.set(utc, value);
     while (completed.size > capacity) completed.delete(completed.keys().next().value);
     return value;
   }
-  async function getMoment(index) {
+  function drainReads() {
+    while (activeReads < LIFETIME_MOMENT_LIMITS.readConcurrency && readQueue.length) {
+      const job = readQueue.shift(), { index, utc, resolve, reject } = job;
+      job.started = true; activeReads++;
+      Promise.resolve().then(() => lifetimeFile.getPoint(index)).then(point => {
+        if (point?.index !== index || point?.utc !== utc || !validLongitudes(point?.longitudes)) throw unavailable();
+        const design = validatedDesign(point.design, utc);
+        return remember(utc, Object.freeze({ index, utc, longitudes: Object.freeze([...point.longitudes]), design }));
+      }).catch(error => { throw error instanceof LifetimeError ? error : unavailable(); })
+        .finally(() => { reads.delete(index); activeReads--; drainReads(); })
+        .then(resolve, reject);
+    }
+  }
+  function consumeRead(job, signal) {
+    return consumeJob(job, signal, abandoned => {
+      if (abandoned.started) return; // A small file read completes and remains reusable.
+      const index = readQueue.indexOf(abandoned); if (index >= 0) readQueue.splice(index, 1);
+      reads.delete(abandoned.index); abandoned.reject(aborted());
+    });
+  }
+  async function getMoment(index, { signal } = {}) {
+    if (signal?.aborted) throw aborted();
     if (!Number.isSafeInteger(index) || index < 0 || index >= metadata?.samples) throw invalidIndex();
     const utc = momentUtc(new Date(Date.parse(metadata.startUtc) + index * metadata.stepSeconds * 1000).toISOString());
     if (completed.has(utc)) return remember(utc, completed.get(utc));
-    if (reads.has(index)) return reads.get(index);
-    if (reads.size >= maxPending) throw busy();
-    const request = Promise.resolve().then(() => lifetimeFile.getPoint(index)).then(point => {
-      if (point?.index !== index || point?.utc !== utc || !validLongitudes(point?.longitudes)) throw unavailable();
-      const design = validatedDesign(point.design, utc);
-      return remember(utc, Object.freeze({ index, utc, longitudes: Object.freeze([...point.longitudes]), design }));
-    }).catch(error => { throw error instanceof LifetimeError ? error : unavailable(); })
-      .finally(() => { reads.delete(index); });
-    reads.set(index, request);
-    return request;
+    if (reads.has(index)) return consumeRead(reads.get(index), signal);
+    // Queue small prepared reads separately; scalar admission never rejects a
+    // normal read burst. Bound retained requests as well as active file reads.
+    if (reads.size >= LIFETIME_MOMENT_LIMITS.pendingReads) throw busy();
+    let resolve, reject;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const job = { index, utc, promise, resolve, reject, started: false };
+    reads.set(index, job); readQueue.push(job);
+    const result = consumeRead(job, signal); drainReads(); return result;
   }
-  async function getUtcMoment(value) {
+  async function getUtcMoment(value, { signal } = {}) {
+    if (signal?.aborted) throw aborted();
     const utc = momentUtc(value), milliseconds = Date.parse(utc), start = Date.parse(metadata.startUtc);
     if (milliseconds < start || milliseconds >= Date.parse(metadata.endExclusiveUtc)) {
       throw new LifetimeError('date_out_of_range', 'Выберите момент в пределах шкалы.', 422);
     }
     const index = (milliseconds - start) / (metadata.stepSeconds * 1000);
-    if (Number.isInteger(index)) return getMoment(index);
+    if (Number.isInteger(index)) return getMoment(index, { signal });
     if (completed.has(utc)) return remember(utc, completed.get(utc));
-    if (exact.has(utc)) return exact.get(utc);
+    if (exact.has(utc)) return consumeExact(exact.get(utc), signal);
     if (exact.size >= maxPending) throw busy();
     if (typeof calculate !== 'function') throw unavailable();
-    const request = Promise.resolve().then(async () => {
-      const point = await calculate({ mode: 'transit_moment', utc });
+    const job = { controller: new AbortController(), promise: null };
+    job.promise = Promise.resolve().then(async () => {
+      const point = await calculate({ mode: 'transit_moment', utc }, { signal: job.controller.signal });
+      if (job.controller.signal.aborted) throw aborted();
       if (point?.error === 'busy') throw busy();
       if (point?.error || point?.utc !== utc || point?.engine !== metadata.engine || !validLongitudes(point?.longitudes)) throw unavailable();
       const design = validatedDesign(point.design, utc, metadata.engine);
       return remember(utc, Object.freeze({ utc, longitudes: Object.freeze([...point.longitudes]), design }));
-    }).catch(error => { throw error instanceof LifetimeError ? error : unavailable(); })
-      .finally(() => { exact.delete(utc); });
-    exact.set(utc, request);
-    return request;
+    }).catch(error => { throw error instanceof LifetimeError || error?.name === 'AbortError' ? error : unavailable(); })
+      .finally(() => { if (exact.get(utc) === job) exact.delete(utc); });
+    exact.set(utc, job);
+    return consumeExact(job, signal);
+  }
+  function consumeExact(job, signal) {
+    return consumeJob(job, signal, abandoned => {
+      abandoned.controller.abort();
+      for (const [key, value] of exact) if (value === abandoned) exact.delete(key);
+    });
   }
   return { metadata, getMoment, getUtcMoment };
 }

@@ -13,7 +13,7 @@ import { transitChartAt } from '../src/domain/transit-day.js';
 import { encodeTransitDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
 
-const meta = { startUtc: '1900-01-01T00:00:00Z', endExclusiveUtc: '1900-01-04T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] };
+const meta = { calculationVersion: 'a'.repeat(64), startUtc: '1900-01-01T00:00:00Z', endExclusiveUtc: '1900-01-04T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] };
 const point = (index, metadata = meta) => ({ index, utc: new Date(Date.parse(metadata.startUtc) + index * 600000).toISOString().replace('.000Z', 'Z'), longitudes: [335.74999999999994, 22, 335.74999999999994, 44, 55, 66, 77, 88, 99, 111, 122] });
 const fullMeta = { ...meta, startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
   samples: (Date.parse('2400-01-01T00:00:00Z') - Date.parse('1801-01-01T00:00:00Z')) / 600000 };
@@ -145,11 +145,11 @@ test('client cancels abandoned transport, never caches stale completion, and ret
   await assert.rejects(retrying.getPoint(1), /offline/); assert.equal((await retrying.getPoint(1)).index, 1);
 });
 
-test('client validates before caching and its LRU stays bounded to 256 visited points', async () => {
-  const calls = [], client = createLifetimeClient({ capacity: 10000, fetch(url) { if (url.endsWith('/meta')) return response(meta); const index = Number(new URL(url, 'http://local').searchParams.get('index')); calls.push(index); return response(moment(index)); } });
+test('client validates before caching and reuses more than 256 visited points in the compact shared reserve', async () => {
+  const calls = [], client = createLifetimeClient({ fetch(url) { if (url.endsWith('/meta')) return response(meta); const index = Number(new URL(url, 'http://local').searchParams.get('index')); calls.push(index); return response(moment(index)); } });
   for (let index = 0; index <= 256; index++) await client.getPoint(index);
   const before = calls.length; await client.getPoint(256); assert.equal(calls.length, before);
-  await client.getPoint(0); assert.equal(calls.length, before + 1);
+  await client.getPoint(0); assert.equal(calls.length, before, 'a small visited packet must not be discarded after 256 objects');
   let attempts = 0;
   const invalid = createLifetimeClient({ fetch(url) { return response(url.endsWith('/meta') ? meta : ++attempts === 1 ? moment(2) : moment(1)); } });
   await assert.rejects(invalid.getPoint(1), /Некорректные/); assert.equal((await invalid.getPoint(1)).index, 1);
@@ -196,7 +196,7 @@ test('validated moments stay immutable and reusable only for their own lifetime 
   assert.throws(() => validateLifetimeMetadata({ ...meta, planets: Array(meta.planets.length) }));
 });
 
-const decodedDay = date => ({ version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const decodedDay = date => ({ calculationVersion: 'a'.repeat(64), version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris 2.10.03', ephemeris: 'test ephemeris', timezoneDatabase: 'test tzdata', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 13 + minute / 10000 + 0.123456789012345) % 360
@@ -317,7 +317,7 @@ test('a custom full lifetime range uses the current shown moment at the ten-minu
 });
 
 test('one request at a time publishes progress and follows the latest scrub', async () => {
-  const h = explorerHarness(); await openLifetime(h);
+  const h = explorerHarness(); await openLifetime(h); h.explorer.setInteracting(true);
   const pending = h.explorer.scrub(h.utc(1)); await tick();
   for (let i = 2; i <= 100; i++) h.explorer.scrub(h.utc(i));
   assert.equal(h.calls.length, 2); h.calls[1].resolve(moment(1, fullMeta)); await tick();
@@ -333,7 +333,7 @@ test('stale errors cannot starve the latest target; failed targets keep the visi
   const pending = h.explorer.scrub(h.utc(2)); await tick(); h.explorer.scrub(h.utc(3));
   h.calls[1].reject(new Error('old failure')); await tick(); assert.equal(h.calls[2].index, 3);
   h.calls[2].reject(new Error('latest failure')); await pending;
-  assert.equal(h.explorer.current, shown); assert.equal(h.explorer.state.error, 'latest failure');
+  assert.equal(h.explorer.current, shown); assert.equal(h.explorer.state.error, ''); assert.equal(h.explorer.state.retryCount, 1);
   await settle(h, h.explorer.retry()); assert.equal(h.explorer.state.displayedUtc, h.utc(3));
 });
 
@@ -405,7 +405,7 @@ test('metadata failure retries while retaining the day chart, and closed metadat
   const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: {
     getMeta: async () => { if (++attempts === 1) throw new Error('offline'); return fullMeta; }, getPoint: async i => { points++; return moment(i, fullMeta); },
   } });
-  assert.equal(await explorer.open(), false); assert.equal(explorer.state.status, 'error'); assert.equal(explorer.current.utc, chart.utc);
+  assert.equal(await explorer.open(), false); assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.retryCount, 1); assert.equal(explorer.current.utc, chart.utc);
   assert.equal(await explorer.retry(), true); assert.equal(explorer.state.mode, 'day'); assert.equal(explorer.state.status, 'ready'); assert.equal(points, 0);
   const waiting = deferred();
   const closed = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: { getMeta: () => waiting.promise, getPoint: () => { points++; } } });
@@ -535,7 +535,7 @@ test('superseded invalid pairs advance the latest target; a mismatched latest De
   h.explorer.scrub(h.utc(1)); h.calls[0].resolve(point(h.calls[0].index, fullMeta)); await tick();
   assert.equal(h.calls[1].index, 1); assert.equal(h.explorer.current, shown);
   h.calls[1].resolve({ ...moment(1, fullMeta), design: designAt(point(2, fullMeta).utc) }); await pending;
-  assert.equal(h.explorer.state.status, 'error'); assert.equal(h.explorer.current, shown);
+  assert.equal(h.explorer.state.status, 'loading'); assert.equal(h.explorer.state.retryCount, 1); assert.equal(h.explorer.current, shown);
   assert.equal(h.explorer.state.displayedUtc, Date.parse(shown.utc));
   const retry = h.explorer.retry(); await tick(); h.calls[2].resolve(moment(1, fullMeta)); await retry;
   assert.equal(h.explorer.state.displayedUtc, h.utc(1)); assert.equal(h.explorer.current.utc, point(1, fullMeta).utc);
@@ -690,4 +690,105 @@ test('cold Now supersedes a queued lifetime scrub before a late response or fail
     assert.equal(h.explorer.current.utc, owner.current.utc);
     assert.equal(h.calls.length, 1);
   }
+});
+
+
+for (const source of ['metadata', 'point', 'minute']) test(`${source} failures retry automatically with a bounded delay and preserve the chosen moment`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0;
+  const saved = Date.parse('2026-09-30T09:37:00Z'), chart = dayChart();
+  const failFirst = () => { if (++attempts <= 7) throw new Error('temporary failure'); };
+  const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
+    getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
+    getPoint: async index => { failFirst(); return moment(index, fullMeta); },
+    getMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
+  } });
+  t.after(() => explorer.close());
+  if (source === 'metadata') await explorer.open();
+  else if (source === 'point') { await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01'); }
+  else await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved });
+  const target = explorer.state.requestedUtc, shown = explorer.current;
+  assert.equal(attempts, 1); assert.equal(explorer.state.retryCount, 1);
+  assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.error, '');
+  for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000, 30000].entries()) {
+    t.mock.timers.tick(delay - 1); await tick();
+    assert.equal(attempts, index + 1, 'the controller never retries before the deadline');
+    assert.equal(explorer.current, shown, 'a failed attempt never replaces the visible chart');
+    t.mock.timers.tick(1); await tick();
+    assert.equal(attempts, index + 2);
+  }
+  assert.equal(explorer.state.retryCount, 0); assert.equal(explorer.state.status, 'ready');
+  assert.equal(explorer.state.requestedUtc, target);
+  if (source === 'minute') assert.equal(Date.parse(explorer.current.utc), saved);
+});
+
+test('closing or selecting a new moment cancels a pending retry instead of reviving its old target', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = explorerHarness(); t.after(() => h.explorer.close());
+  await h.explorer.open();
+  let loading = h.explorer.setDateRange('1801-01-01', '2399-12-31'); await tick();
+  h.calls[0].reject(new Error('offline')); await loading;
+  assert.equal(h.explorer.state.retryCount, 1);
+  loading = h.explorer.scrub(h.utc(1)); await tick();
+  assert.equal(h.explorer.state.retryCount, 0); assert.equal(h.calls.length, 2);
+  h.calls[1].resolve(moment(1, fullMeta)); await loading;
+  t.mock.timers.tick(5000); await tick();
+  assert.equal(h.calls.length, 2); assert.equal(h.explorer.state.displayedUtc, h.utc(1));
+  loading = h.explorer.scrub(h.utc(2)); await tick();
+  h.calls[2].reject(new Error('offline')); await loading;
+  h.explorer.close(); t.mock.timers.tick(60000); await tick();
+  assert.equal(h.calls.length, 3); assert.equal(h.explorer.state.retryCount, 0);
+});
+
+
+test('day clock updates cannot erase metadata retry feedback or its failure count', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let chart = dayChart(), fail = true;
+  const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart }), client: {
+    getMeta: async () => { if (fail) throw new Error('offline metadata'); return fullMeta; },
+  } });
+  t.after(() => explorer.close());
+  await explorer.open();
+  chart = dayChart('2026-09-30T09:35:00Z'); explorer.syncDay();
+  assert.equal(explorer.current.utc, chart.utc);
+  assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.retryCount, 1);
+  fail = false; t.mock.timers.tick(1000); await tick();
+  assert.equal(explorer.state.status, 'ready'); assert.equal(explorer.state.retryCount, 0);
+});
+
+
+for (const minute of [false, true]) test(`a rejected lifetime revision refreshes metadata and preserves ${minute ? 'the exact minute' : 'UTC across shifted indexes'}`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const oldMeta = { ...meta, cacheVersion: 'a'.repeat(64) };
+  const newMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576, cacheVersion: 'b'.repeat(64) };
+  const requestedUtc = Date.parse(minute ? '1900-01-02T00:01:00Z' : '1900-01-02T00:00:00Z');
+  const calls = []; let updated = false;
+  const client = createLifetimeClient({ fetch(url) {
+    calls.push(url);
+    if (url.endsWith('/meta')) return response(updated ? newMeta : oldMeta);
+    const parsed = new URL(url, 'http://local');
+    if (updated && parsed.searchParams.get('v') === oldMeta.cacheVersion) {
+      return { ok: false, json: async () => ({ error: 'unsupported_version' }) };
+    }
+    const currentMeta = updated ? newMeta : oldMeta;
+    if (parsed.pathname.endsWith('/moment')) {
+      const utc = parsed.searchParams.get('utc');
+      return response({ version: '1', utc, longitudes: point(0).longitudes, design: designAt(utc) });
+    }
+    return response(moment(Number(parsed.searchParams.get('index')), currentMeta));
+  } });
+  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  await explorer.open(); await client.getPoint(0); updated = true;
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03', requestedUtc });
+  t.mock.timers.tick(1000); await tick();
+  assert.equal(explorer.state.status, 'ready');
+  assert.equal(explorer.state.metadata.cacheVersion, newMeta.cacheVersion);
+  assert.equal(explorer.state.requestedUtc, requestedUtc);
+  assert.equal(Date.parse(explorer.current.utc), requestedUtc);
+  assert.equal(explorer.state.fromDate, '1900-01-01'); assert.equal(explorer.state.toDate, '1900-01-03');
+  assert.equal(calls.filter(url => url.endsWith('/meta')).length, 2);
+  if (!minute) assert.match(calls.at(-1), /index=288&v=b{64}$/);
+  assert.equal((await client.getPoint(0)).utc, newMeta.startUtc, 'old memory entries cannot survive a revision change');
+  const complete = calls.length; t.mock.timers.tick(60000); await tick();
+  assert.equal(calls.length, complete, 'success stops automatic retries');
 });

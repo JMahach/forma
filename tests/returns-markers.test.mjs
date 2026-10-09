@@ -48,6 +48,21 @@ test('markers include selected fast returns and Jupiter while excluding invalid 
   assert.equal(group([event('point', 'saturn', fromUtc)], { fromUtc, toUtc: fromUtc, width: 280 })[0].position, .5);
 });
 
+test('free return labels sit below, with collisions and the complete endpoint caption zones reserved above', () => {
+  const events = [
+    event('near-birth', 'sun', '2026-01-03T00:00:00Z'),
+    event('free', 'saturn', '2026-01-04T00:00:00Z'),
+    event('neighbor', 'north_node', '2026-01-04T06:00:00Z'),
+    event('free-later', 'chiron', '2026-01-07T00:00:00Z'),
+    event('near-century', 'uranus', '2026-01-09T00:00:00Z'),
+  ];
+  const groups = group(events, { fromUtc, toUtc, width: 280 });
+  assert.deepEqual(groups.map(item => item.labelLane), ['above', 'below', 'above', 'below', 'above']);
+  assert.deepEqual(groups.map(item => item.position), [.2, .3, .325, .6, .8]);
+  assert.ok(groups.every(item => !item.labelHidden));
+  assert.ok(groups.filter(item => item.labelLane === 'below').every(item => item.labelOffset === 0));
+});
+
 test('dense lunar events retain exact positions without pushing visible labels beyond the rail', () => {
   const values = Array.from({ length: 1336 }, (_, i) => ({
     ...event('moon-' + i, 'moon', new Date(Date.parse(fromUtc) + i * 600000).toISOString()), cycle: i + 1,
@@ -65,8 +80,12 @@ test('dense lunar events retain exact positions without pushing visible labels b
 function harness(options = {}) {
   const document = dateDom();
   const container = document.createElement('div'), slider = document.createElement('input');
-  let width = 324, onResize;
-  document.defaultView.ResizeObserver = class { constructor(callback) { onResize = callback; } observe() {} };
+  let width = 324;
+  const observers = [];
+  document.defaultView.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe(target) { observers.push({ target, callback: this.callback }); }
+  };
   container.getBoundingClientRect = () => ({ width });
   slider.type = 'range'; container.append(slider); document.body.append(container);
   Object.assign(slider, { min: '0', max: '1000', step: '1', value: '1000',
@@ -83,7 +102,7 @@ function harness(options = {}) {
   const update = extra => markers.update({ events: [], natal, fromUtc, toUtc, visible: true, displayedUtc: extra.selectedEvent?.utc, ...extra });
   return { document, container, slider, chosen, markers, layer, buttons, update, reference, now, scrubs, day,
     get refreshes() { return refreshes; },
-    resize(value) { width = value; onResize([{ target: container, contentRect: { width } }]); } };
+    resize(value) { width = value; for (const { target, callback } of observers) callback([{ target, contentRect: { width } }]); } };
 }
 
 test('every event lights from accepted UTC without selection id, including coincident events', () => {
@@ -314,10 +333,11 @@ test('resizing and inserting nearby events retain existing focused nodes and upd
   const later = event('node', 'north_node', '2026-01-05T12:00:00Z');
   h.update({ events: [first, later] });
   const [button, neighbor] = h.buttons(); button.focus();
-  assert.equal(neighbor.dataset.labelLane, 'below');
+  assert.equal(button.dataset.labelLane, 'below');
+  assert.equal(neighbor.dataset.labelLane, 'above');
   h.resize(1044);
   assert.equal(h.buttons()[0], button); assert.equal(h.buttons()[1], neighbor);
-  assert.equal(neighbor.dataset.labelLane, 'above');
+  assert.equal(neighbor.dataset.labelLane, 'below');
   const early = event('chiron', 'chiron', fromUtc), corrected = { ...first, utc: '2026-01-04T00:00:00Z' };
   h.update({ events: [early, corrected, later] });
   assert.equal(h.buttons()[1], button); assert.equal(h.buttons()[2], neighbor);

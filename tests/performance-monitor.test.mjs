@@ -213,6 +213,7 @@ test('reference dragging on either day range measures motion even when no native
       const marker = { ...eventTarget(), style: {} }, scrubbed = [];
       let nativeInputCount = 0;
       Object.assign(range, { min: '0', max: '100', value: '50', step: '1',
+        style: { setProperty(name, value) { this[name] = value; } },
         getBoundingClientRect: () => ({ left: 0, width: 244 }),
       });
       const day = attachTimelineRange({ range, marker, onScrub: value => scrubbed.push(value), onReference() {} });

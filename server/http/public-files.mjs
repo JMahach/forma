@@ -43,6 +43,9 @@ export const PUBLIC_FILES = new Map([
     'src/data/storage.js',
     'src/data/view-store.js',
     'src/data/transit-day-client.js',
+    'src/data/moment-cache.js',
+    'src/data/moment-packet.js',
+    'src/data/moment-storage.js',
     'src/data/lifetime-client.js',
     'src/diagnostics/frame-monitor.js',
     'src/domain/chart-facts.js',
@@ -156,12 +159,14 @@ export async function readReleaseManifest(directory) {
   return files;
 }
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null }) {
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null }) {
   const cycleAttribute = typeof cyclesVersion === 'string' && /^[a-f0-9]{64}$/.test(cyclesVersion) ? ` data-cycles-version="${cyclesVersion}"` : '';
+  const numericAttribute = typeof calculationVersion === 'string' && /^[a-f0-9]{64}$/.test(calculationVersion)
+    ? ` data-calculation-version="${calculationVersion}"` : '';
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
     let html = prepareLoadingPage(bytes.toString('utf8'));
-    html = html.replace('<body>', `<body${cycleAttribute}>`);
+    html = html.replace('<body>', `<body${cycleAttribute}${numericAttribute}>`);
     return Buffer.from(html);
   } });
   return async function servePublicFile(req, res, pathname) {

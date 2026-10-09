@@ -21,6 +21,9 @@ import { transitChartAt } from '../src/domain/transit-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { dateDom } from './helpers/date-dom.mjs';
 
+const lifetimeFixtures = [];
+test.afterEach(() => { for (const explorer of lifetimeFixtures.splice(0)) explorer.close(); });
+
 const day = date => ({ date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 20 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 61 : 0)) });
@@ -79,6 +82,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
         getDayState: () => transit.state, onRender: exploration.publishLifetime,
         getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
         onStateChange(state) { exploration.lifetimeChanged(state); changed(); } });
+      lifetimeFixtures.push(lifetime);
       lifetime.setAvailable = value => { if (!value) lifetime.close(); };
       lifetime.refreshDay = () => {};
     }
@@ -202,7 +206,8 @@ test('failed lifetime metadata keeps the saved range and moment so retry resumes
   const saved = JSON.parse(second.storage.get('liniya.view.v1'));
   assert.equal(saved.lifetime.mode, 'lifetime'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
   assert.equal(saved.lifetime.fromDate, '2020-01-01');
-  assert.equal(second.ensureLifetime().state.status, 'error');
+  assert.equal(second.ensureLifetime().state.status, 'loading');
+  assert.equal(second.ensureLifetime().state.retryCount, 1);
   assert.equal(second.ensureLifetime().state.mode, 'lifetime');
   assert.equal(second.transit.state.wanted, false);
   assert.equal(second.session.hasCurrent, false);
@@ -793,7 +798,8 @@ for (const personalPreview of [undefined, true]) test(`metadata retry consumes t
   });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), false);
-  assert.equal(second.ensureLifetime().state.status, 'error');
+  assert.equal(second.ensureLifetime().state.status, 'loading');
+  assert.equal(second.ensureLifetime().state.retryCount, 1);
   assert.equal(second.view.pendingLifetime.index, 75);
   assert.equal(JSON.parse(first.storage.get('liniya.view.v1')).lifetime.index, 75, 'failed metadata cannot invent a UTC origin');
   unavailable = false;

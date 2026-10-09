@@ -22,9 +22,10 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     let reads = 0, creates = 0, options, received;
     const toast = () => {}, layout = {}, client = {};
     const viewStore = { read() { reads++; return savedView; } };
-    const document = { hidden: false, getElementById: () => ({}) };
+    const document = { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: () => ({}) };
     await run(document, class { observe() {} disconnect() {} }, value => { options = value; return client; }, () => layout,
       () => toast, () => { creates++; return viewStore; }, async () => ({ startApp(value) { received = value; } }));
+    assert.equal(options.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
     assert.deepEqual(received, { dayClient: client, layout, toast, viewStore, savedView });
@@ -39,7 +40,7 @@ for (const failure of ['import', 'initialization']) {
     let retry, reloads = 0;
     const button = { hidden: true, addEventListener(type, callback) { assert.equal(type, 'click'); retry = callback; } };
     const nodes = { canvasWrap: canvas, chartLoadingStatus: status, chartLoadingRetry: button };
-    const document = { hidden: false, getElementById: id => nodes[id] || {} };
+    const document = { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: id => nodes[id] || {} };
     const error = new Error('Startup failed');
     const loadApp = async () => {
       if (failure === 'import') throw error;

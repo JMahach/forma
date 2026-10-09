@@ -1,3 +1,4 @@
+import { requestSignal } from './request-signal.mjs';
 import { LifetimeError } from '../services/lifetime.mjs';
 import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-format.js';
 
@@ -12,12 +13,14 @@ function json(res, status, value, immutable = false) {
 export function createLifetimeHandler(service) {
   return async function handle(req, res, suppliedUrl) {
     if (req.method !== 'GET') { res.writeHead(405, { ...headers, Allow: 'GET' }); res.end(); return; }
+    const consumer = requestSignal(req, res);
     try {
       if (!service) throw new LifetimeError('lifetime_unavailable', 'Данные летописи недоступны.');
       const url = suppliedUrl || new URL(req.url, 'http://localhost');
       if (url.pathname === '/api/lifetime/meta') {
         if (url.searchParams.size) throw new LifetimeError('invalid_request', 'Некорректный запрос шкалы.', 400);
-        json(res, 200, await service.getMetadata()); return;
+        const meta = await service.getMetadata();
+        if (!consumer.signal.aborted) json(res, 200, meta); return;
       }
       const exact = url.pathname === '/api/lifetime/moment';
       if (!exact && url.pathname !== '/api/lifetime') throw new LifetimeError('not_found', 'Страница не найдена.', 404);
@@ -31,13 +34,15 @@ export function createLifetimeHandler(service) {
       if (versions.length && (!/^[a-f0-9]{64}$/.test(versions[0]) || versions[0] !== metadata?.cacheVersion)) {
         throw new LifetimeError('unsupported_version', 'Данные шкалы обновились. Обновите страницу.', 400);
       }
-      const value = exact ? { version: LIFETIME_EXACT_VERSION, ...await service.getUtcMoment(values[0]) }
-        : await service.getMoment(Number(values[0]));
+      const value = exact ? { version: LIFETIME_EXACT_VERSION, ...await service.getUtcMoment(values[0], { signal: consumer.signal }) }
+        : await service.getMoment(Number(values[0]), { signal: consumer.signal });
+      if (consumer.signal.aborted) return;
       json(res, 200, value, versions.length === 1);
     } catch (error) {
+      if (consumer.signal.aborted) return;
       const known = error instanceof LifetimeError;
       json(res, known ? error.status : 503, { error: known ? error.code : 'lifetime_unavailable',
         message: known ? error.message : 'Данные летописи недоступны.' });
-    }
+    } finally { consumer.close(); }
   };
 }

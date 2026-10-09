@@ -114,7 +114,8 @@ test('day failures retain the saved chart and explicit retry recovers without na
 
 function element() {
   const attributes = new Map(), listeners = new Map();
-  return { hidden: false, disabled: false, dataset: {}, style: {}, value: '', textContent: '', title: '', dateTime: '',
+  return { hidden: false, disabled: false, dataset: {}, style: { setProperty(name, value) { this[name] = value; } }, value: '', textContent: '', title: '', dateTime: '',
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1044, height: 44 }),
     setAttribute: (key, value) => attributes.set(key, String(value)), getAttribute: key => attributes.get(key),
     addEventListener: (type, listener) => listeners.set(type, listener), dispatch(type) { return listeners.get(type)?.(); },
   };

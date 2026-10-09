@@ -11,18 +11,23 @@ import { createPublicFileHandler, readReleaseManifest } from './http/public-file
 import { createCycles, cyclesCalculationFingerprint } from './services/cycles.mjs';
 import { createLifetimeService } from './services/lifetime.mjs';
 
+import { createComputeQueue } from './runtime/compute-queue.mjs';
+import { calculationVersion } from './runtime/calculation-version.mjs';
+
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PORT || 4176);
 const host = process.env.HOST || '0.0.0.0';
 const cities = await loadCityCatalog(path.join(root, 'data/cities.json'));
-const calculate = createCalculator({ root });
-const transitDays = await createTransitDays({ root, cacheDir: process.env.TRANSIT_CACHE_DIR });
-const natalDays = createNatalDays({ root });
+const numericVersion = await calculationVersion(root);
+const computeQueue = createComputeQueue();
+const calculate = createCalculator({ root, computeQueue });
+const transitDays = await createTransitDays({ root, computeQueue, calculationVersion: numericVersion, cacheDir: process.env.TRANSIT_CACHE_DIR });
+const natalDays = createNatalDays({ root, computeQueue });
 const cyclesVersion = await cyclesCalculationFingerprint(root);
-const cycles = createCycles({ root, cacheVersion: cyclesVersion });
-const lifetime = createLifetimeService({ root, calculate });
+const cycles = createCycles({ root, computeQueue, cacheVersion: cyclesVersion });
+const lifetime = createLifetimeService({ root, calculate, calculationVersion: numericVersion });
 const releaseDir = process.argv.includes('--release') ? path.join(root, 'dist') : null;
-const publicFiles = createPublicFileHandler({ cyclesVersion, ...(releaseDir
+const publicFiles = createPublicFileHandler({ cyclesVersion, calculationVersion: numericVersion, ...(releaseDir
   ? { root: releaseDir, files: await readReleaseManifest(releaseDir), precompressed: true } : { root }) });
 const handler = createRequestHandler({ root, cities, calculate, transitDays, natalDays, lifetime, cycles, publicFiles });
 
@@ -37,7 +42,7 @@ const server = http.createServer(handler).listen(port, host, () => {
   }
   transitDays.startWarmup();
 });
-server.on('close', () => { void Promise.allSettled([transitDays.close(), lifetime?.close(), cycles.close(), calculate.close()]); });
+server.on('close', () => { computeQueue.close(); void Promise.allSettled([transitDays.close(), lifetime?.close(), cycles.close(), calculate.close()]); });
 // Let HTTP requests drain, then close owned sessions instead of orphaning them.
 process.once('SIGTERM', () => server.close());
 process.once('SIGINT', () => server.close());

@@ -58,16 +58,37 @@ test('full moments use a bounded LRU and immutable snapshots, aliases share entr
   assert.notEqual(await fresh.getMoment(0), first);
 });
 
-test('pending grid reads are bounded and duplicates share admission', async () => {
-  const jobs = [];
-  const service = createLifetimeMoments({ maxPending: 2, calculate: neverCalculate,
-    lifetimeFile: { metadata, getPoint(index) { const pending = deferred(); jobs.push({ index, ...pending }); return pending.promise; } } });
-  const first = service.getMoment(0), second = service.getMoment(1), same = service.getMoment(0);
-  await assert.rejects(service.getMoment(2), busy);
-  assert.equal(jobs.length, 2);
-  jobs[0].resolve(point(0)); assert.equal(await first, await same);
-  const third = service.getMoment(2); await tick(); assert.equal(jobs.length, 3);
-  jobs[1].resolve(point(1)); jobs[2].resolve(point(2)); await Promise.all([second, third]);
+test('a read burst queues behind bounded file concurrency and shares queued duplicates', async () => {
+  const release = deferred(), calls = [];
+  let active = 0, maximum = 0;
+  const service = createLifetimeMoments({ maxPending: 1, calculate: neverCalculate,
+    lifetimeFile: { metadata, async getPoint(index) {
+      calls.push(index); active++; maximum = Math.max(maximum, active);
+      await release.promise; active--; return point(index);
+    } } });
+  const requests = Array.from({ length: 6 }, (_, index) => service.getMoment(index));
+  const same = service.getMoment(5);
+  await tick();
+  assert.equal(calls.length, 4, 'extra reads wait without entering scalar admission');
+  release.resolve();
+  const values = await Promise.all(requests);
+  assert.equal(await same, values[5]);
+  assert.deepEqual(calls, [0, 1, 2, 3, 4, 5]);
+  assert.equal(maximum, 4);
+});
+
+test('prepared read backlog is bounded while duplicate requests still join at capacity', async () => {
+  const release = deferred();
+  const service = createLifetimeMoments({ lifetimeFile: {
+    metadata: { ...metadata, samples: 1152, endExclusiveUtc: '2026-10-08T00:00:00Z' },
+    async getPoint(index) { await release.promise; return point(index); },
+  }, calculate: neverCalculate });
+  const requests = Array.from({ length: 1024 }, (_, index) => service.getMoment(index));
+  const same = service.getMoment(1023);
+  try { await assert.rejects(service.getMoment(1024), busy); }
+  finally { release.resolve(); }
+  const values = await Promise.all(requests);
+  assert.equal(await same, values[1023]);
 });
 
 test('failed or malformed full points are never cached and release admission', async () => {
@@ -95,4 +116,20 @@ test('invalid indices and UTC never read or calculate', async () => {
     await assert.rejects(service.getUtcMoment(utc));
   }
   assert.equal(calls, 0);
+});
+
+test('fifty independent consumers share ready reads and one cancellation leaves neighbours intact', async t => {
+  let finish, reads = 0;
+  const service = createLifetimeMoments({ lifetimeFile: { metadata, getPoint(index) {
+    reads++; return new Promise(resolve => { finish = () => resolve(point(index)); });
+  } }, calculate() { throw Error('ready reads must never calculate'); } });
+  const controllers = Array.from({ length: 50 }, () => new AbortController());
+  const started = performance.now();
+  const requests = controllers.map(controller => service.getMoment(0, { signal: controller.signal }));
+  const abandoned = assert.rejects(requests[0], { name: 'AbortError' });
+  await new Promise(setImmediate); controllers[0].abort(); await abandoned; finish();
+  const values = await Promise.all(requests.slice(1));
+  assert.equal(reads, 1); assert.equal(values.length, 49);
+  assert.ok(values.every(value => value === values[0]));
+  t.diagnostic(`50 independent waiters, one ready read: ${(performance.now() - started).toFixed(2)} ms; one cancellation isolated`);
 });

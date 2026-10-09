@@ -59,6 +59,94 @@ function harness() {
   return { people, session, exploration, lifetime, returns, natalDay, transit, navigation, lifetimeJobs, returnJobs, frames };
 }
 
+test('enabled returns follow personal chart navigation and Transit clears that mode', async () => {
+  const h = harness();
+  await h.navigation.select('person-a');
+  await h.navigation.toggleReturns();
+  await h.navigation.select('person-b');
+  assert.equal(h.exploration.returnsEnabled, true);
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.lifetime.state.opened, true);
+  assert.equal(h.returns.state.natal, h.people[1]);
+  assert.equal(h.lifetime.state.minUtc, Date.parse(h.people[1].utc));
+  assert.equal(h.session.current.primary, h.people[1]);
+  assert.equal(h.session.current.secondary, null);
+  assert.equal(h.session.owner, 'original');
+  await h.navigation.select('person-a');
+  assert.equal(h.exploration.returnsEnabled, true);
+  assert.equal(h.lifetime.state.minUtc, Date.parse(h.people[0].utc));
+  await h.navigation.select('current-transit');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.lifetime.state.opened, false);
+  await h.navigation.select('person-b');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.natalDay.state.opened, true);
+});
+
+test('explicitly closed returns do not reopen on another personal chart', async () => {
+  const h = harness();
+  await h.navigation.select('person-a');
+  await h.navigation.toggleReturns();
+  await h.navigation.toggleReturns();
+  await h.navigation.select('person-b');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.natalDay.state.opened, true);
+});
+
+test('returns stay preferred through a manual chart without opening an unsupported tool', async () => {
+  const h = harness();
+  h.people.push({ ...h.people[0], id: 'manual', source: 'manual' });
+  await h.navigation.select('person-a');
+  await h.navigation.toggleReturns();
+  await h.navigation.select('manual');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.returns.state.available, false);
+  assert.equal(h.lifetime.state.opened, false);
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.session.current.primary, h.people[2]);
+  await h.navigation.select('person-b');
+  assert.equal(h.exploration.returnsEnabled, true);
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.lifetime.state.minUtc, Date.parse(h.people[1].utc));
+  assert.equal(h.session.current.primary, h.people[1]);
+  assert.equal(h.session.current.secondary, null);
+});
+
+for (const reset of ['transit', 'off', 'day']) test(`${reset} clears returns preference even after a manual chart`, async () => {
+  const h = harness();
+  h.people.push({ ...h.people[0], id: 'manual', source: 'manual' });
+  await h.navigation.select('person-a');
+  await h.navigation.toggleReturns();
+  await h.navigation.select('manual');
+  if (reset === 'transit') await h.navigation.select('current-transit');
+  else {
+    await h.navigation.select('person-a');
+    assert.equal(h.exploration.returnsEnabled, true);
+    if (reset === 'off') await h.navigation.toggleReturns();
+    else await h.navigation.openDay();
+    await h.navigation.select('manual');
+  }
+  await h.navigation.select('person-b');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.natalDay.state.opened, true);
+});
+
+test('restored returns remain preferred through an unsupported chart', async () => {
+  const first = harness(), saved = savedView(first);
+  await saved.view.restore();
+  await first.exploration.select('person-a');
+  await first.exploration.toggleReturns();
+  saved.view.flush();
+  const restored = await restoreLifetimeSnapshot(saved.writes.at(-1));
+  restored.people.push({ ...restored.people[0], id: 'manual', source: 'manual' });
+  await restored.exploration.select('manual');
+  assert.equal(restored.lifetime.state.opened, false);
+  await restored.exploration.select('person-b');
+  assert.equal(restored.exploration.returnsEnabled, true);
+  assert.equal(restored.session.current.primary, restored.people[1]);
+  assert.equal(restored.session.current.secondary, null);
+});
+
 for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of ['success', 'error']) {
   test(`person B's exact return survives late lifetime ${lifetimeOutcome} and return ${returnOutcome} from person A`, async () => {
     const h = harness(), originals = JSON.stringify(h.people);
@@ -76,7 +164,7 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
     await h.navigation.select('person-b');
     assert.equal(h.lifetimeJobs[0].signal.aborted, true); assert.equal(h.returnJobs[0].signal.aborted, true);
     assert.equal(h.session.current.primary, h.people[1]); assert.equal(h.session.current.secondary, null);
-    assert.equal(await h.navigation.toggleReturns(), true);
+    assert.equal(h.navigation.returnsEnabled, true);
     const currentReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
     assert.equal(h.returnJobs.length, 2); assert.equal(h.returnJobs[1].input.birthUtc, h.people[1].utc);
     const acceptedChart = exactChart('person-b-return'), acceptedEvent = { ...event };
@@ -144,22 +232,28 @@ for (const phase of ['module', 'metadata']) test(`personal OFF while ${phase} is
   assert.deepEqual(h.points, []);
 });
 
-for (const phase of ['module', 'metadata']) test(`A to B to A cannot revive the first ${phase} opening or clear the new one`, async () => {
+for (const phase of ['module', 'metadata']) test(`A to manual to B to A cannot revive the first ${phase} opening or clear the new one`, async () => {
   const h = lazyPersonalHarness({ phase });
+  h.people.push({ ...h.people[0], id: 'manual', source: 'manual' });
   await h.exploration.select('person-a');
   const first = h.exploration.toggleReturns(); await tick();
-  await h.exploration.select('person-b'); await h.exploration.select('person-a');
-  const latest = h.exploration.toggleReturns(); await tick();
+  await h.exploration.select('manual');
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.controller.state.opened, false);
+  const second = h.exploration.select('person-b'); await tick();
+  const latest = h.exploration.select('person-a'); await tick();
   if (phase === 'module') h.finishImport();
   else {
-    assert.equal(h.metadataJobs.length, 2);
+    assert.equal(h.metadataJobs.length, 3);
     h.metadataJobs[0].resolve(metadata);
+    h.metadataJobs[1].resolve(metadata);
     assert.equal(await first, false);
     assert.equal(h.exploration.returnsEnabled, true);
     assert.equal(h.modeChanges.at(-1), true);
-    h.metadataJobs[1].resolve(metadata);
+    h.metadataJobs[2].resolve(metadata);
   }
   assert.equal(await first, false);
+  assert.equal(await second, false);
   assert.equal(await latest, true);
   assert.equal(h.exploration.returnsEnabled, true);
   assert.equal(h.controller.state.mode, 'lifetime');

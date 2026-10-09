@@ -7,7 +7,7 @@ import { createLiveTransit } from '../src/state/live-transit.js';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 
-const day = date => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const day = date => ({ calculationVersion: 'a'.repeat(64), date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, col) => Float64Array.from({ length: 1440 }, (_, index) => col < 22
     ? (col * 30 + index / 10000) % 360 : col === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + index * 61 : index % 100 * 1e-12)),
@@ -58,6 +58,7 @@ test('day client rejects mismatched packets and bounds its decoded-day memory', 
   await client.getDay('2026-09-24');
   await client.getDay('2026-09-23');
   assert.equal(requests, 3);
+  await client.moments.flush(); // This test has no IndexedDB; only the RAM budget remains.
   await client.getDay('2026-09-22');
   assert.equal(requests, 4, 'oldest unused packet is released');
   const mismatch = createTransitDayClient({ fetch: async () => response('2026-09-23') });
@@ -152,7 +153,7 @@ test('the active local day stays visible to shared lookup while unrelated days r
   assert.equal(client.peekDay('2026-09-24'), active, 'Lifetime can use the packets still owned by the last live day');
   const lifetime = createLifetimeClient({ dayClient: client, fetch: async url => {
     assert.equal(url, '/api/lifetime/meta', 'a minute or lifetime point already held by Day needs no transport');
-    return { ok: true, json: async () => ({ startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
+    return { ok: true, json: async () => ({ calculationVersion: 'a'.repeat(64), startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
       stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris' }) };
   } });
   await lifetime.getMeta();
