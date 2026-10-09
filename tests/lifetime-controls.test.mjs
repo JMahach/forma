@@ -19,7 +19,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function harness(options = {}) {
   const document = dateDom();
-  const elements = Object.fromEntries(['toggle', 'panel', 'range', 'hourMarks', 'fromDate', 'toDate', 'fromError', 'toError', 'fromCalendar', 'toCalendar', 'marker', 'status', 'retryButton'].map(name => [name, document.createElement(name.endsWith('Date') ? 'input' : 'div')]));
+  const elements = Object.fromEntries(['toggle', 'panel', 'range', 'hourMarks', 'fromDate', 'toDate', 'fromError', 'toError', 'fromCalendar', 'toCalendar', 'marker', 'status'].map(name => [name, document.createElement(name.endsWith('Date') ? 'input' : 'div')]));
   elements.fromDate.id = 'from'; elements.toDate.id = 'to';
   elements.range.parentElement = document.createElement('div');
   const marks = [document.createElement('span'), document.createElement('span')];
@@ -51,6 +51,29 @@ function harness(options = {}) {
 async function complete(h, position = h.requests.length - 1) { const request = h.requests[position]; request.resolve(moment(request.index)); await tick(); }
 async function open(h) { await h.explorer.open(); assert.equal(h.explorer.state.mode, 'day'); }
 async function dates(h, from = '11081998', to = '12081998') { h.type(h.fromDate, from); h.type(h.toDate, to); await tick(); }
+
+test('chronicle retry feedback is silent twice, centered after the third failure and clears on recovery', async () => {
+  const h = harness(); await open(h);
+  for (const retryCount of [0, 1, 2]) {
+    h.setDayState({ status: 'loading', retryCount });
+    assert.equal(h.status.textContent, '', `failure ${retryCount} stays quiet`);
+  }
+  h.setDayState({ status: 'loading', retryCount: 3 });
+  assert.equal(h.status.textContent, 'Загружаю момент');
+  assert.equal(h.panel.getAttribute('aria-busy'), 'true');
+  assert.equal(h.range.parentElement.hidden, false);
+  h.setDayState({ status: 'ready', retryCount: 0 });
+  assert.equal(h.status.textContent, '');
+  h.explorer.close();
+});
+
+test('chronicle has no manual retry button or overlapping error layout', async () => {
+  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const css = await fs.readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /id="lifetimeRetry"/);
+  assert.doesNotMatch(css, /#lifetimeRetry/);
+  assert.match(css, /\.lifetime-controls > \.lifetime-status[^{}]*\{[^}]*left: 50%[^}]*pointer-events: none/s);
+});
 
 test('hour marks belong only to the day view and disappear before a multi-day chart loads', async () => {
   const h = harness(); await open(h);
@@ -97,8 +120,8 @@ test('only accepted timeline gestures interrupt restoration while opening and re
   assert.deepEqual(h.dayScrubs, [100]); assert.equal(interruptions, 1);
   h.marker.dispatch('click', { detail: 0 });
   assert.deepEqual(h.dayReturns, [[]]); assert.equal(interruptions, 2);
-  h.setDayState({ status: 'error', error: 'Offline' }); h.retryButton.dispatch('click');
-  assert.equal(h.dayReturns.length, 2); assert.equal(interruptions, 2, 'Retry retains the same target');
+  h.setDayState({ status: 'error', error: 'Offline', retryCount: 1 });
+  assert.equal(h.dayReturns.length, 1); assert.equal(interruptions, 2, 'Automatic recovery retains the same target');
   h.setDayState({ status: 'ready', error: '' });
   h.fromCalendar.dispatch('click'); const calendar = h.document.body.children[0];
   calendar.all(node => node.tagName === 'button' && node.textContent === '2026')[0].dispatch('click');
@@ -214,8 +237,8 @@ test('personal live lifetime clock borrows each exact day minute without request
   assert.equal(nowCalls, 1);
   assert.equal(h.requests.length, requests, 'live Now is not a lifetime scrub');
   liveState = { ...liveState, status: 'error', error: 'Текущий день недоступен' }; h.explorer.syncTransit();
-  assert.equal(h.status.textContent, 'Текущий день недоступен');
-  h.retryButton.dispatch('click'); assert.equal(nowCalls, 2);
+  assert.equal(h.status.textContent, '');
+  assert.equal(nowCalls, 1, 'feedback does not reselect the live moment');
   assert.equal(h.requests.length, requests, 'retry stays with the failed live owner');
   liveState = null; h.explorer.syncTransit();
 
@@ -269,17 +292,15 @@ test('Lifetime day range follows real short/long local days and readiness/refere
     h.setDayState({ status: 'loading' });
     assert.equal(h.day.current, chart); assert.equal(h.range.disabled, true); assert.equal(h.range.hidden, false);
     assert.equal(h.range.parentElement.hidden, false); assert.equal(h.marker.hidden, true);
-    assert.equal(h.panel.getAttribute('aria-busy'), 'true'); assert.equal(h.status.textContent, 'Загружаем день…');
+    assert.equal(h.panel.getAttribute('aria-busy'), 'true'); assert.equal(h.status.textContent, '');
     h.range.dispatch('input'); h.marker.dispatch('click', { detail: 0 });
     assert.deepEqual(h.dayScrubs, []); assert.deepEqual(h.dayReturns, []);
     h.setDayState({ status: 'error', error: 'Недоступен текущий день' });
-    assert.equal(h.range.disabled, true); assert.equal(h.retryButton.hidden, false);
-    assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.status.textContent, 'Недоступен текущий день');
-    h.retryButton.dispatch('click'); assert.deepEqual(h.dayReturns.splice(0), [[]]); assert.equal(h.requests.length, 0);
+    assert.equal(h.range.disabled, true); assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.status.textContent, '');
+    assert.deepEqual(h.dayReturns.splice(0), []); assert.equal(h.requests.length, 0);
     h.setDayState({ status: 'ready', error: '', referenceIndex: 300 });
     assert.equal(h.day.current, chart);
-    assert.equal(h.range.disabled, false); assert.equal(h.marker.hidden, false); assert.equal(h.retryButton.hidden, true);
-    assert.equal(h.marker.style.left, `${300 / (minutes - 1) * 100}%`);
+    assert.equal(h.range.disabled, false); assert.equal(h.marker.hidden, false); assert.equal(h.marker.style.left, `${300 / (minutes - 1) * 100}%`);
     assert.equal(h.range.getAttribute('aria-valuetext').includes('01:30'), true);
   }
 });
@@ -315,15 +336,13 @@ test('reused day labels retain drafts and refresh readiness, reference and resiz
   assert.equal(h.notifications.length, notices + 2, 'text reuse cannot suppress owner notifications');
   assert.equal(h.marker.style.left, `${940 / 1439 * 100}%`);
   h.setDayState({ status: 'loading' });
-  assert.deepEqual(writes.splice(0), ['status']); assert.equal(h.range.disabled, true);
-  h.setDayState({ status: 'error', error: 'Нет сети' });
-  assert.deepEqual(writes.splice(0), ['status']); assert.equal(h.retryButton.hidden, false);
-  h.type(h.fromDate, '1508'); writes.length = 0;
+  assert.deepEqual(writes.splice(0), []); assert.equal(h.range.disabled, true);
+  h.setDayState({ status: 'error', error: 'Нет сети', retryCount: 3 });
+  assert.deepEqual(writes.splice(0), ['status']); h.type(h.fromDate, '1508'); writes.length = 0;
   h.setDayState({ status: 'ready', error: '' }); h.explorer.syncTransit();
   assert.equal(h.fromDate.value, '15.08');
   assert.ok(!writes.includes('fromDate') && !writes.includes('toDate'));
-  assert.equal(h.range.disabled, false); assert.equal(h.retryButton.hidden, true);
-  for (const width of [400, 800]) {
+  assert.equal(h.range.disabled, false); for (const width of [400, 800]) {
     h.explorer.syncTransit();
     h.range.getBoundingClientRect = () => ({ left: 0, width, height: 56 });
     const event = { pointerType: 'touch', pointerId: 1, button: 0, clientX: 100, clientY: 20 };
@@ -440,16 +459,19 @@ test('valid dates outside supported bounds identify the offending endpoint', asy
   }
 });
 
-test('date errors do not hide a network failure or its retry action', async () => {
+test('date errors remain inside the date while repeated failures recover automatically', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h);
   h.type(h.toDate, '31021998');
-  h.requests.at(-1).reject(new Error('Нет соединения')); await tick();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    h.requests.at(-1).reject(new Error('Нет соединения')); await tick();
+    assert.equal(h.toError.textContent, 'Дата некорректна');
+    assert.equal(h.status.textContent, attempt < 3 ? '' : 'Загружаю момент');
+    t.mock.timers.tick(1000 * 2 ** (attempt - 1)); await tick();
+  }
+  await complete(h);
   assert.equal(h.toError.textContent, 'Дата некорректна');
-  assert.equal(h.status.textContent, 'Нет соединения');
-  assert.equal(h.retryButton.hidden, false);
-  h.retryButton.dispatch('click'); await tick(); await complete(h);
-  assert.equal(h.toError.textContent, 'Дата некорректна');
-  assert.equal(h.status.textContent, '');
+  assert.equal(h.status.textContent, ''); h.explorer.close();
 });
 
 test('metadata bounds are inclusive and late metadata validates only the current draft', async () => {
@@ -494,7 +516,7 @@ test('a ninth pasted digit is retained and rejected instead of silently committi
 });
 test('drafts entered while metadata is pending survive and apply when it becomes available', async () => {
   const meta = deferred(), h = harness({ metaPromise: meta.promise }); const opening = h.explorer.open();
-  await dates(h); assert.match(h.status.textContent, /Загружаем диапазон/); assert.equal(h.fromCalendar.disabled, true);
+  await dates(h); assert.equal(h.status.textContent, ''); assert.equal(h.fromCalendar.disabled, true);
   meta.resolve(metadata); await tick(); assert.equal(h.explorer.state.fromDate, '1998-08-11');
   await complete(h, 0); if (h.requests.length > 1) await complete(h); await opening;
   assert.equal(h.status.textContent, ''); assert.equal(h.fromDate.value, '11.08.1998');
@@ -507,14 +529,18 @@ test('Enter and unchanged change events add no request after automatic applicati
   h.fromDate.dispatch('keydown', { key: 'Enter' }); await tick(); assert.equal(h.explorer.state.fromDate, '2026-09-29');
   const count = h.requests.length; h.toDate.dispatch('change'); await tick(); assert.equal(h.requests.length, count);
 });
-test('scrub loading/error label stays on the displayed point and retry keeps the chosen range', async () => {
+test('a transient scrub failure keeps the displayed chart and retries the chosen range automatically', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h); await complete(h);
   const before = h.explorer.current, next = Number(h.range.min) + 600000;
   h.range.value = String(next); h.range.dispatch('input'); await tick();
-  assert.equal(h.explorer.current, before);
-  h.requests.at(-1).reject(new Error('Проверка повторной загрузки')); await tick(); assert.equal(h.retryButton.hidden, false);
-  h.retryButton.dispatch('click'); await tick(); await complete(h); assert.equal(h.retryButton.hidden, true);
+  h.requests.at(-1).reject(new Error('Проверка повторной загрузки')); await tick();
+  assert.equal(h.explorer.current, before); assert.equal(h.status.textContent, '');
+  assert.equal(h.explorer.state.retryCount, 1);
+  t.mock.timers.tick(1000); await tick(); await complete(h);
+  assert.equal(h.explorer.state.retryCount, 0); assert.equal(h.status.textContent, '');
   assert.equal(h.fromDate.value, '11.08.1998'); assert.equal(h.toDate.value, '12.08.1998');
+  h.explorer.close();
 });
 
 test('quick lifetime requests keep the shown clock and never flash a loading message', async t => {
@@ -535,11 +561,11 @@ test('quick lifetime requests keep the shown clock and never flash a loading mes
   t.mock.timers.tick(1000); assert.equal(h.status.textContent, '', 'a completed request cancels its delayed label');
   h.explorer.scrub(next + 600000); await tick();
   t.mock.timers.tick(399); assert.equal(h.status.textContent, '', 'a new request receives its own delay');
-  t.mock.timers.tick(1); assert.equal(h.status.textContent, 'Загружаем момент…');
+  t.mock.timers.tick(1); assert.equal(h.status.textContent, '');
   await complete(h); assert.equal(h.status.textContent, '');
 });
 
-test('continuous scrubbing has one 400 ms loading episode across updates and partial responses', async t => {
+test('continuous scrubbing remains silent while requests have not failed', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h);
   const first = h.requests[0], notices = h.notifications.length;
@@ -549,35 +575,32 @@ test('continuous scrubbing has one 400 ms loading episode across updates and par
   assert.equal(h.range.value, String(Date.parse(point(first.index - 2).utc)));
   t.mock.timers.tick(199); assert.equal(h.status.textContent, '');
   const beforeTimerNotices = h.notifications.length;
-  t.mock.timers.tick(1); assert.equal(h.status.textContent, 'Загружаем момент…');
+  t.mock.timers.tick(1); assert.equal(h.status.textContent, '');
   assert.ok(h.notifications.length > notices, 'state updates continue during the delay');
-  assert.equal(h.notifications.length, beforeTimerNotices, 'the timer only changes the message');
-  t.mock.timers.tick(1000); assert.equal(h.notifications.length, beforeTimerNotices, 'the label timer never redraws or notifies the owner');
+  assert.equal(h.notifications.length, beforeTimerNotices, 'elapsed time alone does not trigger feedback');
+  t.mock.timers.tick(1000); assert.equal(h.notifications.length, beforeTimerNotices, 'elapsed time never redraws or notifies the owner');
   await complete(h, 0);
-  assert.equal(h.requests.length, 2); assert.equal(h.status.textContent, 'Загружаем момент…');
+  assert.equal(h.requests.length, 2); assert.equal(h.status.textContent, '');
   assert.equal(h.explorer.state.status, 'loading', 'an intermediate displayed point does not restart the episode');
   await complete(h, 1); assert.equal(h.status.textContent, '');
 });
 
-test('errors, close and returning to today cancel delayed labels, including stale callbacks', async t => {
-  const timers = [];
-  t.mock.method(globalThis, 'setTimeout', callback => { const timer = { callback }; timers.push(timer); return timer; });
-  t.mock.method(globalThis, 'clearTimeout', timer => { timer.cancelled = true; });
+test('close and returning to today cancel automatic retries without stale feedback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h);
-  const firstTimer = timers.at(-1);
   h.requests.at(-1).reject(new Error('Нет соединения')); await tick();
-  assert.equal(firstTimer.cancelled, true); assert.equal(h.status.textContent, 'Нет соединения');
-  firstTimer.callback(); assert.equal(h.status.textContent, 'Нет соединения');
-  h.retryButton.dispatch('click'); await tick(); const retryTimer = timers.at(-1);
-  assert.notEqual(retryTimer, firstTimer); assert.equal(h.status.textContent, '');
-  firstTimer.callback(); assert.equal(h.status.textContent, '', 'an old episode cannot reveal the retry label early');
-  h.explorer.close(); assert.equal(retryTimer.cancelled, true); assert.equal(h.panel.hidden, true);
-  retryTimer.callback(); assert.equal(h.status.textContent, '');
-  await open(h); await dates(h); const lifetimeTimer = timers.at(-1);
+  const count = h.requests.length;
+  h.explorer.close(); t.mock.timers.tick(30000); await tick();
+  assert.equal(h.requests.length, count); assert.equal(h.status.textContent, '');
+  assert.equal(h.panel.hidden, true);
+  await open(h); await dates(h);
+  h.requests.at(-1).reject(new Error('Нет соединения')); await tick();
+  const pendingCount = h.requests.length;
   await dates(h, '30092026', '30092026');
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(lifetimeTimer.cancelled, true);
-  lifetimeTimer.callback(); assert.equal(h.status.textContent, '');
-
+  assert.equal(h.explorer.state.mode, 'day');
+  t.mock.timers.tick(30000); await tick();
+  assert.equal(h.requests.length, pendingCount); assert.equal(h.status.textContent, '');
+  h.explorer.close();
 });
 
 test('a delayed loading label cannot overwrite an unfinished date error', async t => {
@@ -725,17 +748,17 @@ test('an exact birth endpoint can own a scrub while the Now marker still supplie
   assert.equal(h.requests.length, requests);
 });
 
-test('loading feedback follows the live owner even when the lifetime is ready', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('retry feedback follows the live owner even when the lifetime is ready', async () => {
   let live = null;
   const h = harness({ getMomentState: () => live });
   await open(h); await dates(h); await complete(h);
-  live = { ...h.day, status: 'loading' }; h.explorer.syncTransit();
-  assert.equal(h.explorer.state.status, 'ready');
-  t.mock.timers.tick(399); assert.equal(h.status.textContent, '');
-  t.mock.timers.tick(1); assert.equal(h.status.textContent, 'Загружаем момент…');
-  live = { ...live, status: 'ready' }; h.explorer.syncTransit();
-  assert.equal(h.status.textContent, '');
+  live = { ...h.day, status: 'error', retryCount: 2 }; h.explorer.syncTransit();
+  assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
+  live = { ...live, retryCount: 3 }; h.explorer.syncTransit();
+  assert.equal(h.status.textContent, 'Загружаю момент');
+  assert.equal(h.panel.getAttribute('aria-busy'), 'true');
+  live = { ...live, status: 'ready', retryCount: 0 }; h.explorer.syncTransit();
+  assert.equal(h.status.textContent, ''); h.explorer.close();
 });
 
 test('endpoint labels have one owner for personal and standalone ranges and unchanged refreshes make no text writes', async t => {
@@ -888,7 +911,6 @@ test('preparing keeps the disabled lifetime rail and stays visible through live-
   assert.equal(h.toCalendar.disabled, true);
   assert.equal(h.fromDate.value, '30.09.2026');
   assert.equal(h.toDate.value, '30.09.2026');
-  assert.equal(h.retryButton.hidden, true);
   h.setDay('2026-09-30T12:38:00Z');
   h.setDayState({ status: 'loading' });
   assert.equal(h.explorer.state.status, 'preparing');
@@ -911,13 +933,13 @@ test('a ready personal chart cannot hide a pending or failed lifetime file', asy
     minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) });
   await tick();
   assert.equal(h.panel.getAttribute('aria-busy'), 'true');
-  assert.equal(h.status.textContent, 'Загружаем шкалу…');
+  assert.equal(h.status.textContent, '');
   meta.reject(Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }));
   assert.equal(await opening, false);
-  assert.equal(h.panel.dataset.status, 'error');
-  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
-  assert.equal(h.retryButton.hidden, false);
-});
+  assert.equal(h.panel.dataset.status, 'loading');
+  assert.equal(h.status.textContent, '');
+  h.explorer.close();
+  });
 
 test('a personal range accepted before metadata preserves an unfinished date draft when the file opens', async () => {
   const meta = deferred(), natal = { utc: '1998-08-18T14:00:00Z' };

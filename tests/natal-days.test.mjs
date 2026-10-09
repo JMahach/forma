@@ -104,9 +104,9 @@ test('natal cancellation keeps shared queued consumers and the active process sl
   assert.equal(await Promise.race([running, Promise.resolve('pending')]), 'AbortError');
   const resumed = outcome(service.get('1990-06-15', 'UTC'));
   const latest = outcome(service.get('1990-06-17', 'UTC'));
-  assert.deepEqual(calls, ['1990-06-15']); assert.equal(service.queued, 1);
+  assert.deepEqual(calls, ['1990-06-15']); assert.equal(service.queued, 2, 'a new consumer must not join an abandoned active job');
   held.resolve(); assert.equal(await resumed, 'ready'); assert.equal(await latest, 'ready');
-  assert.deepEqual(calls, ['1990-06-15', '1990-06-17']);
+  assert.deepEqual(calls, ['1990-06-15', '1990-06-15', '1990-06-17']);
   const cancelled = new AbortController(); cancelled.abort();
   await assert.rejects(service.get('1990-06-15', 'UTC', { signal: cancelled.signal }), { name: 'AbortError' });
 });

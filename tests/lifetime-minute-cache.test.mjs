@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { IDBFactory } from 'fake-indexeddb';
+import { createMomentCache } from '../src/data/moment-cache.js';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
@@ -9,9 +11,9 @@ import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
 
 const start = Date.parse('2026-09-29T00:00:00Z');
 const utc = text => Date.parse(`2026-09-${text}Z`);
-const metadata = { startUtc: '2026-09-29T00:00:00Z', endExclusiveUtc: '2026-10-02T00:00:00Z', stepSeconds: 600,
+const metadata = { calculationVersion: 'a'.repeat(64), startUtc: '2026-09-29T00:00:00Z', endExclusiveUtc: '2026-10-02T00:00:00Z', stepSeconds: 600,
   samples: 432, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris 2.10.03' };
-const dayAt = date => ({ version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const dayAt = date => ({ calculationVersion: 'a'.repeat(64), version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: metadata.engine, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 60 : 1e-11)),
@@ -96,7 +98,7 @@ test('borrowed exact return at the same UTC still requires manual lifetime acqui
 });
 
 test('cold scrubs preserve intermediate progress and admit one point at a time', async () => {
-  const h = harness(); await openLifetime(h);
+  const h = harness(); await openLifetime(h); h.explorer.setInteracting(true);
   const pending = h.explorer.scrub(utc('29T01:00:00')); await tick();
   h.explorer.scrub(utc('29T02:00:00')); h.explorer.scrub(utc('29T03:00:00'));
   assert.equal(h.requests.length, 2); h.requests[1].resolve(); await tick();
@@ -171,7 +173,7 @@ test('failed minute restoration retries the same UTC and a newer scrub invalidat
   const explorer = createLifetimeExplorer({ client });
   const saved = utc('30T09:37:00');
   assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved }), false);
-  assert.equal(explorer.state.status, 'error'); assert.equal(explorer.state.requestedUtc, saved);
+  assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.retryCount, 1); assert.equal(explorer.state.requestedUtc, saved);
   const retry = explorer.retry(); await tick(); assert.equal(attempts, 2);
   await explorer.scrub(utc('29T01:00:00'));
   resolveMinute(response({ version: '1', utc: '2026-09-30T09:37:00Z', longitudes: Array(11).fill(12),
@@ -189,4 +191,112 @@ test('changing only open-ended range after a borrowed exact chart requests a val
   assert.equal(h.requests.at(-1).index, 202);
   h.requests.at(-1).resolve(); assert.equal(await pending, true);
   assert.equal(h.explorer.state.requestedUtc, utc('30T09:40:00'));
+});
+
+
+test('a cached lifetime point publishes immediately while another point is pending', async t => {
+  const h = harness();
+  t.after(() => { h.explorer.close(); for (const request of h.requests) request.resolve(); });
+  await openLifetime(h);
+  const initial = h.explorer.scrub(start); await tick();
+  h.requests.at(-1).resolve(); await initial;
+  const later = h.explorer.scrub(start + 1200000); await tick();
+  h.requests.at(-1).resolve(); await later;
+  const cold = h.explorer.scrub(start + 600000); await tick();
+  const request = h.requests.at(-1);
+  const ready = h.explorer.scrub(start);
+  assert.equal(h.explorer.state.displayedUtc, start, 'ready point must not wait for another network response');
+  assert.equal(h.explorer.state.status, 'ready');
+  request.resolve(); await cold; await ready;
+  assert.equal(h.explorer.state.displayedUtc, start, 'late cold completion must not replace the accepted point');
+  assert.deepEqual(h.requests.slice(1).map(value => value.index), [0, 2, 1]);
+});
+
+for (const personal of [false, true]) test(`a persisted day gives minute steps on ${personal ? 'returns' : 'lifetime'} without a day request`, async t => {
+  const indexedDB = new IDBFactory(), prepared = createMomentCache({ indexedDB });
+  prepared.putDay(dayAt('2026-09-30')); await prepared.close();
+  const moments = createMomentCache({ indexedDB }); t.after(() => moments.close());
+  const calls = [];
+  const dayClient = createTransitDayClient({ moments, calculationVersion: metadata.calculationVersion,
+    fetch() { throw Error('a saved day must not use HTTP'); } });
+  const client = createLifetimeClient({ dayClient, fetch(url) {
+    calls.push(url); return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
+  } });
+  const explorer = createLifetimeExplorer({ client, getDayState: () => personal ? null : { current: { utc: metadata.startUtc }, timeline: { date: '2026-09-29' } } });
+  t.after(() => explorer.close());
+  await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
+  const before = calls.length;
+  await explorer.scrub(utc('30T12:31:08'));
+  assert.equal(explorer.state.displayedUtc, utc('30T12:31:00'));
+  assert.equal(explorer.adjacentUtc(1), utc('30T12:32:00'));
+  assert.equal(calls.length, before);
+  await explorer.scrub(utc('29T12:31:08'));
+  assert.equal(explorer.state.displayedUtc, utc('29T12:30:00'));
+});
+
+test('after release an outdated intermediate point cannot replace the last selected target', async t => {
+  const h = harness(); t.after(() => { h.explorer.close(); for (const request of h.requests) request.resolve(); });
+  await openLifetime(h);
+  h.explorer.setInteracting(true);
+  const first = h.explorer.scrub(start + 600000); await tick();
+  h.explorer.scrub(start + 1800000); h.explorer.setInteracting(false);
+  const before = h.renders.length;
+  h.requests.at(-1).resolve(); await tick();
+  assert.equal(h.renders.length, before, 'release makes only the final selection publishable');
+  h.requests.at(-1).resolve(); await first;
+  assert.equal(h.explorer.state.displayedUtc, start + 1800000);
+});
+
+test('a disk-only minute bypasses another network request and rejects its late response', async t => {
+  const indexedDB = new IDBFactory(), seed = createMomentCache({ indexedDB });
+  seed.putDay(dayAt('2026-09-30')); await seed.close();
+  const moments = createMomentCache({ indexedDB }); t.after(() => moments.close());
+  const requests = [], arrivals = new Map();
+  const arrived = index => requests[index] ? Promise.resolve(requests[index]) : new Promise(resolve => arrivals.set(index, resolve));
+  const client = createLifetimeClient({ moments, fetch(url) {
+    if (url.endsWith('/meta')) return response(metadata);
+    return new Promise(resolve => { const request = { index: Number(new URL(url, 'http://test').searchParams.get('index')), resolve }; requests.push(request); arrivals.get(requests.length - 1)?.(request); });
+  } });
+  const explorer = createLifetimeExplorer({ client }); t.after(() => { explorer.close(); for (const r of requests) r.resolve(response(point(r.index))); });
+  await explorer.open(); const opening = explorer.setDateRange('2026-09-29', '2026-10-01'); await arrived(0);
+  requests[0].resolve(response(point(requests[0].index))); await opening;
+  const cold = explorer.scrub(start + 600000); await arrived(1);
+  await explorer.scrub(utc('30T12:31:00'));
+  assert.equal(explorer.state.displayedUtc, utc('30T12:31:00'));
+  requests[1].resolve(response(point(requests[1].index))); await cold;
+  assert.equal(explorer.state.displayedUtc, utc('30T12:31:00'));
+});
+
+test('a stale disk minute falls back to the ten-minute file without exact calculation', async t => {
+  const calls = [], target = utc('30T12:31:00');
+  const moments = { ready: Promise.resolve(), hasMinute: () => true, peekMoment: () => null,
+    readMoment: async () => null, putMoment() {} };
+  const client = createLifetimeClient({ moments, fetch(url) {
+    calls.push(url); assert.ok(!url.includes('/moment?'), 'a scrub never grants permission to calculate');
+    return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
+  } });
+  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01'); await explorer.scrub(target);
+  assert.equal(explorer.state.displayedUtc, utc('30T12:30:00'));
+});
+
+test('an old disk read cannot be relabelled with replacement metadata', async () => {
+  let finish, meta = metadata;
+  const moments = { ready: Promise.resolve(), peekMoment: () => null, hasMinute: () => false,
+    readMoment: () => new Promise(resolve => { finish = resolve; }), putMoment() { throw Error('old values cannot be written'); } };
+  const client = createLifetimeClient({ moments, fetch(url) { assert.equal(url, '/api/lifetime/meta'); return response(meta); } });
+  const loading = client.getPoint(1); const rejected = assert.rejects(loading, { name: 'AbortError' }); await tick();
+  client.invalidateMetadata(); meta = { ...metadata, calculationVersion: 'b'.repeat(64) }; await client.getMeta();
+  finish(point(1)); await rejected;
+});
+
+test('every metadata consumer waits for the device minute catalogue', async () => {
+  let ready; const moments = { ready: new Promise(resolve => { ready = resolve; }) };
+  const client = createLifetimeClient({ moments, fetch: async () => response(metadata) });
+  let firstDone = false, secondDone = false;
+  const first = client.getMeta().then(() => { firstDone = true; });
+  await tick();
+  const second = client.getMeta().then(() => { secondDone = true; });
+  await tick(); assert.equal(firstDone, false); assert.equal(secondDone, false);
+  ready(); await Promise.all([first, second]); assert.equal(secondDone, true);
 });

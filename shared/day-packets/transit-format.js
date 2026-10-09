@@ -1,8 +1,7 @@
 import { MOMENT_PLANETS, MOMENT_COLUMN_COUNT, validMomentValue } from './moment-columns.js';
 import { validOrder } from './float64-codec.js';
 
-// Version the calculation AND binary contract together. Bump when ephemerides,
-// calculation flags or reconstruction rules change: HTTP/disk caches use it.
+// Binary layout version. calculationVersion separately identifies the numeric inputs.
 export const TRANSIT_DAY_VERSION = '2';
 export const TRANSIT_PLANETS = MOMENT_PLANETS;
 // Protocol column order is fixed; never derive it from the UI catalogue.
@@ -21,6 +20,7 @@ export function validateTransitMetadata(header) {
     || header.startUtc !== `${header.date}T00:00:00Z`) return failTransitPacket();
   const parsed = new Date(header.startUtc);
   if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== header.date) return failTransitPacket();
+  if (header.calculationVersion !== undefined && (typeof header.calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(header.calculationVersion))) return failTransitPacket();
   if (header.nodeModel !== 'true' || header.zodiac !== 'tropical-geocentric-apparent') return failTransitPacket();
   for (const key of ['engine', 'ephemeris', 'timezoneDatabase']) {
     if (typeof header[key] !== 'string' || !header[key] || header[key].length > 256) return failTransitPacket();

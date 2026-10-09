@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { attachTimelineRange } from '../src/views/timeline-range.js';
+import { dateDom } from './helpers/date-dom.mjs';
 
 const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
@@ -275,6 +277,10 @@ test('coarse pointers gain a 56px invisible range target without moving the rail
 });
 
 test('compact range nodes retain a transparent 44px native hit area around crisp bounded SVG artwork', () => {
+  const rangeElement = dateDom().createElement('input');
+  Object.assign(rangeElement, { min: '0', max: '200', value: '100', step: 'any',
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 244, height: 44 }) });
+  const control = attachTimelineRange({ range: rangeElement, onScrub() {} });
   function graphicBounds(svg) {
     const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     const include = (x, y) => {
@@ -344,14 +350,16 @@ test('compact range nodes retain a transparent 44px native hit area around crisp
       assert.equal(thumb.height, '44px');
       assert.equal(thumb.border, '0');
       assert.equal(thumb['box-shadow'], 'none');
-      const range = declarationsAt(".day-controls input[type='range']", width, height, { coarse });
-      const background = thumb.background.replace('var(--timeline-thumb)', range['--timeline-thumb']);
-      const image = /url\(["']data:image\/svg\+xml,([^"']+)["']\)/.exec(background);
-      assert.ok(image, 'the visible node uses a crisp inline SVG');
-      assert.ok(!thumb['background-color'] || thumb['background-color'] === 'transparent', 'the native hit target remains transparent');
-      const bounds = graphicBounds(decodeURIComponent(image[1]));
-      assert.ok(bounds.minX > 0 && bounds.maxX < 44 && bounds.minY > 0 && bounds.maxY < 44, 'transparent space surrounds the visible artwork');
-      assert.ok(bounds.maxX - bounds.minX <= 32 && bounds.maxY - bounds.minY <= 26, 'the visible node occupies a compact part of its larger native hit target');
+      for (const value of ['0', '5.5', '100', '194.5', '200']) {
+        rangeElement.value = value; control.refreshTargets();
+        const background = thumb.background.replace('var(--timeline-thumb)', rangeElement.style['--timeline-thumb']);
+        const image = /url\(["']data:image\/svg\+xml,([^"']+)["']\)/.exec(background);
+        assert.ok(image, 'the visible node uses a crisp inline SVG');
+        assert.ok(!thumb['background-color'] || thumb['background-color'] === 'transparent', 'the native hit target remains transparent');
+        const bounds = graphicBounds(decodeURIComponent(image[1]));
+        assert.ok(bounds.minX > 0 && bounds.maxX < 44 && bounds.minY > 0 && bounds.maxY < 44, 'transparent space surrounds the visible artwork');
+        assert.ok(bounds.maxX - bounds.minX <= 32 && bounds.maxY - bounds.minY <= 26, 'the visible node occupies a compact part of its larger native hit target');
+      }
       if (pseudo.includes('webkit')) assert.equal(thumb['margin-top'], '-21px');
     }
   }

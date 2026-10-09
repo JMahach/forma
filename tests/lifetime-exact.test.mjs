@@ -160,22 +160,22 @@ test('HTTP exact requests share four calculation slots and repeated UTC without 
   assert.equal(jobs.length, 4, 'grid reads do not enter the scalar calculator');
 });
 
-test('exact and grid entries share server and client eviction limits', async () => {
+test('server exact eviction does not discard compact exact and grid moments already saved by the browser', async () => {
   const calls = [], s = service({ capacity: 1, calculate: input => {
     calls.push(input.mode); return full(input.utc);
   } });
   await s.getUtcMoment(utc); await s.getMoment(0); await s.getUtcMoment(utc);
   assert.deepEqual(calls, ['transit_moment', 'transit_moment']);
   const h = harness(), requests = [];
-  const client = createLifetimeClient({ capacity: 1, fetch: async (url, options) => {
+  const client = createLifetimeClient({ fetch: async (url, options) => {
     requests.push({ url, cache: options.cache }); const result = await http(h.handler, url);
     return { ok: result.status === 200, json: async () => result.value };
   } });
   const first = await client.getMinute(milliseconds);
   assert.equal(first, await client.getMinute(milliseconds));
   await client.getPoint(0); await client.getMinute(milliseconds);
-  assert.equal(requests.length, 4);
-  assert.deepEqual(requests.slice(1).map(request => request.cache), ['default', 'default', 'default']);
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests.slice(1).map(request => request.cache), ['default', 'default']);
 });
 
 test('client rejects mismatched exact UTC, contract versions and malformed sides before caching', async () => {

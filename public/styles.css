@@ -3,7 +3,7 @@
   --returns-side-space: 320px;
   --timeline-background: #f2f2f2;
   --timeline-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --timeline-edge-space: 0px;
+  --timeline-edge-space: 8px;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ink: #141519;
   --line: #e8eaee;
@@ -316,10 +316,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-controls { position: absolute; z-index: 90; width: min(360px, calc(100% - 24px)); height: 48px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: #777777; font-size: 11px; }
 .transit-controls-heading { position: absolute; z-index: 2; left: calc(var(--timeline-content-width) - var(--rail-left) + var(--timeline-gutter) - 60px); top: 2px; display: flex; align-items: center; justify-content: flex-end; width: 60px; height: 44px; pointer-events: none; }
 .transit-controls-heading > button { display: block; width: 60px; height: 44px; padding: 0 4px; color: #555555; background: transparent; font-size: 12px; pointer-events: auto; }
-.day-controls input[type='range'] { --timeline-thumb: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2244%22%20viewBox%3D%220%200%2044%2044%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22a%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23aaaaaa%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23777777%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cpath%20d%3D%22M11%2022C16%2022%2016.5%2017.75%2022.5%2017.75C28%2017.75%2027.5%2022%2033%2022C28%2022%2027%2026.25%2021.5%2026.25C16%2026.25%2016%2022%2011%2022Z%22%20fill%3D%22url%28%23a%29%22%2F%3E%3Cpath%20d%3D%22M19.5%2020.5Q22%2019.5%2024%2020.5%22%20stroke%3D%22%23ffffff%22%20stroke-opacity%3D%22.32%22%20stroke-width%3D%22.8%22%20stroke-linecap%3D%22round%22%20fill%3D%22none%22%2F%3E%3C%2Fsvg%3E"); position: relative; display: block; appearance: none; -webkit-appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; accent-color: #888888; cursor: grab; touch-action: none; }
-/* Round only the outward end; the 44px hit target and time position stay fixed. */
-.day-controls input[type='range'][data-edge='start'] { --timeline-thumb: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2244%22%20viewBox%3D%220%200%2044%2044%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22a%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23aaaaaa%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23777777%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cg%3E%3Cpath%20d%3D%22M15.25%2017.75H22.5C28%2017.75%2027.5%2022%2033%2022C28%2022%2027%2026.25%2021.5%2026.25H15.25A4.25%204.25%200%200%201%2015.25%2017.75Z%22%20fill%3D%22url%28%23a%29%22%2F%3E%3Cpath%20d%3D%22M19.5%2020.5Q22%2019.5%2024%2020.5%22%20stroke%3D%22%23ffffff%22%20stroke-opacity%3D%22.32%22%20stroke-width%3D%22.8%22%20stroke-linecap%3D%22round%22%20fill%3D%22none%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"); }
-.day-controls input[type='range'][data-edge='end'] { --timeline-thumb: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2244%22%20height%3D%2244%22%20viewBox%3D%220%200%2044%2044%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22a%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23aaaaaa%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23777777%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cg%20transform%3D%22translate%2844%200%29%20scale%28-1%201%29%22%3E%3Cpath%20d%3D%22M15.25%2017.75H22.5C28%2017.75%2027.5%2022%2033%2022C28%2022%2027%2026.25%2021.5%2026.25H15.25A4.25%204.25%200%200%201%2015.25%2017.75Z%22%20fill%3D%22url%28%23a%29%22%2F%3E%3Cpath%20d%3D%22M19.5%2020.5Q22%2019.5%2024%2020.5%22%20stroke%3D%22%23ffffff%22%20stroke-opacity%3D%22.32%22%20stroke-width%3D%22.8%22%20stroke-linecap%3D%22round%22%20fill%3D%22none%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"); }
+.day-controls input[type='range'] { position: relative; display: block; appearance: none; -webkit-appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; accent-color: #888888; cursor: grab; touch-action: none; }
 .day-controls input[type='range']:focus { outline: none; box-shadow: none; }
 .day-controls input[type='range'][data-event-hovered='true']:not(:disabled), .day-controls input[type='range'][data-event-pressed='true']:not(:disabled) { cursor: pointer; }
 .day-controls input[type='range']:not(:disabled):active:not([data-event-pressed='true']) { cursor: grabbing; }
@@ -345,7 +342,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-reference[aria-pressed='true']::before { border-color: #555555; }
 .day-reference[data-hovered='true']::after, .day-reference[data-pressed='true']::after, .day-reference[aria-pressed='true']::after { content: ''; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; transform: translate(-50%, -50%); border-radius: 50%; background: #17191e; }
 .day-reference:focus-visible { outline-offset: 3px; }
-.transit-status { position: absolute; top: 0; left: 22px; right: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 14px; pointer-events: none; }
+.transit-status { position: absolute; top: 4px; left: 22px; right: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 14px; pointer-events: none; }
 .transit-status:empty { display: none; }
 .day-controls[data-status='error'] .day-range { visibility: hidden; }
 
@@ -383,17 +380,11 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .date-picker-row button { width: 100%; }
 .date-picker[data-view='periods'] .date-picker-row button { font-size: 10px; }
 .date-picker [role='columnheader'] { padding: 5px 0; color: #9a958a; text-align: center; font-size: 10px; }
-#lifetimeRetry { position: absolute; top: 0; right: 0; height: 44px; padding: 0 7px; border-radius: 5px; background: var(--canvas-background); font-size: 11px; }
-.lifetime-scale { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; color: #999999; font-size: 9px; line-height: 10px; pointer-events: none; }
-.lifetime-status { position: absolute; top: -42px; left: 0; right: 0; text-align: center; font-size: 10px; line-height: 12px; max-height: 24px; overflow: hidden; color: #777777; }
+.lifetime-scale { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; justify-content: space-between; color: #999999; font-size: 10px; line-height: 12px; pointer-events: none; }
 .lifetime-status:empty { display: none; }
-.lifetime-controls[data-status='error'] .lifetime-status { right: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lifetime-controls[data-status='error'] .day-range { visibility: visible; }
 
-/* Keep labels clear of floating browser chrome even with a zero safe inset. */
-@media (max-width: 699px), (pointer: coarse) {
-  :root { --timeline-edge-space: 8px; }
-}
+/* The shared edge inset keeps every scale clear of the viewport bottom. */
 
 @media (pointer: coarse) {
   /* Six extra pixels on each side of the same rail center; headings stay above. */
@@ -506,7 +497,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .returns-body-option:has(input:checked) { background: #f0f0f0; }
 .returns-body-option:hover { background: #e9e9e9; }
 .returns-body-option input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: #626262; }
-.returns-body-option:focus-within { outline: 1px solid #777777; outline-offset: -1px; }
+.returns-body-option:has(input:focus-visible) { outline: 1px solid #777777; outline-offset: -1px; }
 .returns-body-symbol { flex: none; width: 22px; text-align: center; color: var(--return-color, #65775b); font-size: 18px; font-family: Georgia, 'Times New Roman', serif; }
 .date-picker-footer { border-top: 1px solid #dce0d5; margin-top: 6px; padding-top: 4px; }
 .date-picker-footer button { width: 100%; min-height: 44px; color: #58664e; background: transparent; font: inherit; font-size: 13px; border-radius: 6px; }
@@ -575,9 +566,8 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .lifetime-controls[data-status='preparing'] .lifetime-heading :is(input, button):disabled { opacity: 1; cursor: default; }
 .lifetime-controls[data-status='preparing'] .lifetime-date-field { border-color: transparent; }
 .lifetime-controls[data-status='preparing'] .day-hour-marks { opacity: .35; }
-.transit-status, .lifetime-status { top: 4px; }
 /* Loading belongs to the rail: 4 px range offset + its 22 px center. */
-.day-controls[aria-busy='true'] > :is(.transit-status, .lifetime-status) { position: absolute; z-index: 3; top: 26px; left: 50%; right: auto; width: max-content; max-width: calc(100% - 8px); max-height: none; margin: 0; padding: 2px 10px; transform: translate(-50%, -50%); background: var(--timeline-background); color: #555555; font-size: 13px; font-weight: 500; line-height: 18px; text-align: center; white-space: normal; text-wrap: balance; pointer-events: none; }
+.day-controls[aria-busy='true'] > :is(.transit-status, .lifetime-status), .lifetime-controls > .lifetime-status { position: absolute; z-index: 3; top: 26px; left: 50%; right: auto; width: max-content; max-width: calc(100% - 8px); max-height: none; margin: 0; padding: 2px 10px; transform: translate(-50%, -50%); background: var(--timeline-background); color: #555555; font-size: 13px; font-weight: 500; line-height: 18px; text-align: center; white-space: normal; text-wrap: balance; pointer-events: none; }
 
 /* Small event nodes share the line; the selected moment has its own droplet. */
 .returns-markers { position: absolute; inset: 0 22px; z-index: 2; pointer-events: none; }
@@ -587,8 +577,8 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .returns-marker[aria-pressed='true'] .returns-marker-dot { box-shadow: 0 0 0 2px var(--canvas-background), 0 0 0 3px var(--return-color, #555555); }
 .returns-marker[data-hovered='true'] .returns-marker-dot::after, .returns-marker[data-pressed='true'] .returns-marker-dot::after, .returns-marker[aria-pressed='true'] .returns-marker-dot::after { content: ''; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; transform: translate(-50%, -50%); border-radius: 50%; background: #17191e; }
 
-.day-controls input[type='range']:active:not([data-event-pressed='true'])::-webkit-slider-thumb { background-size: 50px 40px; }
-.day-controls input[type='range']:active:not([data-event-pressed='true'])::-moz-range-thumb { background-size: 50px 40px; }
+.day-controls input[type='range']:active:not([data-event-pressed='true'])::-webkit-slider-thumb { background-size: calc(50px - 6px * var(--timeline-thumb-rounding, 0)) calc(40px + 4px * var(--timeline-thumb-rounding, 0)); }
+.day-controls input[type='range']:active:not([data-event-pressed='true'])::-moz-range-thumb { background-size: calc(50px - 6px * var(--timeline-thumb-rounding, 0)) calc(40px + 4px * var(--timeline-thumb-rounding, 0)); }
 .returns-marker-symbol { position: absolute; bottom: calc(50% + 2px); left: 50%; transform: translateX(calc(-50% + var(--return-label-offset, 0px))); display: flex; align-items: center; justify-content: center; min-width: 20px; height: 16px; color: #606060; font-size: 13px; line-height: 1; font-family: Georgia, 'Times New Roman', serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
 .returns-marker[data-label-lane='below'] .returns-marker-symbol { top: calc(50% + 2px); bottom: auto; }
 

@@ -1,3 +1,4 @@
+import { requestSignal } from './request-signal.mjs';
 import { createTransitDayHandler } from './transit-days.mjs';
 import { createNatalDayHandler } from './natal-days.mjs';
 import { createPublicFileHandler } from './public-files.mjs';
@@ -58,9 +59,13 @@ export function createRequestHandler({ root, cities, calculate, transitDays, nat
           if (!city) { json(res, 422, { error: 'city_required', message: 'Выберите город из списка подсказок.' }); return; }
           input.city = city;
         }
-        const result = await calculate(input);
-        const status = !result.error ? 200 : ['engine_unavailable', 'busy'].includes(result.error) ? 503 : 422;
-        json(res, status, result); return;
+        const consumer = requestSignal(req, res);
+        try {
+          const result = await calculate(input, { signal: consumer.signal });
+          if (consumer.signal.aborted) return;
+          const status = !result.error ? 200 : ['engine_unavailable', 'busy'].includes(result.error) ? 503 : 422;
+          json(res, status, result); return;
+        } finally { consumer.close(); }
       }
       await publicFiles(req, res, url.pathname);
     } catch { if (!res.headersSent) json(res, 400, { error: 'invalid_request', message: 'Не удалось обработать запрос.' }); else res.end(); }

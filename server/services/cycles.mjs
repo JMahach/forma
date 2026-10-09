@@ -1,3 +1,4 @@
+import { consumeJob } from '../runtime/job-consumers.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -74,16 +75,16 @@ function validateResult(result, input) {
 
 // Worker transport returns parsed JSON; drain owns semantic validation and error mapping
 // for both this worker and injected generators, before any result enters RAM or HTTP.
-export function generateCycles({ root, input, verifiedEvent, spawnWorker, timeoutMs = CYCLE_LIMITS.timeoutMs, maxOutputBytes = CYCLE_LIMITS.outputBytes }) {
+export function generateCycles({ root, input, verifiedEvent, spawnWorker, computeQueue, signal, timeoutMs = CYCLE_LIMITS.timeoutMs, maxOutputBytes = CYCLE_LIMITS.outputBytes }) {
   const request = validateCycleRequest(input, input.action);
-  return runJsonWorker({ root, script: 'cycles.py', input: verifiedEvent ? { ...request, verifiedEvent } : request, spawnWorker, timeoutMs, maxOutput: maxOutputBytes,
+  return runJsonWorker({ root, script: 'cycles.py', input: verifiedEvent ? { ...request, verifiedEvent } : request, spawnWorker, computeQueue, signal, timeoutMs, maxOutput: maxOutputBytes,
     unavailable: () => new CycleError('cycles_unavailable', 'Локальный движок циклов недоступен. Повторите попытку.'),
     timeoutError: () => new CycleError('cycles_timeout', 'Циклы не успели рассчитаться. Попробуйте меньший диапазон.') });
 }
 
 // Personal events stay only in a bounded, expiring RAM cache. Singleflight jobs
 // share a worker; admission remains occupied until its process actually closes.
-export function createCycles({ root, generate = (input, trusted) => generateCycles({ root, input, ...trusted }), now = Date.now, limits = {}, cacheVersion = null } = {}) {
+export function createCycles({ root, computeQueue, generate = (input, trusted) => generateCycles({ root, input, computeQueue, ...trusted }), now = Date.now, limits = {}, cacheVersion = null } = {}) {
   if (cacheVersion !== null && !/^[a-f0-9]{64}$/.test(cacheVersion)) throw new RangeError('Invalid cycles version');
   const settings = { ...CYCLE_LIMITS, ...limits }, memory = new Map(), pending = new Map(), queue = [];
   let running = 0, bytes = 0, accepting = true, closing = null;
@@ -92,26 +93,14 @@ export function createCycles({ root, generate = (input, trusted) => generateCycl
   function remove(key) { bytes -= memory.get(key).bytes; memory.delete(key); }
   function prune() { for (const [key, entry] of memory) if (entry.expires <= now()) remove(key); }
   function consume(job, signal) {
-    if (!signal) { job.uncancellable = true; return job.promise; }
-    job.consumers++;
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true; job.consumers--; signal.removeEventListener('abort', cancel); callback(value);
-      };
-      const cancel = () => {
-        finish(reject, aborted());
-        const index = queue.indexOf(job);
-        if (!job.uncancellable && job.consumers === 0 && index !== -1) {
-          queue.splice(index, 1); pending.delete(job.key); job.reject(aborted());
-        }
-      };
-      signal.addEventListener('abort', cancel, { once: true });
-      job.promise.then(value => finish(resolve, value), error => finish(reject, error));
-      if (signal.aborted) cancel();
+    return consumeJob(job, signal, abandoned => {
+      const index = queue.indexOf(abandoned);
+      if (index >= 0) { queue.splice(index, 1); pending.delete(abandoned.key); abandoned.reject(aborted()); }
+      if (pending.get(abandoned.key) === abandoned) pending.delete(abandoned.key);
+      abandoned.controller.abort();
     });
   }
+
   function knownEvent(input) {
     if (input.action !== 'chart') return undefined;
     for (const entry of memory.values()) {
@@ -127,7 +116,8 @@ export function createCycles({ root, generate = (input, trusted) => generateCycl
       const work = (async () => {
         try {
           prune();
-          const result = validateResult(await generate(job.input, { verifiedEvent: knownEvent(job.input) }), job.input), size = Buffer.byteLength(JSON.stringify(result));
+          const result = validateResult(await generate(job.input, { verifiedEvent: knownEvent(job.input), signal: job.controller.signal }), job.input), size = Buffer.byteLength(JSON.stringify(result));
+          if (job.controller.signal.aborted) throw aborted();
           prune();
           if (accepting && size <= settings.memoryBytes) {
             memory.set(job.key, { input: job.input, result, bytes: size, expires: now() + settings.ttlMs }); bytes += size;
@@ -135,7 +125,7 @@ export function createCycles({ root, generate = (input, trusted) => generateCycl
           }
           job.resolve(result);
         } catch (error) { job.reject(error); }
-        finally { pending.delete(job.key); running--; void drain(); }
+        finally { if (pending.get(job.key) === job) pending.delete(job.key); running--; void drain(); }
       })();
       activeWork.add(work);
       void work.finally(() => activeWork.delete(work));
@@ -152,7 +142,7 @@ export function createCycles({ root, generate = (input, trusted) => generateCycl
     if (running >= settings.concurrency && queue.length >= settings.maxQueued) return Promise.reject(new CycleError('cycles_busy', 'Подождите завершения расчёта циклов и повторите попытку.'));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    const job = { key, input: request, resolve, reject, promise, consumers: 0, uncancellable: false };
+    const job = { key, controller: new AbortController(), input: request, resolve, reject, promise };
     pending.set(key, job); queue.push(job);
     const result = consume(job, signal); void drain();
     return result;

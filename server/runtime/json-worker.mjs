@@ -1,9 +1,12 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-// Own the JSON process lifetime; services keep admission, limits and feature errors.
+// Own physical process lifetime. The shared queue admits work; services own results.
 export function runJsonWorker({ root, script, input, validate = value => value, unavailable, timeoutError,
-  timeoutMs, maxOutput, outputUnit = 'bytes', spawnWorker = spawn }) {
+  timeoutMs, maxOutput, outputUnit = 'bytes', spawnWorker = spawn, computeQueue = null, signal, priority = 0 }) {
+  if (signal?.aborted) return Promise.reject(new DOMException('Запрос отменён.', 'AbortError'));
+  if (computeQueue) return computeQueue.run(() => runJsonWorker({ root, script, input, validate, unavailable, timeoutError,
+    timeoutMs, maxOutput, outputUnit, spawnWorker, signal }), { signal, priority });
   return new Promise((resolve, reject) => {
     let worker, serialized;
     try {
@@ -14,7 +17,7 @@ export function runJsonWorker({ root, script, input, validate = value => value, 
     let output = '', size = 0, failure = null, settled = false, launched = Boolean(worker.pid);
     const finish = (error, value) => {
       if (settled) return;
-      settled = true; clearTimeout(timer);
+      settled = true; clearTimeout(timer); signal?.removeEventListener('abort', cancel);
       if (error) reject(error); else resolve(value);
     };
     // Killing is only a request. Keep the service's slot until stdio and process close.
@@ -23,6 +26,8 @@ export function runJsonWorker({ root, script, input, validate = value => value, 
       failure = error;
       try { worker.kill('SIGKILL'); } catch { /* The close event still owns completion. */ }
     };
+    const cancel = () => stop(new DOMException('Запрос отменён.', 'AbortError'));
+    signal?.addEventListener('abort', cancel, { once: true });
     const timer = setTimeout(() => stop(timeoutError()), timeoutMs);
     worker.once('spawn', () => { launched = true; });
     worker.stdout.setEncoding('utf8');
@@ -46,5 +51,6 @@ export function runJsonWorker({ root, script, input, validate = value => value, 
       try { finish(null, validate(result)); } catch (error) { finish(error); }
     });
     try { worker.stdin.end(serialized); } catch { stop(unavailable()); }
+    if (signal?.aborted) cancel();
   });
 }

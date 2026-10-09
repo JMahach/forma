@@ -15,7 +15,7 @@ function firstReturnEvents(events) {
   }
   return [...first.values()];
 }
-const eventStatusLabel = (selected, pending) => pending ? 'Открываем…' : selected ? 'На карте' : '';
+const eventStatusLabel = (selected, pending) => pending ? '' : selected ? 'На карте' : '';
 function eventRow(event, state) {
   const moment = returnMomentDetails(event.utc, state.natal);
   const selected = event.id === state.selectedEvent?.id, pending = event.id === state.pendingEvent?.id;
@@ -33,7 +33,7 @@ function renderPreparedReturnEvents(state, events, now) {
   const showNow = showPresent(state, now);
   if (!events.length && !birth && !showNow) return '';
   const dot = '<span class="returns-timeline-dot" aria-hidden="true"></span>';
-  const birthRow = birth ? `<div class="returns-timeline-item">${dot}<button type="button" class="returns-event returns-birth${state.birthSelected ? ' is-selected' : ''}" data-return-birth="" aria-pressed="${Boolean(state.birthSelected)}"><span class="returns-event-copy"><strong>Рождение</strong><time datetime="${esc(birth.utc)}">${esc(birth.date)} · ${esc(birth.time)}</time></span><span class="returns-event-action">0 лет</span></button></div>` : '';
+  const birthRow = birth ? `<div class="returns-timeline-item">${dot}<button type="button" class="returns-event returns-birth${state.birthSelected ? ' is-selected' : ''}" data-return-birth="" aria-pressed="${Boolean(state.birthSelected)}"><span class="returns-event-copy"><strong>Рождение</strong><time datetime="${esc(birth.utc)}">${esc(birth.date)} · ${esc(birth.time)}</time></span><span class="returns-event-action"><span>0 лет</span>${state.birthSelected ? '<small>На карте</small>' : ''}</span></button></div>` : '';
   let marked = false;
   const marker = () => showNow ? `<div class="returns-timeline-item returns-timeline-now">${dot}<button type="button" class="returns-event returns-now${state.live ? ' is-selected' : ''}" data-return-now="" aria-pressed="${Boolean(state.live)}"><span>Сейчас · ${esc(ageText(completedAge(new Date(now).toISOString(), state.natal)))}</span></button></div>` : '';
   const rows = events.map(({ event, at }) => {
@@ -54,6 +54,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
   let state = { available: false, timelineVisible: false, opened: false, events: [], errors: [], pendingBodies: [], year: null, bodies: [] }, markup = '', listSnapshot = null, filterKey = '', jumpPending = false;
   const checks = new Map();
   bodyMenu.hidden = true;
+  bodyMenu.tabIndex = -1;
   function closeBodies(restoreFocus = false) {
     if (bodyMenu.hidden) return;
     bodyMenu.hidden = true; bodyButton.setAttribute('aria-expanded', 'false');
@@ -81,6 +82,15 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
       if (!node || node.getAttribute('aria-pressed') === String(selected)) continue;
       node.classList.toggle('is-selected', selected);
       node.setAttribute('aria-pressed', String(selected));
+      if (node === birthRow) {
+        const action = node.querySelector('.returns-event-action');
+        const badge = action.querySelector('small');
+        if (selected && !badge) {
+          const label = node.ownerDocument.createElement('small');
+          label.textContent = 'На карте';
+          action.appendChild(label);
+        } else if (!selected) badge?.remove();
+      }
     }
   }
   function paintEventState() {
@@ -141,11 +151,13 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
     content.scrollTop = top;
     jumpPending = false;
   }
-  bodyButton.addEventListener('click', () => {
+  bodyButton.addEventListener('click', event => {
     const opening = bodyMenu.hidden;
     yearCalendar.close();
     bodyMenu.hidden = !opening; bodyButton.setAttribute('aria-expanded', String(opening));
-    if (opening) checks.values().next().value?.focus({ preventScroll: true });
+    // Pointer opening enters the dialog without highlighting an unchosen planet.
+    // Keyboard activation still starts at the first checkbox.
+    if (opening) (event.detail === 0 ? checks.values().next().value : bodyMenu)?.focus({ preventScroll: true });
   });
   $('returnsBodiesClose').addEventListener('click', () => closeBodies(true));
   $('returnsBodiesClear').addEventListener('click', () => onBodies([]));
@@ -204,7 +216,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
     if (events.length !== eventInput.length || events.some((event, index) => event !== eventInput[index])) {
       eventInput = [...events]; preparedEvents = firstReturnEvents(events);
     }
-    status.textContent = state.loadingChart ? 'Открываем карту возврата…' : state.chartError || (busy ? 'Рассчитываем точные даты…' : !state.bodies?.length ? 'Выберите планеты, чтобы показать возвраты.' : !preparedEvents.length && !state.errors?.length ? 'В этом периоде первых касаний нет.' : '');
+    status.textContent = state.loadingChart ? '' : state.chartError || (busy ? 'Создаём летопись' : '');
     panel.setAttribute('aria-busy', String(busy || state.loadingChart));
     $('returnsRetry').hidden = !state.chartError && !state.errors?.length;
     const now = Date.now(), errors = state.errors || [];

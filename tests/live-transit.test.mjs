@@ -576,3 +576,22 @@ test('an expired paused startup target follows the current local day', async t =
   assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
   assert.equal(h.live.state.live, true);
 });
+
+
+test('the live day retries at its backoff deadline and stops retrying when another owner takes over', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let fail = true;
+  const h = harness({ getDay: async date => { if (fail) throw new Error('offline'); return day(date); } });
+  t.after(() => h.live.stop());
+  await h.live.start();
+  assert.equal(h.live.state.retryCount, 1);
+  h.utc += 29999; t.mock.timers.tick(29999); await settle();
+  assert.equal(h.requests.length, 1);
+  h.utc += 1; t.mock.timers.tick(1); await settle();
+  assert.equal(h.requests.length, 2); assert.equal(h.live.state.retryCount, 2);
+  h.live.setWanted(false);
+  h.utc += 120000; t.mock.timers.tick(120000); await settle();
+  assert.equal(h.requests.length, 2);
+  fail = false; h.live.setWanted(true); await settle();
+  assert.equal(h.live.state.status, 'ready'); assert.equal(h.live.state.retryCount, 0);
+});

@@ -12,6 +12,7 @@ const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-trans
   ? savedView?.lifetime?.mode !== 'lifetime'
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
 const dayClient = createTransitDayClient({
+  calculationVersion: document.body.dataset.calculationVersion,
   initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
 const layout = createStudioLayout({ returnsControls: element('returnsControls'), canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),

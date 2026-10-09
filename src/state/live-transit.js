@@ -20,7 +20,7 @@ export function createLiveTransit({
     // paused. Never paint yesterday's endpoint while a new day is unavailable.
     const referenceIndex = status === 'ready' && days && timeline && utc >= timeline.startUtc && utc < timeline.endUtc
       ? timelineIndexAt(timeline, utc) : null;
-    return { wanted, live, timeline, index, referenceIndex, status, error, current, loading, unavailable };
+    return { wanted, live, timeline, index, referenceIndex, status, error, retryCount: failures, current, loading, unavailable };
   };
   const notify = () => onStateChange(state());
   const visible = () => wanted && isVisible();
@@ -62,6 +62,7 @@ export function createLiveTransit({
     const requestSequence = ++sequence;
     // Keep successful packets on retry, but never mix different local days.
     const sameDay = keyOf(timeline) === key;
+    if (!sameDay) { failures = 0; nextRetry = 0; }
     days = sameDay ? days || new Map() : new Map();
     timeline = target;
     retainActiveDays();
@@ -101,7 +102,7 @@ export function createLiveTransit({
         if (requestSequence === sequence) {
           activeLoad = null;
           loading = false;
-          notify();
+          notify(); schedule();
         }
       }
     })();
@@ -131,11 +132,12 @@ export function createLiveTransit({
 
   function schedule() {
     clearTimeout(timer);
-    if (!running || isSuspended()) return;
+    if (!running || !wanted || isSuspended()) return;
+    const utc = now(), retryDelay = visible() && nextRetry > utc ? nextRetry - utc : Infinity;
     timer = setTimeout(() => {
       refresh();
       schedule();
-    }, 60_000 - now() % 60_000 + 25);
+    }, Math.min(retryDelay, 60_000 - utc % 60_000 + 25));
   }
 
   function visibilityChanged() {
@@ -149,10 +151,12 @@ export function createLiveTransit({
     get state() { return state(); },
     refresh, visibilityChanged,
     setWanted(value) {
+      if (wanted !== value) { failures = 0; nextRetry = 0; }
       wanted = value;
       retainActiveDays();
       notify();
       if (wanted && activated) refresh();
+      schedule();
     },
     scrub(value) {
       if (!Number.isFinite(value) || !visible() || status !== 'ready') return;
@@ -173,7 +177,7 @@ export function createLiveTransit({
     },
     retry() { nextRetry = 0; return refresh(); },
     stop() {
-      sequence++; activeLoad = null; loading = false; status = 'idle';
+      sequence++; activeLoad = null; loading = false; status = 'idle'; failures = 0; nextRetry = 0;
       running = false; days = null; retainActiveDays(); clearTimeout(timer); timer = null;
     },
   };

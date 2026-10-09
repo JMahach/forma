@@ -153,7 +153,7 @@ test('card selection leaves each previous scale once, including reselecting a pr
   const returns = createReturnsController({ onRender: () => session.publish('natal-day', natalDay.current) });
   const exit = returns.exit;
   returns.exit = () => { counts.exit++; exit(); };
-  const lifetime = { close() { counts.close++; } };
+  const lifetime = { state: { opened: false }, close() { counts.close++; } };
   session = createChartSession({ store: { get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) },
     getNatalDay: () => natalDay, getLifetime: () => lifetime, getReturns: () => returns, onChange: () => counts.changes++ });
   const navigation = createChartExploration({ session, getNatalDay: () => natalDay, getLifetime: () => lifetime, getReturns: () => returns, getTransit: () => null });

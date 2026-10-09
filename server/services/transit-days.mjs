@@ -9,6 +9,9 @@ import { encodeNumericColumn, encodeTransitDay } from '../packets/encode.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.mjs';
 
+import { consumeJob, aborted } from '../runtime/job-consumers.mjs';
+import { calculationVersion, inputFingerprint } from '../runtime/calculation-version.mjs';
+
 const decompressGzip = promisify(gunzip);
 const DAY_MS = 86400000, MAX_DAYS = 7, MAX_QUEUED = 5;
 const OWN_CACHE_FILE = /^\d{4}-\d{2}-\d{2}\.[a-f0-9]{16}\.gz$/;
@@ -27,26 +30,20 @@ export function transitDateMilliseconds(date) {
   }
   return value;
 }
-// Fingerprints protect local disk reuse. Public immutable URLs additionally
-// require a TRANSIT_DAY_VERSION bump when calculation rules or data change.
-export async function transitCacheFingerprint(root) {
-  const hash = createHash('sha256');
-  for (const name of ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py',
-    'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
-    'shared/day-packets/decode.js', 'server/packets/encode.mjs',
-    'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {
-    // Deployments may change file timestamps without changing calculation data.
-    // Content identity also detects changed bytes with preserved size and mtime.
-    hash.update(name).update(await fs.readFile(path.join(root, name)));
-  }
-  return hash.digest('hex').slice(0, 16);
+// Numeric identity and packet encoding are separate: an encoding change only
+// replaces the small day files, never the prepared lifetime.
+export async function transitCacheFingerprint(root, version = null) {
+  const numeric = version || await calculationVersion(root);
+  const format = await inputFingerprint(root, ['shared/day-packets/transit-format.js',
+    'shared/day-packets/float64-codec.js', 'shared/day-packets/decode.js', 'server/packets/encode.mjs']);
+  return digest(`${numeric}\0${format}`).slice(0, 16);
 }
 
-export function generateTransitDay({ root, date, spawnWorker, timeoutMs = 60000, maxOutputBytes = 1000000 }) {
+export function generateTransitDay({ root, date, spawnWorker, computeQueue, signal, priority, timeoutMs = 60000, maxOutputBytes = 1000000 }) {
   transitDateMilliseconds(date);
   const unavailable = () => new TransitDayError('transit_unavailable', 'Не удалось подготовить дневной транзит. Повторите попытку.');
   return runJsonWorker({
-    root, script: 'transit_day.py', input: { date }, spawnWorker, timeoutMs, maxOutput: maxOutputBytes, unavailable,
+    root, script: 'transit_day.py', input: { date }, spawnWorker, computeQueue, signal, priority, timeoutMs, maxOutput: maxOutputBytes, unavailable,
     timeoutError: () => new TransitDayError('transit_timeout', 'Подготовка дневного транзита заняла слишком много времени. Повторите попытку.'),
     validate(day) {
       if (!day || day.error || day.date !== date) throw unavailable();
@@ -64,12 +61,14 @@ async function representations(raw, storedGzip) {
   return { bytes, etags: Object.fromEntries(Object.entries(bytes).map(([name, value]) => [name, `"${digest(value)}"`])) };
 }
 
-export async function createTransitDays({ root, cacheDir = path.join(root, '.cache/transit', `v${TRANSIT_DAY_VERSION}`), now = () => new Date(), fingerprint,
-  generateDay = date => generateTransitDay({ root, date }), onCacheError = () => {} } = {}) {
-  fingerprint ||= await transitCacheFingerprint(root);
+export async function createTransitDays({ root, cacheDir = path.join(root, '.cache/transit', `v${TRANSIT_DAY_VERSION}`), now = () => new Date(), fingerprint, maxDiskBytes = 256 * 1024 * 1024, maxPendingReads = 1024, calculationVersion: version = null, computeQueue,
+  generateDay = (date, options) => generateTransitDay({ root, date, computeQueue, ...options }), onCacheError = () => {} } = {}) {
+  version ||= await calculationVersion(root);
+  fingerprint ||= await transitCacheFingerprint(root, version);
   if (!/^[a-f0-9]{16}$/.test(fingerprint)) throw new Error('Invalid transit cache fingerprint');
-  const memory = new Map(), pending = new Map(), queue = [];
-  let running = null, timer = null, warming = false;
+  const memory = new Map(), pending = new Map(), queue = [], readQueue = [];
+  let running = null, reading = null, timer = null, warming = false;
+  const busy = () => new TransitDayError('transit_busy', 'Дневной транзит готовится. Повторите попытку.', 503, 1);
   const filename = date => `${date}.${fingerprint}.gz`;
 
   async function prune() {
@@ -77,9 +76,12 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     try { entries = await fs.readdir(cacheDir, { withFileTypes: true }); }
     catch (error) { if (error.code !== 'ENOENT') onCacheError(error); return; }
     const files = entries.filter(entry => entry.isFile() && OWN_CACHE_FILE.test(entry.name)).map(entry => entry.name);
-    const current = files.filter(name => name.endsWith(`.${fingerprint}.gz`)).sort().reverse();
+    const current = await Promise.all(files.filter(name => name.endsWith(`.${fingerprint}.gz`)).map(async name => ({ name, ...await fs.stat(path.join(cacheDir, name)) })));
+    current.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    let bytes = 0;
+    const excess = current.filter(entry => (bytes += entry.size) > maxDiskBytes).map(entry => entry.name);
     const obsolete = files.filter(name => !name.endsWith(`.${fingerprint}.gz`));
-    await Promise.all([...obsolete, ...current.slice(MAX_DAYS)].map(name => fs.unlink(path.join(cacheDir, name)).catch(error => { if (error.code !== 'ENOENT') onCacheError(error); })));
+    await Promise.all([...obsolete, ...excess].map(name => fs.unlink(path.join(cacheDir, name)).catch(error => { if (error.code !== 'ENOENT') onCacheError(error); })));
   }
   async function load(date) {
     const file = path.join(cacheDir, filename(date));
@@ -87,7 +89,9 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
       const stat = await fs.lstat(file);
       if (!stat.isFile() || stat.size > 1000000) return null;
       const gz = await fs.readFile(file), raw = await decompressGzip(gz, { maxOutputLength: 1000000 });
-      if (decodeTransitDay(raw).date !== date) return null;
+      const day = decodeTransitDay(raw);
+      if (day.date !== date || day.calculationVersion !== version) return null;
+      await fs.utimes(file, new Date(), new Date()).catch(onCacheError);
       return await representations(raw, gz);
     } catch (error) { if (error.code !== 'ENOENT') onCacheError(error); return null; }
   }
@@ -106,30 +110,59 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     return packet;
   }
   function drain() {
-    if (running || !queue.length) return;
+    if (running || !queue[0]?.ready) return;
     const job = queue.shift();
     running = (async () => {
       try {
-        let packet = await load(job.date);
-        const generated = !packet;
-        if (generated) {
-          const day = await generateDay(job.date);
-          if (day.date !== job.date) throw new Error('Unexpected transit date');
-          packet = await representations(await encodeDayPacket(day));
-        }
+        const day = await Promise.resolve().then(() => generateDay(job.date, { signal: job.controller.signal, priority: () => job.background ? -1 : 0 }));
+        if (day.date !== job.date) throw new Error('Unexpected transit date');
+        const packet = await representations(await encodeDayPacket({ ...day, calculationVersion: version }));
         // The browser needs the ready packet, not the completion of its disk
-        // copy. Persistence keeps this same queue slot: writes cannot pile up.
+        // copy. Persistence keeps this local preparation slot: writes cannot pile up.
         job.resolve(remember(job.date, packet));
-        if (generated) await persist(job.date, packet).catch(onCacheError);
+        await persist(job.date, packet).catch(onCacheError);
       } catch (error) { job.reject(error); }
-      finally { pending.delete(job.date); running = null; drain(); }
+      finally { if (pending.get(job.date) === job) pending.delete(job.date); running = null; drain(); }
+    })();
+  }
+  function discard(job) {
+    const index = queue.indexOf(job);
+    if (index !== -1) queue.splice(index, 1);
+    if (pending.get(job.date) === job) pending.delete(job.date);
+  }
+  function drainReads() {
+    if (reading || !readQueue.length) return;
+    const job = readQueue.shift();
+    // Ready gzip files never wait for astronomy or its disk persistence. One
+    // lookup at a time bounds decompression; duplicate dates share pending.
+    reading = (async () => {
+      try {
+        const packet = await load(job.date);
+        if (job.controller.signal.aborted) { discard(job); job.reject(aborted()); return; }
+        if (packet) { discard(job); job.resolve(remember(job.date, packet)); }
+        else if (!job.allowCalculate) { discard(job); job.reject(new TransitDayError('date_out_of_range', 'Доступны транзиты в пределах двух дней от сегодняшней даты UTC.', 422, null)); }
+        else if (queue.filter(item => item.ready).length >= MAX_QUEUED + (running ? 0 : 1)) {
+          discard(job); job.reject(busy());
+        } else job.ready = true;
+      } catch (error) { discard(job); job.reject(error); }
+      finally { reading = null; drainReads(); drain(); }
     })();
   }
   function enqueue(job) {
     const nextBackground = job.background ? -1 : queue.findIndex(item => item.background);
     if (nextBackground < 0) queue.push(job); else queue.splice(nextBackground, 0, job);
   }
-  function request(date, background) {
+  function consume(job, signal) {
+    return consumeJob(job, signal, abandoned => {
+      const index = readQueue.indexOf(abandoned);
+      if (index >= 0) readQueue.splice(index, 1);
+      if (queue.includes(abandoned)) { discard(abandoned); abandoned.reject(aborted()); }
+      if (pending.get(abandoned.date) === abandoned) pending.delete(abandoned.date);
+      abandoned.controller.abort();
+    });
+  }
+  function request(date, background, { signal, allowCalculate = true } = {}) {
+    if (signal?.aborted) return Promise.reject(aborted());
     try { transitDateMilliseconds(date); } catch (error) { return Promise.reject(error); }
     if (memory.has(date)) return Promise.resolve(remember(date, memory.get(date)));
     if (pending.has(date)) {
@@ -140,16 +173,17 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
         // A running job keeps its slot; only waiting warmup may be reordered.
         if (index >= 0) { queue.splice(index, 1); enqueue(job); }
       }
-      return job.promise;
+      return consume(job, signal);
     }
-    if (queue.length >= MAX_QUEUED) return Promise.reject(new TransitDayError('transit_busy', 'Дневной транзит готовится. Повторите попытку.', 503, 1));
+    if (readQueue.length + Number(Boolean(reading)) >= maxPendingReads) return Promise.reject(busy());
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    const job = { date, background, promise, resolve, reject };
-    pending.set(date, job); enqueue(job); void drain();
-    return promise;
+    const job = { date, background, allowCalculate, controller: new AbortController(), promise, resolve, reject, ready: false };
+    pending.set(date, job); enqueue(job); readQueue.push(job);
+    const result = consume(job, signal); drainReads();
+    return result;
   }
-  function get(date) { return request(date, false); }
+  function get(date, options) { return request(date, false, options); }
   async function warm() {
     const today = Date.parse(`${utcDate(now())}T00:00:00Z`);
     await Promise.allSettled([request(utcDate(today), true), request(utcDate(today + DAY_MS), true)]);
@@ -179,9 +213,9 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
   async function close() {
     warming = false; clearTimeout(timer); timer = null;
     // Stop scheduling immediately; callers may also await the remaining writes.
-    while (running) await running;
+    while (reading || running) await Promise.allSettled([reading, running]);
   }
 
-  return { get, warm, startWarmup, close, prune,
+  return { get, warm, startWarmup, close, prune, calculationVersion: version,
     get size() { return memory.size; }, get queued() { return queue.length; } };
 }

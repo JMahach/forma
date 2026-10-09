@@ -1,3 +1,4 @@
+import { consumeJob } from '../runtime/job-consumers.mjs';
 import { encodeNatalDayColumn, encodeNatalDay } from '../packets/encode.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.mjs';
@@ -18,11 +19,11 @@ export function validateNatalZone(timezone) {
     throw new NatalDayError('invalid_timezone', 'Некорректный часовой пояс города.', 422, null);
   }
 }
-export function generateNatalDay({ root, date, timezone, spawnWorker, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }) {
+export function generateNatalDay({ root, date, timezone, spawnWorker, computeQueue, signal, priority, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }) {
   validateNatalDate(date); validateNatalZone(timezone);
   const unavailable = () => new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
   return runJsonWorker({
-    root, script: 'natal_day.py', input: { date, timezone }, spawnWorker, timeoutMs, maxOutput: maxOutputBytes, unavailable,
+    root, script: 'natal_day.py', input: { date, timezone }, spawnWorker, computeQueue, signal, priority, timeoutMs, maxOutput: maxOutputBytes, unavailable,
     timeoutError: () => new NatalDayError('natal_day_timeout', 'День рождения не успел рассчитаться. Повторите попытку.'),
     validate(day) {
       if (!day) throw unavailable();
@@ -41,41 +42,28 @@ export function encodeNatalDayPacket(day) {
 
 // Only bounded, short-lived RAM. No personal disk cache, persistent workers,
 // prewarming, request logging, or birth data in a public/cacheable URL.
-export function createNatalDays({ root, generateDay = (date, timezone) => generateNatalDay({ root, date, timezone }),
+export function createNatalDays({ root, computeQueue, generateDay = (date, timezone, options) => generateNatalDay({ root, date, timezone, computeQueue, ...options }),
   now = Date.now, capacity = 4, ttlMs = 600_000, maxQueued = 3 } = {}) {
   const memory = new Map(), pending = new Map(), queue = [];
   let running = false;
   const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
   function prune() { for (const [key, entry] of memory) if (entry.expires <= now()) memory.delete(key); }
   function consume(job, signal) {
-    if (!signal) { job.uncancellable = true; return job.promise; }
-    job.consumers++;
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true; job.consumers--; signal.removeEventListener('abort', cancel); callback(value);
-      };
-      const cancel = () => {
-        finish(reject, aborted());
-        const index = queue.indexOf(job);
-        // Keep active work and shared consumers; only abandoned waiting days
-        // can release admission without interfering with a live process.
-        if (!job.uncancellable && job.consumers === 0 && index !== -1) {
-          queue.splice(index, 1); pending.delete(job.key); job.reject(aborted());
-        }
-      };
-      signal.addEventListener('abort', cancel, { once: true });
-      job.promise.then(value => finish(resolve, value), error => finish(reject, error));
-      if (signal.aborted) cancel();
+    return consumeJob(job, signal, abandoned => {
+      const index = queue.indexOf(abandoned);
+      if (index >= 0) { queue.splice(index, 1); pending.delete(abandoned.key); abandoned.reject(aborted()); }
+      if (pending.get(abandoned.key) === abandoned) pending.delete(abandoned.key);
+      abandoned.controller.abort();
     });
   }
+
   async function drain() {
     if (running || !queue.length) return;
     running = true;
     const job = queue.shift();
     try {
-      const day = await generateDay(job.date, job.timezone);
+      const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
+      if (job.controller.signal.aborted) throw aborted();
       if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
       const raw = await encodeNatalDayPacket(day);
       const packet = { bytes: await compressDayPacket(raw, { quality: 9 }) };
@@ -83,7 +71,7 @@ export function createNatalDays({ root, generateDay = (date, timezone) => genera
       while (memory.size > capacity) memory.delete(memory.keys().next().value);
       job.resolve(packet);
     } catch (error) { job.reject(error); }
-    finally { pending.delete(job.key); running = false; void drain(); }
+    finally { if (pending.get(job.key) === job) pending.delete(job.key); running = false; void drain(); }
   }
   function get(date, timezone, { signal } = {}) {
     if (signal?.aborted) return Promise.reject(aborted());
@@ -98,7 +86,7 @@ export function createNatalDays({ root, generateDay = (date, timezone) => genera
     if (queue.length >= maxQueued) return Promise.reject(new NatalDayError('natal_day_busy', 'Подождите завершения расчёта дня рождения и повторите попытку.', 503, 2));
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    const job = { key, date, timezone, resolve, reject, promise, consumers: 0, uncancellable: false };
+    const job = { key, date, timezone, controller: new AbortController(), resolve, reject, promise };
     pending.set(key, job); queue.push(job);
     const result = consume(job, signal); void drain();
     return result;

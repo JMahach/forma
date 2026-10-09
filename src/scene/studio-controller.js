@@ -38,8 +38,8 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
     let dock = null;
     if (studio) {
       const full = studio.getBoundingClientRect();
-      const safeBottom = Math.max(parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0,
-        parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
+      const safeInset = parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0;
+      const safeBottom = Math.max(safeInset, parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
       const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
       const natal = panels.find(panel => panel.id === 'natalDayControls');
       timelineKind = returnsControls && !returnsControls.hidden ? 'returns'
@@ -55,7 +55,8 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
       studio.dataset.timelineKind = timelineKind;
       studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
       dockHeight = dock.height;
-      studio.style?.setProperty('--timeline-heading-top', `${full.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeBottom - 44) / 2 : 0)}px`);
+      // Center dates in the visible dock; the rail's label clearance is not a device safe area.
+      studio.style?.setProperty('--timeline-heading-top', `${full.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeInset - 44) / 2 : 0)}px`);
       studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);
       studio.style?.setProperty('--timeline-action-gutter', `${dock.actionGutter}px`);
       studio.style?.setProperty('--timeline-action-size', `${dock.actionSize}px`);

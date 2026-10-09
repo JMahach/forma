@@ -19,15 +19,15 @@ function clock(utc, timeZone = null) {
 }
 
 export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, status, fromError = null, toError = null,
-  retryButton = null, hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, available = true,
+  hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, available = true,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, resolveTap, ...options }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
   const inputs = [fromDate, toDate], dirty = new Set();
   const dateErrors = new Map([[fromDate, fromError], [toDate, toError]]);
-  let inputError = false, requestError = '', submitted = null, wasOpened = false, waitingForMetadata = false;
-  let momentLoading = null, momentClockShown = false;
+  let inputError = false, submitted = null, wasOpened = false, waitingForMetadata = false;
+  let momentClockShown = false;
   let visibleWindow = null;
   const calendars = [];
   const timelineMarks = attachTimelineMarks(hourMarks);
@@ -44,6 +44,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     }
   }
   const dayRange = attachTimelineRange({ range, marker, resolveTap, onScrub: scrub,
+    onInteractionChange: active => explorer.setInteracting(active),
     resolveEdge({ min, max, value }) {
       const state = explorer.state;
       if (range.disabled || state.mode !== 'lifetime' || !state.metadata || value !== state.requestedUtc || value < min || value > max) return null;
@@ -108,7 +109,9 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const dayReady = day?.status === 'ready' && Boolean(day.timeline);
     // A ready chart cannot acknowledge a file that has not opened yet.
     const fileStatus = !state.metadata && ['loading', 'preparing', 'error'].includes(state.status);
-    const displayStatus = fileStatus ? state.status : momentState ? momentState.status : dayMode && ['idle', 'loading', 'error'].includes(day?.status) ? day.status : state.status;
+    const requestStatus = fileStatus ? state.status : momentState ? momentState.status : dayMode && ['idle', 'loading', 'error'].includes(day?.status) ? day.status : state.status;
+    const retryCount = (fileStatus ? state : momentState || (dayMode ? day : state))?.retryCount ?? 0;
+    const displayStatus = requestStatus === 'error' && retryCount > 0 ? 'loading' : requestStatus;
     panel.dataset.status = displayStatus;
     panel.dataset.mode = state.mode;
     panel.setAttribute('aria-busy', String(displayStatus === 'loading' || preparing));
@@ -148,22 +151,6 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       title: !dayMode && options.getPersonalChart?.() ? 'Текущий транзит' : 'Текущий момент',
       active: isReferenceMoment(displayedUtc, referenceUtc) });
     const pending = displayStatus === 'loading';
-    const waitingForMoment = state.opened && !dayMode && pending && state.metadata;
-    if (!waitingForMoment) {
-      if (momentLoading) clearTimeout(momentLoading.timer);
-      momentLoading = null;
-    } else if (!momentLoading) {
-      // Continuous scrubbing shares one wait; only the message is delayed.
-      const episode = { visible: false, timer: null };
-      momentLoading = episode;
-      episode.timer = setTimeout(() => {
-        if (momentLoading !== episode) return;
-        const current = explorer.state;
-        if (!current.opened || current.mode !== 'lifetime' || (options.getMomentState?.()?.status ?? current.status) !== 'loading') return;
-        episode.visible = true;
-        if (!inputError && !waitingForMetadata) setText(status, 'Загружаем момент…');
-      }, 400);
-    }
     const unshown = !dayMode && !momentState && Boolean(state.metadata && state.requestedUtc !== state.displayedUtc && (pending || state.displayedUtc !== null));
     const dayLabel = dayMode && day?.timeline && formatTimelineMinute(day.timeline, day.index ?? 0);
     const selectedLabel = dayLabel ? `${dayLabel.date}, ${dayLabel.time}, ${dayLabel.offset}`
@@ -171,16 +158,10 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     range.setAttribute('aria-valuetext', [selectedLabel, !cursorVisible ? 'на карте, вне выбранного периода' : '',
       pending ? 'загружается' : unshown ? 'не показано' : '',
       unshown && shown ? `на карте ${shown.date}, ${shown.time} ${shown.zone}` : ''].filter(Boolean).join('; '));
-    const momentMessage = momentLoading?.visible ? 'Загружаем момент…' : '';
-    setText(status, preparing ? 'Создаём летопись' : requestError || (displayStatus === 'error' ? fileStatus ? state.error : momentState
-      ? momentState.error || 'Не удалось загрузить текущий транзит' : dayMode && day?.status === 'error'
-        ? day.error || 'День не загрузился' : state.error || 'Не удалось загрузить момент'
-      : inputError ? '' : waitingForMetadata ? 'Загружаем диапазон дат…'
-      : pending ? dayMode ? 'Загружаем день…' : state.metadata ? momentMessage : 'Загружаем шкалу…' : ''));
-    if (retryButton) {
-      retryButton.hidden = displayStatus !== 'error';
-      retryButton.disabled = pending;
-    }
+    // Only repeated failures deserve feedback; a slow first request stays quiet.
+    // The request owner keeps retrying and owns this count, not the view.
+    setText(status, preparing ? 'Создаём летопись'
+      : state.opened && retryCount >= 3 && ['loading', 'error'].includes(displayStatus) ? 'Загружаю момент' : '');
     if (notify) options.onStateChange?.(state);
     if (waitingForMetadata && state.metadata && state.opened) {
       const pending = submitted;
@@ -193,7 +174,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
 
   const explorer = createLifetimeExplorer({ ...options, onStateChange: update });
   function clearInputError() {
-    inputError = false; requestError = '';
+    inputError = false;
     for (const input of inputs) {
       input.setAttribute('aria-invalid', 'false');
       const message = dateErrors.get(input);
@@ -239,12 +220,9 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (incomplete || inputError) { update(explorer.state); return; }
     submitted = { from, to: through ?? explorer.state.maxDate, fromText: fromDate.value, toText: toDate.value };
     const result = explorer.setDateRange(from, through);
-    if (result === false) {
-      if (!explorer.state.metadata) waitingForMetadata = true;
-      else requestError = 'Не удалось применить период.';
-    }
+    if (result === false && !explorer.state.metadata) waitingForMetadata = true;
     update(explorer.state);
-    Promise.resolve(result).catch(error => { requestError = error.message || 'Не удалось применить период.'; update(explorer.state); });
+    Promise.resolve(result).catch(() => update(explorer.state));
   }
 
   for (const input of inputs) {
@@ -297,9 +275,6 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const momentState = options.getMomentState?.();
     if (state.opened && (state.mode === 'day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
   };
-  retryButton?.addEventListener('click', () => !explorer.state.metadata ? explorer.retry()
-    : options.getMomentState?.()?.status === 'error' ? onLifetimeNow()
-    : explorer.state.mode === 'day' && options.getDayState?.()?.status === 'error' ? onDayNow() : explorer.retry());
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]]) {
     if (!button) continue;
     calendars.push(attachDatePicker({ input, button,
