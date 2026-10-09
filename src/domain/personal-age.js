@@ -34,7 +34,8 @@ export function lifeDecadeMarks(natal, fromUtc, toUtc) {
   const birth = Date.parse(natal?.utc);
   if (!Number.isFinite(birth) || !Number.isFinite(fromUtc) || !Number.isFinite(toUtc) || toUtc <= fromUtc || toUtc <= birth) return [];
   const ageAt = utc => completedAge(new Date(utc).toISOString(), natal);
-  const lastAge = Math.min(100, ageAt(toUtc)), marks = [];
+  const lastAge = Math.min(100, ageAt(toUtc));
+  const marks = birth >= fromUtc ? [{ age: 0, utc: birth }] : [];
   for (let age = 10; age <= lastAge; age += 10) {
     let low = birth, high = toUtc;
     while (low < high) {

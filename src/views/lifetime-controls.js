@@ -44,6 +44,15 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     }
   }
   const dayRange = attachTimelineRange({ range, marker, resolveTap, onScrub: scrub,
+    resolveEdge({ min, max, value }) {
+      const state = explorer.state;
+      if (range.disabled || state.mode !== 'lifetime' || !state.metadata || value !== state.requestedUtc || value < min || value > max) return null;
+      // Only the existing time owner knows the last available cached/grid point.
+      const previous = explorer.adjacentUtc(-1), next = explorer.adjacentUtc(1);
+      if (Number.isFinite(previous) && (previous === value || previous < min)) return 'start';
+      if (Number.isFinite(next) && (next === value || next > max)) return 'end';
+      return null;
+    },
     onStep(direction) {
       if (explorer.state.mode === 'lifetime') {
         const next = explorer.adjacentUtc(direction);
@@ -63,22 +72,22 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     },
   });
 
-  function updateDates(state) {
+  function updateDates(state, preparingDate = null) {
     if (submitted && state.fromDate === submitted.from && state.toDate === submitted.to) {
       if (fromDate.value === submitted.fromText) dirty.delete(fromDate);
       if (toDate.value === submitted.toText) dirty.delete(toDate);
       submitted = null;
     }
-    toDate.placeholder = state.openEnded ? 'До конца' : 'ДД.ММ.ГГГГ';
-    for (const [input, value] of [[fromDate, state.fromDate], [toDate, state.toDate]]) {
+    toDate.placeholder = state.openEnded && !preparingDate ? 'До конца' : 'ДД.ММ.ГГГГ';
+    for (const [input, value] of [[fromDate, preparingDate || state.fromDate], [toDate, preparingDate || state.toDate]]) {
       // Live minute updates and lifetime completions must not replace either
       // unfinished input, including the first field after the user presses Tab.
       if (!dirty.has(input) && panel.ownerDocument.activeElement !== input && value) {
-        const formatted = input === toDate && state.openEnded ? '' : formatDateInput(value);
+        const formatted = input === toDate && state.openEnded && !preparingDate ? '' : formatDateInput(value);
         if (input.value !== formatted) input.value = formatted;
       }
     }
-    const endpoints = state.opened && state.mode === 'lifetime' ? formatEndpoints(state)
+    const endpoints = !preparingDate && state.opened && state.mode === 'lifetime' ? formatEndpoints(state)
       ?? [formatDateInput(state.fromDate), formatDateInput(state.toDate)] : ['', ''];
     if (marks[0]) setText(marks[0], endpoints[0]);
     if (marks[1]) setText(marks[1], endpoints[1]);
@@ -89,11 +98,13 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     wasOpened = state.opened;
     toggle.hidden = !available;
     panel.hidden = !state.opened;
-    const dayMode = state.mode === 'day', preparing = state.status === 'preparing';
+    const preparing = state.status === 'preparing';
+    const transitDay = options.getDayState?.();
+    const dayMode = state.mode === 'day' || preparing && Boolean(transitDay);
     if (rangeLabel) setText(rangeLabel, dayMode ? 'Шкала дня: время транзита' : 'Шкала выбранных лет: время UTC');
     if (dayMode || !state.opened) momentState = null;
     momentClockShown = Boolean(momentState);
-    const day = dayMode ? options.getDayState?.() : null;
+    const day = dayMode ? transitDay : null;
     const dayReady = day?.status === 'ready' && Boolean(day.timeline);
     // A ready chart cannot acknowledge a file that has not opened yet.
     const fileStatus = !state.metadata && ['loading', 'preparing', 'error'].includes(state.status);
@@ -101,8 +112,6 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     panel.dataset.status = displayStatus;
     panel.dataset.mode = state.mode;
     panel.setAttribute('aria-busy', String(displayStatus === 'loading' || preparing));
-    range.hidden = preparing;
-    if (range.parentElement) range.parentElement.hidden = preparing;
     range.disabled = preparing || (dayMode ? !dayReady : !state.metadata);
     for (const input of inputs) input.disabled = preparing;
     if (fromCalendar) fromCalendar.disabled = !state.metadata;
@@ -123,7 +132,9 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const cursorVisible = dayMode || cursor >= Number(range.min) && cursor <= Number(range.max);
     range.setAttribute('data-cursor-visible', String(cursorVisible));
     range.value = String(cursor);
-    updateDates(state);
+    // A pending file previews the existing transit; its saved range stays intact.
+    const preparingDate = preparing && (day?.timeline?.date || day?.current?.birthDate);
+    updateDates(state, preparingDate);
 
     const shown = clock(dayMode ? day?.current?.utc || state.current?.utc : momentState ? momentState.current?.utc : state.current?.utc, dayMode ? day?.timeline?.timeZone : null);
     const requested = momentState ? shown : !dayMode && clock(state.requestedUtc);
@@ -284,7 +295,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (explorer.syncDay() || explorer.syncClock()) return;
     const state = explorer.state;
     const momentState = options.getMomentState?.();
-    if (state.opened && (state.mode === 'day' || momentState || momentClockShown)) update(state, momentState);
+    if (state.opened && (state.mode === 'day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
   };
   retryButton?.addEventListener('click', () => !explorer.state.metadata ? explorer.retry()
     : options.getMomentState?.()?.status === 'error' ? onLifetimeNow()
