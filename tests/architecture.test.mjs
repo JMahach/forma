@@ -102,7 +102,7 @@ test('server separates HTTP, service policies, process adapters and private enco
   for (const file of files('server/runtime')) only(file, ['node:', 'server/runtime/']);
   for (const file of files('server/packets')) only(file, ['node:', 'shared/day-packets/', 'server/packets/']);
   for (const file of files('server/http')) only(file, ['node:', 'shared/day-packets/', 'server/http/', 'server/services/'],
-    file === 'server/http/public-files.mjs' ? [loadingGenerator] : file === 'server/http/lifetime.mjs' ? ['shared/lifetime-format.js'] : []);
+    file === 'server/http/public-files.mjs' ? [loadingGenerator] : file === 'server/http/lifetime.mjs' ? ['shared/lifetime-exact-format.js'] : []);
   assert.ok(!graph.get('server/services/natal-days.mjs').includes('server/services/transit-days.mjs'));
   assert.ok(!graph.get('server/services/transit-days.mjs').includes('server/services/natal-days.mjs'));
   for (const file of [...files('server/services'), ...files('server/runtime'), ...files('server/packets')]) {

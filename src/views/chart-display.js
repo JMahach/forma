@@ -74,14 +74,13 @@ export const chartSubtitle = (value, { useUtc } = {}) => {
 
 // A personal timeline is a preview owned by the selected natal chart. Its
 // calculation uses transit data, but navigation and the header retain identity.
-export function chartCaption(chart, owner = chart, personalPreview = false, options) {
-  const identity = personalPreview && !isChartOverlay(chart) && owner?.source !== 'transit' && owner?.id !== 'current-transit' ? owner : chart;
-  const personalMoment = isChartOverlay(chart) || identity !== chart;
-  const natal = isChartOverlay(chart) ? chart.primary : owner;
+export function chartCaption(chart, owner = chart, options) {
+  const personalMoment = isChartOverlay(chart);
+  const natal = personalMoment ? chart.primary : owner;
   const subtitle = personalMoment ? momentLabel(chart.utc, natal.timezone || 'UTC', chart.kind === 'return') : chartSubtitle(chart, options);
   // The natal caption uses today's age regardless of the open rail; a personal
   // preview or overlay always keeps the age of its displayed moment.
   const ageUtc = personalMoment ? chart.utc : options?.ageUtc ?? chart.utc;
   const age = personalMoment || options?.showAge ? completedAge(ageUtc, primaryChart(natal)) : null;
-  return { title: chartTitle(identity), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
+  return { title: chartTitle(chart), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
 }

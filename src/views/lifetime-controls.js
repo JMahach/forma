@@ -37,7 +37,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (beforeScrub(value) === false) return;
     if (explorer.state.mode === 'day') onDayScrub(value);
     else {
-      explorer.scrub(value);
+      explorer.scrub(value, visibleWindow);
       // A no-op request between available samples still restores the accepted
       // UTC position after the native input has moved its thumb.
       range.value = String(explorer.state.requestedUtc);
@@ -158,9 +158,10 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     range.setAttribute('aria-valuetext', [selectedLabel, !cursorVisible ? 'на карте, вне выбранного периода' : '',
       pending ? 'загружается' : unshown ? 'не показано' : '',
       unshown && shown ? `на карте ${shown.date}, ${shown.time} ${shown.zone}` : ''].filter(Boolean).join('; '));
-    // Only repeated failures deserve feedback; a slow first request stays quiet.
-    // The request owner keeps retrying and owns this count, not the view.
-    setText(status, preparing ? 'Создаём летопись'
+    // Temporary failures stay quiet at first; a rejected file needs repair.
+    // The request owner decides whether to retry and owns the failure count.
+    setText(status, fileStatus && state.status === 'error' ? state.error
+      : preparing ? 'Создаём летопись'
       : state.opened && retryCount >= 3 && ['loading', 'error'].includes(displayStatus) ? 'Загружаю момент' : '');
     if (notify) options.onStateChange?.(state);
     if (waitingForMetadata && state.metadata && state.opened) {

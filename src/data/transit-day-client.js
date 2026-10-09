@@ -5,8 +5,8 @@ import { createAbortError, shareRequest } from './shared-request.js';
 
 // Day is a transport adapter. The common moment cache owns every saved number.
 export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, decode = decodeTransitDay,
-  calculationVersion = null, capacity, timeoutMs = 20_000, initialDate = null,
-  moments = createMomentCache({ ...(capacity ? { maxMemoryBytes: capacity * (1440 * 24 * 8 + 256) } : {}) }),
+  calculationVersion = null, timeoutMs = 20_000, initialDate = null,
+  moments = createMomentCache(),
 } = {}) {
   const pending = new Map();
   const peekDay = date => calculationVersion ? moments.peekDay(date, calculationVersion) : null;

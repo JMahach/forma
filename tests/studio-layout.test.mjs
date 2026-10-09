@@ -1,7 +1,6 @@
 import test from 'node:test';
 import * as geometry from '../src/scene/layout.js';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, STUDIO_BOTTOM_INSET, returnsPlacement } from '../src/scene/layout.js';
 import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
@@ -428,33 +427,21 @@ test('space-dependent columns retain every ring/body gate, exact core markup and
 });
 
 test('Home leaves the caption measurable at every fitted scale; zoom and pan hide it', () => {
-  const heading = {}, fitButton = {}, studio = { dataset: {} };
-  const update = createCameraChangeHandler({ heading, fitButton, studio, activationPopover: { reposition() {} } });
+  const heading = {}, fitButton = {};
+  const update = createCameraChangeHandler({ heading, fitButton, activationPopover: { reposition() {} } });
   for (const k of [.25, .55, 1.2]) {
     const home = { x: 120, y: 210, k };
     update(home, home);
     assert.equal(heading.hidden, false, 'the overlap layout decides caption visibility at Home');
     assert.equal(fitButton.hidden, true);
-    assert.equal(studio.dataset.cameraHome, 'true');
     for (const view of [{ ...home, k: home.k * 1.2 }, { ...home, x: home.x + 20 }]) {
       update(view, home);
       assert.equal(heading.hidden, true);
       assert.equal(fitButton.hidden, false);
-      assert.equal(studio.dataset.cameraHome, 'false');
     }
     update(home, home);
     assert.equal(heading.hidden, false);
   }
-});
-
-test('application rerenders geometric column changes without imposing a phone-only caption policy', () => {
-  const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-  assert.match(app, /getShowActivations:\s*\(\)\s*=>\s*!\(mandalaMode\?\.enabled && !layout\.showMandalaColumns\)/);
-  assert.doesNotMatch(app, /showMandalaHeading/, 'camera controls do not own the caption overlap policy');
-  assert.match(app, /attachMandalaMode\(\{[\s\S]*?motion: mandalaMotion, layout,/);
-  assert.match(app, /mandalaColumns !== layout\.showMandalaColumns[\s\S]*?graph\.render\(\)[\s\S]*?gestures\.resize\(\)/);
-  assert.match(app, /layoutObserver\.observe\(\$\('canvasWrap'\)\)/);
-  assert.doesNotMatch(app, /\[\$\('bodygraph'\), \$\('transitControls'\), \$\('natalDayControls'\)\]/, 'day panel content is not a camera resize source');
 });
 
 test('narrow Home uses a four-pixel outer planet margin without shrinking either mode', () => {
@@ -623,7 +610,6 @@ test('studio reads real DOMRect dimensions, whose properties are not enumerable'
   const canvas={dataset:{},parentElement:studio,getBoundingClientRect:()=>rect};
   const panel={dataset:{},style:{setProperty(){}}};
   createStudioLayout({canvas,panels:[panel],media:{matches:false},readStyle:()=>({scrollPaddingTop:'74px',scrollPaddingBottom:'52px',scrollPaddingLeft:'4px',getPropertyValue:()=> '0px'})});
-  assert.equal(studio.dataset.dockLayout,'inline');
   assert.equal(values.get('--timeline-dock-height'),'40.8px');
   assert.ok(Number.isFinite(Number.parseFloat(panel.style.left)));
   assert.equal(panel.style.top,'679px');

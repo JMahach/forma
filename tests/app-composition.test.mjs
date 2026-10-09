@@ -16,6 +16,10 @@ import { returnsVisibleWindow } from '../src/domain/returns-window.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
+import { createStudioLayout } from '../src/scene/studio-controller.js';
+import { createGraphController } from '../src/scene/updates.js';
+import { attachMandalaMode } from '../src/scene/modes/mandala.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 
 // Execute the whole composition root, preserving declaration and attachment
 // order. Browser-heavy views use ports; library/knowledge and state owners are real.
@@ -31,13 +35,15 @@ function browser() {
   function element(id) {
     if (!elements.has(id)) {
       const classes = new Set(), attributes = new Map(), handlers = new Map();
-      elements.set(id, { id, dataset: {}, hidden: false, inert: false, innerHTML: '',
+      elements.set(id, { id, ownerDocument: document, dataset: {}, hidden: false, inert: false, innerHTML: '',
+        style: { setProperty(name, value) { this[name] = value; } },
         contains(node) { return node === this || id === 'library' && ['nowButton', 'openKnowledge'].includes(node?.id); },
         focus() { document.activeElement = this; }, querySelector: () => element(`${id}-child`), querySelectorAll: () => [],
         getBoundingClientRect: () => ({ top: 0, bottom: 200 }),
         setAttribute(name, value) { attributes.set(name, String(value)); },
         getAttribute: name => attributes.get(name) ?? null, removeAttribute: name => attributes.delete(name),
-        classList: { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) },
+        classList: { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name),
+          toggle(name, enabled = !classes.has(name)) { if (enabled) classes.add(name); else classes.delete(name); } },
         addEventListener(type, handler, capture = false) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type).push({ handler, capture }); },
         async dispatch(type, event = {}) {
           let stopped = false;
@@ -54,8 +60,22 @@ function browser() {
   return { document, element };
 }
 
-function harness({ metaError = null, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
+function harness({ studioSize = null, metaError = null, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser();
+  const dimensions = studioSize && { ...studioSize };
+  let resizeLayout, layout = { refresh: noop };
+  if (dimensions) {
+    const rect = () => ({ ...dimensions, top: 0, left: 0, bottom: dimensions.height, right: dimensions.width });
+    const studio = element('studio'), canvas = element('canvasWrap');
+    studio.getBoundingClientRect = canvas.getBoundingClientRect = rect; canvas.parentElement = studio;
+    for (const id of ['lifetimeControls', 'natalDayControls', 'returnsControls']) element(id).hidden = true;
+    element('viewport').querySelector = () => null;
+    layout = createStudioLayout({ canvas, studio, returnsControls: element('returnsControls'),
+      panels: ['transitControls', 'natalDayControls', 'lifetimeControls'].map(element),
+      media: { matches: dimensions.width < 700 }, viewport: null,
+      readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
+        getPropertyValue: name => name === '--timeline-edge-space' ? '8px' : '0px' }) });
+  }
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
   let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, transitOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
@@ -65,13 +85,18 @@ function harness({ metaError = null, charts = [], getReturn = () => assert.fail(
     eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
     attachKnowledgeEntry: options => attachKnowledgeEntry({ ...options, eventTarget: document,
       load: async () => ({ attachKnowledge: dialog => ({ show() { dialog.open = true; } }) }) }),
-    attachActivationPopover: () => ({ close: noop, reposition: noop }),
+    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
     attachHoverPreview: () => ({ clear: noop }),
     attachGestures: (_svg, options) => { gestures = options; return { reset: noop, resize: noop }; },
     pointerTarget: noop, createCameraView: noop,
-    attachMandalaMode: () => ({ enabled: false }), createMandalaMotion: noop,
+    attachMandalaMode: options => dimensions ? attachMandalaMode(options) : ({ enabled: false }), createMandalaMotion: noop,
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
-    createGraphController: options => { graph = options; return { choose: noop, chooseSummary: noop, changeChart: id => { chartSelections++; options.onChartChange(id); },
+    createGraphController: options => { graph = options;
+      if (dimensions) return createGraphController({ ...options, scene: {
+        update(chart, selection, settings) { renders++; element('viewport').innerHTML = renderBodygraph(chart, selection, settings); },
+        clear() { element('viewport').innerHTML = ''; },
+      } });
+      return { choose: noop, chooseSummary: noop, changeChart: id => { chartSelections++; options.onChartChange(id); },
       clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
     createChartStore: () => store,
@@ -79,21 +104,25 @@ function harness({ metaError = null, charts = [], getReturn = () => assert.fail(
     chartCaption,
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a, b) { title.textContent = a; subtitle.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
-    attachLiveTransit: options => { transitOptions = options; return { state: { wanted: true }, current: null, refresh: noop, setWanted: noop }; },
+    attachLiveTransit: options => {
+      transitOptions = options;
+      const current = dimensions ? store.get('current-transit') : null;
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, setWanted: noop };
+    },
     attachTransitNavigation: noop,
-    attachTransitControls: () => ({ update: noop, setCoveredByLifetime: noop }),
+    attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: () => ({ close: noop, setReturnsVisible: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
+    attachChartSummary: () => ({ close: noop, setReturnsVisible: noop, update: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
     attachChartLoading: () => ({ update: noop }), createCyclesClient: () => ({ events: async () => ({ events: [] }), chart: getReturn }), ageText, completedAge,
     updateReturnsEntry: noop, attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView',
     `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')}\nreturn startApp;`)(
-    ...imports.map(name => ports[name]), document, class { observe() {} }, { search: '' },
+    ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search: '' },
     { location: { reload() { reloads++; } } }, () => { loads++; return module; });
-  startApp({ dayClient: {}, layout: { refresh: noop }, toast: noop, viewStore: { write: noop }, savedView: null });
-  return { element, select: id => graph.onChartChange(id), get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; },
+  startApp({ dayClient: {}, layout, toast: noop, viewStore: { write: noop }, savedView: null });
+  return { element, layout, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select: id => graph.onChartChange(id), get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; },
     get interruptions() { return interruptions; },
     filter: id => gestures.onSelect({ type: 'planet-filter', id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
@@ -104,7 +133,10 @@ function harness({ metaError = null, charts = [], getReturn = () => assert.fail(
     saveMetadata(chart) { charts = store.charts = charts.map(previous => previous.id === chart.id ? chart : previous); birthOptions.onSave(chart.id, { metadataOnly: true }); },
     finishModule() { finishModule({ attachLifetimeControls(options) {
       lifetimeOptions = options;
-      lifetime = createLifetimeExplorer({ ...options, client: {
+      lifetime = createLifetimeExplorer({ ...options, onStateChange(state) {
+        if (dimensions) options.panel.hidden = !state.opened;
+        options.onStateChange(state);
+      }, client: {
         getMeta: async () => { if (metaError) throw metaError; return { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
           stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }; },
         getPoint,
@@ -402,4 +434,32 @@ test('opening a personal timeline before its file is ready retains a restorable 
   assert.equal(h.lifetime.state.toDate, '2126-09-24');
   assert.equal(h.shown.primary, chart);
   assert.equal(h.natalDay.state.opened, false);
+});
+
+
+test('opening chronicle updates mandala columns before the unchanged transit publishes again', async () => {
+  const transit = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), id: 'current-transit', source: 'transit' };
+  const h = harness({ charts: [transit], studioSize: { width: 550, height: 590 } });
+  await tick(); await h.element('mandalaSwitch').click();
+  const shown = h.shown;
+  assert.equal(h.layout.showMandalaColumns, false);
+  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/);
+  await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  assert.equal(h.lifetime.state.mode, 'day');
+  assert.equal(h.shown.utc, shown.utc, 'opening preserves the accepted transit moment');
+  assert.equal(h.layout.showMandalaColumns, true, 'the taller dock leaves room beside the smaller mandala');
+  assert.match(h.element('viewport').innerHTML, /class="activation-columns"/, 'columns must appear without another data response or viewport resize');
+  const rendered = h.renders;
+  h.clockTick();
+  h.resize(550, 590);
+  assert.equal(h.renders, rendered, 'unchanged presentation needs no extra drawing');
+  h.resize(550, 650);
+  assert.equal(h.renders, rendered + 1, 'one presentation change draws once');
+  assert.equal(h.layout.showMandalaColumns, false);
+  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/, 'window resize follows the same presentation owner');
+  h.resize(550, 590);
+  assert.match(h.element('viewport').innerHTML, /class="activation-columns"/);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.layout.showMandalaColumns, false);
+  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/, 'closing the dock removes columns when they no longer fit');
 });

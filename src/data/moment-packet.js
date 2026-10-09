@@ -1,3 +1,4 @@
+import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.js';
 import { MOMENT_COLUMN_COUNT as COLUMNS, validMomentValue } from '../../shared/day-packets/moment-columns.js';
 
 export const DAY_MS = 86400000, MINUTE_MS = 60000, DAY_SAMPLES = 1440;
@@ -49,7 +50,7 @@ export function validPacket(packet, key) {
 // sub-minute exceptions; two tabs merge within the storage transaction.
 export function mergePackets(previous, incoming) {
   if (!previous) return incoming;
-  if (!incoming) return previous;
+  if (!incoming || incoming === previous) return previous;
   const day = incoming.day || previous.day;
   const rows = new Map();
   for (const packet of [previous, incoming]) for (let i = 0; i < packet.offsets.length; i++) {
@@ -97,7 +98,7 @@ export function packetMoment(packet, milliseconds) {
 // mutate the shared cache or another tool's picture.
 export function packetDay(packet) {
   if (!packet.day) return null;
-  return { ...packet.meta, calculationVersion: packet.version, version: '2', date: packet.date,
+  return { ...packet.meta, calculationVersion: packet.version, version: TRANSIT_DAY_VERSION, date: packet.date,
     startUtc: `${packet.date}T00:00:00Z`, samples: DAY_SAMPLES, stepSeconds: 60,
     columns: Array.from({ length: COLUMNS }, (_, c) => packet.day.slice(c * DAY_SAMPLES, (c + 1) * DAY_SAMPLES)) };
 }

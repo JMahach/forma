@@ -19,7 +19,7 @@ export function createLifetimeExplorer({
 } = {}) {
   let metadata = null, fullChart = null, manualChart = null, requestedUtc = null, restoring = false, pendingRestore = null;
   const current = () => planetFilter.filter(fullChart);
-  let interacting = false, selection = 0;
+  let interacting = false, selection = 0, selectionBounds = null;
   let opened = false, mode = 'day', status = 'idle', error = '', sequence = 0, active = null, notifiedReference = null;
   let retryCount = 0, retryTimer = null;
   let openEnded = false, fromDate = null, toDate = null, minDate = null, maxDate = null, minUtc = null, maxUtc = null;
@@ -27,9 +27,11 @@ export function createLifetimeExplorer({
   const clampUtc = value => Math.max(minUtc, Math.min(maxUtc, value));
   const indexAt = utc => (utc - Date.parse(metadata.startUtc)) / (metadata.stepSeconds * 1000);
   const utcAt = index => Date.parse(metadata.startUtc) + index * metadata.stepSeconds * 1000;
-  function gridUtc(value, round = Math.round) {
-    if (Math.ceil(indexAt(minUtc)) > Math.floor(indexAt(maxUtc))) return minUtc;
-    const index = Math.max(Math.ceil(indexAt(minUtc)), Math.min(Math.floor(indexAt(maxUtc)), round(indexAt(value))));
+  const limits = bounds => ({ min: Math.max(minUtc, bounds?.minUtc ?? minUtc), max: Math.min(maxUtc, bounds?.maxUtc ?? maxUtc) });
+  function gridUtc(value, round = Math.round, bounds = null) {
+    const { min, max } = limits(bounds), first = Math.ceil(indexAt(min)), last = Math.floor(indexAt(max));
+    if (first > last) return bounds ? null : min;
+    const index = Math.max(first, Math.min(last, round(indexAt(value))));
     return utcAt(index);
   }
   function setBounds(start, end, minimumUtc) {
@@ -47,7 +49,7 @@ export function createLifetimeExplorer({
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
   function cancel() {
     clearTimeout(retryTimer); retryTimer = null; retryCount = 0;
-    sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null;
+    sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null; selectionBounds = null;
   }
   const dayDate = day => day?.timeline?.date || day?.current?.birthDate || null;
   function borrowDay() {
@@ -89,17 +91,19 @@ export function createLifetimeExplorer({
     if (generation === sequence && opened && mode === 'lifetime') onRender();
     return Promise.resolve(true);
   }
-  function chooseTarget(value, round = Math.round) {
-    const clamped = clampUtc(value);
+  function chooseTarget(value, round = Math.round, bounds = null) {
+    const { min, max } = limits(bounds);
+    if (min > max) return null;
+    const clamped = Math.max(min, Math.min(max, value));
     // A selected manual snapshot survives eviction. A borrowed natal/return
     // chart never becomes an lifetime snapshot merely by sharing its UTC.
     if (manualChart && shownUtc() === clamped) return { utc: clamped, chart: manualChart };
-    const minute = Math.max(Math.ceil(minUtc / 60000) * 60000,
-      Math.min(Math.floor(maxUtc / 60000) * 60000, Math.round(clamped / 60000) * 60000));
-    const chart = minute <= maxUtc ? client.peekMinute?.(minute) : null;
-    if (chart || client.hasMinute?.(minute)) return { utc: minute, chart };
-    const utc = gridUtc(clamped, round);
-    return { utc, chart: client.peekMoment?.(utc) || null };
+    const minute = Math.max(Math.ceil(min / 60000) * 60000,
+      Math.min(Math.floor(max / 60000) * 60000, Math.round(clamped / 60000) * 60000));
+    const chart = minute <= max ? client.peekMinute?.(minute) : null;
+    if (chart || minute <= max && client.hasMinute?.(minute)) return { utc: minute, chart };
+    const utc = gridUtc(clamped, round, bounds);
+    return utc === null ? null : { utc, chart: client.peekMoment?.(utc) || null };
   }
   function load(restoration = pendingRestore) {
     if (!opened) return Promise.resolve(false);
@@ -159,18 +163,27 @@ export function createLifetimeExplorer({
             return true;
           }
           let target = requestedUtc;
-          const selected = selection;
+          const selected = selection, bounds = selectionBounds;
           let chart;
           try {
             chart = client.peekMoment?.(target) || client.peekMinute?.(target);
             if (!chart && client.hasMinute?.(target)) chart = await client.readMinute(target, { signal: request.controller.signal });
+            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
+            // A disk miss has no ready progress to show. Recheck ownership and
+            // the selected UTC before starting another request for this target.
+            if (!chart && (getMomentState() || target !== requestedUtc)) continue;
             if (!chart && restoration?.requestedUtc !== undefined && !Number.isInteger(indexAt(target))) {
               chart = await client.getMinute(target, { signal: request.controller.signal });
             } else if (!chart) {
               // A catalogue can outlive a disk entry. A scrub may only read
               // prepared data; only explicit restoration permits exact work.
               if (!Number.isInteger(indexAt(target))) {
-                const fallback = gridUtc(target);
+                const fallback = gridUtc(target, Math.round, bounds);
+                if (fallback === null) {
+                  if (target !== requestedUtc) continue;
+                  requestedUtc = shownUtc(); status = fullChart ? 'ready' : 'idle'; notify();
+                  return false;
+                }
                 if (target === requestedUtc) { requestedUtc = fallback; notify(); }
                 target = fallback;
               }
@@ -209,7 +222,11 @@ export function createLifetimeExplorer({
         }
         error = '';
         if (failure?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
-        else {
+        else if (!metadata && failure?.code === 'lifetime_unavailable') {
+          // Opening rejected the prepared file. A repaired file can be tried
+          // again explicitly; repeating the same validation cannot repair it.
+          status = 'error'; retryCount = 0; error = failure.message || 'Данные летописи недоступны.';
+        } else {
           status = 'loading'; retryCount++;
           // Keep the selected target and last good chart. A new command cancels
           // this wait; only the still-current load may retry after its backoff.
@@ -270,11 +287,16 @@ export function createLifetimeExplorer({
     onModeAccepted({ opened, mode });
     notify(); onRender();
   }
-  function scrub(value) {
-    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)) return;
-    const next = chooseTarget(value);
+  function scrub(value, bounds = null) {
+    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
+        || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
+    const next = chooseTarget(value, Math.round, bounds);
+    if (!next) return;
     if (next.utc === requestedUtc && status !== 'error' && (manualChart && shownUtc() === next.utc || active && !next.chart)) return;
     if (restoring || pendingRestore || retryTimer !== null || active && client.hasMinute?.(next.utc)) cancel();
+    // The visible year constrains this command and its disk-miss fallback,
+    // while the explorer keeps the person's full range and saved UTC.
+    selectionBounds = bounds ? { minUtc: bounds.minUtc, maxUtc: bounds.maxUtc } : null;
     if (next.chart) return publishReady(next.chart, next.utc);
     selection++; retryCount = 0; requestedUtc = next.utc; status = 'loading'; error = ''; notify();
     return load();
@@ -310,6 +332,7 @@ export function createLifetimeExplorer({
       const start = dateStart(from), end = dateStart(through) + dayMilliseconds;
       if (!opened || !metadata || !Number.isFinite(start) || !Number.isFinite(end)
           || from < minDate || through > maxDate || from > through) return false;
+      selectionBounds = null;
       const currentDay = dayDate(getDayState());
       if (!nextOpenEnded && from === currentDay && through === currentDay) {
         if (mode === 'day') return true;

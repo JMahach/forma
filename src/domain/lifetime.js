@@ -1,5 +1,6 @@
 import { projectMomentChart, snapshotLongitudes } from './moment-projection.js';
-import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_EXACT_VERSION } from '../../shared/lifetime-format.js';
+import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS } from '../../shared/lifetime-format.js';
+import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 
 const fail = () => { throw new Error('Некорректные данные летописи.'); };
 const utcText = milliseconds => new Date(milliseconds).toISOString().replace('.000Z', 'Z');

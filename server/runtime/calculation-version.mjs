@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 // Transport, compression, styling and file layout have their own versions.
 export const CALCULATION_INPUTS = Object.freeze([
   'server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
-  'server/python/calculator.py', 'server/python/transit_day.py', 'requirements.txt',
+  'server/python/calculator.py', 'server/python/transit_day.py', 'server/python/lifetime_file.py', 'requirements.txt',
   'shared/day-packets/moment-columns.js', 'data/ephe',
 ]);
 

@@ -25,6 +25,7 @@ export function createMomentCache({ indexedDB, databaseName, maxMemoryBytes = 32
   }
   function retain(packet) {
     const previous = memory.get(packet.key);
+    if (previous !== packet) for (const key of snapshots.keys()) if (key.startsWith(`${packet.key}:`)) snapshots.delete(key);
     memoryBytes -= previous ? packetBytes(previous) : 0;
     memory.delete(packet.key); memory.set(packet.key, packet); memoryBytes += packetBytes(packet);
     for (const [key, oldest] of memory) {
@@ -40,25 +41,32 @@ export function createMomentCache({ indexedDB, databaseName, maxMemoryBytes = 32
     if (packet) { memory.delete(key); memory.set(key, packet); touch(key); }
     return packet || null;
   }
+  function available(key, disk = null) {
+    // RAM can contain only a newer fragment after eviction. Pending writes
+    // remain readable until persistence settles; none may shadow the others.
+    for (const packet of [flushingPackets.get(key), writes.get(key), memory.get(key)]) disk = mergePackets(disk, packet);
+    return disk;
+  }
   async function read(date, version, contains) {
-    const key = packetKey(date, version), hot = peek(date, version) || writes.get(key) || flushingPackets.get(key);
-    if (hot && contains(hot)) return retain(hot);
+    const key = packetKey(date, version), hot = peek(date, version);
+    if (hot && contains(hot)) return hot;
+    const local = available(key);
+    if (local && contains(local)) return retain(local);
     await ready;
     if (!reads.has(key)) reads.set(key, storage.read(key).then(packet => {
-      // A newly received full day wins over a slower old disk read.
-      const current = memory.get(key);
-      if (!packet) { diskCatalogue.delete(key); return current || hot || null; }
-      rememberDisk(packetCatalogue(packet, now()));
-      const merged = mergePackets(packet, current);
-      touch(key); return retain(merged);
-    }).catch(() => null).finally(() => reads.delete(key)));
+      if (packet) { rememberDisk(packetCatalogue(packet, now())); touch(key); }
+      else diskCatalogue.delete(key);
+      // Include rows received while the disk read was pending, even if they
+      // no longer fit RAM. A failed read cannot discard local ready numbers.
+      const merged = available(key, packet);
+      return merged ? retain(merged) : null;
+    }).catch(() => available(key)).finally(() => reads.delete(key)));
     return reads.get(key);
   }
   function remember(packet) {
     if (closed) return;
     const combined = mergePackets(memory.get(packet.key), packet);
     retain(combined);
-    for (const key of snapshots.keys()) if (key.startsWith(`${packet.key}:`)) snapshots.delete(key);
     const queued = writes.get(packet.key), next = mergePackets(queued, packet);
     writeBytes += packetBytes(next) - (queued ? packetBytes(queued) : 0); writes.delete(packet.key); writes.set(packet.key, next);
     while (writeBytes > maxWriteBytes && writes.size) {
@@ -97,8 +105,10 @@ export function createMomentCache({ indexedDB, databaseName, maxMemoryBytes = 32
     ready, flush,
     retainDay(day) {
       const key = packetKey(day.date, day.calculationVersion);
-      if (!memory.has(key)) retain(dayPacket(day));
+      const packet = memory.get(key);
+      const full = packet?.day ? packet : mergePackets(packet, dayPacket(day));
       pinned.set(key, (pinned.get(key) || 0) + 1);
+      retain(full);
       let released = false;
       return () => { if (released) return; released = true;
         const count = pinned.get(key) - 1; if (count) pinned.set(key, count); else pinned.delete(key);

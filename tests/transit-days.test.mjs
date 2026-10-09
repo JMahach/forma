@@ -404,7 +404,7 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
 
 test('disk fingerprint follows calculation bytes, not deployment timestamps or interface changes', async t => {
   const sourceRoot = await directory(t);
-  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py', 'server/python/calculator.py',
+  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py', 'server/python/calculator.py', 'server/python/lifetime_file.py',
     'shared/day-packets/moment-columns.js', 'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
     'shared/day-packets/decode.js', 'server/packets/encode.mjs'];
   for (const file of [...inputs, 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {

@@ -24,7 +24,7 @@ const response = value => ({ ok: true, json: async () => value });
 const tick = () => new Promise(setImmediate);
 function harness({ capacity = 1, getMomentState = () => null } = {}) {
   const requests = [], exactRequests = [], dayRequests = [], renders = [];
-  const dayClient = createTransitDayClient({ capacity, decode: value => value, fetch: async url => {
+  const dayClient = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: capacity * (1440 * 24 * 8 + 256) }), decode: value => value, fetch: async url => {
     const date = new URL(url, 'http://test').searchParams.get('date'); dayRequests.push(date);
     return { ok: true, arrayBuffer: async () => dayAt(date) };
   } });
@@ -278,6 +278,71 @@ test('a stale disk minute falls back to the ten-minute file without exact calcul
   const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01'); await explorer.scrub(target);
   assert.equal(explorer.state.displayedUtc, utc('30T12:30:00'));
+});
+
+function delayedMinute(t) {
+  const target = utc('30T12:31:00'), points = [], exact = [], renders = [];
+  let finish, momentState = null;
+  const day = transitChartAt(dayAt('2026-09-30'), 577);
+  const minute = transitChartAt(dayAt('2026-09-30'), 751);
+  const explorer = createLifetimeExplorer({ getMomentState: () => momentState,
+    getDayState: () => ({ current: day, timeline: { date: '2026-09-30' } }),
+    client: { getMeta: async () => metadata, hasMinute: value => value === target,
+      readMinute: () => new Promise(resolve => { finish = resolve; }),
+      getPoint: async index => { points.push(index); return point(index); },
+      getMinute: async value => { exact.push(value); return minute; } },
+    onRender: () => { if (explorer.current) renders.push(explorer.current.utc); },
+  });
+  t.after(() => { explorer.close(); finish?.(null); });
+  return { explorer, target, points, exact, renders, minute,
+    finish: value => finish(value), setOwner: value => { momentState = value; } };
+}
+
+for (const interacting of [false, true]) test(`a superseded disk miss skips obsolete fallback with interaction ${interacting}`, async t => {
+  const h = delayedMinute(t);
+  await h.explorer.open(); await h.explorer.setDateRange('2026-09-29', '2026-10-01');
+  h.points.length = 0; h.renders.length = 0; h.explorer.setInteracting(interacting);
+  const first = h.explorer.scrub(h.target, { minUtc: utc('30T00:00:00'), maxUtc: utc('30T23:59:59.999') });
+  await tick();
+  const latest = Date.parse('2026-10-01T12:00:00Z');
+  h.explorer.scrub(latest, { minUtc: Date.parse('2026-10-01T00:00:00Z'), maxUtc: Date.parse('2026-10-01T23:59:59.999Z') });
+  h.finish(null); await first;
+  assert.deepEqual(h.points, [360], 'the latest target must not wait for an obsolete fallback request');
+  assert.deepEqual(h.exact, []);
+  assert.deepEqual(h.renders, ['2026-10-01T12:00:00Z']);
+  assert.equal(h.explorer.state.displayedUtc, latest);
+});
+
+for (const command of ['close', 'day', 'align', 'owner']) test(`a disk miss after ${command} cannot start another transport`, async t => {
+  const h = delayedMinute(t);
+  await h.explorer.open(); await h.explorer.setDateRange('2026-09-29', '2026-10-01');
+  h.points.length = 0;
+  // Restoration could start exact calculation; a scrub could read a grid point.
+  const pending = ['close', 'align'].includes(command)
+    ? h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: h.target })
+    : h.explorer.scrub(h.target);
+  await tick();
+  if (command === 'close') h.explorer.close();
+  else if (command === 'day') h.explorer.setDateRange('2026-09-30', '2026-09-30');
+  else if (command === 'align') h.explorer.alignMoment(h.minute);
+  else h.setOwner({ current: h.minute, status: 'ready' });
+  h.finish(null); await pending;
+  assert.deepEqual(h.points, [], 'the abandoned disk read cannot request its grid fallback');
+  assert.deepEqual(h.exact, [], 'the abandoned restoration cannot request an exact calculation');
+  if (command === 'close') assert.equal(h.explorer.state.opened, false);
+  else if (command === 'day') assert.equal(h.explorer.state.mode, 'day');
+  else { assert.equal(h.explorer.current.utc, '2026-09-30T12:31:00Z'); assert.equal(h.explorer.state.status, 'ready'); }
+});
+
+test('a ready disk minute still shows intermediate progress during continuous scrubbing', async t => {
+  const h = delayedMinute(t);
+  await h.explorer.open(); await h.explorer.setDateRange('2026-09-29', '2026-10-01');
+  h.points.length = 0; h.renders.length = 0; h.explorer.setInteracting(true);
+  const first = h.explorer.scrub(h.target); await tick();
+  h.explorer.scrub(Date.parse('2026-10-01T12:00:00Z'));
+  h.finish(h.minute); await first;
+  assert.deepEqual(h.renders, ['2026-09-30T12:31:00Z', '2026-10-01T12:00:00Z']);
+  assert.deepEqual(h.points, [360]);
 });
 
 test('an old disk read cannot be relabelled with replacement metadata', async () => {

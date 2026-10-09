@@ -926,9 +926,10 @@ test('preparing keeps the disabled lifetime rail and stays visible through live-
 });
 
 
-test('a ready personal chart cannot hide a pending or failed lifetime file', async () => {
+test('a ready personal chart cannot hide a pending or failed lifetime file', async t => {
   const meta = deferred(), natal = { utc: '1998-08-18T14:00:00Z' };
   const h = harness({ metaPromise: meta.promise, getMomentState: () => ({ current: natal, status: 'ready' }) });
+  t.after(() => h.explorer.close());
   const opening = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
     minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) });
   await tick();
@@ -936,10 +937,11 @@ test('a ready personal chart cannot hide a pending or failed lifetime file', asy
   assert.equal(h.status.textContent, '');
   meta.reject(Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }));
   assert.equal(await opening, false);
-  assert.equal(h.panel.dataset.status, 'loading');
-  assert.equal(h.status.textContent, '');
+  assert.equal(h.panel.dataset.status, 'error');
+  assert.equal(h.panel.getAttribute('aria-busy'), 'false');
+  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
   h.explorer.close();
-  });
+});
 
 test('a personal range accepted before metadata preserves an unfinished date draft when the file opens', async () => {
   const meta = deferred(), natal = { utc: '1998-08-18T14:00:00Z' };
@@ -1026,4 +1028,119 @@ test('preparing dates do not acknowledge an unaccepted user range while metadata
   assert.equal(h.fromDate.value, '30.09.2026');
   assert.equal(h.toDate.value, '30.09.2026');
   assert.equal(h.explorer.state.mode, 'day');
+});
+
+
+for (const cache of ['cold', 'memory', 'missing-disk']) test(`a clipped year keeps End and rightward steps within prepared ${cache} samples`, async () => {
+  const finalMinute = Date.parse('2000-12-31T23:59:00Z'), outsideMinute = Date.parse('2001-01-01T00:00:00Z');
+  const cached = { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(finalMinute).toISOString() };
+  let diskCataloguePresent = true;
+  const h = harness({ client: {
+    peekMinute: value => cache === 'memory' && [finalMinute, outsideMinute].includes(value) ? { ...cached, utc: new Date(value).toISOString() } : null,
+    hasMinute: value => diskCataloguePresent && cache === 'missing-disk' && [finalMinute, outsideMinute].includes(value),
+    readMinute: async () => { diskCataloguePresent = false; return null; },
+  } });
+  await open(h); await dates(h, '18081998', '18082098'); await complete(h);
+  const full = { minUtc: h.explorer.state.minUtc, maxUtc: h.explorer.state.maxUtc };
+  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:00:00Z'), maxUtc: Date.parse('2000-12-31T23:59:59.999Z') });
+  h.range.dispatch('keydown', { key: 'End' }); await tick();
+  if (cache !== 'memory') await complete(h);
+  const expected = cache === 'memory' ? '2000-12-31T23:59:00.000Z' : '2000-12-31T23:50:00.000Z';
+  assert.equal(new Date(h.explorer.state.requestedUtc).toISOString(), expected);
+  assert.equal(Date.parse(h.explorer.current.utc), Date.parse(expected));
+  assert.equal(h.range.getAttribute('data-cursor-visible'), 'true');
+  const requests = h.requests.length;
+  h.range.dispatch('keydown', { key: 'ArrowRight' }); await tick();
+  assert.equal(new Date(h.explorer.state.requestedUtc).toISOString(), expected);
+  assert.equal(h.requests.length, requests, 'the next step cannot request a moment in another year');
+  assert.deepEqual({ minUtc: h.explorer.state.minUtc, maxUtc: h.explorer.state.maxUtc }, full, 'year filtering never changes the full life span');
+  h.explorer.close();
+});
+
+test('a clipped left edge rounds inward for both Home and pointer input', async () => {
+  const h = harness(); await open(h); await dates(h, '01012000', '02012000'); await complete(h);
+  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:04:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
+  h.range.dispatch('keydown', { key: 'Home' }); await tick(); await complete(h);
+  assert.equal(h.explorer.current.utc, '2000-01-01T00:10:00Z');
+  assert.equal(h.range.getAttribute('data-cursor-visible'), 'true');
+  h.range.value = String(Date.parse('2000-01-01T12:05:00Z'));
+  h.range.dispatch('input'); await tick(); await complete(h);
+  assert.equal(h.explorer.current.utc, '2000-01-01T12:00:00Z');
+  assert.equal(h.range.getAttribute('data-cursor-visible'), 'true');
+  h.explorer.close();
+});
+
+
+test('an invalid lifetime file stops metadata retries and an explicit retry retains the personal range', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let ready = false, metadataCalls = 0;
+  const natal = { utc: '1998-08-18T14:00:00Z' };
+  const h = harness({ getMomentState: () => ({ current: natal, status: 'ready' }), client: {
+    async getMeta() { metadataCalls++; if (!ready) throw Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }); return metadata; },
+  } });
+  const snapshot = { opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18', minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) };
+  assert.equal(await h.explorer.restore(snapshot), false);
+  assert.equal(h.explorer.state.status, 'error');
+  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.explorer.state.retryCount, 0);
+  t.mock.timers.tick(60_000); await tick(); h.explorer.syncTransit();
+  assert.equal(metadataCalls, 1, 'a rejected file cannot be repaired by repeating its metadata request');
+  ready = true; assert.equal(await h.explorer.retry(), true);
+  assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
+  assert.equal(h.explorer.state.fromDate, snapshot.fromDate); assert.equal(h.explorer.state.toDate, snapshot.toDate);
+  assert.equal(h.explorer.current, natal); assert.equal(h.explorer.state.requestedUtc, snapshot.requestedUtc);
+  h.explorer.close();
+});
+
+test('reopening the scale recovers after a rejected file has been replaced', async t => {
+  let ready = false, metadataCalls = 0;
+  const h = harness({ client: { async getMeta() {
+    metadataCalls++; if (!ready) throw Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' });
+    return metadata;
+  } } });
+  t.after(() => h.explorer.close());
+  assert.equal(await h.explorer.open(), false);
+  assert.equal(h.explorer.state.status, 'error');
+  h.explorer.close(); ready = true;
+  assert.equal(await h.explorer.open(), true);
+  assert.equal(metadataCalls, 2); assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
+  assert.equal(h.explorer.current.utc, h.day.current.utc);
+  h.explorer.close();
+});
+
+test('metadata rejection after a changed revision remains a file error before a new moment can load', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let metadataCalls = 0, pointCalls = 0;
+  const h = harness({ client: {
+    async getMeta() { if (++metadataCalls > 1) throw Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }); return metadata; },
+    async getPoint() { pointCalls++; throw Object.assign(new Error('Версия изменилась.'), { code: 'unsupported_version' }); },
+  } });
+  await open(h);
+  const selected = Date.parse('2000-01-01T00:00:00Z');
+  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected });
+  assert.equal(h.explorer.state.status, 'loading');
+  t.mock.timers.tick(1000); await tick();
+  assert.equal(h.explorer.state.status, 'error'); assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.explorer.state.requestedUtc, selected); assert.equal(pointCalls, 1);
+  t.mock.timers.tick(60_000); await tick(); assert.equal(metadataCalls, 2);
+  h.explorer.close();
+});
+
+for (const failureSource of ['metadata-network', 'point', 'exact']) test(`temporary ${failureSource} errors still retry the chosen moment automatically`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0;
+  const selected = Date.parse(failureSource === 'exact' ? '2000-01-01T12:37:00Z' : '2000-01-01T12:30:00Z');
+  const failOnce = () => { if (++attempts === 1) throw Object.assign(new Error('Временно недоступно.'), failureSource === 'metadata-network' ? {} : { code: 'lifetime_unavailable' }); };
+  const h = harness({ client: {
+    async getMeta() { if (failureSource === 'metadata-network') failOnce(); return metadata; },
+    async getPoint(index) { if (failureSource === 'point') failOnce(); return moment(index); },
+    async getMinute(value) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
+  } });
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected }), false);
+  assert.equal(h.explorer.state.status, 'loading'); assert.equal(h.explorer.state.retryCount, 1);
+  assert.equal(h.status.textContent, '');
+  t.mock.timers.tick(1000); await tick();
+  assert.equal(attempts, 2); assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(Date.parse(h.explorer.current.utc), selected); assert.equal(h.explorer.state.retryCount, 0);
+  h.explorer.close();
 });

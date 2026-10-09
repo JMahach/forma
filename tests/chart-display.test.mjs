@@ -7,7 +7,7 @@ test('personal previews keep the name but show the accepted moment, its birth-zo
   const owner = Object.freeze({ id: 'anna', source: 'calculated', name: 'Анна', utc: '1998-08-18T14:00:00Z',
     birthDate: '1998-08-18', birthTime: '18:00', timezone: 'Europe/Moscow' });
   const preview = { id: 'lifetime-preview', source: 'transit', utc: '2026-10-08T09:25:00Z' };
-  assert.deepEqual(chartCaption(preview, owner, true), { title: 'Анна', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
+  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Анна · Транзит', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
   const overlay = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:1:1', body: 'saturn', cycle: 1, utc: preview.utc } });
   assert.equal(chartCaption(overlay, owner).subtitle, '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет');
   assert.equal(owner.birthTime, '18:00');
@@ -17,9 +17,9 @@ test('header distinguishes repeated local minutes and never carries the previous
   localZone(t, 'America/New_York');
   const owner = { id: 'anna', name: 'Анна', source: 'calculated', utc: '1998-08-18T14:00:00Z', timezone: 'America/New_York' };
   const first = { id: 'current-transit', source: 'transit', utc: '2026-11-01T05:30:00Z' };
-  assert.equal(chartCaption(first, owner, true).subtitle, '1 ноября 2026 г. · 01:30 · UTC-4 · 28\u00a0лет');
+  assert.equal(chartCaption(overlayFixture(owner, first, { kind: 'transit' }), owner).subtitle, '1 ноября 2026 г. · 01:30 · UTC-4 · 28\u00a0лет');
   const second = { ...first, utc: '2026-11-01T06:30:00Z' };
-  assert.equal(chartCaption(second, owner, true).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5 · 28\u00a0лет');
+  assert.equal(chartCaption(overlayFixture(owner, second, { kind: 'transit' }), owner).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5 · 28\u00a0лет');
   assert.equal(chartCaption(second).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5');
 });
 
@@ -27,7 +27,7 @@ test('closing a preview restores saved birth facts with the same date formatting
   const owner = { id: 'anna', source: 'calculated', name: 'Анна', utc: '1998-08-18T14:00:00Z',
     birthDate: '1998-08-18', birthTime: '18:00', utcOffset: 'UTC+04:00', timezone: 'Europe/Moscow', birthPlace: 'Мурманск' };
   assert.equal(chartCaption(owner, owner).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск');
-  assert.equal(chartCaption(owner, owner, false, { showAge: true }).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск · 0\u00a0лет');
+  assert.equal(chartCaption(owner, owner, { showAge: true }).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск · 0\u00a0лет');
   const minute = { ...owner, utc: '1998-08-18T14:01:00Z', birthTime: '18:01' };
   assert.equal(chartCaption(minute, owner).subtitle, '18 августа 1998 г. · 18:01 · UTC+4 · Мурманск');
 });
@@ -37,7 +37,7 @@ test('birth-day captions use todays age of the original person across their loca
     birthDate: '1998-08-18', birthTime: '18:00', utcOffset: 'UTC+04:00', timezone: 'Europe/Moscow' });
   for (const [ageUtc, age] of [['2026-08-17T20:59:59Z', 27], ['2026-08-17T21:00:00Z', 28]]) {
     for (const minute of [owner, { ...owner, utc: '1998-08-18T14:01:00Z', birthTime: '18:01' }]) {
-      const caption = chartCaption(minute, owner, false, { showAge: true, ageUtc });
+      const caption = chartCaption(minute, owner, { showAge: true, ageUtc });
       assert.equal(caption.subtitle, `18 августа 1998 г. · ${minute.birthTime} · UTC+4 · ${age}\u00a0лет`);
     }
   }
@@ -50,10 +50,10 @@ test('today override cannot replace a return or life-event age or add an age to 
   const options = { ageUtc: '2026-10-08T12:00:00Z' };
   const event = { id: 'saturn:2', body: 'saturn', cycle: 2, utc: minute.utc };
   const overlay = overlayFixture(owner, minute, { kind: 'return', event });
-  for (const caption of [chartCaption(overlay, owner, false, options), chartCaption(minute, owner, true, options)]) {
+  for (const caption of [chartCaption(overlay, owner, options), chartCaption(overlayFixture(owner, minute, { kind: 'transit' }), owner, options)]) {
     assert.equal(caption.subtitle, '1 января 2050 г. · 03:00 · UTC+3 · 51\u00a0год');
   }
-  assert.equal(chartCaption(minute, minute, false, options).subtitle, '1 января 2050 г. · 00:00 · UTC');
+  assert.equal(chartCaption(minute, minute, options).subtitle, '1 января 2050 г. · 00:00 · UTC');
 });
 
 test('stored historical offsets retain their minutes and seconds in the unified header', () => {
@@ -100,7 +100,7 @@ test('century preview caption uses the same UTC grid as its slider, including hi
 test('a lifetime can display a shared day minute in UTC without cloning or renaming that chart', t => {
   localZone(t, 'Europe/Moscow');
   const minute = Object.freeze({ id: 'current-transit', source: 'transit', utc: '2026-10-05T12:01:00Z' });
-  assert.equal(chartCaption(minute, minute, false, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');
+  assert.equal(chartCaption(minute, minute, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');
   assert.equal(chartCaption(minute).subtitle, '5 октября 2026 г. · 15:01 · UTC+3');
 });
 
@@ -162,11 +162,11 @@ test('120 selected minutes reuse two formatters, including after changing the de
 test('personal life preview retains its selected chart caption while transit keeps its own identity', () => {
   const owner = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '12:00' };
   const preview = { id: 'lifetime-preview', source: 'transit', name: 'Транзит', utc: '2050-01-01T00:00:00Z' };
-  assert.deepEqual(chartCaption(preview, owner, true), { title: 'Марат', subtitle: '1 января 2050 г. · 00:00 · UTC' });
-  assert.equal(chartCaption(preview, { id: 'current-transit', source: 'transit' }, true).title, 'Транзит');
+  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
+  assert.equal(chartCaption(preview).title, 'Транзит');
   const event = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:2:1', body: 'saturn', cycle: 2, utc: preview.utc } });
-  assert.equal(chartCaption(event, owner, false).title, 'Марат · Возврат Сатурна 2');
-  assert.match(chartCaption(event, owner, false).subtitle, /2050/);
+  assert.equal(chartCaption(event, owner).title, 'Марат · Возврат Сатурна 2');
+  assert.match(chartCaption(event, owner).subtitle, /2050/);
 });
 
 
@@ -174,5 +174,5 @@ test('a personal transit overlay names both context and moment while preserving 
   const natal = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '18:00' };
   const moment = { source: 'transit', utc: '2050-01-01T00:10:00Z', personality: [20], design: [] };
   const chart = overlayFixture(natal, moment, { kind: 'transit' });
-  assert.deepEqual(chartCaption(chart, natal, true), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
+  assert.deepEqual(chartCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
 });

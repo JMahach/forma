@@ -1,25 +1,14 @@
 import { consumeJob } from '../runtime/job-consumers.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { inputFingerprint } from '../runtime/calculation-version.mjs';
 import { cycleUtcMilliseconds as parseCycleUtc, validCycleResult } from '../../shared/cycles-format.js';
 
 // Device results are keyed by calculation inputs, independent of UI releases.
-export async function cyclesCalculationFingerprint(root) {
-  const hash = createHash('sha256');
-  for (const name of ['server/python/cycles.py', 'server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
-    'requirements.txt', 'server/services/cycles.mjs', 'shared/cycles-format.js', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1']) {
-    const bytes = await fs.readFile(path.join(root, name)).catch(error => {
-      // Chiron already reports unavailable data per body; its absence must
-      // not prevent the rest of the application from starting.
-      if (name === 'data/ephe/seas_18.se1' && error.code === 'ENOENT') return null;
-      throw error;
-    });
-    hash.update(`${name}\0${bytes?.length ?? -1}\0`);
-    if (bytes) hash.update(bytes);
-  }
-  return hash.digest('hex');
+export function cyclesCalculationFingerprint(root) {
+  // Recurse over all installed inputs, including optional time-conversion files.
+  // Missing Chiron data changes the revision without blocking other bodies.
+  return inputFingerprint(root, ['server/python/cycles.py', 'server/python/astronomy.py',
+    'server/python/civil_time.py', 'server/python/errors.py', 'requirements.txt', 'shared/cycles-format.js', 'data/ephe']);
 }
 
 export const CYCLE_BODIES = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'uranus_opposition', 'neptune', 'pluto', 'chiron']);

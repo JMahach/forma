@@ -1,52 +1,20 @@
+import { createIndexedDatabase } from './indexed-db.js';
 import { mergePackets, packetCatalogue, validPacket } from './moment-packet.js';
 
 // Persistence owns atomic merge and disk eviction. Reads are readonly; small
 // usage records are touched in batches without rewriting numeric payloads.
 export function createMomentStorage({ indexedDB = globalThis.indexedDB, databaseName = 'forma-moments',
   maxBytes = 256 * 1024 * 1024, catalogueEntries = 8192, timeoutMs = 1000, now = Date.now } = {}) {
-  let database = null, opening = null, closed = false;
-  function open() {
-    if (closed || !indexedDB) return Promise.resolve(null);
-    if (database) return Promise.resolve(database);
-    if (opening) return opening;
-    opening = new Promise(resolve => {
-      let request, done = false;
-      const finish = value => { if (!done) { done = true; clearTimeout(timer); resolve(value); } };
-      const timer = setTimeout(() => finish(null), timeoutMs);
-      try { request = indexedDB.open(databaseName, 1); } catch { finish(null); return; }
-      request.onupgradeneeded = () => {
-        if (done || closed) { request.transaction.abort(); return; }
-        const db = request.result;
-        db.createObjectStore('packets', { keyPath: 'key' });
-        const catalogue = db.createObjectStore('catalogue', { keyPath: 'key' });
-        catalogue.createIndex('accessedAt', 'accessedAt');
-        catalogue.createIndex('full', 'full');
-        db.createObjectStore('settings');
-      };
-      request.onsuccess = () => {
-        if (done || closed) { request.result.close(); return; }
-        database = request.result;
-        database.onversionchange = () => { database.close(); database = null; opening = null; };
-        finish(database);
-      };
-      request.onerror = () => { opening = null; finish(null); };
-      request.onblocked = () => finish(null);
-    });
-    return opening;
-  }
-  async function transaction(mode, action) {
-    const db = await open(); if (!db) return null;
-    return new Promise(resolve => {
-      let tx, value = null, done = false;
-      const finish = result => { if (!done) { done = true; clearTimeout(timer); resolve(result); } };
-      const timer = setTimeout(() => { finish(null); try { tx?.abort(); } catch {} }, timeoutMs);
-      try {
-        tx = db.transaction(['packets', 'catalogue', 'settings'], mode);
-        tx.oncomplete = () => finish(value); tx.onerror = tx.onabort = () => finish(null);
-        action(tx, result => { value = result; });
-      } catch { try { tx?.abort(); } catch {} finish(null); }
-    });
-  }
+  const { transaction, close } = createIndexedDatabase({ indexedDB, databaseName, timeoutMs,
+    version: 1, stores: ['packets', 'catalogue', 'settings'],
+    upgrade(db) {
+      db.createObjectStore('packets', { keyPath: 'key' });
+      const catalogue = db.createObjectStore('catalogue', { keyPath: 'key' });
+      catalogue.createIndex('accessedAt', 'accessedAt');
+      catalogue.createIndex('full', 'full');
+      db.createObjectStore('settings');
+    },
+  });
   return {
     catalogue() { return transaction('readonly', (tx, result) => {
       const store = tx.objectStore('catalogue'), entries = new Map();
@@ -97,6 +65,6 @@ export function createMomentStorage({ indexedDB = globalThis.indexedDB, database
         };
       });
     },
-    close() { closed = true; database?.close(); database = null; },
+    close,
   };
 }

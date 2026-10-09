@@ -30,18 +30,45 @@ test('cycle revisions bind exact calculation inputs including Chiron while inter
   for (const name of names) { await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true }); await fs.copyFile(path.join(root, name), path.join(copy, name)); }
   const original = await cyclesService.cyclesCalculationFingerprint(root);
   assert.match(original, /^[a-f0-9]{64}$/); assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
-  for (const name of names) {
+  for (const name of names.filter(name => name !== 'server/services/cycles.mjs')) {
     const file = path.join(copy, name), before = await fs.readFile(file), stat = await fs.stat(file), changed = Buffer.from(before);
     changed[0] ^= 1; await fs.writeFile(file, changed); await fs.utimes(file, stat.atime, stat.mtime);
     assert.notEqual(await cyclesService.cyclesCalculationFingerprint(copy), original, name);
     await fs.writeFile(file, before);
   }
+  const serviceFile = path.join(copy, 'server/services/cycles.mjs');
+  await fs.writeFile(serviceFile, (await fs.readFile(serviceFile, 'utf8')).replace('maxQueued: 12', 'maxQueued: 13'));
+  assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original, 'queue capacity does not change astronomical results');
   await fs.mkdir(path.join(copy, 'src')); await fs.writeFile(path.join(copy, 'src/app.js'), 'new interface');
   assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
   await fs.unlink(path.join(copy, 'data/ephe/seas_18.se1'));
   const missingChiron = await cyclesService.cyclesCalculationFingerprint(copy);
   assert.match(missingChiron, /^[a-f0-9]{64}$/); assert.notEqual(missingChiron, original,
     'missing Chiron data keeps the other bodies available and invalidates previously complete device results');
+});
+
+
+test('optional ephemeris files and nested inputs invalidate cycle results', async t => {
+  const copy = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-cycles-optional-'));
+  t.after(() => fs.rm(copy, { recursive: true, force: true }));
+  for (const name of ['server/python', 'server/services/cycles.mjs', 'shared/cycles-format.js', 'requirements.txt', 'data/ephe']) {
+    await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true });
+    await fs.cp(path.join(root, name), path.join(copy, name), { recursive: true });
+  }
+  const original = await cyclesService.cyclesCalculationFingerprint(copy);
+  const optional = path.join(copy, 'data/ephe/seleapsec.txt');
+  let previous = original;
+  for (const content of ['20261231\n', '20271231\n']) {
+    await fs.writeFile(optional, content);
+    const changed = await cyclesService.cyclesCalculationFingerprint(copy);
+    assert.notEqual(changed, previous, 'optional time-conversion inputs belong to the cycle revision');
+    previous = changed;
+  }
+  await fs.unlink(optional);
+  assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
+  await fs.mkdir(path.join(copy, 'data/ephe/extra'));
+  await fs.writeFile(path.join(copy, 'data/ephe/extra/data.se1'), 'nested ephemeris');
+  assert.notEqual(await cyclesService.cyclesCalculationFingerprint(copy), original);
 });
 
 async function request(service, { path = '/api/cycles/events', method = 'POST', value = requestInput, body = JSON.stringify(value), headers = {} } = {}) {
