@@ -214,13 +214,13 @@ async function versionedHandler(t, input, fingerprint = 'a'.repeat(64)) {
   return { send, meta, version: JSON.parse(meta.body).cacheVersion, reads };
 }
 
-test('only a matching complete-moment version gets immutable HTTP caching', async t => {
+test('complete-moment versions validate numerical identity without HTTP caching', async t => {
   const input = await fixture(t), { send, meta, version, reads } = await versionedHandler(t, input);
   assert.match(version, /^[a-f0-9]{64}$/);
   assert.equal(meta.headers['Cache-Control'], 'no-store');
   const first = await send(`/api/lifetime?index=2&v=${version}`), repeat = await send(`/api/lifetime?index=2&v=${version}`);
   assert.equal(first.status, 200); assert.equal(repeat.body, first.body);
-  assert.equal(first.headers['Cache-Control'], 'public, max-age=31536000, immutable');
+  assert.equal(first.headers['Cache-Control'], 'no-store');
   assert.deepEqual(reads, [2]);
   assert.equal((await send('/api/lifetime?index=2')).headers['Cache-Control'], 'no-store');
   for (const query of [`index=3&v=${'b'.repeat(64)}`, 'index=3&v=', 'index=3&v=bad',
@@ -245,7 +245,7 @@ test('moment versions bind verified file bytes, index-to-UTC metadata and calcul
     endExclusiveUtc: new Date(Date.parse(input.metadata.endExclusiveUtc) + 86400000).toISOString().replace('.000Z', 'Z') };
   await fs.writeFile(input.metadataFile, JSON.stringify(shifted));
   const changedMetadata = await versionedHandler(t, input);
-  assert.notEqual(changedMetadata.version, first.version, 'same bytes at another UTC origin must never share immutable URLs');
+  assert.notEqual(changedMetadata.version, first.version, 'same bytes at another UTC origin must never share numerical version URLs');
   const stale = await changedMetadata.send(`/api/lifetime?index=0&v=${first.version}`);
   assert.equal(stale.status, 400); assert.equal(stale.headers['Cache-Control'], 'no-store');
   assert.deepEqual(changedMetadata.reads, []);
@@ -371,7 +371,7 @@ test('a completed lifetime file becomes available on the next request without re
   assert.equal(result.status, 200);
   assert.equal(result.body.utc, '1900-01-01T01:20:00Z');
   assert.deepEqual(result.body.longitudes, input.columns.slice(0, 11).map(column => column[8]));
-  assert.match(result.headers['Cache-Control'], /immutable/);
+  assert.equal(result.headers['Cache-Control'], 'no-store');
   assert.equal(fileOpens, 1, 'concurrent visitors share validation; ready requests reuse the open file');
 });
 

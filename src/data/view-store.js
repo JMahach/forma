@@ -1,3 +1,4 @@
+import { EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR } from '../../shared/date-limits.js';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../domain/cycles.js';
 import { PLANET_IDS } from '../domain/planets.js';
 
@@ -20,7 +21,7 @@ function normalizeReturns(value) {
   if (!object(value) || typeof value.opened !== 'boolean'
     || !(value.eventId === null || typeof value.eventId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(value.eventId))) return null;
   const knownBody = id => CYCLE_BODIES.some(body => body.id === id);
-  const validYear = year => Number.isInteger(year) && year >= 1801 && year <= 2399;
+  const validYear = year => Number.isInteger(year) && year >= EPHEMERIS_FIRST_YEAR && year <= EPHEMERIS_LAST_YEAR;
   let bodies, year;
   if ('bodies' in value) {
     if (!Array.isArray(value.bodies) || value.bodies.length > CYCLE_BODIES.length

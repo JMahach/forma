@@ -57,15 +57,18 @@ test('every natal minute and both activation sides match the prior projection ac
   }
 });
 
-test('revisiting a day minute reuses its sample and all 26 projected activations', () => {
+test('revisiting a day minute creates an independent sample and chart with the same exact facts', () => {
   const day = packet(), first = transitChartAt(day, 0), sample = transitSampleAt(day, 0);
   transitChartAt(day, 1);
   const revisited = transitChartAt(day, 0);
-  assert.equal(revisited, first);
-  assert.equal(transitSampleAt(day, 0), sample);
+  assert.notEqual(revisited, first);
+  assert.deepEqual(revisited, first);
+  const revisitedSample = transitSampleAt(day, 0);
+  assert.notEqual(revisitedSample, sample);
+  assert.deepEqual(revisitedSample, sample);
   for (const side of ['personality', 'design']) {
     assert.equal(revisited.activations[side].length, 13);
-    for (let i = 0; i < 13; i++) assert.equal(revisited.activations[side][i], first.activations[side][i]);
+    for (let i = 0; i < 13; i++) assert.deepEqual(revisited.activations[side][i], first.activations[side][i]);
   }
 });
 
@@ -82,13 +85,13 @@ test('revisiting an immutable Lifetime moment reuses its chart without changing 
   assert.deepEqual(first.activations.personality[0], { planet: 'sun', longitude: 302, gate: 41, line: 1 });
 });
 
-test('Lifetime reuses the exact Day longitude snapshots and activation projection', () => {
+test('Lifetime retains its supplied exact sample while Day independently projects the same values', () => {
   const day = packet(), sample = transitSampleAt(day, 20), dayChart = transitChartAt(day, 20), meta = metadata();
   const point = validateLifetimeMoment({ index: 2, ...sample }, meta), yearChart = lifetimeChartAt(meta, point);
   assert.equal(point.longitudes, sample.longitudes);
   assert.equal(point.design.longitudes, sample.design.longitudes);
-  assert.equal(yearChart.activations.personality, dayChart.activations.personality);
-  assert.equal(yearChart.activations.design, dayChart.activations.design);
+  assert.deepEqual(yearChart.activations.personality, dayChart.activations.personality);
+  assert.deepEqual(yearChart.activations.design, dayChart.activations.design);
   assert.equal(dayChart.id, 'current-transit');
   assert.equal(yearChart.id, 'lifetime-preview');
 });
@@ -112,9 +115,9 @@ test('Day and Lifetime keep identical chart facts while adapters retain their ow
   assert.equal(lifetime.verification, 'Exact Swiss Ephemeris longitudes on a ten-minute grid.');
   assert.deepEqual({ ...lifetime, id: current.id, createdAt: current.createdAt, verification: current.verification }, current);
   for (const side of ['personality', 'design']) {
-    assert.equal(current[side], lifetime[side]); assert.equal(current.activations[side], lifetime.activations[side]);
+    assert.deepEqual(current[side], lifetime[side]); assert.deepEqual(current.activations[side], lifetime.activations[side]);
   }
-  assert.equal(transitChartAt(day, minute), current); assert.equal(lifetimeChartAt(meta, point), lifetime);
+  assert.deepEqual(transitChartAt(day, minute), current); assert.equal(lifetimeChartAt(meta, point), lifetime);
   const explicit = lifetimeChartAt({ ...meta, engine: 'Explicit engine' }, point);
   assert.equal(explicit.engine, 'Explicit engine');
   day.source = 'not a transit fallback'; delete day.engine;
@@ -157,7 +160,7 @@ test('the common moment constructor retains exact UTC, frozen projected referenc
   assert.throws(() => { chart.activations.design[0].gate = 1; }, TypeError);
 });
 
-test('cached projections and longitude snapshots cannot be corrupted by their consumers', () => {
+test('immutable projections and longitude snapshots cannot be corrupted by their consumers', () => {
   const day = packet(), sample = transitSampleAt(day, 0), chart = transitChartAt(day, 0);
   for (const mutate of [() => { sample.longitudes[0] = 0; }, () => { sample.design.longitudes[0] = 0; },
     () => { sample.design.utc = ''; }, () => { chart.name = ''; }, () => { chart.activations.design = []; },
@@ -165,22 +168,22 @@ test('cached projections and longitude snapshots cannot be corrupted by their co
   const year = lifetimeChartAt(metadata(), { index: 0, ...sample });
   assert.throws(() => { year.activations.design[0].longitude = 0; }, TypeError);
   assert.throws(() => { year.design = []; }, TypeError);
-  assert.equal(transitChartAt(day, 0), chart);
+  assert.deepEqual(transitChartAt(day, 0), chart);
 });
 
-test('mutable day input invalidates only its changed sample and refreshed metadata', () => {
+test('each projection reads current day numbers and metadata without changing prior snapshots', () => {
   const day = packet(), first = transitChartAt(day, 0), other = transitChartAt(day, 1);
   day.columns[0][0] = 307.625;
   const changed = transitChartAt(day, 0);
   assert.notEqual(changed, first);
   assert.deepEqual(changed.activations.personality[0], { planet: 'sun', longitude: 307.625, gate: 19, line: 1 });
   assert.equal(first.activations.personality[0].longitude, 302);
-  assert.equal(transitChartAt(day, 1), other);
+  assert.deepEqual(transitChartAt(day, 1), other);
   day.engine = 'Another engine';
   const metadataChanged = transitChartAt(day, 0);
   assert.notEqual(metadataChanged, changed);
   assert.equal(metadataChanged.engine, 'Another engine');
-  assert.equal(metadataChanged.activations.personality, changed.activations.personality);
+  assert.deepEqual(metadataChanged.activations.personality, changed.activations.personality);
   day.startUtc = '2026-10-06T00:00:00Z';
   assert.equal(transitChartAt(day, 0).utc, '2026-10-06T00:00:00Z');
 });
@@ -198,13 +201,15 @@ test('mutable Lifetime input is copied and revalidated, including externally fro
   assert.throws(() => lifetimeChartAt(meta, raw), /Некорректные/);
 });
 
-test('day projections retain only a bounded set of visited minutes and refresh recency', () => {
-  const day = packet(), oldest = transitChartAt(day, 0), kept = transitChartAt(day, 1);
-  for (let index = 2; index < 32; index++) transitChartAt(day, index);
-  assert.equal(transitChartAt(day, 1), kept);
-  transitChartAt(day, 32);
-  assert.equal(transitChartAt(day, 1), kept);
-  assert.notEqual(transitChartAt(day, 0), oldest);
+test('a numeric day retains no history of previously materialized charts', () => {
+  const day = packet(), keys = Object.keys(day), minutes = [0, 1, 1439];
+  const charts = minutes.map(minute => transitChartAt(day, minute));
+  for (let index = 0; index < minutes.length; index++) {
+    const current = transitChartAt(day, minutes[index]);
+    assert.notEqual(current, charts[index]);
+    assert.deepEqual(current, charts[index]);
+  }
+  assert.deepEqual(Object.keys(day), keys, 'projection does not attach UI history to the numeric packet');
 });
 
 test('lifetime cache versions accept only the complete lowercase content digest', () => {

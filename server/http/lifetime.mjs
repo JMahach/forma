@@ -3,9 +3,9 @@ import { LifetimeError } from '../services/lifetime.mjs';
 import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
-function json(res, status, value, immutable = false) {
+function json(res, status, value) {
   const body = JSON.stringify(value);
-  res.writeHead(status, { ...headers, ...(immutable ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {}),
+  res.writeHead(status, { ...headers,
     'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
 }
@@ -37,7 +37,7 @@ export function createLifetimeHandler(service) {
       const value = exact ? { version: LIFETIME_EXACT_VERSION, ...await service.getUtcMoment(values[0], { signal: consumer.signal }) }
         : await service.getMoment(Number(values[0]), { signal: consumer.signal });
       if (consumer.signal.aborted) return;
-      json(res, 200, value, versions.length === 1);
+      json(res, 200, value);
     } catch (error) {
       if (consumer.signal.aborted) return;
       const known = error instanceof LifetimeError;

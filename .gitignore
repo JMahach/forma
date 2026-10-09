@@ -14,3 +14,6 @@ dist/
 *.f64le
 *.f64le.*.tmp
 .cache/lifetime/
+
+# Generated shared trajectory index for exact return searches.
+.cache/returns/

@@ -92,7 +92,7 @@ test('materialization retains original identity and never mutates the saved char
 test('bounded shapes, timeline validation and value ranges reject corrupt packets', () => {
   const packet = encodeNatalDay(makeDay());
   for (const bad of [null, {}, packet.subarray(0, -1), new Uint8Array(1_000_000)]) assert.throws(() => decodeNatalDay(bad));
-  for (const update of [h => h.version = '2', h => h.samples = 2881, h => h.samples = 0, h => h.orders.pop(), h => h.orders[0] = 9,
+  for (const update of [h => h.version = '2', h => h.calculationVersion = '', h => h.calculationVersion = 123, h => h.calculationVersion = 'g'.repeat(64), h => h.samples = 2881, h => h.samples = 0, h => h.orders.pop(), h => h.orders[0] = 9,
     h => h.segments[0].index = 1, h => h.segments[0].offsetSeconds = 1, h => h.segments[0].fold = 2,
     h => h.segments[0].startUtc = '2000-01-01T00:00:00Z', h => h.date = '1990-02-30', h => h.timezone = 'x'.repeat(161)]) {
     assert.throws(() => decodeNatalDay(rewriteHeader(packet, update)));

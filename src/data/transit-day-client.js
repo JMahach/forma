@@ -1,22 +1,23 @@
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.js';
 import { decodeTransitDay } from '../../shared/day-packets/decode.js';
-import { createMomentCache } from './moment-cache.js';
+import { createTransitDayCache } from './transit-day-cache.js';
+import { createMemoryCache } from './memory-cache.js';
 import { createAbortError, shareRequest } from './shared-request.js';
 
-// Day is a transport adapter. The common moment cache owns every saved number.
+// Day is a transport adapter. The common full-day cache owns reusable numbers.
 export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, decode = decodeTransitDay,
   calculationVersion = null, timeoutMs = 20_000, initialDate = null,
-  moments = createMomentCache(),
+  memory = createMemoryCache(), days = createTransitDayCache({ memory }),
 } = {}) {
   const pending = new Map();
-  const peekDay = date => calculationVersion ? moments.peekDay(date, calculationVersion) : null;
+  const peekDay = date => calculationVersion ? days.peekDay(date, calculationVersion) : null;
   async function getDay(date, { signal } = {}) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Некорректная дата транзита.');
     if (signal?.aborted) throw createAbortError();
     const remembered = peekDay(date); if (remembered) return remembered;
     return shareRequest(pending, date, async ({ controller }) => {
       if (calculationVersion) {
-        const saved = await moments.getDay(date, calculationVersion);
+        const saved = await days.getDay(date, calculationVersion);
         if (controller.signal.aborted) throw createAbortError();
         if (saved) return saved;
       }
@@ -25,7 +26,7 @@ export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, dec
       try {
         let response;
         try {
-          response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}${calculationVersion ? `&r=${calculationVersion}` : ''}`, { signal: controller.signal });
+          response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}${calculationVersion ? `&r=${calculationVersion}` : ''}`, { signal: controller.signal, cache: 'no-store' });
         } catch (error) {
           if (controller.signal.aborted && !timedOut) throw createAbortError();
           throw new Error(timedOut ? 'Транзит дня не успел загрузиться. Повторите попытку.' : 'Не удалось загрузить транзит дня. Проверьте соединение.');
@@ -40,15 +41,15 @@ export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, dec
         if (calculationVersion && day.calculationVersion !== calculationVersion) throw Object.assign(new Error('Версия дневного транзита не поддерживается.'), { code: 'unsupported_version' });
         calculationVersion ||= day.calculationVersion;
         if (!calculationVersion) return day; // Unknown numeric revisions cannot enter the shared cache.
-        moments.putDay(day);
-        return moments.peekDay(date, calculationVersion) || day;
+        days.putDay(day);
+        return days.peekDay(date, calculationVersion) || day;
       } finally { clearTimeout(deadline); }
     }, { signal });
   }
   // Preserve an early failure until the live view takes ownership of its retry.
   let initial = initialDate ? getDay(initialDate) : null;
   initial?.catch(() => {});
-  return { moments, peekDay, retainDay: day => day.calculationVersion ? moments.retainDay(day) : () => {},
+  return { days, memory: days.memory || memory, peekDay, retainDay: day => day.calculationVersion ? days.retainDay(day) : () => {},
     getDay(date, options) {
       if (initial && date === initialDate) { const started = initial; initial = null; return started; }
       return getDay(date, options);

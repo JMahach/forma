@@ -43,6 +43,7 @@ export function encodeTransitDay(day, { orders = Array(TRANSIT_DAY_COLUMNS).fill
 
 export function encodeNatalDay(day, { orders = Array(COLUMNS).fill(3) } = {}) {
   const header = validateNatalDayMetadata({ version: NATAL_DAY_VERSION, date: day.date, timezone: day.timezone, startUtc: day.startUtc,
+    ...(day.calculationVersion !== undefined ? { calculationVersion: day.calculationVersion } : {}),
     samples: day.samples, stepSeconds: day.stepSeconds, segments: day.segments, orders: [...orders],
     engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac });
   if (!Array.isArray(day.columns) || day.columns.length !== COLUMNS) return failNatalDayPacket();

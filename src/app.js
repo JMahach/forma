@@ -27,6 +27,7 @@ import { attachPerformanceMonitor } from './views/performance-monitor.js';
 import { attachChartLoading } from './views/chart-loading.js';
 import { createReturnsController } from './state/returns.js';
 import { createCyclesClient } from './data/cycles-client.js';
+import { createNatalDayClient } from './data/natal-day-client.js';
 import { ageText, completedAge } from './domain/personal-age.js';
 import { updateReturnsEntry } from './views/returns-clock.js';
 import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from './domain/cycles.js';
@@ -152,7 +153,9 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     },
     beforeOpen: () => { returns?.close(); library.close(); chartSummary.close(); },
   });
+  const natalDayClient = createNatalDayClient({ memory: dayClient.memory, calculationVersion: document.body.dataset.calculationVersion });
   natalDay = attachNatalDayExplorer({
+    dayClient: natalDayClient,
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
     status: $('natalDayStatus'), retryButton: $('natalDayRetry'), hourMarks: $('natalDayHourMarks'),
     onMomentInput: () => viewSession?.interrupt(),
@@ -167,7 +170,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     onTargetsChange: () => lifetime?.refreshTargets(),
     onSelect: event => { viewSession?.interrupt(); return returns.selectEvent(event.id); } });
   returns = createReturnsController({
-    client: createCyclesClient({ cacheVersion: document.body.dataset.cyclesVersion }),
+    client: createCyclesClient({ memory: dayClient.memory, cacheVersion: document.body.dataset.cyclesVersion }),
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn,
     onStateChange() {
       updatePersonalTimeline(); viewSession?.schedule();
@@ -349,7 +352,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
       try {
         const { attachLifetimeControls } = await import('./views/lifetime-controls.js');
         lifetime = attachLifetimeControls({
-          dayClient,
+          dayClient, natalDayClient,
           planetFilter: transitPlanets,
           available: session.selectedId === 'current-transit' || returns.state.available,
           getDayState: () => session.selectedId === 'current-transit' ? transit.state : null,

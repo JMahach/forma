@@ -179,3 +179,16 @@ test('real historical and fold days survive production compression and reconstru
     });
   }
 });
+
+
+test('natal requests attest the current numerical revision and reject stale clients before computation', async () => {
+  const revision = 'a'.repeat(64); let calls = 0;
+  const service = createNatalDays({ calculationVersion: revision, generateDay: async (date, timezone) => { calls++; return makeDay(date, timezone); } });
+  for (const r of ['b'.repeat(64), 'invalid']) {
+    const result = await request(service, { value: { birthDate: '1990-06-15', cityId: 'trusted', v: '1', r } });
+    assert.equal(result.status, 400); assert.equal(calls, 0);
+  }
+  const result = await request(service, { value: { birthDate: '1990-06-15', cityId: 'trusted', v: '1', r: revision } });
+  assert.equal(result.status, 200);
+  assert.equal(decodeNatalDay(result.body).calculationVersion, revision); assert.equal(calls, 1);
+});

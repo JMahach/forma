@@ -2,14 +2,27 @@
 import pathlib
 import hashlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from server.python import cycles, astronomy as astro
+from server.python import cycles, astronomy as astro, return_index as returns
 from server.python.errors import ChartError
 
 BIRTH = '2000-01-01T00:00:00Z'
+
+
+def prepare_chart_fixture(testcase):
+    directory = tempfile.TemporaryDirectory()
+    testcase.addClassCleanup(directory.cleanup)
+    path = pathlib.Path(directory.name) / 'return-index.bin'
+    start = astro.julian_tt(cycles.parse_utc('1999-01-01T00:00:00Z'))
+    end = astro.julian_tt(cycles.parse_utc('2101-01-01T00:00:00Z'))
+    returns.prepare_index(path, start=start, end=end, bodies=('saturn', 'uranus', 'chiron'))
+    override = patch.object(returns, 'DEFAULT_FILE', path)
+    override.start()
+    testcase.addClassCleanup(override.stop)
 
 
 class CrossingTests(unittest.TestCase):
@@ -46,6 +59,15 @@ class CrossingTests(unittest.TestCase):
         self.assertGreater(pair[1]['jd'], 1)
         self.assertEqual([item['cycle'] for item in pair], [1, 1])
 
+    def test_close_crossings_are_not_collapsed_by_station_angle_tolerance(self):
+        amplitude, duration = 360 + 1e-9, 100
+        def sample(t):
+            return (amplitude * (2*t/duration - (t/duration)**2)) % 360, 2*amplitude/duration*(1-t/duration)
+        roots = cycles.scan_crossings(sample, 0, 200, .3)
+        self.assertEqual(len(roots), 2)
+        self.assertEqual([root['direction'] for root in roots], ['direct', 'retrograde'])
+        self.assertAlmostEqual((roots[1]['jd'] - roots[0]['jd']) * 86400, 28.8, delta=.01)
+
     def test_regressive_nodes_and_oppositions_have_separate_turn_rules(self):
         nodes = cycles.scan_crossings(lambda t: ((3 - 40 * t) % 360, -40), 0, 10, 1, direction=-1)
         self.assertEqual([(item['jd'], item['cycle']) for item in nodes], [(9, 1)])
@@ -55,6 +77,10 @@ class CrossingTests(unittest.TestCase):
 
 
 class ReturnEngineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        prepare_chart_fixture(cls)
+
     def test_reference_saturn_all_passes_and_narrow_window_keep_pass_number(self):
         result = cycles.events(dict(birthUtc=BIRTH, body='saturn', fromAge=28, toAge=30))
         expected = ['2028-07-21T12:36:05.921Z', '2028-09-24T13:49:26.494Z', '2029-04-01T23:24:11.691Z']
@@ -83,7 +109,7 @@ class ReturnEngineTests(unittest.TestCase):
         self.assertEqual(chart['source'], 'calculated')
         self.assertEqual(chart['birthTime'], '13:36')
         self.assertEqual(chart['utcOffset'], 'UTC+01:00')
-        self.assertEqual(chart['utc'], result['event']['utc'])
+        self.assertLess(abs((cycles.parse_utc(chart['utc']) - cycles.parse_utc('2028-07-21T12:36:05.921Z')).total_seconds()), .002)
         self.assertLess(abs((cycles.parse_utc(chart['designUtc']) - cycles.parse_utc('2028-04-20T20:24:56.033Z')).total_seconds()), 0.01)
         for side in ('personality', 'design'):
             self.assertEqual(len(chart['activations'][side]), 13)
@@ -146,6 +172,32 @@ class ReturnEngineTests(unittest.TestCase):
         for event, root in zip(events, roots):
             self.assertLess(abs((cycles.parse_utc(event['utc']) - astro.tt_to_datetime(root)).total_seconds()), 0.01)
 
+    def test_node_short_station_pair_keeps_all_three_passes(self):
+        birth = cycles.parse_utc('1961-01-09T00:34:00Z')
+        events = cycles.search_events(birth, 'north_node', 130.37, 130.39)
+        self.assertEqual([event['cycle'] for event in events], [7, 7, 7])
+        self.assertEqual([event['pass'] for event in events], [1, 2, 3])
+        self.assertEqual([event['direction'] for event in events], ['retrograde', 'direct', 'retrograde'])
+        expected = ['2091-05-26T00:42:00.730685Z', '2091-05-26T04:20:03.330334Z', '2091-05-26T08:32:41.397019Z']
+        for event, utc in zip(events, expected):
+            self.assertLess(abs((cycles.parse_utc(event['utc']) - cycles.parse_utc(utc)).total_seconds()), .02)
+
+    def test_node_longitude_jump_is_not_a_root_and_does_not_hide_next_return(self):
+        birth = cycles.parse_utc('1881-03-31T01:18:00Z')
+        events = cycles.search_events(birth, 'north_node', 18.5, 18.7)
+        november = [event for event in events if event['utc'].startswith('1899-11-11')]
+        self.assertEqual([event['direction'] for event in november], ['retrograde', 'retrograde'])
+        self.assertEqual(len(events), 4)
+        expected = ['1899-11-11T06:37:15.586627Z', '1899-11-11T06:46:48.311945Z']
+        for event, utc in zip(november, expected):
+            self.assertLess(abs((cycles.parse_utc(event['utc'])-cycles.parse_utc(utc)).total_seconds()), .02)
+
+    def test_near_station_uses_two_signed_brackets_instead_of_noisy_speed_label(self):
+        birth = cycles.parse_utc('1916-05-17T04:44:08.159431Z')
+        events = cycles.search_events(birth, 'north_node', 18.65, 18.66)
+        self.assertEqual([event['direction'] for event in events], ['direct', 'retrograde'])
+        self.assertGreater((cycles.parse_utc(events[1]['utc'])-cycles.parse_utc(events[0]['utc'])).total_seconds(), 10)
+
     def test_missing_chiron_and_fallback_ephemerides_are_explicit(self):
         with patch.object(astro.swe, 'calc', side_effect=astro.swe.Error('Missing asteroid file')):
             with self.assertRaises(ChartError) as failure:
@@ -158,7 +210,7 @@ class ReturnEngineTests(unittest.TestCase):
 
     def test_chart_near_last_supported_day_does_not_search_into_missing_year(self):
         result = cycles.chart(dict(birthUtc='2300-12-31T00:00:00Z', body='sun', eventUtc='2399-12-31T00:21:01.568293Z'))
-        self.assertEqual(result['event']['cycle'], 99)
+        self.assertNotIn('event', result)
         self.assertEqual(result['chart']['birthDate'], '2399-12-31')
 
     def test_input_and_ephemeris_boundaries(self):
@@ -173,61 +225,80 @@ class ReturnEngineTests(unittest.TestCase):
         self.assertEqual(failure.exception.payload['error'], 'unsupported_date')
 
 
-class VerifiedChartTests(unittest.TestCase):
+class ExactMomentChartTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.moon = cycles.events(dict(birthUtc=BIRTH, body='moon', fromAge=0, toAge=100))['events'][-1]
-        cls.saturn = cycles.events(dict(birthUtc=BIRTH, body='saturn', fromAge=28, toAge=30))['events'][-1]
-        cls.opposition = cycles.events(dict(birthUtc=BIRTH, body='uranus_opposition', fromAge=42, toAge=44))['events'][1]
+        prepare_chart_fixture(cls)
+        cls.events = [cycles.events(dict(birthUtc=BIRTH, body=body, fromAge=low, toAge=high))['events'][-1]
+            for body, low, high in [('moon', 99, 100), ('saturn', 28, 30), ('uranus_opposition', 42, 44)]]
 
-    def test_verified_events_keep_the_exact_chart_and_pass_without_repeating_the_life_search(self):
-        for event in (self.moon, self.saturn, self.opposition):
-            with self.subTest(body=event['body']):
-                request = dict(birthUtc=BIRTH, body=event['body'], eventUtc=event['utc'], timezone='Europe/London')
-                expected = cycles.chart(request)
-                with patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')), \
-                     patch.object(cycles, 'position', wraps=cycles.position) as position:
-                    actual = cycles.chart(request, verified_event=event)
-                self.assertEqual(position.call_count, 2, 'only natal and event longitude verify the trusted crossing')
-                self.assertEqual(actual['event'], expected['event'])
-                for result in (actual, expected):
-                    for key in ('createdAt', 'updatedAt'):
-                        result['chart'].pop(key)
-                self.assertEqual(actual['chart'], expected['chart'])
-                self.assertEqual(actual['chart']['utc'], event['utc'])
-
-    def test_only_the_private_worker_argument_uses_the_verified_event(self):
-        event = self.saturn
-        request = dict(action='chart', birthUtc=BIRTH, body='saturn', eventUtc=event['utc'])
-        with patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')):
-            result = cycles.calculate(dict(request, verifiedEvent=event))
-        self.assertEqual(result['event'], event)
-        forged = dict(event, cycle=999, cycleId='saturn:999')
-        with patch.object(cycles, 'search_events', wraps=cycles.search_events) as search:
-            ordinary = cycles.chart(dict(request, verifiedEvent=forged))
-        self.assertEqual(search.call_count, 1, 'an ordinary chart request cannot grant itself trusted event ownership')
-        self.assertEqual(ordinary['event']['cycle'], event['cycle'])
-        self.assertEqual(ordinary['event']['pass'], 3)
-
-    def test_verified_event_binding_and_angular_residual_are_still_checked(self):
-        event = self.moon
-        request = dict(birthUtc=BIRTH, body='moon', eventUtc=event['utc'])
-        shifted = cycles.parse_utc(event['utc']) + cycles.dt.timedelta(seconds=2)
-        shifted_utc = cycles.exact_iso(shifted)
-        shifted_event = dict(event, utc=shifted_utc, id=f'moon:{shifted_utc}',
-            age=(shifted - cycles.parse_utc(BIRTH)).total_seconds() / (86400 * cycles.YEAR_DAYS))
-        for selected, data in ((dict(event, body='saturn'), request),
-            (dict(event, utc=shifted_utc), request),
-            (event, dict(request, birthUtc='2000-01-06T00:00:00Z')),
-            (shifted_event, dict(request, eventUtc=shifted_utc))):
-            with self.subTest(selected=selected, request=data), \
+    def test_known_exact_moment_never_searches_life_or_reconstructs_event_metadata(self):
+        for event in self.events:
+            with self.subTest(body=event['body']), \
                  patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')), \
-                 self.assertRaises(ChartError) as failure:
-                cycles.chart(data, verified_event=selected)
-            self.assertEqual(failure.exception.payload['error'], 'invalid_event')
+                 patch.object(returns.Trajectory, 'search', side_effect=AssertionError('Repeated trajectory search')), \
+                 patch.object(cycles, 'position', wraps=cycles.position) as position:
+                result = cycles.chart(dict(birthUtc=BIRTH, body=event['body'], eventUtc=event['utc'], timezone='Europe/London'))
+            self.assertEqual(position.call_count, 2)
+            self.assertEqual(set(result), {'chart'})
+            self.assertEqual(result['chart']['utc'], event['utc'])
+
+    def test_natal_angle_without_a_full_turn_is_not_a_return_chart(self):
+        for body, utc in (('sun', '2000-01-01T00:00:00.001000Z'),
+                          ('saturn', '2000-01-23T09:07:11.870882Z')):
+            with self.subTest(body=body):
+                with patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')), \
+                     self.assertRaises(ChartError) as failure:
+                    cycles.chart(dict(birthUtc=BIRTH, body=body, eventUtc=utc))
+                self.assertEqual(failure.exception.payload['error'], 'invalid_event')
+
+    def test_missing_or_stale_index_fails_closed_without_scanning_for_chart(self):
+        event = self.events[1]
+        for error in (FileNotFoundError('missing'), returns.InvalidIndex('stale')):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(returns, 'load_index', side_effect=error), \
+                     patch.object(returns, 'prepare_trajectory', side_effect=AssertionError('Hidden trajectory preparation')), \
+                     patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')), \
+                     self.assertRaises(ChartError) as failure:
+                    cycles.chart(dict(birthUtc=BIRTH, body='saturn', eventUtc=event['utc']))
+                self.assertEqual(failure.exception.payload['error'], 'return_index_unavailable')
+
+    def test_native_first_returns_need_no_index_and_only_one_period(self):
+        for birth, body, age in ((BIRTH, 'sun', 1.1), (BIRTH, 'moon', .1),
+                                 ('2398-12-31T00:00:00Z', 'sun', 1.001)):
+            with self.subTest(birth=birth, body=body):
+                event = cycles.events(dict(birthUtc=birth, body=body, toAge=age))['events'][0]
+                with patch.object(returns, 'load_index', side_effect=AssertionError('Native return needs no index')), \
+                     patch.object(returns, 'native_crossings', wraps=returns.native_crossings) as native:
+                    result = cycles.chart(dict(birthUtc=birth, body=body, eventUtc=event['utc']))
+                self.assertEqual(result['chart']['utc'], event['utc'])
+                self.assertEqual(native.call_count, 1)
+                _, start, end = native.call_args.args
+                self.assertLessEqual(end-start, 400 if body == 'sun' else 32)
+
+    def test_rounded_moment_is_refined_locally_without_life_search(self):
+        event = self.events[1]
+        for utc in (event['utc'][:19] + 'Z', event['utc'][:23] + 'Z'):
+            with patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')), \
+                 patch.object(cycles, 'position', wraps=cycles.position) as position:
+                result = cycles.chart(dict(birthUtc=BIRTH, body='saturn', eventUtc=utc))
+            self.assertLess(position.call_count, 100)
+            self.assertLess(abs((cycles.parse_utc(result['chart']['utc']) - cycles.parse_utc(event['utc'])).total_seconds()), .002)
+
+    def test_client_cannot_supply_event_metadata_and_wrong_moments_are_rejected(self):
+        event = self.events[0]
+        request = dict(action='chart', birthUtc=BIRTH, body='moon', eventUtc=event['utc'])
+        with patch.object(cycles, 'search_events', side_effect=AssertionError('Repeated full search')):
+            result = cycles.calculate(dict(request, verifiedEvent=dict(event, cycle=999)))
+            self.assertEqual(set(result), {'chart'})
+            shifted = cycles.exact_iso(cycles.parse_utc(event['utc']) + cycles.dt.timedelta(seconds=2))
+            for change in [dict(birthUtc='2000-01-06T00:00:00Z'), dict(eventUtc=shifted)]:
+                with self.subTest(change=change), self.assertRaises(ChartError) as failure:
+                    cycles.chart(dict(request, **change))
+                self.assertEqual(failure.exception.payload['error'], 'invalid_event')
         with patch.object(cycles, 'position', side_effect=ChartError('ephemeris_unavailable', 'Missing exact files')), \
              self.assertRaises(ChartError) as failure:
-            cycles.chart(request, verified_event=event)
+            cycles.chart(request)
         self.assertEqual(failure.exception.payload['error'], 'ephemeris_unavailable')
 
 

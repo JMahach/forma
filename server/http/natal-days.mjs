@@ -2,16 +2,17 @@ import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.js';
 import { NatalDayError, validateNatalDate, validateNatalZone } from '../services/natal-days.mjs';
 import { negotiateEncoding } from './content-encoding.mjs';
 
-export function validateNatalDayRequest(input, cities) {
+export function validateNatalDayRequest(input, cities, calculationVersion = null) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new NatalDayError('invalid_request', 'Некорректные данные.', 400, null);
   if (input.v !== NATAL_DAY_VERSION) throw new NatalDayError('unsupported_version', 'Версия дня рождения не поддерживается. Обновите страницу.', 400, null);
+  if (input.r !== undefined && (typeof input.r !== 'string' || !/^[a-f0-9]{64}$/.test(input.r) || input.r !== calculationVersion)) throw new NatalDayError('unsupported_version', 'Версия расчёта изменилась. Обновите страницу.', 400, null);
   validateNatalDate(input.birthDate);
   const city = typeof input.cityId === 'string' && input.cityId.length <= 40 ? cities.find(input.cityId) : null;
   if (!city) throw new NatalDayError('city_required', 'Выберите город из списка подсказок.', 422, null);
   validateNatalZone(city.timezone);
   return { date: input.birthDate, timezone: city.timezone };
 }
-export function createNatalDayHandler({ get }) {
+export function createNatalDayHandler({ get, calculationVersion = null }) {
   return async function handle(req, res, cities) {
     const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
     if (req.method !== 'POST') { res.writeHead(405, { ...headers, Allow: 'POST' }); res.end(); return; }
@@ -36,7 +37,7 @@ export function createNatalDayHandler({ get }) {
       let input;
       try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { throw new NatalDayError('invalid_json', 'Не удалось прочитать данные.', 400, null); }
-      const { date, timezone } = validateNatalDayRequest(input, cities);
+      const { date, timezone } = validateNatalDayRequest(input, cities, calculationVersion);
       const encoding = negotiateEncoding(req.headers['accept-encoding']);
       if (!encoding) throw new NatalDayError('encoding_not_acceptable', 'Нет поддерживаемого способа передачи дня рождения.', 406, null);
       const packet = await get(date, timezone, { signal: controller.signal }), body = packet.bytes[encoding];

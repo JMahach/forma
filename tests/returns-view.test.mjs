@@ -1,3 +1,5 @@
+import { cycleYearBoundsForChart, lifeTimelineForChart } from '../src/domain/cycles.js';
+import { returnsVisibleWindow } from '../src/domain/returns-window.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderReturnEvents, attachReturnsPanel } from '../src/views/returns-panel.js';
@@ -651,4 +653,18 @@ test('Now enters and leaves the selected local year without repainting an unchan
   assert.equal(h.nodes.returnsContent.innerHTMLWrites, writes);
   now = Date.parse('2026-12-31T20:59:59Z'); h.update({});
   assert.match(h.nodes.returnsContent.innerHTML, /returns-timeline-now/);
+});
+
+
+test('the return year input includes the centenary year while its visible interval stops at the anniversary', () => {
+  const source = { utc: '2000-01-01T12:34:56Z', timezone: 'UTC' };
+  const bounds = cycleYearBoundsForChart(source), span = lifeTimelineForChart(source);
+  const h = panelHarness(); h.update({ timelineVisible: true, opened: true, natal: source, ...bounds, year: 2100 });
+  assert.equal(h.nodes.returnsYear.min, '2000'); assert.equal(h.nodes.returnsYear.max, '2100');
+  h.nodes.returnsYear.value = '2100'; h.nodes.returnsYear.dispatch('change');
+  assert.equal(h.nodes.returnsYear.getAttribute('aria-invalid'), 'false');
+  h.nodes.returnsYear.value = '2101'; h.nodes.returnsYear.dispatch('change');
+  assert.equal(h.nodes.returnsYear.getAttribute('aria-invalid'), 'true');
+  assert.deepEqual(returnsVisibleWindow(source, 2100, { minUtc: Date.parse(source.utc), maxUtc: Date.parse(span.maximumUtc) }),
+    { minUtc: Date.parse('2100-01-01T00:00:00Z'), maxUtc: Date.parse('2100-01-01T12:34:56Z') });
 });

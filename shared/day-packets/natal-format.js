@@ -22,6 +22,7 @@ export function validateNatalDayMetadata(header) {
     || !Array.isArray(header.segments) || !header.segments.length || header.segments.length > 128
     || header.nodeModel !== 'true' || header.zodiac !== 'tropical-geocentric-apparent') return failNatalDayPacket();
   for (const key of ['engine', 'ephemeris', 'timezoneDatabase']) if (typeof header[key] !== 'string' || !header[key] || header[key].length > 256) return failNatalDayPacket();
+  if (header.calculationVersion !== undefined && (typeof header.calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(header.calculationVersion))) return failNatalDayPacket();
   let previousEnd = -Infinity;
   for (let i = 0; i < header.segments.length; i++) {
     const segment = header.segments[i], nextIndex = header.segments[i + 1]?.index ?? header.samples;

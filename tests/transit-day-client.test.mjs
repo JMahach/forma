@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMomentCache } from '../src/data/moment-cache.js';
+import { createTransitDayCache } from '../src/data/transit-day-cache.js';
+import { createMemoryCache } from '../src/data/memory-cache.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
 import { encodeTransitDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
@@ -26,6 +27,8 @@ test('day client coalesces concurrent requests and reuses the decoded immutable 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, `/api/transit/day?date=2026-09-24&v=${TRANSIT_DAY_VERSION}`);
   assert.equal(requests[0].options.method, undefined, 'packet loading is a GET');
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(client.memory, client.days.memory);
   assert.ok(requests[0].options.signal instanceof AbortSignal);
   resolve(response('2026-09-24'));
   const [a, b] = await Promise.all([first, second]);
@@ -50,7 +53,7 @@ test('failed requests are retryable and JSON API errors reach the day controls',
 
 test('day client rejects mismatched packets and bounds its decoded-day memory', async () => {
   let requests = 0;
-  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => {
+  const client = createTransitDayClient({ days: createTransitDayCache({ indexedDB: null, memory: createMemoryCache({ maxBytes: 600_000 }) }), fetch: async url => {
     requests++;
     return response(new URL(url, 'https://example.test').searchParams.get('date'));
   } });
@@ -59,7 +62,7 @@ test('day client rejects mismatched packets and bounds its decoded-day memory', 
   await client.getDay('2026-09-24');
   await client.getDay('2026-09-23');
   assert.equal(requests, 3);
-  await client.moments.flush(); // This test has no IndexedDB; only the RAM budget remains.
+  await client.days.flush(); // This test has no IndexedDB; only the RAM budget remains.
   await client.getDay('2026-09-22');
   assert.equal(requests, 4, 'oldest unused packet is released');
   const mismatch = createTransitDayClient({ fetch: async () => response('2026-09-23') });
@@ -137,7 +140,7 @@ test('another UTC date cannot consume the one-shot startup failure', async () =>
 
 test('the active local day stays visible to shared lookup while unrelated days rotate through LRU', async () => {
   let requests = 0;
-  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => {
+  const client = createTransitDayClient({ days: createTransitDayCache({ indexedDB: null, memory: createMemoryCache({ maxBytes: 600_000 }) }), fetch: async url => {
     requests++;
     return response(new URL(url, 'https://example.test').searchParams.get('date'));
   } });
@@ -174,13 +177,13 @@ test('the active local day stays visible to shared lookup while unrelated days r
 
 test('day rollover releases every earlier pin, and late stopped loads cannot pin again', async () => {
   let timestamp = Date.parse('2026-09-01T12:00:00Z');
-  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => response(new URL(url, 'https://example.test').searchParams.get('date')) });
+  const client = createTransitDayClient({ days: createTransitDayCache({ indexedDB: null, memory: createMemoryCache({ maxBytes: 600_000 }) }), fetch: async url => response(new URL(url, 'https://example.test').searchParams.get('date')) });
   const live = createLiveTransit({ dayClient: client, now: () => timestamp, timeZone: () => 'UTC' });
   for (let offset = 0; offset < 20; offset++) { await live.refresh(); timestamp += 86400000; }
   for (let date = 1; date < 18; date++) assert.equal(client.peekDay(`2026-09-${String(date).padStart(2, '0')}`), null);
   live.stop();
   let finish;
-  const delayedClient = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 1440 * 24 * 8 + 256 }), fetch: url => {
+  const delayedClient = createTransitDayClient({ days: createTransitDayCache({ indexedDB: null, memory: createMemoryCache({ maxBytes: 300_000 }) }), fetch: url => {
     const date = new URL(url, 'https://example.test').searchParams.get('date');
     return date === '2026-09-24' ? new Promise(resolve => { finish = () => resolve(response(date)); }) : Promise.resolve(response(date));
   } });

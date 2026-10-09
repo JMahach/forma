@@ -1,71 +1,36 @@
 import { createIndexedDatabase } from './indexed-db.js';
 
-// Optional device-local packet cache. Payloads and their small LRU records share
-// one transaction; reading or pruning never rewrites other binary packets.
-export function createBinaryCache({
-  databaseName,
-  indexedDB: databaseFactory, capacity = 4, maxBytes = 8 * 1024 * 1024,
-  maxAgeMs = 30 * 24 * 60 * 60 * 1000, timeoutMs = 500, now = () => Date.now(),
-} = {}) {
-  const limit = Math.max(1, Math.floor(capacity));
+// Completed days remain on this device until the browser or user removes them.
+// Keep the existing schema, including legacy metadata, without scanning or
+// rewriting old packets when a day is read or a new one is added.
+export function createBinaryCache({ databaseName, indexedDB: databaseFactory, timeoutMs = 500 } = {}) {
   const database = createIndexedDatabase({ indexedDB: databaseFactory, databaseName, timeoutMs,
     version: 2, stores: ['packets', 'metadata'],
-    upgrade(db, tx) {
-      if (!db.objectStoreNames.contains('packets')) db.createObjectStore('packets', { keyPath: 'key' });
-      db.createObjectStore('metadata', { keyPath: 'key' });
-      // The schema upgrade retains the existing payloads and their expiry.
-      const metadata = tx.objectStore('metadata');
-      const cursor = tx.objectStore('packets').openCursor();
-      cursor.onsuccess = () => {
-        if (!cursor.result) return;
-        const { key, bytes, createdAt, accessedAt } = cursor.result.value;
-        metadata.put({ key, size: bytes?.byteLength, createdAt, accessedAt });
-        cursor.result.continue();
-      };
+    upgrade(db) {
+      for (const name of ['packets', 'metadata']) {
+        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'key' });
+      }
     },
   });
-  const transaction = operation => database.transaction('readwrite', (tx, result) =>
-    operation(tx.objectStore('packets'), tx.objectStore('metadata'), result));
-
-  const valid = (entry, timestamp) => entry && Number.isSafeInteger(entry.size) && entry.size >= 0
-    && entry.size <= maxBytes && Number.isFinite(entry.createdAt) && Number.isFinite(entry.accessedAt)
-    && timestamp - entry.createdAt <= maxAgeMs;
-  const remove = (packets, metadata, key) => { packets.delete(key); metadata.delete(key); };
-
   return {
     get(key) {
-      return transaction((packets, metadata, result) => {
-        const request = metadata.get(key);
+      return database.transaction('readonly', (tx, result) => {
+        const request = tx.objectStore('packets').get(key);
         request.onsuccess = () => {
-          const entry = request.result, timestamp = now();
-          if (!valid(entry, timestamp)) { remove(packets, metadata, key); return; }
-          const payload = packets.get(key);
-          payload.onsuccess = () => {
-            const bytes = payload.result?.bytes;
-            if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== entry.size) { remove(packets, metadata, key); return; }
-            metadata.put({ ...entry, accessedAt: timestamp });
-            result(bytes);
-          };
+          const bytes = request.result?.bytes;
+          if (bytes instanceof ArrayBuffer) result(bytes);
         };
       });
     },
-    async put(key, bytes) {
-      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength > maxBytes) return;
-      return transaction((packets, metadata) => {
-        const timestamp = now();
-        packets.put({ key, bytes });
-        metadata.put({ key, size: bytes.byteLength, accessedAt: timestamp, createdAt: timestamp });
-        const request = metadata.getAll();
-        request.onsuccess = () => {
-          const entries = request.result.sort((a, b) => b.accessedAt - a.accessedAt || Number(b.key === key) - Number(a.key === key));
-          let retained = 0, usedBytes = 0;
-          for (const entry of entries) {
-            if (!valid(entry, timestamp) || retained >= limit || usedBytes + entry.size > maxBytes) remove(packets, metadata, entry.key);
-            else { retained += 1; usedBytes += entry.size; }
-          }
-        };
+    put(key, bytes) {
+      if (!(bytes instanceof ArrayBuffer)) return Promise.resolve(null);
+      return database.transaction('readwrite', tx => tx.objectStore('packets').put({ key, bytes }));
+    },
+    remove(key) {
+      return database.transaction('readwrite', tx => {
+        tx.objectStore('packets').delete(key);
+        tx.objectStore('metadata').delete(key);
       });
     },
-    remove(key) { return transaction((packets, metadata) => remove(packets, metadata, key)); },
   };
 }

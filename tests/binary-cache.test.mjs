@@ -1,12 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBinaryCache } from '../src/data/binary-cache.js';
-import { createNatalDayClient } from '../src/data/natal-day-client.js';
-import { NATAL_DAY_VERSION } from '../shared/day-packets/natal-format.js';
-import { encodeNatalDay } from '../server/packets/encode.mjs';
-import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
-
-// Exercise asynchronous transaction completion and eviction with a small
+// Exercise asynchronous transaction completion and access with a small
 // IndexedDB-compatible in-memory adapter, without requiring a browser session.
 function databaseHarness() {
   const records = new Map(), metadata = new Map();
@@ -79,52 +74,15 @@ function databaseHarness() {
   };
 }
 
-test('device cache retains only a bounded LRU collection of binary packets and expires old entries', async () => {
+test('explicit removal and version changes retain the surviving days and reopen the connection', async () => {
   const h = databaseHarness();
-  let timestamp = 100;
-  const cache = createBinaryCache({ databaseName: 'test-packets', indexedDB: h.indexedDB, capacity: 2, maxAgeMs: 1000, now: () => timestamp });
-  await cache.put('v:date:city-a', new ArrayBuffer(20)); timestamp++;
-  await cache.put('v:date:city-b', new ArrayBuffer(30)); timestamp++;
-  assert.equal((await cache.get('v:date:city-a')).byteLength, 20); timestamp++;
-  await cache.put('v:date:city-c', new ArrayBuffer(40));
-  assert.deepEqual([...h.records.keys()].sort(), ['v:date:city-a', 'v:date:city-c']);
-  assert.equal(h.opens, 1);
-  assert.equal(h.records.get('v:date:city-a').bytes.byteLength, 20);
-  timestamp += 1001;
-  assert.equal(await cache.get('v:date:city-a'), null);
-  assert.equal(h.records.has('v:date:city-a'), false);
-  await cache.put('v:date:city-d', new ArrayBuffer(10));
-  assert.deepEqual([...h.records.keys()], ['v:date:city-d']);
-});
-
-test('a separate device cache preserves existing natal client records without expiring immutable data', async t => {
-  const natal = databaseHarness(), cycles = databaseHarness(); let now = 0;
-  const previous = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
-  Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: natal.indexedDB });
-  t.after(() => previous ? Object.defineProperty(globalThis, 'indexedDB', previous) : delete globalThis.indexedDB);
-  const chart = personalChartFixture(), key = `${NATAL_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
-  natal.records.set(key, { key, bytes: encodeNatalDay(natalDayFixture()).buffer, createdAt: Date.now(), accessedAt: Date.now() });
-  const client = createNatalDayClient({ fetch: () => { throw new Error('Existing natal packet must not need a request'); } });
-  assert.equal((await client.getDay(chart)).date, chart.birthDate);
-  const cache = createBinaryCache({ indexedDB: cycles.indexedDB, databaseName: 'bodygraph-cycles', maxAgeMs: Infinity, now: () => now });
-  await cache.put('version:birth:event', new ArrayBuffer(12)); now = 10 * 365 * 86400000;
-  assert.equal((await cache.get('version:birth:event')).byteLength, 12);
-  assert.deepEqual(natal.names, ['bodygraph-chart-days']); assert.deepEqual(cycles.names, ['bodygraph-cycles']);
-});
-
-test('device cache enforces a byte budget, rejects oversized records and handles version invalidation', async () => {
-  const h = databaseHarness();
-  let timestamp = 100;
-  const cache = createBinaryCache({ databaseName: 'test-packets', indexedDB: h.indexedDB, capacity: 4, maxBytes: 60, now: () => timestamp });
-  await cache.put('a', new ArrayBuffer(30)); timestamp++;
+  const cache = createBinaryCache({ databaseName: 'test-packets', indexedDB: h.indexedDB });
+  await cache.put('a', new ArrayBuffer(30));
   await cache.put('b', new ArrayBuffer(40));
-  assert.deepEqual([...h.records.keys()], ['b']);
-  await cache.put('large', new ArrayBuffer(61));
-  assert.equal(h.records.has('large'), false);
   await cache.remove('b');
-  assert.equal(h.records.size, 0);
+  assert.deepEqual([...h.records.keys()], ['a']);
   h.database.onversionchange();
-  await cache.get('a');
+  assert.equal((await cache.get('a')).byteLength, 30);
   assert.equal(h.opens, 2);
 });
 
@@ -146,54 +104,38 @@ test('blocked, denied or missing IndexedDB never fails the day-loading path', as
 });
 
 
-test('cache hits touch metadata without rewriting the binary payload', async () => {
+test('cache hits do not rewrite payloads or legacy metadata', async () => {
   const h = databaseHarness();
   const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
   await cache.put('day', new ArrayBuffer(276906));
   h.operations.length = 0;
   assert.equal((await cache.get('day')).byteLength, 276906);
-  assert.equal(h.operations.filter(([store, op]) => store === 'packets' && op === 'put').length, 0);
+  assert.deepEqual(h.operations, [['packets', 'get']]);
 });
 
-test('eviction never loads existing binary payloads', async () => {
+test('adding a day never scans or evicts existing packets', async () => {
   const h = databaseHarness();
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB, capacity: 2 });
+  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
   await cache.put('a', new ArrayBuffer(100));
   await cache.put('b', new ArrayBuffer(100));
   h.operations.length = 0;
   await cache.put('c', new ArrayBuffer(100));
-  assert.equal(h.records.size, 2);
-  assert.equal(h.operations.filter(([store, op]) => store === 'packets' && ['getAll', 'get', 'openCursor'].includes(op)).length, 0);
+  assert.equal(h.records.size, 3);
+  assert.deepEqual(h.operations, [['packets', 'put']]);
 });
 
-test('version-one migration preserves original creation time and expiry', async () => {
+test('legacy timestamps and missing metadata never expire intact bytes; invalid values remain a miss', async () => {
   const h = databaseHarness();
-  h.records.set('old', { key: 'old', bytes: new ArrayBuffer(15), createdAt: 20, accessedAt: 30 });
-  let timestamp = 100;
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB, maxAgeMs: 100, now: () => timestamp });
-  assert.equal((await cache.get('old')).byteLength, 15);
-  timestamp = 121;
-  assert.equal(await cache.get('old'), null);
-  assert.equal(h.records.has('old'), false);
-  assert.equal(h.metadata.has('old'), false);
-});
-
-test('corrupt and orphaned cache halves are discarded together', async () => {
-  const h = databaseHarness();
+  h.records.set('old', { key: 'old', bytes: new ArrayBuffer(15), createdAt: 0, accessedAt: 0 });
   const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
-  await cache.put('missing-payload', new ArrayBuffer(10));
-  h.records.delete('missing-payload');
-  assert.equal(await cache.get('missing-payload'), null);
-  assert.equal(h.metadata.has('missing-payload'), false);
-  await cache.put('missing-metadata', new ArrayBuffer(10));
-  h.metadata.delete('missing-metadata');
-  assert.equal(await cache.get('missing-metadata'), null);
-  assert.equal(h.records.has('missing-metadata'), false);
-  await cache.put('wrong-size', new ArrayBuffer(10));
-  h.records.set('wrong-size', { key: 'wrong-size', bytes: new ArrayBuffer(11) });
-  assert.equal(await cache.get('wrong-size'), null);
-  assert.equal(h.metadata.has('wrong-size'), false);
-  assert.equal(h.records.has('wrong-size'), false);
+  assert.equal((await cache.get('old')).byteLength, 15);
+  assert.equal(h.records.has('old'), true);
+  assert.equal(h.metadata.size, 0);
+  h.records.set('bad', { key: 'bad', bytes: 'not binary' });
+  assert.equal(await cache.get('bad'), null);
+  assert.equal(await cache.get('missing'), null);
+  await cache.put('bad', 'still not binary');
+  assert.equal(await cache.get('bad'), null);
 });
 
 test('a stalled transaction is aborted at its deadline and does not become a late successful hit', async t => {

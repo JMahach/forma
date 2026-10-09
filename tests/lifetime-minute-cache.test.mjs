@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
-import { createMomentCache } from '../src/data/moment-cache.js';
+import { createTransitDayCache } from '../src/data/transit-day-cache.js';
+import { createMemoryCache } from '../src/data/memory-cache.js';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
@@ -24,7 +25,7 @@ const response = value => ({ ok: true, json: async () => value });
 const tick = () => new Promise(setImmediate);
 function harness({ capacity = 1, getMomentState = () => null } = {}) {
   const requests = [], exactRequests = [], dayRequests = [], renders = [];
-  const dayClient = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: capacity * (1440 * 24 * 8 + 256) }), decode: value => value, fetch: async url => {
+  const dayClient = createTransitDayClient({ days: createTransitDayCache({ indexedDB: null, memory: createMemoryCache({ maxBytes: capacity * 300_000 }) }), decode: value => value, fetch: async url => {
     const date = new URL(url, 'http://test').searchParams.get('date'); dayRequests.push(date);
     return { ok: true, arrayBuffer: async () => dayAt(date) };
   } });
@@ -48,11 +49,11 @@ async function openLifetime(h) {
   await tick(); h.requests.at(-1)?.resolve(); await pending;
 }
 
-test('compatible minute lookup is synchronous, shares day projection, validates UTC and never fetches a day', async () => {
+test('compatible minute lookup is synchronous, matches day values, validates UTC and never fetches a day', async () => {
   const h = harness(); const day = await h.dayClient.getDay('2026-09-30'); await h.client.getMeta();
   const chart = h.client.peekMinute(utc('30T09:37:00'));
-  assert.equal(chart, transitChartAt(day, 577));
-  assert.equal(h.client.peekMinute(utc('30T09:37:00')), chart);
+  assert.deepEqual(chart, transitChartAt(day, 577));
+  assert.deepEqual(h.client.peekMinute(utc('30T09:37:00')), chart);
   for (const value of [NaN, Infinity, Number.MAX_SAFE_INTEGER, utc('30T09:37:01'), utc('29T09:37:00')]) assert.equal(h.client.peekMinute(value), null);
   assert.deepEqual(h.dayRequests, ['2026-09-30']); assert.equal(h.requests.length, 0);
 });
@@ -194,7 +195,7 @@ test('changing only open-ended range after a borrowed exact chart requests a val
 });
 
 
-test('a cached lifetime point publishes immediately while another point is pending', async t => {
+test('a previously visited point is requested again instead of accumulating behind the current state', async t => {
   const h = harness();
   t.after(() => { h.explorer.close(); for (const request of h.requests) request.resolve(); });
   await openLifetime(h);
@@ -205,19 +206,19 @@ test('a cached lifetime point publishes immediately while another point is pendi
   const cold = h.explorer.scrub(start + 600000); await tick();
   const request = h.requests.at(-1);
   const ready = h.explorer.scrub(start);
-  assert.equal(h.explorer.state.displayedUtc, start, 'ready point must not wait for another network response');
-  assert.equal(h.explorer.state.status, 'ready');
-  request.resolve(); await cold; await ready;
-  assert.equal(h.explorer.state.displayedUtc, start, 'late cold completion must not replace the accepted point');
-  assert.deepEqual(h.requests.slice(1).map(value => value.index), [0, 2, 1]);
+  assert.equal(h.explorer.state.displayedUtc, start + 1200000, 'only the current chart remains available while waiting');
+  request.resolve(); await tick();
+  assert.deepEqual(h.requests.slice(1).map(value => value.index), [0, 2, 1, 0]);
+  h.requests.at(-1).resolve(); await cold; await ready;
+  assert.equal(h.explorer.state.displayedUtc, start);
 });
 
 for (const personal of [false, true]) test(`a persisted day gives minute steps on ${personal ? 'returns' : 'lifetime'} without a day request`, async t => {
-  const indexedDB = new IDBFactory(), prepared = createMomentCache({ indexedDB });
+  const indexedDB = new IDBFactory(), prepared = createTransitDayCache({ indexedDB });
   prepared.putDay(dayAt('2026-09-30')); await prepared.close();
-  const moments = createMomentCache({ indexedDB }); t.after(() => moments.close());
+  const days = createTransitDayCache({ indexedDB }); t.after(() => days.close());
   const calls = [];
-  const dayClient = createTransitDayClient({ moments, calculationVersion: metadata.calculationVersion,
+  const dayClient = createTransitDayClient({ days, calculationVersion: metadata.calculationVersion,
     fetch() { throw Error('a saved day must not use HTTP'); } });
   const client = createLifetimeClient({ dayClient, fetch(url) {
     calls.push(url); return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
@@ -248,12 +249,12 @@ test('after release an outdated intermediate point cannot replace the last selec
 });
 
 test('a disk-only minute bypasses another network request and rejects its late response', async t => {
-  const indexedDB = new IDBFactory(), seed = createMomentCache({ indexedDB });
+  const indexedDB = new IDBFactory(), seed = createTransitDayCache({ indexedDB });
   seed.putDay(dayAt('2026-09-30')); await seed.close();
-  const moments = createMomentCache({ indexedDB }); t.after(() => moments.close());
+  const days = createTransitDayCache({ indexedDB }); t.after(() => days.close());
   const requests = [], arrivals = new Map();
   const arrived = index => requests[index] ? Promise.resolve(requests[index]) : new Promise(resolve => arrivals.set(index, resolve));
-  const client = createLifetimeClient({ moments, fetch(url) {
+  const client = createLifetimeClient({ days, fetch(url) {
     if (url.endsWith('/meta')) return response(metadata);
     return new Promise(resolve => { const request = { index: Number(new URL(url, 'http://test').searchParams.get('index')), resolve }; requests.push(request); arrivals.get(requests.length - 1)?.(request); });
   } });
@@ -269,9 +270,8 @@ test('a disk-only minute bypasses another network request and rejects its late r
 
 test('a stale disk minute falls back to the ten-minute file without exact calculation', async t => {
   const calls = [], target = utc('30T12:31:00');
-  const moments = { ready: Promise.resolve(), hasMinute: () => true, peekMoment: () => null,
-    readMoment: async () => null, putMoment() {} };
-  const client = createLifetimeClient({ moments, fetch(url) {
+  const days = { prepare: async () => {}, hasMinute: () => true, peekDay: () => null, getDay: async () => null };
+  const client = createLifetimeClient({ days, fetch(url) {
     calls.push(url); assert.ok(!url.includes('/moment?'), 'a scrub never grants permission to calculate');
     return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
   } });
@@ -347,21 +347,52 @@ test('a ready disk minute still shows intermediate progress during continuous sc
 
 test('an old disk read cannot be relabelled with replacement metadata', async () => {
   let finish, meta = metadata;
-  const moments = { ready: Promise.resolve(), peekMoment: () => null, hasMinute: () => false,
-    readMoment: () => new Promise(resolve => { finish = resolve; }), putMoment() { throw Error('old values cannot be written'); } };
-  const client = createLifetimeClient({ moments, fetch(url) { assert.equal(url, '/api/lifetime/meta'); return response(meta); } });
+  const days = { prepare: async () => {}, peekDay: () => null, hasMinute: () => false,
+    getDay: () => new Promise(resolve => { finish = resolve; }) };
+  const client = createLifetimeClient({ days, fetch(url) { assert.equal(url, '/api/lifetime/meta'); return response(meta); } });
   const loading = client.getPoint(1); const rejected = assert.rejects(loading, { name: 'AbortError' }); await tick();
   client.invalidateMetadata(); meta = { ...metadata, calculationVersion: 'b'.repeat(64) }; await client.getMeta();
-  finish(point(1)); await rejected;
+  finish(dayAt('2026-09-29')); await rejected;
 });
 
 test('every metadata consumer waits for the device minute catalogue', async () => {
-  let ready; const moments = { ready: new Promise(resolve => { ready = resolve; }) };
-  const client = createLifetimeClient({ moments, fetch: async () => response(metadata) });
+  let ready; const prepared = new Promise(resolve => { ready = resolve; }); const days = { prepare: () => prepared };
+  const client = createLifetimeClient({ days, fetch: async () => response(metadata) });
   let firstDone = false, secondDone = false;
   const first = client.getMeta().then(() => { firstDone = true; });
   await tick();
   const second = client.getMeta().then(() => { secondDone = true; });
   await tick(); assert.equal(firstDone, false); assert.equal(secondDone, false);
   ready(); await Promise.all([first, second]); assert.equal(secondDone, true);
+});
+
+
+test('a personal upper bound blocks a cached minute beyond the centenary on restore, drag and keyboard', async () => {
+  const h = harness(); await h.dayClient.getDay('2026-09-30');
+  const maximumUtc = '2026-09-30T09:37:29Z';
+  const snapshot = { opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-09-30',
+    maximumUtc, requestedUtc: utc('30T09:38:00') };
+  assert.equal(await h.explorer.restore(snapshot), true);
+  assert.equal(h.explorer.state.maxUtc, Date.parse(maximumUtc));
+  assert.equal(h.explorer.state.displayedUtc, utc('30T09:37:00'));
+  assert.equal(h.explorer.adjacentUtc(1), utc('30T09:37:00'));
+  await h.explorer.scrub(utc('30T09:38:00'));
+  assert.equal(h.explorer.state.displayedUtc, utc('30T09:37:00'));
+  h.explorer.close(); await h.explorer.restore(snapshot);
+  assert.equal(h.explorer.state.maxUtc, Date.parse(maximumUtc));
+  assert.equal(h.explorer.state.displayedUtc, utc('30T09:37:00'));
+  assert.equal(h.requests.length, 0); assert.equal(h.exactRequests.length, 0);
+});
+
+test('invalid personal upper bounds are rejected before changing the open range', async () => {
+  const h = harness(); await h.dayClient.getDay('2026-09-30');
+  const base = { opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30',
+    minimumUtc: '2026-09-30T09:00:00Z', requestedUtc: utc('30T09:37:00') };
+  await h.explorer.restore(base);
+  const before = h.explorer.state;
+  for (const maximumUtc of ['bad', '2026-09-29T23:59:59Z', '2026-10-01T00:00:00Z', '2026-09-30T08:00:00Z']) {
+    assert.equal(await h.explorer.restore({ ...base, maximumUtc }), false, maximumUtc);
+    assert.equal(h.explorer.state.maxUtc, before.maxUtc);
+    assert.equal(h.explorer.state.displayedUtc, before.displayedUtc);
+  }
 });

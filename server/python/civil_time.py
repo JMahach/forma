@@ -6,8 +6,10 @@ import tzdata
 
 if __package__:
     from .errors import ChartError
+    from .date_limits import full_range_year, EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR
 else:
     from errors import ChartError
+    from date_limits import full_range_year, EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR
 
 # Use the pinned package, not whichever database the operating system has.
 zoneinfo.reset_tzpath([])
@@ -34,8 +36,8 @@ def transit_utc(value):
         moment = dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
     except ValueError:
         raise ChartError('invalid_utc', 'Некорректный момент UTC.')
-    if not 1801 <= moment.year <= 2399:
-        raise ChartError('unsupported_date', 'Доступны даты с 1801 по 2399 год.')
+    if not full_range_year(moment.year):
+        raise ChartError('unsupported_date', f'Доступны даты с {EPHEMERIS_FIRST_YEAR} по {EPHEMERIS_LAST_YEAR} год.')
     return moment
 
 
@@ -55,8 +57,8 @@ def local_to_utc(date, time, timezone, fold=None):
         zone = zoneinfo.ZoneInfo(timezone)
     except (ValueError, TypeError, zoneinfo.ZoneInfoNotFoundError):
         raise ChartError('invalid_datetime', 'Проверьте дату, время и выбранный город.')
-    if not 1801 <= local.year <= 2399:
-        raise ChartError('unsupported_date', 'Доступны даты с 1801 по 2399 год.')
+    if not full_range_year(local.year):
+        raise ChartError('unsupported_date', f'Доступны даты с {EPHEMERIS_FIRST_YEAR} по {EPHEMERIS_LAST_YEAR} год.')
     candidates = _local_candidates(local, zone)
     if not candidates:
         raise ChartError('nonexistent_time', 'Такого местного времени не было из-за перевода часов. Уточните время рождения.')
@@ -77,8 +79,8 @@ def local_minutes(date, timezone):
         day = dt.date.fromisoformat(date)
     except ValueError:
         raise ChartError('invalid_date', 'Некорректная дата рождения.')
-    if not 1801 <= day.year <= 2399:
-        raise ChartError('unsupported_date', 'Доступны даты с 1801 по 2399 год.')
+    if not full_range_year(day.year):
+        raise ChartError('unsupported_date', f'Доступны даты с {EPHEMERIS_FIRST_YEAR} по {EPHEMERIS_LAST_YEAR} год.')
     try:
         zone = zoneinfo.ZoneInfo(timezone)
     except (ValueError, TypeError, zoneinfo.ZoneInfoNotFoundError):

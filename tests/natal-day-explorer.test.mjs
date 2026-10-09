@@ -72,7 +72,7 @@ test('scrub recalculates both sides locally; reset and close restore the origina
   assert.equal(h.explorer.state.current, chart);
   await h.explorer.open();
   assert.equal(h.explorer.current, chart);
-  assert.equal(h.requests.length, 1, 'reopening reuses its already loaded day');
+  assert.equal(h.requests.length, 2, 'reopening reacquires the day through the common cache owner');
   assert.equal(h.explorer.state.referenceIndex, 754);
 });
 

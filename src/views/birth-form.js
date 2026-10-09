@@ -1,3 +1,4 @@
+import { natalDateAllowed, NATAL_DATE_MESSAGE } from '../../shared/date-limits.js';
 import { createChartId, normalizeChartName, parseGates } from '../data/storage.js';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
 import { canManageChart } from './chart-display.js';
@@ -129,6 +130,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
           && $('foldField').hidden;
         if (unchanged) { result = previous; metadataOnly = true; }
         else {
+          if (!natalDateAllowed(birthDate)) { $('birthDate').focus(); throw new Error(NATAL_DATE_MESSAGE); }
           const payload = { name, date: birthDate, time: birthTime, cityId: String(selectedCity.id), cityName: selectedCity.name, mode: 'natal' };
           if (!$('foldField').hidden) payload.fold = Number($('foldChoice').value);
           setFormBusy(true);

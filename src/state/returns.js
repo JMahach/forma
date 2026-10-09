@@ -1,3 +1,5 @@
+import { cycleUtcDifference } from '../../shared/cycles-format.js';
+import { EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR } from '../../shared/date-limits.js';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES, eligibleCycleChart, cycleRangeForChart,
   cycleYearBoundsForChart, cycleEventWithinRange, cycleTimeZone, cycleCalendarYear } from '../domain/cycles.js';
 import { createCyclesClient } from '../data/cycles-client.js';
@@ -5,21 +7,19 @@ import { createCyclesClient } from '../data/cycles-client.js';
 const BODY_IDS = CYCLE_BODIES.map(item => item.id);
 const normalizeBodies = value => Array.isArray(value) && value.every(id => BODY_IDS.includes(id))
   ? BODY_IDS.filter(id => value.includes(id)) : null;
-const rememberedEvent = (event, id) => event && event.id === id && BODY_IDS.includes(event.body) && Number.isFinite(Date.parse(event.utc)) ? event : null;
 
-// Filters own the event list; selecting an exact chart is an independent action.
-// Each body's full-life result is shared by the list and the lower rail.
+// The selected saved natal prepares its default dates. Extra bodies load on
+// demand; all prepared lists remain reusable while exact chart selection is independent.
 export function createReturnsController({ client = createCyclesClient(), onStateChange = () => {}, onRender = () => {}, onRequest = () => {} } = {}) {
   let natal = null, opened = false, markersEnabled = false, year = null, bodies = [...DEFAULT_CYCLE_BODIES];
   let current = null, selectedEvent = null, pendingEvent = null, chartError = '', loadingChart = false;
-  let generation = 0, chartGeneration = 0, chartJob = null, failedEvent = null;
-  let minYear = 1801, maxYear = 2399, calendarZone = 'UTC';
+  let generation = 0, chartGeneration = 0, chartJob = null, failedEvent = null, releaseCurrent = null;
+  let minYear = EPHEMERIS_FIRST_YEAR, maxYear = EPHEMERIS_LAST_YEAR, calendarZone = 'UTC';
   // null events means not loaded; [] is a completed search with no returns.
-  const records = new Map(), slots = new Set();
-  const queue = [];
+  const records = new Map();
   const available = () => eligibleCycleChart(natal);
   const wanted = () => opened || markersEnabled;
-  const pendingJobs = () => [...records.values()].flatMap(record => record.job ? [record.job] : []);
+  const pendingJobs = (wantedBodies = bodies) => wantedBodies.flatMap(body => records.get(body)?.job ? [records.get(body).job] : []);
   let eventView = null;
   function visibleEvents() {
     const sources = bodies.map(body => records.get(body)?.events);
@@ -38,47 +38,45 @@ export function createReturnsController({ client = createCyclesClient(), onState
     errors: bodies.flatMap(body => records.get(body)?.error ? [records.get(body).error] : []), markersEnabled,
     pendingBodies: bodies.filter(body => records.get(body)?.job), loadingChart, selectedEvent, pendingEvent, chartError, current });
   function emit(render = false) { if (render) onRender(current, selectedEvent); onStateChange(state()); }
-  function pump() {
-    while (slots.size < 2 && queue.length) {
-      const job = queue.shift();
-      if (job.controller.signal.aborted) { job.resolve(false); continue; }
-      slots.add(job);
-      Promise.resolve().then(() => job.run(job.controller.signal)).then(job.resolve, job.reject).finally(() => { slots.delete(job); pump(); });
-    }
+  // Admission belongs after client RAM/device lookup, not before it. Each
+  // controller job is only this tool's cancellable wait for a shared result.
+  function start(run) {
+    const job = { controller: new AbortController() };
+    job.promise = Promise.resolve().then(() => run(job.controller.signal));
+    return job;
   }
-  function enqueue(run, priority = false) {
-    const job = { run, controller: new AbortController() };
-    job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
-    priority ? queue.unshift(job) : queue.push(job);
-    pump(); return job;
-  }
-  function abortJob(job) {
-    if (!job) return;
-    job.controller.abort();
-    const index = queue.indexOf(job);
-    if (index >= 0) { queue.splice(index, 1); job.resolve(false); }
-  }
+  function abortJob(job) { job?.controller.abort(); }
   function cancelChart() {
     chartGeneration++; abortJob(chartJob); chartJob = null; loadingChart = false; pendingEvent = null;
   }
+  function dropCurrent() { releaseCurrent?.(); releaseCurrent = null; current = null; }
+  function acceptChart(input, data, event) {
+    const release = client.retainChart?.(input, data);
+    dropCurrent(); releaseCurrent = release; current = data.chart;
+    selectedEvent = event; failedEvent = null; chartError = ''; loadingChart = false; pendingEvent = null; chartJob = null; emit(true);
+  }
   function cancelSearch(record) { abortJob(record.job); record.job = null; }
-  function cancelSearches() { for (const record of records.values()) cancelSearch(record); }
-  function ensure({ hidden = false, extraBody = null } = {}) {
-    if ((!wanted() && !hidden) || !available()) return Promise.resolve(false);
+  function cancelSearches() {
+    for (const record of records.values()) { cancelSearch(record); record.release?.(); }
+  }
+  function ensure({ waitBodies = bodies } = {}) {
+    if (!available()) return Promise.resolve(false);
     const owner = natal, version = generation, range = cycleRangeForChart(owner);
     if (range.toAge <= range.fromAge) return Promise.resolve(false);
-    const requestedBodies = extraBody && !bodies.includes(extraBody) ? [...bodies, extraBody] : bodies;
     let added = false;
-    for (const body of requestedBodies) {
+    const required = new Set([...DEFAULT_CYCLE_BODIES, ...bodies, ...waitBodies]);
+    for (const body of BODY_IDS.filter(body => required.has(body))) {
       let record = records.get(body);
-      if (!record) { record = { events: null, error: null, job: null }; records.set(body, record); }
+      if (!record) { record = { events: null, error: null, job: null, release: null }; records.set(body, record); }
       if (record.events !== null || record.job || record.error) continue;
-      const job = enqueue(async signal => {
+      const job = start(async signal => {
         const owns = () => version === generation && !signal.aborted && record.job === job;
         if (!owns()) return false;
         try {
-          const data = await client.events({ birthUtc: owner.utc, timezone: owner.timezone || 'UTC', body, ...range }, signal);
+          const input = { birthUtc: owner.utc, timezone: owner.timezone || 'UTC', body, ...range };
+          const data = await client.events(input, signal);
           if (!owns()) return false;
+          record.release = client.retainEvents?.(input, data);
           record.events = data.events; return true;
         } catch (error) {
           if (!owns() || error?.name === 'AbortError') return false;
@@ -91,7 +89,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
       record.job = job; added = true;
     }
     if (added) emit();
-    return Promise.all(pendingJobs().map(job => job.promise));
+    return Promise.all(pendingJobs(waitBodies).map(job => job.promise));
   }
   function select(chart) {
     if (chart === natal) return;
@@ -100,44 +98,42 @@ export function createReturnsController({ client = createCyclesClient(), onState
     const hadPreview = Boolean(current);
     generation++; cancelChart(); cancelSearches(); records.clear();
     natal = chart; opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
-    current = selectedEvent = failedEvent = null; chartError = ''; calendarZone = 'UTC';
+    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; calendarZone = 'UTC';
     if (available()) {
       ({ minYear, maxYear } = cycleYearBoundsForChart(natal));
       calendarZone = cycleTimeZone(natal.timezone);
     }
     emit(hadPreview);
-    if (markersEnabled) return ensure();
+    return ensure();
   }
   function enableMarkers(value) {
     if (typeof value !== 'boolean') return false;
     if (value === markersEnabled) return Promise.all(pendingJobs().map(job => job.promise));
     markersEnabled = value;
-    if (!wanted()) cancelSearches();
     emit(); return ensure();
   }
   function open() { if (!available()) return Promise.resolve(false); opened = true; emit(); return ensure(); }
   function close() {
-    const changed = opened || loadingChart || pendingEvent || !markersEnabled && pendingJobs().length;
+    const changed = opened || loadingChart || pendingEvent;
     cancelChart(); opened = false;
-    if (!markersEnabled) cancelSearches();
     if (changed) emit();
     return ensure();
   }
   function reset() {
     const changed = current || selectedEvent || failedEvent || chartError || loadingChart || pendingEvent;
-    cancelChart(); current = selectedEvent = failedEvent = null; chartError = '';
+    cancelChart(); dropCurrent(); selectedEvent = failedEvent = null; chartError = '';
     if (changed) emit(true);
   }
   function exit() {
-    generation++; cancelChart(); cancelSearches(); records.clear(); markersEnabled = false; opened = false;
-    current = selectedEvent = failedEvent = null; chartError = ''; emit(true);
+    // Closing tools leaves the selected natal's date preparation intact.
+    cancelChart(); markersEnabled = false; opened = false;
+    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; emit(true);
   }
   function setBodies(value) {
     const next = normalizeBodies(value);
     if (!next) return false;
     if (next.length === bodies.length && next.every(body => bodies.includes(body))) return ensure();
     bodies = next;
-    for (const [body, record] of records) if (!bodies.includes(body)) cancelSearch(record);
     emit(); return ensure();
   }
   function setYear(value) {
@@ -146,29 +142,27 @@ export function createReturnsController({ client = createCyclesClient(), onState
     if (next === year) return ensure();
     year = next; emit(); return ensure();
   }
-  function selectEvent(value, { valid = () => true, restoredEvent = null } = {}) {
+  function selectEvent(value, { valid = () => true } = {}) {
     const id = typeof value === 'string' ? value : value?.id;
-    const remembered = rememberedEvent(restoredEvent, id);
-    const selected = [...records.values()].flatMap(record => record.events || []).find(event => event.id === id) || remembered;
+    const selected = [...records.values()].flatMap(record => record.events || []).find(event => event.id === id);
     if (!available() || !selected) return Promise.resolve(false);
     cancelChart(); const version = chartGeneration, owner = natal;
     onRequest(selected);
     loadingChart = true; pendingEvent = selected; failedEvent = null; chartError = ''; emit();
-    const job = enqueue(async signal => {
+    const job = start(async signal => {
       if (version !== chartGeneration || signal.aborted) return false;
       try {
-        const data = await client.chart({ birthUtc: owner.utc, body: selected.body, eventUtc: selected.utc, timezone: owner.timezone || 'UTC' }, signal);
+        const input = { birthUtc: owner.utc, body: selected.body, eventUtc: selected.utc, timezone: owner.timezone || 'UTC' };
+        const data = await client.chart(input, signal, { event: selected });
         if (version !== chartGeneration || signal.aborted) return false;
         if (!valid()) { cancelChart(); emit(); return false; }
-        const event = data.event;
-        current = data.chart;
-        selectedEvent = event; loadingChart = false; pendingEvent = null; chartJob = null; emit(true); return true;
+        acceptChart(input, data, selected); return true;
       } catch (error) {
         if (version !== chartGeneration || signal.aborted || error?.name === 'AbortError') return false;
         if (!valid()) { cancelChart(); emit(); return false; }
         chartError = error.message || 'Не удалось загрузить карту возврата.'; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
       }
-    }, true);
+    });
     chartJob = job; return job.promise;
   }
   async function restore(saved, { valid = () => true } = {}) {
@@ -177,29 +171,45 @@ export function createReturnsController({ client = createCyclesClient(), onState
     let exactVersion = chartGeneration;
     const owns = () => valid() && version === generation && exactVersion === chartGeneration;
     let eventId = saved.eventId;
+    const eventUtc = typeof eventId === 'string' ? eventId.slice(eventId.indexOf(':') + 1) : null;
     if (eventId) {
-      const utc = saved.event?.id === eventId ? saved.event.utc : typeof eventId === 'string' ? eventId.slice(eventId.indexOf(':') + 1) : null;
-      if (!cycleEventWithinRange(natal, utc)) { eventId = null; reset(); exactVersion = chartGeneration; }
+      if (!cycleEventWithinRange(natal, eventUtc)) { eventId = null; reset(); exactVersion = chartGeneration; }
     }
     bodies = normalizeBodies(saved.bodies) || [...DEFAULT_CYCLE_BODIES];
     year = Number.isInteger(saved.year) ? Math.max(minYear, Math.min(maxYear, saved.year)) : null;
-    for (const [body, record] of records) if (!bodies.includes(body)) cancelSearch(record);
     opened = saved.opened === true; markersEnabled ||= Boolean(eventId); emit();
     if (!owns()) return false;
-    if (eventId && rememberedEvent(saved.event, eventId)) {
-      // Exact restoration goes first; full-life lists may complete afterwards.
-      const selecting = selectEvent(eventId, { valid: owns, restoredEvent: saved.event });
-      exactVersion = chartGeneration;
-      void ensure();
-      const selected = await selecting;
-      return owns() && selected;
-    }
-    // Older snapshots can lack the exact descriptor. Search its body even when
-    // it is unchecked; the result does not enter the filtered visible list.
+    // A saved descriptor is presentation history, not numerical authority.
+    // Only a current-revision calculation or its exact UTC list can confirm it.
     const eventBody = typeof eventId === 'string' ? eventId.split(':')[0] : null;
-    await ensure({ hidden: true, extraBody: BODY_IDS.includes(eventBody) ? eventBody : null });
+    if (BODY_IDS.includes(eventBody) && client.readChart) {
+      // The complete calculation owns one verified event label. A session's
+      // older ordinal is never needed to render ready current-revision data.
+      cancelChart(); exactVersion = chartGeneration;
+      const input = { birthUtc: natal.utc, body: eventBody, eventUtc, timezone: natal.timezone || 'UTC' };
+      const job = start(signal => client.readChart(input, { signal }));
+      chartJob = job;
+      let data = null;
+      try { data = await job.promise; } catch { /* Optional cached data may be unavailable. */ }
+      if (!owns() || job.controller.signal.aborted || chartJob !== job) return false;
+      chartJob = null;
+      if (data) {
+        onRequest(data.event);
+        if (!owns()) return false;
+        acceptChart(input, data, data.event); ensure(); return true;
+      }
+    }
+    await ensure({ waitBodies: BODY_IDS.includes(eventBody) ? [eventBody] : bodies });
     if (!owns()) return false;
     if (eventId) {
+      const events = records.get(eventBody)?.events;
+      if (events && !events.some(event => event.id === eventId)) {
+        // A revised calculation can refine the root slightly. Only one nearby
+        // event is unambiguous; its fresh descriptor owns cycle/pass/direction.
+        const candidates = events.filter(event => Math.abs(cycleUtcDifference(event.utc, eventUtc)) <= 1000);
+        if (candidates.length !== 1) { reset(); return valid() && version === generation; }
+        eventId = candidates[0].id;
+      }
       const selecting = selectEvent(eventId, { valid: owns }); exactVersion = chartGeneration;
       return await selecting && owns();
     }
@@ -207,7 +217,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
   }
   function retry() {
     if (!wanted() && !failedEvent) return Promise.resolve(false);
-    if (failedEvent) return selectEvent(failedEvent.id, { restoredEvent: failedEvent });
+    if (failedEvent) return selectEvent(failedEvent.id);
     for (const body of bodies) { const record = records.get(body); if (record) record.error = null; }
     return ensure();
   }

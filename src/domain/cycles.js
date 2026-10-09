@@ -1,6 +1,9 @@
-export const LIFE_SPAN_YEARS = 100;
+import { LIFE_SPAN_YEARS, EPHEMERIS_LAST_YEAR, SUPPORTED_START, SUPPORTED_END_EXCLUSIVE, calendarAnniversaryUtc } from '../../shared/date-limits.js';
+
+export { LIFE_SPAN_YEARS };
 const DAY_MS = 86400000, ELAPSED_YEAR_MS = 365.2425 * DAY_MS;
-const SUPPORTED_START = Date.UTC(1801, 0, 1), SUPPORTED_END = Date.UTC(2400, 0, 1) - 1;
+const SUPPORTED_END = SUPPORTED_END_EXCLUSIVE - 1;
+const cycleSearchEnd = chart => Math.min(SUPPORTED_END, calendarAnniversaryUtc(Date.parse(chart?.utc)));
 
 // Labels describe the event; astronomical searching belongs to the server.
 export const CYCLE_BODIES = Object.freeze([
@@ -19,10 +22,9 @@ export const eligibleCycleChart = chart => Boolean(chart?.source === 'calculated
 
 export function cycleRangeForChart(chart) {
   if (!chart) return null;
-  const available = (SUPPORTED_END - Date.parse(chart.utc)) / ELAPSED_YEAR_MS;
-  return { fromAge: 0, toAge: Math.max(0, Math.min(LIFE_SPAN_YEARS, available)) };
+  const span = (cycleSearchEnd(chart) - Date.parse(chart.utc)) / ELAPSED_YEAR_MS;
+  return { fromAge: 0, toAge: Math.max(0, span) };
 }
-const cycleSearchEnd = chart => Math.min(SUPPORTED_END, Date.parse(chart.utc) + cycleRangeForChart(chart).toAge * ELAPSED_YEAR_MS);
 
 const calendars = new Map();
 function cycleCalendar(timezone) {
@@ -43,13 +45,12 @@ export function cycleCalendarYear(utc, timezone = 'UTC') {
   return Number(cycleCalendar(timezone).format(new Date(utc)));
 }
 export function cycleYearBoundsForChart(chart) {
-  const end = cycleSearchEnd(chart);
-  try { return { minYear: cycleCalendarYear(chart.utc, chart.timezone || 'UTC'), maxYear: Math.min(2399, cycleCalendarYear(end, chart.timezone || 'UTC')) }; }
-  catch { return { minYear: new Date(chart.utc).getUTCFullYear(), maxYear: Math.min(2399, new Date(end).getUTCFullYear()) }; }
+  const minYear = cycleCalendarYear(chart.utc, chart.timezone || 'UTC');
+  return { minYear, maxYear: Math.min(EPHEMERIS_LAST_YEAR, minYear + LIFE_SPAN_YEARS) };
 }
 export function cycleEventWithinRange(chart, utc) {
-  const range = cycleRangeForChart(chart), age = (Date.parse(utc) - Date.parse(chart?.utc)) / ELAPSED_YEAR_MS;
-  return Boolean(range && Number.isFinite(age) && age > 0 && age <= range.toAge + 1e-8);
+  const moment = Date.parse(utc), birth = Date.parse(chart?.utc);
+  return Number.isFinite(moment) && moment > birth && moment <= cycleSearchEnd(chart);
 }
 
 
@@ -60,9 +61,7 @@ export function lifeTimelineForChart(chart) {
   const milliseconds = Date.parse(utc);
   if (!Number.isFinite(milliseconds)) return null;
   const birth = new Date(milliseconds), fromDate = birth.toISOString().slice(0, 10);
-  if (birth.toISOString().slice(0, 19) !== utc.slice(0, 19) || fromDate < '1801-01-01' || fromDate > '2399-12-31') return null;
-  const year = birth.getUTCFullYear() + LIFE_SPAN_YEARS, month = birth.getUTCMonth();
-  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  const anniversary = new Date(Date.UTC(year, month, Math.min(birth.getUTCDate(), lastDay))).toISOString().slice(0, 10);
-  return { fromDate, toDate: anniversary > '2399-12-31' ? '2399-12-31' : anniversary };
+  if (birth.toISOString().slice(0, 19) !== utc.slice(0, 19) || milliseconds < SUPPORTED_START || milliseconds >= SUPPORTED_END_EXCLUSIVE) return null;
+  const maximumUtc = new Date(cycleSearchEnd(chart)).toISOString();
+  return { fromDate, toDate: maximumUtc.slice(0, 10), maximumUtc };
 }
