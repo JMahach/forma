@@ -50,7 +50,7 @@ export function createLifetimeExplorer({
     const changed = chart !== fullChart || date !== fromDate || date !== toDate;
     fullChart = chart; manualChart = null; requestedUtc = shownUtc();
     fromDate = toDate = date; openEnded = false;
-    if (status !== 'error') status = fullChart ? 'ready' : 'loading';
+    if (!['error', 'preparing'].includes(status)) status = fullChart ? 'ready' : 'loading';
     return changed;
   }
   function syncDay() {
@@ -111,7 +111,8 @@ export function createLifetimeExplorer({
           maxDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
         }
         if (restoration?.mode === 'lifetime') {
-          const through = restoration.openEnded ? maxDate : restoration.toDate;
+          const through = restoration.openEnded || (restoration.minimumUtc && restoration.toDate > maxDate)
+            ? maxDate : restoration.toDate;
           const start = dateStart(restoration.fromDate), end = dateStart(through) + dayMilliseconds;
           if (restoration.fromDate < minDate || through > maxDate || restoration.fromDate > through) {
             pendingRestore = null; mode = 'day'; borrowDay();
@@ -181,7 +182,8 @@ export function createLifetimeExplorer({
         return false;
       } catch (failure) {
         if (generation !== sequence || request.controller.signal.aborted) return false;
-        status = 'error'; error = failure?.message || 'Не удалось загрузить летопись.'; notify();
+        status = failure?.code === 'lifetime_preparing' ? 'preparing' : 'error';
+        error = status === 'error' ? failure?.message || 'Не удалось загрузить летопись.' : ''; notify();
         return false;
       } finally { if (active === request) { active = null; restoring = false; } }
     });

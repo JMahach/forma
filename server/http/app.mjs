@@ -3,7 +3,6 @@ import { createNatalDayHandler } from './natal-days.mjs';
 import { createPublicFileHandler } from './public-files.mjs';
 import { createCyclesHandler } from './cycles.mjs';
 import { createLifetimeHandler } from './lifetime.mjs';
-import { createLifetimeMoments } from '../services/lifetime.mjs';
 
 const MAX_REQUEST_BYTES = 20000;
 function json(res, status, data) {
@@ -13,11 +12,11 @@ function json(res, status, data) {
 
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, cities, calculate, transitDays, natalDays, lifetime, lifetimeFingerprint, cycles, now, publicFiles = createPublicFileHandler({ root }) }) {
+export function createRequestHandler({ root, cities, calculate, transitDays, natalDays, lifetime, cycles, now, publicFiles = createPublicFileHandler({ root }) }) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
   const natalDay = natalDays && createNatalDayHandler(natalDays);
   const cycleHandler = cycles && createCyclesHandler(cycles);
-  const lifetimePoint = createLifetimeHandler(createLifetimeMoments({ lifetimeFile: lifetime, calculate, calculationFingerprint: lifetimeFingerprint }));
+  const lifetimePoint = createLifetimeHandler(lifetime);
   return async function handleRequest(req, res) {
     try {
       const url = new URL(req.url, 'http://localhost');

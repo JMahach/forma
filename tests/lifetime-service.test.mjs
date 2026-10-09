@@ -138,7 +138,7 @@ test('close waits for all pending positional reads and prevents new requests', a
 async function request(service, url, method = 'GET') {
   const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
   const moments = createLifetimeMoments({ lifetimeFile: service, calculate() { throw Error('Grid must never calculate'); } });
-  await createLifetimeHandler(moments)({ method, url }, res, new URL(url, 'http://localhost'));
+  await createLifetimeHandler(moments && { ...moments, getMetadata: async () => moments.metadata })({ method, url }, res, new URL(url, 'http://localhost'));
   return res;
 }
 
@@ -173,9 +173,11 @@ test('HTTP validates one canonical bounded index and sanitizes unavailable error
 
 async function versionedHandler(t, input, fingerprint = 'a'.repeat(64)) {
   const source = await openLifetime(t, input), reads = [];
-  const handler = createRequestHandler({ root: '/unused', lifetime: { ...source,
-    getPoint(index) { reads.push(index); return source.getPoint(index); } }, lifetimeFingerprint: fingerprint,
-    calculate() { throw Error('Grid must never calculate'); }, publicFiles() { throw Error('unexpected static'); } });
+  const moments = createLifetimeMoments({ lifetimeFile: { ...source,
+    getPoint(index) { reads.push(index); return source.getPoint(index); } }, calculationFingerprint: fingerprint,
+    calculate() { throw Error('Grid must never calculate'); } });
+  const handler = createRequestHandler({ root: '/unused', lifetime: { ...moments, getMetadata: async () => moments.metadata },
+    publicFiles() { throw Error('unexpected static'); } });
   const send = async url => {
     const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
     await handler({ method: 'GET', url, headers: { host: 'localhost' } }, res);
@@ -314,4 +316,70 @@ test('optional ephemeris input presence and bytes invalidate file provenance and
   await assert.rejects(createLifetimeFile({ ...input, root: directory }), unavailable);
   await fs.rm(nested, { recursive: true });
   assert.deepEqual(await fingerprints(), original);
+});
+
+
+test('a completed lifetime file becomes available on the next request without recreating the service', async t => {
+  const input = await fixture(t);
+  await fs.unlink(input.metadataFile);
+  const service = lifetimeService.createLifetimeService({ file: input.file, calculate() { assert.fail('Preparation must not calculate through HTTP'); } });
+  t.after(() => service.close());
+  const send = async url => {
+    const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = JSON.parse(body); } };
+    await createLifetimeHandler(service)({ method: 'GET' }, res, new URL(url, 'http://localhost'));
+    return res;
+  };
+  const waiting = await send('/api/lifetime/meta');
+  assert.equal(waiting.status, 503);
+  assert.equal(waiting.body.error, 'lifetime_preparing');
+  assert.equal(waiting.headers['Cache-Control'], 'no-store');
+  await fs.unlink(input.file);
+  assert.equal((await send('/api/lifetime/meta')).body.error, 'lifetime_preparing');
+  await fs.writeFile(input.file, input.bytes);
+  assert.equal((await send('/api/lifetime/meta')).body.error, 'lifetime_preparing', 'data without the completion marker must not open');
+  await fs.writeFile(input.metadataFile, JSON.stringify(input.metadata));
+  const originalOpen = fs.open.bind(fs); let fileOpens = 0;
+  t.mock.method(fs, 'open', (...args) => { if (args[0] === input.file) fileOpens++; return originalOpen(...args); });
+  const replies = await Promise.all([send('/api/lifetime/meta'), send('/api/lifetime/meta')]);
+  for (const reply of replies) { assert.equal(reply.status, 200); assert.equal(reply.body.samples, 17); }
+  const result = await send(`/api/lifetime?index=8&v=${replies[0].body.cacheVersion}`);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.utc, '1900-01-01T01:20:00Z');
+  assert.deepEqual(result.body.longitudes, input.columns.slice(0, 11).map(column => column[8]));
+  assert.match(result.headers['Cache-Control'], /immutable/);
+  assert.equal(fileOpens, 1, 'concurrent visitors share validation; ready requests reuse the open file');
+});
+
+test('a corrupt lifetime is an error, and a corrected file can be opened by the same service', async t => {
+  const input = await fixture(t);
+  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, sha256: '0'.repeat(64) }));
+  const service = lifetimeService.createLifetimeService({ file: input.file });
+  t.after(() => service.close());
+  await assert.rejects(service.getMetadata(), unavailable);
+  await fs.writeFile(input.metadataFile, JSON.stringify(input.metadata));
+  assert.equal((await service.getMetadata()).samples, 17);
+});
+
+
+test('closing the service during its first file check closes that handle and rejects further requests', async t => {
+  const input = await fixture(t), originalOpen = fs.open.bind(fs);
+  let opens = 0, closes = 0;
+  t.mock.method(fs, 'open', async (...args) => {
+    const handle = await originalOpen(...args);
+    if (args[0] === input.file) {
+      opens++;
+      const close = handle.close.bind(handle);
+      t.mock.method(handle, 'close', async () => { closes++; return close(); });
+    }
+    return handle;
+  });
+  const service = lifetimeService.createLifetimeService({ file: input.file });
+  const opening = assert.rejects(service.getMetadata(), unavailable);
+  const closing = service.close();
+  assert.equal(service.close(), closing);
+  await Promise.all([opening, closing]);
+  assert.equal(opens, 1); assert.equal(closes, 1);
+  await assert.rejects(service.getMetadata(), unavailable);
+  await assert.rejects(service.getMoment(0), unavailable);
+  assert.equal(opens, 1, 'closed services cannot reopen files');
 });

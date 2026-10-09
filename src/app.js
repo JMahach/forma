@@ -36,7 +36,6 @@ import { returnsVisibleWindow } from './domain/returns-window.js';
 // Composition root: each feature owns its state; these callbacks connect them.
 export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   const $ = id => document.getElementById(id);
-  const lifetimeEnabled = document.body.dataset.lifetimeEnabled === 'true';
   attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]);
   const store = createChartStore({ onStorageError: toast });
   const headingLayout = createChartHeadingLayout({
@@ -55,7 +54,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     getLifetime: () => lifetime, getReturns: () => returns,
     filterTransit: transitPlanets.filter, onSelect: () => exploration?.selected(), onChange: updatePage });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
-    getLifetime: () => lifetime, getReturns: () => returns, loadLifetime, enabled: lifetimeEnabled,
+    getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
     onTimelineReady: () => { layout.refresh(); gestures.resize(); updatePersonalTimeline(); },
     onModeChange: updatePersonalTimeline, onChange: () => viewSession?.schedule() });
   const currentChart = () => session.current;
@@ -228,7 +227,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
 
   function updatePage() {
     updatePersonalTimeline();
-    if (!lifetime) $('lifetimeToggle').hidden = !lifetimeEnabled || !(session.selectedId === 'current-transit' || returns?.state.available);
+    if (!lifetime) $('lifetimeToggle').hidden = !(session.selectedId === 'current-transit' || returns?.state.available);
     library.render();
     graph.render();
     updateLoading();
@@ -269,7 +268,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     restorePersonalLive: exploration.restoreLive,
     acceptLifetimeMode: exploration.acceptLifetimeMode,
     getReturns: () => returns, getLifetime: () => lifetime, loadLifetime,
-    openReturnsTimeline: exploration.openTimeline, canRestoreLifetime: () => lifetimeEnabled && (session.selectedId === 'current-transit' || returns.state.available),
+    openReturnsTimeline: exploration.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns.state.available),
   });
   void viewSession.restore().catch(() => toast('Не удалось восстановить положение страницы.')).finally(() => {
     exploration.finishRestore({ saved: restoreView, interrupted: viewSession.interrupted,
@@ -340,7 +339,6 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   // Both a toolbar click and page restoration use the same lazy controller.
   // Importing it alone never opens Lifetime or resets a restored date range.
   async function loadLifetime() {
-    if (!lifetimeEnabled) return null;
     if (lifetime) return lifetime;
     if (lifetimeLoading) return lifetimeLoading;
     if (lifetimeLoadFailed) return null;
@@ -402,18 +400,16 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     })();
     return lifetimeLoading;
   }
-  if (lifetimeEnabled) {
-    $('lifetimeToggle').addEventListener('click', () => {
-      if (session.selectedId !== 'current-transit' && !returns.state.available) return;
-      viewSession?.interrupt();
-      library.close(); chartSummary.close(); activationPopover.close(); hoverPreview?.clear();
-      if (lifetimeLoadFailed) { window.location.reload(); return; }
-      if (session.selectedId === 'current-transit') {
-        void exploration.toggleTransit();
-      } else void exploration.toggleReturns();
-    });
-    for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
-      field.addEventListener('input', () => { viewSession?.interrupt(); exploration.invalidateTimeline(); }, true);
-    }
+  $('lifetimeToggle').addEventListener('click', () => {
+    if (session.selectedId !== 'current-transit' && !returns.state.available) return;
+    viewSession?.interrupt();
+    library.close(); chartSummary.close(); activationPopover.close(); hoverPreview?.clear();
+    if (lifetimeLoadFailed) { window.location.reload(); return; }
+    if (session.selectedId === 'current-transit') {
+      void exploration.toggleTransit();
+    } else void exploration.toggleReturns();
+  });
+  for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
+    field.addEventListener('input', () => { viewSession?.interrupt(); exploration.invalidateTimeline(); }, true);
   }
 }

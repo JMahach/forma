@@ -24,7 +24,7 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, cap
           if (!response.ok) {
             let failure;
             try { failure = await response.json(); } catch { /* Local server errors may have no JSON body. */ }
-            throw new Error(failure?.message || 'Не удалось загрузить летопись.');
+            throw Object.assign(new Error(failure?.message || 'Не удалось загрузить летопись.'), { code: failure?.error });
           }
           const value = await response.json();
           if (controller.signal.aborted) throw createAbortError();

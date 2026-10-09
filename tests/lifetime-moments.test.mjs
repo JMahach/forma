@@ -30,8 +30,9 @@ test('cold full grid point is served without invoking the calculator', async () 
 
 test('five duplicate HTTP moments share one complete file read with no calculator', async () => {
   const reads = [], pending = deferred();
+  const moments = createLifetimeMoments({ lifetimeFile: { metadata, getPoint(index) { reads.push(index); return pending.promise; } }, calculate: neverCalculate });
   const handler = createRequestHandler({ root: '/unused', calculate: neverCalculate,
-    lifetime: { metadata, getPoint(index) { reads.push(index); return pending.promise; } },
+    lifetime: { ...moments, getMetadata: async () => moments.metadata },
     publicFiles: async () => { throw new Error('unexpected static request'); } });
   const requests = Array.from({ length: 5 }, () => httpRequest(handler, '/api/lifetime?index=3'));
   await tick(); assert.deepEqual(reads, [3]); pending.resolve(point(3));

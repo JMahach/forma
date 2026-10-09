@@ -853,3 +853,66 @@ test('reference titles distinguish the current moment from a personal transit', 
   personal = { utc: '1998-08-18T14:00:00Z', timezone: 'Europe/Moscow' }; owner = h.day;
   h.explorer.syncTransit(); assert.equal(h.marker.title, 'Текущий транзит');
 });
+
+
+test('preparing replaces the lifetime rail and stays visible through live-day updates until a fresh request succeeds', async () => {
+  let ready = false, requests = 0;
+  const h = harness({ client: { async getMeta() {
+    requests++;
+    if (!ready) throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
+    return metadata;
+  } } });
+  await h.explorer.open();
+  assert.equal(h.toggle.hidden, false);
+  assert.equal(h.panel.hidden, false);
+  assert.equal(h.explorer.state.status, 'preparing');
+  assert.equal(h.status.textContent, 'Создаём летопись');
+  assert.equal(h.panel.getAttribute('aria-busy'), 'true');
+  assert.equal(h.range.parentElement.hidden, true);
+  assert.equal(h.range.disabled, true);
+  assert.equal(h.fromDate.disabled, true);
+  assert.equal(h.retryButton.hidden, true);
+  h.setDay('2026-09-30T12:38:00Z');
+  h.setDayState({ status: 'loading' });
+  assert.equal(h.explorer.state.status, 'preparing');
+  assert.equal(h.status.textContent, 'Создаём летопись');
+  assert.equal(requests, 1, 'clock updates do not poll for the file');
+  ready = true; h.setDayState({ status: 'ready' });
+  h.explorer.close(); await h.explorer.open();
+  assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.range.parentElement.hidden, false);
+  assert.equal(h.fromDate.disabled, false);
+  assert.equal(h.status.textContent, '');
+  assert.equal(requests, 2);
+});
+
+
+test('a ready personal chart cannot hide a pending or failed lifetime file', async () => {
+  const meta = deferred(), natal = { utc: '1998-08-18T14:00:00Z' };
+  const h = harness({ metaPromise: meta.promise, getMomentState: () => ({ current: natal, status: 'ready' }) });
+  const opening = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
+    minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) });
+  await tick();
+  assert.equal(h.panel.getAttribute('aria-busy'), 'true');
+  assert.equal(h.status.textContent, 'Загружаем шкалу…');
+  meta.reject(Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }));
+  assert.equal(await opening, false);
+  assert.equal(h.panel.dataset.status, 'error');
+  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.retryButton.hidden, false);
+});
+
+test('a personal range accepted before metadata preserves an unfinished date draft when the file opens', async () => {
+  const meta = deferred(), natal = { utc: '1998-08-18T14:00:00Z' };
+  const h = harness({ metaPromise: meta.promise, getMomentState: () => ({ current: natal, status: 'ready' }) });
+  const opening = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
+    minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) });
+  await tick();
+  h.type(h.fromDate, '1908');
+  meta.resolve(metadata);
+  assert.equal(await opening, true);
+  assert.equal(h.fromDate.value, '19.08');
+  assert.equal(h.explorer.state.fromDate, '1998-08-18');
+  assert.equal(h.explorer.current, natal);
+  assert.deepEqual(h.requests, [], 'opening a personal range reuses its original chart');
+});

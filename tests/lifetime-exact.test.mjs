@@ -28,7 +28,8 @@ function http(handler, url, method = 'GET') {
 }
 function harness(calculate = ({ utc }) => full(utc)) {
   const requests = [], dayRequests = [];
-  const handler = createRequestHandler({ root, lifetime: lifetimeFile, lifetimeFingerprint: 'b'.repeat(64), calculate,
+  const moments = service({ calculate });
+  const handler = createRequestHandler({ root, lifetime: { ...moments, getMetadata: async () => moments.metadata }, calculate,
     now: () => new Date('2026-10-06T00:00:00Z'), transitDays: { get: async date => { dayRequests.push(date); throw new Error('No day'); } },
     publicFiles: async (_req, res) => { res.writeHead(404, {}); res.end(); } });
   const client = createLifetimeClient({ dayClient: { peekDay: () => null, getDay: async date => {

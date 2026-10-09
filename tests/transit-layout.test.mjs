@@ -448,7 +448,7 @@ test('Home is the first toolbar control, before Lifetime, Day and Mandala', () =
   const tools = byId('fitButton').parent;
   assert.deepEqual(nodes.filter(node => node.parent === tools && node.tag === 'button')
     .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'natalDayToggle', 'mandalaSwitch', 'summarySwitch']);
-  assert.match(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'the server exposes Lifetime in its first HTML only when available');
+  assert.doesNotMatch(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'Lifetime remains available while its data is being prepared');
   assert.match(byId('fitButton').attributes, /\bhidden(?:\s|$)/, 'the fitted initial chart starts without Home');
   assert.equal(byId('natalDayToggle').parent, byId('mandalaSwitch').parent);
 });

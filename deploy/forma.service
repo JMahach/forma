@@ -11,10 +11,8 @@ Environment=HOST=127.0.0.1
 Environment=PORT=4173
 # Packet filenames contain the calculation fingerprint; no manual v1/v2 path.
 Environment=TRANSIT_CACHE_DIR=/var/cache/forma/transit
-# Run npm run prepare:lifetime in the project before starting.
-# .cache/lifetime may point to shared data preserved across releases.
-# The HTTP service reads the completed file; it never starts preparation.
-Environment=FORMA_LIFETIME_FILE=/opt/forma/current/.cache/lifetime/lifetime-1801-2400.f64le
+# Prepare .cache/lifetime with npm run prepare:lifetime in the project.
+# Once ready, the next browser request opens it; no service restart is needed.
 CacheDirectory=forma
 CacheDirectoryMode=0700
 ExecStart=/opt/forma/node/bin/node server/server.mjs --release

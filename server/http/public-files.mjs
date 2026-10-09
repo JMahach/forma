@@ -156,13 +156,12 @@ export async function readReleaseManifest(directory) {
   return files;
 }
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, lifetimeEnabled = false, cyclesVersion = null }) {
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null }) {
   const cycleAttribute = typeof cyclesVersion === 'string' && /^[a-f0-9]{64}$/.test(cyclesVersion) ? ` data-cycles-version="${cyclesVersion}"` : '';
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
     let html = prepareLoadingPage(bytes.toString('utf8'));
-    html = html.replace('<body>', `<body${lifetimeEnabled ? ' data-lifetime-enabled="true"' : ''}${cycleAttribute}>`);
-    if (lifetimeEnabled) html = html.replace(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/, tag => tag.replace(/\s+hidden(?=\s|>)/, ''));
+    html = html.replace('<body>', `<body${cycleAttribute}>`);
     return Buffer.from(html);
   } });
   return async function servePublicFile(req, res, pathname) {
