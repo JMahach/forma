@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createMomentCache } from '../src/data/moment-cache.js';
 import { createTransitDayClient } from '../src/data/transit-day-client.js';
 import { encodeTransitDay } from '../server/packets/encode.mjs';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.js';
@@ -49,7 +50,7 @@ test('failed requests are retryable and JSON API errors reach the day controls',
 
 test('day client rejects mismatched packets and bounds its decoded-day memory', async () => {
   let requests = 0;
-  const client = createTransitDayClient({ capacity: 2, fetch: async url => {
+  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => {
     requests++;
     return response(new URL(url, 'https://example.test').searchParams.get('date'));
   } });
@@ -136,7 +137,7 @@ test('another UTC date cannot consume the one-shot startup failure', async () =>
 
 test('the active local day stays visible to shared lookup while unrelated days rotate through LRU', async () => {
   let requests = 0;
-  const client = createTransitDayClient({ capacity: 2, fetch: async url => {
+  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => {
     requests++;
     return response(new URL(url, 'https://example.test').searchParams.get('date'));
   } });
@@ -173,13 +174,13 @@ test('the active local day stays visible to shared lookup while unrelated days r
 
 test('day rollover releases every earlier pin, and late stopped loads cannot pin again', async () => {
   let timestamp = Date.parse('2026-09-01T12:00:00Z');
-  const client = createTransitDayClient({ capacity: 2, fetch: async url => response(new URL(url, 'https://example.test').searchParams.get('date')) });
+  const client = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 2 * (1440 * 24 * 8 + 256) }), fetch: async url => response(new URL(url, 'https://example.test').searchParams.get('date')) });
   const live = createLiveTransit({ dayClient: client, now: () => timestamp, timeZone: () => 'UTC' });
   for (let offset = 0; offset < 20; offset++) { await live.refresh(); timestamp += 86400000; }
   for (let date = 1; date < 18; date++) assert.equal(client.peekDay(`2026-09-${String(date).padStart(2, '0')}`), null);
   live.stop();
   let finish;
-  const delayedClient = createTransitDayClient({ capacity: 1, fetch: url => {
+  const delayedClient = createTransitDayClient({ moments: createMomentCache({ indexedDB: null, maxMemoryBytes: 1440 * 24 * 8 + 256 }), fetch: url => {
     const date = new URL(url, 'https://example.test').searchParams.get('date');
     return date === '2026-09-24' ? new Promise(resolve => { finish = () => resolve(response(date)); }) : Promise.resolve(response(date));
   } });

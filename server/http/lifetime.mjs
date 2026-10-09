@@ -1,6 +1,6 @@
 import { requestSignal } from './request-signal.mjs';
 import { LifetimeError } from '../services/lifetime.mjs';
-import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-format.js';
+import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 function json(res, status, value, immutable = false) {

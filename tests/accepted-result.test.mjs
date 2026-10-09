@@ -63,3 +63,22 @@ test('one lifetime owner accepts intermediate ready progress and keeps reference
   assert.equal(session.current.primary, natal);
   assert.equal(session.current.secondary, next);
 });
+
+
+test('changing the accepted source notifies captions while retaining an unchanged composition', () => {
+  const chart = moment('2026-10-09T12:01:00Z'), changes = [];
+  let session;
+  session = createChartSession({ store: { get: () => chart, has: () => true },
+    onChange: () => changes.push({ composition: session.current, source: session.shownSource }) });
+  session.publish('transit', chart);
+  const accepted = session.current;
+  changes.length = 0;
+  session.expect('lifetime'); session.publish('lifetime', chart);
+  assert.equal(session.current, accepted, 'the same numeric result retains its composition');
+  assert.deepEqual(changes, [{ composition: accepted, source: 'lifetime' }], 'the UTC caption context still changes');
+  session.publish('lifetime', chart);
+  assert.equal(changes.length, 1, 'repeated publication from the same source is a no-op');
+  session.expect('transit'); session.publish('transit', chart);
+  assert.deepEqual(changes.map(change => change.source), ['lifetime', 'transit']);
+  assert.equal(session.current, accepted);
+});

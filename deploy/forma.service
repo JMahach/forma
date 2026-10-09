@@ -11,7 +11,7 @@ Environment=HOST=127.0.0.1
 Environment=PORT=4173
 # Packet filenames contain the calculation fingerprint; no manual v1/v2 path.
 Environment=TRANSIT_CACHE_DIR=/var/cache/forma/transit
-# Prepare .cache/lifetime with npm run prepare:lifetime in the project.
+# Prepare .cache/lifetime as user forma with npm run prepare:lifetime in the project.
 # Once ready, the next browser request opens it; no service restart is needed.
 CacheDirectory=forma
 CacheDirectoryMode=0700

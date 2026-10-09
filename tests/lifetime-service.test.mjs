@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createLifetimeFile, createLifetimeMoments } from '../server/services/lifetime.mjs';
 import * as lifetimeService from '../server/services/lifetime.mjs';
+import { calculationVersion } from '../server/runtime/calculation-version.mjs';
 import { createLifetimeHandler } from '../server/http/lifetime.mjs';
 import { createRequestHandler } from '../server/http/app.mjs';
 import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, LIFETIME_FIELDS, LIFETIME_POINT_BYTES } from '../shared/lifetime-format.js';
@@ -255,7 +256,6 @@ test('moment versions bind verified file bytes, index-to-UTC metadata and calcul
 });
 
 test('calculation fingerprints follow exact inputs but ignore paths, timestamps and interface files', async t => {
-  assert.equal(typeof lifetimeService.lifetimeCalculationFingerprint, 'function');
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-moment-fingerprint-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const { CALCULATION_INPUTS } = await import('../server/runtime/calculation-version.mjs');
@@ -264,9 +264,9 @@ test('calculation fingerprints follow exact inputs but ignore paths, timestamps 
     await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
     await fs.copyFile(new URL(`../${name}`, import.meta.url), path.join(directory, name));
   }
-  const fingerprint = () => lifetimeService.lifetimeCalculationFingerprint(directory);
+  const fingerprint = () => calculationVersion(directory);
   const original = await fingerprint(); assert.match(original, /^[a-f0-9]{64}$/);
-  assert.equal(await lifetimeService.lifetimeCalculationFingerprint(fileURLToPath(new URL('../', import.meta.url))), original);
+  assert.equal(await calculationVersion(fileURLToPath(new URL('../', import.meta.url))), original);
   for (const name of names) {
     const file = path.join(directory, name), before = await fs.readFile(file), stat = await fs.stat(file);
     const changed = Buffer.from(before); changed[0] ^= 1;
@@ -314,7 +314,7 @@ test('optional ephemeris input presence and bytes invalidate file provenance and
     const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-B', '-c',
       'from server.python.lifetime_file import calculation_fingerprint; print(calculation_fingerprint())'], { cwd: directory });
     assert.equal(stdout.trim(), fileFingerprint, 'Python preparation and Node verification use identical names, ordering and bytes');
-    return [fileFingerprint, await lifetimeService.lifetimeCalculationFingerprint(directory)];
+    return [fileFingerprint, await calculationVersion(directory)];
   }
   const original = await fingerprints();
   await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance: { version: '1', calculationFingerprint: original[0] } }));

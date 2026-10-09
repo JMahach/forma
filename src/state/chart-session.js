@@ -23,8 +23,12 @@ export function createChartSession({ store, getTransit = () => null, getNatalDay
     const overlay = kind === 'return' || (kind === 'transit' || kind === 'lifetime') && selectedId !== 'current-transit' && original.source !== 'transit';
     const primary = overlay ? original : filtered, secondary = overlay ? filtered : null;
     const compositionKind = overlay ? kind === 'return' ? 'return' : 'transit' : 'single';
+    const sourceChanged = acceptedKind !== kind;
     acceptedSource = chart; acceptedKind = kind; hasCurrent = chart !== emptyMoment;
-    if (accepted.primary === primary && accepted.secondary === secondary && accepted.kind === compositionKind && accepted.event === event) return true;
+    if (accepted.primary === primary && accepted.secondary === secondary && accepted.kind === compositionKind && accepted.event === event) {
+      if (sourceChanged) refresh();
+      return true;
+    }
     accepted = createChartComposition(primary, { secondary, kind: compositionKind, event });
     refresh(); return true;
   }

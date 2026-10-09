@@ -48,6 +48,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   let returns = null, returnsView = null, returnsViewLoading = null, returnMarkers = null;
   const returnsEntry = { footer: $('returnsControls'), entry: $('returnsToggle') };
   let exploration = null, timelineLayoutKey = '';
+  let phoneLayout = layout.phone, mandalaColumns = layout.showMandalaColumns;
   const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
   const transitPlanets = createTransitPlanetFilter();
   const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => natalDay,
@@ -55,7 +56,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     filterTransit: transitPlanets.filter, onSelect: () => exploration?.selected(), onChange: updatePage });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
-    onTimelineReady: () => { layout.refresh(); gestures.resize(); updatePersonalTimeline(); },
+    onTimelineReady: () => { updatePersonalTimeline(); refreshStudioLayout(); },
     onModeChange: updatePersonalTimeline, onChange: () => viewSession?.schedule() });
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
@@ -90,7 +91,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     },
   });
   const cameraChanged = createCameraChangeHandler({
-    heading: $('chartHeader'), fitButton: $('fitButton'), studio: $('canvasWrap').parentElement, activationPopover,
+    heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
   });
   const gestures = attachGestures($('bodygraph'), {
@@ -209,11 +210,26 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     const chart = currentChart();
     // The accepted composition describes the shown moment, even while another
     // source is loading. A pending owner must not change the natal caption.
-    const caption = chartCaption(chart, session.original, false,
+    const caption = chartCaption(chart, session.original,
       { useUtc: session.shownSource === 'lifetime',
         showAge: Boolean(returns?.state.available),
         ageUtc: new Date().toISOString() });
     headingLayout.updateText(caption.title, caption.subtitle);
+  }
+
+  function refreshStudioLayout() {
+    layout.refresh();
+    headingLayout.refresh();
+    const changed = phoneLayout !== layout.phone || mandalaColumns !== layout.showMandalaColumns;
+    if (changed) {
+      phoneLayout = layout.phone;
+      mandalaColumns = layout.showMandalaColumns;
+      activationPopover.close();
+      hoverPreview?.clear({ notify: false });
+      graph.render();
+    }
+    gestures.resize();
+    return changed;
   }
 
   function refreshTimelineLayout() {
@@ -222,14 +238,14 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
       .map(id => $(id).hidden).concat($('lifetimeControls').dataset.personalLife).join(':');
     if (key === timelineLayoutKey) return;
     timelineLayoutKey = key;
-    layout.refresh(); gestures.resize(); headingLayout.refresh();
+    return refreshStudioLayout();
   }
 
   function updatePage() {
-    updatePersonalTimeline();
+    const layoutRendered = updatePersonalTimeline();
     if (!lifetime) $('lifetimeToggle').hidden = !(session.selectedId === 'current-transit' || returns?.state.available);
     library.render();
-    graph.render();
+    if (!layoutRendered) graph.render();
     updateLoading();
     viewSession?.schedule();
   }
@@ -238,21 +254,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   natalDay.select(session.original);
   updatePage();
   gestures.reset();
-  let phoneLayout = layout.phone;
-  let mandalaColumns = layout.showMandalaColumns;
-  const resizeLayout = () => {
-    layout.refresh();
-    headingLayout.refresh();
-    if (phoneLayout !== layout.phone || mandalaColumns !== layout.showMandalaColumns) {
-      phoneLayout = layout.phone;
-      mandalaColumns = layout.showMandalaColumns;
-      activationPopover.close();
-      hoverPreview?.clear({ notify: false });
-      graph.render();
-    }
-    gestures.resize();
-  };
-  const layoutObserver = new ResizeObserver(resizeLayout);
+  const layoutObserver = new ResizeObserver(refreshStudioLayout);
   layoutObserver.observe($('canvasWrap'));
   if (!store.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
   const savedChart = store.get(savedView?.selectedId);
@@ -288,7 +290,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
         onBirth: () => { viewSession?.interrupt(); returns.setYear(null); exploration.resetMoment(); if (returnsView.sheet()) returns.close(); },
         onNow: () => { viewSession?.interrupt(); returns.setYear(null); if (exploration.followNow() && returnsView.sheet()) returns.close(); },
         onRetry: () => returns.retry(),
-        onLayout: () => { layout.refresh(); gestures.resize(); headingLayout.refresh(); },
+        onLayout: refreshStudioLayout,
       });
       // Loading only supplies the view. The controller still owns whether its
       // drawer is open, including another click or navigation during the import.
@@ -333,7 +335,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
       toUtc: window?.maxUtc ?? NaN,
       visible: Boolean(valid) });
     updateChartCaption();
-    refreshTimelineLayout();
+    return refreshTimelineLayout();
   }
 
   // Both a toolbar click and page restoration use the same lazy controller.

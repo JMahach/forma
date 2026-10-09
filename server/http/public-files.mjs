@@ -15,6 +15,7 @@ export const PUBLIC_FILES = new Map([
   ['love.css', 'public/love.css'],
   ...[
     'shared/lifetime-format.js',
+    'shared/lifetime-exact-format.js',
     'shared/cycles-format.js',
     'shared/day-packets/decode.js',
     'shared/day-packets/moment-columns.js',
@@ -37,7 +38,7 @@ export const PUBLIC_FILES = new Map([
     'src/views/chart-loading.js',
     'src/data/api-client.js',
     'src/data/chart-store.js',
-    'src/data/binary-cache.js',
+    'src/data/binary-cache.js', 'src/data/indexed-db.js',
     'src/data/natal-day-client.js',
     'src/data/shared-request.js',
     'src/data/storage.js',

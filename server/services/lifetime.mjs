@@ -6,6 +6,7 @@ import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_FILE_VERSION, LIFETIM
 
 import { PERSONALITY_COLUMN, DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN, DESIGN_RESIDUAL_COLUMN, validMomentValue } from '../../shared/day-packets/moment-columns.js';
 
+import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 import { consumeJob, aborted } from '../runtime/job-consumers.mjs';
 import { inputFingerprint, calculationVersion } from '../runtime/calculation-version.mjs';
 
@@ -14,8 +15,6 @@ const MAX_METADATA_BYTES = 16_384;
 export function lifetimeFileFingerprint(root) {
   return inputFingerprint(root, LIFETIME_PROVENANCE_INPUTS);
 }
-
-export const lifetimeCalculationFingerprint = calculationVersion;
 
 // One owner opens the completed file on demand. A later request can find it
 // after preparation; ready requests share one verified file and moment cache.
@@ -99,7 +98,7 @@ export function createLifetimeMoments({ lifetimeFile, calculate, capacity = LIFE
   if (calculationFingerprint !== null && !/^[a-f0-9]{64}$/.test(calculationFingerprint)) throw new RangeError('Invalid calculation fingerprint');
   const metadata = calculationFingerprint && lifetimeFile.cacheIdentity
     ? Object.freeze({ ...lifetimeFile.metadata, calculationVersion: calculationFingerprint, cacheVersion: createHash('sha256')
-      .update(`lifetime-moment-v1\0${lifetimeFile.cacheIdentity}\0${calculationFingerprint}`).digest('hex') })
+      .update(`lifetime-moment-v${LIFETIME_EXACT_VERSION}\0${lifetimeFile.cacheIdentity}\0${calculationFingerprint}`).digest('hex') })
     : lifetimeFile.metadata;
   const completed = new Map(), reads = new Map(), exact = new Map(), readQueue = [];
   let activeReads = 0;

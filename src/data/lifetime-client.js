@@ -1,6 +1,7 @@
 import { validateLifetimeMetadata, validateLifetimeMoment, lifetimeChartAt, lifetimeExactChartAt } from '../domain/lifetime.js';
 import { transitSampleAt, transitChartAt } from '../domain/transit-day.js';
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.js';
+import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 import { createMomentCache } from './moment-cache.js';
 import { createAbortError, shareRequest } from './shared-request.js';
 
@@ -28,7 +29,7 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
     if (Number.isInteger(index)) return lifetimeChartAt(meta, pointAt(sample, index, meta));
     let entry = projections.get(sample);
     if (!entry || entry.meta !== meta) { entry = { meta }; projections.set(sample, entry); }
-    return entry.chart ||= lifetimeExactChartAt({ ...sample, version: '1' }, meta, milliseconds);
+    return entry.chart ||= lifetimeExactChartAt({ ...sample, version: LIFETIME_EXACT_VERSION }, meta, milliseconds);
   }
   function shared(key, url, validate, signal, cache = 'no-store') {
     return shareRequest(pending, key, ({ controller }) => {

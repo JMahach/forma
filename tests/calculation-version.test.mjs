@@ -30,3 +30,17 @@ test('public numeric revision follows every calculation input, independent of de
   await fs.writeFile(path.join(root, 'data/ephe/new.se1'), 'new ephemeris');
   assert.notEqual(await calculationVersion(root), original);
 });
+
+
+test('a lifetime generator correction invalidates previously stored public numbers', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-generator-version-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const names = new Set([...CALCULATION_INPUTS.filter(name => name !== 'data/ephe'), 'server/python/lifetime_file.py', 'data/ephe/planet.se1']);
+  for (const name of names) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.writeFile(path.join(root, name), `input ${name}`);
+  }
+  const original = await calculationVersion(root);
+  await fs.writeFile(path.join(root, 'server/python/lifetime_file.py'), 'corrected lifetime sample generation');
+  assert.notEqual(await calculationVersion(root), original, 'old stored moments must not hide corrected prepared values');
+});

@@ -7,7 +7,7 @@ export const PHONE_LAYOUT_QUERY = '(max-width: 699px), (pointer: coarse) and (ma
 export function createStudioLayout({ canvas, panels, returnsControls = null, studio = canvas.parentElement, drawing = null, art = null, readStyle = element => getComputedStyle(element),
   media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport }) {
   const phone = () => media.matches;
-  let current, timelineKind = 'day', dockHeight = 0;
+  let current, dockHeight = 0;
   const document = studio?.ownerDocument, window = document?.defaultView;
   let editingFinished = false, focusFrame = null;
   const editable = element => Boolean(element && !element.readOnly && !element.disabled &&
@@ -42,7 +42,7 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
       const safeBottom = Math.max(safeInset, parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
       const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
       const natal = panels.find(panel => panel.id === 'natalDayControls');
-      timelineKind = returnsControls && !returnsControls.hidden ? 'returns'
+      const timelineKind = returnsControls && !returnsControls.hidden ? 'returns'
         : natal && !natal.hidden ? 'natal-day'
         : lifetime && !lifetime.hidden && lifetime.dataset.personalLife !== 'true' ? 'chronicle' : 'day';
       const fields = timelineKind === 'chronicle' ? [...(lifetime.querySelectorAll?.('.lifetime-date-control') || [])] : [];
@@ -51,8 +51,6 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
       insets.bottom = dock.height;
       insets.footerHeight = dock.height;
       insets.safeBottom = safeBottom;
-      studio.dataset.dockLayout = dock.mode;
-      studio.dataset.timelineKind = timelineKind;
       studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
       dockHeight = dock.height;
       // Center dates in the visible dock; the rail's label clearance is not a device safe area.
@@ -121,7 +119,6 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
     });
   });
   return {
-    get timelineKind() { return timelineKind; },
     get returnsLayout() { return studio?.dataset.returnsLayout || 'sheet'; },
     get phone() { return phone(); },
     get showMandalaColumns() { return current.showMandalaColumns; },

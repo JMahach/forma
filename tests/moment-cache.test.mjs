@@ -87,3 +87,66 @@ test('unavailable storage cannot leave an unbounded catalogue after numeric evic
   for (let i = 0; i < 1000; i++) { a.putMoment(moment(start + i * 86400000), meta); await a.flush(); }
   assert.ok(a.catalogueSize <= 2); assert.ok(a.memoryBytes <= 600);
 });
+
+
+test('pending writes remain readable after a partial day exceeds the RAM budget', async t => {
+  const a = cache(t, { indexedDB: null, maxMemoryBytes: 600 }); await a.ready;
+  for (let i = 0; i < 3; i++) a.putMoment(moment(start + i * 60000), meta);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(a.hasMinute(start + i * 60000, version), true);
+    assert.deepEqual(await a.readMoment(start + i * 60000, version), moment(start + i * 60000));
+  }
+  assert.ok(a.memoryBytes <= 600);
+});
+
+test('in-flight writes supply a full day while RAM contains a newer sparse point', async t => {
+  let complete;
+  const a = cache(t, { maxMemoryBytes: 600, storage: {
+    catalogue: async () => [], read: async () => null, close() {},
+    write: () => complete ? Promise.resolve(null) : new Promise(resolve => { complete = resolve; }),
+  } });
+  await a.ready;
+  a.putDay(day());
+  const flushing = a.flush();
+  a.putMoment(moment(start + 37123), meta);
+  try {
+  assert.equal((await a.getDay('2026-10-09', version))?.samples, 1440);
+  assert.equal((await a.readMoment(start + 60000, version))?.longitudes[0], 0.01);
+  } finally { complete(null); await flushing; }
+});
+
+test('a late disk miss merges all locally received rows, including evicted pending writes', async t => {
+  let completeRead;
+  const a = cache(t, { maxMemoryBytes: 600, storage: {
+    catalogue: async () => [], read: () => new Promise(resolve => { completeRead = resolve; }),
+    write: async () => null, close() {},
+  } });
+  await a.ready;
+  const reading = a.readMoment(start, version);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  for (let i = 0; i < 3; i++) a.putMoment(moment(start + i * 60000), meta);
+  completeRead(null);
+  assert.deepEqual(await reading, moment(start));
+});
+
+
+test('an active day is pinned before eviction and supplies every minute until release', async t => {
+  const a = cache(t, { indexedDB: null, maxMemoryBytes: 600 }); await a.ready;
+  const release = a.retainDay(day());
+  assert.equal(a.peekDay('2026-10-09', version)?.samples, 1440);
+  assert.equal(a.peekMoment(start + 60000, version)?.longitudes[0], 0.01);
+  release(); release();
+  assert.equal(a.peekDay('2026-10-09', version), null);
+  assert.ok(a.memoryBytes <= 600);
+});
+
+test('pinning a full day fills a partial packet without losing its exact second', async t => {
+  const a = cache(t, { indexedDB: null }); await a.ready;
+  a.putMoment(moment(start + 37123), meta);
+  a.putMoment(moment(start + 60000), meta);
+  assert.equal(a.peekMoment(start + 60000, version).longitudes[0], 5);
+  const release = a.retainDay(day());
+  assert.equal(a.peekMoment(start + 60000, version)?.longitudes[0], 0.01);
+  assert.deepEqual(a.peekMoment(start + 37123, version), moment(start + 37123));
+  release();
+});
