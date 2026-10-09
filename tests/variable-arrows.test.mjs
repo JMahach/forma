@@ -525,7 +525,7 @@ test('Color and Tone retain approved local positions and spacing inside the enla
   }
 });
 
-test('all eight arrows clear the numbers, planets and full 40-unit activation hit areas in both columns', () => {
+test('all eight arrows clear the numbers, planets and compact activation hit areas in both columns', () => {
   const complete = chartFor();
   for (const source of ['design', 'personality']) {
     const prototype = complete.activations[source][0];
@@ -548,7 +548,7 @@ test('all eight arrows clear the numbers, planets and full 40-unit activation hi
         const rectangles = control.children.filter(node => node.name === 'rect');
         assert.equal(rectangles.length, 1);
         const rect = rectangles[0].attrs, planet = control.attrs['data-type'] === 'planet';
-        assert.deepEqual([Number(rect.x), Number(rect.y), Number(rect.width), Number(rect.height)], planet ? [-8, -20, 32, 40] : [28, -20, 68, 40], 'the full existing hit rectangle is preserved');
+        assert.deepEqual([Number(rect.x), Number(rect.y), Number(rect.width), Number(rect.height)], planet ? [-8, -16, 32, 32] : [28, -16, 68, 32], 'both targets retain their horizontal bounds and share the compact row height');
         return blockBounds({ source, left: x + Number(rect.x), right: x + Number(rect.x) + Number(rect.width), top: y + Number(rect.y), bottom: y + Number(rect.y) + Number(rect.height) }, source);
       });
     });

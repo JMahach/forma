@@ -1,7 +1,8 @@
+import { describePlanetTarget, renderPlanetTarget } from './activation-targets.js';
 import { renderOverlayActivationColumns } from './overlay-activation-columns.js';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.js';
 import { calculateLineFixings } from '../domain/line-fixing.js';
-import { ACTIVATION_COLUMN_LAYOUT, ACTIVATION_PLANET_FILTER_LAYOUT, activationBlockTransform, activationHeadingX, activationRowY } from './geometry/activation-layout.js';
+import { ACTIVATION_COLUMN_LAYOUT, ACTIVATION_ROW_LAYOUT, ACTIVATION_PLANET_FILTER_LAYOUT, activationTargetLayout, activationPlanetLayout, activationBlockTransform, activationHeadingX, activationRowY } from './geometry/activation-layout.js';
 
 import { PLANETS } from '../domain/planets.js';
 
@@ -115,14 +116,14 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
       const pressed = pressedGates.has(entry.gate) && matchesFilter;
       const fixing = planetEnabled ? fixings.get(`${source}-${planet}`)?.state : undefined;
       const fixingLabel = FIXING_LABELS[fixing];
-      const planetSelected = selections.some(value => value.type === 'planet' && value.id === `${source}-${planet}`);
       const id = `${source}-${planet}`;
+      const planetAria = `${label}, ${name}`;
+      const planetTarget = describePlanetTarget({ id, symbol, label: planetAria, title: `${name} · ${label}`,
+        geometry: activationPlanetLayout(), selections, pressedSelections, enabled: planetEnabled });
       return { id, source, planet, symbol, name, x, y: activationRowY(index), label,
-        gate: entry.gate, line: entry.line, selected, pressed, fixing, fixingLabel, planetSelected, hasPlanetControl, planetEnabled, filterId: `${filterPrefix}${planet}`,
-        planetPressed: pressedSelections.some(value => value.type === 'planet' && value.id === id),
-        planetAria: `${label}, ${name}`, planetTitle: `${name} · ${label}`,
+        gate: entry.gate, line: entry.line, selected, pressed, fixing, fixingLabel, planetTarget, hasPlanetControl, planetEnabled, filterId: `${filterPrefix}${planet}`,
+        planetAria,
         gateAria: `${label}, ${name}: ворота ${entry.gate}, линия ${entry.line}${fixingLabel ? `, ${fixingLabel.toLowerCase()}` : ''}`,
-        gateTitle: `Ворота ${entry.gate} · линия ${entry.line}${fixingLabel ? ` · ${fixingLabel}` : ''}`,
       };
     }).filter(Boolean);
     const enabledCount = PLANETS.filter(([planet]) => selectedPlanets.has(planet)).length;
@@ -134,18 +135,14 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
 }
 
 export function renderActivationRow(row) {
-  const { id, symbol, x, y, gate, line, selected, pressed, fixing, planetSelected, planetPressed, planetAria, planetTitle, gateAria, gateTitle, hasPlanetControl, filterId, planetEnabled = true } = row;
+  const { id, x, y, gate, line, selected, pressed, fixing, planetTarget, planetAria, gateAria, hasPlanetControl, filterId, planetEnabled = true } = row;
+  const target = activationTargetLayout();
   return `<g class="activation-row" transform="translate(${x} ${y})">
         ${hasPlanetControl ? renderPlanetFilterControl(filterId, planetAria, planetEnabled) : ''}
-        <g class="bg-activation bg-planet" data-type="planet" data-id="${id}" data-activation="${id}-planet" tabindex="0" role="button" aria-label="${planetAria}" aria-pressed="${planetPressed}"${planetEnabled ? '' : ' opacity=".35"'}>
-          <title>${planetTitle}</title>
-          <rect x="-8" y="-20" width="32" height="40" rx="5" fill="${planetSelected ? '#eaf0f8' : 'transparent'}"/>
-          <text class="planet-symbol" x="${ACTIVATION_COLUMN_LAYOUT.glyphOffsetX}" y="0" text-anchor="middle" dominant-baseline="central" font-size="26" pointer-events="none">${symbol}</text>
-        </g>
+        ${renderPlanetTarget(planetTarget)}
         <g class="bg-activation" data-type="gate" data-id="${gate}" data-activation="${id}" data-selected="${selected}" tabindex="0" role="button" aria-label="${gateAria}" aria-pressed="${pressed}"${planetEnabled ? '' : ' opacity=".22"'}>
-          <title>${gateTitle}</title>
-          <rect x="28" y="-20" width="68" height="40" rx="5" fill="${selected ? '#eaf0f8' : 'transparent'}"/>
-          <text x="${ACTIVATION_COLUMN_LAYOUT.valueOffsetX}" y="0" dominant-baseline="central" font-size="24" font-weight="500" pointer-events="none">${gate}<tspan font-weight="400" opacity=".7">.${line}</tspan></text>
+          <rect x="${ACTIVATION_ROW_LAYOUT.valueX[0] + ACTIVATION_ROW_LAYOUT.rectX}" y="${target.hitY}" width="${ACTIVATION_ROW_LAYOUT.hitWidth}" height="${target.hitHeight}" rx="${target.hitRadius}" fill="${selected ? '#eaf0f8' : 'transparent'}"/>
+          <text x="${ACTIVATION_COLUMN_LAYOUT.valueOffsetX}" y="0" dominant-baseline="central" font-size="${ACTIVATION_ROW_LAYOUT.fontSize}" font-weight="500" pointer-events="none">${gate}<tspan font-weight="400" opacity=".7">.${line}</tspan></text>
         </g>
         ${fixingMark(fixing)}
       </g>`;
@@ -164,7 +161,10 @@ export function renderActivationColumn(column) {
 }
 
 export function renderActivationColumns(chart, selectedGates = new Set(), selection = null, options = {}) {
-  if (isChartOverlay(chart)) return renderOverlayActivationColumns(chart, selectedGates, options.pressedGates || selectedGates, options);
+  if (isChartOverlay(chart)) {
+    const { pressedSelection = selection, selections = [selection].filter(Boolean), pressedSelections = [pressedSelection].filter(Boolean) } = options;
+    return renderOverlayActivationColumns(chart, selectedGates, options.pressedGates || selectedGates, { ...options, selections, pressedSelections });
+  }
   const columns = describeActivationColumns(chart, selectedGates, selection, options);
   return columns.length ? `<g class="activation-columns">${columns.map(renderActivationColumn).join('')}</g>` : '';
 }

@@ -17,11 +17,17 @@ export const ACTIVATION_COLUMN_LAYOUT = Object.freeze({
 export const activationRowY = index => ACTIVATION_COLUMN_LAYOUT.firstRowY + index * ACTIVATION_COLUMN_LAYOUT.rowStep;
 export const activationHeadingX = source => ACTIVATION_COLUMN_LAYOUT.x[source] + ACTIVATION_COLUMN_LAYOUT.headingOffsetX;
 
+// Ordinary rows and single overlay rows share the same presentation metrics.
+export const ACTIVATION_ROW_LAYOUT = Object.freeze({
+  valueX: Object.freeze([ACTIVATION_COLUMN_LAYOUT.valueOffsetX]),
+  fontSize: 24, textX: 0, rectX: -6, hitWidth: 68,
+  glyphX: ACTIVATION_COLUMN_LAYOUT.glyphOffsetX, glyphSize: 26,
+});
+
 // Overlay sources use the same row anchors. Normal dual columns gain a wider
 // gap; beside the mandala their original envelope determines visibility/frames.
 export const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
-  single: Object.freeze({ valueX: Object.freeze([ACTIVATION_COLUMN_LAYOUT.valueOffsetX]), natalOffsetX: 0,
-    fontSize: 24, textX: 0, rectX: -6, hitWidth: 68, glyphX: ACTIVATION_COLUMN_LAYOUT.glyphOffsetX, glyphSize: 26,
+  single: Object.freeze({ ...ACTIVATION_ROW_LAYOUT, natalOffsetX: 0,
     headingWidth: null, captionX: Object.freeze([40, 88]), captionSize: 9 }),
   dual: Object.freeze({ valueX: Object.freeze([22, 72]), natalOffsetX: 0,
     fontSize: 18, textX: 1, rectX: -2, hitWidth: 38, glyphX: 6, glyphSize: 23,
@@ -30,6 +36,18 @@ export const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
     fontSize: 20, textX: 1, rectX: -2, hitWidth: 44, glyphX: 6, glyphSize: 23,
     headingWidth: 123, captionX: Object.freeze([40, 100]), captionSize: 10 }),
 });
+
+// Number size owns the highlight height for both targets in a row. The font
+// of planet symbols needs a small optical correction, without moving row anchors.
+export function activationTargetLayout(fontSize = ACTIVATION_ROW_LAYOUT.fontSize) {
+  const hitHeight = fontSize + 8;
+  return { hitY: -hitHeight / 2, hitHeight, hitRadius: 4 };
+}
+export function activationPlanetLayout(metrics = ACTIVATION_ROW_LAYOUT) {
+  const hitWidth = metrics.valueX.length === 1 ? 32 : 24;
+  return { ...activationTargetLayout(metrics.fontSize), rectX: metrics.glyphX - hitWidth / 2,
+    hitWidth, x: metrics.glyphX, y: 2, fontSize: metrics.glyphSize };
+}
 
 export function overlayActivationColumnLayout(side, { single, showMandala, label }) {
   const layout = single ? 'single' : showMandala ? 'dual' : 'dual-wide';
@@ -41,10 +59,11 @@ export function overlayActivationColumnLayout(side, { single, showMandala, label
     ruleY: ACTIVATION_COLUMN_LAYOUT.ruleY, headingSize,
     headingTop: ACTIVATION_COLUMN_LAYOUT.headingY - headingSize, headingHeight: headingSize * 1.5,
     headingWidth: metrics.headingWidth ?? ACTIVATION_COLUMN_LAYOUT.headingWidths[label] ?? ACTIVATION_COLUMN_LAYOUT.headingWidths['Личность'],
-    captionX: metrics.captionX.map(offset => x + offset), captionY: 96, captionSize: metrics.captionSize,
-    glyphX: metrics.glyphX, glyphSize: metrics.glyphSize,
+    headingViewportWidth: metrics.headingWidth ?? ACTIVATION_COLUMN_LAYOUT.width,
+    captionX: metrics.captionX.map(offset => x + offset), captionY: 101, captionSize: metrics.captionSize,
+    planet: activationPlanetLayout(metrics),
     values: metrics.valueX.map(x => ({ x, fontSize: metrics.fontSize, textX: metrics.textX,
-      rectX: metrics.rectX, hitWidth: metrics.hitWidth, hitY: -20, hitHeight: 40, hitRadius: 4 })),
+      rectX: metrics.rectX, hitWidth: metrics.hitWidth, ...activationTargetLayout(metrics.fontSize) })),
   };
 }
 

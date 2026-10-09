@@ -176,11 +176,15 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
       return lifetimeExactChartAt(value, meta, milliseconds);
     }, signal);
   }
-  async function getPoint(index, { signal } = {}) {
+  async function getPoint(index, { signal, checkedDay = null } = {}) {
     const meta = await getMeta({ signal });
     if (!Number.isInteger(index) || index < 0 || index >= meta.samples) throw new Error('Некорректный момент летописи.');
     const milliseconds = Date.parse(meta.startUtc) + index * meta.stepSeconds * 1000;
-    const sample = await readSample(milliseconds, meta, signal);
+    // The current command may already have checked this same day before its
+    // grid fallback. Recheck RAM, but do not repeat that disk miss or carry it
+    // to another date/revision or independent visit.
+    const alreadyRead = meta.calculationVersion && checkedDay?.version === meta.calculationVersion && checkedDay.date === dateAt(milliseconds);
+    const sample = alreadyRead ? cachedMinute(milliseconds, meta) : await readSample(milliseconds, meta, signal);
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     if (sample) return validateLifetimeMoment({ ...sampleAt(sample), index }, meta, index);
     const version = meta.cacheVersion ? `&v=${encodeURIComponent(meta.cacheVersion)}` : '';

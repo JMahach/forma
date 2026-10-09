@@ -8,6 +8,8 @@ import { encodeNatalDay } from '../server/packets/encode.mjs';
 import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
+import { IDBFactory } from 'fake-indexeddb';
+import { createTransitDayCache } from '../src/data/transit-day-cache.js';
 
 const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
 const historical = () => natalDayFixture({ date: '1900-01-01', timezone: 'Europe/Paris', segments: [
@@ -18,7 +20,7 @@ const folded = () => natalDayFixture({ date: '2024-11-03', timezone: 'America/Ne
   { index: 120, startUtc: '2024-11-03T06:00:00Z', offsetSeconds: -18000, utcOffset: 'UTC−05:00', fold: 1 },
   { index: 180, startUtc: '2024-11-03T07:00:00Z', offsetSeconds: -18000, utcOffset: 'UTC−05:00', fold: 0 },
 ] });
-function harness(raw = natalDayFixture(), { cold = false, memoryLimit } = {}) {
+function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = null } = {}) {
   const day = { ...raw, calculationVersion: revision }, storage = new Map(), memory = createMemoryCache(memoryLimit === undefined ? {} : { maxBytes: memoryLimit });
   let chart = personalChartFixture({ birthDate: day.date, timezone: day.timezone, utc: day.startUtc });
   const natalCalls = [], requests = []; let reads = 0;
@@ -31,7 +33,7 @@ function harness(raw = natalDayFixture(), { cold = false, memoryLimit } = {}) {
     endExclusiveUtc: new Date(end).toISOString().replace('.000Z', 'Z'), samples: 432, stepSeconds: 600,
     planets: LIFETIME_PLANETS, engine: day.engine, nodeModel: day.nodeModel, zodiac: day.zodiac };
   const client = createLifetimeClient({ natalDayClient: natal, getPersonalChart: () => chart,
-    days: { prepare: async () => {}, peekDay: () => null, getDay: async () => null, hasMinute: () => false },
+    days: days || { prepare: async () => {}, peekDay: () => null, getDay: async () => null, hasMinute: () => false },
     fetch: async url => {
       if (url.endsWith('/meta')) return { ok: true, json: async () => meta };
       requests.push(url);
@@ -84,6 +86,38 @@ test('personal lifetime scrubs and steps on exact historical samples within the 
   assert.equal(explorer.state.requestedUtc, next, 'a narrow interval without any prepared/grid sample cannot invent one');
   await explorer.scrub(Date.parse('1900-01-01T00:10:39Z'));
   assert.equal(explorer.adjacentUtc(-1), Date.parse('1900-01-01T00:09:39Z'), 'an available natal minute stays local across a ten-minute grid boundary');
+  assert.deepEqual(h.requests, []);
+});
+
+for (const direction of [1, -1]) test(`a historical step ${direction} offers the exact prepared sample before selecting it`, async t => {
+  const h = harness(historical(), { memoryLimit: 0 }); await h.prepare();
+  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
+  const current = Date.parse('1900-01-01T00:10:39Z');
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1899-12-31', toDate: '1900-01-01', requestedUtc: current });
+  const expected = Date.parse(direction > 0 ? '1900-01-01T00:11:39Z' : '1900-01-01T00:09:39Z'), offered = [];
+  await explorer.step(direction, null, utc => offered.push(utc));
+  assert.deepEqual(offered, [expected], 'ownership sees the same exact natal sample that is selected');
+  assert.equal(explorer.state.requestedUtc, expected);
+  assert.equal(Date.parse(explorer.current.utc), expected);
+  assert.deepEqual(h.requests, []);
+});
+
+test('a backward historical step offers the exact birth boundary to its owner', async t => {
+  const h = harness(historical()); await h.prepare();
+  const birth = Date.parse('1900-01-01T00:10:39Z'), current = Date.parse('1900-01-01T00:11:39Z');
+  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-01',
+    minimumUtc: '1900-01-01T00:10:39Z', requestedUtc: current });
+  const offered = []; let resetBirth = false;
+  await explorer.step(-1, null, utc => {
+    offered.push(utc);
+    if (utc > birth) return;
+    resetBirth = true;
+    return false;
+  });
+  assert.deepEqual(offered, [birth]);
+  assert.equal(resetBirth, true, 'the exact endpoint owner receives the birth command');
+  assert.equal(explorer.state.requestedUtc, current, 'the endpoint owner prevents a manual lifetime selection');
   assert.deepEqual(h.requests, []);
 });
 
@@ -189,6 +223,21 @@ test('evicting natal numbers retains only the active timeline and preserves the 
   const chart = await h.client.readMinute(utc);
   assert.equal(chart.utc, natalDayMinute(h.day, 1).utc);
   assert.deepEqual(h.requests, []);
+});
+
+test('a missing historical natal minute still reads the ready transit day for its grid fallback', async t => {
+  const days = createTransitDayCache({ indexedDB: new IDBFactory(), memory: createMemoryCache({ maxBytes: 0 }) });
+  t.after(() => days.close());
+  const h = harness(historical(), { days }); await h.prepare();
+  days.putDay({ ...h.day, version: '2', date: '1899-12-31', startUtc: '1899-12-31T00:00:00Z' }); await days.flush();
+  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1899-12-31', toDate: '1900-01-01',
+    requestedUtc: Date.parse('1899-12-31T00:00:00Z') });
+  h.memory.delete([...h.storage.keys()][0]); h.storage.clear();
+  const before = h.requests.length;
+  await explorer.scrub(Date.parse('1899-12-31T23:51:39Z'));
+  assert.equal(explorer.current.utc, '1899-12-31T23:50:00Z');
+  assert.equal(h.requests.length, before, 'a natal read with UTC seconds did not check the transit day');
 });
 
 for (const command of ['open', 'restore']) test(`explicit ${command} discovers the same natal day saved after an earlier miss`, async t => {

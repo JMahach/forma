@@ -22,8 +22,11 @@ test('exaltation, detriment and both polarities get minimal independent marks', 
     const markup = renderActivationColumns(chart(entries));
     const row = rowFor(markup, `personality-${entries[0].planet}`);
     assert.match(row, new RegExp(`data-fixing="${expected}"`));
-    assert.ok(row.includes(label));
-    assert.ok(row.includes(label.toLowerCase()));
+    const number = /<g\b[^>]*data-type="gate"[^>]*>[\s\S]*?<\/g>/.exec(row)?.[0];
+    assert.ok(number, 'the numeric activation remains a distinct target');
+    const accessibleName = /aria-label="([^"]*)"/.exec(number)?.[1];
+    assert.ok(accessibleName?.endsWith(`, ${label.toLowerCase()}`), 'the numeric accessible name retains the fixing meaning');
+    assert.doesNotMatch(number, /<title\b/, 'the numeric target has no native tooltip');
     assert.match(row, /pointer-events="none" aria-hidden="true"><path/);
     assert.match(row, /transform="translate\(103 0\) scale\(1\.15\)"/);
   }
@@ -60,7 +63,7 @@ test('marks inherit red or black without moving planet, number, hit area or popu
   for (const [source, x] of [['design', -32], ['personality', 584]]) {
     const row = rowFor(markup, `${source}-pluto`);
     assert.match(row, new RegExp(`transform="translate\\(${x} 694\\)"`));
-    assert.match(row, /<rect x="28" y="-20" width="68" height="40"/);
+    assert.match(row, /<rect x="28" y="-16" width="68" height="32"/);
     assert.match(row, /<text x="34" y="0"/);
     const numberStart = row.indexOf(`data-activation="${source}-pluto"`);
     const numberEnd = row.indexOf('</g>', numberStart);
@@ -77,7 +80,7 @@ test('enlarged double mark stays inside its row without approaching the numeric 
   const row = rowFor(markup, 'personality-pluto');
   assert.match(row, /data-fixing="juxtaposed" transform="translate\(103 0\) scale\(1\.15\)"/);
   assert.match(row, /d="M -4 -1 L 0 -8 L 4 -1 Z M -4 1 L 0 8 L 4 1 Z"/);
-  assert.ok(8 * 1.15 < 20, 'double mark fits the existing row height');
+  assert.ok(8 * 1.15 < 16, 'double mark fits the compact row height');
   assert.ok(103 - 4 * 1.15 > 28 + 68, 'mark remains outside the numeric hit area');
 });
 

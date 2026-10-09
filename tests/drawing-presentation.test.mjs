@@ -113,7 +113,7 @@ test('persistent toggles and reversals retain body targets, parents and presenta
   assert.deepEqual(measure(root, false), expected, 'a remount uses the same approved geometry');
 });
 
-test('loading paths and both column glyph anchors have the same complete ancestor transform as the initial studio', () => {
+test('loading paths and both column row centers have the same complete ancestor transform as the initial studio', () => {
   const loading = parse(renderLoadingPlaceholder()), live = parse(renderBodygraph(natalChart(), null, options));
   for (const point of [[320, 40], [320, 436], [320, 756]]) {
     assert.deepEqual(project(loading.querySelector('.loading-centers'), point), project(live.querySelector('.bodygraph-centers'), point));
@@ -124,9 +124,11 @@ test('loading paths and both column glyph anchors have the same complete ancesto
     const actual = live.querySelector(`.activation-column[data-source="${source}"]`).querySelectorAll('.activation-row');
     assert.equal(empty.length, actual.length);
     empty.forEach((row, index) => {
-      const glyph = row.querySelector('circle'), text = actual[index].querySelector('.planet-symbol');
+      const glyph = row.querySelector('circle'), rect = actual[index].querySelector('.bg-planet rect');
+      const center = [Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) / 2,
+        Number(rect.getAttribute('y')) + Number(rect.getAttribute('height')) / 2];
       assert.deepEqual(project(glyph, [Number(glyph.getAttribute('cx')), Number(glyph.getAttribute('cy'))]),
-        project(text, [Number(text.getAttribute('x')), Number(text.getAttribute('y'))]));
+        project(rect, center), 'the loading dot shares the live target center; glyph text has an optical offset');
     });
   }
 });

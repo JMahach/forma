@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore, IDBIndex } from 'fake-indexeddb';
 import { createTransitDayCache } from '../src/data/transit-day-cache.js';
 import { createMemoryCache } from '../src/data/memory-cache.js';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
@@ -235,6 +235,58 @@ for (const personal of [false, true]) test(`a persisted day gives minute steps o
   assert.equal(explorer.state.displayedUtc, utc('29T12:30:00'));
 });
 
+test('the first scrub uses an exact day minute committed by another tab after opening', async t => {
+  const indexedDB = new IDBFactory(), writer = createTransitDayCache({ indexedDB }), days = createTransitDayCache({ indexedDB });
+  t.after(async () => { await writer.close(); await days.close(); });
+  let scans = 0;
+  const openCursor = IDBIndex.prototype.openCursor;
+  t.mock.method(IDBIndex.prototype, 'openCursor', function(...args) { scans++; return openCursor.apply(this, args); });
+  const calls = [];
+  const client = createLifetimeClient({ days, fetch(url) {
+    calls.push(url);
+    assert.ok(!url.includes('/moment?'), 'a scrub must not calculate an exact moment');
+    return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
+  } });
+  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
+  writer.putDay(dayAt('2026-09-30')); await writer.flush();
+  const before = calls.length, preparedScans = scans;
+  await explorer.scrub(utc('30T12:31:08'));
+  assert.equal(explorer.current.utc, '2026-09-30T12:31:00Z');
+  assert.equal(explorer.state.requestedUtc, utc('30T12:31:00'));
+  assert.equal(calls.length, before, 'only existing full-day storage supplies the first minute');
+  assert.equal(explorer.adjacentUtc(1), utc('30T12:32:00'));
+  assert.equal(explorer.adjacentUtc(-1), utc('30T12:30:00'));
+  explorer.setPlanet('moon', false);
+  await explorer.scrub(explorer.adjacentUtc(1));
+  assert.equal(explorer.current.utc, '2026-09-30T12:32:00Z');
+  assert.ok(explorer.current.activations.personality.every(entry => entry.planet !== 'moon'));
+  assert.equal(calls.length, before, 'filtering and stepping reuse the committed day');
+  assert.equal(scans, preparedScans, 'scrubbing and stepping do not scan the full day catalogue again');
+});
+
+test('an unknown cold minute probes its day once before reading the grid fallback', async t => {
+  const days = createTransitDayCache({ indexedDB: new IDBFactory() }); t.after(() => days.close());
+  let reads = 0;
+  const get = IDBObjectStore.prototype.get;
+  t.mock.method(IDBObjectStore.prototype, 'get', function(...args) {
+    if (this.name === 'packets') reads++;
+    return get.apply(this, args);
+  });
+  const calls = [];
+  const client = createLifetimeClient({ days, fetch: async url => {
+    calls.push(url); assert.ok(!url.includes('/moment?'));
+    return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
+  } });
+  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
+  const before = reads;
+  await explorer.scrub(utc('30T12:31:00'));
+  assert.equal(explorer.current.utc, '2026-09-30T12:30:00Z');
+  assert.equal(calls.at(-1), '/api/lifetime?index=219');
+  assert.equal(reads - before, 1, 'a confirmed same-day miss must not repeat the IDB lookup');
+});
+
 test('after release an outdated intermediate point cannot replace the last selected target', async t => {
   const h = harness(); t.after(() => { h.explorer.close(); for (const request of h.requests) request.resolve(); });
   await openLifetime(h);
@@ -288,7 +340,7 @@ function delayedMinute(t) {
   const explorer = createLifetimeExplorer({ getMomentState: () => momentState,
     getDayState: () => ({ current: day, timeline: { date: '2026-09-30' } }),
     client: { getMeta: async () => metadata, hasMinute: value => value === target,
-      readMinute: () => new Promise(resolve => { finish = resolve; }),
+      readMinute: value => value === target ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null),
       getPoint: async index => { points.push(index); return point(index); },
       getMinute: async value => { exact.push(value); return minute; } },
     onRender: () => { if (explorer.current) renders.push(explorer.current.utc); },

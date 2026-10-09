@@ -20,7 +20,7 @@ export function createLifetimeExplorer({
 } = {}) {
   let metadata = null, fullChart = null, manualChart = null, requestedUtc = null, restoring = false, pendingRestore = null;
   const current = () => planetFilter.filter(fullChart);
-  let interacting = false, selection = 0, selectionBounds = null;
+  let interacting = false, selection = 0, selectionBounds = null, selectionRound = Math.round;
   let opened = false, mode = 'day', status = 'idle', error = '', sequence = 0, active = null, notifiedReference = null;
   let retryCount = 0, retryTimer = null;
   let openEnded = false, fromDate = null, toDate = null, minDate = null, maxDate = null, minUtc = null, maxUtc = null, rangeCeiling = null;
@@ -51,7 +51,7 @@ export function createLifetimeExplorer({
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
   function cancel() {
     clearTimeout(retryTimer); retryTimer = null; retryCount = 0;
-    sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null; selectionBounds = null;
+    sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null; selectionBounds = null; selectionRound = Math.round;
   }
   const dayDate = day => day?.timeline?.date || day?.current?.birthDate || null;
   function borrowDay() {
@@ -106,6 +106,9 @@ export function createLifetimeExplorer({
       Math.min(Math.floor(max / 60000) * 60000, Math.round(clamped / 60000) * 60000));
     const chart = minute <= max ? client.peekMinute?.(minute) : null;
     if (chart || minute <= max && client.hasMinute?.(minute)) return { utc: minute, chart };
+    // Another tab may have saved this day after the catalogue was prepared.
+    // Keep the minute until a cache-only lookup can confirm it or miss.
+    if (minute <= max && client.readMinute && !Number.isInteger(indexAt(minute))) return { utc: minute, chart: null };
     const utc = gridUtc(clamped, round, bounds);
     return utc === null ? null : { utc, chart: client.peekMoment?.(utc) || null };
   }
@@ -169,11 +172,16 @@ export function createLifetimeExplorer({
             return true;
           }
           let target = requestedUtc;
-          const selected = selection, bounds = selectionBounds;
-          let chart;
+          const selected = selection, bounds = selectionBounds, round = selectionRound;
+          let chart, checkedDay = null;
           try {
             chart = client.peekMoment?.(target) || client.peekMinute?.(target);
-            if (!chart && client.hasMinute?.(target)) chart = await client.readMinute(target, { signal: request.controller.signal });
+            if (!chart && client.readMinute && (client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
+              chart = await client.readMinute(target, { signal: request.controller.signal });
+              // Historical natal minutes can have UTC seconds; their miss
+              // does not inspect the whole-minute transit day.
+              if (target % 60000 === 0) checkedDay = { date: new Date(target).toISOString().slice(0, 10), version: metadata.calculationVersion };
+            }
             if (generation !== sequence || !opened || mode !== 'lifetime') return false;
             // A disk miss has no ready progress to show. Recheck ownership and
             // the selected UTC before starting another request for this target.
@@ -184,17 +192,21 @@ export function createLifetimeExplorer({
               // A catalogue can outlive a disk entry. A scrub may only read
               // prepared data; only explicit restoration permits exact work.
               if (!Number.isInteger(indexAt(target))) {
-                const fallback = gridUtc(target, Math.round, bounds);
+                const fallback = gridUtc(target, round, bounds);
                 if (fallback === null) {
                   if (target !== requestedUtc) continue;
                   requestedUtc = shownUtc(); status = fullChart ? 'ready' : 'idle'; notify();
                   return false;
                 }
+                if (manualChart && shownUtc() === fallback) {
+                  requestedUtc = fallback; status = 'ready'; error = ''; pendingRestore = null; notify();
+                  return true;
+                }
                 if (target === requestedUtc) { requestedUtc = fallback; notify(); }
                 target = fallback;
               }
               const requestedIndex = indexAt(target);
-              const point = await client.getPoint(requestedIndex, { signal: request.controller.signal });
+              const point = await client.getPoint(requestedIndex, { signal: request.controller.signal, checkedDay });
               chart = lifetimeChartAt(metadata, validateLifetimeMoment(point, metadata, requestedIndex));
             }
             if (generation !== sequence || !opened || mode !== 'lifetime') return false;
@@ -300,37 +312,55 @@ export function createLifetimeExplorer({
     onModeAccepted({ opened, mode });
     notify(); onRender();
   }
-  function scrub(value, bounds = null) {
+  function scrub(value, bounds = null, round = Math.round) {
     if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
         || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
-    const next = chooseTarget(value, Math.round, bounds);
+    const next = chooseTarget(value, round, bounds);
     if (!next) return;
     if (next.utc === requestedUtc && status !== 'error' && (manualChart && shownUtc() === next.utc || active && !next.chart)) return;
     if (restoring || pendingRestore || retryTimer !== null || active && client.hasMinute?.(next.utc)) cancel();
     // The visible year constrains this command and its disk-miss fallback,
     // while the explorer keeps the person's full range and saved UTC.
     selectionBounds = bounds ? { minUtc: bounds.minUtc, maxUtc: bounds.maxUtc } : null;
+    selectionRound = round;
     if (next.chart) return publishReady(next.chart, next.utc);
     selection++; retryCount = 0; requestedUtc = next.utc; status = 'loading'; error = ''; notify();
     return load();
+  }
+  function adjacentUtc(direction) {
+    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
+    const forward = direction > 0;
+    const minute = (forward ? Math.floor(requestedUtc / 60000) + 1 : Math.ceil(requestedUtc / 60000) - 1) * 60000;
+    if (!forward && minute <= minUtc) return minUtc;
+    const ready = minute <= maxUtc && (client.hasMinute?.(minute) || client.peekMinute?.(minute));
+    const grid = utcAt(forward ? Math.floor(indexAt(requestedUtc)) + 1 : Math.ceil(indexAt(requestedUtc)) - 1);
+    const fallback = ready ? minute : forward && grid > maxUtc ? requestedUtc : clampUtc(grid);
+    const prepared = client.adjacentMinute?.(requestedUtc, direction);
+    if (!Number.isFinite(prepared) || prepared < minUtc || prepared > maxUtc) return fallback;
+    if (Math.abs(prepared - requestedUtc) <= 60000) return prepared;
+    return fallback === requestedUtc ? prepared : forward ? Math.min(prepared, fallback) : Math.max(prepared, fallback);
   }
   return {
     get current() { return opened ? current() : null; },
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
     setInteracting(value) { interacting = Boolean(value); },
-    adjacentUtc(direction) {
-      if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
+    adjacentUtc,
+    step(direction, bounds = null, beforeSelect = () => {}) {
+      let target = adjacentUtc(direction);
+      if (!Number.isFinite(target)) return;
       const forward = direction > 0;
       const minute = (forward ? Math.floor(requestedUtc / 60000) + 1 : Math.ceil(requestedUtc / 60000) - 1) * 60000;
-      if (!forward && minute <= minUtc) return minUtc;
-      const ready = minute <= maxUtc && (client.hasMinute?.(minute) || client.peekMinute?.(minute));
-      const grid = utcAt(forward ? Math.floor(indexAt(requestedUtc)) + 1 : Math.ceil(indexAt(requestedUtc)) - 1);
-      const fallback = ready ? minute : forward && grid > maxUtc ? requestedUtc : clampUtc(grid);
-      const prepared = client.adjacentMinute?.(requestedUtc, direction);
-      if (!Number.isFinite(prepared) || prepared < minUtc || prepared > maxUtc) return fallback;
-      if (Math.abs(prepared - requestedUtc) <= 60000) return prepared;
-      return fallback === requestedUtc ? prepared : forward ? Math.min(prepared, fallback) : Math.max(prepared, fallback);
+      // Preserve the exact birth endpoint and prepared natal samples, including
+      // historical UTC seconds. Only an unknown neighbour needs a disk probe.
+      const ready = target === minUtc || client.hasMinute?.(target) || client.peekMinute?.(target);
+      if (!ready && client.readMinute && minute >= minUtc && minute <= maxUtc)
+        target = target === requestedUtc ? minute : forward ? Math.min(target, minute) : Math.max(target, minute);
+      const { min, max } = limits(bounds);
+      if (min > max) return;
+      target = Math.max(min, Math.min(max, target));
+      if (beforeSelect(target) === false) return;
+      return scrub(target, bounds, forward ? Math.ceil : Math.floor);
     },
     setPlanet(...args) { return applySelection('setPlanet', ...args); },
     setAllPlanets(...args) { return applySelection('setAllPlanets', ...args); },
@@ -348,7 +378,7 @@ export function createLifetimeExplorer({
       const start = dateStart(from), end = dateStart(through) + dayMilliseconds;
       if (!opened || !metadata || !Number.isFinite(start) || !Number.isFinite(end)
           || from < minDate || through > maxDate || from > through) return false;
-      selectionBounds = null;
+      selectionBounds = null; selectionRound = Math.round;
       const currentDay = dayDate(getDayState());
       if (!nextOpenEnded && from === currentDay && through === currentDay) {
         if (mode === 'day') return true;
@@ -379,6 +409,7 @@ export function createLifetimeExplorer({
       retryCount = 0; setBounds(start, end);
       const shown = Date.parse(fullChart?.utc);
       const target = chooseTarget(mode === 'lifetime' ? requestedUtc : Number.isFinite(shown) ? shown : minUtc, Math.floor);
+      selectionRound = Math.floor;
       requestedUtc = target.utc;
       mode = 'lifetime'; fromDate = from; toDate = through; openEnded = nextOpenEnded;
       const generation = sequence;

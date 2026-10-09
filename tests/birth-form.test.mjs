@@ -105,6 +105,24 @@ function formHarness(t, { charts = [], selectedId = charts[0]?.id || 'current-tr
   };
 }
 
+for (const { key, options, selectedName } of [
+  { key: 'ArrowUp', options: ['city-option-2', 'city-option-1', 'city-option-0', 'city-option-2'], selectedName: 'Мюнхен' },
+  { key: 'ArrowDown', options: ['city-option-0', 'city-option-1', 'city-option-2', 'city-option-0'], selectedName: 'Берлин' },
+]) test(`city suggestions start at the correct end for ${key} and wrap cyclically`, async t => {
+  const h = formHarness(t); h.form.open();
+  const request = await h.search('Город');
+  request.resolve({ cities: [city(1, 'Берлин'), city(2, 'Гамбург'), city(3, 'Мюнхен')] }); await settle();
+  const input = h.element('birthPlace');
+  assert.equal(input.getAttribute('aria-activedescendant'), null);
+  for (const option of options) {
+    await input.emit('keydown', { key });
+    assert.equal(input.getAttribute('aria-activedescendant'), option);
+  }
+  await input.emit('keydown', { key: 'Enter' });
+  assert.match(input.value, new RegExp(selectedName));
+  assert.equal(h.element('cityResults').hidden, true);
+});
+
 test('city search debounces input and discards an older response even when it ignores cancellation', async t => {
   const h = formHarness(t); h.form.open();
   h.element('birthPlace').value = 'Б';

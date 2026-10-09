@@ -353,3 +353,27 @@ test('column memo observes mutated filtered contributors, full rows, both planet
   assert.equal(h.root.querySelectorAll('.activation-row').length, 0);
   opt.showActivations = true; check('hidden columns restored');
 });
+
+
+test('ordinary numeric targets have no native tooltip and share compact highlight height with their planet', () => {
+  const chart = chartAt(), h = fixture(chart), painter = createActivationPainter(h.root);
+  const selection = { type: 'planet', id: 'personality-sun' };
+  const opt = { ...options, previewSelection: { type: 'planet', id: 'design-sun' } };
+  update(painter, chart, selection, opt); assertEquivalent(h.root, chart, selection, opt);
+  for (const source of ['design', 'personality']) {
+    const planet = h.root.querySelector(`[data-activation="${source}-sun-planet"]`);
+    const number = h.root.querySelector(`[data-activation="${source}-sun"]`);
+    assert.equal(planet.querySelector('rect').getAttribute('fill'), '#eaf0f8');
+    assert.equal(planet.getAttribute('aria-pressed'), String(source === 'personality'));
+    assert.equal(number.getAttribute('aria-pressed'), 'false');
+  }
+  for (const row of h.root.querySelectorAll('.activation-row')) {
+    const number = row.querySelector('[data-type="gate"]'), planet = row.querySelector('.bg-planet');
+    assert.equal(Boolean(number.querySelector('title')), false);
+    assert.ok(number.getAttribute('aria-label').includes('ворота'));
+    const rect = number.querySelector('rect'), planetRect = planet.querySelector('rect');
+    assert.ok(Number(rect.getAttribute('height')) < 40);
+    assert.equal(planetRect.getAttribute('y'), rect.getAttribute('y'));
+    assert.equal(planetRect.getAttribute('height'), rect.getAttribute('height'));
+  }
+});

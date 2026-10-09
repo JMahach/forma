@@ -7,7 +7,7 @@ const owners = new Set(['original', 'natal-day', 'transit', 'lifetime', 'return'
 // A request can outlive its data job; only its owner may publish to this view.
 export function createChartSession({ store, getTransit = () => null, getNatalDay = () => null,
   getLifetime = () => null, getReturns = () => null, filterTransit = chart => chart,
-  onSelect = () => {}, onChange = () => {} }) {
+  resetTransitFilter = () => {}, onSelect = () => {}, onChange = () => {} }) {
   let selectedId = 'current-transit', selecting = false, owner = 'transit';
   let original = store.get(selectedId) || emptyMoment;
   let accepted = createChartComposition(original), hasCurrent = store.has(selectedId);
@@ -66,6 +66,7 @@ export function createChartSession({ store, getTransit = () => null, getNatalDay
     select(id) {
       selecting = true;
       try {
+        if (selectedId === 'current-transit' && id !== 'current-transit') resetTransitFilter();
         selectedId = id; original = store.get(id) || emptyMoment;
         expect(id === 'current-transit' ? 'transit' : 'natal-day');
         getReturns()?.exit(); getReturns()?.select(original);

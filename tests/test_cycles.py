@@ -27,7 +27,7 @@ def prepare_chart_fixture(testcase):
 
 class CrossingTests(unittest.TestCase):
     def test_wrap_does_not_add_antipodal_false_return(self):
-        roots = cycles.scan_crossings(lambda t: ((350 + 50 * t) % 360, 50), 0, 8, 1)
+        roots = returns.scan_crossings(lambda t: ((350 + 50 * t) % 360, 50), 0, 8, 1)
         self.assertEqual(len(roots), 1)
         self.assertAlmostEqual(roots[0]['jd'], 7.2)
         self.assertEqual(roots[0]['cycle'], 1)
@@ -35,7 +35,7 @@ class CrossingTests(unittest.TestCase):
     def test_three_retrograde_passages_keep_one_cycle(self):
         def sample(t):
             return (360 + 6 * (t - 3) * (t - 4) * (t - 5)) % 360, 18 * t * t - 144 * t + 282
-        roots = cycles.scan_crossings(sample, 0, 6, 1)
+        roots = returns.scan_crossings(sample, 0, 6, 1)
         self.assertEqual([round(item['jd'], 8) for item in roots], [3, 4, 5])
         self.assertEqual([item['cycle'] for item in roots], [1, 1, 1])
         self.assertEqual([item['direction'] for item in roots], ['direct', 'retrograde', 'direct'])
@@ -43,17 +43,17 @@ class CrossingTests(unittest.TestCase):
     def test_birth_near_repeats_do_not_become_age_cycles(self):
         def sample(t):
             return (60 * t * (t - 1) * (t - 2)) % 360, 60 * (3 * t * t - 6 * t + 2)
-        roots = cycles.scan_crossings(sample, 0, 3.1, 0.2)
+        roots = returns.scan_crossings(sample, 0, 3.1, 0.2)
         self.assertEqual(len(roots), 1)
         self.assertAlmostEqual(roots[0]['jd'], 3)
         self.assertEqual(roots[0]['cycle'], 1)
 
     def test_station_tangent_and_close_paired_roots_are_not_missed(self):
-        tangent = cycles.scan_crossings(lambda t: ((360 * (2 * t - t * t)) % 360, 720 * (1 - t)), 0, 2, 0.3)
+        tangent = returns.scan_crossings(lambda t: ((360 * (2 * t - t * t)) % 360, 720 * (1 - t)), 0, 2, 0.3)
         self.assertEqual(len(tangent), 1)
         self.assertAlmostEqual(tangent[0]['jd'], 1)
         self.assertEqual(tangent[0]['direction'], 'stationary')
-        pair = cycles.scan_crossings(lambda t: ((361 * (2 * t - t * t)) % 360, 722 * (1 - t)), 0, 2, 0.3)
+        pair = returns.scan_crossings(lambda t: ((361 * (2 * t - t * t)) % 360, 722 * (1 - t)), 0, 2, 0.3)
         self.assertEqual(len(pair), 2)
         self.assertLess(pair[0]['jd'], 1)
         self.assertGreater(pair[1]['jd'], 1)
@@ -63,15 +63,15 @@ class CrossingTests(unittest.TestCase):
         amplitude, duration = 360 + 1e-9, 100
         def sample(t):
             return (amplitude * (2*t/duration - (t/duration)**2)) % 360, 2*amplitude/duration*(1-t/duration)
-        roots = cycles.scan_crossings(sample, 0, 200, .3)
+        roots = returns.scan_crossings(sample, 0, 200, .3)
         self.assertEqual(len(roots), 2)
         self.assertEqual([root['direction'] for root in roots], ['direct', 'retrograde'])
         self.assertAlmostEqual((roots[1]['jd'] - roots[0]['jd']) * 86400, 28.8, delta=.01)
 
     def test_regressive_nodes_and_oppositions_have_separate_turn_rules(self):
-        nodes = cycles.scan_crossings(lambda t: ((3 - 40 * t) % 360, -40), 0, 10, 1, direction=-1)
+        nodes = returns.scan_crossings(lambda t: ((3 - 40 * t) % 360, -40), 0, 10, 1, direction=-1)
         self.assertEqual([(item['jd'], item['cycle']) for item in nodes], [(9, 1)])
-        opposition = cycles.scan_crossings(lambda t: ((350 + 50 * t) % 360, 50), 0, 12, 1, offset=180)
+        opposition = returns.scan_crossings(lambda t: ((350 + 50 * t) % 360, 50), 0, 12, 1, offset=180)
         self.assertEqual([round(item['jd'], 8) for item in opposition], [3.6, 10.8])
         self.assertEqual([item['cycle'] for item in opposition], [1, 2])
 

@@ -2,7 +2,8 @@ import { PLANET_IDS } from '../domain/planets.js';
 
 // One selection owner serves ordinary transit, its day slider and the lifetime.
 // Source charts remain complete so either side can be restored without a fetch.
-// Lifetime retain individual choices. The day always shows all black planets and
+// Lifetime retains individual choices until navigation leaves Transit.
+// The day always shows all black planets and
 // shows all red when the shared Design selection contains any planet.
 export function createTransitPlanetFilter() {
   const selections = { personality: new Set(PLANET_IDS), design: new Set() };
@@ -48,6 +49,12 @@ export function createTransitPlanetFilter() {
       return true;
     },
     setPlanet, setAllPlanets,
+    reset() {
+      if (selections.personality.size === PLANET_IDS.length && selections.design.size === 0) return;
+      PLANET_IDS.forEach(planet => selections.personality.add(planet));
+      selections.design.clear();
+      projections = new WeakMap();
+    },
     setExpanded(value) {
       if (typeof value !== 'boolean') return false;
       if (expanded !== value) { expanded = value; projections = new WeakMap(); }

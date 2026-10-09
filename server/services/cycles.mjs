@@ -15,7 +15,7 @@ export function cyclesCalculationFingerprint(root) {
 }
 
 export const CYCLE_BODIES = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'uranus_opposition', 'neptune', 'pluto', 'chiron']);
-export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12, timeoutMs: 45_000, outputBytes: 2_000_000,
+export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12,
   capacity: 24, memoryBytes: 6_000_000, ttlMs: 600_000 });
 const YEAR_MS = 365.2425 * 86400000;
 
@@ -68,7 +68,7 @@ function validateResult(result, input) {
 
 // Worker transport returns parsed JSON; drain owns semantic validation and error mapping
 // for both this worker and injected generators, before any result enters RAM or HTTP.
-export function generateCycles({ root, input, spawnWorker, computeQueue, signal, timeoutMs = CYCLE_LIMITS.timeoutMs, maxOutputBytes = CYCLE_LIMITS.outputBytes }) {
+export function generateCycles({ root, input, spawnWorker, computeQueue, signal, timeoutMs = 45_000, maxOutputBytes = 2_000_000 }) {
   const request = validateCycleRequest(input, input.action);
   return runJsonWorker({ root, script: 'cycles.py', input: request, spawnWorker, computeQueue, signal, timeoutMs, maxOutput: maxOutputBytes,
     unavailable: () => new CycleError('cycles_unavailable', 'Локальный движок циклов недоступен. Повторите попытку.'),
@@ -79,8 +79,9 @@ export function generateCycles({ root, input, spawnWorker, computeQueue, signal,
 // queue owns admission; an exact chart takes priority over background dates.
 export function createCycles({ root, computeQueue, generate = (input, options) => generateCycles({ root, input, ...options }), now = Date.now, limits = {}, cacheVersion = null } = {}) {
   if (cacheVersion !== null && !/^[a-f0-9]{64}$/.test(cacheVersion)) throw new RangeError('Invalid cycles version');
-  const settings = { ...CYCLE_LIMITS, ...limits }, memory = new Map(), pending = new Map(), jobs = new Set();
-  const queue = computeQueue || createComputeQueue({ concurrency: settings.concurrency, maxQueued: settings.maxQueued });
+  const { concurrency, maxQueued, capacity, memoryBytes, ttlMs } = { ...CYCLE_LIMITS, ...limits };
+  const memory = new Map(), pending = new Map(), jobs = new Set();
+  const queue = computeQueue || createComputeQueue({ concurrency, maxQueued });
   let bytes = 0, accepting = true, closing = null;
   const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
   const stopped = () => new CycleError('cycles_unavailable', 'Расчёт циклов остановлен.');
@@ -111,9 +112,9 @@ export function createCycles({ root, computeQueue, generate = (input, options) =
       if (job.controller.signal.aborted) throw aborted();
       const size = Buffer.byteLength(JSON.stringify(result));
       prune();
-      if (accepting && size <= settings.memoryBytes) {
-        memory.set(key, { result, bytes: size, expires: now() + settings.ttlMs }); bytes += size;
-        while (memory.size > settings.capacity || bytes > settings.memoryBytes) remove(memory.keys().next().value);
+      if (accepting && size <= memoryBytes) {
+        memory.set(key, { result, bytes: size, expires: now() + ttlMs }); bytes += size;
+        while (memory.size > capacity || bytes > memoryBytes) remove(memory.keys().next().value);
       }
       return result;
     }, { signal: job.controller.signal, priority: action === 'chart' ? 1 : 0 }).finally(() => {
