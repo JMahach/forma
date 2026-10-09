@@ -7,10 +7,12 @@ import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
-import { eligibleCycleChart, lifeTimelineForChart } from '../src/domain/cycles.js';
+import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from '../src/domain/cycles.js';
 import { attachChartLibrary } from '../src/views/library.js';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.js';
-import { ageText, returnAge } from '../src/views/returns-clock.js';
+import { chartCaption } from '../src/views/chart-display.js';
+import { ageText, completedAge } from '../src/domain/personal-age.js';
+import { returnsVisibleWindow } from '../src/domain/returns-window.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
@@ -55,12 +57,12 @@ function browser(lifetimeEnabled) {
 function harness({ lifetimeEnabled = false, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser(lifetimeEnabled);
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
-  let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
+  let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, transitOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const ports = {
     createChartSession, createChartExploration, createTransitPlanetFilter,
     createReturnsController: options => returns = createReturnsController(options),
-    eligibleCycleChart, lifeTimelineForChart, attachChartLibrary,
+    eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
     attachKnowledgeEntry: options => attachKnowledgeEntry({ ...options, eventTarget: document,
       load: async () => ({ attachKnowledge: dialog => ({ show() { dialog.open = true; } }) }) }),
     attachActivationPopover: () => ({ close: noop, reposition: noop }),
@@ -74,16 +76,16 @@ function harness({ lifetimeEnabled = false, charts = [], getReturn = () => asser
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
     createChartStore: () => store,
     createViewSession: () => ({ restore: async () => true, interrupt: () => { interruptions++; }, schedule: noop }),
-    chartCaption: () => ({ title: 'Транзит', subtitle: '' }),
-    createChartHeadingLayout: () => ({ updateText: noop, refresh: noop }),
+    chartCaption,
+    createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a, b) { title.textContent = a; subtitle.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
-    attachLiveTransit: () => ({ state: { wanted: true }, current: null, refresh: noop, setWanted: noop }),
+    attachLiveTransit: options => { transitOptions = options; return { state: { wanted: true }, current: null, refresh: noop, setWanted: noop }; },
     attachTransitNavigation: noop,
     attachTransitControls: () => ({ update: noop, setCoveredByLifetime: noop }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: () => ({ close: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
-    attachChartLoading: () => ({ update: noop }), createCyclesClient: () => ({ events: async () => ({ events: [] }), chart: getReturn }), ageText, returnAge,
-    updateReturnClock: noop, attachReturnMarkers: () => ({ update: noop }),
+    attachChartSummary: () => ({ close: noop, setReturnsVisible: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
+    attachChartLoading: () => ({ update: noop }), createCyclesClient: () => ({ events: async () => ({ events: [] }), chart: getReturn }), ageText, completedAge,
+    updateReturnsEntry: noop, attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView',
@@ -97,6 +99,7 @@ function harness({ lifetimeEnabled = false, charts = [], getReturn = () => asser
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
     get lifetimeOptions() { return lifetimeOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
+    clockTick() { transitOptions.onStateChange({ wanted: false }); },
     edit() { birthOptions.beforeOpen(); },
     saveMetadata(chart) { charts = store.charts = charts.map(previous => previous.id === chart.id ? chart : previous); birthOptions.onSave(chart.id, { metadataOnly: true }); },
     finishModule() { finishModule({ attachLifetimeControls(options) {
@@ -108,11 +111,39 @@ function harness({ lifetimeEnabled = false, charts = [], getReturn = () => asser
       } });
       lifetime.setAvailable = value => { if (!value) lifetime.close(); };
       lifetime.syncTransit = noop;
+      lifetime.setVisibleWindow = value => { lifetime.visibleWindow = value; };
       return lifetime;
     } }); },
   };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('the natal caption keeps todays age across day, life and closed rails while events keep their moment', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-09-23T23:59:59Z') });
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  await h.select(chart.id);
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*1\u00a0год$/);
+  t.mock.timers.setTime(Date.parse('2028-09-24T00:00:00Z'));
+  const requests = h.dayRequests, renders = h.renders;
+  h.clockTick();
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*2\u00a0года$/);
+  assert.equal(h.dayRequests, requests); assert.equal(h.renders, renders);
+  h.natalDay.scrub(755);
+  assert.match(h.element('chartSubtitle').textContent, /12:35.*2\u00a0года$/);
+  const opening = h.element('lifetimeToggle').click(); h.finishModule(); await opening; await tick();
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*2\u00a0года$/);
+  t.mock.timers.setTime(Date.parse('2029-09-24T00:00:00Z'));
+  const lifeRequests = h.dayRequests, lifeRenders = h.renders;
+  h.clockTick();
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*3\u00a0года$/);
+  assert.equal(h.dayRequests, lifeRequests); assert.equal(h.renders, lifeRenders);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.lifetime.state.opened, false); assert.equal(h.natalDay.state.opened, false);
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*3\u00a0года$/);
+  await h.select('current-transit');
+  assert.doesNotMatch(h.element('chartSubtitle').textContent, /лет|год/);
+});
 
 test('raw range editing supersedes restoration and a cold opening before the date is valid', async () => {
   const h = harness({ lifetimeEnabled: true }); await tick();
@@ -274,14 +305,16 @@ test('renaming keeps the confirmed exact return and list filters while updating 
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   await h.returns.selectEvent(event.id, { restoredEvent: event });
-  await h.returns.setGroup('planet'); await h.returns.setBody('venus');
+  await h.returns.setBodies(['venus']);
   const requests = h.dayRequests, selections = h.chartSelections;
   const updated = { ...chart, name: 'Новое имя', note: 'Новая заметка' };
   h.edit(); h.saveMetadata(updated); await tick();
   assert.equal(h.shown.kind, 'return'); assert.equal(h.shown.utc, '2050-01-01T12:00:29.432Z');
+  assert.match(h.element('chartTitle').textContent, /^Новое имя · Возврат Сатурна/);
+  assert.equal(h.element('chartSubtitle').textContent, '1 января 2050 г. · 12:00:29 · UTC · 23\u00a0года');
   assert.equal(h.shown.primary, updated); assert.equal(h.shown.secondary, exact); assert.equal(h.shown.event, event);
   assert.equal(h.returns.state.selectedEvent, event); assert.equal(h.returns.current, exact);
-  assert.equal(h.returns.state.natal, updated); assert.equal(h.returns.state.group, 'planet'); assert.equal(h.returns.state.body, 'venus');
+  assert.equal(h.returns.state.natal, updated); assert.deepEqual(h.returns.state.bodies, ['venus']);
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(event.utc));
   assert.equal(h.dayRequests, requests); assert.equal(returnRequests, 1); assert.equal(h.chartSelections, selections);
 });
@@ -295,11 +328,54 @@ test('opening the editor still cancels a pending return and its late answer cann
   } });
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  const previousCaption = h.element('chartSubtitle').textContent;
   const pending = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  assert.equal(h.element('chartSubtitle').textContent, previousCaption, 'a pending event is not presented as the displayed chart');
   h.edit();
   assert.equal(signal.aborted, true);
   const updated = { ...chart, name: 'Новое имя', note: 'Новая заметка' }; h.saveMetadata(updated);
   complete({ event, chart: { ...chart, utc: event.utc } }); assert.equal(await pending, false);
   assert.equal(h.shown.primary, updated); assert.equal(h.shown.secondary, null);
+  assert.equal(h.element('chartTitle').textContent, 'Новое имя');
+  assert.equal(h.element('chartSubtitle').textContent, previousCaption, 'late return metadata cannot replace the accepted birth caption');
   assert.equal(h.returns.state.loadingChart, false); assert.equal(h.returns.state.selectedEvent, null);
+});
+
+
+test('pending personal life data retains todays natal age until the new moment is actually shown', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-10-08T12:00:00Z') });
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  let resolve;
+  const response = new Promise(done => { resolve = done; });
+  const h = harness({ lifetimeEnabled: true, charts: [chart], getPoint: async index => {
+    await response;
+    const utc = new Date(Date.parse('1801-01-01T00:00:00Z') + index * 600000).toISOString();
+    return { index, utc, longitudes: Array.from({ length: 11 }, (_, i) => i * 23),
+      design: { utc, designUtc: '2049-10-01T00:00:00Z', designArcResidualDegrees: 0,
+        longitudes: Array.from({ length: 11 }, (_, i) => i * 23 + 10) } };
+  } });
+  await h.select(chart.id);
+  const opening = h.element('lifetimeToggle').click(); h.finishModule(); await opening; await tick();
+  const target = Date.parse('2050-01-01T12:00:00Z');
+  h.lifetimeOptions.beforeScrub(target);
+  const pending = h.lifetime.scrub(target);
+  await tick(); h.clockTick();
+  assert.equal(h.shown.kind, 'single');
+  assert.match(h.element('chartSubtitle').textContent, /12:34.*2\u00a0года$/);
+  resolve(); await pending;
+  assert.equal(h.shown.kind, 'transit');
+  assert.match(h.element('chartSubtitle').textContent, /2050.*23\u00a0года$/);
+  h.clockTick();
+  assert.match(h.element('chartSubtitle').textContent, /2050.*23\u00a0года$/);
+});
+
+test('year endpoint captions also use UTC when a saved timezone is obsolete', async () => {
+  const chart = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), timezone: 'Obsolete/Zone' };
+  const h = harness({ lifetimeEnabled: true, charts: [chart] });
+  await tick(); await h.element('lifetimeToggle').click();
+  h.select(chart.id); await h.element('natalDayToggle').click();
+  h.finishModule(); await tick(); await h.returns.setYear(2027);
+  const bounds = { minUtc: Date.parse('2026-01-01T00:00:00Z'), maxUtc: Date.parse('2028-01-01T00:00:00Z') };
+  const labels = h.lifetimeOptions.formatEndpoints(bounds);
+  assert.match(labels[0], /янв.*2027/); assert.match(labels[1], /дек.*2027/);
 });

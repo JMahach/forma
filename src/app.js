@@ -27,9 +27,11 @@ import { attachPerformanceMonitor } from './views/performance-monitor.js';
 import { attachChartLoading } from './views/chart-loading.js';
 import { createReturnsController } from './state/returns.js';
 import { createCyclesClient } from './data/cycles-client.js';
-import { ageText, returnAge, updateReturnClock } from './views/returns-clock.js';
-import { eligibleCycleChart, lifeTimelineForChart } from './domain/cycles.js';
+import { ageText, completedAge } from './domain/personal-age.js';
+import { updateReturnsEntry } from './views/returns-clock.js';
+import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from './domain/cycles.js';
 import { attachReturnMarkers } from './views/returns-markers.js';
+import { returnsVisibleWindow } from './domain/returns-window.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
@@ -45,9 +47,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   let hoverPreview = null, chartSummary = null, mandalaMode = null, library = null, transit = null, transitControls = null, natalDay = null, lifetime = null;
   let viewSession = null, lifetimeLoading = null, lifetimeLoadFailed = false;
   let returns = null, returnsView = null, returnsViewLoading = null, returnMarkers = null;
-  const returnsClock = { footer: $('returnsControls'), entry: $('returnsToggle'),
-    date: $('returnsDate'), detail: $('returnsDetail'), label: $('returnsButtonLabel') };
-  let exploration = null;
+  const returnsEntry = { footer: $('returnsControls'), entry: $('returnsToggle') };
+  let exploration = null, timelineLayoutKey = '';
   const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'));
   const transitPlanets = createTransitPlanetFilter();
   const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => natalDay,
@@ -55,8 +56,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     filterTransit: transitPlanets.filter, onSelect: () => exploration?.selected(), onChange: updatePage });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime, enabled: lifetimeEnabled,
-    onTimelineReady: () => { layout.refresh(); gestures.resize(); updateReturns(); },
-    onModeChange: updateReturns, onChange: () => viewSession?.schedule() });
+    onTimelineReady: () => { layout.refresh(); gestures.resize(); updatePersonalTimeline(); },
+    onModeChange: updatePersonalTimeline, onChange: () => viewSession?.schedule() });
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
     lifetime?.state.opened && lifetime.state.mode === 'lifetime' || viewSession?.pendingLifetime?.mode === 'lifetime');
@@ -90,7 +91,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     },
   });
   const cameraChanged = createCameraChangeHandler({
-    heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
+    heading: $('chartHeader'), fitButton: $('fitButton'), studio: $('canvasWrap').parentElement, activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
   });
   const gestures = attachGestures($('bodygraph'), {
@@ -123,10 +124,11 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   attachKnowledgeEntry({ button: $('openKnowledge'), dialog: $('knowledgeDialog'), onSelect: graph.choose,
     getSelection: () => graph.selectionState.primary, beforeOpen: () => library.close(), onError: toast });
   chartSummary = attachChartSummary({
-    panel: $('chartSummary'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
+    panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'), returnsEntry: $('returnsToggle'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
     search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     onSelect: graph.choose, onLines: graph.chooseSummary,
     onOpen: () => { returns?.close(); activationPopover.close(); hoverPreview?.clear(); library.close(); },
+    onClose: () => returns?.close(),
   });
   const mandalaMotion = createMandalaMotion({
     viewport: $('viewport'), onUpdate: () => activationPopover.reposition(),
@@ -152,22 +154,23 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   });
   natalDay = attachNatalDayExplorer({
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
-    time: $('natalDayMoment'), status: $('natalDayStatus'), resetButton: $('natalDayReset'),
+    status: $('natalDayStatus'), retryButton: $('natalDayRetry'), hourMarks: $('natalDayHourMarks'),
     onMomentInput: () => viewSession?.interrupt(),
-    onRender: exploration.publishDay, onStateChange: () => { updateReturns(); viewSession?.schedule(); },
+    onRender: exploration.publishDay, onStateChange: () => { updatePersonalTimeline(); viewSession?.schedule(); },
   });
-  returnsClock.entry.addEventListener('click', () => {
+  returnsEntry.entry.addEventListener('click', () => {
     if (returns.state.opened) { returns.close(); return; }
     library.close(); chartSummary.close(); activationPopover.close(); hoverPreview?.clear();
     void returns.open();
   });
   returnMarkers = attachReturnMarkers({ container: $('lifetimeTime').parentElement,
+    onTargetsChange: () => lifetime?.refreshTargets(),
     onSelect: event => { viewSession?.interrupt(); return returns.selectEvent(event.id); } });
   returns = createReturnsController({
     client: createCyclesClient({ cacheVersion: document.body.dataset.cyclesVersion }),
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn,
     onStateChange() {
-      updateReturns(); viewSession?.schedule();
+      updatePersonalTimeline(); viewSession?.schedule();
     },
   });
   $('natalDayToggle').addEventListener('click', () => {
@@ -178,12 +181,13 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     onRender: exploration.publishTransit, onStateChange: state => {
       transitControls?.setCoveredByLifetime(session.selectedId !== 'current-transit' || Boolean(lifetime?.state.opened));
-      transitControls?.update(state); lifetime?.syncTransit(); updateLoading(); viewSession?.schedule();
+      transitControls?.update(state); lifetime?.syncTransit(); updateLoading(); refreshTimelineLayout(); viewSession?.schedule();
+      if (returns?.state.available) updateChartCaption();
     },
   });
   transitControls = attachTransitControls({
-    panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'), time: $('transitMoment'),
-    status: $('transitStatus'), nowButton: $('transitNow'),
+    panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'),
+    status: $('transitStatus'), retryButton: $('transitRetry'), hourMarks: $('transitHourMarks'),
     onScrub: value => { viewSession?.interrupt(); return transit.scrub(value); },
     onNow: () => { viewSession?.interrupt(); return transit.goNow(); },
   });
@@ -204,15 +208,27 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
 
   function updateChartCaption() {
     const chart = currentChart();
-    const caption = chartCaption(chart, session.original, exploration.preview && !returns?.current,
-      { useUtc: session.shownSource === 'lifetime' });
+    // The accepted composition describes the shown moment, even while another
+    // source is loading. A pending owner must not change the natal caption.
+    const caption = chartCaption(chart, session.original, false,
+      { useUtc: session.shownSource === 'lifetime',
+        showAge: Boolean(returns?.state.available),
+        ageUtc: new Date().toISOString() });
     headingLayout.updateText(caption.title, caption.subtitle);
   }
 
+  function refreshTimelineLayout() {
+    if (!transitControls) return;
+    const key = ['transitControls', 'natalDayControls', 'lifetimeControls', 'returnsControls']
+      .map(id => $(id).hidden).concat($('lifetimeControls').dataset.personalLife).join(':');
+    if (key === timelineLayoutKey) return;
+    timelineLayoutKey = key;
+    layout.refresh(); gestures.resize(); headingLayout.refresh();
+  }
+
   function updatePage() {
-    updateReturns();
+    updatePersonalTimeline();
     if (!lifetime) $('lifetimeToggle').hidden = !lifetimeEnabled || !(session.selectedId === 'current-transit' || returns?.state.available);
-    updateChartCaption();
     library.render();
     graph.render();
     updateLoading();
@@ -263,29 +279,30 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   function loadReturnsView() {
     if (returnsView) return Promise.resolve(returnsView);
     if (returnsViewLoading) return returnsViewLoading;
-    returnsClock.entry.setAttribute('aria-busy', 'true');
+    returnsEntry.entry.setAttribute('aria-busy', 'true');
     returnsViewLoading = import('./views/returns-panel.js').then(({ attachReturnsPanel }) => {
-      returnsView = attachReturnsPanel({
-        document, onClose: () => returns.close(),
-        onGroup: value => returns.setGroup(value), onYear: value => returns.setYear(value), onBody: value => returns.setBody(value),
-        onSelect: async value => { viewSession?.interrupt(); const selected = await returns.selectEvent(value); if (selected && returnsView.phone()) returns.close(); },
-        onBirth: () => { viewSession?.interrupt(); exploration.resetMoment(); if (returnsView.phone()) returns.close(); },
-        onNow: () => { viewSession?.interrupt(); if (exploration.followNow() && returnsView.phone()) returns.close(); },
+      returnsView = attachReturnsPanel({ getLayout: () => layout.returnsLayout,
+        document, onClose: () => chartSummary.close({ focus: true }), onBack: () => chartSummary.open(),
+        onYear: value => returns.setYear(value),
+        onBodies: value => returns.setBodies(value),
+        onSelect: async value => { viewSession?.interrupt(); const selected = await returns.selectEvent(value); if (selected && returnsView.sheet()) returns.close(); },
+        onBirth: () => { viewSession?.interrupt(); returns.setYear(null); exploration.resetMoment(); if (returnsView.sheet()) returns.close(); },
+        onNow: () => { viewSession?.interrupt(); returns.setYear(null); if (exploration.followNow() && returnsView.sheet()) returns.close(); },
         onRetry: () => returns.retry(),
         onLayout: () => { layout.refresh(); gestures.resize(); headingLayout.refresh(); },
       });
       // Loading only supplies the view. The controller still owns whether its
       // drawer is open, including another click or navigation during the import.
-      updateReturns();
+      updatePersonalTimeline();
       return returnsView;
     }).catch(() => {
       if (returns.state.opened) { returns.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
       return null;
-    }).finally(() => { returnsViewLoading = null; returnsClock.entry.removeAttribute('aria-busy'); });
+    }).finally(() => { returnsViewLoading = null; returnsEntry.entry.removeAttribute('aria-busy'); });
     return returnsViewLoading;
   }
 
-  function updateReturns() {
+  function updatePersonalTimeline() {
     if (!returns) return;
     const state = returns.state, lifetimeState = lifetime?.state, metadata = lifetimeState?.metadata;
     const timelineVisible = Boolean(state.available && lifetimeState?.opened && lifetimeState.mode === 'lifetime' && !natalDay.state.opened);
@@ -294,9 +311,10 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     $('lifetimeControls').dataset.personalLife = String(state.available);
     // The footer and source labels describe the same resolved chart as the scene.
     const chart = currentChart();
-    const viewState = { ...state, timelineVisible, cursorUtc: chart?.utc, overlayKind: chart?.kind,
+    const viewState = { ...state, timelineVisible,
       birthSelected: !exploration.live && chart.primary === session.original && !chart.secondary, live: exploration.live };
-    updateReturnClock(returnsClock, viewState);
+    updateReturnsEntry(returnsEntry, viewState);
+    chartSummary.setReturnsVisible(Boolean(returnsView && timelineVisible && state.opened));
     if (returnsView) returnsView.update(viewState);
     else if (timelineVisible && state.opened) void loadReturnsView();
     const lifetimeToggle = $('lifetimeToggle');
@@ -309,10 +327,14 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     lifetimeToggle.setAttribute('aria-expanded', String(enabled));
     lifetimeToggle.setAttribute('aria-pressed', String(enabled));
     const valid = timelineVisible && metadata;
-    returnMarkers?.update({ events: state.majorEvents, natal: state.natal, selectedEvent: state.selectedEvent,
-      fromUtc: valid ? lifetimeState.minUtc : NaN,
-      toUtc: valid ? lifetimeState.maxUtc : NaN,
+    const window = valid ? returnsVisibleWindow(state.natal, state.year, lifetimeState) : null;
+    lifetime?.setVisibleWindow(window);
+    returnMarkers?.update({ events: state.events, natal: state.natal, displayedUtc: chart?.utc,
+      fromUtc: window?.minUtc ?? NaN,
+      toUtc: window?.maxUtc ?? NaN,
       visible: Boolean(valid) });
+    updateChartCaption();
+    refreshTimelineLayout();
   }
 
   // Both a toolbar click and page restoration use the same lazy controller.
@@ -331,23 +353,33 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
           planetFilter: transitPlanets,
           available: session.selectedId === 'current-transit' || returns.state.available,
           getDayState: () => session.selectedId === 'current-transit' ? transit.state : null,
+          getPersonalChart: () => returns.state.available ? returns.state.natal : null,
           formatEndpoints: state => {
             const natal = session.original;
+            if (eligibleCycleChart(natal) && !natalDay.state.opened && Number.isInteger(returns.state.year)) {
+              const visible = returnsVisibleWindow(natal, returns.state.year, state);
+              if (visible) {
+                const label = new Intl.DateTimeFormat('ru', { timeZone: cycleTimeZone(natal.timezone), month: 'short', year: 'numeric' });
+                return [label.format(visible.minUtc), label.format(visible.maxUtc)];
+              }
+            }
             return eligibleCycleChart(natal) && !natalDay.state.opened
-              ? ['Рождение', ageText(returnAge(`${state.toDate}T23:59:59Z`, natal))] : null;
+              ? ['Рождение', ageText(completedAge(`${state.toDate}T23:59:59Z`, natal))] : null;
           },
           getMomentState: exploration.momentState,
           onDayScrub: transit.scrub, onDayNow: transit.goNow,
           onLifetimeNow: () => {
+            if (returns.state.available) returns.setYear(null);
             if (!exploration.followNow()) return false;
             returns.close(); return true;
           },
-          resolveTap: event => returnMarkers?.hitTest(event),
+          resolveTap: (event, metrics) => returnMarkers?.hitTest(event, metrics),
           beforeScrub: exploration.beforeScrub,
           onMomentInput: () => viewSession?.interrupt(),
           toggle: $('lifetimeToggle'), panel: $('lifetimeControls'), range: $('lifetimeTime'), marker: $('lifetimeReference'),
-          date: $('lifetimeDate'), time: $('lifetimeMoment'), status: $('lifetimeStatus'),
+          status: $('lifetimeStatus'), hourMarks: $('lifetimeHourMarks'),
           fromDate: $('lifetimeFromDate'), toDate: $('lifetimeToDate'),
+          fromError: $('lifetimeFromError'), toError: $('lifetimeToError'),
           fromCalendar: $('lifetimeFromCalendar'), toCalendar: $('lifetimeToCalendar'),
           retryButton: $('lifetimeRetry'),
           onRender: exploration.publishLifetime,
@@ -356,12 +388,12 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
             transitControls.setCoveredByLifetime(state.opened || session.selectedId !== 'current-transit');
             viewSession?.schedule();
             exploration.lifetimeChanged(state);
-            updateReturns(); updateLoading();
+            updatePersonalTimeline(); updateLoading();
           },
         });
         return lifetime;
       } catch {
-        lifetimeLoadFailed = true; updateLoading(); updateReturns();
+        lifetimeLoadFailed = true; updateLoading(); updatePersonalTimeline();
         return null;
       } finally {
         lifetimeLoading = null;

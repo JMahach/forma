@@ -173,7 +173,10 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
     for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
     return element;
   }
-  const studio = node(), panel = node(), content = node(), overview = node(), search = node('input');
+  const studio = node(), panel = node('aside', { 'aria-labelledby': 'chartSummaryTitle' });
+  const summaryScreen = node(), returnsPanel = node('section', { 'aria-labelledby': 'returnsTitle' });
+  const returnsEntry = node('button'), returnsBack = node('button');
+  const content = node(), overview = node(), search = node('input');
   const switcher = node('button', { 'aria-controls': 'chartSummary', 'aria-expanded': 'false' });
   const backdrop = withBackdrop ? node() : null;
   const canvas = node('svg');
@@ -183,8 +186,12 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   canvas.innerHTML = '<g class="bodygraph-camera" transform="translate(17 31) scale(1.4)"></g>';
   canvas.querySelector = () => { throw new Error('The drawer must not measure or inspect the chart'); };
   panel.parentElement = studio;
-  search.parentElement = content.parentElement = overview.parentElement = panel;
-  panel.children = [overview, search, content];
+  summaryScreen.parentElement = returnsPanel.parentElement = panel;
+  search.parentElement = content.parentElement = overview.parentElement = summaryScreen;
+  returnsBack.parentElement = returnsPanel;
+  summaryScreen.children = [overview, search, content];
+  returnsPanel.children = [returnsBack]; returnsPanel.hidden = true;
+  panel.children = [summaryScreen, returnsPanel];
   document = node();
   Object.defineProperty(document, 'activeElement', { get: () => globals.activeElement });
   document.querySelector = selector => selector === 'dialog[open]' && globals.dialogOpen || selector === '.library.open' && globals.libraryOpen ? {} : null;
@@ -193,13 +200,13 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   let openCalls = 0, closeCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panel, content, overview, search, switcher, backdrop,
+    panel, summaryScreen, returnsPanel, returnsEntry, content, overview, search, switcher, backdrop,
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
   };
   if (callbacks) {
-    config.onOpen = () => { openCalls++; globals.libraryOpen = false; };
-    config.onClose = () => { closeCalls++; };
+    config.onOpen = () => { openCalls++; globals.libraryOpen = false; controller.setReturnsVisible(false); };
+    config.onClose = () => { closeCalls++; controller.setReturnsVisible(false); };
   }
   const controller = attachChartSummary(config);
   controller.update(input);
@@ -210,7 +217,8 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   const searchFor = value => { search.value = value; search.dispatch('input'); };
   const disclosure = (id, open) => { const section = content.querySelectorAll('[data-summary-section]').find(section => section.dataset.summarySection === id); assert.ok(section); section.open = open; content.dispatch('toggle', { target: section }); };
   return {
-    controller, globals, document, window, panel, content, overview, search, switcher, canvas, camera, studio, backdrop,
+    controller, globals, document, window, panel, summaryScreen, returnsPanel, returnsEntry, returnsBack,
+    content, overview, search, switcher, canvas, camera, studio, backdrop,
     lineCalls, lineOptions, selectionCalls, click, mode, lineButton, entityButton, searchFor, disclosure,
     resize(value) { window.innerWidth = value; window.dispatch('resize'); controller.layout(); },
     get openCalls() { return openCalls; },
@@ -644,4 +652,129 @@ test('compositions keep summary lazy and name the real natal lines beside the un
   assert.equal(h.lineButton(2, 'design').disabled, false);
   assert.equal(h.lineButton(6, 'personality').disabled, true);
   assert.ok(h.entityButton('gate', 63));
+});
+
+test('returns alone opens the shared shell without opening or rendering the summary', () => {
+  const h = harness();
+  h.returnsEntry.focus();
+  assert.equal(typeof h.controller.setReturnsVisible, 'function');
+  h.controller.setReturnsVisible(true);
+  assert.equal(h.controller.opened, true);
+  assert.equal(h.controller.screen, 'returns');
+  assert.equal(h.panel.dataset.screen, 'returns');
+  assert.equal(h.panel.classList.contains('open'), true);
+  assert.equal(h.panel.inert, false);
+  assert.equal(h.panel.getAttribute('aria-hidden'), 'false');
+  assert.equal(h.panel.getAttribute('aria-labelledby'), 'returnsTitle');
+  assert.equal(h.summaryScreen.hidden, true);
+  assert.equal(h.returnsPanel.hidden, false);
+  assert.equal(h.backdrop.hidden, false);
+  assert.equal(h.switcher.getAttribute('aria-expanded'), 'true');
+  assert.equal(h.globals.activeElement, h.returnsEntry, 'the returns view chooses its own initial focus');
+  assert.equal(h.content.markupWrites, 0);
+  assert.equal(h.openCalls, 0);
+  assert.equal(h.closeCalls, 0);
+});
+
+test('Back to summary preserves search, disclosure, scroll and the existing DOM', () => {
+  const h = harness();
+  h.controller.open(); h.disclosure('gates', true); h.searchFor('ворота');
+  h.content.scrollTop = 91;
+  const gate = h.entityButton('gate', 34), writes = h.content.markupWrites;
+  h.controller.close(); h.controller.setReturnsVisible(true);
+  h.returnsBack.focus();
+  h.controller.open();
+  assert.equal(h.controller.screen, 'summary');
+  assert.equal(h.controller.opened, true);
+  assert.equal(h.panel.dataset.screen, 'summary');
+  assert.equal(h.panel.getAttribute('aria-labelledby'), 'chartSummaryTitle');
+  assert.equal(h.summaryScreen.hidden, false);
+  assert.equal(h.returnsPanel.hidden, true);
+  assert.equal(h.search.value, 'ворота');
+  assert.equal(h.content.scrollTop, 91);
+  assert.equal(h.content.markupWrites, writes);
+  assert.equal(h.entityButton('gate', 34), gate);
+  assert.equal(h.globals.activeElement, h.search);
+  h.searchFor('');
+  assert.ok(h.content.querySelectorAll('[data-summary-section]').find(x => x.dataset.summarySection === 'gates').open);
+});
+
+test('closing a returns-only shell closes its owner once and keeps content for the exit animation', () => {
+  for (const dismiss of [h => h.controller.close(), h => h.switcher.dispatch('click'), h => h.backdrop.dispatch('click')]) {
+    const h = harness();
+    h.controller.setReturnsVisible(true); h.returnsBack.focus();
+    dismiss(h);
+    assert.equal(h.controller.screen, 'closed');
+    assert.equal(h.controller.opened, false);
+    assert.equal(h.panel.classList.contains('open'), false);
+    assert.equal(h.panel.inert, true);
+    assert.equal(h.panel.getAttribute('aria-hidden'), 'true');
+    assert.equal(h.backdrop.hidden, true);
+    assert.equal(h.switcher.getAttribute('aria-expanded'), 'false');
+    assert.equal(h.panel.dataset.screen, 'returns', 'closing keeps the same presentation for its slide out');
+    assert.equal(h.returnsPanel.hidden, false, 'the inert shell can still animate its contents');
+    assert.equal(h.globals.activeElement, h.returnsEntry);
+    assert.deepEqual(h.returnsEntry.focusOptions, { preventScroll: true });
+    assert.equal(h.closeCalls, 1);
+    h.controller.close(); h.controller.layout();
+    assert.equal(h.closeCalls, 1);
+    assert.equal(h.openCalls, 0);
+  }
+});
+
+test('Escape consumed by a nested return control leaves the shell open; the next Escape closes it', () => {
+  const h = harness();
+  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.document.dispatch('keydown', { key: 'Escape', defaultPrevented: true });
+  assert.equal(h.controller.screen, 'returns');
+  assert.equal(h.closeCalls, 0);
+  const event = h.document.dispatch('keydown', { key: 'Escape' });
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(h.controller.screen, 'closed');
+  assert.equal(h.closeCalls, 1);
+  assert.equal(h.globals.activeElement, h.returnsEntry);
+});
+
+test('returns projection and camera layout repeats preserve focus and avoid shell DOM writes', () => {
+  const h = harness();
+  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  const writes = observeLayoutWrites(h);
+  for (let i = 0; i < 1000; i++) { h.controller.setReturnsVisible(true); h.controller.layout(); }
+  h.resize(390); h.resize(1440);
+  assert.equal(writes.length, 0);
+  assert.equal(h.globals.activeElement, h.returnsBack);
+  assert.equal(h.controller.screen, 'returns');
+  assert.equal(h.openCalls, 0);
+  assert.equal(h.closeCalls, 0);
+});
+
+test('the hidden summary defers chart inspection behind returns and applies the latest chart on Back', () => {
+  const h = harness();
+  h.controller.open();
+  h.controller.setReturnsVisible(true);
+  let reads = 0;
+  const next = { ...chart, id: 'next-chart' };
+  Object.defineProperty(next, 'activations', { get() { reads++; return chart.activations; } });
+  const writes = h.content.markupWrites;
+  h.controller.update(next, { items: [{ type: 'gate', id: 34 }] });
+  assert.equal(reads, 0);
+  assert.equal(h.content.markupWrites, writes);
+  h.controller.open();
+  assert.equal(h.controller.screen, 'summary');
+  assert.ok(reads > 0);
+  assert.equal(h.entityButton('gate', 34).getAttribute('aria-pressed'), 'true');
+  assert.equal(h.openCalls, 2, 'Back invokes coordination even if summary was requested before returns');
+});
+
+test('externally hidden returns releases shell focus without issuing a second close command', () => {
+  const h = harness();
+  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.controller.setReturnsVisible(false);
+  assert.equal(h.controller.screen, 'closed');
+  assert.equal(h.panel.inert, true);
+  assert.equal(h.globals.activeElement, h.returnsEntry);
+  assert.equal(h.closeCalls, 0);
+  h.controller.setReturnsVisible(true); h.canvas.focus();
+  h.controller.setReturnsVisible(false);
+  assert.equal(h.globals.activeElement, h.canvas, 'external navigation retains its own focus');
 });

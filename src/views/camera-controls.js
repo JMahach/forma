@@ -1,8 +1,9 @@
 import { isHomeView } from '../scene/camera.js';
 
-export function createCameraChangeHandler({ heading, fitButton, getHoverPreview = () => null, activationPopover, getSummary = () => null }) {
+export function createCameraChangeHandler({ heading, fitButton, studio = null, getHoverPreview = () => null, activationPopover, getSummary = () => null }) {
   return (view, fitted) => {
     const home = isHomeView(view, fitted);
+    if (studio && studio.dataset.cameraHome !== String(home)) studio.dataset.cameraHome = String(home);
     // Caption overlap belongs to chart-heading-layout; the camera only hides
     // it while the drawing is away from Home.
     if (heading && heading.hidden !== !home) heading.hidden = !home;

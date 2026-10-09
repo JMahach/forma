@@ -282,7 +282,10 @@ for (const outcome of ['error', 'menu-cancel']) for (const lateLifetime of ['suc
     assert.equal(before.lifetime.personalPreview, true);
     assert.equal(before.lifetime.personalLive, false);
     assert.equal(before.lifetime.requestedUtc, target);
-    assert.equal(before.returns, undefined);
+    assert.equal(before.returns.eventId, null, 'only filters are saved, not the failed exact request');
+    assert.equal(before.returns.event, undefined);
+    assert.equal(before.returns.year, null);
+    assert.deepEqual(before.returns.bodies, ['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
     if (lateLifetime === 'success') h.lifetimeJobs[1].resolve(lifetimeMoment(h.lifetimeJobs[1].index));
     else h.lifetimeJobs[1].reject(new Error('abandoned point offline'));
     await abandoned;
@@ -342,7 +345,9 @@ for (const source of ['original', 'natal-day']) test(`failed Return retains acce
   assert.equal(JSON.stringify(h.people[0]), original);
   assert.equal(h.lifetimeJobs.length, 0);
   saved.view.flush(); const snapshot = saved.writes.at(-1);
-  assert.equal(snapshot.returns, undefined);
+  if (source === 'original') {
+    assert.equal(snapshot.returns.eventId, null); assert.equal(snapshot.returns.event, undefined);
+  } else assert.equal(snapshot.returns, undefined);
   if (source === 'original') {
     assert.equal(snapshot.lifetime.personalPreview, false);
     const restored = await restoreLifetimeSnapshot(snapshot);
@@ -368,7 +373,9 @@ for (const outcome of ['error', 'menu-cancel']) test(`accepted lifetime survives
   saved.view.flush();
   const snapshot = saved.writes.at(-1);
   assert.equal(snapshot.lifetime.requestedUtc, target);
-  assert.equal(snapshot.returns, undefined, 'an unaccepted request is not a saved exact return');
+  assert.equal(snapshot.returns.eventId, null, 'an unaccepted request is not a saved exact return');
+  assert.equal(snapshot.returns.event, undefined);
+  assert.equal(snapshot.returns.opened, false);
 
   const restored = harness();
   // The app adds the selected person's exact lower bound to the saved rail.

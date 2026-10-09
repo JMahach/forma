@@ -40,12 +40,26 @@ test('clipping away a first passage never promotes later passes and retains the 
   assert.deepEqual(h.chosen, [next]);
 });
 
-test('markers exclude unsupported fast returns, invalid moments and events outside the inclusive scale', () => {
+test('markers include selected fast returns and Jupiter while excluding invalid moments and events outside the scale', () => {
   const events = [event('before', 'saturn', '2025-12-31T23:59:59Z'), event('jupiter', 'jupiter', '2026-01-05T00:00:00Z'), event('solar', 'sun', '2026-01-05T00:00:00Z'), event('invalid', 'chiron', 'bad'), event('opposition', 'uranus_opposition', '2026-01-05T00:00:00Z'), event('after', 'uranus', '2026-01-11T00:00:01Z')];
-  assert.deepEqual(group(events, { fromUtc, toUtc, width: 280 }).flatMap(item => item.events.map(value => value.id)), ['opposition']);
+  assert.deepEqual(group(events, { fromUtc, toUtc, width: 280 }).flatMap(item => item.events.map(value => value.id)), ['jupiter', 'solar', 'opposition']);
   assert.deepEqual(group(events, { fromUtc: 'bad', toUtc, width: 280 }), []);
   assert.deepEqual(group(events, { fromUtc: toUtc, toUtc: fromUtc, width: 280 }), []);
   assert.equal(group([event('point', 'saturn', fromUtc)], { fromUtc, toUtc: fromUtc, width: 280 })[0].position, .5);
+});
+
+test('dense lunar events retain exact positions without pushing visible labels beyond the rail', () => {
+  const values = Array.from({ length: 1336 }, (_, i) => ({
+    ...event('moon-' + i, 'moon', new Date(Date.parse(fromUtc) + i * 600000).toISOString()), cycle: i + 1,
+  }));
+  const groups = group(values, { fromUtc, toUtc, width: 236 });
+  assert.equal(groups.length, 1336);
+  const visible = groups.filter(item => !item.labelHidden);
+  assert.ok(visible.length > 1 && visible.length < 30);
+  for (const item of visible) {
+    const x = item.position * 236 + item.labelOffset;
+    assert.ok(x >= 0 && x <= 236, 'labels remain within the rail');
+  }
 });
 
 function harness(options = {}) {
@@ -58,17 +72,52 @@ function harness(options = {}) {
   Object.assign(slider, { min: '0', max: '1000', step: '1', value: '1000',
     getBoundingClientRect: () => ({ left: 10, top: 30, width, height: 44 }) });
   container.querySelector = selector => selector === 'input[type="range"]' ? slider : null;
-  const chosen = [], markers = attach({ container, onSelect: value => chosen.push(value), ...options });
+  let day, refreshes = 0;
+  const chosen = [], markers = attach({ container, onSelect: value => chosen.push(value), onTargetsChange: () => { refreshes++; day?.refreshTargets(); }, ...options });
   const layer = container.children.at(-1);
   const reference = document.createElement('button'), now = [], scrubs = [];
-  const day = attachTimelineRange({ range: slider, marker: reference, resolveTap: pointer => markers.hitTest(pointer),
+  day = attachTimelineRange({ range: slider, marker: reference, resolveTap: (pointer, metrics) => markers.hitTest(pointer, metrics),
     onReference: () => now.push(true), onScrub: value => scrubs.push(value) });
   day.updateReference({ visible: false, label: 'Сейчас' });
   const buttons = () => layer.all(node => node.tagName === 'button' && node.className === 'returns-marker');
-  const update = extra => markers.update({ events: [], natal, fromUtc, toUtc, visible: true, ...extra });
+  const update = extra => markers.update({ events: [], natal, fromUtc, toUtc, visible: true, displayedUtc: extra.selectedEvent?.utc, ...extra });
   return { document, container, slider, chosen, markers, layer, buttons, update, reference, now, scrubs, day,
+    get refreshes() { return refreshes; },
     resize(value) { width = value; onResize([{ target: container, contentRect: { width } }]); } };
 }
+
+test('every event lights from accepted UTC without selection id, including coincident events', () => {
+  const a = event('saturn', 'saturn', fromUtc), b = event('uranus', 'uranus_opposition', fromUtc);
+  const c = event('node', 'north_node', toUtc), h = harness(), events = [a, b, c];
+  h.update({ events, displayedUtc: new Date(fromUtc).toISOString() });
+  assert.deepEqual(h.buttons().map(button => button.getAttribute('aria-pressed')), ['true', 'true', 'false']);
+  h.update({ events, selectedEvent: a, displayedUtc: toUtc });
+  assert.deepEqual(h.buttons().map(button => button.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'old selection is not the chart');
+  h.update({ events, selectedEvent: c, displayedUtc: null });
+  assert.ok(h.buttons().every(button => button.getAttribute('aria-pressed') === 'false'));
+  assert.deepEqual(h.chosen, []);
+});
+
+test('event contact previews across a drag, clears on cancel and preserves published selection', () => {
+  const h = harness(), value = event('saturn', 'saturn', fromUtc);
+  h.update({ events: [value] }); const button = h.buttons()[0];
+  let reads = 0;
+  for (const element of button.children) element.getBoundingClientRect = () => {
+    reads++; return { left: 50, top: 50, width: 5, height: 5 };
+  };
+  const pointer = { pointerId: 1, button: 0, pointerType: 'touch', buttons: 1, clientX: 52, clientY: 52 };
+  h.slider.dispatch('pointerdown', pointer);
+  assert.equal(button.dataset.pressed, 'true'); assert.deepEqual(h.chosen, []);
+  reads = 0;
+  h.slider.dispatch('pointermove', { ...pointer, clientX: 150 });
+  assert.notEqual(button.dataset.pressed, 'true');
+  h.slider.dispatch('pointermove', pointer); assert.equal(button.dataset.pressed, 'true');
+  assert.equal(reads, 0, 'drag reuses its hit geometry');
+  h.update({ events: [value], displayedUtc: value.utc });
+  h.slider.dispatch('pointercancel', pointer);
+  assert.notEqual(button.dataset.pressed, 'true'); assert.equal(button.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(h.chosen, []);
+});
 
 test('single compact node selects its exact event, labels actual date and completed age, and preserves the existing slider', () => {
   const h = harness(), value = event('first', 'saturn', fromUtc);
@@ -108,11 +157,11 @@ test('first-event selection with missing natal data never invents an age', () =>
 });
 
 test('each life event node visibly identifies its planet using a compact hidden-from-ARIA glyph', () => {
-  for (const [body, glyph] of [['saturn', '♄'], ['north_node', '☊'], ['uranus_opposition', '♅'], ['uranus', '♅'], ['chiron', '⚷']]) {
+  for (const [body, glyph] of [['saturn', '♄'], ['north_node', '☊'], ['uranus_opposition', '♅½'], ['uranus', '♅'], ['chiron', '⚷']]) {
     const h = harness(); h.update({ events: [event(body, body, fromUtc)] }); const button = h.buttons()[0];
     const symbol = button.children.find(child => child.className === 'returns-marker-symbol');
-    assert.ok(symbol, `visible identifier for ${body}`); assert.equal(symbol.textContent, glyph + '1'); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
-    assert.equal(button.style.left, '0%'); assert.equal(button.children.map(child => child.textContent).join(''), glyph + '1');
+    assert.ok(symbol, `visible identifier for ${body}`); assert.equal(symbol.textContent, glyph + (body === 'uranus_opposition' ? '' : '1')); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
+    assert.equal(button.style.left, '0%'); assert.equal(button.children.map(child => child.textContent).join(''), glyph + (body === 'uranus_opposition' ? '' : '1'));
     assert.equal(button.children.filter(child => child.className === 'returns-marker-dot').length, 1);
   }
 });
@@ -169,7 +218,10 @@ test('lower labels leave birth and age endpoint captions clear without moving ex
   assert.equal(groups.length, 2);
   assert.ok(groups.every(item => item.labelLane === 'above'));
   for (const item of groups) assert.equal(item.position, (Date.parse(item.events[0].utc)-Date.parse(lifeBirth))/(Date.parse(lifeEnd)-Date.parse(lifeBirth)));
-  assert.ok(groups[1].position*280 + groups[1].labelOffset - (groups[0].position*280+groups[0].labelOffset) >= 20);
+  const visible = groups.filter(item => !item.labelHidden);
+  assert.ok(visible.length > 0);
+  assert.ok(visible.every(item => item.position * 280 + item.labelOffset <= 269));
+  for (let i = 1; i < visible.length; i++) assert.ok(visible[i].position * 280 + visible[i].labelOffset - (visible[i - 1].position * 280 + visible[i - 1].labelOffset) >= 20);
 });
 
 test('mouse, touch and pen select near a tiny mark while preserving nearby events and direct labels', () => {
@@ -203,7 +255,11 @@ test('mouse hover on the shared range exposes the exact marker label without sel
   button.children[1].getBoundingClientRect = () => ({ left: 42, top: 29, width: 20, height: 16 });
   h.slider.dispatch('pointermove', { pointerType: 'mouse', buttons: 0, clientX: 40, clientY: 52 });
   assert.match(h.slider.title, /Возврат Сатурна 1/);
-  assert.match(h.slider.title, /3 января 2026/); assert.match(h.slider.title, /12:36:05.*UTC.*25 лет/);
+  assert.deepEqual(h.slider.title.split('\n'), [
+    'Возврат Сатурна 1 · 25 лет',
+    '3 января 2026 г. в 12:36:05',
+    'UTC · прямой ход',
+  ]);
   assert.equal(button.dataset.hovered, 'true'); assert.deepEqual(h.chosen, []);
   button.dispatch('click', { detail: 0 }); button.dispatch('click', { detail: 1 });
   assert.deepEqual(h.chosen, [value], 'keyboard selects once; pointer clicks stay owned by the range');
@@ -225,7 +281,13 @@ test('marker hover clears off-target, on leaving, dragging and hiding without dr
   reads = 0;
   h.slider.dispatch('pointermove', { ...pointer, buttons: 1 });
   assert.equal(reads, 0); cleared();
-  hover(); h.update({ events: [value], visible: false }); cleared();
+  hover(); h.update({ events: [] }); cleared();
+  h.update({ events: [value] });
+  const replacement = h.buttons()[0];
+  for (const child of replacement.children) child.getBoundingClientRect = () => ({ left: 50, top: 50, width: 5, height: 5 });
+  h.slider.dispatch('pointermove', pointer); assert.ok(h.slider.title);
+  h.update({ events: [value], visible: false });
+  assert.equal(h.slider.title, ''); assert.notEqual(replacement.dataset.hovered, 'true');
   assert.deepEqual(h.chosen, []);
 });
 
@@ -233,12 +295,14 @@ test('clock and selected-event updates reuse marker geometry, formatters and foc
   const h = harness(), values = [event('saturn', 'saturn', fromUtc), event('node', 'north_node', toUtc)];
   h.update({ events: values, selectedEvent: values[0] });
   const [first, second] = h.buttons(); first.focus();
+  const refreshes = h.refreshes;
   let reads = 0, formats = 0;
   const measure = h.container.getBoundingClientRect, Format = Intl.DateTimeFormat;
   h.container.getBoundingClientRect = () => { reads++; return measure(); };
   t.mock.method(Intl, 'DateTimeFormat', function(...args) { formats++; return new Format(...args); });
   for (let index = 0; index < 50; index++) h.update({ events: [...values], natal: { ...natal }, selectedEvent: values[index % 2] });
   assert.equal(reads, 0, 'state updates do not measure layout');
+  assert.equal(h.refreshes, refreshes, 'clock-only updates never invalidate targets or re-enter render');
   assert.equal(formats, 0, 'an unchanged birth and zone reuse the formatter');
   assert.equal(h.buttons()[0], first); assert.equal(h.buttons()[1], second);
   assert.equal(h.document.activeElement, first); assert.equal(h.layer.contains(first), true);
@@ -303,4 +367,33 @@ test('a pending exact tap cannot select a moved event through its retained butto
   assert.equal(h.buttons()[0], button); assert.equal(button.style.left, '100%');
   assert.equal(target.valid(), false);
   target.select(); assert.deepEqual(h.chosen, []);
+});
+
+test('event tooltip has three readable lines without a passage counter', () => {
+  const h = harness(), value = { ...event('saturn', 'saturn', '2057-06-24T23:20:37Z'), cycle: 2 };
+  h.update({ events: [value], natal: { utc: '1998-08-18T14:00:00Z', timezone: 'Europe/Moscow' },
+    fromUtc: '1998-08-18T14:00:00Z', toUtc: '2098-08-18T14:00:00Z' });
+  assert.deepEqual(h.buttons()[0].title.split('\n'), [
+    'Возврат Сатурна 2 · 58 лет',
+    '25 июня 2057 г. в 02:20:37',
+    'Europe/Moscow · прямой ход',
+  ]);
+});
+
+
+test('removing a contacted target cancels its pending tap without selecting or recursive rendering', () => {
+  const h = harness(), value = event('saturn', 'saturn', fromUtc);
+  h.update({ events: [value] });
+  const button = h.buttons()[0];
+  for (const child of button.children) child.getBoundingClientRect = () => ({ left: 50, top: 50, width: 5, height: 5 });
+  const pointer = { pointerType: 'touch', pointerId: 1, button: 0, buttons: 1, clientX: 52, clientY: 52 };
+  h.slider.dispatch('pointerdown', pointer);
+  assert.equal(button.dataset.pressed, 'true');
+  const refreshes = h.refreshes;
+  h.update({ events: [] });
+  assert.notEqual(button.dataset.pressed, 'true');
+  assert.equal(h.refreshes, refreshes + 1, 'one layout change produces exactly one invalidation');
+  h.slider.dispatch('pointerup', { ...pointer, buttons: 0 });
+  assert.deepEqual(h.chosen, []);
+  assert.equal(h.slider.title, '');
 });

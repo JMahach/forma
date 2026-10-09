@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
-  <title>Форма 2</title>
+  <title>Форма 1</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=forma-lotus-1">
   <link rel="stylesheet" href="/styles.css">
   <link rel="modulepreload" href="/src/app.js">
@@ -49,9 +49,30 @@
           <div class="chart-heading"><div class="chart-title-row"><h1 id="chartTitle"></h1></div><p class="subtitle" id="chartSubtitle"></p></div>
         </header>
         <aside class="chart-summary" id="chartSummary" aria-labelledby="chartSummaryTitle" aria-hidden="true" inert>
+          <div class="summary-screen" id="summaryScreen">
           <header class="summary-heading"><h2 id="chartSummaryTitle">О карте</h2><div class="summary-overview" id="summaryOverview"></div></header>
           <label class="summary-search"><span class="visually-hidden">Поиск по сводке</span><input id="summarySearch" type="search" placeholder="Найти в карте" autocomplete="off"></label>
           <div class="summary-content" id="chartSummaryContent"></div>
+          </div>
+        <aside class="returns-panel" id="returnsPanel" aria-labelledby="returnsTitle" hidden>
+          <div class="returns-screen-heading"><button type="button" class="returns-back" id="returnsBack" aria-label="Назад к О карте"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true"><path d="m11 4-6 6 6 6M5 10h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><h2 id="returnsTitle">Возвраты</h2><button type="button" class="returns-close" id="returnsClose" aria-label="Закрыть возвраты">×</button></div>
+          <div class="returns-panel-controls">
+            <div class="returns-control-bar">
+              <input id="returnsYear" type="hidden" aria-label="Период возвратов" hidden>
+              <button type="button" class="returns-filter-toggle" id="returnsYearCalendar" aria-label="Период возвратов"><span id="returnsYearLabel">Вся жизнь</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              <button type="button" class="returns-filter-toggle" id="returnsBodiesToggle" aria-expanded="false" aria-controls="returnsBodyMenu" aria-haspopup="dialog"><span id="returnsBodiesLabel">Планеты</span><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            </div>
+            <section class="returns-body-menu returns-filter-popover" id="returnsBodyMenu" role="dialog" aria-label="Планеты возвратов" hidden>
+              <div class="returns-menu-heading"><span>Планеты</span><button type="button" id="returnsBodiesClose" aria-label="Закрыть выбор планет">×</button></div>
+              <div class="returns-body-options" id="returnsBody"></div>
+              <div class="returns-menu-actions"><button type="button" id="returnsBodiesClear">Снять все</button><button type="button" id="returnsBodiesDefault">По умолчанию</button></div>
+            </section>
+          </div>
+          <div class="returns-content" id="returnsContent"></div>
+          <p class="returns-status" id="returnsStatus" role="status"></p>
+          <button type="button" class="returns-retry" id="returnsRetry" hidden>Повторить расчёт</button>
+          <p class="visually-hidden" id="returnsNote"></p>
+        </aside>
         </aside>
         <section class="canvas-wrap" id="canvasWrap" aria-label="Интерактивный бодиграф" aria-busy="true" data-chart-state="loading" inert>
           <!-- chart-loading-placeholder -->
@@ -62,53 +83,34 @@
           <button type="button" class="secondary-button" id="chartLoadingRetry" hidden>Повторить</button>
           <noscript><p>Для показа карты включите JavaScript в браузере.</p></noscript>
         </div>
+        <div class="timeline-dock" aria-hidden="true"></div>
         <div class="day-controls transit-controls" id="transitControls" role="group" aria-label="Транзит сегодня" hidden>
-          <div class="transit-controls-heading"><time id="transitMoment">—</time><button type="button" id="transitNow" aria-pressed="true">Сейчас</button></div>
+          <div class="transit-controls-heading"><button type="button" id="transitRetry" hidden>Повторить</button></div>
           <label class="visually-hidden" for="transitTime">Шкала дня: время транзита</label>
-          <div class="day-range"><input id="transitTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="transitReference" aria-label="Вернуться к текущему времени" hidden></button></span></div>
+          <div class="day-range"><div class="day-hour-marks" id="transitHourMarks" aria-hidden="true"></div><input id="transitTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="transitReference" aria-label="Вернуться к текущему времени" hidden></button></span></div>
           <p class="transit-status" id="transitStatus" role="status"></p>
         </div>
         <div class="day-controls natal-day-controls" id="natalDayControls" role="group" aria-label="День рождения по минутам" hidden>
-          <div class="transit-controls-heading"><time id="natalDayMoment">—</time><button type="button" id="natalDayReset" title="Вернуться к сохранённому времени рождения">К рождению</button></div>
+          <div class="transit-controls-heading"><button type="button" id="natalDayRetry" hidden>Повторить</button></div>
           <label class="visually-hidden" for="natalDayTime">Шкала дня: время рождения</label>
-          <div class="day-range"><input id="natalDayTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="natalDayReference" aria-label="Вернуться к сохранённому времени рождения" hidden></button></span></div>
+          <div class="day-range"><div class="day-hour-marks" id="natalDayHourMarks" aria-hidden="true"></div><input id="natalDayTime" type="range" min="0" max="1439" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="natalDayReference" aria-label="Вернуться к сохранённому времени рождения" hidden></button></span></div>
           <p class="transit-status" id="natalDayStatus" role="status"></p>
         </div>
         <div class="day-controls lifetime-controls" id="lifetimeControls" role="group" aria-label="Летопись" hidden>
-          <div class="lifetime-heading"><div class="lifetime-date-control"><label for="lifetimeFromDate">С</label><div class="lifetime-date-field"><button type="button" class="lifetime-calendar-toggle" id="lifetimeFromCalendar" aria-label="Календарь: начальная дата" title="Выбрать дату"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button><input id="lifetimeFromDate" type="text" inputmode="numeric" maxlength="10" placeholder="ДД.ММ.ГГГГ" autocomplete="off" aria-label="Начальная дата" aria-describedby="lifetimeStatus"></div></div><div class="lifetime-date-control"><label for="lifetimeToDate">По</label><div class="lifetime-date-field"><button type="button" class="lifetime-calendar-toggle" id="lifetimeToCalendar" aria-label="Календарь: конечная дата включительно" title="Выбрать дату"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button><input id="lifetimeToDate" type="text" inputmode="numeric" maxlength="10" placeholder="ДД.ММ.ГГГГ" autocomplete="off" aria-label="Конечная дата включительно" aria-describedby="lifetimeStatus"></div></div></div>
+          <div class="lifetime-heading"><div class="lifetime-date-control"><label for="lifetimeFromDate">С</label><div class="lifetime-date-field"><button type="button" class="lifetime-calendar-toggle" id="lifetimeFromCalendar" aria-label="Календарь: начальная дата" title="Выбрать дату"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button><input id="lifetimeFromDate" type="text" inputmode="numeric" maxlength="10" placeholder="ДД.ММ.ГГГГ" autocomplete="off" aria-label="Начальная дата" aria-describedby="lifetimeFromError"><span id="lifetimeFromError" class="lifetime-date-error" role="status" aria-atomic="true"></span></div></div><div class="lifetime-date-control"><label for="lifetimeToDate">По</label><div class="lifetime-date-field"><button type="button" class="lifetime-calendar-toggle" id="lifetimeToCalendar" aria-label="Календарь: конечная дата включительно" title="Выбрать дату"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button><input id="lifetimeToDate" type="text" inputmode="numeric" maxlength="10" placeholder="ДД.ММ.ГГГГ" autocomplete="off" aria-label="Конечная дата включительно" aria-describedby="lifetimeToError"><span id="lifetimeToError" class="lifetime-date-error" role="status" aria-atomic="true"></span></div></div></div>
           <label class="visually-hidden" for="lifetimeTime">Шкала летописи: выбранный момент</label>
-          <div class="day-range"><input id="lifetimeTime" type="range" min="0" max="0" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="lifetimeReference" aria-label="К текущему времени · шаг 10 минут" hidden></button></span></div>
-          <div class="lifetime-scale"><span data-lifetime-date aria-hidden="true"></span><span class="lifetime-clock"><span id="lifetimeDate"></span><time id="lifetimeMoment"></time></span><span data-lifetime-date aria-hidden="true"></span></div>
+          <div class="day-range"><div class="day-hour-marks" id="lifetimeHourMarks" aria-hidden="true"></div><input id="lifetimeTime" type="range" min="0" max="0" step="1" value="0" disabled><span class="day-reference-rail"><button type="button" class="day-reference" id="lifetimeReference" aria-label="К текущему времени · шаг 10 минут" hidden></button></span></div>
+          <div class="lifetime-scale"><span data-lifetime-date aria-hidden="true"></span><span data-lifetime-date aria-hidden="true"></span></div>
           <p class="lifetime-status" id="lifetimeStatus" role="status"></p>
           <button type="button" id="lifetimeRetry" hidden>Повторить</button>
         </div>
-        <aside class="returns-panel" id="returnsPanel" aria-labelledby="returnsTitle" aria-hidden="true" hidden inert>
-          <h2 id="returnsTitle" class="visually-hidden">Возвраты</h2>
-          <div class="returns-content" id="returnsContent"></div>
-          <p class="returns-status" id="returnsStatus" role="status"></p>
-          <button type="button" class="returns-retry" id="returnsRetry" hidden>Повторить расчёт</button>
-          <div class="returns-panel-controls">
-            <div class="returns-filters">
-              <label id="returnsBodyField" hidden><span class="visually-hidden">Планета</span><select id="returnsBody" aria-label="Вид возврата"></select></label>
-              <div class="returns-year-field" id="returnsYearField" hidden><label class="visually-hidden" for="returnsYear">Год возвратов</label><input id="returnsYear" type="text" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="Год возвратов"><button type="button" class="lifetime-calendar-toggle returns-calendar-toggle" id="returnsYearCalendar" aria-label="Календарь: год возвратов" title="Выбрать год"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6.5 11.5h2m3 0h2m-7 3h2"/></svg></button></div>
-            </div>
-            <div class="returns-control-bar">
-              <div class="returns-groups" role="group" aria-label="Структура возвратов"><button type="button" data-returns-group="major" aria-pressed="true">Жизнь</button><button type="button" data-returns-group="year" aria-pressed="false">Год</button><button type="button" data-returns-group="planet" aria-pressed="false">Планета</button></div>
-              <button type="button" class="returns-close" id="returnsClose" aria-label="Закрыть возвраты">×</button>
-            </div>
-            <div class="returns-overlay-key" aria-label="Цвета наложения"><span><i aria-hidden="true"></i><span id="returnsNatalName"></span></span><span><i aria-hidden="true"></i><span id="returnsMomentName">Возврат</span></span></div>
-          </div>
-          <p class="visually-hidden" id="returnsNote"></p>
-        </aside>
         <div class="returns-controls" id="returnsControls" aria-label="Возвраты личной карты" hidden>
-          <div class="returns-clock"><time id="returnsDate"></time><div class="returns-clock-meta"><small id="returnsDetail"></small></div></div>
-          <button type="button" class="returns-toggle" id="returnsToggle" aria-expanded="false" aria-controls="returnsPanel"><span id="returnsButtonLabel">Возвраты</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 10 4-4 4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" class="returns-toggle" id="returnsToggle" aria-label="Открыть возвраты" title="Возвраты" aria-expanded="false" aria-controls="returnsPanel"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12 4-6 6 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
       </main>
     </div>
   </div>
   <div class="mobile-backdrop" id="libraryBackdrop" hidden></div>
-  <div class="returns-backdrop" id="returnsBackdrop" hidden></div>
   <div class="summary-backdrop" id="summaryBackdrop" hidden></div>
   <dialog id="chartDialog" aria-labelledby="dialogTitle">
     <div class="dialog-content">

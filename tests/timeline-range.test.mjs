@@ -33,6 +33,45 @@ function harness({ value = 200, reference = 500, withMarker = true, resolveTap }
   return { range, marker, scrubs, returns, update, advance(ms) { time += ms; } };
 }
 
+test('touching or dragging across the reference previews its dot without committing early', () => {
+  for (const pointerType of ['touch', 'pen', 'mouse']) {
+    const h = harness(), pointer = { pointerType, buttons: 1, clientX: 132 };
+    h.range.send('pointerdown', pointer);
+    assert.equal(h.marker.getAttribute('data-pressed'), 'true');
+    assert.equal(h.marker.getAttribute('aria-pressed'), 'false'); assert.deepEqual(h.returns, []);
+    h.update(); assert.equal(h.marker.getAttribute('data-pressed'), 'true', 'render retains contact feedback');
+    h.range.send('pointermove', { ...pointer, clientX: 185 });
+    assert.equal(h.marker.getAttribute('data-pressed'), 'false');
+    h.range.send('pointermove', pointer); assert.equal(h.marker.getAttribute('data-pressed'), 'true');
+    h.update({ active: true });
+    h.range.send('pointerup', { ...pointer, buttons: 0 });
+    assert.equal(h.marker.getAttribute('data-pressed'), 'false');
+    assert.equal(h.marker.getAttribute('aria-pressed'), 'true', 'accepted coincidence survives release');
+    assert.deepEqual(h.returns, [], 'crossing never calls the reference action');
+  }
+});
+
+test('cancelled contact or unavailable reference cannot leave a temporary inner dot behind', () => {
+  for (const ending of ['pointercancel', 'blur', 'lostpointercapture', 'hidden', 'disabled']) {
+    const h = harness(); h.range.send('pointerdown', { pointerType: 'touch' });
+    assert.equal(h.marker.getAttribute('data-pressed'), 'true');
+    if (ending === 'hidden') h.update({ visible: false });
+    else if (ending === 'disabled') { h.range.disabled = true; h.update(); }
+    else h.range.send(ending, { pointerType: 'touch' });
+    assert.equal(h.marker.getAttribute('data-pressed'), 'false', ending);
+    assert.deepEqual(h.returns, []);
+  }
+});
+
+test('changing visible bounds cancels an in-flight gesture rather than scrubbing with stale geometry', () => {
+  const h = harness({ withMarker: false });
+  h.range.send('pointerdown', { pointerType: 'touch', clientX: 72 });
+  h.range.min = '400'; h.range.max = '800'; h.update();
+  h.range.send('pointermove', { pointerType: 'touch', clientX: 170 });
+  h.range.send('pointerup', { pointerType: 'touch', clientX: 170 });
+  assert.deepEqual(h.scrubs, []);
+});
+
 test('reference tap waits for release and does not publish an intermediate selected minute', () => {
   const h = harness();
   assert.equal(h.range.send('pointerdown').defaultPrevented, true);

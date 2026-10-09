@@ -4,12 +4,13 @@ const SUPPORTED_START = Date.UTC(1801, 0, 1), SUPPORTED_END = Date.UTC(2400, 0, 
 
 // Labels describe the event; astronomical searching belongs to the server.
 export const CYCLE_BODIES = Object.freeze([
-  ['sun', 'Соляр', 'Солнце'], ['moon', 'Лунар', 'Луна'], ['north_node', 'Возврат лунных узлов', 'Лунные узлы'],
-  ['mercury', 'Возврат Меркурия', 'Меркурий'], ['venus', 'Возврат Венеры', 'Венера'], ['mars', 'Возврат Марса', 'Марс'],
-  ['jupiter', 'Возврат Юпитера', 'Юпитер'], ['saturn', 'Возврат Сатурна', 'Сатурн'],
-  ['uranus_opposition', 'Оппозиция Урана', 'Оппозиция Урана'], ['chiron', 'Возврат Хирона', 'Хирон'],
-  ['uranus', 'Возврат Урана', 'Уран'], ['neptune', 'Возврат Нептуна', 'Нептун'], ['pluto', 'Возврат Плутона', 'Плутон'],
-].map(([id, label, name]) => Object.freeze({ id, label, name })));
+  ['sun', 'Соляр', 'Солнце', '☉'], ['moon', 'Лунар', 'Луна', '☽'], ['north_node', 'Возврат лунных узлов', 'Лунные узлы', '☊'],
+  ['mercury', 'Возврат Меркурия', 'Меркурий', '☿'], ['venus', 'Возврат Венеры', 'Венера', '♀'], ['mars', 'Возврат Марса', 'Марс', '♂'],
+  ['jupiter', 'Возврат Юпитера', 'Юпитер', '♃'], ['saturn', 'Возврат Сатурна', 'Сатурн', '♄'],
+  ['uranus_opposition', 'Оппозиция Урана', 'Оппозиция Урана', '♅½'], ['chiron', 'Возврат Хирона', 'Хирон', '⚷'],
+  ['uranus', 'Возврат Урана', 'Уран', '♅'], ['neptune', 'Возврат Нептуна', 'Нептун', '♆'], ['pluto', 'Возврат Плутона', 'Плутон', '♇'],
+].map(([id, label, name, symbol]) => Object.freeze({ id, label, name, symbol })));
+export const DEFAULT_CYCLE_BODIES = Object.freeze(['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
 export const cycleLabel = body => CYCLE_BODIES.find(item => item.id === body)?.label || 'Возврат';
 export const cycleEventLabel = event => `${cycleLabel(event?.body)}${Number.isInteger(event?.cycle) && event.cycle > 0 ? ` ${event.cycle}` : ''}`;
 export const eligibleCycleChart = chart => Boolean(chart?.source === 'calculated' && chart.id
@@ -23,16 +24,23 @@ export function cycleRangeForChart(chart) {
 }
 const cycleSearchEnd = chart => Math.min(SUPPORTED_END, Date.parse(chart.utc) + cycleRangeForChart(chart).toAge * ELAPSED_YEAR_MS);
 
-// Search ages are elapsed UTC time; the chosen year is a local calendar year.
-// A day's UTC padding covers its timezone edges, including the date line.
-export function cycleRangeForYear(chart, year) {
-  if (!chart) return null;
-  const birth = Date.parse(chart.utc), end = cycleSearchEnd(chart);
-  const low = Math.max(birth, Date.UTC(year, 0, 1) - DAY_MS), high = Math.min(end, Date.UTC(year + 1, 0, 1) + DAY_MS);
-  return { fromAge: Math.max(0, (low - birth) / ELAPSED_YEAR_MS), toAge: Math.min(300, (high - birth) / ELAPSED_YEAR_MS) };
+const calendars = new Map();
+function cycleCalendar(timezone) {
+  const key = typeof timezone === 'string' && timezone ? timezone : 'UTC';
+  if (!calendars.has(key)) {
+    let calendar;
+    try { calendar = new Intl.DateTimeFormat('en', { timeZone: key, year: 'numeric' }); }
+    catch { calendar = new Intl.DateTimeFormat('en', { timeZone: 'UTC', year: 'numeric' }); }
+    if (calendars.size >= 8) calendars.delete(calendars.keys().next().value);
+    calendars.set(key, calendar);
+  }
+  return calendars.get(key);
 }
+// Saved zones may outlive a browser's timezone database. All return calendars
+// use this same UTC fallback while preserving the original event instant.
+export const cycleTimeZone = timezone => cycleCalendar(timezone).resolvedOptions().timeZone;
 export function cycleCalendarYear(utc, timezone = 'UTC') {
-  return Number(new Intl.DateTimeFormat('en', { timeZone: timezone, year: 'numeric' }).format(new Date(utc)));
+  return Number(cycleCalendar(timezone).format(new Date(utc)));
 }
 export function cycleYearBoundsForChart(chart) {
   const end = cycleSearchEnd(chart);

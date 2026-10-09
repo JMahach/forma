@@ -1,8 +1,9 @@
-import { cycleEventLabel } from '../domain/cycles.js';
-import { ageText, returnAge } from './returns-clock.js';
+import { CYCLE_BODIES, cycleEventLabel, cycleTimeZone } from '../domain/cycles.js';
+import { isReferenceMoment } from './timeline-range.js';
+import { ageText, completedAge } from '../domain/personal-age.js';
 
-const SYMBOLS = Object.freeze({ saturn: '♄', north_node: '☊', uranus_opposition: '♅', uranus: '♅', chiron: '⚷' });
-const MAJOR = new Set(['saturn', 'north_node', 'uranus_opposition', 'chiron', 'uranus']);
+const SYMBOLS = Object.fromEntries(CYCLE_BODIES.map(body => [body.id, body.symbol]));
+const BODIES = new Set(CYCLE_BODIES.map(body => body.id));
 const milliseconds = value => typeof value === 'number' ? value : Date.parse(value);
 
 // Each independent lifecycle owns a node at its first exact passage. Pixel
@@ -12,7 +13,7 @@ export function groupReturnMarkers(events, { fromUtc, toUtc, width } = {}, separ
   if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
   const pixels = Number.isFinite(width) ? Math.max(0, width) : 0;
   const distance = Number.isFinite(separation) ? Math.max(0, separation) : 20;
-  const points = (Array.isArray(events) ? events : []).filter(event => MAJOR.has(event?.body)
+  const points = (Array.isArray(events) ? events : []).filter(event => BODIES.has(event?.body)
     && typeof event.id === 'string' && Number.isFinite(Date.parse(event.utc))
     && Date.parse(event.utc) >= from && Date.parse(event.utc) <= to)
     .map(event => ({ event, utc: Date.parse(event.utc) })).sort((a, b) => a.utc - b.utc);
@@ -28,56 +29,67 @@ export function groupReturnMarkers(events, { fromUtc, toUtc, width } = {}, separ
       cycles.set(key, group); groups.push(group);
     }
   }
-  // Keep the rail fixed. Neighboring labels use opposite sides of it, while
-  // a small label offset resolves a crowded row without changing any node UTC.
-  // Lower labels leave space for the birth and age captions at both endpoints.
+  // Labels get only the space they can occupy. Dense events retain their
+  // exact nodes and accessible names, without pushing text beyond the rail.
   const last = [-Infinity, -Infinity];
   for (const group of groups) {
     const x = group.position * pixels;
-    const belowFits = x >= 48 && x <= pixels - 48 && Math.max(x, last[1] + distance) <= pixels - 48;
-    const lane = x - last[0] >= distance || !belowFits ? 0 : x - last[1] >= distance ? 1 : last[0] <= last[1] ? 0 : 1;
+    const digits = group.events[0].body === 'uranus_opposition' ? 0 : String(group.events[0].cycle || '').length;
+    const half = Math.max(10, (14 + ((SYMBOLS[group.events[0].body]?.length || 1) - 1 + digits) * 7) / 2);
+    const center = Math.max(half, Math.min(pixels - half, x));
+    const gap = Math.max(distance, half * 2 + 3);
+    const belowFits = center >= 48 && center <= pixels - 48 && center - last[1] >= gap;
+    const lane = center - last[0] >= gap || !belowFits ? 0 : 1;
+    const placed = Math.max(center, last[lane] + gap);
     group.labelLane = lane ? 'below' : 'above';
-    group.labelOffset = pixels ? Math.max(0, last[lane] + distance - x) : 0;
-    last[lane] = x + group.labelOffset;
+    group.labelHidden = pixels > 0 && (placed > pixels - half || Math.abs(placed - x) > gap);
+    group.labelOffset = pixels && !group.labelHidden ? placed - x : 0;
+    if (!group.labelHidden) last[lane] = placed;
   }
   return groups;
 }
 
 function labelsFor(natal) {
-  let timeZone = natal?.timezone || 'UTC', format;
+  const timeZone = cycleTimeZone(natal?.timezone);
   const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
-  try { format = new Intl.DateTimeFormat('ru-RU', { ...options, timeZone }); }
-  catch { timeZone = 'UTC'; format = new Intl.DateTimeFormat('ru-RU', { ...options, timeZone }); }
+  const format = new Intl.DateTimeFormat('ru-RU', { ...options, timeZone });
   return event => {
-    const age = returnAge(event.utc, natal);
+    const age = completedAge(event.utc, natal);
     const ageLabel = age === null ? '' : ageText(age);
-    const passage = Number.isInteger(event.pass) && event.pass > 0 ? `Проход ${event.pass}` : '';
     const direction = { direct: 'прямой ход', retrograde: 'ретроградный ход', stationary: 'стационарный момент' }[event.direction];
-    return [cycleEventLabel(event), `${format.format(new Date(event.utc))} · ${timeZone}`, ageLabel, passage, direction].filter(Boolean).join(' · ');
+    return [[cycleEventLabel(event), ageLabel].filter(Boolean).join(' · '),
+      format.format(new Date(event.utc)),
+      [timeZone, direction].filter(Boolean).join(' · ')].join('\n');
   };
 }
 
 // This layer shares the slider's 22 px rail endpoints. Pointer input passes
 // through to the range, which resolves a roomy event tap or a continuous drag.
-export function attachReturnMarkers({ container, onSelect = () => {} }) {
+export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsChange = () => {} }) {
   const document = container.ownerDocument;
-  const range = container.querySelector('input[type="range"]'), rangeTitle = range?.title || '';
   const layer = document.createElement('div');
   layer.className = 'returns-markers'; layer.hidden = true; container.append(layer);
-  let inputs = null, key = null, width = null, labelKey = null, label = null, selectedId = null, targets = [], hovered = null;
+  let inputs = null, key = null, width = null, labelKey = null, label = null, targets = [], hovered = null, hitMetrics = null, hitBoxes = null;
   const records = new Map();
   function hover(button) {
     if (hovered === button) return;
     if (hovered) delete hovered.dataset.hovered;
     hovered = button;
     if (hovered) hovered.dataset.hovered = 'true';
-    if (range) range.title = hovered?.title || rangeTitle;
   }
   function node(tag, className) {
     const element = document.createElement(tag); element.className = className;
     return element;
   }
+  function updateActive() {
+    const displayed = milliseconds(inputs.displayedUtc);
+    for (const target of targets) {
+      const active = String(isReferenceMoment(displayed, target.utc));
+      if (target.button.getAttribute('aria-pressed') !== active) target.button.setAttribute('aria-pressed', active);
+    }
+  }
   function render() {
+    hitMetrics = null; hitBoxes = null;
     const { events, natal, fromUtc, toUtc, visible } = inputs;
     if (visible && width === null) width = Math.max(0, container.getBoundingClientRect().width - 44);
     const groups = visible ? groupReturnMarkers(events, { fromUtc, toUtc, width }) : [];
@@ -97,38 +109,35 @@ export function attachReturnMarkers({ container, onSelect = () => {} }) {
         const dot = node('span', 'returns-marker-dot'); dot.setAttribute('aria-hidden', 'true');
         const symbol = node('span', 'returns-marker-symbol'); symbol.setAttribute('aria-hidden', 'true');
         button.append(dot, symbol);
-        target = { button, dot, symbol, hover: active => hover(active ? button : null) };
+        target = { button, dot, symbol, hover: active => hover(active ? button : null),
+          press: active => { if (active) button.dataset.pressed = 'true'; else delete button.dataset.pressed; } };
         button.addEventListener('click', action => { if (!action.detail) onSelect(target.event); });
         records.set(event.id, target);
       }
-      target.event = event;
+      target.event = event; target.utc = Date.parse(event.utc);
       const { button, symbol } = target;
       button.style.left = `${group.position * 100}%`;
       button.dataset.returnMarker = event.id;
+      button.dataset.cycleBody = event.body;
       button.dataset.labelLane = group.labelLane;
+      button.dataset.labelHidden = String(group.labelHidden);
       button.style.setProperty('--return-label-offset', `${group.labelOffset}px`);
       const text = label(event);
       button.title = text; button.setAttribute('aria-label', text);
-      button.setAttribute('aria-pressed', String(event.id === selectedId));
-      const ordinal = Number.isInteger(event.cycle) && event.cycle > 0 ? event.cycle : '';
+      const ordinal = event.body !== 'uranus_opposition' && Number.isInteger(event.cycle) && event.cycle > 0 ? event.cycle : '';
       symbol.textContent = `${SYMBOLS[event.body]}${ordinal}`;
       if (layer.children[index] !== button) layer.insertBefore(button, layer.children[index] || null);
       return target;
     });
+    updateActive();
+    onTargetsChange();
   }
   function update(next) {
     inputs = { ...next, events: Array.isArray(next.events) ? next.events : [] };
-    const nextSelected = typeof next.selectedEvent === 'string' ? next.selectedEvent : next.selectedEvent?.id;
-    if (nextSelected !== selectedId) {
-      records.get(selectedId)?.button.setAttribute('aria-pressed', 'false');
-      records.get(nextSelected)?.button.setAttribute('aria-pressed', 'true');
-      selectedId = nextSelected;
-    }
-    // State snapshots copy the array. Compare only input facts before grouping,
-    // formatting dates or touching layout; selection changes only two buttons.
+    // Clock changes update only changed indicators; labels and layout stay intact.
     const nextKey = JSON.stringify([Boolean(next.visible), next.fromUtc, next.toUtc, next.natal?.id, next.natal?.utc, next.natal?.timezone,
       inputs.events.map(event => [event?.id, event?.body, event?.utc, event?.cycle, event?.cycleId, event?.pass, event?.direction])]);
-    if (nextKey === key) return;
+    if (nextKey === key) { updateActive(); return; }
     key = nextKey; render();
   }
   const Observer = document.defaultView?.ResizeObserver || globalThis.ResizeObserver;
@@ -141,13 +150,21 @@ export function attachReturnMarkers({ container, onSelect = () => {} }) {
   }).observe(container);
   // Resolve a generous invisible target once, at the beginning of the shared
   // rail gesture. Direct labels win; overlapping hit areas use the nearest mark.
-  function targetAt(pointer) {
+  function targetAt(pointer, metrics) {
     if (!inputs?.visible || layer.hidden) return null;
     const hitSize = pointer.pointerType === 'touch' || pointer.pointerType === 'pen' ? 44 : 28;
+    // A captured drag shares one geometry object. Refresh for every new hover,
+    // gesture, resize or marker layout, never measure every node on each move.
+    if (!metrics || metrics !== hitMetrics || !hitBoxes) {
+      hitMetrics = metrics;
+      hitBoxes = targets.flatMap(target => [target.dot, target.symbol].flatMap(element => {
+        if (element === target.symbol && target.button.dataset.labelHidden === 'true') return [];
+        const rect = element.getBoundingClientRect();
+        return rect.width && rect.height ? [{ target, rect }] : [];
+      }));
+    }
     let winner = null;
-    for (const target of targets) for (const element of [target.dot, target.symbol]) {
-      const rect = element.getBoundingClientRect();
-      if (!rect.width || !rect.height) continue;
+    for (const { target, rect } of hitBoxes) {
       const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
       const dx = Math.abs(pointer.clientX - x), dy = Math.abs(pointer.clientY - y);
       const direct = dx <= rect.width / 2 && dy <= rect.height / 2;
@@ -157,13 +174,13 @@ export function attachReturnMarkers({ container, onSelect = () => {} }) {
     }
     return winner;
   }
-  function hitTest(pointer) {
-    const winner = targetAt(pointer);
+  function hitTest(pointer, metrics) {
+    const winner = targetAt(pointer, metrics);
     if (!winner) return null;
     const owner = `${inputs.natal?.id}:${inputs.natal?.utc}`, target = winner.target, { id, utc } = target.event;
     const valid = () => inputs?.visible && `${inputs.natal?.id}:${inputs.natal?.utc}` === owner
       && records.get(id) === target && target.event.utc === utc;
-    return { direct: winner.direct, distance: winner.distance, valid, title: target.button.title, hover: target.hover,
+    return { direct: winner.direct, distance: winner.distance, valid, title: target.button.title, hover: target.hover, press: target.press,
       select() { if (valid()) onSelect(target.event); } };
   }
   return { update, hitTest };

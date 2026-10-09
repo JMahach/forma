@@ -10,6 +10,7 @@
     "test": "node --test tests/*.test.mjs",
     "test:python": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'",
     "build": "node scripts/build-web.mjs",
+    "prepare:lifetime": ".venv/bin/python -m server.python.lifetime_file --file .cache/lifetime/lifetime-1801-2400.f64le",
     "start:release": "node server/server.mjs --release"
   },
   "devDependencies": {

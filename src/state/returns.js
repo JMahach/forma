@@ -1,30 +1,42 @@
-import { CYCLE_BODIES, eligibleCycleChart, cycleRangeForChart, cycleRangeForYear,
-  cycleCalendarYear, cycleYearBoundsForChart, cycleEventWithinRange } from '../domain/cycles.js';
+import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES, eligibleCycleChart, cycleRangeForChart,
+  cycleYearBoundsForChart, cycleEventWithinRange, cycleTimeZone, cycleCalendarYear } from '../domain/cycles.js';
 import { createCyclesClient } from '../data/cycles-client.js';
 
-const MAJOR = ['jupiter', 'north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus'];
-const ANNUAL = ['sun', 'mercury', 'venus', 'mars'];
-const BODIES = new Set(CYCLE_BODIES.map(item => item.id));
-const rememberedEvent = (event, id) => event && event.id === id && BODIES.has(event.body) && Number.isFinite(Date.parse(event.utc)) ? event : null;
+const BODY_IDS = CYCLE_BODIES.map(item => item.id);
+const normalizeBodies = value => Array.isArray(value) && value.every(id => BODY_IDS.includes(id))
+  ? BODY_IDS.filter(id => value.includes(id)) : null;
+const rememberedEvent = (event, id) => event && event.id === id && BODY_IDS.includes(event.body) && Number.isFinite(Date.parse(event.utc)) ? event : null;
 
-// Temporary exact charts belong to this exploration, never to the chart library.
+// Filters own the event list; selecting an exact chart is an independent action.
+// Each body's full-life result is shared by the list and the lower rail.
 export function createReturnsController({ client = createCyclesClient(), onStateChange = () => {}, onRender = () => {}, onRequest = () => {} } = {}) {
-  let natal = null, opened = false, group = 'major', year = new Date().getFullYear(), body = 'saturn';
-  let events = [], errors = [], current = null, selectedEvent = null, pendingEvent = null, chartError = '', loadingChart = false;
+  let natal = null, opened = false, markersEnabled = false, year = null, bodies = [...DEFAULT_CYCLE_BODIES];
+  let current = null, selectedEvent = null, pendingEvent = null, chartError = '', loadingChart = false;
   let generation = 0, chartGeneration = 0, chartJob = null, failedEvent = null;
-  let minYear = 1801, maxYear = 2399, markersEnabled = false, majorGeneration = 0;
-  let majorEvents = [], majorErrors = [];
-  const majorLoaded = new Set(), majorPending = new Map();
-  const loaded = new Set(), pending = new Map(), slots = new Set();
-  let queue = [];
+  let minYear = 1801, maxYear = 2399, calendarZone = 'UTC';
+  // null events means not loaded; [] is a completed search with no returns.
+  const records = new Map(), slots = new Set();
+  const queue = [];
   const available = () => eligibleCycleChart(natal);
-  const rangeFor = () => group === 'year' ? cycleRangeForYear(natal, year) : cycleRangeForChart(natal);
-  const majorGroup = () => group === 'major' || group === 'planet' && MAJOR.includes(body);
-  const needsMajor = () => markersEnabled || opened && majorGroup();
-  const displayEvents = () => group === 'major' ? majorEvents : group === 'planet' && MAJOR.includes(body) ? majorEvents.filter(event => event.body === body) : events;
-  const displayErrors = () => group === 'major' ? majorErrors : group === 'planet' && MAJOR.includes(body) ? majorErrors.filter(error => error.body === body) : errors;
-  const state = () => ({ natal, available: available(), opened, group, year, body, minYear, maxYear, range: rangeFor(),
-    events: [...displayEvents()], errors: [...displayErrors()], markersEnabled, majorEvents: [...majorEvents], majorErrors: [...majorErrors], pendingBodies: [...new Set([...pending.keys(), ...majorPending.keys()])], loadingChart, selectedEvent, pendingEvent, chartError, current });
+  const wanted = () => opened || markersEnabled;
+  const pendingJobs = () => [...records.values()].flatMap(record => record.job ? [record.job] : []);
+  let eventView = null;
+  function visibleEvents() {
+    const sources = bodies.map(body => records.get(body)?.events);
+    if (!eventView || eventView.bodies !== bodies || eventView.year !== year || eventView.calendarZone !== calendarZone
+        || sources.some((events, index) => events !== eventView.sources[index])) {
+      const events = sources.flatMap(events => events || [])
+        .filter(event => year === null || cycleCalendarYear(event.utc, calendarZone) === year)
+        .sort((a, b) => Date.parse(a.utc) - Date.parse(b.utc));
+      eventView = { bodies, year, calendarZone, sources, events };
+    }
+    // Consumers may reorder or clear their snapshot without changing our view.
+    return [...eventView.events];
+  }
+  const state = () => ({ natal, available: available(), opened, bodies: [...bodies], year, minYear, maxYear,
+    range: cycleRangeForChart(natal), events: visibleEvents(),
+    errors: bodies.flatMap(body => records.get(body)?.error ? [records.get(body).error] : []), markersEnabled,
+    pendingBodies: bodies.filter(body => records.get(body)?.job), loadingChart, selectedEvent, pendingEvent, chartError, current });
   function emit(render = false) { if (render) onRender(current, selectedEvent); onStateChange(state()); }
   function pump() {
     while (slots.size < 2 && queue.length) {
@@ -49,125 +61,95 @@ export function createReturnsController({ client = createCyclesClient(), onState
   function cancelChart() {
     chartGeneration++; abortJob(chartJob); chartJob = null; loadingChart = false; pendingEvent = null;
   }
-  function cancel() {
-    generation++; cancelChart();
-    for (const job of pending.values()) abortJob(job);
-    pending.clear();
-  }
-  function cancelMajor(clear = false) {
-    majorGeneration++;
-    for (const job of majorPending.values()) abortJob(job);
-    majorPending.clear();
-    if (clear) { majorEvents = []; majorErrors = []; majorLoaded.clear(); }
-  }
-  function ensureMajor() {
-    if (!needsMajor() || !available()) return Promise.resolve(false);
-    const owner = natal, version = majorGeneration;
-    const range = cycleRangeForChart(owner);
+  function cancelSearch(record) { abortJob(record.job); record.job = null; }
+  function cancelSearches() { for (const record of records.values()) cancelSearch(record); }
+  function ensure({ hidden = false, extraBody = null } = {}) {
+    if ((!wanted() && !hidden) || !available()) return Promise.resolve(false);
+    const owner = natal, version = generation, range = cycleRangeForChart(owner);
     if (range.toAge <= range.fromAge) return Promise.resolve(false);
-    const wanted = markersEnabled || group === 'major' ? MAJOR : [body];
+    const requestedBodies = extraBody && !bodies.includes(extraBody) ? [...bodies, extraBody] : bodies;
     let added = false;
-    for (const requested of wanted) {
-      if (majorLoaded.has(requested) || majorPending.has(requested) || majorErrors.some(error => error.body === requested)) continue;
+    for (const body of requestedBodies) {
+      let record = records.get(body);
+      if (!record) { record = { events: null, error: null, job: null }; records.set(body, record); }
+      if (record.events !== null || record.job || record.error) continue;
       const job = enqueue(async signal => {
-        if (version !== majorGeneration || signal.aborted || !needsMajor()) return false;
+        const owns = () => version === generation && !signal.aborted && record.job === job;
+        if (!owns()) return false;
         try {
-          const data = await client.events({ birthUtc: owner.utc, timezone: owner.timezone || 'UTC', body: requested, ...range }, signal);
-          if (version !== majorGeneration || signal.aborted || !needsMajor()) return false;
-          majorEvents = [...majorEvents.filter(event => event.body !== requested), ...data.events].sort((a, b) => Date.parse(a.utc) - Date.parse(b.utc));
-          majorLoaded.add(requested); return true;
+          const data = await client.events({ birthUtc: owner.utc, timezone: owner.timezone || 'UTC', body, ...range }, signal);
+          if (!owns()) return false;
+          record.events = data.events; return true;
         } catch (error) {
-          if (version !== majorGeneration || signal.aborted || error?.name === 'AbortError') return false;
-          majorErrors = [...majorErrors.filter(item => item.body !== requested), { body: requested, code: error.code || 'cycles_unavailable', message: error.message || 'Не удалось рассчитать возвраты.' }];
+          if (!owns() || error?.name === 'AbortError') return false;
+          record.error = { body, code: error.code || 'cycles_unavailable', message: error.message || 'Не удалось рассчитать возвраты.' };
           return false;
         } finally {
-          if (version === majorGeneration) { majorPending.delete(requested); emit(); }
+          if (owns()) { record.job = null; emit(); }
         }
       });
-      majorPending.set(requested, job);
-      added = true;
+      record.job = job; added = true;
     }
     if (added) emit();
-    return Promise.all([...majorPending.values()].map(job => job.promise));
-  }
-  function enableMarkers(value) {
-    if (typeof value !== 'boolean') return false;
-    if (value === markersEnabled) return Promise.all([...majorPending.values()].map(job => job.promise));
-    markersEnabled = value;
-    if (!value && !(opened && group === 'major')) cancelMajor();
-    emit(); return ensureMajor();
-  }
-  function wantedBodies() { return group === 'year' ? ANNUAL : [body]; }
-  function ensure({ hidden = false } = {}) {
-    const background = ensureMajor();
-    if ((!opened && !hidden) || !available() || majorGroup()) return background;
-    const owner = natal, version = generation, annual = group === 'year', chosenYear = year;
-    const range = rangeFor();
-    if (!range || range.toAge <= range.fromAge) return Promise.resolve(false);
-    for (const requested of wantedBodies()) {
-      if (loaded.has(requested) || pending.has(requested) || errors.some(error => error.body === requested)) continue;
-      const job = enqueue(async signal => {
-        if (version !== generation || (!opened && !hidden) || signal.aborted) return false;
-        try {
-          const data = await client.events({ birthUtc: owner.utc, timezone: owner.timezone || 'UTC', body: requested, ...range }, signal);
-          if (version !== generation || (!opened && !hidden) || signal.aborted) return false;
-          const received = annual ? data.events.filter(event => cycleCalendarYear(event.utc, owner.timezone || 'UTC') === chosenYear) : data.events;
-          events = [...events.filter(event => event.body !== requested), ...received].sort((a, b) => Date.parse(a.utc) - Date.parse(b.utc));
-          loaded.add(requested);
-          return true;
-        } catch (error) {
-          if (version !== generation || signal.aborted || error?.name === 'AbortError') return false;
-          errors = [...errors.filter(item => item.body !== requested), { body: requested, code: error.code || 'cycles_unavailable', message: error.message || 'Не удалось рассчитать возвраты.' }];
-          return false;
-        } finally {
-          if (version === generation) { pending.delete(requested); emit(); }
-        }
-      });
-      pending.set(requested, job);
-    }
-    emit(); return Promise.all([background, ...[...pending.values()].map(job => job.promise)]);
+    return Promise.all(pendingJobs().map(job => job.promise));
   }
   function select(chart) {
     if (chart === natal) return;
     const same = available() && eligibleCycleChart(chart) && chart.id === natal.id && chart.utc === natal.utc && chart.timezone === natal.timezone;
-    if (same) {
-      natal = chart;
-      emit(Boolean(current)); return;
-    }
+    if (same) { natal = chart; emit(Boolean(current)); return; }
     const hadPreview = Boolean(current);
-    cancel(); cancelMajor(true); natal = chart; opened = false; group = 'major'; body = 'saturn'; events = []; errors = []; loaded.clear();
-    current = selectedEvent = failedEvent = null; chartError = '';
+    generation++; cancelChart(); cancelSearches(); records.clear();
+    natal = chart; opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
+    current = selectedEvent = failedEvent = null; chartError = ''; calendarZone = 'UTC';
     if (available()) {
       ({ minYear, maxYear } = cycleYearBoundsForChart(natal));
-      year = Math.max(minYear, Math.min(maxYear, new Date().getFullYear()));
+      calendarZone = cycleTimeZone(natal.timezone);
     }
     emit(hadPreview);
-    if (markersEnabled) return ensureMajor();
+    if (markersEnabled) return ensure();
+  }
+  function enableMarkers(value) {
+    if (typeof value !== 'boolean') return false;
+    if (value === markersEnabled) return Promise.all(pendingJobs().map(job => job.promise));
+    markersEnabled = value;
+    if (!wanted()) cancelSearches();
+    emit(); return ensure();
   }
   function open() { if (!available()) return Promise.resolve(false); opened = true; emit(); return ensure(); }
   function close() {
-    const changed = opened || loadingChart || pendingEvent || pending.size || !markersEnabled && majorPending.size;
-    cancel(); opened = false; if (!markersEnabled) cancelMajor();
+    const changed = opened || loadingChart || pendingEvent || !markersEnabled && pendingJobs().length;
+    cancelChart(); opened = false;
+    if (!markersEnabled) cancelSearches();
     if (changed) emit();
-    return ensureMajor();
+    return ensure();
   }
   function reset() {
     const changed = current || selectedEvent || failedEvent || chartError || loadingChart || pendingEvent;
     cancelChart(); current = selectedEvent = failedEvent = null; chartError = '';
     if (changed) emit(true);
   }
-  function exit() { cancel(); cancelMajor(true); markersEnabled = false; opened = false; events = []; errors = []; loaded.clear(); current = selectedEvent = failedEvent = null; chartError = ''; emit(true); }
-  function refresh() { cancel(); if (!needsMajor()) cancelMajor(); events = []; errors = []; loaded.clear(); chartError = ''; failedEvent = null; emit(); return ensure(); }
-  function setGroup(value) { if (!['major', 'year', 'planet'].includes(value)) return false; if (group === value) return ensure(); group = value; return refresh(); }
-  function setYear(value) {
-    if (!Number.isInteger(value)) return false;
-    const next = Math.max(minYear, Math.min(maxYear, value)); if (next === year) return ensure(); year = next; return refresh();
+  function exit() {
+    generation++; cancelChart(); cancelSearches(); records.clear(); markersEnabled = false; opened = false;
+    current = selectedEvent = failedEvent = null; chartError = ''; emit(true);
   }
-  function setBody(value) { if (!BODIES.has(value)) return false; if (body === value) return ensure(); body = value; return refresh(); }
+  function setBodies(value) {
+    const next = normalizeBodies(value);
+    if (!next) return false;
+    if (next.length === bodies.length && next.every(body => bodies.includes(body))) return ensure();
+    bodies = next;
+    for (const [body, record] of records) if (!bodies.includes(body)) cancelSearch(record);
+    emit(); return ensure();
+  }
+  function setYear(value) {
+    if (value !== null && !Number.isInteger(value)) return false;
+    const next = value === null ? null : Math.max(minYear, Math.min(maxYear, value));
+    if (next === year) return ensure();
+    year = next; emit(); return ensure();
+  }
   function selectEvent(value, { valid = () => true, restoredEvent = null } = {}) {
     const id = typeof value === 'string' ? value : value?.id;
     const remembered = rememberedEvent(restoredEvent, id);
-    const selected = displayEvents().find(event => event.id === id) || majorEvents.find(event => event.id === id) || remembered;
+    const selected = [...records.values()].flatMap(record => record.events || []).find(event => event.id === id) || remembered;
     if (!available() || !selected) return Promise.resolve(false);
     cancelChart(); const version = chartGeneration, owner = natal;
     onRequest(selected);
@@ -191,38 +173,44 @@ export function createReturnsController({ client = createCyclesClient(), onState
   }
   async function restore(saved, { valid = () => true } = {}) {
     if (!available() || !saved || !valid()) return false;
-    const owner = natal, version = generation;
-    const owns = () => valid() && owner === natal && version === generation;
+    const version = generation;
+    let exactVersion = chartGeneration;
+    const owns = () => valid() && version === generation && exactVersion === chartGeneration;
     let eventId = saved.eventId;
     if (eventId) {
       const utc = saved.event?.id === eventId ? saved.event.utc : typeof eventId === 'string' ? eventId.slice(eventId.indexOf(':') + 1) : null;
-      if (!cycleEventWithinRange(owner, utc)) { eventId = null; reset(); }
+      if (!cycleEventWithinRange(natal, utc)) { eventId = null; reset(); exactVersion = chartGeneration; }
     }
-    group = ['major', 'year', 'planet'].includes(saved.group) ? saved.group : 'major';
-    body = BODIES.has(saved.body) ? saved.body : 'saturn';
-    if (Number.isInteger(saved.year)) year = Math.max(minYear, Math.min(maxYear, saved.year));
+    bodies = normalizeBodies(saved.bodies) || [...DEFAULT_CYCLE_BODIES];
+    year = Number.isInteger(saved.year) ? Math.max(minYear, Math.min(maxYear, saved.year)) : null;
+    for (const [body, record] of records) if (!bodies.includes(body)) cancelSearch(record);
     opened = saved.opened === true; markersEnabled ||= Boolean(eventId); emit();
     if (!owns()) return false;
     if (eventId && rememberedEvent(saved.event, eventId)) {
-      // The saved descriptor locates the exact chart without waiting for lists.
-      // Queue it first; markers and an opened list keep their own background work.
+      // Exact restoration goes first; full-life lists may complete afterwards.
       const selecting = selectEvent(eventId, { valid: owns, restoredEvent: saved.event });
+      exactVersion = chartGeneration;
       void ensure();
       const selected = await selecting;
       return owns() && selected;
     }
-    await ensure({ hidden: true });
+    // Older snapshots can lack the exact descriptor. Search its body even when
+    // it is unchecked; the result does not enter the filtered visible list.
+    const eventBody = typeof eventId === 'string' ? eventId.split(':')[0] : null;
+    await ensure({ hidden: true, extraBody: BODY_IDS.includes(eventBody) ? eventBody : null });
     if (!owns()) return false;
-    const selected = eventId ? await selectEvent(eventId, { valid: owns, restoredEvent: saved.event }) : true;
-    if (!owns()) return false;
-    if (!saved.opened) close();
-    return selected;
+    if (eventId) {
+      const selecting = selectEvent(eventId, { valid: owns }); exactVersion = chartGeneration;
+      return await selecting && owns();
+    }
+    return true;
   }
   function retry() {
-    if (!opened && !markersEnabled && !failedEvent) return Promise.resolve(false);
+    if (!wanted() && !failedEvent) return Promise.resolve(false);
     if (failedEvent) return selectEvent(failedEvent.id, { restoredEvent: failedEvent });
-    errors = []; majorErrors = []; return ensure();
+    for (const body of bodies) { const record = records.get(body); if (record) record.error = null; }
+    return ensure();
   }
-  return { select, open, close, exit, reset, enableMarkers, setGroup, setYear, setBody, selectEvent, retry, restore,
+  return { select, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore,
     get state() { return state(); }, get current() { return current; } };
 }
