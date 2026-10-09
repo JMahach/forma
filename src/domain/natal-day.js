@@ -1,5 +1,5 @@
 import { PERSONALITY_COLUMN, DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN, DESIGN_RESIDUAL_COLUMN } from '../../shared/day-packets/moment-columns.js';
-import { projectLongitudes } from './moment-projection.js';
+import { projectLongitudes, snapshotLongitudes } from './moment-projection.js';
 import { NATAL_DAY_PLANETS, failNatalDayPacket as fail } from '../../shared/day-packets/natal-format.js';
 const iso = value => new Date(value).toISOString().replace('.000Z', 'Z');
 
@@ -22,6 +22,28 @@ export function natalDayIndexAt(day, utc) {
     if (minuteAt(day, mid).moment <= moment) low = mid + 1; else high = mid;
   }
   return minuteAt(day, low).moment > moment ? Math.max(0, low - 1) : low;
+}
+// A local minute can land on a UTC second, and repeated hours are distinct
+// samples. Always use packet segments rather than rounding UTC to :00.
+export function natalDayNearestIndex(day, milliseconds, { min = -Infinity, max = Infinity, round = Math.round } = {}) {
+  if (!Number.isFinite(milliseconds) || milliseconds < minuteAt(day, 0).moment || milliseconds > minuteAt(day, day.samples - 1).moment) return null;
+  let low = natalDayIndexAt(day, min), high = natalDayIndexAt(day, max);
+  if (min === -Infinity) low = 0;
+  if (max === Infinity) high = day.samples - 1;
+  if (minuteAt(day, low).moment < min) low++;
+  if (low > high || low >= day.samples || minuteAt(day, high).moment > max) return null;
+  const floor = Math.max(low, Math.min(high, natalDayIndexAt(day, milliseconds)));
+  const ceil = Math.min(high, floor + (minuteAt(day, floor).moment < milliseconds ? 1 : 0));
+  if (round === Math.floor) return floor;
+  if (round === Math.ceil) return ceil;
+  return milliseconds - minuteAt(day, floor).moment < minuteAt(day, ceil).moment - milliseconds ? floor : ceil;
+}
+export function natalDaySampleAt(day, index) {
+  const utc = natalDayMinute(day, index).utc;
+  return { utc, longitudes: snapshotLongitudes(day.columns.slice(PERSONALITY_COLUMN, DESIGN_COLUMN).map(column => column[index])),
+    design: { utc, longitudes: snapshotLongitudes(day.columns.slice(DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN).map(column => column[index])),
+      designUtc: iso(day.columns[DESIGN_UNIX_SECONDS_COLUMN][index] * 1000),
+      designArcResidualDegrees: day.columns[DESIGN_RESIDUAL_COLUMN][index] } };
 }
 export function chartAtMinute(day, index, originalChart) {
   const minute = natalDayMinute(day, index);

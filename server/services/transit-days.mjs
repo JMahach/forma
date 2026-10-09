@@ -58,7 +58,7 @@ export function encodeDayPacket(day) {
 async function representations(raw, storedGzip) {
   // q9 keeps exact packet bytes while avoiding q11 work on cold and disk-cache reads.
   const bytes = await compressDayPacket(raw, { quality: 9, storedGzip });
-  return { bytes, etags: Object.fromEntries(Object.entries(bytes).map(([name, value]) => [name, `"${digest(value)}"`])) };
+  return { bytes };
 }
 
 export async function createTransitDays({ root, cacheDir = path.join(root, '.cache/transit', `v${TRANSIT_DAY_VERSION}`), now = () => new Date(), fingerprint, maxDiskBytes = 256 * 1024 * 1024, maxPendingReads = 1024, calculationVersion: version = null, computeQueue,

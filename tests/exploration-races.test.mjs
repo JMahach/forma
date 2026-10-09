@@ -157,7 +157,7 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
     const oldLifetime = h.lifetime.scrub(lifetimeUtc); await tick();
     assert.equal(h.lifetimeJobs.length, 1);
     assert.equal(h.lifetime.state.status, 'loading');
-    const oldReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+    const oldReturn = h.returns.selectEvent(event.id); await tick();
     assert.equal(h.returnJobs.length, 1); assert.equal(h.returnJobs[0].input.birthUtc, h.people[0].utc);
     assert.equal(h.session.owner, 'return'); assert.equal(h.returns.state.loadingChart, true);
 
@@ -165,10 +165,10 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
     assert.equal(h.lifetimeJobs[0].signal.aborted, true); assert.equal(h.returnJobs[0].signal.aborted, true);
     assert.equal(h.session.current.primary, h.people[1]); assert.equal(h.session.current.secondary, null);
     assert.equal(h.navigation.returnsEnabled, true);
-    const currentReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+    const currentReturn = h.returns.selectEvent(event.id); await tick();
     assert.equal(h.returnJobs.length, 2); assert.equal(h.returnJobs[1].input.birthUtc, h.people[1].utc);
-    const acceptedChart = exactChart('person-b-return'), acceptedEvent = { ...event };
-    h.returnJobs[1].resolve({ chart: acceptedChart, event: acceptedEvent }); assert.equal(await currentReturn, true);
+    const acceptedChart = exactChart('person-b-return'), acceptedEvent = h.returns.state.events.find(item => item.id === event.id);
+    h.returnJobs[1].resolve({ chart: acceptedChart }); assert.equal(await currentReturn, true);
     const accepted = h.session.current, count = h.frames.length;
     assert.equal(accepted.kind, 'return'); assert.equal(accepted.primary, h.people[1]);
     assert.equal(accepted.secondary, acceptedChart); assert.equal(accepted.event, acceptedEvent);
@@ -372,7 +372,7 @@ for (const outcome of ['error', 'menu-cancel']) for (const lateLifetime of ['suc
     assert.equal(h.session.owner, 'lifetime');
     assert.equal(h.lifetime.state.requestedUtc, target + 600000);
     assert.equal(h.lifetimeJobs[1].signal.aborted, false, 'an invalid Return selection cannot cancel the lifetime command');
-    const pendingReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+    const pendingReturn = h.returns.selectEvent(event.id); await tick();
     saved.view.flush();
     assert.equal(saved.writes.at(-1).lifetime.requestedUtc, target, 'a pending Return already pins the accepted lifetime, not the abandoned target');
     if (outcome === 'error') h.returnJobs[0].reject(new Error('exact calculation failed'));
@@ -414,7 +414,7 @@ test('live preview remains live until a failed Return pins its accepted moment f
   assert.equal(saved.writes.at(-1).lifetime.personalLive, true);
   assert.equal(saved.writes.at(-1).lifetime.personalPreview, true);
   assert.equal(h.transit.state.wanted, true);
-  const pendingReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const pendingReturn = h.returns.selectEvent(event.id); await tick();
   h.returnJobs[0].reject(new Error('exact calculation failed')); assert.equal(await pendingReturn, false);
   saved.view.flush(); const snapshot = saved.writes.at(-1);
   assert.equal(h.session.current.secondary, liveChart);
@@ -435,7 +435,7 @@ for (const source of ['original', 'natal-day']) test(`failed Return retains acce
   else h.natalDay.scrub(800);
   assert.equal(h.session.shownSource, source);
   const accepted = h.session.current, original = JSON.stringify(h.people[0]), utc = accepted.utc;
-  const pendingReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const pendingReturn = h.returns.selectEvent(event.id); await tick();
   assert.equal(h.session.current, accepted);
   if (h.lifetime.state.opened) assert.equal(h.lifetime.state.requestedUtc, Date.parse(utc));
   h.returnJobs[0].reject(new Error('exact calculation failed')); assert.equal(await pendingReturn, false);
@@ -465,7 +465,7 @@ for (const outcome of ['error', 'menu-cancel']) test(`accepted lifetime survives
   const lifetime = h.lifetime.scrub(target); await tick();
   h.lifetimeJobs[0].resolve(lifetimeMoment(h.lifetimeJobs[0].index)); assert.equal(await lifetime, true);
   const accepted = h.session.current;
-  const pendingReturn = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const pendingReturn = h.returns.selectEvent(event.id); await tick();
   assert.equal(h.session.owner, 'return'); assert.equal(h.session.shownSource, 'lifetime');
   if (outcome === 'error') h.returnJobs[0].reject(new Error('exact calculation failed'));
   else { h.returns.close(); h.returnJobs[0].resolve({ chart: exactChart('cancelled'), event }); }
@@ -497,10 +497,10 @@ test('a confirmed Return remains the saved exact event after a subsequent reques
   const h = harness(), saved = savedView(h);
   await saved.view.restore();
   await h.exploration.select('person-a'); await h.exploration.toggleReturns();
-  const first = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const first = h.returns.selectEvent(event.id); await tick();
   h.returnJobs[0].resolve({ chart: exactChart('confirmed'), event }); assert.equal(await first, true);
   const accepted = h.session.current;
-  const second = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const second = h.returns.selectEvent(event.id); await tick();
   h.returnJobs[1].reject(new Error('later request failed')); assert.equal(await second, false);
   saved.view.flush(); const snapshot = saved.writes.at(-1);
   assert.equal(snapshot.lifetime.personalPreview, false);

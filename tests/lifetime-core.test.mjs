@@ -1,3 +1,4 @@
+import { lifeTimelineForChart } from '../src/domain/cycles.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
@@ -118,7 +119,7 @@ test('lifetime validates ordered metadata, matching timestamps, indexes and fini
     ...[NaN, Infinity, -1, 360].map(value => ({ ...point(0), longitudes: [value, ...point(0).longitudes.slice(1)] }))]) assert.throws(() => lifetimeChartAt(meta, value));
 });
 
-test('client coalesces same point, isolates cancellation and retains validated immutable values', async () => {
+test('client coalesces concurrent points and isolates cancellation without retaining completed points', async () => {
   const waiting = deferred(), calls = []; let transport;
   const client = createLifetimeClient({ fetch(url, { signal }) { calls.push(url); if (url.endsWith('/meta')) return Promise.resolve(response(meta)); transport = signal; return waiting.promise; } });
   const firstController = new AbortController();
@@ -128,7 +129,8 @@ test('client coalesces same point, isolates cancellation and retains validated i
   assert.equal(transport.aborted, false); waiting.resolve(response(moment(3)));
   const actual = await second;
   assert.equal(calls.filter(url => url.includes('?')).length, 1);
-  assert.equal(await client.getPoint(3), actual);
+  assert.deepEqual(await client.getPoint(3), actual);
+  assert.equal(calls.filter(url => url.includes('?')).length, 2, 'a later independent visit returns to the server');
   assert.ok(Object.isFrozen(actual)); assert.ok(Object.isFrozen(actual.longitudes));
 });
 
@@ -139,17 +141,24 @@ test('client cancels abandoned transport, never caches stale completion, and ret
   const rejection = assert.rejects(first, { name: 'AbortError' }); await tick(); controller.abort(); await rejection;
   assert.equal(calls[0].signal.aborted, true);
   const next = await client.getPoint(2); firstWaiting.resolve(response({ ...moment(2), longitudes: Array(11).fill(99) })); await tick();
-  assert.equal(await client.getPoint(2), next); assert.equal(calls.length, 2);
+  assert.deepEqual(await client.getPoint(2), next); assert.equal(calls.length, 3);
   let attempts = 0;
   const retrying = createLifetimeClient({ fetch(url) { if (url.endsWith('/meta')) return response(meta); if (++attempts === 1) throw new Error('offline'); return response(moment(1)); } });
   await assert.rejects(retrying.getPoint(1), /offline/); assert.equal((await retrying.getPoint(1)).index, 1);
 });
 
-test('client validates before caching and reuses more than 256 visited points in the compact shared reserve', async () => {
-  const calls = [], client = createLifetimeClient({ fetch(url) { if (url.endsWith('/meta')) return response(meta); const index = Number(new URL(url, 'http://local').searchParams.get('index')); calls.push(index); return response(moment(index)); } });
-  for (let index = 0; index <= 256; index++) await client.getPoint(index);
-  const before = calls.length; await client.getPoint(256); assert.equal(calls.length, before);
-  await client.getPoint(0); assert.equal(calls.length, before, 'a small visited packet must not be discarded after 256 objects');
+test('independent visits never accumulate intermediate points in RAM or IndexedDB', async () => {
+  const calls = [], client = createLifetimeClient({ fetch(url, options) {
+    assert.equal(options.cache, 'no-store');
+    if (url.endsWith('/meta')) return response(meta);
+    const index = Number(new URL(url, 'http://local').searchParams.get('index'));
+    calls.push(index); return response(moment(index));
+  } });
+  for (const index of [0, 1, 2, 1, 0]) await client.getPoint(index);
+  assert.deepEqual(calls, [0, 1, 2, 1, 0]);
+  assert.equal(client.peekMinute(Date.parse(meta.startUtc)), null);
+  assert.equal(client.hasMinute(Date.parse(meta.startUtc)), false);
+  assert.equal(await client.readMinute(Date.parse(meta.startUtc)), null);
   let attempts = 0;
   const invalid = createLifetimeClient({ fetch(url) { return response(url.endsWith('/meta') ? meta : ++attempts === 1 ? moment(2) : moment(1)); } });
   await assert.rejects(invalid.getPoint(1), /Некорректные/); assert.equal((await invalid.getPoint(1)).index, 1);
@@ -170,7 +179,7 @@ test('a complete moment requires matching Design and never caches a partial or i
     await assert.rejects(client.getPoint(1), /Некорректные/);
     const accepted = await client.getPoint(1);
     assert.equal(accepted.utc, accepted.design.utc); assert.equal(attempts, 2);
-    assert.equal(await client.getPoint(1), accepted); assert.equal(attempts, 2);
+    assert.deepEqual(await client.getPoint(1), accepted); assert.equal(attempts, 3);
     assert.ok(Object.isFrozen(accepted.design)); assert.ok(Object.isFrozen(accepted.design.longitudes));
   }
 });
@@ -218,7 +227,7 @@ test('Lifetime reuses a real decoded day at exact UTC with all black/red Float64
   }
   assert.equal(sample.design.designUtc, new Date(day.columns[22][minute] * 1000).toISOString().replace('.000Z', 'Z'));
   assert.ok(Object.is(sample.design.designArcResidualDegrees, day.columns[23][minute]));
-  assert.equal(await client.getPoint(index), sample);
+  assert.deepEqual(await client.getPoint(index), sample);
   assert.deepEqual(requests, ['/api/lifetime/meta']); assert.equal(dayRequests.length, 1);
   assert.ok(Object.isFrozen(sample.design.longitudes));
 });
@@ -762,6 +771,7 @@ for (const minute of [false, true]) test(`a rejected lifetime revision refreshes
   const oldMeta = { ...meta, cacheVersion: 'a'.repeat(64) };
   const newMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576, cacheVersion: 'b'.repeat(64) };
   const requestedUtc = Date.parse(minute ? '1900-01-02T00:01:00Z' : '1900-01-02T00:00:00Z');
+  const maximumUtc = '1900-01-03T12:34:56Z';
   const calls = []; let updated = false;
   const client = createLifetimeClient({ fetch(url) {
     calls.push(url);
@@ -779,10 +789,11 @@ for (const minute of [false, true]) test(`a rejected lifetime revision refreshes
   } });
   const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
   await explorer.open(); await client.getPoint(0); updated = true;
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03', requestedUtc });
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03', maximumUtc, requestedUtc });
   t.mock.timers.tick(1000); await tick();
   assert.equal(explorer.state.status, 'ready');
   assert.equal(explorer.state.metadata.cacheVersion, newMeta.cacheVersion);
+  assert.equal(explorer.state.maxUtc, Date.parse(maximumUtc), 'refreshing numerical data preserves the personal centenary');
   assert.equal(explorer.state.requestedUtc, requestedUtc);
   assert.equal(Date.parse(explorer.current.utc), requestedUtc);
   assert.equal(explorer.state.fromDate, '1900-01-01'); assert.equal(explorer.state.toDate, '1900-01-03');
@@ -791,4 +802,16 @@ for (const minute of [false, true]) test(`a rejected lifetime revision refreshes
   assert.equal((await client.getPoint(0)).utc, newMeta.startUtc, 'old memory entries cannot survive a revision change');
   const complete = calls.length; t.mock.timers.tick(60000); await tick();
   assert.equal(calls.length, complete, 'success stops automatic retries');
+});
+
+
+test('a personal rail stops at the exact calendar centenary instead of the end of its day', async () => {
+  const birth = '2000-02-29T12:34:56Z', anniversary = Date.parse('2100-02-28T12:34:56Z');
+  const span = lifeTimelineForChart({ utc: birth });
+  assert.equal(Date.parse(span.maximumUtc), anniversary);
+  const h = explorerHarness(fullMeta, { getMomentState: () => ({ current: dayChart(birth), status: 'ready' }) });
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', ...span, minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
+  assert.equal(h.explorer.state.maxUtc, anniversary);
+  assert.equal(h.explorer.state.minUtc, Date.parse(birth));
+  assert.equal(h.calls.length, 0);
 });

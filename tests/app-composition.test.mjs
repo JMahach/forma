@@ -60,7 +60,7 @@ function browser() {
   return { document, element };
 }
 
-function harness({ studioSize = null, metaError = null, charts = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
+function harness({ studioSize = null, metaError = null, charts = [], returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser();
   const dimensions = studioSize && { ...studioSize };
   let resizeLayout, layout = { refresh: noop };
@@ -79,8 +79,10 @@ function harness({ studioSize = null, metaError = null, charts = [], getReturn =
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
   let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, transitOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
+  const memory = {}, natalClient = {};
   const ports = {
     createChartSession, createChartExploration, createTransitPlanetFilter,
+    createNatalDayClient: options => { assert.equal(options.memory, memory); return natalClient; },
     createReturnsController: options => returns = createReturnsController(options),
     eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
     attachKnowledgeEntry: options => attachKnowledgeEntry({ ...options, eventTarget: document,
@@ -113,7 +115,7 @@ function harness({ studioSize = null, metaError = null, charts = [], getReturn =
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: () => ({ close: noop, setReturnsVisible: noop, update: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
-    attachChartLoading: () => ({ update: noop }), createCyclesClient: () => ({ events: async () => ({ events: [] }), chart: getReturn }), ageText, completedAge,
+    attachChartLoading: () => ({ update: noop }), createCyclesClient: options => { assert.equal(options.memory, memory); return { events: async input => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     updateReturnsEntry: noop, attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
@@ -121,8 +123,8 @@ function harness({ studioSize = null, metaError = null, charts = [], getReturn =
     `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search: '' },
     { location: { reload() { reloads++; } } }, () => { loads++; return module; });
-  startApp({ dayClient: {}, layout, toast: noop, viewStore: { write: noop }, savedView: null });
-  return { element, layout, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select: id => graph.onChartChange(id), get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; },
+  startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView: null });
+  return { element, layout, natalClient, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select: id => graph.onChartChange(id), get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; },
     get interruptions() { return interruptions; },
     filter: id => gestures.onSelect({ type: 'planet-filter', id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
@@ -333,10 +335,10 @@ test('renaming keeps the confirmed exact return and list filters while updating 
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   let returnRequests = 0;
-  const h = harness({ charts: [chart], getReturn: async () => { returnRequests++; return { event, chart: exact }; } });
+  const h = harness({ charts: [chart], returnEvents: [event], getReturn: async () => { returnRequests++; return { event, chart: exact }; } });
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
-  await h.returns.selectEvent(event.id, { restoredEvent: event });
+  await h.returns.selectEvent(event.id);
   await h.returns.setBodies(['venus']);
   const requests = h.dayRequests, selections = h.chartSelections;
   const updated = { ...chart, name: 'Новое имя', note: 'Новая заметка' };
@@ -355,13 +357,13 @@ test('opening the editor still cancels a pending return and its late answer cann
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   let complete, signal;
-  const h = harness({ charts: [chart], getReturn: (_query, requestSignal) => {
+  const h = harness({ charts: [chart], returnEvents: [event], getReturn: (_query, requestSignal) => {
     signal = requestSignal; return new Promise(resolve => { complete = resolve; });
   } });
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   const previousCaption = h.element('chartSubtitle').textContent;
-  const pending = h.returns.selectEvent(event.id, { restoredEvent: event }); await tick();
+  const pending = h.returns.selectEvent(event.id); await tick();
   assert.equal(h.element('chartSubtitle').textContent, previousCaption, 'a pending event is not presented as the displayed chart');
   h.edit();
   assert.equal(signal.aborted, true);
@@ -462,4 +464,13 @@ test('opening chronicle updates mandala columns before the unchanged transit pub
   await h.element('lifetimeToggle').click();
   assert.equal(h.layout.showMandalaColumns, false);
   assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/, 'closing the dock removes columns when they no longer fit');
+});
+
+
+test('the personal timeline and natal-day tool share one prepared-day client', async () => {
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ charts: [chart] }); h.select(chart.id); await tick();
+  await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  assert.equal(h.lifetimeOptions.natalDayClient, h.natalClient);
+  assert.equal(h.lifetimeOptions.getPersonalChart(), chart);
 });

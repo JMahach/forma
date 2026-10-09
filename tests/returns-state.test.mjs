@@ -8,12 +8,14 @@ const shown = control => createChartComposition(control.state.natal, { secondary
 const caption = control => chartCaption(shown(control), control.state.natal).title;
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
+const majorBodies = cycles.DEFAULT_CYCLE_BODIES;
+const centuryAge = (Date.parse('2100-01-01T00:00:00Z') - Date.parse('2000-01-01T00:00:00Z')) / (365.2425 * 86400000);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function natal(overrides = {}) { return { ...chartAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal', name: 'Анна' })), ...overrides }; }
 function event(body = 'saturn', utc = '2028-07-21T12:36:05.920740Z') { return { id: `${body}:${utc}`, body, utc, age: (Date.parse(utc) - Date.parse('2000-01-01T00:00:00Z')) / (365.2425 * 86400000), cycle: 1, pass: 1, cycleId: `${body}:1`, direction: 'direct' }; }
 const packet = (input, events = [event(input.body)]) => ({ events, range: { fromAge: input.fromAge, toAge: input.toAge } });
-const chartPacket = selected => ({ event: selected, chart: { ...natal(), utc: selected.utc, timezone: 'UTC', engine: 'Exact worker', designArcResidualDegrees: 1e-12 } });
+const chartPacket = selected => ({ chart: { ...natal(), utc: selected.utc, timezone: 'UTC', engine: 'Exact worker', designArcResidualDegrees: 1e-12 } });
 function freeze(value) { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 function fast(options = {}) { const calls = []; const control = createReturnsController({ ...options, client: { events: async input => { calls.push(input); return packet(input); }, chart: async input => chartPacket(event(input.body, input.eventUtc)), ...options.client } }); return { control, calls }; }
 
@@ -32,7 +34,7 @@ test('unchanged returns reads reuse prepared events and exported arrays cannot c
   }
   await control.setBodies([]); assert.deepEqual(control.state.events, []);
   await control.setBodies(['moon']); assert.ok(control.state.events.length > 0);
-  control.exit(); assert.deepEqual(control.state.events, []);
+  const prepared = control.state.events; control.exit(); assert.equal(control.state.opened, false); assert.deepEqual(control.state.events, prepared);
 });
 
 test('combined filters reuse full-life results and retain an explicitly empty choice', async () => {
@@ -45,11 +47,11 @@ test('combined filters reuse full-life results and retain an explicitly empty ch
   await control.setBodies(['sun', 'moon', 'sun']); await control.setYear(2026); await control.open();
   assert.deepEqual(control.state.bodies, ['sun', 'moon']);
   assert.deepEqual(control.state.events.map(item => item.id), [before.id]);
-  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === 100));
+  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === centuryAge));
   await control.setYear(2027); assert.deepEqual(control.state.events.map(item => item.id), [after.id]);
   await control.setYear(null); assert.equal(control.state.events.length, 2);
   await control.setBodies([]); assert.deepEqual(control.state.events, []); assert.deepEqual(control.state.bodies, []);
-  await control.setBodies(['moon', 'sun']); assert.equal(calls.length, 2, 'empty Moon results are loaded results too');
+  await control.setBodies(['moon', 'sun']); assert.equal(calls.length, majorBodies.length + 2, 'empty Moon results are loaded results too');
   assert.equal(control.state.events.length, 2);
   assert.equal(control.setBodies(['earth']), false); assert.equal(control.setBodies('sun'), false);
   assert.equal(control.setYear(undefined), false);
@@ -67,35 +69,32 @@ test('filter changes preserve an exact request even when its event is no longer 
   await control.setYear(null); assert.equal(control.state.selectedEvent.id, event().id);
 });
 
-test('turning a body off and on cannot let its old completion remove the new request', async () => {
+test('turning a body off and on shares its ongoing preparation without restarting it', async () => {
   const jobs = [], { control } = fast({ client: { events: (input, signal) => {
     const job = { input, signal, ...deferred() }; jobs.push(job); return job.promise;
   } } });
-  control.select(natal()); await control.setBodies(['sun']);
-  const first = control.open(); await tick(); await control.setBodies([]);
-  const second = control.setBodies(['sun']); await tick(); assert.equal(jobs.length, 2);
-  jobs[0].resolve(packet(jobs[0].input, [event('sun', '2001-01-01T00:00:00Z')])); await first;
-  assert.deepEqual(control.state.pendingBodies, ['sun']); assert.deepEqual(control.state.events, []);
-  jobs[1].resolve(packet(jobs[1].input)); await second;
-  assert.deepEqual(control.state.pendingBodies, []); assert.equal(control.state.events[0].utc, event().utc);
+  control.select(natal()); const first = control.setBodies(['sun']); await tick();
+  await control.setBodies([]); const second = control.setBodies(['sun']); await tick();
+  assert.equal(jobs.length, majorBodies.length + 1); assert.ok(jobs.every(job => !job.signal.aborted));
+  jobs.forEach(job => job.resolve(packet(job.input))); await Promise.all([first, second]);
+  assert.deepEqual(control.state.pendingBodies, []); assert.equal(control.state.events[0].body, 'sun');
 });
 
-test('an exact request takes the next free slot ahead of remaining event searches', async () => {
+test('an exact request starts immediately after its own list without waiting for other bodies', async () => {
   const h = deferredRestore(); const opening = h.control.open(); await tick();
-  const selecting = h.control.selectEvent(event().id, { restoredEvent: event() });
-  await tick(); assert.equal(h.charts.length, 0);
-  h.jobs[0].resolve(packet(h.jobs[0].input)); await tick();
-  assert.equal(h.charts.length, 1); assert.equal(h.jobs.length, 2);
+  h.jobs.find(job => job.input.body === 'saturn').resolve(packet({ body: 'saturn' })); await tick();
+  const selecting = h.control.selectEvent(event().id); await tick();
+  assert.equal(h.charts.length, 1); assert.equal(h.jobs.length, majorBodies.length);
   h.charts[0].resolve(chartPacket(event())); assert.equal(await selecting, true);
   await h.finishLists(); await opening;
 });
 
-test('closed filters restore empty choices without fetching a hidden default list', async () => {
+test('closed filters restore empty choices while preparation stays independent', async () => {
   const { control, calls } = fast(); control.select(natal());
   assert.equal(await control.restore({ opened: false, bodies: [], year: 2040, eventId: null }), true);
   await control.enableMarkers(true);
   assert.deepEqual(control.state.bodies, []); assert.deepEqual(control.state.events, []);
-  assert.equal(control.state.year, 2040); assert.equal(calls.length, 0);
+  assert.equal(control.state.year, 2040); assert.equal(calls.length, majorBodies.length);
 });
 
 test('an obsolete timezone does not prevent opening a saved chart or filtering its returns', async () => {
@@ -112,34 +111,40 @@ test('only saved calculated natal charts enable returns; major defaults exclude 
   assert.equal(calls.length, 0); const source = freeze(natal()); control.select(source); await control.open();
   assert.equal(control.state.natal, source); assert.equal(control.current, null); assert.equal(control.state.opened, true);
   assert.equal(control.state.year, null); assert.deepEqual(control.state.bodies, ['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
-  assert.deepEqual(calls.map(input => input.body), ['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
-  assert.ok(calls.every(input => input.birthUtc === source.utc && input.fromAge === 0 && input.toAge === 100));
+  assert.deepEqual(calls.map(input => input.body), majorBodies);
+  assert.ok(calls.every(input => input.birthUtc === source.utc && input.fromAge === 0 && input.toAge === centuryAge));
 });
-test('major events publish incrementally with no more than two requests, including switches whose transport ignores abort', async () => {
-  const jobs = []; let active = 0, peak = 0;
-  const control = createReturnsController({ client: { events(input, signal) { const hold = deferred(); active++; peak = Math.max(peak, active); jobs.push({ input, signal, finish() { if (this.finished) return; this.finished = true; active--; hold.resolve(packet(input)); } }); return hold.promise; } } });
-  control.select(natal()); const opening = control.open(); await tick(); assert.equal(jobs.length, 2);
-  jobs[0].finish(); await tick(); assert.equal(control.state.events.length, 1); assert.equal(active, 2);
-  const switched = control.setBodies(['sun', 'mercury', 'venus', 'mars']); assert.ok(jobs[1].signal.aborted); assert.equal(peak, 2);
-  for (let guard = 0; guard < 20 && jobs.length; guard++) { const batch = jobs.splice(0); batch.forEach(job => { if (!job.signal.aborted || active > 0) job.finish(); }); await tick(); }
-  await Promise.all([opening, switched]); assert.equal(peak, 2); assert.ok(control.state.events.every(item => ['sun', 'mercury', 'venus', 'mars'].includes(item.body)));
+test('prepared bodies publish incrementally and filters never restart or abort their requests', async () => {
+  const jobs = [];
+  const control = createReturnsController({ client: { events(input, signal) { const job = { input, signal, ...deferred() }; jobs.push(job); return job.promise; } } });
+  control.select(natal()); const opening = control.open(); await tick(); assert.equal(jobs.length, majorBodies.length);
+  const node = jobs.find(job => job.input.body === 'north_node'); node.resolve(packet(node.input)); await tick();
+  assert.equal(control.state.events.length, 1);
+  const switched = control.setBodies(['sun', 'mercury', 'venus', 'mars']); await tick();
+  assert.ok(jobs.every(job => !job.signal.aborted)); assert.equal(jobs.length, majorBodies.length + 4);
+  jobs.forEach(job => job.resolve(packet(job.input))); await Promise.all([opening, switched]);
+  assert.deepEqual(control.state.events.map(item => item.body).sort(), ['mars', 'mercury', 'sun', 'venus']);
 });
-test('close and selecting another natal reject late event responses even when transport ignores abort', async () => {
+test('close retains preparation but selecting another natal rejects its late responses', async () => {
   const jobs = []; const control = createReturnsController({ client: { events(input, signal) { const job = { input, signal, ...deferred() }; jobs.push(job); return job.promise; } } });
-  control.select(natal()); const opening = control.open(); await tick(); control.close(); jobs.forEach(job => job.resolve(packet(job.input))); await opening;
-  assert.equal(control.state.opened, false); assert.deepEqual(control.state.events, []);
-  const second = natal({ id: 'second' }); control.select(second); const next = control.open(); await tick(); control.select(natal({ id: 'third' }));
-  jobs.forEach(job => job.resolve(packet(job.input))); await next; assert.equal(control.state.natal.id, 'third'); assert.deepEqual(control.state.events, []);
+  control.select(natal()); const opening = control.open(); await tick(); control.close();
+  assert.ok(jobs.every(job => !job.signal.aborted)); jobs.forEach(job => job.resolve(packet(job.input))); await opening;
+  assert.equal(control.state.opened, false); assert.equal(control.state.events.length, 5);
+  control.select(natal({ id: 'second' })); const next = control.open(); await tick(); const previous = [...jobs];
+  control.select(natal({ id: 'third' })); previous.forEach(job => job.resolve(packet(job.input))); await next;
+  assert.equal(control.state.natal.id, 'third'); assert.deepEqual(control.state.events, []);
+  assert.ok(previous.slice(majorBodies.length).every(job => job.signal.aborted));
+  await tick(); jobs.forEach(job => job.resolve(packet(job.input))); await tick();
 });
 test('selected bodies filter locally by natal year while searches retain the full life', async () => {
   const outside = event('sun', '2026-12-31T23:30:00Z'), inside = event('sun', '2025-12-31T23:30:00Z');
   const { control, calls } = fast({ client: { events: async input => { calls.push(input); return packet(input, input.body === 'sun' ? [inside, outside] : []); } } });
   control.select(natal({ timezone: 'Europe/Moscow' })); await control.setBodies(['sun', 'moon']); await control.setYear(2026); await control.open();
-  assert.deepEqual(calls.map(input => input.body), ['sun', 'moon']);
-  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === 100));
+  assert.deepEqual(calls.map(input => input.body), [...majorBodies, 'sun', 'moon']);
+  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === centuryAge));
   assert.deepEqual(control.state.events.map(item => item.id), [inside.id]);
   await control.setYear(2027); assert.deepEqual(control.state.events.map(item => item.id), [outside.id]);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, majorBodies.length + 2);
 });
 
 test('selected years clamp to birth and the supported date range; major range cannot exceed available ephemerides', async () => {
@@ -147,7 +152,7 @@ test('selected years clamp to birth and the supported date range; major range ca
   assert.equal(control.state.year, null); assert.ok(calls.every(input => input.toAge < 20 && input.toAge > 19));
   await control.setYear(1801); assert.equal(control.state.year, 2380); await control.setYear(9999); assert.equal(control.state.year, 2399);
   await control.setBodies(['sun']);
-  assert.equal(calls.at(-1).body, 'sun'); assert.equal(calls.at(-1).fromAge, 0); assert.ok(calls.at(-1).toAge < 20 && calls.at(-1).toAge > 19);
+  const solar = calls.find(input => input.body === 'sun'); assert.equal(solar.fromAge, 0); assert.ok(solar.toAge < 20 && solar.toAge > 19);
 });
 
 test('planet exploration keeps Sun, Moon and node returns across the whole hundred-year life', async () => {
@@ -160,11 +165,11 @@ test('planet exploration keeps Sun, Moon and node returns across the whole hundr
     } } });
     control.select(natal({ timezone: 'Europe/Moscow' })); await control.setBodies([body]); await control.open();
     assert.deepEqual(control.state.events.map(item => item.id), life.map(item => item.id));
-    assert.ok(calls.every(input => input.body === body && input.fromAge === 0 && input.toAge === 100));
+    assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === centuryAge));
     await control.setYear(2040);
     assert.deepEqual(control.state.events, []);
     await control.setYear(null); assert.deepEqual(control.state.events.map(item => item.id), life.map(item => item.id));
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, new Set([...majorBodies, body]).size);
   }
 });
 
@@ -172,8 +177,8 @@ test('year browsing clamps a late year to the same hundred-year life range', asy
   t.mock.timers.enable({ apis: ['Date'], now: new Date('2117-04-01T12:00:00Z') });
   const { control, calls } = fast(); control.select(natal());
   await control.setYear(2117); await control.open();
-  assert.equal(control.state.maxYear, 2099); assert.equal(control.state.year, 2099);
-  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === 100));
+  assert.equal(control.state.maxYear, 2100); assert.equal(control.state.year, 2100);
+  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === centuryAge));
 });
 test('exact result is temporary and metadata-rich; selecting an event keeps the desktop list open and natal unchanged', async () => {
   const source = freeze(natal()), before = JSON.stringify(source), selected = event(); const requests = [];
@@ -217,7 +222,7 @@ test('background markers load exact majors without opening the panel or changing
   const { control, calls } = fast(); control.select(freeze(natal()));
   assert.equal(control.state.markersEnabled, false); await control.enableMarkers(true);
   assert.equal(control.state.opened, false); assert.equal(control.current, null);
-  assert.equal(control.state.events.length, 5); assert.deepEqual(calls.map(input => input.body), ['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
+  assert.equal(control.state.events.length, 5); assert.deepEqual(calls.map(input => input.body), majorBodies);
   const requests = calls.length; await control.open(); assert.equal(calls.length, requests, 'opening the major list reuses marker results');
   await control.setYear(2040); assert.equal(control.state.events.length, 0);
   await control.setYear(null); assert.equal(control.state.events.length, 5); assert.equal(calls.length, requests);
@@ -231,37 +236,32 @@ test('a stored marker selects its exact chart while the popup stays closed; unkn
   assert.equal(calls[0].body, 'saturn'); assert.equal(calls[0].eventUtc, selected.utc);
   assert.equal(control.state.opened, false); assert.equal(control.current.utc, selected.utc);
 });
-test('close retains marker loading and partial results while a year list uses the same two request slots', async () => {
-  const jobs = []; let active = 0, peak = 0;
-  const control = createReturnsController({ client: { events(input, signal) { const hold = deferred(); active++; peak = Math.max(peak, active); const job = { input, signal, done: false, finish() { if (this.done) return; this.done = true; active--; hold.resolve(packet(input)); } }; jobs.push(job); return hold.promise; } } });
+test('close and year filtering reuse ongoing preparation for the selected natal', async () => {
+  const jobs = [];
+  const control = createReturnsController({ client: { events(input, signal) { const job = { input, signal, ...deferred() }; jobs.push(job); return job.promise; } } });
   control.select(natal()); const markers = control.enableMarkers(true); await tick();
-  const opening = control.open(); assert.equal(jobs.length, 2, 'list shares marker requests');
-  jobs[0].finish(); await tick(); assert.equal(control.state.events.length, 1);
-  const annual = control.setYear(2028); control.close();
-  assert.equal(jobs[1].signal.aborted, false, 'background major remains owned by the timeline');
-  for (let guard = 0; guard < 20; guard++) { jobs.filter(job => !job.done).forEach(job => job.finish()); await tick(); if (!active && !control.state.pendingBodies.length) break; }
-  await Promise.all([markers, opening, annual]); assert.equal(peak, 2); assert.equal(control.state.opened, false); assert.equal(control.state.events.length, 5); assert.equal(control.current, null);
+  const opening = control.open(); assert.equal(jobs.length, majorBodies.length);
+  const node = jobs.find(job => job.input.body === 'north_node'); node.resolve(packet(node.input)); await tick();
+  assert.equal(control.state.events.length, 1);
+  const annual = control.setYear(2028); control.close(); assert.ok(jobs.every(job => !job.signal.aborted));
+  jobs.forEach(job => job.resolve(packet(job.input))); await Promise.all([markers, opening, annual]);
+  assert.equal(control.state.opened, false); assert.equal(control.state.events.length, 5); assert.equal(control.current, null);
 });
-test('disabling markers or switching natal rejects late majors and late marker chart responses', async () => {
+test('disabling markers retains preparation; switching natal cancels old lists and the old chart', async () => {
   const jobs = [], charts = []; const { control } = fast({ client: { events(input, signal) { const job = { input, signal, ...deferred() }; jobs.push(job); return job.promise; }, chart(input, signal) { const job = { input, signal, ...deferred() }; charts.push(job); return job.promise; } } });
-  control.select(natal()); const disabled = control.enableMarkers(true); await tick(); await control.enableMarkers(false);
-  assert.ok(jobs.every(job => job.signal.aborted)); jobs.forEach(job => job.resolve(packet(job.input))); await disabled; assert.deepEqual(control.state.events, []);
-  const loading = control.enableMarkers(true); await tick(); const before = jobs.length; control.select(natal({ id: 'other' }));
-  jobs.slice(0, before).forEach(job => job.resolve(packet(job.input))); await loading;
-  assert.equal(control.state.natal.id, 'other'); assert.deepEqual(control.state.events, []);
-  control.enableMarkers(false); jobs.forEach(job => job.resolve(packet(job.input))); await tick();
-  const { control: ready } = fast({ client: { chart(input, signal) { const job = { input, signal, ...deferred() }; charts.push(job); return job.promise; } } });
-  ready.select(natal()); await ready.enableMarkers(true); const selected = ready.state.events.find(item => item.body === 'saturn');
-  const chart = ready.selectEvent(selected); await tick(); ready.select(natal({ id: 'different' }));
-  const job = charts.at(-1); assert.equal(job.signal.aborted, true); job.resolve(chartPacket(selected)); await chart;
-  assert.equal(ready.current, null); assert.equal(ready.state.selectedEvent, null);
+  control.select(natal()); const disabled = control.enableMarkers(true); await tick(); control.enableMarkers(false);
+  assert.ok(jobs.every(job => !job.signal.aborted)); jobs.forEach(job => job.resolve(packet(job.input))); await disabled;
+  const chart = control.selectEvent(event().id); await tick(); control.select(natal({ id: 'other' }));
+  const job = charts.at(-1); assert.equal(job.signal.aborted, true); job.resolve(chartPacket(event())); await chart;
+  assert.equal(control.current, null); assert.equal(control.state.selectedEvent, null);
+  await tick(); jobs.forEach(job => job.resolve(packet(job.input))); await tick();
 });
 
 test('repeated marker enable is idempotent so app state notifications cannot form a render loop', async () => {
   let notices = 0; const { control, calls } = fast({ onStateChange: () => notices++ });
   control.select(natal()); await control.enableMarkers(true); const before = notices, requests = calls.length;
   await control.enableMarkers(true); assert.equal(notices, before); assert.equal(calls.length, requests);
-  control.exit(); assert.equal(control.state.markersEnabled, false); assert.deepEqual(control.state.events, []);
+  control.exit(); assert.equal(control.state.markersEnabled, false); assert.equal(control.state.events.length, 5);
 });
 
 test('scrubbing with no return selection or open list publishes no redundant state or render', async () => {
@@ -300,7 +300,7 @@ test('closing an already hidden restore cancels its ownership while background m
   } });
   control.select(natal());
   const restoring = control.restore({ opened: false, bodies: [...cycles.DEFAULT_CYCLE_BODIES], eventId: event().id });
-  await tick(); assert.equal(jobs.length, 2); assert.equal(control.state.opened, false);
+  await tick(); assert.equal(jobs.length, majorBodies.length); assert.equal(control.state.opened, false);
   notices = renders = 0;
   control.reset(); const closing = control.close();
   assert.equal(notices, 0); assert.equal(renders, 0);
@@ -310,7 +310,7 @@ test('closing an already hidden restore cancels its ownership while background m
   }
   assert.equal(await restoring, false); await closing;
   assert.equal(chartCalls, 0); assert.equal(control.current, null);
-  assert.equal(control.state.events.length, 5); assert.equal(jobs.length, 5);
+  assert.equal(control.state.events.length, 5); assert.equal(jobs.length, majorBodies.length);
 });
 
 
@@ -319,7 +319,7 @@ test('major life search keeps returns before age 100 and excludes later events',
   const { control, calls } = fast({ client: { events: async input => { calls.push(input); return packet(input, [within, late].filter(item => item.body === input.body && item.age <= input.toAge)); } } });
   control.select(natal()); await control.open();
   assert.ok(within.age < 100 && late.age > 100); assert.deepEqual(control.state.events.map(item => item.id), [within.id]);
-  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === 100));
+  assert.ok(calls.every(input => input.fromAge === 0 && input.toAge === centuryAge));
 });
 test('fixed life timeline follows UTC birth date and its calendar 100-year anniversary', () => {
   for (const [utc, fromDate, toDate] of [
@@ -330,7 +330,10 @@ test('fixed life timeline follows UTC birth date and its calendar 100-year anniv
     ['2290-12-31T23:59:00Z', '2290-12-31', '2390-12-31'],
     ['2340-12-31T23:59:00Z', '2340-12-31', '2399-12-31'],
     ['2399-12-31T23:59:00Z', '2399-12-31', '2399-12-31'],
-  ]) assert.deepEqual(cycles.lifeTimelineForChart({ utc, timezone: 'Asia/Tokyo' }), { fromDate, toDate });
+  ]) {
+    const maximumUtc = Number(utc.slice(0, 4)) + 100 > 2399 ? '2399-12-31T23:59:59.999Z' : `${toDate}${utc.slice(10, -1)}.000Z`;
+    assert.deepEqual(cycles.lifeTimelineForChart({ utc, timezone: 'Asia/Tokyo' }), { fromDate, toDate, maximumUtc });
+  }
 });
 test('invalid or unsupported life-timeline birth moments have no invented range', () => {
   for (const chart of [null, {}, { utc: 'bad' }, { utc: '1900-02-29T00:00:00Z' }, { utc: '1800-12-31T23:59:00Z' }, { utc: '2400-01-01T00:00:00Z' }]) {
@@ -382,37 +385,30 @@ function deferredRestore() {
   } });
   control.select(natal());
   return { control, jobs, charts, order, renders, async finishLists() {
-    for (let guard = 0; guard < 12 && control.state.pendingBodies.length; guard++) {
-      jobs.forEach(job => job.resolve(packet(job.input))); await tick();
-    }
+    jobs.forEach(job => job.resolve(packet(job.input))); await tick();
   } };
 }
 
-test('a saved exact descriptor requests its chart before the selected-body lists finish', async () => {
-  for (const filter of [{ opened: true, bodies: ['sun', 'moon'] },
-    { opened: false, bodies: ['moon'] }, { opened: false, bodies: [] }]) {
-    const h = deferredRestore(), selected = event(); let result;
-    const restoring = h.control.restore({ ...filter, year: 2040, eventId: selected.id, event: selected }).then(value => { result = value; return value; });
-    await tick();
-    assert.equal(h.order[0], 'chart'); assert.equal(h.charts.length, 1);
-    assert.equal(h.jobs.length, filter.bodies.length ? 1 : 0);
-    assert.equal(result, undefined);
-    h.charts[0].resolve(chartPacket(selected)); await tick();
-    assert.equal(await restoring, true); assert.equal(h.renders.length, 1);
-    assert.equal(h.control.current.utc, selected.utc); assert.equal(h.control.state.selectedEvent, selected);
-    assert.equal(h.control.state.opened, filter.opened); assert.deepEqual(h.control.state.bodies, filter.bodies);
-    assert.equal(h.control.state.events.length, 0); await h.finishLists();
-    assert.equal(h.control.state.events.length, 0, 'events outside 2040 remain filtered, not deleted');
-    assert.deepEqual(h.jobs.map(job => job.input.body), filter.bodies);
-    assert.equal(h.charts.length, 1); assert.equal(h.renders.length, 1);
+test('a saved exact descriptor waits only for its verified body and never trusts a stored ordinal', async () => {
+  for (const filter of [{ opened: true, bodies: ['sun', 'moon'] }, { opened: false, bodies: ['moon'] }, { opened: false, bodies: [] }]) {
+    const h = deferredRestore(), selected = event();
+    const restoring = h.control.restore({ ...filter, year: 2040, eventId: selected.id, event: { ...selected, cycle: 99 } });
+    await tick(); assert.equal(h.charts.length, 0); assert.equal(h.jobs.length, new Set([...majorBodies, ...filter.bodies]).size);
+    const body = h.jobs.find(job => job.input.body === 'saturn'); body.resolve(packet(body.input, [selected])); await tick();
+    assert.equal(h.charts.length, 1);
+    h.charts[0].resolve(chartPacket(selected)); assert.equal(await restoring, true);
+    assert.equal(h.control.state.selectedEvent, selected); assert.equal(h.control.state.opened, filter.opened);
+    assert.deepEqual(h.control.state.bodies, filter.bodies); assert.equal(h.renders.length, 1);
+    await h.finishLists(); assert.equal(h.control.state.events.length, 0);
   }
 });
 
 test('a newer selection survives cancellation of a fast exact restore while markers are pending', async () => {
   const h = deferredRestore(), first = event(), next = event('saturn', '2057-07-21T12:36:05Z');
   const restoring = h.control.restore({ opened: false, bodies: [...cycles.DEFAULT_CYCLE_BODIES], eventId: first.id, event: first });
-  await tick(); assert.equal(h.charts.length, 1);
-  const selecting = h.control.selectEvent(next.id, { restoredEvent: next });
+  await tick(); const list = h.jobs.find(job => job.input.body === 'saturn'); list.resolve(packet(list.input, [first, next])); await tick();
+  assert.equal(h.charts.length, 1);
+  const selecting = h.control.selectEvent(next.id);
   assert.equal(h.charts[0].signal.aborted, true);
   h.charts[0].resolve(chartPacket(first)); await tick();
   assert.equal(await restoring, false); assert.equal(h.charts.length, 2);
@@ -426,7 +422,8 @@ test('fast exact restore failure is independent of markers and cancelled failure
   for (const cancelled of [false, true]) {
     const h = deferredRestore(), selected = event(); let valid = true;
     const restoring = h.control.restore({ opened: false, year: 2028, bodies: ['sun', 'saturn'], eventId: selected.id, event: selected }, { valid: () => valid });
-    await tick(); assert.equal(h.charts.length, 1);
+    await tick(); const list = h.jobs.find(job => job.input.body === 'saturn'); list.resolve(packet(list.input, [selected])); await tick();
+    assert.equal(h.charts.length, 1);
     if (cancelled) valid = false;
     h.charts[0].reject(new Error('Exact chart unavailable'));
     assert.equal(await restoring, false); assert.equal(h.control.current, null); assert.deepEqual(h.renders, []);
@@ -442,11 +439,11 @@ test('fast exact restore failure is independent of markers and cancelled failure
 
 test('a failed remembered chart retains the current preview and a malformed descriptor uses the legacy lookup', async () => {
   const previous = event(), selected = event('saturn', '2057-07-21T12:36:05Z');
-  const { control } = fast({ client: { chart: async input => {
+  const { control } = fast({ client: { events: async input => packet(input, input.body === 'saturn' ? [previous, selected] : []), chart: async input => {
     if (input.eventUtc === selected.utc) throw new Error('Exact chart unavailable');
     return chartPacket(previous);
   } } });
-  control.select(natal()); await control.selectEvent(previous.id, { restoredEvent: previous });
+  await control.select(natal()); await control.selectEvent(previous.id);
   const shown = control.current;
   assert.equal(await control.restore({ opened: false, bodies: [...cycles.DEFAULT_CYCLE_BODIES], eventId: selected.id, event: selected }), false);
   assert.equal(control.current, shown); assert.equal(control.state.selectedEvent, previous);
@@ -455,7 +452,7 @@ test('a failed remembered chart retains the current preview and a malformed desc
   const fallback = fast(); fallback.control.select(natal());
   assert.equal(await fallback.control.restore({ opened: false, bodies: [...cycles.DEFAULT_CYCLE_BODIES], eventId: previous.id,
     event: { ...previous, body: 'unknown' } }), true);
-  assert.equal(fallback.calls.length, 5); assert.equal(fallback.control.current.utc, previous.utc);
+  assert.equal(fallback.calls.length, majorBodies.length); assert.equal(fallback.control.current.utc, previous.utc);
   assert.equal(fallback.control.state.selectedEvent.body, 'saturn');
 });
 
@@ -472,9 +469,9 @@ test('restoring a legacy exact return after age 100 clears and acknowledges only
     assert.equal(restored, true, 'a discarded selection must not remain a pending restore');
     assert.deepEqual(charts, []);
     assert.equal(control.state.opened, true); assert.deepEqual(control.state.bodies, ['saturn']);
-    assert.equal(control.state.year, 2099); assert.equal(control.state.selectedEvent, null); assert.equal(control.current, null);
+    assert.equal(control.state.year, 2100); assert.equal(control.state.selectedEvent, null); assert.equal(control.current, null);
     assert.equal(control.state.loadingChart, false); assert.equal(control.state.chartError, '');
-    assert.ok(calls.every(input => input.toAge <= 100));
+    assert.ok(calls.every(input => input.toAge <= centuryAge));
   }
 });
 
@@ -530,4 +527,33 @@ test('fast restoration adopts the validated event instead of an old saved cycle 
   await control.restore({ eventId: saved.id, event: saved, opened: false });
   assert.equal(control.state.selectedEvent.cycle, 1);
   assert.match(caption(control), /Сатурна 1$/);
+});
+
+
+test('return search reaches the calendar centenary and never admits a later instant', () => {
+  const yearMs = 365.2425 * 86400000;
+  for (const [birth, anniversary] of [
+    ['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z'],
+    ['2000-02-29T12:34:56Z', '2100-02-28T12:34:56Z'],
+    ['2099-12-31T23:59:00Z', '2199-12-31T23:59:00Z'],
+  ]) {
+    const chart = { utc: birth, timezone: 'UTC' }, range = cycles.cycleRangeForChart(chart);
+    assert.ok(Math.abs(Date.parse(birth) + range.toAge * yearMs - Date.parse(anniversary)) < 1, birth);
+    assert.equal(cycles.cycleEventWithinRange(chart, anniversary), true, 'the exact hundredth anniversary belongs to the span');
+    assert.equal(cycles.cycleEventWithinRange(chart, new Date(Date.parse(anniversary) + 1).toISOString()), false, 'the next millisecond does not');
+  }
+});
+
+test('return year choices include birth year plus one hundred even for January first', async () => {
+  for (const [utc, timezone, minYear, maxYear] of [
+    ['2000-01-01T00:00:00Z', 'UTC', 2000, 2100],
+    ['2000-01-01T00:00:00Z', 'America/Los_Angeles', 1999, 2099],
+    ['1999-12-31T23:59:00Z', 'Pacific/Kiritimati', 2000, 2100],
+    ['2299-12-31T12:00:00Z', 'UTC', 2299, 2399],
+  ]) {
+    const { control } = fast(); control.select(natal({ utc, timezone }));
+    assert.equal(control.state.minYear, minYear); assert.equal(control.state.maxYear, maxYear);
+    await control.setYear(maxYear); assert.equal(control.state.year, maxYear);
+    await control.setYear(maxYear + 1); assert.equal(control.state.year, maxYear);
+  }
 });

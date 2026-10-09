@@ -12,7 +12,7 @@ const value = index => {
       longitudes: LIFETIME_PLANETS.map((_, i) => i * 30 + 1) } };
 };
 
-test('versioned moments share the browser cache across clients; metadata is always fresh', async () => {
+test('versioned moments bypass browser storage across clients; metadata is always fresh', async () => {
   let cacheVersion = 'a'.repeat(64), transfers = 0, metas = 0;
   const disk = new Map(), requests = [];
   const fetch = async (url, options) => {
@@ -25,13 +25,13 @@ test('versioned moments share the browser cache across clients; metadata is alwa
   const first = await createLifetimeClient({ fetch }).getPoint(3);
   const second = await createLifetimeClient({ fetch }).getPoint(3);
   assert.deepEqual(second, first);
-  assert.equal(transfers, 1, 'reload reuses the versioned response instead of transferring it');
+  assert.equal(transfers, 2, 'each client asks the server rather than reading HTTP storage');
   assert.equal(metas, 2);
   assert.deepEqual(requests.slice(0, 2), [{ url: '/api/lifetime/meta', cache: 'no-store' },
-    { url: `/api/lifetime?index=3&v=${'a'.repeat(64)}`, cache: 'default' }]);
+    { url: `/api/lifetime?index=3&v=${'a'.repeat(64)}`, cache: 'no-store' }]);
   cacheVersion = 'b'.repeat(64);
   await createLifetimeClient({ fetch }).getPoint(3);
-  assert.equal(transfers, 2, 'changed calculation revision selects a different immutable URL');
+  assert.equal(transfers, 3, 'changed calculation revision still reaches the server');
 });
 
 test('unversioned metadata keeps safe no-store transport', async () => {

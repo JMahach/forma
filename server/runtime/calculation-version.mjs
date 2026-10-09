@@ -5,9 +5,9 @@ import { createHash } from 'node:crypto';
 // These inputs define the numbers shared by minute days and lifetime moments.
 // Transport, compression, styling and file layout have their own versions.
 export const CALCULATION_INPUTS = Object.freeze([
-  'server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
+  'server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/date_limits.py', 'server/python/errors.py',
   'server/python/calculator.py', 'server/python/transit_day.py', 'server/python/lifetime_file.py', 'requirements.txt',
-  'shared/day-packets/moment-columns.js', 'data/ephe',
+  'shared/day-packets/moment-columns.js', 'shared/date-limits.js', 'data/ephe',
 ]);
 
 export async function inputFingerprint(root, names) {

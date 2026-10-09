@@ -42,8 +42,9 @@ export function encodeNatalDayPacket(day) {
 
 // Only bounded, short-lived RAM. No personal disk cache, persistent workers,
 // prewarming, request logging, or birth data in a public/cacheable URL.
-export function createNatalDays({ root, computeQueue, generateDay = (date, timezone, options) => generateNatalDay({ root, date, timezone, computeQueue, ...options }),
+export function createNatalDays({ root, computeQueue, calculationVersion = null, generateDay = (date, timezone, options) => generateNatalDay({ root, date, timezone, computeQueue, ...options }),
   now = Date.now, capacity = 4, ttlMs = 600_000, maxQueued = 3 } = {}) {
+  if (calculationVersion !== null && (typeof calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(calculationVersion))) throw new TypeError('Invalid calculation version');
   const memory = new Map(), pending = new Map(), queue = [];
   let running = false;
   const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
@@ -65,7 +66,7 @@ export function createNatalDays({ root, computeQueue, generateDay = (date, timez
       const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
       if (job.controller.signal.aborted) throw aborted();
       if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
-      const raw = await encodeNatalDayPacket(day);
+      const raw = await encodeNatalDayPacket(calculationVersion ? { ...day, calculationVersion } : day);
       const packet = { bytes: await compressDayPacket(raw, { quality: 9 }) };
       prune(); memory.set(job.key, { packet, expires: now() + ttlMs });
       while (memory.size > capacity) memory.delete(memory.keys().next().value);
@@ -91,5 +92,5 @@ export function createNatalDays({ root, computeQueue, generateDay = (date, timez
     const result = consume(job, signal); void drain();
     return result;
   }
-  return { get, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
+  return { get, calculationVersion, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
 }

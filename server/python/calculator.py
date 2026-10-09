@@ -6,10 +6,12 @@ import sys
 if __package__:
     from . import astronomy as astro
     from . import civil_time as civil
+    from . import date_limits as dates
     from .errors import ChartError
 else:
     import astronomy as astro
     import civil_time as civil
+    import date_limits as dates
     from errors import ChartError
 
 
@@ -40,7 +42,9 @@ def calculate(request):
         if not name:
             raise ChartError('name_required', 'Добавьте имя карты.')
         date, time, place, timezone = request.get('date'), request.get('time'), city['name'], city['timezone']
+        dates.validate_natal_date(date)
         moment, offset, fold = civil.local_to_utc(date, time, timezone, request.get('fold'))
+        dates.validate_natal_moment(moment)
     else:
         raise ChartError('invalid_mode', 'Неизвестный режим расчёта.')
     jd = astro.julian_tt(moment)

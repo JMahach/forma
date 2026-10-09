@@ -1,3 +1,4 @@
+import { EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR } from '../../shared/date-limits.js';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES, cycleLabel, cycleEventLabel, cycleCalendarYear } from '../domain/cycles.js';
 import { escapeHtml as esc } from '../ui/html.js';
 import { attachDatePicker } from './date-picker.js';
@@ -203,7 +204,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
       if (wasVisible) onLayout();
       return;
     }
-    year.min = String(state.minYear || 1801); year.max = String(state.maxYear || 2399);
+    year.min = String(state.minYear ?? EPHEMERIS_FIRST_YEAR); year.max = String(state.maxYear ?? EPHEMERIS_LAST_YEAR);
     if (document.activeElement !== year) { year.value = state.year == null ? '' : String(state.year); year.setAttribute('aria-invalid', 'false'); }
     $('returnsYearLabel').textContent = state.year == null ? 'Вся жизнь' : String(state.year);
     $('returnsBodiesLabel').textContent = `Планеты · ${state.bodies?.length || 0}`;

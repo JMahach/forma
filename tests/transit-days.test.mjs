@@ -248,8 +248,8 @@ test('RAM retains seven days while disk preserves prepared days within its byte 
 
 test('query validation is exact, version aware and uses UTC dates through month/year boundaries', () => {
   const query = value => new URLSearchParams(value);
-  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '2' }), now()), { date, versioned: true, allowCalculate: true });
-  assert.equal(validateTransitDayQuery(query({ date: '2026-09-24' }), now()).versioned, false);
+  for (const date of ['2026-09-22', '2026-09-24', '2026-09-26']) assert.deepEqual(validateTransitDayQuery(query({ date, v: '2' }), now()), { date, allowCalculate: true });
+  assert.deepEqual(validateTransitDayQuery(query({ date: '2026-09-24' }), now()), { date: '2026-09-24', allowCalculate: true });
   for (const value of [{}, { date: '2026-9-24' }, { date: '2026-02-30' }, { date: '../2026-09-24' }, { date: '2026-09-24', v: '0' }, { date: '2026-09-24', v: '' }]) {
     assert.throws(() => validateTransitDayQuery(query(value), now()), error => error.status === 400);
   }
@@ -319,7 +319,7 @@ async function request(service, url, { method = 'GET', headers = {} } = {}) {
   return result;
 }
 
-test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and version-scoped immutable caching', async t => {
+test('HTTP endpoint sends negotiated lossless packets and HEAD without browser storage or conditional reads', async t => {
   let calls = 0;
   const service = await cache(t, { generateDay: async date => { calls++; return makeDay(date); } });
   const url = `/api/transit/day?date=2026-09-24&v=2&r=${service.calculationVersion}`;
@@ -328,17 +328,17 @@ test('HTTP endpoint sends negotiated lossless packets, ETags, HEAD/304 and versi
     assert.equal(result.status, 200); assert.equal(result.headers['Content-Encoding'], encoding);
     assert.equal(result.headers['Content-Type'], 'application/octet-stream');
     assert.equal(result.headers['Content-Length'], result.body.length);
-    assert.equal(result.headers.Vary, 'Accept-Encoding'); assert.match(result.headers['Cache-Control'], /immutable/);
+    assert.equal(result.headers.Vary, 'Accept-Encoding'); assert.equal(result.headers['Cache-Control'], 'no-store'); assert.equal(result.headers.ETag, undefined);
     assert.equal(decodeTransitDay(unpack(result.body)).date, '2026-09-24');
-    const cached = await request(service, url, { headers: { 'accept-encoding': accept, 'if-none-match': `W/${result.headers.ETag}` } });
-    assert.equal(cached.status, 304); assert.equal(cached.body, undefined);
+    const cached = await request(service, url, { headers: { 'accept-encoding': accept, 'if-none-match': '*' } });
+    assert.equal(cached.status, 200); assert.deepEqual(cached.body, result.body);
     const head = await request(service, url, { method: 'HEAD', headers: { 'accept-encoding': accept } });
     assert.equal(head.status, 200); assert.equal(head.body, undefined); assert.deepEqual(head.headers, result.headers);
   }
   assert.equal(calls, 1);
-  assert.equal((await request(service, '/api/transit/day?date=2026-09-24&v=2')).headers['Cache-Control'], 'no-cache');
+  assert.equal((await request(service, '/api/transit/day?date=2026-09-24&v=2')).headers['Cache-Control'], 'no-store');
   assert.equal((await request(service, `${url.slice(0, -64)}${'f'.repeat(64)}`)).status, 409);
-  assert.equal((await request(service, '/api/transit/day?date=2026-09-24')).headers['Cache-Control'], 'no-cache');
+  assert.equal((await request(service, '/api/transit/day?date=2026-09-24')).headers['Cache-Control'], 'no-store');
   assert.equal((await request(service, url, { method: 'POST' })).status, 405);
   assert.equal((await request(service, url, { headers: { origin: 'https://unrelated.example' } })).status, 403);
   assert.equal((await request(service, '/.cache/transit/v1/2026-09-24.gz')).status, 404);
@@ -404,7 +404,7 @@ test('real Python batch and binary packet reproduce all 1440 scalar charts exact
 
 test('disk fingerprint follows calculation bytes, not deployment timestamps or interface changes', async t => {
   const sourceRoot = await directory(t);
-  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py', 'server/python/transit_day.py', 'server/python/calculator.py', 'server/python/lifetime_file.py',
+  const inputs = ['server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/date_limits.py', 'shared/date-limits.js', 'server/python/errors.py', 'server/python/transit_day.py', 'server/python/calculator.py', 'server/python/lifetime_file.py',
     'shared/day-packets/moment-columns.js', 'requirements.txt', 'shared/day-packets/transit-format.js', 'shared/day-packets/float64-codec.js',
     'shared/day-packets/decode.js', 'server/packets/encode.mjs'];
   for (const file of [...inputs, 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1']) {

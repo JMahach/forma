@@ -415,3 +415,29 @@ for (const field of ['birthDate', 'birthTime', 'city']) test(`changing calculate
   assert.deepEqual(h.store.charts[0].personality, [25]);
   assert.deepEqual(h.calls.toasts, []);
 });
+
+
+test('new natal calculations reject dates outside the hundred-year creation window before transport', async t => {
+  const h = formHarness(t, { charts: [natalChart()] });
+  for (const value of ['31.12.1800', '01.01.2300', '01.01.2500']) {
+    h.form.open(true, 'natal-1'); h.element('birthDate').value = value;
+    const submitting = h.submit(); await settle();
+    assert.equal(h.requests.length, 0, 'invalid natal dates never start a calculation');
+    await submitting;
+    assert.match(h.element('formError').textContent, /1801.*2299/);
+    assert.equal(h.document.activeElement, h.element('birthDate'));
+  }
+});
+
+test('creation limits retain both boundary dates and metadata edits of older saved charts', async t => {
+  const old = { ...natalChart(), utc: '2350-01-01T12:00:00Z', birthDate: '2350-01-01', birthTime: '13:00' };
+  const h = formHarness(t, { charts: [old] });
+  h.form.open(true, old.id); h.element('chartName').value = 'Новое имя'; await h.submit();
+  assert.equal(h.requests.length, 0); assert.equal(h.calls.persisted.at(-1)[0].utc, old.utc);
+  for (const value of ['01.01.1801', '31.12.2299']) {
+    h.form.open(true, old.id); h.element('birthDate').value = value;
+    const submitting = h.submit(); const request = h.requests.at(-1);
+    assert.equal(request?.url, '/api/calculate');
+    request.resolve({ chart: { personality: [], design: [] } }); await submitting;
+  }
+});

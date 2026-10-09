@@ -11,10 +11,13 @@ export function createNatalDayExplorer({
   dayClient = createNatalDayClient(), onStateChange = () => {}, onRender = () => {},
 } = {}) {
   let original = null, current = null, day = null, index = 0, referenceIndex = null;
+  let releaseDay = null;
   let opened = false, status = 'idle', error = '', exactOriginal = true, sequence = 0, active = null;
   const state = () => ({ original, current, day, index, referenceIndex, opened, status, error, exactOriginal, available: canExploreNatalDay(original) });
   const notify = () => onStateChange(state());
   const cancel = () => { sequence += 1; active?.controller.abort(); active = null; };
+
+  const discardDay = () => { releaseDay?.(); releaseDay = null; day = null; index = 0; referenceIndex = null; };
 
   async function load() {
     if (!opened || !canExploreNatalDay(original)) return false;
@@ -25,6 +28,8 @@ export function createNatalDayExplorer({
       try {
         const result = await dayClient.getDay(chart, { signal: controller.signal });
         if (requestSequence !== sequence || !opened) return false;
+        const release = dayClient.retainDay?.(result);
+        releaseDay?.(); releaseDay = release;
         day = result; referenceIndex = natalDayIndexAt(day, chart.utc); index = referenceIndex; status = 'ready';
         return true;
       } catch (failure) {
@@ -50,7 +55,7 @@ export function createNatalDayExplorer({
 
   function close() {
     if (!opened) return;
-    cancel(); opened = false; status = day ? 'ready' : 'idle'; error = '';
+    cancel(); discardDay(); opened = false; status = 'idle'; error = '';
     reset();
   }
 
@@ -59,7 +64,7 @@ export function createNatalDayExplorer({
     get state() { return state(); },
     select(chart) {
       if (chart === original) return;
-      cancel(); original = chart; current = chart; day = null; index = 0; referenceIndex = null;
+      cancel(); discardDay(); original = chart; current = chart;
       opened = false; status = 'idle'; error = ''; exactOriginal = true; notify();
     },
     updateMetadata(chart) {

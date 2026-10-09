@@ -25,8 +25,9 @@ test('cycle revisions bind exact calculation inputs including Chiron while inter
   assert.equal(typeof cyclesService.cyclesCalculationFingerprint, 'function');
   const copy = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-cycles-revision-'));
   t.after(() => fs.rm(copy, { recursive: true, force: true }));
-  const names = ['server/python/cycles.py', 'server/python/astronomy.py', 'server/python/civil_time.py', 'server/python/errors.py',
-    'requirements.txt', 'server/services/cycles.mjs', 'shared/cycles-format.js', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'];
+  const names = ['server/python/cycles.py', 'server/python/return_index.py', 'server/python/astronomy.py', 'server/python/civil_time.py',
+    'server/python/date_limits.py', 'server/python/errors.py', 'requirements.txt', 'server/services/cycles.mjs',
+    'shared/cycles-format.js', 'shared/date-limits.js', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'];
   for (const name of names) { await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true }); await fs.copyFile(path.join(root, name), path.join(copy, name)); }
   const original = await cyclesService.cyclesCalculationFingerprint(root);
   assert.match(original, /^[a-f0-9]{64}$/); assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
@@ -51,7 +52,7 @@ test('cycle revisions bind exact calculation inputs including Chiron while inter
 test('optional ephemeris files and nested inputs invalidate cycle results', async t => {
   const copy = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-cycles-optional-'));
   t.after(() => fs.rm(copy, { recursive: true, force: true }));
-  for (const name of ['server/python', 'server/services/cycles.mjs', 'shared/cycles-format.js', 'requirements.txt', 'data/ephe']) {
+  for (const name of ['server/python', 'server/services/cycles.mjs', 'shared/cycles-format.js', 'shared/date-limits.js', 'requirements.txt', 'data/ephe']) {
     await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true });
     await fs.cp(path.join(root, name), path.join(copy, name), { recursive: true });
   }
@@ -293,7 +294,7 @@ test('native HTTP routes forward cycle events and charts while cross-origin call
   assert.equal(calls.length, 2);
 });
 
-test('opening a server-verified event reuses its identity and ignores client-provided metadata', async () => {
+test('opening a known UTC needs no cached event descriptor and ignores client-provided metadata', async () => {
   const observed = [];
   const service = createCycles({ root, generate: async (input, trusted) => {
     observed.push({ input, trusted });
@@ -303,9 +304,9 @@ test('opening a server-verified event reuses its identity and ignores client-pro
   const list = await service.events(input), event = list.events[2];
   const exact = { birthUtc: input.birthUtc, body: input.body, eventUtc: event.utc, timezone: 'Europe/London' };
   const chart = await service.chart({ ...exact, verifiedEvent: { ...event, cycle: 99 } });
-  assert.equal(observed[1].trusted?.verifiedEvent, event);
+  assert.equal(observed[1].trusted?.verifiedEvent, undefined);
   assert.equal(observed[1].input.verifiedEvent, undefined);
-  assert.equal(chart.event.pass, 3); assert.equal(chart.chart.utc, event.utc);
+  assert.equal(chart.event, undefined); assert.equal(chart.chart.utc, event.utc);
   const direct = await generateCycles({ root, input: { ...exact, action: 'chart' } });
   const numbers = value => { const { createdAt, updatedAt, ...rest } = value.chart; return { ...value, chart: rest }; };
   assert.deepEqual(numbers(chart), numbers(direct));
@@ -334,7 +335,7 @@ test('the worker and service composition semantically validates every event once
   }) };
   const reads = { birth: 0, event: 0 }; let workers = 0;
   Date.parse = value => {
-    if (new Error().stack.includes('validEvent')) reads[value === input.birthUtc ? 'birth' : 'event']++;
+    if (new Error().stack.includes('validCycleEvent')) reads[value === input.birthUtc ? 'birth' : 'event']++;
     return parse(value);
   };
   t.after(() => { Date.parse = parse; });
@@ -345,9 +346,10 @@ test('the worker and service composition semantically validates every event once
   t.after(() => service.close());
   const result = await service.events(input);
   assert.deepEqual(result, output); assert.equal(service.size, 1);
-  assert.deepEqual(reads, { birth: 1000, event: 1000 });
+  assert.equal(reads.birth, output.events.length, 'one age check per event at the publication boundary');
+  const acceptedReads = { ...reads };
   assert.equal(await service.events(input), result);
-  assert.deepEqual(reads, { birth: 1000, event: 1000 }, 'the accepted RAM entry requires no further semantic walk');
+  assert.deepEqual(reads, acceptedReads, 'the accepted RAM entry requires no further semantic walk');
   assert.equal(workers, 1);
 });
 
@@ -376,4 +378,21 @@ test('the publication boundary validates worker and injected results, maps error
     await assert.rejects(service.events(requestInput), error => error.code === 'cycles_unavailable');
     assert.equal(service.active, 0); assert.equal(service.size, 0); await service.close();
   }
+});
+
+
+test('a missing return index remains a retryable 503 with its own error code', async t => {
+  let calls = 0;
+  const service = createCycles({ generate: async input => ++calls === 1
+    ? { error: 'return_index_unavailable', message: 'Индекс возвратов ещё не создан.', body: input.body }
+    : emptyEvents(input) });
+  t.after(() => service.close());
+  const failed = await request(service);
+  assert.equal(failed.status, 503);
+  assert.equal(JSON.parse(failed.body).error, 'return_index_unavailable');
+  assert.equal(JSON.parse(failed.body).message, 'Индекс возвратов ещё не создан.');
+  assert.equal(failed.headers['Retry-After'], '3');
+  assert.equal(failed.headers['Cache-Control'], 'private, no-store');
+  assert.equal((await request(service)).status, 200);
+  assert.equal(calls, 2, 'failed preparation is not cached as an empty completed list');
 });

@@ -92,7 +92,7 @@ test('exact handler validates version, shape and range before calculator admissi
   assert.equal((await http(h.handler, `/api/lifetime/moment?utc=${utc}`, 'POST')).status, 405);
   const valid = harness(); const result = await http(valid.handler, `/api/lifetime/moment?utc=${utc}&v=${meta.cacheVersion}`);
   assert.equal(result.status, 200); assert.equal(result.value.version, '1');
-  assert.equal(result.headers['Cache-Control'], 'public, max-age=31536000, immutable');
+  assert.equal(result.headers['Cache-Control'], 'no-store');
 });
 
 test('malformed exact response is rejected and retry never reuses the failed result', async () => {
@@ -160,7 +160,7 @@ test('HTTP exact requests share four calculation slots and repeated UTC without 
   assert.equal(jobs.length, 4, 'grid reads do not enter the scalar calculator');
 });
 
-test('server exact eviction does not discard compact exact and grid moments already saved by the browser', async () => {
+test('server exact caching is independent from browser requests that never retain intermediate moments', async () => {
   const calls = [], s = service({ capacity: 1, calculate: input => {
     calls.push(input.mode); return full(input.utc);
   } });
@@ -172,10 +172,11 @@ test('server exact eviction does not discard compact exact and grid moments alre
     return { ok: result.status === 200, json: async () => result.value };
   } });
   const first = await client.getMinute(milliseconds);
-  assert.equal(first, await client.getMinute(milliseconds));
+  assert.deepEqual(first, await client.getMinute(milliseconds));
   await client.getPoint(0); await client.getMinute(milliseconds);
-  assert.equal(requests.length, 3);
-  assert.deepEqual(requests.slice(1).map(request => request.cache), ['default', 'default']);
+  assert.equal(requests.length, 5);
+  assert.ok(requests.every(request => request.cache === 'no-store'));
+  assert.equal(client.peekMinute(milliseconds), null);
 });
 
 test('client rejects mismatched exact UTC, contract versions and malformed sides before caching', async () => {

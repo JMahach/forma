@@ -11,12 +11,15 @@ from server.python.errors import ChartError
 
 
 class ExactMomentTests(unittest.TestCase):
-    def test_full_moment_matches_existing_natal_bits_without_day_generation(self):
+    def test_full_moment_matches_full_transit_chart_bits_without_day_generation(self):
         for utc in ('1801-01-01T12:31:00Z', '1900-03-01T12:31:00Z',
                     '2000-02-29T12:31:00Z', '2026-10-02T12:31:00Z', '2399-12-31T12:31:00Z'):
             with self.subTest(utc=utc):
-                expected = calculator.calculate(dict(mode='natal', name='Parity', date=utc[:10], time=utc[11:16],
-                    city=dict(id='utc', name='UTC', timezone='UTC')))['chart']
+                # Compare with a normal full chart throughout the ephemeris
+                # range. Creating a natal chart reserves its next 100 years.
+                with mock.patch.object(calculator, 'dt') as clock:
+                    clock.datetime.now.return_value = civil.transit_utc(utc)
+                    expected = calculator.calculate(dict(mode='transit'))['chart']
                 with mock.patch.object(astro, 'sample_columns', side_effect=AssertionError('No day')):
                     actual = calculator.calculate(dict(mode='transit_moment', utc=utc))
                 self.assertEqual(actual['utc'], utc)

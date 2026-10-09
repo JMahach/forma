@@ -357,7 +357,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(chart['designArcResidualDegrees'].hex(), residual.hex())
 
     def test_design_only_matches_natal_exactly_without_unused_personality_work(self):
-        for date in ('1801-01-01', '1998-08-11', '2024-02-29', '2399-12-31'):
+        for date in ('1801-01-01', '1998-08-11', '2024-02-29', '2299-12-31'):
             with self.subTest(date=date):
                 chart = calc.calculate(dict(mode='natal', name='Parity', date=date, time='12:34',
                     city=dict(id='utc', name='UTC', timezone='UTC')))['chart']
@@ -385,6 +385,40 @@ class ChartTests(unittest.TestCase):
                     '1800-12-31T23:59:59Z', '2400-01-01T00:00:00Z'):
             with self.subTest(utc=utc), self.assertRaises(ChartError):
                 calc.calculate(dict(mode='transit_design', utc=utc))
+
+
+class NatalCreationRangeTests(unittest.TestCase):
+    def request(self, date, time='12:00', timezone='UTC'):
+        return dict(mode='natal', name='Граница', date=date, time=time,
+                    city=dict(id='range-test', name='Город', timezone=timezone))
+
+    def test_new_natal_requires_one_hundred_available_calendar_years(self):
+        for date, time, zone in [
+            ('1800-12-31', '12:00', 'UTC'), ('2300-01-01', '12:00', 'UTC'),
+            ('2500-01-01', '12:00', 'UTC'), ('1801-01-01', '00:00', 'Etc/GMT-14'),
+            ('2299-12-31', '23:59', 'Etc/GMT+12'),
+        ]:
+            with self.subTest(date=date, timezone=zone):
+                with self.assertRaises(ChartError) as error:
+                    calc.calculate(self.request(date, time, zone))
+                self.assertEqual(error.exception.payload['error'], 'unsupported_date')
+                self.assertIn('наталь', error.exception.payload['message'].lower())
+                self.assertIn('2299', error.exception.payload['message'])
+
+    def test_natal_boundary_dates_are_available_in_utc(self):
+        for date in ('1801-01-01', '2299-12-31'):
+            with self.subTest(date=date):
+                chart = calc.calculate(self.request(date))['chart']
+                self.assertEqual(chart['birthDate'], date)
+                self.assertEqual(len(chart['activations']['personality']), 13)
+
+    def test_later_transit_and_existing_local_days_keep_the_full_range(self):
+        utc = '2399-12-31T12:00:00Z'
+        point = calc.calculate(dict(mode='transit_moment', utc=utc))
+        self.assertEqual(point['utc'], utc)
+        self.assertEqual(len(point['longitudes']), 11)
+        self.assertEqual(civil.iso(civil.local_to_utc('2399-12-31', '12:00', 'UTC')[0]), utc)
+        self.assertEqual(len(civil.local_minutes('2399-12-31', 'UTC')), 1440)
 
 
 if __name__ == '__main__':

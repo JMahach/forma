@@ -53,16 +53,16 @@ test('an exact HTTP contract update preserves prepared-file provenance and numer
   finally { await prepared.close(); }
 });
 
-test('HTTP delivery and cached exact projection adopt the same updated response contract', async t => {
+test('HTTP delivery and exact projection adopt the same updated response contract without retaining points', async t => {
   const copy = await copyProject(t); await changeExactContract(copy);
   const { createLifetimeHandler } = await import(pathToFileURL(path.join(copy, 'server/http/lifetime.mjs')));
   const { createLifetimeClient } = await import(pathToFileURL(path.join(copy, 'src/data/lifetime-client.js')));
-  const { createMomentCache } = await import(pathToFileURL(path.join(copy, 'src/data/moment-cache.js')));
-  const moments = createMomentCache({ storage: { catalogue: async () => [], read: async () => null, write: async () => null, close() {} } });
-  t.after(() => moments.close());
+  const { createTransitDayCache } = await import(pathToFileURL(path.join(copy, 'src/data/transit-day-cache.js')));
+  const days = createTransitDayCache({ indexedDB: null });
+  t.after(() => days.close());
   const handler = createLifetimeHandler({ getMetadata: async () => metadata, getUtcMoment: async () => point });
   const responses = [], urls = [];
-  const client = createLifetimeClient({ moments, fetch: async url => {
+  const client = createLifetimeClient({ days, fetch: async url => {
     urls.push(url);
     const res = { writeHead(status) { this.status = status; }, end(body) { this.body = JSON.parse(body); } };
     await handler({ method: 'GET' }, res, new URL(url, 'http://localhost'));
@@ -73,17 +73,17 @@ test('HTTP delivery and cached exact projection adopt the same updated response 
   assert.equal(responses.at(-1).version, '2');
   assert.equal(chart.utc, utc);
   const cached = client.peekMinute(Date.parse(utc));
-  assert.equal(cached.utc, utc);
+  assert.equal(cached, null);
   assert.equal((await client.getMinute(Date.parse(utc))).utc, utc);
-  assert.equal(urls.length, 2, 'a metadata request and one exact result suffice for subsequent cached projections');
+  assert.equal(urls.length, 3, 'metadata is reused, but each independent point visit returns to the exact API');
 });
 
 
-test('a new exact response contract selects fresh immutable URLs without discarding numeric samples', async t => {
+test('a new exact response contract selects fresh versioned URLs without discarding full-day numbers', async t => {
   const copy = await copyProject(t); await changeExactContract(copy);
   const { createLifetimeMoments: updatedMoments } = await import(pathToFileURL(path.join(copy, 'server/services/lifetime.mjs')));
   const options = { lifetimeFile: { metadata, cacheIdentity: 'c'.repeat(64) }, calculationFingerprint: metadata.calculationVersion };
   const previous = createLifetimeMoments(options).metadata, updated = updatedMoments(options).metadata;
-  assert.notEqual(updated.cacheVersion, previous.cacheVersion, 'old exact response bodies must not occupy the new immutable URL');
+  assert.notEqual(updated.cacheVersion, previous.cacheVersion, 'old exact response contracts must not occupy the new versioned URL');
   assert.equal(updated.calculationVersion, previous.calculationVersion, 'stored numbers remain compatible across response updates');
 });

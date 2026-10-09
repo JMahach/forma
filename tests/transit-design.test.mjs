@@ -97,13 +97,18 @@ test('public Design-only calculation uses the scalar pool and preserves exact ou
   assert.equal(res.status, 200); assert.deepEqual(JSON.parse(res.body), standalone);
 });
 
-test('real lifetime Design float bits, UTC and residual equal the production natal calculator across supported years', async t => {
+test('real lifetime Design float bits, UTC and residual equal the full calculator across supported years', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'forma-lifetime-parity-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const calculate = createCalculator({ root });
   t.after(() => calculate.close());
-  for (const date of ['1801-01-01', '2024-02-29', '2399-12-31']) {
-    const { chart } = await calculate({ mode: 'natal', name: 'Parity', date, time: '12:30', city: { id: 'utc', name: 'UTC', timezone: 'UTC' } });
+  for (const date of ['1801-01-01', '2024-02-29', '2299-12-31', '2399-12-31']) {
+    // Natal creation needs a future century; ordinary transit still covers the
+    // full ephemeris range. Freeze only its clock, retaining the real calculator.
+    const script = `import json\nfrom unittest.mock import patch\nfrom server.python import calculator, civil_time\nwith patch.object(calculator, 'dt') as clock:\n clock.datetime.now.return_value=civil_time.transit_utc('${date}T12:30:00Z')\n print(json.dumps(calculator.calculate(dict(mode='transit'))))`;
+    const { chart } = date <= '2299-12-31'
+      ? await calculate({ mode: 'natal', name: 'Parity', date, time: '12:30', city: { id: 'utc', name: 'UTC', timezone: 'UTC' } })
+      : JSON.parse((await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } })).stdout);
     const expected = new Map(chart.activations.design.map(entry => [entry.planet, entry.longitude]));
     const longitudes = LIFETIME_PLANETS.map(planet => chart.activations.personality.find(entry => entry.planet === planet).longitude);
     const file = path.join(directory, `${date}.f64le`), metadataFile = file.replace('.f64le', '.metadata.json');
