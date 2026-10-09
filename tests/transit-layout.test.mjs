@@ -152,7 +152,7 @@ test('both day sliders are separate studio children after the full drawing viewp
     assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
     assert.match(page, new RegExp(`<label[^>]*for="${id}"[^>]*>Шкала дня: время ${context}</label>`));
   }
-  assert.match(page, /id="natalDayReset" title="Вернуться к сохранённому времени рождения">К рождению<\/button>/);
+  assert.match(byId('natalDayRetry').attributes, /\bhidden(?:\s|$)/);
 });
 
 test('permanent studio insets retain the full drawing viewport independently of slider visibility', () => {
@@ -187,7 +187,7 @@ test('the drawing has no CSS fade, blur or compositing mask at any breakpoint', 
   }
 });
 
-test('the day slider keeps its 48px hit area but paints only a slim rounded local backing', () => {
+test('all timelines keep their native hit area above a permanent full-width footer', () => {
   for (const [width, height] of [[320, 568], [393, 747], [844, 390], [1440, 900]]) {
     const controls = declarationsAt('.day-controls', width, height);
     assert.equal(controls.position, 'absolute', 'measured layout owns placement, independent of panel contents');
@@ -196,15 +196,16 @@ test('the day slider keeps its 48px hit area but paints only a slim rounded loca
     assert.equal(controls.border, '0');
     assert.equal(controls['box-shadow'], 'none');
     assert.equal(controls.background, 'transparent', 'the hit area cannot hide a full-height strip of the chart');
-    const backing = declarationsAt('.day-controls::before', width, height);
-    assert.equal(backing.position, 'absolute');
-    assert.equal(backing.inset, '13px -8px 9px');
-    assert.equal(backing.background, 'var(--canvas-background)');
-    assert.equal(backing['border-radius'], '8px');
-    assert.match(backing.border, /^1px solid /);
-    assert.equal(backing['pointer-events'], 'none');
-    const [top, , bottom] = backing.inset.split(' ').map(Number.parseFloat);
-    assert.equal(Number.parseFloat(controls.height) - top - bottom, 26, 'only the 26px pill is opaque');
+    const backing = declarationsAt('.timeline-dock', width, height);
+    assert.equal(backing.position, 'fixed', 'Safari can extend the viewport-attached background under its chrome');
+    assert.equal(backing.inset, 'var(--timeline-dock-top, calc(100% - 74.8px)) 0 0');
+    assert.equal(backing.height, undefined, 'top and bottom stretch the backing through the obscured area');
+    assert.equal(backing.background, 'var(--timeline-background)');
+    assert.match(backing['border-top'], /^1px solid /);
+    assert.notEqual(backing['pointer-events'], 'none', 'footer stops gestures reaching the scene');
+    assert.equal(backing['touch-action'], 'none');
+    assert.equal(declarationsAt('html', width, height).overflow, 'hidden');
+    assert.equal(declarationsAt('body', width, height)['overscroll-behavior'], 'none');
     assert.equal(declarationsAt(".day-controls input[type='range']", width, height).position, 'relative', 'the native control paints above the backing');
     for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
       assert.equal(declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height).height, '2px');
@@ -227,16 +228,15 @@ test('CSS leaves the centered footer geometry to the studio, without a width swi
   }
 });
 
-test('time details appear within the existing control height, without a separate action row', () => {
+test('compact day actions retain accessible targets without a hover-only heading', () => {
   for (const [width, height] of [[393, 747], [844, 390], [1100, 800], [1440, 900]]) {
     const heading = declarationsAt('.transit-controls-heading', width, height);
     assert.equal(heading.position, 'absolute');
-    assert.equal(heading.height, '14px');
-    assert.equal(heading.opacity, '0');
+    assert.equal(heading.height, '44px');
+    assert.notEqual(heading.opacity, '0');
     assert.equal(heading['pointer-events'], 'none');
-    assert.equal(declarationsAt('.transit-controls-heading > button', width, height).display, 'none');
-    assert.equal(declarationsAt('.day-controls time', width, height)['text-overflow'], 'ellipsis');
-    assert.equal(declarationsAt('.day-controls:focus-within .transit-controls-heading', width, height).opacity, '1');
+    assert.equal(declarationsAt('.transit-controls-heading > button', width, height).height, '44px');
+    assert.equal(declarationsAt('.transit-controls-heading > button', width, height)['pointer-events'], 'auto');
   }
 });
 
@@ -265,7 +265,7 @@ test('coarse pointers gain a 56px invisible range target without moving the rail
     assert.equal(wrapper.height, '44px'); assert.equal(wrapper['margin-top'], '4px');
     assert.equal(declarationsAt('.day-reference-rail', width, height, { coarse: true }).inset, '0 22px');
     const heading = declarationsAt('.lifetime-heading', width, height, { coarse: true });
-    assert.equal(heading['z-index'], '1', 'date inputs remain above the invisible touch target');
+    assert.ok(Number(heading['z-index']) > 0, 'date inputs remain above the invisible touch target');
     assert.equal(coarse['z-index'], undefined, 'the expanded hit area never covers date buttons or inputs');
     for (const id of ['transitTime', 'natalDayTime', 'lifetimeTime']) {
       assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
@@ -393,20 +393,16 @@ test('integrated reference buttons and track endpoints share the native thumb tr
     assert.equal(marker.transform, 'translate(-50%, -50%)');
     for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
       assert.equal(declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height).background,
-        'linear-gradient(to right, transparent 22px, #d9d9ce 22px, #d9d9ce calc(100% - 22px), transparent calc(100% - 22px))');
+        'linear-gradient(to right, transparent 22px, #c8c8c8 22px, #c8c8c8 calc(100% - 22px), transparent calc(100% - 22px))');
     }
   }
 });
 
-test('loading errors keep retry accessible inside the same 48px slot', () => {
+test('loading errors keep retry accessible inside the shared footer heading', () => {
   for (const [width, height] of [[320, 568], [393, 747], [844, 390], [1440, 900]]) {
-    for (const status of ['loading', 'error']) {
-      assert.equal(declarationsAt(`.day-controls[data-status='${status}'] .transit-controls-heading time`, width, height).display, 'none',
-        'status feedback and the current time cannot occupy the same line on hover or focus');
-    }
-    const heading = declarationsAt(".day-controls[data-status='error'] .transit-controls-heading", width, height);
-    assert.equal(heading.height, '48px');
-    assert.equal(heading.opacity, '1');
+    const heading = declarationsAt('.transit-controls-heading', width, height);
+    assert.equal(heading.height, '44px');
+    assert.notEqual(heading.opacity, '0');
     assert.equal(declarationsAt(".day-controls[data-status='error'] .day-range", width, height).visibility, 'hidden');
     const retry = declarationsAt(".day-controls[data-status='error'] .transit-controls-heading > button", width, height);
     assert.equal(retry.display, 'block');
@@ -599,4 +595,24 @@ test('printing hides both day sliders and restores the full print drawing height
   assert.match(printBlocks, /\.day-controls\s*\{[^}]*display:\s*none\s*!important/);
   assert.match(printBlocks, /\.studio\s*>\s*\.canvas-wrap\s*\{[^}]*height:\s*260mm/);
   assert.doesNotMatch(printBlocks, /mask-image|mask-composite|backdrop-filter|blur\(/);
+});
+
+
+test('loading canvas fallback and its message cannot start a native page pinch', () => {
+  // While canvasWrap is inert, the studio background receives the touch;
+  // the separate loading message is another target outside the scene handler.
+  const allowsPinch = start => {
+    for (let node = start; node; node = node.parent) {
+      const classes = /class="([^"]+)"/.exec(node.attributes)?.[1].split(/\s+/) || [];
+      const id = /id="([^"]+)"/.exec(node.attributes)?.[1];
+      const selectors = [node.tag, ...classes.map(name => `.${name}`), ...(id ? [`#${id}`] : [])];
+      const policy = Object.assign({}, ...selectors.map(selector => declarationsAt(selector, 390, 844)))['touch-action'] || 'auto';
+      if (!['auto', 'manipulation'].includes(policy) && !policy.split(/\s+/).includes('pinch-zoom')) return false;
+    }
+    return true;
+  };
+  assert.equal(allowsPinch(byId('canvasWrap').parent), false, 'inert loading canvas must not expose browser pinch');
+  assert.equal(allowsPinch(byId('chartLoadingStatus')), false, 'the loading text must not expose browser pinch');
+  assert.notEqual(declarationsAt('.app-shell', 390, 844)['touch-action'], 'none', 'native list panning remains available');
+  assert.equal(declarationsAt('.returns-content', 390, 844).overflow, 'auto');
 });

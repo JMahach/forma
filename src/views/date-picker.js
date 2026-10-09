@@ -8,10 +8,11 @@ const PAGE_YEARS = 25;
 
 // A non-modal calendar: typed input remains independent, and Tab can leave the
 // popup. Only its active grid choice is tabbable; arrows move between choices.
-export function attachDatePicker({ input, button, getBounds, onSelect, precision = 'day' }) {
+export function attachDatePicker({ input, button, getBounds, onSelect, precision = 'day', clearLabel = '', onClear = null, getInitialDate = () => null, presentation = null }) {
   const document = input.ownerDocument, window = document.defaultView;
   const popup = document.createElement('section');
-  popup.className = 'date-picker'; popup.id = `${input.id}-calendar`; popup.hidden = true;
+  popup.className = ['date-picker', presentation?.className].filter(Boolean).join(' ');
+  popup.id = `${input.id}-calendar`; popup.hidden = true;
   popup.setAttribute('role', 'dialog');
   popup.setAttribute('aria-label', input.getAttribute('aria-label') || 'Выбор даты');
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', popup.id); button.setAttribute('aria-expanded', 'false');
@@ -41,11 +42,20 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     const viewport = window.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
     const width = viewport?.width || window.innerWidth, height = viewport?.height || window.innerHeight;
-    popup.style.maxHeight = `${Math.max(0, height - 16)}px`;
+    // A containing panel may reserve its header. Selection and keyboard logic
+    // stay independent of that optional presentation boundary.
+    const bounds = presentation?.getBounds?.();
+    const area = { left: Math.max(left + 8, bounds?.left ?? -Infinity),
+      top: Math.max(top + 8, bounds?.top ?? -Infinity),
+      right: Math.min(left + width - 8, bounds?.right ?? Infinity),
+      bottom: Math.min(top + height - 8, bounds?.bottom ?? Infinity) };
+    if (bounds) popup.style.maxWidth = `${Math.max(0, area.right - area.left)}px`;
+    popup.style.maxHeight = `${Math.max(0, area.bottom - area.top)}px`;
     const box = popup.getBoundingClientRect();
-    popup.style.left = `${clamp(anchor.left, left + 8, Math.max(left + 8, left + width - box.width - 8))}px`;
+    popup.style.left = `${clamp(bounds ? area.left : anchor.left, area.left, Math.max(area.left, area.right - box.width))}px`;
     const above = anchor.top - box.height - 8;
-    popup.style.top = `${clamp(above >= top + 8 ? above : anchor.bottom + 8, top + 8, Math.max(top + 8, top + height - box.height - 8))}px`;
+    const preferredTop = presentation?.preferBelow || above < area.top ? anchor.bottom + 8 : above;
+    popup.style.top = `${clamp(preferredTop, area.top, Math.max(area.top, area.bottom - box.height))}px`;
   }
   function close(restoreFocus = false) {
     if (popup.hidden) return;
@@ -97,6 +107,11 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     const now = new Date(), currentYear = now.getFullYear();
     const today = isoDate(currentYear, now.getMonth() + 1, now.getDate());
     choices = []; positions = []; popup.replaceChildren(); popup.dataset.view = view;
+    const dismiss = control('×', 'Закрыть календарь', () => close(true));
+    if (presentation?.title) {
+      const heading = node('div', '', 'returns-menu-heading');
+      heading.append(node('strong', presentation.title), dismiss); popup.append(heading);
+    }
     const header = node('div', '', 'date-picker-heading');
     const previous = control('‹', view === 'years' ? 'Предыдущие годы' : view === 'months' ? 'Предыдущий год' : 'Предыдущий месяц', () => navigate(-1));
     const next = control('›', view === 'years' ? 'Следующие годы' : view === 'months' ? 'Следующий год' : 'Следующий месяц', () => navigate(1));
@@ -107,9 +122,10 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     previous.hidden = next.hidden = view === 'periods';
     previous.disabled = view === 'years' ? page === minYear() : view === 'months' ? year === minYear() : isoDate(year, month) <= minimum;
     next.disabled = view === 'years' ? page + PAGE_YEARS > maxYear() : view === 'months' ? year === maxYear() : isoDate(year, month, 31) >= maximum;
-    firstHeader = previous.hidden || previous.disabled ? heading : previous;
-    const dismiss = control('×', 'Закрыть календарь', () => close(true));
-    header.append(previous, heading, next, dismiss); popup.append(header);
+    firstHeader = presentation?.title ? dismiss : previous.hidden || previous.disabled ? heading : previous;
+    header.append(previous, heading, next);
+    if (!presentation?.title) header.append(dismiss);
+    popup.append(header);
     const grid = node('div', '', 'date-picker-grid'); grid.setAttribute('role', 'grid'); grid.setAttribute('aria-label', title);
     columns = view === 'days' ? 7 : view === 'months' ? 3 : view === 'periods' ? 4 : 5;
     grid.style.setProperty('--calendar-columns', columns);
@@ -155,6 +171,11 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
       }
     }
     popup.append(grid);
+    if (onClear && clearLabel) {
+      const footer = node('div', '', `date-picker-footer${presentation?.title ? ' returns-menu-actions' : ''}`);
+      footer.append(control(clearLabel, clearLabel, () => { pending = ''; close(true); onClear(); }));
+      popup.append(footer);
+    }
     position(); focusChoice(focused < 0 ? 0 : focused);
   }
   function open() {
@@ -164,7 +185,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
       ? /^\d{4}$/.test(input.value.trim()) ? isoDate(Number(input.value)) : ''
       : normalizeDate(input.value); } catch { selected = ''; }
     if (selected && !allowed(selected)) selected = '';
-    cursor = bounded(selected || minimum); pending = '';
+    cursor = bounded(selected || getInitialDate() || minimum); pending = '';
     [year, month] = cursor.split('-').map(Number); page = pageFor(year); view = 'years';
     popup.hidden = false; button.setAttribute('aria-expanded', 'true'); render();
     document.addEventListener('pointerdown', outside, true); document.addEventListener('focusin', focusOutside);
@@ -178,7 +199,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     if (event.key === 'Tab') {
       // The popup follows its trigger logically, even though it is portalled
       // to body to avoid clipping inside the chart's camera surface.
-      if (!event.shiftKey && current >= 0) { event.preventDefault(); close(); input.focus(); }
+      if (!event.shiftKey && current >= 0 && !onClear) { event.preventDefault(); close(); (input.hidden ? button : input).focus(); }
       else if (event.shiftKey && document.activeElement === firstHeader) { event.preventDefault(); close(true); }
       return;
     }

@@ -3,10 +3,24 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachCameraControls, createCameraChangeHandler } from '../src/views/camera-controls.js';
 import { attachGestures } from './fixtures/gesture-harness.js';
-import { constrainView, zoomAt } from '../src/scene/camera.js';
+import { constrainView, zoomAt, createCamera } from '../src/scene/camera.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
 const closeTo = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} ≈ ${expected}`);
+
+test('zooming out near Home completes scale and translation, but a small zoom in remains intentional', () => {
+  const camera = createCamera({ measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, min: 0.1 }), onChange() {} });
+  camera.reset();
+  const home = camera.getFittedView();
+  camera.zoomAt({ x: 160, y: 300 }, 1.005);
+  closeTo(camera.getView().k, home.k * 1.005, 'small zoom in does not stick');
+  camera.zoomAt({ x: 160, y: 300 }, 2);
+  camera.zoomAt({ x: 220, y: 400 }, home.k * 1.015 / camera.getView().k, 17, -9);
+  assert.deepEqual(camera.getView(), home, 'pinch translation cannot leave a nearly Home camera offset');
+  camera.zoom(1.5);
+  camera.zoom(home.k * 1.01 / camera.getView().k);
+  assert.deepEqual(camera.getView(), home, 'button zoom uses the same finishing behavior');
+});
 const projected = (view, bounds = DRAWING_BOUNDS) => ({
   left: view.x + bounds.x * view.k,
   right: view.x + (bounds.x + bounds.width) * view.k,

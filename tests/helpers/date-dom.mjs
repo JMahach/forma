@@ -40,7 +40,7 @@ export function dateDom() {
       contains(target) { return this === target || this.children.some(child => child.contains(target)); },
       all(predicate) { return this.children.flatMap(child => [...(predicate(child) ? [child] : []), ...child.all(predicate)]); },
       querySelectorAll() { return []; },
-      getBoundingClientRect() { return this.className === 'date-picker'
+      getBoundingClientRect() { return this.className.split(' ').includes('date-picker')
         ? { left: 0, top: 0, width: 286, height: 280, bottom: 280 }
         : { left: 260, top: 710, right: 284, bottom: 738, width: 24, height: 28 }; },
     };

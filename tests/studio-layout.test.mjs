@@ -1,7 +1,8 @@
 import test from 'node:test';
+import * as geometry from '../src/scene/layout.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, STUDIO_BOTTOM_INSET } from '../src/scene/layout.js';
+import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, STUDIO_BOTTOM_INSET, returnsPlacement } from '../src/scene/layout.js';
 import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
@@ -427,17 +428,19 @@ test('space-dependent columns retain every ring/body gate, exact core markup and
 });
 
 test('Home leaves the caption measurable at every fitted scale; zoom and pan hide it', () => {
-  const heading = {}, fitButton = {};
-  const update = createCameraChangeHandler({ heading, fitButton, activationPopover: { reposition() {} } });
+  const heading = {}, fitButton = {}, studio = { dataset: {} };
+  const update = createCameraChangeHandler({ heading, fitButton, studio, activationPopover: { reposition() {} } });
   for (const k of [.25, .55, 1.2]) {
     const home = { x: 120, y: 210, k };
     update(home, home);
     assert.equal(heading.hidden, false, 'the overlap layout decides caption visibility at Home');
     assert.equal(fitButton.hidden, true);
+    assert.equal(studio.dataset.cameraHome, 'true');
     for (const view of [{ ...home, k: home.k * 1.2 }, { ...home, x: home.x + 20 }]) {
       update(view, home);
       assert.equal(heading.hidden, true);
       assert.equal(fitButton.hidden, false);
+      assert.equal(studio.dataset.cameraHome, 'false');
     }
     update(home, home);
     assert.equal(heading.hidden, false);
@@ -510,4 +513,330 @@ test('compact exterior spacing preserves width-limited phone Home while reservin
     assert.ok(layout.center.y + layout.mandalaRadius <= layout.panel.y - 17 - 4 + 1e-7, 'the date fields have at least a four-pixel gap');
     if (width >= 1000) close(layout.panel.y - layout.center.y - layout.mandalaRadius, DAY_CONTROL_TOP_CLEARANCE + 4, 'height-limited Home uses the space above the date heading');
   }
+});
+
+
+test('returns measures the mandala without requiring exterior calculation columns', () => {
+  const placement = (width, height, phone = false) => returnsPlacement({ width, height, top: 74, bottom: 52, side: 4 }, { reserve: 352, phone });
+  for (const [width, height] of [[320,700], [390,844], [1000,910], [1280,1200]]) assert.equal(placement(width,height), 'sheet');
+  assert.equal(placement(1280,800), 'side');
+  assert.equal(placement(1140,800), 'side', 'columns may disappear while the complete mandala keeps its size');
+  assert.equal(placement(844,390,true), 'sheet', 'phones stay bottom sheets even in landscape');
+  for (let width = 700; width <= 2400; width += 25) for (let height = 390; height <= 1800; height += 25) {
+    if (placement(width,height) !== 'side') continue;
+    const options = { height, top: 74, bottom: 52, side: 4 };
+    const full = computeStudioLayout({ ...options, width });
+    const side = computeStudioLayout({ ...options, width: width - 352 });
+    close(side.scale, full.scale, `${width}×${height}: opening returns preserves map size`);
+
+  }
+});
+
+test('drawer placement stays stable when opening changes the canvas width', () => {
+  const full = { width: 1280, height: 800 }, dataset = {};
+  let open = false;
+  const studio = { dataset, getBoundingClientRect: () => full };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => ({ ...full, width: full.width - (open && dataset.returnsLayout === 'side' ? 352 : 0) }) };
+  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false },
+    readStyle: () => ({ scrollPaddingTop: '74px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px', getPropertyValue: name => name === '--returns-side-space' ? '352px' : '0px' }) });
+  const before = layout.refresh();
+  open = true;
+  for (let i=0; i<3; i++) { close(layout.refresh().scale, before.scale, 'opening preserves scale'); assert.equal(layout.returnsLayout,'side'); }
+  full.width = 1000; full.height = 910;
+  for (let i=0; i<3; i++) { layout.refresh(); assert.equal(layout.returnsLayout,'sheet'); }
+  open = false; layout.refresh(); assert.equal(layout.returnsLayout,'sheet', 'closing does not change the arrow');
+});
+
+
+test('return placement respects actual safe-area insets, including landscape notches', () => {
+  for (const width of [844,1100,1280,1440,1800]) for (const height of [390,690,824,910]) {
+    for (const insets of [{side:44,top:74,bottom:52},{side:60,top:112,bottom:98}]) {
+      const options={width,height,...insets};
+      if (returnsPlacement(options,{reserve:352}) !== 'side') continue;
+      const full=computeStudioLayout(options), side=computeStudioLayout({...options,width:width-352});
+      close(side.scale,full.scale,'actual safe-area preserves map size');
+
+    }
+  }
+});
+
+
+test('only a chronicle with crowded period fields needs a second row', () => {
+  for (const kind of ['day', 'natal-day', 'returns']) {
+    for (const width of [320, 390, 699, 948, 1440, 1920]) {
+      const dock = geometry.computeTimelineDock({ width, height: 844, kind });
+      assert.equal(dock.height, 40.8, `${kind} stays compact at ${width}px`);
+      assert.equal(dock.mode, 'inline');
+      assert.equal(dock.rail.y, 796);
+    }
+  }
+  const narrow = geometry.computeTimelineDock({ width: 451, height: 932, kind: 'chronicle' });
+  const wide = geometry.computeTimelineDock({ width: 924, height: 889, kind: 'chronicle' });
+  assert.equal(narrow.mode, 'stacked');
+  assert.equal(narrow.height, 74.8);
+  assert.equal(wide.mode, 'inline');
+  assert.equal(wide.height, 40.8);
+  assert.ok(wide.rail.x >= wide.gutter + wide.controlWidth + 8, 'left period field clears the rail');
+  assert.ok(wide.rail.x + wide.rail.width <= 924 - wide.gutter - wide.controlWidth - 8, 'right field clears the rail');
+});
+
+test('timeline uses the available window width regardless of the mandala diameter or window height', () => {
+  for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
+    const short = geometry.computeTimelineDock({ width: 1440, height: 390, kind });
+    const tall = geometry.computeTimelineDock({ width: 1440, height: 1200, kind });
+    assert.equal(short.rail.x, tall.rail.x);
+    assert.equal(short.rail.width, tall.rail.width);
+    assert.ok(short.rail.width > 1000, `${kind} uses the wide screen instead of the small ring`);
+    const wider = geometry.computeTimelineDock({ width: 1600, height: 390, kind });
+    assert.equal(wider.rail.width - short.rail.width, 160, 'additional screen width all goes to the rail');
+  }
+  const plain = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'natal-day' });
+  assert.equal(plain.rail.x, 24, 'birth marker has room at the left edge');
+  assert.equal(plain.rail.x + plain.rail.width, 366);
+  const returns = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'returns' });
+  assert.equal(returns.rail.x, 26);
+  assert.equal(returns.actionGutter, 0, 'the narrow action uses the existing edge space');
+  assert.equal(390 - returns.actionGutter - returns.actionWidth - returns.rail.x - returns.rail.width, 2, 'the end of the rail clears the action target');
+  assert.equal(returns.actionSize, 39.6);
+  const safe = geometry.computeTimelineDock({ width: 844, height: 390, kind: 'returns', side: 40 });
+  assert.equal(safe.actionGutter, 36, 'the glyph retains its safe device inset inside the narrow target');
+  const day = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'day' });
+  assert.deepEqual(day.rail, plain.rail, 'day no longer reserves a column for Now');
+});
+
+test('safe area extends the shared dock without changing its content height', () => {
+  assert.equal(typeof geometry.computeTimelineDock, 'function');
+  const normal=geometry.computeTimelineDock({width:390,height:844,top:112,safeBottom:0});
+  const safe=geometry.computeTimelineDock({width:390,height:844,top:112,safeBottom:34});
+  assert.equal(safe.height, normal.height+34);
+  assert.equal(safe.mode, normal.mode);
+  assert.equal(safe.rail.y, normal.rail.y-34);
+  const scene=computeStudioLayout({width:390,height:844,top:112,bottom:safe.height,footerHeight:safe.height});
+  assert.ok(scene.center.y+scene.mandalaRadius <= 844-safe.height-4, 'mandala clears the full solid footer');
+});
+
+
+test('studio reads real DOMRect dimensions, whose properties are not enumerable', () => {
+  const rect=Object.create({width:948,height:727});
+  const values=new Map();
+  const studio={dataset:{},style:{setProperty:(k,v)=>values.set(k,v)},getBoundingClientRect:()=>rect};
+  const canvas={dataset:{},parentElement:studio,getBoundingClientRect:()=>rect};
+  const panel={dataset:{},style:{setProperty(){}}};
+  createStudioLayout({canvas,panels:[panel],media:{matches:false},readStyle:()=>({scrollPaddingTop:'74px',scrollPaddingBottom:'52px',scrollPaddingLeft:'4px',getPropertyValue:()=> '0px'})});
+  assert.equal(studio.dataset.dockLayout,'inline');
+  assert.equal(values.get('--timeline-dock-height'),'40.8px');
+  assert.ok(Number.isFinite(Number.parseFloat(panel.style.left)));
+  assert.equal(panel.style.top,'679px');
+});
+
+
+test('returns uses the user supplied narrow-window reference before the map becomes cramped', () => {
+  const options={width:1126,height:889,top:74,bottom:60,side:4};
+  assert.equal(returnsPlacement(options,{reserve:320}),'sheet');
+  assert.equal(returnsPlacement({...options,width:1127},{reserve:320}),'side');
+  assert.equal(returnsPlacement({...options,width:1400,height:1400},{reserve:320}),'sheet','tall windows must still protect the mandala scale');
+});
+
+
+test('924px reference fits date and action beside a shorter useful rail', () => {
+  const dock=geometry.computeTimelineDock({width:924,height:889,top:74,kind:'chronicle'});
+  assert.equal(dock.mode,'inline');
+  assert.equal(dock.height,40.8);
+  assert.ok(dock.rail.width>=530, 'period fields leave all remaining width to the rail');
+  assert.ok(dock.rail.x<=194, 'no oversized side columns');
+});
+
+
+test('chronicle adapts to the measured period controls instead of clipping wider text', () => {
+  const options = { width: 650, height: 844, kind: 'chronicle' };
+  const normal = geometry.computeTimelineDock({ ...options, controlWidth: 140 });
+  const largeText = geometry.computeTimelineDock({ ...options, controlWidth: 210 });
+  assert.equal(normal.mode, 'inline');
+  assert.equal(largeText.mode, 'stacked');
+  assert.ok(normal.rail.x >= 140 + normal.gutter + 8);
+  assert.ok(largeText.rail.width > normal.rail.width, 'moving the fields above returns their width to the rail');
+});
+
+
+test('the visible rail stays centered in every mode, including the returns action', () => {
+  for (const width of [320, 390, 844, 1440]) for (const kind of ['day', 'natal-day', 'chronicle', 'returns']) {
+    const dock = geometry.computeTimelineDock({ width, height: 844, kind });
+    assert.ok(Math.abs(dock.rail.x - (width - dock.rail.x - dock.rail.width)) < 1e-9, `${kind} at ${width}px has equal screen-edge margins`);
+  }
+});
+
+function viewportLayoutHarness({ width = 390, height = 844, top = 0, safeBottom = 0, edgeSpace = 0, viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 }) } = {}) {
+  const rect = { width, height, top, bottom: top + height };
+  const values = new Map(), writes = [];
+  const frames = new Map(); let nextFrame = 0;
+  const document = Object.assign(new EventTarget(), { activeElement: null,
+    defaultView: { requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+      cancelAnimationFrame(id) { frames.delete(id); } } });
+  const fromDate = { tagName: 'INPUT', type: 'text' }, toDate = { tagName: 'INPUT', type: 'text' }, slider = { tagName: 'INPUT', type: 'range' };
+  const studio = { ownerDocument: document, dataset: {}, style: { setProperty(key, value) { values.set(key, value); writes.push([key, value]); } }, getBoundingClientRect: () => rect };
+  let canvasReads = 0;
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => { canvasReads++; return rect; } };
+  const panel = { id: 'lifetimeControls', hidden: false, dataset: {}, style: { setProperty() {} }, contains: node => [fromDate, toDate, slider].includes(node) };
+  const layout = createStudioLayout({ canvas, panels: [panel], viewport, media: { matches: true },
+    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
+      getPropertyValue: name => `${name === '--timeline-safe-bottom' ? safeBottom : name === '--timeline-edge-space' ? edgeSpace : 0}px` }) });
+  function dispatchFocus(type, target, relatedTarget) {
+    const event = new Event(type);
+    Object.defineProperties(event, { target: { value: target }, relatedTarget: { value: relatedTarget } });
+    document.dispatchEvent(event);
+  }
+  function focus(next, related = next) {
+    const previous = document.activeElement;
+    if (previous) {
+      document.activeElement = null;
+      dispatchFocus('focusout', previous, related);
+    }
+    document.activeElement = next;
+    if (next) dispatchFocus('focusin', next, previous);
+  }
+  function frame() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback()); }
+  return { viewport, rect, values, writes, layout, panel, fromDate, toDate, slider, focus, frame, canvasReads: () => canvasReads };
+}
+
+test('the whole chronicle dock follows the visible bottom without reframing the scene', () => {
+  const h = viewportLayoutHarness();
+  const before = { insets: h.layout.insets(), top: h.panel.style.top, reads: h.canvasReads() };
+  const lift = () => parseFloat(h.values.get('--timeline-viewport-lift'));
+  const dockTop = () => parseFloat(h.values.get('--timeline-dock-top'));
+  assert.equal(lift(), 0);
+  assert.equal(dockTop(), 769.2);
+  h.focus(h.fromDate); h.viewport.height = 500;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(lift(), 344, 'keyboard moves every dock control by the same amount');
+  assert.equal(dockTop(), 425.2, 'the entire 74.8px date-and-rail platform is above the keyboard');
+  h.viewport.offsetTop = 70;
+  h.viewport.dispatchEvent(new Event('scroll'));
+  assert.equal(lift(), 274, 'Safari autopan is counted once');
+  assert.equal(dockTop(), 495.2);
+  assert.equal(h.layout.insets(), before.insets, 'camera fit keeps its original insets object');
+  assert.equal(h.panel.style.top, before.top, 'base rail geometry does not change');
+  assert.equal(h.canvasReads(), before.reads, 'viewport events do not measure or refresh the scene');
+  h.viewport.height = 844; h.viewport.offsetTop = 0;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(lift(), 0, 'closing the keyboard restores the exact baseline');
+  assert.equal(dockTop(), 769.2);
+});
+
+test('visible dock positioning includes the studio offset and follows full layout changes', () => {
+  const h = viewportLayoutHarness({ top: -20 });
+  h.focus(h.fromDate); h.viewport.height = 450; h.viewport.offsetTop = 80;
+  h.viewport.dispatchEvent(new Event('scroll'));
+  assert.equal(parseFloat(h.values.get('--timeline-viewport-lift')), 294);
+  assert.equal(parseFloat(h.values.get('--timeline-dock-top')), 455.2);
+  h.rect.width = 844; h.rect.height = 390; h.rect.top = 0; h.rect.bottom = 390;
+  h.viewport.height = 390; h.viewport.offsetTop = 0;
+  h.layout.refresh();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
+  assert.equal(h.values.get('--timeline-dock-top'), '349.2px', 'wide chronicle returns to the single row');
+});
+
+test('missing or invalid visual viewport metrics leave the normal dock in place', () => {
+  for (const viewport of [null, Object.assign(new EventTarget(), { height: NaN, offsetTop: 0 }),
+    Object.assign(new EventTarget(), { height: 0, offsetTop: 0 }),
+    Object.assign(new EventTarget(), { height: 500, offsetTop: Infinity }),
+    Object.assign(new EventTarget(), { height: 900, offsetTop: 0 })]) {
+    const h = viewportLayoutHarness({ viewport });
+    assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
+    assert.equal(h.values.get('--timeline-dock-top'), '769.2px');
+  }
+});
+
+
+test('compact controls keep a small edge clearance even when an embedded browser reports no safe inset', () => {
+  const mobile = viewportLayoutHarness({ edgeSpace: 8 });
+  assert.equal(mobile.panel.style.top, '788px', 'rail and its labels rise above the bottom browser overlap');
+  assert.equal(mobile.values.get('--timeline-dock-height'), '82.8px', 'the continuous backing includes the clearance');
+  const homeIndicator = viewportLayoutHarness({ edgeSpace: 8, safeBottom: 34 });
+  assert.equal(homeIndicator.panel.style.top, '762px', 'a larger native safe area is not padded twice');
+  assert.equal(homeIndicator.values.get('--timeline-dock-height'), '108.8px');
+  const desktop = viewportLayoutHarness({ edgeSpace: 0 });
+  assert.equal(desktop.panel.style.top, '796px', 'desktop has no extra edge allowance');
+  mobile.focus(mobile.fromDate); mobile.viewport.height = 500;
+  mobile.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(mobile.values.get('--timeline-viewport-lift'), '344px');
+  assert.equal(mobile.values.get('--timeline-dock-top'), '417.2px', 'keyboard and edge clearance compose once');
+});
+
+
+test('Done lowers the dock before delayed Safari viewport metrics catch up', () => {
+  const h = viewportLayoutHarness({ edgeSpace: 8 });
+  const before = { insets: h.layout.insets(), top: h.panel.style.top, reads: h.canvasReads() };
+  h.focus(h.fromDate); h.viewport.height = 500;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px');
+  h.focus(null); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'Done must not wait for resize');
+  assert.equal(h.values.get('--timeline-dock-top'), '761.2px', 'no keyboard-sized grey gap');
+  for (const event of ['scroll', 'resize']) {
+    h.viewport.dispatchEvent(new Event(event));
+    assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'late metrics cannot lift a closed editor');
+  }
+  h.viewport.offsetTop = 344; h.viewport.dispatchEvent(new Event('scroll'));
+  h.viewport.offsetTop = 0; h.viewport.dispatchEvent(new Event('scroll'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'autopan reaching the bottom is not a reopened keyboard');
+  h.viewport.height = 600; h.viewport.offsetTop = 40;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'intermediate closing frame stays dismissed');
+  h.viewport.height = 844; h.viewport.offsetTop = 0;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-dock-top'), '761.2px');
+  assert.equal(h.layout.insets(), before.insets);
+  assert.equal(h.panel.style.top, before.top);
+  assert.equal(h.canvasReads(), before.reads, 'focus and keyboard never reframe the camera');
+});
+
+test('focus moves between dates without dropping the dock and a new edit can reopen it', () => {
+  const h = viewportLayoutHarness();
+  h.focus(h.fromDate); h.viewport.height = 500;
+  h.viewport.dispatchEvent(new Event('resize'));
+  h.writes.length = 0;
+  for (const relatedTarget of [h.toDate, null]) {
+    h.focus(h.fromDate); h.focus(h.toDate, relatedTarget); h.frame();
+    assert.equal(h.values.get('--timeline-viewport-lift'), '344px');
+  }
+  assert.ok(h.writes.filter(([key]) => key === '--timeline-viewport-lift').every(([, value]) => value === '344px'), 'no lowered frame between С and По');
+  h.focus(null); h.focus(h.fromDate); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px', 'a queued blur cannot override new focus');
+  h.focus(h.slider); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'range focus does not open the keyboard');
+  h.focus(h.toDate); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px', 'reopening does not depend on another resize');
+  h.viewport.height = 844; h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'hardware keyboard focus has no lift');
+});
+
+
+test('dismissal does not change non-keyboard viewport handling or other editable fields', () => {
+  const h = viewportLayoutHarness();
+  h.viewport.height = 500; h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px', 'non-keyboard viewport changes retain their existing contract');
+  h.focus(h.fromDate);
+  const search = { tagName: 'INPUT', type: 'search' };
+  h.focus(search, null); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px', 'switching to another editor keeps the keyboard clearance');
+  h.focus(null); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
+  h.viewport.height = 844; h.viewport.dispatchEvent(new Event('resize'));
+  h.viewport.height = 500; h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(h.values.get('--timeline-viewport-lift'), '344px', 'suppression ends once the closed viewport has caught up');
+});
+
+test('closing the keyboard on a zoomed page restores its prior viewport geometry', () => {
+  const viewport = Object.assign(new EventTarget(), { height: 844 / 1.5, offsetTop: 0, scale: 1.5 });
+  const h = viewportLayoutHarness({ viewport });
+  close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - 844 / 1.5, 'initial zoom clearance');
+  h.focus(h.fromDate); viewport.height = 500 / 1.5;
+  viewport.dispatchEvent(new Event('resize'));
+  h.focus(null); h.frame();
+  assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
+  viewport.height = (844 - 0.25) / 1.5;
+  viewport.dispatchEvent(new Event('resize'));
+  close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - viewport.height, 'closed keyboard at non-unit scale with fractional rounding');
+  viewport.offsetTop = 80; viewport.dispatchEvent(new Event('scroll'));
+  close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - viewport.height - 80, 'later page pan is not suppressed');
 });

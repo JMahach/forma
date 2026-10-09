@@ -61,6 +61,12 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   // panning around a ring. Standalone diagrams keep their existing frame floor.
   const minimumScale = () => studioHome ? fittedView.k : navigationFit.k;
   const zoom = (anchor, factor) => zoomAt(view, anchor, factor, { min: minimumScale(), max: 4.5 });
+  function finishZoom(factor) {
+    // Only an outward gesture completes Home. A small deliberate zoom in
+    // and an unrelated resize keep their exact position.
+    if (factor < 1 && view.k >= fittedView.k && view.k <= fittedView.k * 1.02) view = { ...fittedView };
+    apply();
+  }
   function publish() {
     onChange({ ...view }, { ...fittedView }, { minScale: minimumScale() });
   }
@@ -108,8 +114,8 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   const controls = {
     minimumScale,
     pan(dx, dy) { view.x += dx; view.y += dy; apply(); },
-    zoomAt(anchor, factor, dx = 0, dy = 0) { view = zoom(anchor, factor); view.x += dx; view.y += dy; apply(); },
-    zoom(factor) { view = zoom({ x: 320, y: 410 }, factor); apply(); },
+    zoomAt(anchor, factor, dx = 0, dy = 0) { view = zoom(anchor, factor); view.x += dx; view.y += dy; finishZoom(factor); },
+    zoom(factor) { view = zoom({ x: 320, y: 410 }, factor); finishZoom(factor); },
     reset() { fit(); },
     refreshFrame() {
       fittedView = defaultView(homeFrame());

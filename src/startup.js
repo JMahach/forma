@@ -14,14 +14,18 @@ const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-trans
 const dayClient = createTransitDayClient({
   initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
-const layout = createStudioLayout({ canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
+const layout = createStudioLayout({ returnsControls: element('returnsControls'), canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
   panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')] });
 // The shared layout positions the preview while the larger application loads.
 // Its temporary observer hands resize ownership to the app without recreating
 // the layout or starting a second camera.
 const loadingLayoutObserver = new ResizeObserver(() => layout.refresh());
 loadingLayoutObserver.observe(element('canvasWrap'));
-const app = await import('./app.js').catch(() => {
+try {
+  const app = await import('./app.js');
+  loadingLayoutObserver.disconnect();
+  app.startApp({ dayClient, layout, toast, viewStore, savedView });
+} catch {
   const canvas = document.getElementById('canvasWrap');
   canvas.dataset.chartState = 'error';
   canvas.setAttribute('aria-busy', 'false');
@@ -29,8 +33,4 @@ const app = await import('./app.js').catch(() => {
   const retry = document.getElementById('chartLoadingRetry');
   retry.hidden = false;
   retry.addEventListener('click', () => location.reload());
-});
-if (app) {
-  loadingLayoutObserver.disconnect();
-  app.startApp({ dayClient, layout, toast, viewStore, savedView });
 }

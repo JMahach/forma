@@ -89,11 +89,42 @@ test('same-tab reload restores the view while a new tab starts fresh and shares 
 
 test('return exploration saves only navigation metadata and cannot inject a computed overlay', () => {
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
-  const returns = { opened: true, group: 'planet', year: 2050, body: 'saturn', eventId: 'saturn:2050-01-01T12:00:00Z' };
+  const returns = { opened: true, year: 2050, bodies: ['saturn'], eventId: 'saturn:2050-01-01T12:00:00Z' };
   store.write({ ...snapshot, returns: { ...returns, chart: { injected: true } } });
   assert.deepEqual(createViewStore({ getStorage: () => storage }).read().returns, returns);
-  store.write({ ...snapshot, returns: { ...returns, body: 'injected', eventId: '<script>' } });
+  store.write({ ...snapshot, returns: { ...returns, bodies: ['injected'], eventId: '<script>' } });
   assert.equal(createViewStore({ getStorage: () => storage }).read().returns, undefined);
+});
+
+test('closed empty return filters round-trip without inventing default planets or a year', () => {
+  const returns = { opened: false, year: null, bodies: [], eventId: null };
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  store.write({ ...snapshot, returns });
+  assert.deepEqual(createViewStore({ getStorage: () => storage }).read().returns, returns);
+});
+
+test('legacy return modes become one combined filter only at the storage boundary', () => {
+  for (const [group, year, bodies] of [
+    ['major', null, ['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']],
+    ['year', 2050, ['sun', 'mercury', 'venus', 'mars']], ['planet', null, ['moon']],
+  ]) {
+    const storage = memory({ ...snapshot, returns: { opened: false, group, year: 2050, body: 'moon', eventId: null } });
+    const store = createViewStore({ getStorage: () => storage }), result = store.read();
+    assert.deepEqual(result.returns, { opened: false, year, bodies, eventId: null });
+    assert.equal(storage.writes.length, 0);
+    store.write({ ...result, mandala: false });
+    assert.equal('group' in JSON.parse(storage.records.get(VIEW_STORAGE_KEY)).returns, false);
+  }
+});
+
+test('modern filters do not fall back to legacy values and reject malformed bodies or years', () => {
+  for (const bad of [{ bodies: ['unknown'], year: null }, { bodies: 'moon', year: null },
+    { bodies: [], year: '2050' }, { bodies: [], year: 2400 }]) {
+    const storage = memory({ ...snapshot, returns: { opened: false, group: 'major', body: 'saturn', eventId: null, ...bad } });
+    assert.equal(createViewStore({ getStorage: () => storage }).read().returns, undefined);
+  }
+  const storage = memory({ ...snapshot, returns: { opened: false, bodies: ['moon', 'sun', 'moon'], year: null, eventId: null } });
+  assert.deepEqual(createViewStore({ getStorage: () => storage }).read().returns.bodies, ['sun', 'moon']);
 });
 
 

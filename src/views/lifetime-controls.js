@@ -1,8 +1,9 @@
 import { createLifetimeExplorer } from '../state/lifetime.js';
 import { bindNumericInput, formatDateInput, normalizeDate } from './date-input.js';
-import { attachTimelineRange } from './timeline-range.js';
+import { attachTimelineRange, isReferenceMoment } from './timeline-range.js';
+import { attachTimelineMarks } from './timeline-marks.js';
 import { attachDatePicker } from './date-picker.js';
-import { formatTimelineMinute, localDateAt } from '../domain/day-timeline.js';
+import { formatTimelineMinute, localDateAt, timelineMinute } from '../domain/day-timeline.js';
 import { setText } from '../ui/html.js';
 
 function clock(utc, timeZone = null) {
@@ -17,16 +18,19 @@ function clock(utc, timeZone = null) {
   return { date: formatDateInput(iso.slice(0, 10)), time, zone: 'UTC', utc: iso };
 }
 
-export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, date, time, status,
-  retryButton = null, fromCalendar = null, toCalendar = null, marker = null, enabled = true, available = true,
+export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, status, fromError = null, toError = null,
+  retryButton = null, hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, enabled = true, available = true,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, resolveTap, ...options }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
   const inputs = [fromDate, toDate], dirty = new Set();
-  let inputError = '', submitted = null, wasOpened = false, waitingForMetadata = false;
+  const dateErrors = new Map([[fromDate, fromError], [toDate, toError]]);
+  let inputError = false, requestError = '', submitted = null, wasOpened = false, waitingForMetadata = false;
   let momentLoading = null, momentClockShown = false;
+  let visibleWindow = null;
   const calendars = [];
+  const timelineMarks = attachTimelineMarks(hourMarks);
   function scrub(value) {
     if (!explorer.state.opened) return;
     onMomentInput();
@@ -41,7 +45,10 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
   }
   const dayRange = attachTimelineRange({ range, marker, resolveTap, onScrub: scrub,
     onStep(direction) {
-      if (explorer.state.mode === 'lifetime') return explorer.adjacentUtc(direction);
+      if (explorer.state.mode === 'lifetime') {
+        const next = explorer.adjacentUtc(direction);
+        return Number.isFinite(next) ? Math.max(Number(range.min), Math.min(Number(range.max), next)) : next;
+      }
       const day = options.getDayState?.();
       return Math.max(0, Math.min((day?.timeline?.minutes ?? 1) - 1, (day?.index ?? 0) + direction));
     },
@@ -77,7 +84,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (marks[1]) setText(marks[1], endpoints[1]);
   }
 
-  function update(state, momentState = options.getMomentState?.()) {
+  function update(state, momentState = options.getMomentState?.(), notify = true) {
     if (wasOpened && !state.opened) { calendars.forEach(calendar => calendar.close()); dirty.clear(); clearInputError(); submitted = null; waitingForMetadata = false; }
     wasOpened = state.opened;
     toggle.hidden = !enabled || !available;
@@ -97,24 +104,35 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     range.disabled = dayMode ? !dayReady : !state.metadata;
     if (fromCalendar) fromCalendar.disabled = !state.metadata;
     if (toCalendar) toCalendar.disabled = !state.metadata;
-    range.min = dayMode ? '0' : String(state.minUtc ?? 0);
-    range.max = String(dayMode ? Math.max(0, (day?.timeline?.minutes ?? 1) - 1) : state.maxUtc ?? 0);
+    const window = !dayMode && visibleWindow ? visibleWindow : state;
+    range.min = dayMode ? '0' : String(window.minUtc ?? 0);
+    range.max = String(dayMode ? Math.max(0, (day?.timeline?.minutes ?? 1) - 1) : window.maxUtc ?? 0);
     range.step = dayMode ? '1' : 'any';
+    if (!state.opened) timelineMarks.clear();
+    else if (dayMode) {
+      timelineMarks.day(day?.timeline, day?.timeline?.minutes, (timeline, index) => formatTimelineMinute(timeline, index).time);
+    } else {
+      timelineMarks.life(options.getPersonalChart?.(), Number(range.min), Number(range.max));
+    }
     const momentUtc = momentState?.current && state.metadata ? Math.max(state.minUtc, Math.min(state.maxUtc,
       Date.parse(momentState.current.utc))) : null;
-    range.value = String(dayMode ? day?.index ?? 0 : momentUtc ?? state.requestedUtc ?? 0);
+    const cursor = dayMode ? day?.index ?? 0 : momentUtc ?? state.requestedUtc ?? 0;
+    const cursorVisible = dayMode || cursor >= Number(range.min) && cursor <= Number(range.max);
+    range.setAttribute('data-cursor-visible', String(cursorVisible));
+    range.value = String(cursor);
     updateDates(state);
 
     const shown = clock(dayMode ? day?.current?.utc || state.current?.utc : momentState ? momentState.current?.utc : state.current?.utc, dayMode ? day?.timeline?.timeZone : null);
-    setText(date, shown?.date || '');
-    setText(time, shown ? `${shown.time} · ${shown.zone}` : '');
-    time.dateTime = shown?.utc || '';
-    time.title = dayMode ? day?.timeline?.timeZone || 'Время показанной карты' : 'Время показанной карты · UTC';
     const requested = momentState ? shown : !dayMode && clock(state.requestedUtc);
     const reference = dayMode ? day?.referenceIndex : state.referenceUtc;
-    dayRange.updateReference({ value: reference, visible: state.opened && (!dayMode || dayReady) && Number.isFinite(reference),
+    const referenceUtc = dayMode ? day?.timeline && Number.isFinite(reference)
+      ? timelineMinute(day.timeline, reference).utc : null : reference;
+    const displayedUtc = dayMode ? day?.current?.utc : momentState ? momentState.current?.utc : state.displayedUtc;
+    dayRange.updateReference({ value: reference, visible: state.opened && (!dayMode || dayReady) && Number.isFinite(reference)
+      && reference >= Number(range.min) && reference <= Number(range.max),
       label: 'Вернуться к текущему времени',
-      active: dayMode ? Boolean(day?.live) : momentState ? momentState.live : reference !== null && reference === state.displayedUtc });
+      title: !dayMode && options.getPersonalChart?.() ? 'Текущий транзит' : 'Текущий момент',
+      active: isReferenceMoment(displayedUtc, referenceUtc) });
     const pending = displayStatus === 'loading';
     const waitingForMoment = state.opened && !dayMode && pending && state.metadata;
     if (!waitingForMoment) {
@@ -136,19 +154,20 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const dayLabel = dayMode && day?.timeline && formatTimelineMinute(day.timeline, day.index ?? 0);
     const selectedLabel = dayLabel ? `${dayLabel.date}, ${dayLabel.time}, ${dayLabel.offset}`
       : requested ? `${requested.date}, ${requested.time} UTC` : '';
-    range.setAttribute('aria-valuetext', [selectedLabel, pending ? 'загружается' : unshown ? 'не показано' : '',
+    range.setAttribute('aria-valuetext', [selectedLabel, !cursorVisible ? 'на карте, вне выбранного периода' : '',
+      pending ? 'загружается' : unshown ? 'не показано' : '',
       unshown && shown ? `на карте ${shown.date}, ${shown.time} ${shown.zone}` : ''].filter(Boolean).join('; '));
     const momentMessage = momentLoading?.visible ? 'Загружаем момент…' : '';
-    setText(status, inputError || (displayStatus === 'error' ? momentState
+    setText(status, requestError || (displayStatus === 'error' ? momentState
       ? momentState.error || 'Не удалось загрузить текущий транзит' : dayMode && day?.status === 'error'
         ? day.error || 'День не загрузился' : state.error || 'Не удалось загрузить момент'
-      : waitingForMetadata ? 'Загружаем диапазон дат…'
+      : inputError ? '' : waitingForMetadata ? 'Загружаем диапазон дат…'
       : pending ? dayMode ? 'Загружаем день…' : state.metadata ? momentMessage : 'Загружаем шкалу…' : ''));
     if (retryButton) {
-      retryButton.hidden = displayStatus !== 'error' || Boolean(inputError);
+      retryButton.hidden = displayStatus !== 'error';
       retryButton.disabled = pending;
     }
-    options.onStateChange?.(state);
+    if (notify) options.onStateChange?.(state);
     if (waitingForMetadata && state.metadata && state.opened) {
       const pending = submitted;
       waitingForMetadata = false;
@@ -160,8 +179,18 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
 
   const explorer = createLifetimeExplorer({ ...options, onStateChange: update });
   function clearInputError() {
-    inputError = '';
-    for (const input of inputs) input.setAttribute('aria-invalid', 'false');
+    inputError = false; requestError = '';
+    for (const input of inputs) {
+      input.setAttribute('aria-invalid', 'false');
+      const message = dateErrors.get(input);
+      if (message) setText(message, '');
+    }
+  }
+  function showDateError(input, text) {
+    inputError = true;
+    input.setAttribute('aria-invalid', 'true');
+    const message = dateErrors.get(input);
+    if (message) setText(message, text);
   }
   function resetEndBeforeStart() {
     let start, end;
@@ -176,39 +205,32 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
   function applyDates(reportIncomplete = true) {
     if (!explorer.state.opened) return;
     clearInputError();
-    let from, through;
-    try {
-      for (const input of inputs) {
-        if (input.value.replace(/\D/g, '').length > 8) {
-          input.setAttribute('aria-invalid', 'true');
-          throw new Error('В дате должно быть восемь цифр.');
-        }
+    let incomplete = false;
+    const { minDate, maxDate } = explorer.state;
+    const [from, through] = inputs.map(input => {
+      if (input === toDate && !input.value.trim()) return null;
+      const digits = input.value.replace(/\D/g, '').length;
+      if (digits > 8) { showDateError(input, 'Дата некорректна'); return null; }
+      // A draft is quiet until submit; every complete field owns its error.
+      if (!reportIncomplete && digits < 8) {
+        incomplete = true; return null;
       }
-      if (!reportIncomplete && toDate.value.trim() && !/^\d{2}\.\d{2}\.\d{4}$/.test(toDate.value)) { update(explorer.state); return; }
-      for (const input of inputs) {
-        if (input === toDate && !input.value.trim()) continue;
-        try { normalizeDate(input.value); }
-        catch (error) { input.setAttribute('aria-invalid', 'true'); throw error; }
-      }
-      from = normalizeDate(fromDate.value); through = toDate.value.trim() ? normalizeDate(toDate.value) : null;
-      if (through && from > through) throw new Error('Начальная дата должна быть не позже конечной.');
-      const { minDate, maxDate } = explorer.state;
-      if (minDate && from < minDate || maxDate && through && through > maxDate) {
-        throw new Error(`Даты: ${formatDateInput(minDate)}–${formatDateInput(maxDate)}.`);
-      }
-    } catch (error) {
-      inputError = error.message;
-      update(explorer.state);
-      return;
-    }
+      let date;
+      try { date = normalizeDate(input.value); }
+      catch { showDateError(input, 'Дата некорректна'); return null; }
+      if (minDate && date < minDate || maxDate && date > maxDate) showDateError(input, 'Вне диапазона');
+      return date;
+    });
+    if (!incomplete && !inputError && through && from > through) showDateError(toDate, 'Вне диапазона');
+    if (incomplete || inputError) { update(explorer.state); return; }
     submitted = { from, to: through ?? explorer.state.maxDate, fromText: fromDate.value, toText: toDate.value };
     const result = explorer.setDateRange(from, through);
     if (result === false) {
       if (!explorer.state.metadata) waitingForMetadata = true;
-      else inputError = 'Проверьте выбранный диапазон дат.';
+      else requestError = 'Не удалось применить период.';
     }
     update(explorer.state);
-    Promise.resolve(result).catch(error => { inputError = error.message || 'Проверьте даты.'; update(explorer.state); });
+    Promise.resolve(result).catch(error => { requestError = error.message || 'Не удалось применить период.'; update(explorer.state); });
   }
 
   for (const input of inputs) {
@@ -224,15 +246,11 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       if (rawInput.replace(/\D/g, '').length > 8) {
         input.value = rawInput;
         input.setSelectionRange(rawInput.length, rawInput.length);
-        input.setAttribute('aria-invalid', 'true');
-        inputError = 'В дате должно быть восемь цифр.';
-        update(explorer.state);
+        applyDates(false);
         return;
       }
-      // Editing the left date never commits the prefilled right date. The
-      // complete right date, Enter, or its change event commits the pair.
-      if (input === toDate || resetEndBeforeStart()) applyDates(false);
-      else update(explorer.state);
+      if (input === fromDate) resetEndBeforeStart();
+      applyDates(false);
     });
     input.addEventListener('keydown', event => {
       if (input === fromDate && event.key === 'Tab' && !event.shiftKey) {
@@ -248,6 +266,14 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     available = value;
     if (!available) explorer.close();
     toggle.hidden = !enabled || !available;
+  };
+  explorer.refreshTargets = dayRange.refreshTargets;
+  explorer.setVisibleWindow = value => {
+    const next = value && Number.isFinite(value.minUtc) && Number.isFinite(value.maxUtc) && value.minUtc <= value.maxUtc
+      ? { minUtc: value.minUtc, maxUtc: value.maxUtc } : null;
+    if (next?.minUtc === visibleWindow?.minUtc && next?.maxUtc === visibleWindow?.maxUtc) return;
+    visibleWindow = next;
+    update(explorer.state, options.getMomentState?.(), false);
   };
   // Readiness and the real-clock marker can change without a new chart object.
   // The existing day controller remains the sole owner of its minute range.

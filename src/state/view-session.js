@@ -42,7 +42,7 @@ export function createViewSession({
     const personalPreview = getPersonalPreview();
     const personalLive = getPersonalLive();
     const cycles = getReturns()?.state;
-    const returnView = pendingReturns || (cycles?.available && (cycles.opened || cycles.selectedEvent) ? { opened: cycles.opened, group: cycles.group, year: cycles.year, body: cycles.body, eventId: cycles.selectedEvent?.id || null, ...(cycles.selectedEvent ? { event: cycles.selectedEvent } : {}) } : null);
+    const returnView = pendingReturns || (cycles?.available && (cycles.opened || cycles.markersEnabled || cycles.selectedEvent) ? { opened: cycles.opened, bodies: [...cycles.bodies], year: cycles.year, eventId: cycles.selectedEvent?.id || null, ...(cycles.selectedEvent ? { event: cycles.selectedEvent } : {}) } : null);
     const lifetimeState = getLifetime()?.state, day = natalDay.state, live = transit.state;
     const pendingUtc = lifetimeUtc(pendingLifetime, lifetimeState);
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)
@@ -113,12 +113,14 @@ export function createViewSession({
       let returnRestoration;
       const restoreReturn = () => returnRestoration ??= getReturns().restore(pendingReturns,
         { valid: () => valid() && session.selectedId === selectedId });
-      // A saved exact event owns the moment. Restore it before Lifetime so the
-      // rail can borrow its chart instead of calculating a rounded point.
-      if (pendingReturns?.eventId && pendingReturns.event?.id === pendingReturns.eventId
-          && Number.isFinite(Date.parse(pendingReturns.event.utc)) && getReturns()?.state.available) {
-        await restoreReturn();
-        if (!valid() || session.selectedId !== selectedId) return false;
+      // Apply filters before the rail can enable searches. A saved exact event
+      // also owns the moment; unrelated event lists need not delay the rail.
+      if (pendingReturns && getReturns()?.state.available) {
+        const restoration = restoreReturn();
+        if (pendingReturns.eventId) {
+          await restoration;
+          if (!valid() || session.selectedId !== selectedId) return false;
+        }
       }
       if (pendingLifetime?.opened && canRestoreLifetime()) {
         // An opened Lifetime view owns the saved moment ahead of natal-day preview.

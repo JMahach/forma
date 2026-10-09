@@ -9,6 +9,7 @@ import { createGraphController } from '../src/scene/updates.js';
 import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.js';
 import { attachBirthForm } from '../src/views/birth-form.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
+import { dateDom } from './helpers/date-dom.mjs';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 function harness(getDay = async () => natalDayFixture()) {
@@ -119,23 +120,74 @@ function element() {
   };
 }
 function uiHarness(getDay, withMarker = true, options = {}) {
-  const elements = Object.fromEntries(['toggle', 'panel', 'range', 'time', 'status', 'resetButton', ...(withMarker ? ['marker'] : [])].map(key => [key, element()]));
+  const elements = Object.fromEntries(['toggle', 'panel', 'range', 'status', 'retryButton', ...(withMarker ? ['marker'] : [])].map(key => [key, element()]));
+  elements.hourMarks = dateDom().createElement('div');
   const explorer = attachNatalDayExplorer({ ...elements, dayClient: { getDay }, ...options });
   return { ...elements, explorer };
 }
+
+test('scrubbing onto saved birth UTC lights the dot without resetting the saved object', async () => {
+  for (const seconds of ['00.000', '29.432']) {
+    const h = uiHarness(async () => natalDayFixture());
+    const chart = personalChartFixture({ utc: `2026-09-24T12:34:${seconds}Z` });
+    h.explorer.select(chart); await h.explorer.open();
+    assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
+    h.range.value = '755'; h.range.dispatch('input');
+    assert.equal(h.marker.getAttribute('aria-pressed'), 'false');
+    h.range.value = '754'; h.range.dispatch('input');
+    assert.equal(h.marker.getAttribute('aria-pressed'), String(seconds === '00.000'));
+    assert.equal(h.explorer.state.exactOriginal, false, 'indicator does not restore or replace the chart');
+    h.marker.dispatch('click');
+    assert.equal(h.explorer.current, chart); assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
+  }
+});
+
+test('birth-day hour marks follow packet segments even when historical UTC offset has seconds', async () => {
+  const day = natalDayFixture({ date: '1900-01-01', timezone: 'Europe/Moscow', segments: [
+    { index: 0, startUtc: '1899-12-31T21:29:43Z', utcOffset: 'UTC+02:30:17', offsetSeconds: 9017, fold: 0 },
+  ] });
+  const h = uiHarness(async () => day);
+  h.explorer.select(personalChartFixture({ birthDate: day.date, utc: '1900-01-01T10:04:28Z' }));
+  await h.explorer.open();
+  const marks = h.hourMarks.children;
+  assert.equal(marks.length, 25);
+  assert.equal(marks[6].children[0].textContent, '06');
+  assert.equal(Number.parseFloat(marks[6].style['--hour-position']), 360 / 1439 * 100);
+  h.explorer.scrub(755);
+  assert.equal(h.hourMarks.children, marks);
+  h.explorer.close();
+  assert.equal(h.hourMarks.children.length, 0);
+});
+
+test('birth day retry appears only on failure without needing a duplicate clock or restore button', async () => {
+  const elements = Object.fromEntries(['toggle', 'panel', 'range', 'status', 'retryButton'].map(key => [key, element()]));
+  let fail = true;
+  const explorer = attachNatalDayExplorer({ ...elements, dayClient: { getDay: async () => {
+    if (fail) throw Error('Offline');
+    return natalDayFixture();
+  } } });
+  explorer.select(personalChartFixture());
+  assert.equal(elements.retryButton.hidden, true);
+  await explorer.open();
+  assert.equal(elements.retryButton.hidden, false);
+  fail = false; await elements.retryButton.dispatch('click');
+  assert.equal(explorer.state.status, 'ready');
+  assert.equal(elements.retryButton.hidden, true);
+  assert.match(elements.range.getAttribute('aria-valuetext'), /UTC/);
+});
 
 test('only user natal scrubs and birth choices interrupt restoration; open, internal reset and retry do not', async () => {
   let fail = true, interruptions = 0;
   const h = uiHarness(async () => { if (fail) throw Error('Offline'); return natalDayFixture(); }, true,
     { onMomentInput: () => { interruptions++; } });
   const chart = personalChartFixture(); h.explorer.select(chart); await h.explorer.open();
-  fail = false; await h.resetButton.dispatch('click');
+  fail = false; await h.retryButton.dispatch('click');
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(interruptions, 0);
   h.explorer.scrub(800); h.explorer.reset(); assert.equal(interruptions, 0);
   h.range.value = '801'; h.range.dispatch('input');
   assert.equal(h.explorer.current.utc, '2026-09-24T13:21:00Z'); assert.equal(interruptions, 1);
   h.marker.dispatch('click'); assert.equal(h.explorer.current, chart); assert.equal(interruptions, 2);
-  h.explorer.scrub(802); h.resetButton.dispatch('click');
+  h.explorer.scrub(802); h.marker.dispatch('click');
   assert.equal(h.explorer.current, chart); assert.equal(interruptions, 3);
 });
 
@@ -153,29 +205,26 @@ test('controls distinguish repeated local minutes by offset and select the origi
   const reference = `${150 / 1499 * 100}%`;
   assert.equal(h.marker.hidden, false);
   assert.equal(h.marker.style.left, reference, 'the marker follows saved UTC into the correct repeated-hour fold');
-  assert.equal(h.time.textContent, '01:30:45 · UTC−05:00');
-  assert.equal(h.time.getAttribute('aria-label'), '01:30:45, UTC−05:00, America/New_York');
-  assert.match(h.time.title, /America\/New_York/);
-  assert.equal(h.time.dateTime, chart.utc);
+
   assert.match(h.range.getAttribute('aria-valuetext'), /^01\.11\.2026, 01:30:45, UTC−05:00/);
   h.range.value = '90'; h.range.dispatch('input');
-  assert.equal(h.time.textContent, '01:30 · UTC−04:00');
+
   assert.equal(h.explorer.current.fold, 0);
   assert.equal(h.marker.style.left, reference, 'previewing the first 01:30 cannot move the saved second-fold marker');
   h.range.value = '150'; h.range.dispatch('input');
-  assert.equal(h.time.textContent, '01:30 · UTC−05:00');
+
   assert.equal(h.explorer.current.fold, 1);
   assert.match(h.range.getAttribute('aria-valuetext'), /UTC−05:00, America\/New_York/);
-  h.resetButton.dispatch('click');
+  h.marker.dispatch('click');
   assert.equal(h.explorer.current, chart);
-  assert.equal(h.time.textContent, '01:30:45 · UTC−05:00');
-  assert.equal(h.resetButton.textContent, 'К рождению');
-  assert.equal(h.resetButton.title, 'Вернуться к сохранённому времени рождения');
+
+  assert.equal(h.retryButton.hidden, true);
+  assert.equal(h.retryButton.title, 'Повторить загрузку дня рождения');
   assert.equal(h.marker.style.left, reference);
   h.range.value = '149'; h.range.dispatch('input');
   h.marker.dispatch('click');
   assert.equal(h.explorer.current, chart, 'the reference button restores the saved object, not its rounded minute');
-  assert.equal(h.time.textContent, '01:30:45 · UTC−05:00');
+
   assert.equal(h.marker.getAttribute('aria-label'), 'Вернуться к сохранённому времени рождения');
 });
 
@@ -255,11 +304,11 @@ test('controls expose loading, error and retry without enabling unavailable minu
   assert.equal(h.marker.hidden, true);
   await pending;
   assert.equal(h.status.textContent, 'Расчёт недоступен');
-  assert.equal(h.resetButton.textContent, 'Повторить');
-  assert.equal(h.resetButton.disabled, false);
+  assert.equal(h.retryButton.textContent, 'Повторить');
+  assert.equal(h.retryButton.disabled, false);
   assert.equal(h.panel.dataset.status, 'error');
   assert.equal(h.marker.hidden, true);
-  fail = false; await h.resetButton.dispatch('click');
+  fail = false; await h.retryButton.dispatch('click');
   assert.equal(h.range.disabled, false);
   assert.equal(h.status.textContent, '');
   assert.equal(h.panel.dataset.status, 'ready');
@@ -371,4 +420,10 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
   assert.equal(explorer.state.current, session.original);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
   assert.deepEqual(writes, []);
+});
+
+test('birth reference tooltip describes the saved chart time', async () => {
+  const h = uiHarness(async () => natalDayFixture());
+  h.explorer.select(personalChartFixture()); await h.explorer.open();
+  assert.equal(h.marker.title, 'Сохраненное время карты');
 });

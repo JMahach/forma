@@ -45,36 +45,66 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panel, content, overview, search, switcher, backdrop, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
+export function attachChartSummary({ panel, summaryScreen, returnsPanel, returnsEntry, content, overview, search, switcher, backdrop, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
   const document = panel.ownerDocument;
   const window = document.defaultView;
-  let opened = false, model = null, fingerprint = '', expanded = new Set(['lines']);
-  let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedOpen = null, currentChart = null;
+  const summaryLabel = panel.getAttribute('aria-labelledby');
+  let summaryOpened = false, returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
+  let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedScreen = null, currentChart = null;
+  const screen = () => returnsVisible ? 'returns' : summaryOpened ? 'summary' : 'closed';
+  const entryFor = value => value === 'returns' ? returnsEntry || switcher : switcher;
   function layout() {
-    // This view owns the drawer state; camera and resize callbacks can repeat it.
-    if (appliedOpen === opened) return;
-    appliedOpen = opened;
-    // CSS slides the overlay without changing the chart's layout or camera.
-    // Keep it rendered for its closing transition, but inaccessible when shut.
+    // Camera callbacks read only this cheap projection, never cycle results.
+    const next = screen();
+    if (appliedScreen === next) return;
+    const previous = appliedScreen;
+    if (next === 'closed' && panel.contains(document.activeElement)) entryFor(previous).focus({ preventScroll: true });
+    appliedScreen = next;
+    const opened = next !== 'closed';
+    // Retain the last screen and its placement throughout the closing slide.
+    // The shell becomes inaccessible immediately, without erasing its contents.
+    if (opened || previous === null) {
+      const shown = opened ? next : 'summary';
+      panel.dataset.screen = shown;
+      if (summaryScreen) summaryScreen.hidden = shown !== 'summary';
+      if (returnsPanel) returnsPanel.hidden = shown !== 'returns';
+      const label = shown === 'returns' ? returnsPanel?.getAttribute('aria-labelledby') : summaryLabel;
+      if (label) panel.setAttribute('aria-labelledby', label);
+    }
     panel.hidden = false;
     panel.inert = !opened;
     panel.classList.toggle('open', opened);
     panel.setAttribute('aria-hidden', String(!opened));
     switcher.setAttribute('aria-expanded', String(opened));
     if (backdrop) backdrop.hidden = !opened;
+    if (next === 'summary') {
+      updateVisible();
+      if (returnsPanel?.contains(document.activeElement)) search.focus({ preventScroll: true });
+    }
   }
-  function setOpen(value, focus = false) {
-    if (opened === value) return;
-    if (!value && (focus || panel.contains(document.activeElement))) switcher.focus({ preventScroll: true });
-    opened = value;
-    if (opened) { onOpen(); updateVisible(); }
+  function open() {
+    if (screen() === 'summary') return;
+    summaryOpened = true;
+    onOpen(); // The application closes returns through its existing controller.
     layout();
-    if (opened) search.focus({ preventScroll: true });
-    else onClose();
+    if (screen() === 'summary') search.focus({ preventScroll: true });
   }
-  const open = () => setOpen(true);
-  const close = ({ focus = false } = {}) => setOpen(false, focus);
-  const toggle = () => setOpen(!opened);
+  function close({ focus = false } = {}) {
+    const active = screen();
+    if (active === 'closed') return;
+    if (focus || panel.contains(document.activeElement)) entryFor(active).focus({ preventScroll: true });
+    summaryOpened = false;
+    onClose(); // Closes the returns owner too, even when only that screen is open.
+    layout();
+  }
+  const toggle = () => screen() === 'closed' ? open() : close();
+  function setReturnsVisible(value) {
+    const visible = Boolean(value);
+    if (returnsVisible === visible) return;
+    // A view projection supplied by app.js, not another return-opening command.
+    returnsVisible = visible;
+    layout();
+  }
   function syncSelection(force = false) {
     const key = JSON.stringify([currentItems, currentFilter]);
     if (!force && key === selectionFingerprint) return;
@@ -101,7 +131,7 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
     currentChart = chart; currentItems = items; currentFilter = filter;
     // Keep only the latest inputs while closed. The existing markup can finish
     // its exit animation; chart facts and controls are prepared on opening.
-    if (opened) updateVisible();
+    if (screen() === 'summary') updateVisible();
   }
   function updateVisible() {
     const chart = currentChart;
@@ -114,7 +144,6 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
       overview.innerHTML = `<span>${model.scope === 'overlay' ? 'Топология наложения' : model.isTransit ? 'Транзит' : model.profile ? `Профиль <strong>${esc(model.profile)}</strong>` : 'Обзор карты'}</span><span><strong>${model.totals.centers}</strong> / 9 центров · <strong>${model.totals.channels}</strong> каналов</span>`;
       render();
     } else syncSelection();
-    if (opened) layout();
   }
   switcher.addEventListener('click', toggle);
   backdrop?.addEventListener('click', () => close());
@@ -139,10 +168,11 @@ export function attachChartSummary({ panel, content, overview, search, switcher,
     if (window.innerWidth <= 850 && !event.shiftKey) close();
   });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && opened && !event.defaultPrevented && !document.querySelector('dialog[open]') && !document.querySelector('.library.open')) {
+    if (event.key === 'Escape' && screen() !== 'closed' && !event.defaultPrevented && !document.querySelector('dialog[open]') && !document.querySelector('.library.open')) {
       event.preventDefault(); close({ focus: true });
     }
   });
   layout();
-  return { update, layout, open, close, toggle, get opened() { return opened; } };
+  return { update, layout, open, close, toggle, setReturnsVisible,
+    get opened() { return screen() !== 'closed'; }, get screen() { return screen(); } };
 }

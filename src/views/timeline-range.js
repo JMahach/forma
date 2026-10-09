@@ -1,3 +1,10 @@
+// Compare the displayed chart with the reference, never a pending slider target.
+export function isReferenceMoment(displayedUtc, referenceUtc) {
+  const utc = value => typeof value === 'string' ? Date.parse(value) : value;
+  const displayed = utc(displayedUtc), reference = utc(referenceUtc);
+  return Number.isFinite(displayed) && Number.isFinite(reference) && displayed === reference;
+}
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 // Mouse and keyboard retain the native range. Touch/pen use its entire transparent
@@ -31,13 +38,13 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     if (referenceTap) tapTarget = null;
     // The visible droplet owns its selected moment. Only a directly pointed
     // event label/dot may beat it, never a neighboring expanded hit rectangle.
-    const onThumb = tapTarget && !tapTarget.direct && Math.abs(event.clientX - position(Number(range.value), metrics)) <= thumbSize / 4
+    const onThumb = range.getAttribute('data-cursor-visible') !== 'false' && tapTarget && !tapTarget.direct && Math.abs(event.clientX - position(Number(range.value), metrics)) <= thumbSize / 4
       && Math.abs(event.clientY - metrics.centerY) <= thumbSize / 8;
     if (onThumb) tapTarget = null;
     return { tapTarget, referenceTap };
   }
   const rangeTitle = range.title || '';
-  let eventHovered = false, eventPressed = false, hoverPointer = null, hoveredTarget = null, referenceHovered = false;
+  let eventHovered = false, eventPressed = false, hoverPointer = null, hoveredTarget = null, referenceHovered = false, pressedTarget = null;
   function setEventHover(value, target = null, referenceTap = false) {
     if (hoveredTarget?.hover !== target?.hover) {
       hoveredTarget?.hover?.(false); hoveredTarget = target; target?.hover?.(true);
@@ -70,9 +77,23 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     const target = tapTarget && tapTarget.valid?.() !== false ? tapTarget : null;
     setEventHover(Boolean(referenceTap || target), target, referenceTap);
   }
+  function updateContact() {
+    const pointer = gesture?.pointer;
+    const metrics = gesture?.metrics;
+    const inside = pointer && pointer.clientX >= metrics.rect.left && pointer.clientX <= metrics.rect.left + metrics.rect.width
+      && pointer.clientY >= metrics.rect.top && pointer.clientY <= metrics.rect.top + metrics.rect.height;
+    const hit = inside && canScrub() ? targetAt(pointer, metrics) : null;
+    const pressed = Boolean(hit?.referenceTap);
+    if (marker && marker.getAttribute('data-pressed') !== String(pressed)) marker.setAttribute('data-pressed', String(pressed));
+    const target = hit?.tapTarget?.valid?.() !== false ? hit?.tapTarget : null;
+    if (pressedTarget?.press !== target?.press) {
+      pressedTarget?.press?.(false); pressedTarget = target; target?.press?.(true);
+    }
+  }
   function clearGesture() {
     const previous = gesture;
     gesture = null;
+    updateContact();
     setEventPress(false);
     if (previous && range.hasPointerCapture?.(previous.pointerId)) range.releasePointerCapture(previous.pointerId);
     return previous;
@@ -82,6 +103,8 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     event.preventDefault();
     if (!canScrub() || gesture.referenceTap && !canReturn()
         || !gesture.dragging && gesture.tapTarget?.valid?.() === false) { clearGesture(); return; }
+    gesture.pointer = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
+    updateContact();
     const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
     if (!gesture.dragging && Math.hypot(dx, dy) <= (gesture.referenceTap || gesture.tapTarget ? movementThreshold : 0)) return;
     gesture.dragging = true;
@@ -118,10 +141,11 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     event.preventDefault();
     const initialValue = Number(range.value);
     const gripRadius = touch ? Math.max(thumbSize / 2, metrics.height / 2) : thumbSize / 2;
-    gesture = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+    gesture = { pointerId: event.pointerId, pointer: { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType }, startX: event.clientX, startY: event.clientY,
       startedAt: now(), metrics, initialValue, lastInput: initialValue, lastValue: initialValue, dragging: false, referenceTap, tapTarget,
-      relative: Math.abs(event.clientX - position(initialValue, metrics)) <= gripRadius };
+      relative: range.getAttribute('data-cursor-visible') !== 'false' && Math.abs(event.clientX - position(initialValue, metrics)) <= gripRadius };
     setEventPress(Boolean(referenceTap || tapTarget));
+    updateContact();
     range.focus?.({ preventScroll: true });
     range.setPointerCapture?.(event.pointerId);
     // A track tap away from both controls responds immediately. A loose grip on
@@ -183,8 +207,19 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     if ((!event || !event.detail) && canReturn()) onReference();
   });
 
+  function refreshTargets() {
+    if (!canScrub() || gesture?.referenceTap && !canReturn()
+        || !gesture?.dragging && gesture?.tapTarget?.valid?.() === false) clearGesture();
+    updateContact();
+    updateHover();
+  }
   return {
-    updateReference({ value, visible, label, active = false }) {
+    refreshTargets,
+    updateReference({ value, visible, label, title = label, active = false }) {
+      const currentBounds = bounds();
+      if (gesture && (gesture.metrics.min !== currentBounds.min || gesture.metrics.max !== currentBounds.max)) {
+        clearGesture(); hoverPointer = null; setEventHover(false); suppressedInputValue = null;
+      }
       if (gesture) gesture.lastValue = Number(range.value);
       if (suppressedInputValue !== null) suppressedInputValue = Number(range.value);
       const { min, max } = bounds();
@@ -194,13 +229,11 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
         marker.hidden = !available;
         marker.disabled = !available || range.disabled;
         marker.style.left = available ? `${(reference - min) / Math.max(1, max - min) * 100}%` : '';
-        marker.title = label;
+        marker.title = title;
         marker.setAttribute('aria-label', label);
-        marker.setAttribute('aria-pressed', String(active));
+        marker.setAttribute('aria-pressed', String(available && active));
       }
-      if (!canScrub() || gesture?.referenceTap && !canReturn()
-          || !gesture?.dragging && gesture?.tapTarget?.valid?.() === false) clearGesture();
-      updateHover();
+      refreshTargets();
     },
   };
 }

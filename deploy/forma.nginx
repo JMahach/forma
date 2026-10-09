@@ -2,7 +2,7 @@ limit_req_zone $binary_remote_addr zone=forma_per_ip:1m rate=3r/s;
 limit_conn_zone $binary_remote_addr zone=forma_connections:1m;
 server {
     listen 80;
-    server_name 89.125.202.66 r840525.s1698.vm.mydomain.zone;
+    server_name 153.76.161.24;
     client_max_body_size 20k;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;

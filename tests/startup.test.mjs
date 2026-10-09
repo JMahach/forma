@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace("import('./app.js')", 'loadApp()');
 const run = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'loadApp', source);
+  'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'loadApp', 'location', source);
 
 test('startup reads the tab once and prefetches only a day that owns the saved view', async () => {
   for (const [savedView, needsDay] of [
@@ -30,3 +30,29 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     assert.deepEqual(received, { dayClient: client, layout, toast, viewStore, savedView });
   }
 });
+
+for (const failure of ['import', 'initialization']) {
+  test(`${failure} failure replaces endless loading with an explicit reload action`, async () => {
+    const attributes = new Map([['aria-busy', 'true']]);
+    const canvas = { dataset: { chartState: 'loading' }, setAttribute: (name, value) => attributes.set(name, value) };
+    const status = { textContent: 'Загружаем карту…' };
+    let retry, reloads = 0;
+    const button = { hidden: true, addEventListener(type, callback) { assert.equal(type, 'click'); retry = callback; } };
+    const nodes = { canvasWrap: canvas, chartLoadingStatus: status, chartLoadingRetry: button };
+    const document = { hidden: false, getElementById: id => nodes[id] || {} };
+    const error = new Error('Startup failed');
+    const loadApp = async () => {
+      if (failure === 'import') throw error;
+      return { startApp() { throw error; } };
+    };
+    await run(document, class { observe() {} disconnect() {} }, () => ({}), () => ({}), () => () => {},
+      () => ({ read: () => null }), loadApp, { reload() { reloads++; } });
+    assert.equal(canvas.dataset.chartState, 'error');
+    assert.equal(attributes.get('aria-busy'), 'false');
+    assert.equal(status.textContent, 'Не удалось загрузить приложение');
+    assert.equal(button.hidden, false);
+    assert.equal(reloads, 0, 'a startup failure must not create an automatic reload loop');
+    retry();
+    assert.equal(reloads, 1);
+  });
+}

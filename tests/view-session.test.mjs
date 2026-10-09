@@ -370,9 +370,9 @@ test('selected Saturn survives refresh after list changes to Year and the panel 
   const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0];
   first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   // The displayed selection remains independent from the list's active filter.
-  await first.returns.setGroup('year'); first.returns.close(); first.view.flush();
+  await first.returns.setYear(2050); first.returns.close(); first.view.flush();
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
-  assert.equal(second.returns.state.group, 'year'); assert.equal(second.returns.state.opened, false);
+  assert.equal(second.returns.state.year, 2050); assert.equal(second.returns.state.opened, false);
   assert.equal(second.returns.state.selectedEvent.id, first.returnEvent.id);
   assert.equal(second.session.current.secondary.utc, first.returnEvent.utc);
 });
@@ -385,7 +385,7 @@ async function saveExactLifetime(t) {
   const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0]; first.session.select(source.id);
   const event = { ...first.returnEvent, utc: '2055-10-01T12:03:07.123456Z', id: 'saturn:2055-10-01T12:03:07.123456Z' };
   await first.returns.selectEvent(event.id, { restoredEvent: event });
-  await first.returns.setGroup('planet'); await first.returns.setBody('moon'); first.returns.close(); first.view.flush();
+  await first.returns.setBodies(['moon']); first.returns.close(); first.view.flush();
   const snapshot = JSON.parse(first.storage.get('liniya.view.v1'));
   snapshot.lifetime = { opened: true, mode: 'lifetime', fromDate: source.utc.slice(0, 10), toDate: '2126-09-24',
     requestedUtc: Date.parse(event.utc), personalPreview: false, personalLive: false };
@@ -414,13 +414,13 @@ test('known exact reload owns the Lifetime moment before restoration without a r
   assert.deepEqual(order, ['chart', 'metadata']); assert.deepEqual(points, []);
   assert.equal(second.ensureLifetime().current.utc, event.utc); assert.equal(second.session.current.utc, event.utc);
   assert.equal(second.ensureLifetime().state.requestedUtc, target.requestedUtc); assert.equal(second.ensureLifetime().state.displayedUtc, Date.parse(event.utc));
-  assert.equal(second.returns.state.opened, false); assert.equal(second.returns.state.body, 'moon');
+  assert.equal(second.returns.state.opened, false); assert.deepEqual(second.returns.state.bodies, ['moon']);
   assert.equal(second.view.pendingReturns, null); assert.equal(second.view.pendingLifetime, null);
   assert.deepEqual(second.camera.getView(), pose);
   for (let pass = 0; pass < 10 && second.returns.state.pendingBodies.length; pass++) {
     lists.forEach(job => job.resolve({ events: job.input.body === event.body ? [event] : [] })); await nextTurn();
   }
-  assert.equal(lists.length, 6); assert.ok(lists.every(job => job.input.body !== 'moon'));
+  assert.equal(lists.length, 1); assert.equal(lists[0].input.body, 'moon');
 });
 
 test('navigation while a known return reloads prevents starting its saved Lifetime restoration', async t => {
@@ -466,7 +466,7 @@ test('an early exact failure is not retried twice and metadata failure keeps its
 test('legacy return IDs restore through event lookup while the original remains accepted', async t => {
   const { storage, source, event } = await saveExactLifetime(t), order = [];
   const snapshot = JSON.parse(storage.get('liniya.view.v1')); delete snapshot.returns.event;
-  snapshot.returns.group = 'major'; storage.set('liniya.view.v1', JSON.stringify(snapshot));
+  snapshot.returns = { ...snapshot.returns, group: 'major', year: 2055, body: 'saturn' }; delete snapshot.returns.bodies; storage.set('liniya.view.v1', JSON.stringify(snapshot));
   const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => returnMetadata, getPoint: async index => { order.push('point'); return point(index, returnMetadata); },
   }, returnsClient: { events: async input => ({ events: input.body === event.body ? [event] : [] }),
@@ -949,4 +949,43 @@ for (const action of ['choose-chart', 'lifetime-off']) test(`passive tools do no
   assert.equal(h.session.hasCurrent, true);
   assert.equal(h.transit.state.wanted, action === 'lifetime-off');
   h.view.flush(); assert.equal(JSON.parse(storage.get('liniya.view.v1')).lifetime, null);
+});
+
+test('closed return filters survive a reload of the personal rail without an exact event', async t => {
+  const first = harness(new Map(), { canRestoreLifetime: () => true, lifetimeClient: {
+    getMeta: async () => returnMetadata, getPoint: async index => point(index, returnMetadata),
+  } });
+  t.after(() => first.transit.stop()); await first.view.restore();
+  const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0]; first.session.select(source.id);
+  await first.exploration.openTimeline(); await first.returns.setBodies([]); await first.returns.setYear(2050);
+  first.returns.close(); first.view.flush();
+  const saved = JSON.parse(first.storage.get('liniya.view.v1'));
+  assert.deepEqual(saved.returns, { opened: false, bodies: [], year: 2050, eventId: null });
+  const calls = [];
+  const second = harness(first.storage, { canRestoreLifetime: () => true, lifetimeClient: {
+    getMeta: async () => returnMetadata, getPoint: async index => point(index, returnMetadata),
+  }, loadLifetime: async () => { void second.returns.enableMarkers(true); return second.ensureLifetime(); },
+  returnsClient: { events: async input => { calls.push(input); return { events: [] }; } } });
+  t.after(() => second.transit.stop()); await second.view.restore();
+  assert.deepEqual(second.returns.state.bodies, []); assert.equal(second.returns.state.year, 2050);
+  assert.equal(second.returns.state.opened, false); assert.equal(second.returns.state.selectedEvent, null);
+  assert.deepEqual(calls, [], 'restoring empty filters must not briefly schedule default planets');
+});
+
+test('changing filters during exact reload keeps the chart request and saves the latest filters', async t => {
+  const { storage, source, event } = await saveExactLifetime(t);
+  let releaseChart, chartSignal;
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
+    getMeta: async () => returnMetadata, getPoint: async () => assert.fail('exact reload must not load a sampled point'),
+  }, returnsClient: {
+    events: async () => ({ events: [] }),
+    chart: (input, signal) => { chartSignal = signal; return new Promise(resolve => { releaseChart = resolve; }); },
+  } });
+  t.after(() => second.transit.stop()); const restoring = second.view.restore(); await nextTurn();
+  await second.returns.setBodies([]); await second.returns.setYear(2060);
+  assert.equal(chartSignal.aborted, false);
+  releaseChart({ event, chart: { ...source, utc: event.utc } }); assert.equal(await restoring, true);
+  assert.equal(second.session.current.utc, event.utc); assert.equal(second.returns.state.selectedEvent.id, event.id);
+  second.view.flush(); const saved = JSON.parse(storage.get('liniya.view.v1')).returns;
+  assert.deepEqual(saved.bodies, []); assert.equal(saved.year, 2060); assert.equal(saved.eventId, event.id);
 });

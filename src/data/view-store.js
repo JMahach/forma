@@ -1,4 +1,4 @@
-import { CYCLE_BODIES } from '../domain/cycles.js';
+import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../domain/cycles.js';
 import { PLANET_IDS } from '../domain/planets.js';
 
 export const VIEW_STORAGE_KEY = 'liniya.view.v1';
@@ -16,15 +16,30 @@ function normalizeReturnEvent(event, id) {
     cycleId: typeof event.cycleId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(event.cycleId) ? event.cycleId : `${event.body}:${event.cycle}`,
     direction: ['direct', 'retrograde', 'stationary'].includes(event.direction) ? event.direction : 'direct' };
 }
+function normalizeReturns(value) {
+  if (!object(value) || typeof value.opened !== 'boolean'
+    || !(value.eventId === null || typeof value.eventId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(value.eventId))) return null;
+  const knownBody = id => CYCLE_BODIES.some(body => body.id === id);
+  const validYear = year => Number.isInteger(year) && year >= 1801 && year <= 2399;
+  let bodies, year;
+  if ('bodies' in value) {
+    if (!Array.isArray(value.bodies) || value.bodies.length > CYCLE_BODIES.length
+      || !value.bodies.every(knownBody) || value.year !== null && !validYear(value.year)) return null;
+    bodies = CYCLE_BODIES.filter(body => value.bodies.includes(body.id)).map(body => body.id);
+    year = value.year;
+  } else {
+    // Legacy modes are translated here only; application state has no modes.
+    if (!['major', 'year', 'planet'].includes(value.group) || !validYear(value.year) || !knownBody(value.body)) return null;
+    bodies = value.group === 'major' ? [...DEFAULT_CYCLE_BODIES]
+      : value.group === 'year' ? ['sun', 'mercury', 'venus', 'mars'] : [value.body];
+    year = value.group === 'year' ? value.year : null;
+  }
+  const event = normalizeReturnEvent(value.event, value.eventId);
+  return { opened: value.opened, year, bodies, eventId: value.eventId, ...(event ? { event } : {}) };
+}
 function normalize(value) {
   if (!object(value) || value.version !== 1) return null;
-  const returns = value.returns;
-  const event = normalizeReturnEvent(returns?.event, returns?.eventId);
-  const returnView = object(returns) && typeof returns.opened === 'boolean' && ['major', 'year', 'planet'].includes(returns.group)
-    && Number.isInteger(returns.year) && returns.year >= 1801 && returns.year <= 2399
-    && CYCLE_BODIES.some(body => body.id === returns.body)
-    && (returns.eventId === null || typeof returns.eventId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(returns.eventId))
-    ? { opened: returns.opened, group: returns.group, year: returns.year, body: returns.body, eventId: returns.eventId, ...(event ? { event } : {}) } : null;
+  const returnView = normalizeReturns(value.returns);
   const camera = value.camera, lifetime = value.lifetime, transit = value.transit, natalDay = value.natalDay, planets = value.planets;
   // Read the former saved name once; the application uses only lifetime.
   const lifetimeMode = lifetime?.mode === 'archive' ? 'lifetime' : lifetime?.mode;

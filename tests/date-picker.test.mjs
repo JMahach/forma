@@ -11,6 +11,52 @@ function harness(value = '15.08.2025', bounds = { min: '1801-01-01', max: '2399-
   const click = text => { const target = buttons().find(node => node.textContent === text && !node.hidden); assert.ok(target, text); target.dispatch('click'); };
   return { document, input, button, popup, picker, selected, buttons, click };
 }
+test('an optional presentation shares a header without duplicating close or changing year selection', () => {
+  const h = harness('2026', { min: '1996-01-01', max: '2096-12-31' }, {
+    precision: 'year', clearLabel: 'Вся жизнь', onClear() {},
+    presentation: { className: 'returns-filter-popover', title: 'Период' },
+  });
+  h.button.dispatch('click');
+  assert.ok(h.popup.className.split(' ').includes('returns-filter-popover'));
+  const header = h.popup.children[0];
+  assert.equal(header.className, 'returns-menu-heading');
+  assert.equal(header.children[0].textContent, 'Период');
+  assert.equal(h.buttons().filter(button => button.textContent === '×').length, 1);
+  assert.ok(h.popup.children.at(-1).className.split(' ').includes('returns-menu-actions'));
+  h.click('2027');
+  assert.deepEqual(h.selected, ['2027-01-01']);
+  assert.equal(h.document.activeElement, h.button);
+  h.button.dispatch('click'); h.click('×');
+  assert.equal(h.popup.hidden, true); assert.equal(h.document.activeElement, h.button);
+  h.button.dispatch('click'); h.popup.dispatch('keydown', { key: 'Escape' });
+  assert.equal(h.popup.hidden, true); assert.equal(h.document.activeElement, h.button);
+  h.button.dispatch('click');
+  h.popup.children[0].children.at(-1).focus();
+  h.popup.dispatch('keydown', { key: 'Tab', shiftKey: true });
+  assert.equal(h.popup.hidden, true, 'backward Tab exits from the first header control');
+});
+
+test('optional placement stays below its trigger within panel and visual viewport bounds', () => {
+  let area = { left: 30, top: 120, right: 310, bottom: 680 };
+  const h = harness('2026', { min: '1996-01-01', max: '2096-12-31' }, {
+    precision: 'year', presentation: { getBounds: () => area, preferBelow: true },
+  });
+  h.button.getBoundingClientRect = () => ({ left: 35, top: 180, bottom: 212 });
+  h.popup.getBoundingClientRect = () => ({ width: Math.min(240, Number.parseFloat(h.popup.style.maxWidth)),
+    height: Math.min(280, Number.parseFloat(h.popup.style.maxHeight)) });
+  h.button.dispatch('click');
+  assert.equal(h.popup.style.left, '30px'); assert.equal(h.popup.style.top, '220px');
+  assert.equal(h.popup.style.maxWidth, '280px'); assert.equal(h.popup.style.maxHeight, '560px');
+  // A reduced visual viewport models the available area above a phone keyboard.
+  h.document.defaultView.visualViewport = { offsetLeft: 20, offsetTop: 100, width: 240, height: 300,
+    addEventListener() {}, removeEventListener() {} };
+  area = { ...area, top: 150 };
+  h.document.defaultView.dispatch('resize');
+  assert.equal(h.popup.style.left, '30px'); assert.equal(h.popup.style.top, '150px');
+  assert.equal(h.popup.style.maxWidth, '222px'); assert.equal(h.popup.style.maxHeight, '242px');
+  h.popup.dispatch('keydown', { key: 'Escape' });
+  assert.equal(h.document.activeElement, h.button);
+});
 test('year precision opens at the typed year and selects it without a month or day step', () => {
   const h = harness('2026', { min: '1996-01-01', max: '2096-12-31' }, { precision: 'year' });
   h.button.dispatch('click');
@@ -21,6 +67,14 @@ test('year precision opens at the typed year and selects it without a month or d
   assert.deepEqual(h.selected, ['2027-01-01']);
   assert.equal(h.popup.dataset.view, 'years');
   assert.equal(h.document.activeElement, h.button);
+});
+test('an optional all-years action clears the filter and returns focus without selecting a date', () => {
+  let cleared = 0;
+  const h = harness('2026', { min: '1996-01-01', max: '2096-12-31' },
+    { precision: 'year', clearLabel: 'Все годы', onClear: () => cleared++ });
+  h.button.dispatch('click'); h.click('Все годы');
+  assert.equal(cleared, 1); assert.deepEqual(h.selected, []);
+  assert.equal(h.popup.hidden, true); assert.equal(h.document.activeElement, h.button);
 });
 test('year precision keeps period navigation and cancel without inventing a year', () => {
   const h = harness('', { min: '1996-01-01', max: '2096-12-31' }, { precision: 'year' });
