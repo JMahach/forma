@@ -56,8 +56,10 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     },
     onStep(direction) {
       if (explorer.state.mode === 'lifetime') {
-        const next = explorer.adjacentUtc(direction);
-        return Number.isFinite(next) ? Math.max(Number(range.min), Math.min(Number(range.max), next)) : next;
+        onMomentInput();
+        void explorer.step(direction, visibleWindow, beforeScrub);
+        range.value = String(explorer.state.requestedUtc);
+        return null;
       }
       const day = options.getDayState?.();
       return Math.max(0, Math.min((day?.timeline?.minutes ?? 1) - 1, (day?.index ?? 0) + direction));

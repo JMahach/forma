@@ -325,7 +325,7 @@ test('fixed life timeline follows UTC birth date and its calendar 100-year anniv
   for (const [utc, fromDate, toDate] of [
     ['1996-10-04T12:00:00Z', '1996-10-04', '2096-10-04'],
     ['1980-02-29T06:00:00Z', '1980-02-29', '2080-02-29'],
-    ['2000-02-29T06:00:00Z', '2000-02-29', '2100-02-28'],
+    ['2000-02-29T06:00:00Z', '2000-02-29', '2100-03-01'],
     ['1996-10-03T23:30:00Z', '1996-10-03', '2096-10-03'],
     ['2290-12-31T23:59:00Z', '2290-12-31', '2390-12-31'],
     ['2340-12-31T23:59:00Z', '2340-12-31', '2399-12-31'],
@@ -534,7 +534,7 @@ test('return search reaches the calendar centenary and never admits a later inst
   const yearMs = 365.2425 * 86400000;
   for (const [birth, anniversary] of [
     ['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z'],
-    ['2000-02-29T12:34:56Z', '2100-02-28T12:34:56Z'],
+    ['2000-02-29T12:34:56Z', '2100-03-01T12:34:56Z'],
     ['2099-12-31T23:59:00Z', '2199-12-31T23:59:00Z'],
   ]) {
     const chart = { utc: birth, timezone: 'UTC' }, range = cycles.cycleRangeForChart(chart);

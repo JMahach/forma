@@ -33,7 +33,9 @@ def full_range_year(year):
 
 def calendar_anniversary(moment, years=LIFE_SPAN_YEARS):
     year = moment.year + years
-    return moment.replace(year=year, day=min(moment.day, calendar.monthrange(year, moment.month)[1]))
+    if moment.month == 2 and moment.day == 29 and not calendar.isleap(year):
+        return moment.replace(year=year, month=3, day=1)
+    return moment.replace(year=year)
 
 
 def validate_natal_date(value):

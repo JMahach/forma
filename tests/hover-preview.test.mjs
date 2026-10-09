@@ -92,6 +92,25 @@ test('same-gate copies and descendants deduplicate preview notifications regardl
   assert.deepEqual(harness.controller.currentSelection, { type: 'gate', id: 41 });
 });
 
+test('planet hover preserves ordinary and overlay identities without repeating the same preview', t => {
+  const harness = hoverHarness(t);
+  const expected = [];
+  for (const id of ['design-sun', 'personality-sun', 'natal-sun', 'cycle-sun']) {
+    const target = harness.target('planet', id, `${id}-planet`);
+    const selection = { type: 'planet', id };
+    harness.move(target);
+    expected.push(selection);
+    assert.deepEqual(harness.controller.currentSelection, selection);
+    harness.move(harness.node({}, { parent: target }));
+    harness.move(harness.target('planet', id, `${id}-planet`));
+    assert.deepEqual(harness.previews, expected, 'descendants and replacement glyphs keep one preview per planet');
+  }
+  harness.send('svg', 'pointerleave');
+  harness.send('svg', 'pointerleave');
+  assert.equal(harness.controller.currentSelection, null);
+  assert.deepEqual(harness.previews, [...expected, null], 'leaving clears the last planet once');
+});
+
 test('the controller has no pointerover or pointerout handlers, so SVG replacement cannot create a hover loop', t => {
   const harness = hoverHarness(t);
   assert.equal(harness.listeners.has('svg:pointerover'), false);
@@ -106,11 +125,14 @@ test('the controller has no pointerover or pointerout handlers, so SVG replaceme
   assert.deepEqual(harness.previews, [{ type: 'center', id: 'throat' }], 'equivalent nodes created by redraw keep a single preview');
 });
 
-test('touch, pressed pointers, planets and malformed gates do not preview', t => {
+test('touch, pressed pointers, filter controls and malformed gates do not preview', t => {
   const harness = hoverHarness(t), number = harness.target('gate', 41, 'personality-mercury');
-  for (const options of [{ pointerType: 'touch' }, { buttons: 1 }, { buttons: 2 }]) harness.move(number, options);
+  for (const options of [{ pointerType: 'touch' }, { buttons: 1 }, { buttons: 2 }]) {
+    harness.move(number, options);
+    harness.move(harness.target('planet', 'design-sun', 'design-sun-planet'), options);
+  }
   for (const target of [
-    harness.target('planet', 'design-mercury', 'design-mercury-planet'),
+    harness.target('planet-filter', 'design:sun'),
     harness.target('gate', 0), harness.target('gate', 65), harness.target('gate', 1.5), harness.target('gate', 'invalid'),
     harness.target('unknown', 'anything'), harness.node({}),
   ]) harness.move(target);

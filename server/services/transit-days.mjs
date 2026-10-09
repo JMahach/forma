@@ -114,7 +114,10 @@ export async function createTransitDays({ root, cacheDir = path.join(root, '.cac
     const job = queue.shift();
     running = (async () => {
       try {
-        const day = await Promise.resolve().then(() => generateDay(job.date, { signal: job.controller.signal, priority: () => job.background ? -1 : 0 }));
+        await Promise.resolve(); // Assign the running slot before a cache hit can release it.
+        // Abandoned packing may finish while a retry is waiting in this queue.
+        if (memory.has(job.date)) { job.resolve(remember(job.date, memory.get(job.date))); return; }
+        const day = await generateDay(job.date, { signal: job.controller.signal, priority: () => job.background ? -1 : 0 });
         if (day.date !== job.date) throw new Error('Unexpected transit date');
         const packet = await representations(await encodeDayPacket({ ...day, calculationVersion: version }));
         // The browser needs the ready packet, not the completion of its disk

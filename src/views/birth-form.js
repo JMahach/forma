@@ -178,7 +178,9 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault(); $('cityResults').hidden = false; $('birthPlace').setAttribute('aria-expanded', 'true');
       const direction = event.key === 'ArrowDown' ? 1 : -1;
-      highlightCity((activeCityIndex + direction + cityResults.length) % cityResults.length);
+      const nextIndex = activeCityIndex === -1 ? (direction === 1 ? 0 : cityResults.length - 1)
+        : (activeCityIndex + direction + cityResults.length) % cityResults.length;
+      highlightCity(nextIndex);
     } else if (event.key === 'Enter' && !$('cityResults').hidden) {
       event.preventDefault(); selectCity(cityResults[Math.max(0, activeCityIndex)]);
     }

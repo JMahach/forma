@@ -476,6 +476,30 @@ test('one HTTP consumer can cancel a shared day without interrupting its neighbo
   a.abort(); await rejected; release.resolve(); assert.ok((await second).bytes.gzip); assert.equal(calls, 1);
 });
 
+test('a transit retry after cancellation during packing reuses the completed day without regenerating', { timeout: 10000 }, async t => {
+  const entered = deferred(), calls = [];
+  const service = await cache(t, { generateDay: async date => {
+    calls.push(date); entered.resolve(); return makeDay(date);
+  } });
+  const controller = new AbortController();
+  const first = service.get('2026-09-24', { signal: controller.signal });
+  const cancelled = assert.rejects(first, { name: 'AbortError' });
+  await entered.promise;
+  await new Promise(setImmediate); // Keep encoding and compression real after the generator returns.
+  assert.equal(service.size, 0);
+  controller.abort();
+  const resumed = service.get('2026-09-24');
+  assert.equal(service.queued, 1);
+  await cancelled;
+  const packet = await resumed;
+  assert.equal(decodeTransitDay(packet.bytes.identity).date, '2026-09-24');
+  assert.deepEqual(calls, ['2026-09-24'], 'a completed abandoned day must satisfy its queued retry');
+  assert.equal(await service.get('2026-09-24'), packet);
+  await service.get('2026-09-25');
+  assert.deepEqual(calls, ['2026-09-24', '2026-09-25'], 'reuse releases the slot for the next date');
+  await service.close();
+});
+
 test('a new HTTP consumer never joins an abandoned day while its worker is closing', async t => {
   const entered = deferred(), release = deferred(); let calls = 0;
   const service = await cache(t, { generateDay: async date => {

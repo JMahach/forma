@@ -13,15 +13,15 @@ import sys
 if __package__:
     from . import astronomy as astro
     from . import civil_time as civil, date_limits as dates
-    from .return_index import (BODIES, YEAR_DAYS, SECOND_DAYS, ANGLE_TOLERANCE, position,
-        angle_delta, bisect_root, scan_crossings, find_crossings, has_completed_return)
+    from .return_index import (BODIES, YEAR_DAYS, position,
+        angle_delta, bisect_root, find_crossings, has_completed_return)
     from .errors import ChartError
 else:
     import astronomy as astro
     import civil_time as civil
     import date_limits as dates
-    from return_index import (BODIES, YEAR_DAYS, SECOND_DAYS, ANGLE_TOLERANCE, position,
-        angle_delta, bisect_root, scan_crossings, find_crossings, has_completed_return)
+    from return_index import (BODIES, YEAR_DAYS, position,
+        angle_delta, bisect_root, find_crossings, has_completed_return)
     from errors import ChartError
 
 def exact_iso(moment):
@@ -50,14 +50,12 @@ def validate_birth_body(request):
     return birth, body
 
 
-def search_events(birth, body, from_age, to_age, clip_ephemeris=False):
+def search_events(birth, body, from_age, to_age):
     start = astro.julian_tt(birth)
     # Age is elapsed civil UTC time in mean Gregorian years, not orbital period.
     end_moment = birth + dt.timedelta(days=to_age * YEAR_DAYS)
     if end_moment >= dates.SUPPORTED_END_EXCLUSIVE:
-        if not clip_ephemeris:
-            raise ChartError('unsupported_date', 'Диапазон возвратов выходит за доступные эфемериды: до конца 2399 года.')
-        end_moment = dates.SUPPORTED_END_EXCLUSIVE - dt.timedelta(microseconds=100)
+        raise ChartError('unsupported_date', 'Диапазон возвратов выходит за доступные эфемериды: до конца 2399 года.')
     end = astro.julian_tt(end_moment)
     roots = find_crossings(body, start, end)
     counters, events = {}, []

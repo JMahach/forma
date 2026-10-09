@@ -7,7 +7,6 @@ Run this module to prepare the shared file, or pass --check to verify it.
 import argparse
 import array
 import bisect
-import datetime as dt
 import hashlib
 import json
 import math

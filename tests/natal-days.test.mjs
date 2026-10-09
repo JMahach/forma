@@ -11,6 +11,7 @@ import { createNatalDays, generateNatalDay, encodeNatalDayPacket } from '../serv
 import { decodeNatalDay } from '../shared/day-packets/decode.js';
 import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.js';
 import { createRequestHandler } from '../server/http/app.mjs';
+import { natalDayFixture } from './fixtures/natal-day.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cities = { find: id => id === 'trusted' ? { timezone: 'Europe/Moscow' } : null };
@@ -109,6 +110,28 @@ test('natal cancellation keeps shared queued consumers and the active process sl
   assert.deepEqual(calls, ['1990-06-15', '1990-06-15', '1990-06-17']);
   const cancelled = new AbortController(); cancelled.abort();
   await assert.rejects(service.get('1990-06-15', 'UTC', { signal: cancelled.signal }), { name: 'AbortError' });
+});
+
+test('a natal retry after cancellation during packing reuses the completed day without regenerating', { timeout: 10000 }, async () => {
+  const calls = [];
+  const service = createNatalDays({ generateDay: async (date, timezone) => {
+    calls.push([date, timezone]); return natalDayFixture({ date, timezone });
+  } });
+  const controller = new AbortController();
+  const first = service.get('1990-06-15', 'UTC', { signal: controller.signal });
+  const cancelled = assert.rejects(first, { name: 'AbortError' });
+  await tick(); // The generator has returned; real asynchronous packet packing is still underway.
+  assert.equal(service.size, 0);
+  controller.abort();
+  const resumed = service.get('1990-06-15', 'UTC');
+  assert.equal(service.queued, 1);
+  await cancelled;
+  const packet = await resumed;
+  assert.equal(decodeNatalDay(packet.bytes.identity).date, '1990-06-15');
+  assert.deepEqual(calls, [['1990-06-15', 'UTC']], 'a completed abandoned day must satisfy its queued retry');
+  assert.equal(await service.get('1990-06-15', 'UTC'), packet);
+  await service.get('1990-06-16', 'UTC');
+  assert.deepEqual(calls, [['1990-06-15', 'UTC'], ['1990-06-16', 'UTC']], 'reuse releases the slot for the next date');
 });
 
 test('a natal disconnect during upload never submits calculation work', async t => {

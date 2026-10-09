@@ -54,7 +54,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   const transitPlanets = createTransitPlanetFilter();
   const session = createChartSession({ store, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns,
-    filterTransit: transitPlanets.filter, onSelect: () => exploration?.selected(), onChange: updatePage });
+    filterTransit: transitPlanets.filter, resetTransitFilter: transitPlanets.reset,
+    onSelect: () => exploration?.selected(), onChange: updatePage });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
     onTimelineReady: () => { updatePersonalTimeline(); refreshStudioLayout(); },

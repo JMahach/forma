@@ -9,12 +9,11 @@ export const SUPPORTED_END_EXCLUSIVE = Date.UTC(EPHEMERIS_LAST_YEAR + 1, 0, 1);
 export const NATAL_LAST_YEAR = EPHEMERIS_LAST_YEAR - LIFE_SPAN_YEARS;
 export const NATAL_DATE_MESSAGE = `Натальные карты доступны с ${EPHEMERIS_FIRST_YEAR} по ${NATAL_LAST_YEAR} год: впереди нужны полные ${LIFE_SPAN_YEARS} лет данных.`;
 
-// Keep the birth's UTC clock time; February 29 becomes February 28 when needed.
+// Keep the birth's UTC clock time; February 29 becomes March 1 when needed.
 export function calendarAnniversaryUtc(milliseconds, years = LIFE_SPAN_YEARS) {
   if (!Number.isFinite(milliseconds)) return NaN;
   const birth = new Date(milliseconds), year = birth.getUTCFullYear() + years, month = birth.getUTCMonth();
-  const day = Math.min(birth.getUTCDate(), new Date(Date.UTC(year, month + 1, 0)).getUTCDate());
-  return Date.UTC(year, month, day, birth.getUTCHours(), birth.getUTCMinutes(), birth.getUTCSeconds(), birth.getUTCMilliseconds());
+  return Date.UTC(year, month, birth.getUTCDate(), birth.getUTCHours(), birth.getUTCMinutes(), birth.getUTCSeconds(), birth.getUTCMilliseconds());
 }
 
 // The form already validated the calendar date. UTC coverage is checked after

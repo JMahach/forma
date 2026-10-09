@@ -1,3 +1,4 @@
+import { capturePlanetTarget, updatePlanetTarget } from './activation-targets.js';
 import { createOverlayActivationPainter } from './overlay-activation-columns.js';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.js';
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.js';
@@ -30,8 +31,7 @@ function captureRow(row) {
   const gate = row.querySelector('[data-type="gate"]');
   const value = gate.querySelector('text');
   return { row, planet, gate, value, line: value.querySelector('tspan'),
-    planetTitle: planet.querySelector('title'), gateTitle: gate.querySelector('title'),
-    planetRect: planet.querySelector('rect'), gateRect: gate.querySelector('rect'),
+    planetTarget: capturePlanetTarget(planet), gateRect: gate.querySelector('rect'),
     fixing: row.querySelector('.line-fixing'), filter: row.querySelector('.activation-planet-filter'), previous: null };
 }
 function captureColumn(node) {
@@ -70,7 +70,7 @@ export function createActivationPainter(root, rendered = null) {
   }
 
   function updateRow(entry, row) {
-    const key = JSON.stringify([row.gate, row.line, row.selected, row.pressed, row.fixing, row.planetSelected, row.planetPressed, row.label, row.hasPlanetControl, row.planetEnabled]);
+    const key = JSON.stringify([row.gate, row.line, row.selected, row.pressed, row.fixing, row.planetTarget.selected, row.planetTarget.pressed, row.label, row.hasPlanetControl, row.planetEnabled]);
     if (key === entry.previous) return;
     entry.previous = key;
     if (row.hasPlanetControl) {
@@ -80,12 +80,9 @@ export function createActivationPainter(root, rendered = null) {
       }
       updatePlanetFilter(entry.filter, row.planetEnabled, row.planetAria);
     } else if (entry.filter) { entry.filter.remove(); entry.filter = null; }
-    setAttributes(entry.planet, { 'aria-label': row.planetAria, 'aria-pressed': row.planetPressed, opacity: row.planetEnabled ? null : '.35' });
-    text(entry.planetTitle, row.planetTitle);
-    setAttribute(entry.planetRect, 'fill', row.planetSelected ? '#eaf0f8' : 'transparent');
+    updatePlanetTarget(entry.planetTarget, row.planetTarget);
     setAttributes(entry.gate, { 'data-id': row.gate, 'data-selected': row.selected, 'aria-label': row.gateAria, 'aria-pressed': row.pressed,
       opacity: row.planetEnabled ? null : '.22' });
-    text(entry.gateTitle, row.gateTitle);
     setAttribute(entry.gateRect, 'fill', row.selected ? '#eaf0f8' : 'transparent');
     if (entry.value.firstChild.nodeValue !== String(row.gate)) entry.value.firstChild.nodeValue = String(row.gate);
     text(entry.line, `.${row.line}`);

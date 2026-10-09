@@ -806,7 +806,7 @@ for (const minute of [false, true]) test(`a rejected lifetime revision refreshes
 
 
 test('a personal rail stops at the exact calendar centenary instead of the end of its day', async () => {
-  const birth = '2000-02-29T12:34:56Z', anniversary = Date.parse('2100-02-28T12:34:56Z');
+  const birth = '2000-02-29T12:34:56Z', anniversary = Date.parse('2100-03-01T12:34:56Z');
   const span = lifeTimelineForChart({ utc: birth });
   assert.equal(Date.parse(span.maximumUtc), anniversary);
   const h = explorerHarness(fullMeta, { getMomentState: () => ({ current: dayChart(birth), status: 'ready' }) });

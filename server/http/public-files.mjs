@@ -67,6 +67,7 @@ export const PUBLIC_FILES = new Map([
     'src/reference/catalog.js',
     'src/reference/gate-descriptions.js',
     'src/scene/activation-columns.js',
+    'src/scene/activation-targets.js',
     'src/scene/activation-painter.js',
     'src/scene/backdrop.js',
     'src/scene/bodygraph-paint.js',

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createChartSession } from '../src/state/chart-session.js';
+import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
+import { PLANET_IDS } from '../src/domain/planets.js';
 import { createChartStore } from '../src/data/chart-store.js';
 import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { createReturnsController } from '../src/state/returns.js';
@@ -507,4 +509,57 @@ test('a cancelled standalone Lifetime continuation cannot clear a later click sh
   assert.equal(await h.scales.toggleTransit(), false);
   assert.equal(h.controller.state.opened, false);
   assert.equal(await h.scales.toggleTransit(), true, 'a loaded controller can be reopened normally');
+});
+
+function filteredTransitSession() {
+  const natal = personalChartFixture();
+  const rows = offset => PLANET_IDS.map((planet, index) => ({ planet, gate: index + offset, line: 1 }));
+  const moment = { id: 'current-transit', source: 'transit', utc: '2026-10-09T12:00:00Z',
+    activations: { personality: rows(1), design: rows(20) } };
+  moment.personality = moment.activations.personality.map(row => row.gate);
+  moment.design = moment.activations.design.map(row => row.gate);
+  const planets = createTransitPlanetFilter();
+  planets.setExpanded(true);
+  for (const source of ['personality', 'design']) {
+    planets.setAllPlanets(false, source);
+    for (const planet of ['uranus', 'neptune', 'pluto']) planets.setPlanet(planet, true, source);
+  }
+  const session = createChartSession({
+    store: { get: id => id === natal.id ? natal : moment, has: () => true },
+    getTransit: () => ({ current: moment, setWanted() {} }),
+    getLifetime: () => ({ close: () => planets.setExpanded(false) }),
+    filterTransit: planets.filter, resetTransitFilter: planets.reset,
+  });
+  return { natal, moment, planets, session };
+}
+
+test('leaving Transit restores all personality planets without enabling Design in a personal overlay', () => {
+  const { natal, moment, planets, session } = filteredTransitSession();
+  const original = JSON.stringify({ natal, moment });
+  const previous = planets.filter(moment);
+  assert.equal(previous.activations.personality.length, 3);
+  assert.equal(previous.activations.design.length, 3);
+  session.select(natal.id);
+  planets.setExpanded(true);
+  // A retained projection must also recover its complete source rows.
+  const complete = planets.filter(previous);
+  session.publish(session.expect('lifetime'), complete);
+  assert.equal(session.current.primary, natal);
+  assert.deepEqual(session.current.secondary.activations.personality.map(row => row.planet), PLANET_IDS);
+  assert.deepEqual(session.current.secondary.activations.design, []);
+  session.select('current-transit');
+  planets.setExpanded(true);
+  assert.deepEqual(planets.snapshot, { selectedPlanets: PLANET_IDS, selectedDesignPlanets: [] });
+  assert.equal(JSON.stringify({ natal, moment }), original);
+});
+
+test('staying in Transit preserves individual lifetime choices across day and lifetime views', () => {
+  const { planets, session, moment } = filteredTransitSession();
+  const chosen = planets.snapshot;
+  planets.setExpanded(false);
+  assert.equal(planets.filter(moment).activations.personality.length, PLANET_IDS.length);
+  session.select('current-transit');
+  planets.setExpanded(true);
+  assert.deepEqual(planets.snapshot, chosen);
+  assert.deepEqual(planets.filter(moment).activations.personality.map(row => row.planet), ['uranus', 'neptune', 'pluto']);
 });

@@ -63,6 +63,12 @@ export function createNatalDays({ root, computeQueue, calculationVersion = null,
     running = true;
     const job = queue.shift();
     try {
+      // Abandoned packing may finish while a retry is waiting in this queue.
+      prune();
+      if (memory.has(job.key)) {
+        const entry = memory.get(job.key); memory.delete(job.key); memory.set(job.key, entry);
+        job.resolve(entry.packet); return;
+      }
       const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
       if (job.controller.signal.aborted) throw aborted();
       if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');

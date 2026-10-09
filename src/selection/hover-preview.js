@@ -52,7 +52,7 @@ export function attachHoverPreview(svg, {
     const resolved = resolvePreview(event, target);
     if (resolved) { set(resolved, coalesceMandala && resolved.type === 'mandala-cross'); return; }
     const type = target?.dataset.type;
-    if (!['gate', 'center', 'channel', 'integration'].includes(type)) { clear(); return; }
+    if (!['gate', 'center', 'channel', 'integration', 'planet'].includes(type)) { clear(); return; }
     const id = type === 'gate' ? Number(target.dataset.id) : target.dataset.id;
     if (type === 'gate' && (!Number.isInteger(id) || id < 1 || id > 64)) { clear(); return; }
     set({ type, id });

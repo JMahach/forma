@@ -7,6 +7,9 @@ import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createLocalDayTimeline, timelineIndexAt } from '../src/domain/day-timeline.js';
 import { completedAge } from '../src/domain/personal-age.js';
 import { dateDom } from './helpers/date-dom.mjs';
+import { IDBFactory } from 'fake-indexeddb';
+import { createTransitDayCache } from '../src/data/transit-day-cache.js';
+import { createLifetimeClient } from '../src/data/lifetime-client.js';
 
 const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
   stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] };
@@ -51,6 +54,45 @@ function harness(options = {}) {
 async function complete(h, position = h.requests.length - 1) { const request = h.requests[position]; request.resolve(moment(request.index)); await tick(); }
 async function open(h) { await h.explorer.open(); assert.equal(h.explorer.state.mode, 'day'); }
 async function dates(h, from = '11081998', to = '12081998') { h.type(h.fromDate, from); h.type(h.toDate, to); await tick(); }
+
+for (const { key, expected, saved = true, maximumUtc } of [
+  { key: 'ArrowRight', expected: '2026-09-30T12:31:00Z' },
+  { key: 'ArrowLeft', expected: '2026-09-30T12:29:00Z' },
+  { key: 'ArrowRight', expected: '2026-09-30T12:31:00Z', maximumUtc: '2026-09-30T12:35:00Z' },
+  { key: 'ArrowRight', expected: '2026-09-30T12:40:00Z', saved: false },
+  { key: 'ArrowLeft', expected: '2026-09-30T12:20:00Z', saved: false },
+]) {
+  test(`the first ${key} ${saved ? 'discovers a day saved by another tab' : 'uses the directional grid on a disk miss'}${maximumUtc ? ' at a clipped end' : ''}`, async t => {
+    const indexedDB = new IDBFactory(), writer = createTransitDayCache({ indexedDB }), days = createTransitDayCache({ indexedDB });
+    t.after(async () => { await writer.close(); await days.close(); });
+    const calls = [], version = 'a'.repeat(64), engine = 'Swiss Ephemeris 2.10.03';
+    const client = createLifetimeClient({ days, fetch: async url => {
+      calls.push(url);
+      assert.ok(!url.includes('/moment?'), 'an arrow must not calculate an exact moment');
+      return { ok: true, json: async () => url.endsWith('/meta') ? { ...metadata, calculationVersion: version, engine }
+        : moment(Number(new URL(url, 'http://test').searchParams.get('index'))) };
+    } });
+    let rendered; const commands = [];
+    const h = harness({ client, beforeScrub: utc => commands.push(utc), onRender: () => rendered?.() });
+    t.after(() => h.explorer.close());
+    await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: maximumUtc ? '2026-09-30' : '2026-10-01',
+      ...(maximumUtc ? { maximumUtc } : {}), requestedUtc: Date.parse('2026-09-30T12:30:00Z') });
+    if (saved) writer.putDay({ calculationVersion: version, version: '2', date: '2026-09-30', startUtc: '2026-09-30T00:00:00Z', stepSeconds: 60, samples: 1440,
+      engine, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
+      columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
+        ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse('2026-09-30') / 1000 - 88 * 86400 + minute * 60 : 1e-11)) });
+    await writer.flush();
+    const before = calls.length, ready = new Promise(resolve => { rendered = resolve; });
+    h.range.dispatch('keydown', { key });
+    const commandUtc = Date.parse(key === 'ArrowRight' ? '2026-09-30T12:31:00Z' : '2026-09-30T12:29:00Z');
+    assert.equal(h.explorer.state.requestedUtc, commandUtc, 'the potential minute remains selected until the disk lookup finishes');
+    await ready;
+    assert.equal(h.explorer.current.utc, expected);
+    assert.deepEqual(commands, [commandUtc],
+      'the exact step claims ownership once before loading');
+    assert.equal(calls.length - before, saved ? 0 : 1, 'only a disk miss needs one grid-file request');
+  });
+}
 
 test('chronicle retry feedback is silent twice, centered after the third failure and clears on recovery', async () => {
   const h = harness(); await open(h);

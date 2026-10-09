@@ -43,7 +43,8 @@ test('loading centers and both columns occupy the exact live SVG anchors, includ
       const actualRow = actualRows[index];
       assert.equal(row.getAttribute('transform'), actualRow.getAttribute('transform'));
       assert.equal(row.querySelector('circle').getAttribute('cx'), actualRow.querySelector('.planet-symbol').getAttribute('x'));
-      assert.equal(row.querySelector('circle').getAttribute('cy'), actualRow.querySelector('.planet-symbol').getAttribute('y'));
+      const planetRect = actualRow.querySelector('.bg-planet rect');
+      assert.equal(Number(row.querySelector('circle').getAttribute('cy')), Number(planetRect.getAttribute('y')) + Number(planetRect.getAttribute('height')) / 2, 'loading dot stays on the shared row center; the live font has an optical offset');
       assert.equal(row.querySelector('rect').getAttribute('x'), actualRow.querySelector('[data-type="gate"] text').getAttribute('x'));
     }
   }
