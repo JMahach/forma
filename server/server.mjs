@@ -15,7 +15,7 @@ import { createComputeQueue } from './runtime/compute-queue.mjs';
 import { calculationVersion } from './runtime/calculation-version.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const port = Number(process.env.PORT || 4176);
+const port = Number(process.env.PORT || 3636);
 const host = process.env.HOST || '0.0.0.0';
 const cities = await loadCityCatalog(path.join(root, 'data/cities.json'));
 const numericVersion = await calculationVersion(root);

@@ -15,7 +15,7 @@ const dayClient = createTransitDayClient({
   calculationVersion: document.body.dataset.calculationVersion,
   initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
-const layout = createStudioLayout({ returnsControls: element('returnsControls'), canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
+const layout = createStudioLayout({ canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
   panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')] });
 // The shared layout positions the preview while the larger application loads.
 // Its temporary observer hands resize ownership to the app without recreating
