@@ -150,6 +150,8 @@ ${thumbnail ? '' : `  <style>
     .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
     ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); }`).join('\n    ')}
     .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
+    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */
+    .bg-activation tspan { dominant-baseline: inherit; }
     .bg-activation:focus-visible rect { stroke: #c4d9f1; stroke-width: 1.5; }
     .planet-symbol { font-family: 'Apple Symbols', 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif; }
     @media (hover: hover) {

@@ -228,7 +228,9 @@ const originalGateContour = markup => markup.replace(
 // decoration. Restore only those exact CSS lines for this geometry oracle.
 const originalActivationStyle = markup => markup.replace(
   '    .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }\n',
-  '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n');
+  '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n')
+  // Explicit Safari baseline inheritance does not change channel geometry.
+  .replace('    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */\n    .bg-activation tspan { dominant-baseline: inherit; }\n', '');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center', id: 'throat' },
     { type: 'channel', id: '37-40' }, { type: 'integration', id: 'integration' }];
