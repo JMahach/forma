@@ -15,7 +15,7 @@ test('navigation includes enlarged columns and the complete outer planet envelop
   assert.ok(bounds.x <= ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE);
   assert.ok(bounds.x + bounds.width >= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width + ACTIVATION_COLUMN_REVEAL_DISTANCE);
   assert.ok(Math.abs(bounds.x - -370.828125) < 1e-9, 'the enlarged left checkbox target fits navigation');
-  assert.ok(Math.abs(bounds.x + bounds.width - 986.4166666666667) < 1e-9, 'enlarged right fixing and hit bounds fit too');
+  assert.ok(Math.abs(bounds.x + bounds.width - 1000.0416666666667) < 1e-9, 'the widened adjacent number targets fit the right navigation edge');
   assert.equal(STUDIO_FRAME.bounds.x + STUDIO_FRAME.bounds.width / 2, 320, 'navigation bounds never move the shared Home center');
   assert.equal(bounds.y, STUDIO_FRAME.bounds.y);
   assert.equal(bounds.height, STUDIO_FRAME.bounds.height);

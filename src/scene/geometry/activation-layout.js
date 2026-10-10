@@ -24,16 +24,19 @@ export const ACTIVATION_ROW_LAYOUT = Object.freeze({
   glyphX: ACTIVATION_COLUMN_LAYOUT.glyphOffsetX, glyphSize: 26,
 });
 
-// Overlay sources use the same row anchors. Normal dual columns gain a wider
-// gap; beside the mandala their original envelope determines visibility/frames.
+// Equal-width number targets meet at the next column anchor.
+const adjacentValues = valueX => ({ valueX: Object.freeze(valueX), hitWidth: valueX[1] - valueX[0] });
+
+// Overlay sources use the same row anchors. Normal dual values have a wider
+// text spacing; beside the mandala their envelope determines visibility/frames.
 export const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
   single: Object.freeze({ ...ACTIVATION_ROW_LAYOUT, natalOffsetX: 0,
     headingWidth: null, captionX: Object.freeze([40, 88]), captionSize: 9 }),
-  dual: Object.freeze({ valueX: Object.freeze([22, 72]), natalOffsetX: 0,
-    fontSize: 18, textX: 1, rectX: -2, hitWidth: 38, glyphX: 6, glyphSize: 23,
+  dual: Object.freeze({ ...adjacentValues([22, 72]), natalOffsetX: 0,
+    fontSize: 18, textX: 1, rectX: -2, glyphX: 6, glyphSize: 23,
     headingWidth: 109, captionX: Object.freeze([40, 88]), captionSize: 9 }),
-  'dual-wide': Object.freeze({ valueX: Object.freeze([22, 80]), natalOffsetX: -14,
-    fontSize: 20, textX: 1, rectX: -2, hitWidth: 44, glyphX: 6, glyphSize: 23,
+  'dual-wide': Object.freeze({ ...adjacentValues([22, 80]), natalOffsetX: -14,
+    fontSize: 20, textX: 1, rectX: -2, glyphX: 6, glyphSize: 23,
     headingWidth: 123, captionX: Object.freeze([40, 100]), captionSize: 10 }),
 });
 
