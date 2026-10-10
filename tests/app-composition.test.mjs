@@ -439,31 +439,31 @@ test('opening a personal timeline before its file is ready retains a restorable 
 });
 
 
-test('opening chronicle updates mandala columns before the unchanged transit publishes again', async () => {
+test('opening chronicle preserves scene presentation while a real resize can change mandala columns', async () => {
   const transit = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), id: 'current-transit', source: 'transit' };
   const h = harness({ charts: [transit], studioSize: { width: 550, height: 590 } });
   await tick(); await h.element('mandalaSwitch').click();
-  const shown = h.shown;
+  const shown = h.shown, insets = { ...h.layout.insets() };
   assert.equal(h.layout.showMandalaColumns, false);
   assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   assert.equal(h.lifetime.state.mode, 'day');
   assert.equal(h.shown.utc, shown.utc, 'opening preserves the accepted transit moment');
-  assert.equal(h.layout.showMandalaColumns, true, 'the taller dock leaves room beside the smaller mandala');
-  assert.match(h.element('viewport').innerHTML, /class="activation-columns"/, 'columns must appear without another data response or viewport resize');
+  assert.deepEqual(h.layout.insets(), insets, 'the taller dock must not shrink or recenter the scene');
+  assert.equal(h.layout.showMandalaColumns, false);
+  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/);
   const rendered = h.renders;
-  h.clockTick();
-  h.resize(550, 590);
+  h.clockTick(); h.resize(550, 590);
   assert.equal(h.renders, rendered, 'unchanged presentation needs no extra drawing');
-  h.resize(550, 650);
-  assert.equal(h.renders, rendered + 1, 'one presentation change draws once');
-  assert.equal(h.layout.showMandalaColumns, false);
-  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/, 'window resize follows the same presentation owner');
+  h.resize(550, 530);
+  assert.equal(h.renders, rendered + 1, 'a real presentation change draws once');
+  assert.equal(h.layout.showMandalaColumns, true);
+  assert.match(h.element('viewport').innerHTML, /class="activation-columns"/, 'shorter window can make room beside the mandala');
   h.resize(550, 590);
-  assert.match(h.element('viewport').innerHTML, /class="activation-columns"/);
+  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/);
   await h.element('lifetimeToggle').click();
+  assert.deepEqual(h.layout.insets(), insets);
   assert.equal(h.layout.showMandalaColumns, false);
-  assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/, 'closing the dock removes columns when they no longer fit');
 });
 
 

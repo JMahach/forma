@@ -22,7 +22,7 @@ test('saved chart navigation keeps the enabled mandala, current reveal and camer
   const session = createChartSession({ store: { get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) }, onChange: () => graph?.render() });
   session.select('one');
   const camera = createCamera({ getFrame: () => mode?.frame, getHomeFrame: () => STUDIO_FRAME,
-    measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }),
+    measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, viewport: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }),
     onChange: view => viewport.setAttribute('transform', `translate(${view.x} ${view.y}) scale(${view.k})`) });
   const motion = createMandalaMotion({ viewport, now: () => time, reducedMotion: () => false,
     requestFrame(callback) { const id = nextFrame++; frames.set(id, callback); return id; },

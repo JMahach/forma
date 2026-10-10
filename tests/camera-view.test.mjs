@@ -128,6 +128,9 @@ test('fit reads the stationary screen area and responsive insets, independently 
     return result;
   };
   const homeFit = verify(fixtures[2]);
+  pointClose(homeFit.viewport, { x: -360, y: -300.5 / .3 }, 'full viewport includes letterboxed white space');
+  close(homeFit.viewport.width, 1300);
+  close(homeFit.viewport.height, 844 / .3);
   h.cameraView.paint({ x: -1200, y: 1000, k: 4.5 });
   assert.deepEqual(verify(fixtures[2]), homeFit, 'Home measurement cannot inherit the transformed root scale');
   h.move(200, -300);
