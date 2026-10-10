@@ -75,13 +75,15 @@ test('loading art becomes visible only at the exact camera placement, including 
   } }, canvas = { dataset: {} };
   let rect, style;
   canvas.getBoundingClientRect = () => rect;
-  const resize = ([width, height, side, top, bottom]) => {
+  canvas.parentElement = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => rect };
+  const resize = ([width, height, side, top, safeBottom]) => {
     rect = { left: 20, top: 50, right: 20 + width, bottom: 50 + height, width, height };
-    style = { scrollPaddingLeft: `${side}px`, scrollPaddingTop: `${top}px`, scrollPaddingBottom: `${bottom}px` };
+    style = { scrollPaddingLeft: `${side}px`, scrollPaddingTop: `${top}px`,
+      getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' };
   };
-  resize([390, 844, 12, 112, 64]);
+  resize([390, 844, 12, 112, 8]);
   assert.equal(art.style.visibility, 'hidden');
-  const controller = createStudioLayout({ canvas, panels: [], art, media: { matches: true }, readStyle: () => style });
+  const controller = createStudioLayout({ canvas, panels: [], art, media: { matches: true }, viewport: null, readStyle: () => style });
   assert.equal(art.style.visibility, 'visible', 'layout reveals the art immediately without waiting for app or data');
   assert.equal(revealed, 1);
   const bounds = parse(renderLoadingPlaceholder()).firstElementChild.getAttribute('viewBox').split(' ').map(Number);
@@ -93,7 +95,7 @@ test('loading art becomes visible only at the exact camera placement, including 
   }));
   // Exercise a nonidentity outer SVG screen matrix as well as both aspect ratios.
   const screenScale = .7, screenOffset = { x: 38, y: -23 };
-  for (const dimensions of [[390, 844, 12, 112, 64], [1440, 900, 20, 74, 52], [844, 390, 28, 74, 98], [320, 180, 4, 112, 64]]) {
+  for (const dimensions of [[390, 844, 12, 112, 8], [1440, 900, 20, 74, 0], [844, 390, 28, 74, 34], [320, 180, 4, 112, 8]]) {
     resize(dimensions);
     const layout = controller.refresh();
     const { area, min } = computeCameraFit(controller.frame(), rect, controller.insets(), (x, y) => ({

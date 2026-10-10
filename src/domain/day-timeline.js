@@ -12,17 +12,28 @@ export function localDateAt(utc, timeZone) {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// Find the first sample on the requested UTC grid belonging to this date.
+function firstSampleOfDate(date, timeZone, resolution) {
+  if (timeZone === 'UTC') return Date.parse(`${date}T00:00:00Z`);
+  const midnight = Date.parse(`${date}T00:00:00Z`) / resolution;
+  let low = midnight - 36 * 3600000 / resolution, high = midnight + 36 * 3600000 / resolution;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (localDateAt(middle * resolution, timeZone) < date) low = middle + 1;
+    else high = middle;
+  }
+  return low * resolution;
+}
+
+// Exact calendar boundaries retain historical offsets with seconds.
+export function startOfLocalDate(date, timeZone) {
+  return firstSampleOfDate(date, timeZone, 1);
+}
+
 // Search actual UTC minutes, rather than assuming every local day lasts 24h.
 // Local calendar dates are ordered even when a clock repeats or skips an hour.
 function firstMinuteOfDate(date, timeZone) {
-  const midnight = Date.parse(`${date}T00:00:00Z`) / MINUTE;
-  let low = midnight - 36 * 60, high = midnight + 36 * 60;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (localDateAt(middle * MINUTE, timeZone) < date) low = middle + 1;
-    else high = middle;
-  }
-  return low * MINUTE;
+  return firstSampleOfDate(date, timeZone, MINUTE);
 }
 
 export function createLocalDayTimeline(utc, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {

@@ -111,21 +111,23 @@ for (const [width, height, edge] of [[1440, 900, 100], [900, 800, 120], [390, 84
 
 test('the layout owns measured insets and refreshes them once when canvas spacing changes', () => {
   let styleReads = 0, rectReads = 0;
-  let style = { scrollPaddingLeft: '20px', scrollPaddingTop: '100px', scrollPaddingBottom: '60px' };
-  const canvas = { dataset: {}, getBoundingClientRect() { rectReads++; return { width: 1200, height: 800 }; } };
-  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false },
-    readStyle(element) { assert.equal(element, canvas); styleReads++; return style; } });
+  let safeBottom = 0, style = { scrollPaddingLeft: '20px', scrollPaddingTop: '100px' };
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ width: 1200, height: 800 }) };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect() { rectReads++; return { width: 1200, height: 800 }; } };
+  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false }, viewport: null,
+    readStyle(element) { assert.equal(element, canvas); styleReads++; return { ...style,
+      getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' }; } });
   const initial = layout.insets();
   assert.equal(initial.side, 20);
   assert.equal(initial.top, 100);
-  assert.equal(initial.bottom, 80);
+  assert.equal(initial.bottom, 60.8);
   assert.equal(layout.insets(), initial, 'camera measurements reuse the current measured layout');
   assert.deepEqual([rectReads, styleReads], [1, 1], 'reading resolved insets does not force another DOM measurement');
-  style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px', scrollPaddingBottom: '80px' };
+  style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px' }; safeBottom = 34;
   layout.refresh();
   assert.equal(layout.insets().side, 18.5);
   assert.equal(layout.insets().top, 120);
-  assert.equal(layout.insets().bottom, 100);
+  assert.equal(layout.insets().bottom, 94.8);
   assert.deepEqual([rectReads, styleReads], [2, 2]);
 });
 
@@ -429,7 +431,7 @@ for (const [width, height] of [[404, 872], [550, 590], [1440, 900]]) {
         assert.deepEqual(h.controls.getFittedView(), home);
         assert.deepEqual(h.controls.getView(), before, 'both scale and translation remain exact');
         assert.equal(layout.showMandalaColumns, columns, 'dock cannot change mandala content visibility');
-        assert.equal(values.get('--timeline-dock-height'), open && width < 628 ? '82.8px' : '48.8px');
+        assert.equal(values.get('--timeline-dock-height'), open && width < 628 ? '96.8px' : '48.8px');
       }
     }
   });

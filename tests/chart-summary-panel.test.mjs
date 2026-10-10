@@ -175,7 +175,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   }
   const studio = node(), panel = node('aside', { 'aria-labelledby': 'chartSummaryTitle' });
   const summaryScreen = node(), returnsPanel = node('section', { 'aria-labelledby': 'returnsTitle' });
-  const returnsBack = node('button');
+  const returnsBack = node('button'), returnsButton = node('button');
   const content = node(), overview = node(), search = node('input');
   const switcher = node('button', { 'aria-controls': 'chartSummary', 'aria-expanded': 'false' });
   const backdrop = withBackdrop ? node() : null;
@@ -187,9 +187,9 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   canvas.querySelector = () => { throw new Error('The drawer must not measure or inspect the chart'); };
   panel.parentElement = studio;
   summaryScreen.parentElement = returnsPanel.parentElement = panel;
-  search.parentElement = content.parentElement = overview.parentElement = summaryScreen;
+  search.parentElement = content.parentElement = overview.parentElement = returnsButton.parentElement = summaryScreen;
   returnsBack.parentElement = returnsPanel;
-  summaryScreen.children = [overview, search, content];
+  summaryScreen.children = [overview, search, returnsButton, content];
   returnsPanel.children = [returnsBack]; returnsPanel.hidden = true;
   panel.children = [summaryScreen, returnsPanel];
   document = node();
@@ -197,10 +197,11 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   document.querySelector = selector => selector === 'dialog[open]' && globals.dialogOpen || selector === '.library.open' && globals.libraryOpen ? {} : null;
   const window = node(); window.innerWidth = width;
   document.defaultView = window;
-  let openCalls = 0, closeCalls = 0;
+  let openCalls = 0, closeCalls = 0, returnsCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop,
+    panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton,
+    onReturns() { returnsCalls++; controller.setReturnsVisible(true); },
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
   };
@@ -217,12 +218,13 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   const searchFor = value => { search.value = value; search.dispatch('input'); };
   const disclosure = (id, open) => { const section = content.querySelectorAll('[data-summary-section]').find(section => section.dataset.summarySection === id); assert.ok(section); section.open = open; content.dispatch('toggle', { target: section }); };
   return {
-    controller, globals, document, window, panel, summaryScreen, returnsPanel, returnsBack,
+    controller, globals, document, window, panel, summaryScreen, returnsPanel, returnsBack, returnsButton,
     content, overview, search, switcher, canvas, camera, studio, backdrop,
     lineCalls, lineOptions, selectionCalls, click, mode, lineButton, entityButton, searchFor, disclosure,
     resize(value) { window.innerWidth = value; window.dispatch('resize'); controller.layout(); },
     get openCalls() { return openCalls; },
     get closeCalls() { return closeCalls; },
+    get returnsCalls() { return returnsCalls; },
   };
 }
 
@@ -777,4 +779,31 @@ test('externally hidden returns releases shell focus without issuing a second cl
   h.controller.setReturnsVisible(true); h.canvas.focus();
   h.controller.setReturnsVisible(false);
   assert.equal(h.globals.activeElement, h.canvas, 'external navigation retains its own focus');
+});
+
+for (const width of [390, 1440]) test(`return entry at ${width}px switches the shared screen without closing the menu or selecting chart facts`, () => {
+  const h = harness({ width });
+  h.controller.open(); h.searchFor('линии'); h.content.scrollTop = 80;
+  h.returnsButton.dispatch('click');
+  assert.equal(h.returnsCalls, 1);
+  assert.equal(h.controller.screen, 'returns');
+  assert.equal(h.controller.opened, true);
+  assert.equal(h.closeCalls, 0);
+  assert.deepEqual(h.selectionCalls, []);
+  h.controller.open();
+  assert.equal(h.controller.screen, 'summary');
+  assert.equal(h.search.value, 'линии');
+  assert.equal(h.content.scrollTop, 80);
+});
+
+test('choosing a return closes the shared drawer rather than reopening the summary underneath it', () => {
+  const h = harness({ width: 390 });
+  h.controller.open(); h.searchFor('линии');
+  h.returnsButton.dispatch('click'); h.returnsBack.focus();
+  h.controller.setReturnsVisible(false);
+  assert.equal(h.controller.screen, 'closed');
+  assert.equal(h.panel.inert, true);
+  assert.equal(h.globals.activeElement, h.switcher);
+  h.controller.open();
+  assert.equal(h.search.value, 'линии');
 });

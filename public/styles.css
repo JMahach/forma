@@ -287,9 +287,10 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .summary-search input::placeholder { color: #918c84; }
 .summary-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #49443d26 transparent; padding: 0 5px 12px; }
 .summary-section { border-bottom: 1px solid #49443d12; }
-.summary-section > summary { display: flex; align-items: center; gap: 12px; min-height: 49px; cursor: pointer; list-style: none; user-select: none; font-size: 14px; }
+.summary-action { flex: none; margin: 0 5px; padding: 0; border-bottom: 1px solid #49443d12; border-radius: 0; text-align: left; }
+.summary-action, .summary-section > summary { display: flex; align-items: center; gap: 12px; min-height: 49px; cursor: pointer; list-style: none; user-select: none; font-size: 14px; }
 .summary-section > summary::-webkit-details-marker { display: none; }
-.summary-section > summary:focus-visible { outline: 2px solid #587364; outline-offset: -2px; border-radius: 4px; }
+.summary-action:focus-visible, .summary-section > summary:focus-visible { outline: 2px solid #587364; outline-offset: -2px; border-radius: 4px; }
 .summary-section-count { margin-left: auto; color: #87827b; font-size: 12px; font-variant-numeric: tabular-nums; }
 .summary-chevron { color: #98938a; transform: rotate(-90deg); transition: transform .18s; font-size: 15px; }
 .summary-section[open] > summary .summary-chevron { transform: rotate(0); }
@@ -303,7 +304,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .summary-design { color: #b34b4d; }
 .summary-personality { color: #49443d; }
 .summary-all { color: #787269; }
-.summary-count:hover:not(:disabled), .summary-entity:hover { background: #49443d06; }
+.summary-action:hover, .summary-count:hover:not(:disabled), .summary-entity:hover { background: #49443d06; }
 .summary-count[aria-pressed='true'], .summary-entity[aria-pressed='true'] { background: #eaf0f8; color: #354b68; }
 .summary-note { margin: 10px 0 2px; color: #736e67; font-size: 11px; line-height: 1.65; }
 .summary-empty { padding-top: 10px; }
@@ -337,6 +338,11 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-hour-mark > span { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
 .day-hour-mark:first-child > span { transform: none; }
 .day-hour-mark:last-child > span { transform: translateX(-100%); }
+.calendar-time-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 6px; transform: translate(-50%, -50%); background: #bdbdbd; }
+.calendar-time-mark.is-edge { height: 10px; background: #999999; }
+.calendar-time-mark > span { position: absolute; top: calc(50% + 7px); left: 50%; transform: translateX(-50%); color: #999999; white-space: nowrap; }
+.calendar-time-mark[data-edge='start'] > span { transform: none; }
+.calendar-time-mark[data-edge='end'] > span { transform: translateX(-100%); }
 .life-year-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 4px; transform: translate(-50%, -50%); background: #c7c7c7; }
 .life-year-mark.is-major { height: 7px; background: #adadad; }
 .day-reference-rail { position: absolute; inset: 0 22px; pointer-events: none; }
@@ -353,12 +359,12 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-controls[data-status='error'] .transit-status { top: 17px; right: 86px; }
 
 /* The year preview shares the studio's panel placement and range geometry. */
-.lifetime-heading { position: absolute; z-index: 2; left: calc(var(--timeline-gutter) - var(--rail-left)); top: calc(var(--timeline-heading-top) - var(--rail-top)); display: flex; align-items: center; justify-content: space-between; width: var(--timeline-content-width); height: 44px; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; }
+.lifetime-heading { position: absolute; z-index: 2; left: calc(var(--timeline-gutter) - var(--rail-left)); top: calc(var(--timeline-heading-top) - var(--rail-top)); display: flex; align-items: center; justify-content: space-between; width: var(--timeline-content-width); height: var(--timeline-heading-height, 44px); white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; }
 .lifetime-heading > * { pointer-events: auto; }
 .lifetime-date-control { display: flex; align-items: center; gap: 3px; }
 .lifetime-date-control > label { color: #777777; font-size: 11px; }
 .lifetime-date-field { position: relative; display: flex; align-items: center; border: 1px solid transparent; border-radius: 5px; background: transparent; }
-.lifetime-date-field:focus-within { border-color: #888888; }
+.lifetime-date-field:hover, .lifetime-date-field:focus-within { border-color: #c8c8c8; }
 .lifetime-heading input { width: 88px; height: 36px; padding: 0 2px; border: 0; border-radius: 0 5px 5px 0; background: transparent; color: #555555; font-family: inherit; font-size: 12px; font-variant-numeric: tabular-nums; cursor: text; }
 .lifetime-heading input:focus, .lifetime-heading input:focus-visible { outline: none; box-shadow: none; }
 .lifetime-date-field:has(input[aria-invalid='true']) { border-color: #b46d66; }
@@ -373,11 +379,12 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .date-picker-heading { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
 .date-picker button { min-width: 0; height: 32px; padding: 0 3px; border-radius: 5px; color: inherit; font: inherit; }
 .date-picker-heading > button { width: 28px; font-size: 19px; }
-.date-picker-heading > .date-picker-title { flex: 1; width: auto; font-size: 12px; font-weight: 500; }
+.date-picker-heading > .date-picker-title { flex: 1; width: auto; text-align: center; font-size: 12px; font-weight: 500; }
 .date-picker button:hover { background: #eeeee5; }
 .date-picker button:focus-visible { outline: 1px solid #89947b; outline-offset: -2px; }
 .date-picker button:disabled { opacity: .3; cursor: default; }
 .date-picker button[data-selected='true'] { background: #e5eadf; box-shadow: inset 0 0 0 1px #89947b; color: #536348; font-weight: 600; }
+.date-picker button[aria-current] { box-shadow: inset 0 0 0 1px #89947b; }
 .date-picker-grid { display: flex; flex-direction: column; gap: 3px; }
 .date-picker-row { display: grid; grid-template-columns: repeat(var(--calendar-columns), minmax(0, 1fr)); gap: 3px; }
 .date-picker-row button { width: 100%; }
@@ -396,6 +403,8 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
   .lifetime-date-control { gap: 2px; }
   .lifetime-date-control > label { font-size: 10px; }
   .lifetime-heading input { width: 96px; font-size: 16px; }
+  .lifetime-heading input::placeholder { font-size: 14px; }
+  .lifetime-heading .lifetime-calendar-toggle { width: 24px; }
 }
 
 /* Feedback and accessibility helpers. */
@@ -543,17 +552,9 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 }
 @media print { .returns-panel, .timeline-dock { display: none !important; } }
 
-/* One continuous footer; its two heights come from full-studio geometry. */
-.timeline-dock { position: fixed; z-index: 89; inset: var(--timeline-dock-top, calc(100% - 74.8px)) 0 0; border-top: 1px solid #d1d1d1; background: var(--timeline-background); touch-action: none; }
+/* One low rail backing; stacked dates remain on the canvas above it. */
+.timeline-dock { position: fixed; z-index: 89; inset: var(--timeline-dock-top, calc(100% - 40.8px)) 0 0; border-top: 1px solid #d1d1d1; background: var(--timeline-background); touch-action: none; }
 .studio:not(:has(.day-controls:not([hidden]))) .timeline-dock { display: none; }
-
-
-
-
-.lifetime-date-field:hover, .lifetime-date-field:focus-within { border-color: #c8c8c8; }
-
-
-
 .lifetime-controls:not([data-personal-life='true']) .lifetime-scale > [data-lifetime-date] { visibility: hidden; }
 /* Preserve the normal panel geometry while the lifetime file is prepared. */
 .lifetime-controls[data-status='preparing'] > .lifetime-heading { opacity: .35; pointer-events: none; }

@@ -45,7 +45,7 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
+export function attachChartSummary({ panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
   const document = panel.ownerDocument;
   const window = document.defaultView;
   const summaryLabel = panel.getAttribute('aria-labelledby');
@@ -102,6 +102,7 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
     if (returnsVisible === visible) return;
     // A view projection supplied by app.js, not another return-opening command.
     returnsVisible = visible;
+    if (visible) summaryOpened = false;
     layout();
   }
   function syncSelection(force = false) {
@@ -144,6 +145,9 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
       render();
     } else syncSelection();
   }
+  returnsButton?.addEventListener('click', () => {
+    if (!returnsButton.hidden && !returnsButton.disabled) onReturns();
+  });
   switcher.addEventListener('click', toggle);
   backdrop?.addEventListener('click', () => close());
   search.addEventListener('input', render);

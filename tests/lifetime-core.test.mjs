@@ -363,7 +363,7 @@ test('narrowed ranges reject in-flight outside points, clamp the requested momen
 test('invalid, incomplete, out of bounds, reversed and non-leap dates leave the day range unchanged', async () => {
   const h = explorerHarness(); await h.explorer.open(); const before = h.explorer.state;
   for (const pair of [['1800-12-31', '1900-01-01'], ['2399-01-01', '2400-01-01'], ['2000-01-02', '2000-01-01'],
-    ['1900-02-29', '1900-03-01'], ['2000-02-30', '2000-03-01'], ['2000-1-1', '2000-01-02'], ['', '2000-01-01'], ['abc', '2000-01-01']]) {
+    ['1900-02-29', '1900-03-01'], ['2000-02-30', '2000-03-01'], ['2000-1-1', '2000-01-02'], ['abc', '2000-01-01']]) {
     assert.equal(h.explorer.setDateRange(...pair), false);
   }
   assert.equal(h.explorer.state.current, before.current); assert.equal(h.calls.length, 0);
@@ -814,4 +814,53 @@ test('a personal rail stops at the exact calendar centenary instead of the end o
   assert.equal(h.explorer.state.maxUtc, anniversary);
   assert.equal(h.explorer.state.minUtc, Date.parse(birth));
   assert.equal(h.calls.length, 0);
+});
+
+
+test('an empty lifetime start uses the first available instant', async () => {
+  for (const from of [null, '', undefined]) {
+    const h = explorerHarness(meta); await h.explorer.open();
+    const pending = h.explorer.setDateRange(from, '1900-01-02'); await settle(h, pending, meta);
+    assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.minUtc, h.explorer.state.openStart],
+      ['1900-01-01', Date.parse(meta.startUtc), true]);
+    const calls = h.calls.length;
+    assert.equal(h.explorer.setDateRange('1900-01-01', '1900-01-02'), true);
+    assert.equal(h.explorer.state.openStart, false); assert.equal(h.calls.length, calls);
+    assert.equal(h.explorer.setDateRange(null, '1900-01-02'), true);
+    assert.equal(h.explorer.state.openStart, true); assert.equal(h.calls.length, calls);
+    h.explorer.close(); await h.explorer.open(); assert.equal(h.explorer.state.openStart, false);
+  }
+});
+
+test('open-start restoration uses the available lower bound instead of a stored former start', async () => {
+  const h = explorerHarness(meta);
+  const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-03', openStart: true, index: 0 });
+  await settle(h, pending, meta);
+  assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.minUtc, h.explorer.state.openStart],
+    ['1900-01-01', Date.parse(meta.startUtc), true]);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(h.explorer.state.openStart, false);
+});
+
+for (const openStart of [true, false]) test(`metadata expansion ${openStart ? 'expands an open start' : 'preserves an exact personal lower bound'}`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const nextMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576 };
+  let metadataCalls = 0, pointCalls = 0;
+  const explorer = createLifetimeExplorer({ client: {
+    async getMeta() { return ++metadataCalls === 1 ? meta : nextMeta; },
+    async getPoint(index) {
+      if (++pointCalls === 1) throw Object.assign(new Error('Версия изменилась'), { code: 'unsupported_version' });
+      return moment(index, nextMeta);
+    },
+  } });
+  t.after(() => explorer.close());
+  const minimumUtc = '1900-01-01T12:34:56Z', requestedUtc = Date.parse('1900-01-02T00:00:00Z');
+  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03',
+    requestedUtc, openStart, ...(openStart ? {} : { minimumUtc }) });
+  t.mock.timers.tick(1000); await tick();
+  assert.equal(explorer.state.status, 'ready'); assert.equal(metadataCalls, 2);
+  assert.equal(explorer.state.openStart, openStart);
+  assert.equal(explorer.state.minUtc, Date.parse(openStart ? nextMeta.startUtc : minimumUtc));
+  assert.equal(explorer.state.fromDate, openStart ? '1899-12-31' : '1900-01-01');
+  assert.equal(explorer.state.requestedUtc, requestedUtc);
 });

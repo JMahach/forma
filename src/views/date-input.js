@@ -7,6 +7,37 @@ export function formatDateInput(value) {
   return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('.');
 }
 
+// Native caret placement jumps to the start/end above/below an input's text.
+// Resolve a date component from X using the actual font, padding and scroll.
+export function datePartAt(input, clientX) {
+  const parts = [...input.value.matchAll(/\d+/g)];
+  if (!parts.length) return null;
+  if (!Number.isFinite(clientX) || parts.length === 1) {
+    return parts.find(part => input.selectionStart <= part.index + part[0].length) || parts.at(-1);
+  }
+  const document = input.ownerDocument, style = document.defaultView.getComputedStyle(input);
+  const scale = input.getBoundingClientRect().width / input.offsetWidth;
+  const x = (clientX - input.getBoundingClientRect().left) / scale - input.clientLeft - parseFloat(style.paddingLeft) + input.scrollLeft;
+  const text = document.createElement('span');
+  text.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;white-space:pre';
+  text.setAttribute('aria-hidden', 'true');
+  for (const property of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariant',
+    'fontVariantNumeric', 'fontFeatureSettings', 'fontVariationSettings', 'letterSpacing']) text.style[property] = style[property];
+  text.textContent = input.value;
+  document.body.append(text);
+  try {
+    const range = document.createRange();
+    range.setStart(text.firstChild, 0);
+    const widthTo = end => { range.setEnd(text.firstChild, end); return range.getBoundingClientRect().width; };
+    for (let index = 0; index < parts.length - 1; index++) {
+      const end = parts[index].index + parts[index][0].length;
+      const boundary = (widthTo(end) + widthTo(parts[index + 1].index)) / 2;
+      if (x <= boundary) return parts[index];
+    }
+    return parts.at(-1);
+  } finally { text.remove(); }
+}
+
 export function formatTimeInput(value) {
   const source = String(value ?? '').trim();
   if (/^\d:\d{2}$/.test(source)) return `0${source}`;

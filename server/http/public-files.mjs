@@ -32,6 +32,7 @@ export const PUBLIC_FILES = new Map([
     'src/data/return-storage.js',
     'src/domain/cycles.js',
     'src/domain/returns-window.js',
+    'src/domain/timeline-ticks.js',
     'src/domain/personal-age.js',
     'src/domain/chart-overlay.js',
     'src/domain/chart-composition.js',

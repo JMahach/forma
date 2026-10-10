@@ -200,7 +200,7 @@ test('all timelines keep their native hit area above a permanent full-width foot
     assert.equal(controls.background, 'transparent', 'the hit area cannot hide a full-height strip of the chart');
     const backing = declarationsAt('.timeline-dock', width, height);
     assert.equal(backing.position, 'fixed', 'Safari can extend the viewport-attached background under its chrome');
-    assert.equal(backing.inset, 'var(--timeline-dock-top, calc(100% - 74.8px)) 0 0');
+    assert.equal(backing.inset, 'var(--timeline-dock-top, calc(100% - 40.8px)) 0 0');
     assert.equal(backing.height, undefined, 'top and bottom stretch the backing through the obscured area');
     assert.equal(backing.background, 'var(--timeline-background)');
     assert.match(backing['border-top'], /^1px solid /);

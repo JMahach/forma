@@ -117,16 +117,18 @@ test('chronicle has no manual retry button or overlapping error layout', async (
   assert.match(css, /\.lifetime-controls > \.lifetime-status[^{}]*\{[^}]*left: 50%[^}]*pointer-events: none/s);
 });
 
-test('hour marks belong only to the day view and disappear before a multi-day chart loads', async () => {
+test('hour marks change to calendar marks as soon as a multi-day range is accepted', async () => {
   const h = harness(); await open(h);
   assert.equal(h.hourMarks.children.length, 25);
   h.setDay('2026-11-01T12:00:00Z', 'America/New_York');
   assert.equal(h.hourMarks.children.length, 26);
   await dates(h);
   assert.equal(h.explorer.state.mode, 'lifetime');
-  assert.equal(h.hourMarks.children.length, 0);
+  assert.ok(h.hourMarks.children.length >= 2);
+  assert.ok(h.hourMarks.children.every(mark => mark.className.includes('calendar-time-mark')));
+  const calendar = h.hourMarks.children;
   await complete(h);
-  assert.equal(h.hourMarks.children.length, 0);
+  assert.equal(h.hourMarks.children, calendar, 'loading a moment does not replace its calendar');
 });
 
 test('lifetime rail keeps accessible time and date endpoints without its own visible clock', async () => {
@@ -365,7 +367,7 @@ test('day date follows local midnight rather than the lifetime UTC date', async 
   assert.equal(h.fromDate.value, '01.10.2026'); assert.equal(h.toDate.value, '01.10.2026'); assert.equal(h.requests.length, 0);
 });
 
-test('reused day labels retain drafts and refresh readiness, reference and resized slider input', async () => {
+test('reused day labels retain active drafts and refresh readiness, reference and resized slider input', async () => {
   const h = harness(); await open(h);
   const writes = [];
   for (const [name, property] of [['status', 'textContent'], ['fromDate', 'value'], ['toDate', 'value']]) {
@@ -393,7 +395,7 @@ test('reused day labels retain drafts and refresh readiness, reference and resiz
   assert.deepEqual(h.dayScrubs, [315, 148], 'each drag still reads the current viewport geometry');
   h.setDay(h.day.current.utc, 'Asia/Tokyo');
 
-  assert.equal(h.fromDate.value, '15.08');
+  assert.equal(h.fromDate.value, '30.09.2026', 'using the slider leaves the field and restores its date');
 });
 test('the last year digit applies either endpoint immediately, including a second start date', async () => {
   const h = harness(); await open(h);
@@ -456,35 +458,143 @@ test('Tab retains the applied start and selects the end; its last digit applies 
   assert.equal(h.marker.hidden, true); await complete(h);
   assert.deepEqual(h.marks.map(mark => mark.textContent), ['11.08.1998', '12.08.1998']);
 });
-test('focus and click select the entire formatted date, including after caret placement', async () => {
+test('date clicks select the whole date on entry, one component while focused and the whole date on double click', async () => {
   const h = harness(); await open(h);
   for (const input of [h.fromDate, h.toDate]) {
-    input.focus(); assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 10]);
-    input.setSelectionRange(3, 3); input.dispatch('click'); assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 10]);
+    const click = async (start, end = start, detail = 1) => {
+      input.dispatch('pointerdown', { button: 0, pointerType: 'mouse' });
+      input.focus();
+      // A click inside selected text can leave the old selection during the
+      // click handler; the browser places its caret only after that handler.
+      if (start !== end) input.setSelectionRange(start, end);
+      input.dispatch('click', { button: 0, detail });
+      input.setSelectionRange(start, end);
+      if (detail === 2) input.dispatch('dblclick', { button: 0, detail });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    };
+    await click(4); assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 10]);
+    for (const [caret, expected] of [[0, [0, 2]], [2, [0, 2]], [3, [3, 5]], [5, [3, 5]], [6, [6, 10]], [10, [6, 10]]]) {
+      await click(caret); assert.deepEqual([input.selectionStart, input.selectionEnd], expected);
+    }
+    await click(4, 4, 2); assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 10]);
+    await click(1, 5); assert.deepEqual([input.selectionStart, input.selectionEnd], [1, 5], 'a drag keeps its selected text');
+    h.toggle.focus(); input.focus();
+    assert.deepEqual([input.selectionStart, input.selectionEnd], [0, 10], 'keyboard focus selects the whole date');
   }
 });
-test('invalid calendar dates stay inside their own field with two words', async () => {
+
+test('date components follow horizontal text bounds across the whole field height, font size and scale', async () => {
   const h = harness(); await open(h);
-  const current = h.explorer.current;
-  h.type(h.fromDate, '11221999');
-  assert.equal(h.fromError.textContent, 'Дата некорректна');
+  let digitWidth = 8, dotWidth = 4;
+  const measure = text => [...text].reduce((width, char) => width + (char === '.' ? dotWidth : digitWidth), 0);
+  h.document.defaultView.getComputedStyle = input => ({ paddingLeft: '3px', fontSize: `${digitWidth * 2}px`, fontVariantNumeric: 'tabular-nums' });
+  const create = h.document.createElement;
+  h.document.createElement = tag => {
+    const node = create(tag);
+    Object.defineProperty(node, 'firstChild', { get: () => ({ textContent: node.textContent }) });
+    return node;
+  };
+  h.document.createRange = () => {
+    let text = '', start = 0, end = 0;
+    return { setStart(node, value) { text = node.textContent; start = value; }, setEnd(node, value) { end = value; },
+      getBoundingClientRect() { return { width: measure(text.slice(start, end)) }; } };
+  };
+  for (const input of [h.fromDate, h.toDate]) for (const [font, scale, scroll] of [[8, 1, 0], [10, 1.5, 0], [10, 1, 12]]) {
+    digitWidth = font; dotWidth = font / 2;
+    input.offsetWidth = 100; input.clientLeft = 1; input.scrollLeft = scroll;
+    input.getBoundingClientRect = () => ({ left: 100, top: 200, width: 100 * scale, height: 40 * scale });
+    input.focus();
+    for (const [textX, expected] of [[0, [0, 2]], [digitWidth, [0, 2]], [3 * digitWidth + dotWidth, [3, 5]], [6 * digitWidth + 2 * dotWidth, [6, 10]], [100, [6, 10]]]) {
+      for (const [clientY, nativeCaret] of [[201, 0], [220, 4], [239, 10]]) {
+        const clientX = 100 + scale * (4 + textX - scroll);
+        input.dispatch('pointerdown', { button: 0, pointerType: 'mouse', clientX, clientY });
+        input.dispatch('click', { button: 0, detail: 1, clientX, clientY });
+        input.setSelectionRange(nativeCaret, nativeCaret);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual([input.selectionStart, input.selectionEnd], expected,
+          `${input.id}: x=${textX}, y=${clientY}, font=${font}, scale=${scale}, scroll=${scroll}`);
+        assert.equal(h.document.body.children.filter(node => node.tagName === 'span').length, 0, 'text measurement leaves no nodes behind');
+      }
+    }
+  }
+});
+
+for (const field of ['fromDate', 'toDate']) for (const draft of ['', '1508', '31021998', '01011800', '01012400', '110819981']) {
+  test(`${field}: leaving ${draft || 'an empty date'} restores the accepted range without moving the scale`, async () => {
+    const h = harness(); await open(h); await dates(h); await complete(h);
+    const accepted = h[field].value, current = h.explorer.current, requests = h.requests.length;
+    const scale = [h.range.min, h.range.max, h.range.value];
+    h.type(h[field], draft);
+    assert.deepEqual([h.range.min, h.range.max, h.range.value], scale);
+    h[field].dispatch('change'); h.fromCalendar.focus();
+    assert.equal(h[field].value, accepted);
+    assert.equal(h[field].getAttribute('aria-invalid'), 'false');
+    assert.equal(h[field === 'fromDate' ? 'fromError' : 'toError'].textContent, '');
+    assert.deepEqual([h.range.min, h.range.max, h.range.value], scale);
+    assert.equal(h.explorer.current, current); assert.equal(h.requests.length, requests);
+  });
+}
+
+test('leaving an invalid current-day draft restores the latest date after midnight', async () => {
+  const h = harness(); await open(h);
+  h.type(h.toDate, '22222222'); h.setDay('2026-09-30T22:05:00Z');
+  assert.equal(h.toDate.value, '22.22.2222');
+  h.toggle.focus();
+  assert.equal(h.toDate.value, '01.10.2026');
   assert.equal(h.toError.textContent, '');
-  assert.equal(h.fromDate.getAttribute('aria-invalid'), 'true');
-  assert.equal(h.status.textContent, '', 'no validation paragraph above the timeline');
-  h.setDay('2026-09-30T12:38:00Z');
-  assert.equal(h.fromError.textContent, 'Дата некорректна');
-  h.type(h.toDate, '31022026');
-  assert.equal(h.toError.textContent, 'Дата некорректна');
-  assert.equal(h.fromError.textContent, 'Дата некорректна');
-  h.type(h.fromDate, '22111999');
-  assert.equal(h.fromError.textContent, '');
-  assert.equal(h.toError.textContent, 'Дата некорректна');
-  assert.equal(h.explorer.state.mode, 'day');
   assert.equal(h.requests.length, 0);
-  h.type(h.toDate, '');
-  assert.equal(h.toError.textContent, '');
+});
+
+test('a rejected end leaves an open end intact and the next valid end applies', async () => {
+  const h = harness(); await open(h); await dates(h); await complete(h);
+  h.type(h.fromDate, '15081998'); await tick(); await complete(h);
   assert.equal(h.explorer.state.openEnded, true);
-  await tick(); await complete(h);
+  h.type(h.toDate, '01012400'); h.toggle.focus();
+  assert.equal(h.toDate.value, ''); assert.equal(h.toDate.placeholder, 'До конца');
+  assert.equal(h.toError.textContent, ''); assert.equal(h.explorer.state.openEnded, true);
+  h.type(h.toDate, '16081998'); await tick(); await complete(h);
+  assert.equal(h.explorer.state.toDate, '1998-08-16', 'the next valid edit applies normally');
+});
+
+test('Tab restores an unfinished start, and blur restores the current day instead of a focus-time snapshot', async () => {
+  const h = harness(); await open(h);
+  h.type(h.fromDate, '1508');
+  h.fromDate.dispatch('keydown', { key: 'Tab' });
+  assert.equal(h.fromDate.value, '30.09.2026');
+  assert.equal(h.document.activeElement, h.toDate);
+  assert.deepEqual([h.toDate.selectionStart, h.toDate.selectionEnd], [0, 10]);
+  h.type(h.toDate, ''); h.setDay('2026-09-30T22:05:00Z');
+  assert.equal(h.toDate.value, '', 'an active draft survives the clock update');
+  h.toggle.focus();
+  assert.equal(h.toDate.value, '01.10.2026'); assert.equal(h.fromDate.value, '01.10.2026');
+  assert.equal(h.requests.length, 0);
+});
+
+test('switching between date fields restores each rejected draft and clears its error', async () => {
+  const h = harness(); await open(h);
+  h.type(h.fromDate, '31022026'); h.type(h.toDate, '15');
+  assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.fromError.textContent, '');
+  h.toDate.dispatch('keydown', { key: 'Enter' });
+  assert.equal(h.toError.textContent, 'Дата некорректна');
+  h.toggle.focus();
+  assert.equal(h.toDate.value, '30.09.2026'); assert.equal(h.toError.textContent, '');
+  for (const input of [h.fromDate, h.toDate]) assert.equal(input.getAttribute('aria-invalid'), 'false');
+  assert.equal(h.requests.length, 0);
+});
+
+test('invalid calendar dates show their own error only while being edited', async () => {
+  for (const [field, error, value] of [['fromDate', 'fromError', '11221999'], ['toDate', 'toError', '31022026']]) {
+    const h = harness(); await open(h);
+    h.type(h[field], value);
+    assert.equal(h[error].textContent, 'Дата некорректна');
+    assert.equal(h[field].getAttribute('aria-invalid'), 'true');
+    assert.equal(h.status.textContent, '', 'no validation paragraph above the timeline');
+    h.setDay('2026-09-30T12:38:00Z');
+    assert.equal(h[error].textContent, 'Дата некорректна', 'a clock update preserves the active error');
+    h.toggle.focus();
+    assert.equal(h[field].value, '30.09.2026'); assert.equal(h[error].textContent, '');
+    assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.requests.length, 0);
+  }
 });
 
 test('valid dates outside supported bounds identify the offending endpoint', async () => {
@@ -527,13 +637,14 @@ test('metadata bounds are inclusive and late metadata validates only the current
   await dates(pending, '01011800', '02111800');
   assert.equal(pending.fromError.textContent, ''); assert.equal(pending.toError.textContent, '');
   meta.resolve(metadata); await opening; await tick();
-  assert.equal(pending.fromError.textContent, 'Вне диапазона');
+  assert.equal(pending.fromError.textContent, '');
+  assert.equal(pending.fromDate.value, '30.09.2026', 'late bounds restore the endpoint already left by the user');
   assert.equal(pending.toError.textContent, 'Вне диапазона');
   assert.equal(pending.requests.length, 0);
 });
 
-test('invalid, reversed, unsupported and incomplete drafts preserve the displayed point', async () => {
-  for (const [field, value, reason] of [['toDate', '31021998', 'Дата некорректна'], ['toDate', '10081998', 'Вне диапазона'], ['fromDate', '01011800', 'Вне диапазона']]) {
+test('invalid, unsupported and incomplete drafts preserve the displayed point', async () => {
+  for (const [field, value, reason] of [['toDate', '31021998', 'Дата некорректна'], ['fromDate', '01011800', 'Вне диапазона']]) {
     const h = harness(); await open(h); await dates(h); await complete(h);
     const current = h.explorer.current, count = h.requests.length;
     const accepted = [h.explorer.state.fromDate, h.explorer.state.toDate];
@@ -545,16 +656,20 @@ test('invalid, reversed, unsupported and incomplete drafts preserve the displaye
   assert.equal(h.toError.textContent, 'Дата некорректна'); assert.equal(h.status.textContent, ''); assert.equal(h.toDate.getAttribute('aria-invalid'), 'true');
   h.type(h.toDate, '120'); assert.equal(h.status.textContent, '');
 });
-test('pending point completion and clock refresh preserve unfinished drafts in both inputs', async () => {
-  const h = harness(); await open(h); await dates(h);
-  h.type(h.fromDate, '15081998'); h.type(h.toDate, '1708'); h.toggle.focus(); await complete(h);
-  h.setNow('2026-09-30T12:48:00Z'); assert.equal(h.fromDate.value, '15.08.1998'); assert.equal(h.toDate.value, '17.08');
+test('pending point completion and clock refresh retain the latest accepted date after an unfinished edit loses focus', async () => {
+  const h = harness(); await open(h); await dates(h, '11081998', '20081998');
+  h.type(h.fromDate, '15081998'); h.type(h.fromDate, ''); h.toDate.focus();
+  assert.equal(h.fromDate.value, '15.08.1998');
+  h.type(h.toDate, '1708'); h.toggle.focus(); await tick(); await complete(h);
+  h.setNow('2026-09-30T12:48:00Z'); assert.equal(h.fromDate.value, '15.08.1998'); assert.equal(h.toDate.value, '20.08.1998');
 });
-test('a ninth pasted digit is retained and rejected instead of silently committing eight digits', async () => {
-  const h = harness(); await open(h); await dates(h, '110819981', '12081998');
-  assert.equal(h.fromDate.value, '110819981'); assert.equal(h.fromError.textContent, 'Дата некорректна'); assert.equal(h.status.textContent, '');
-  h.toDate.dispatch('keydown', { key: 'Enter' }); assert.equal(h.requests.length, 0);
-  h.type(h.fromDate, '11081998'); h.toDate.dispatch('change'); await tick(); assert.equal(h.requests.length, 1); await complete(h);
+test('a ninth pasted digit is rejected during editing and restored on blur', async () => {
+  const h = harness(); await open(h); h.type(h.fromDate, '110819981');
+  assert.equal(h.fromDate.value, '110819981'); assert.equal(h.fromError.textContent, 'Дата некорректна');
+  h.fromDate.dispatch('keydown', { key: 'Enter' }); assert.equal(h.requests.length, 0);
+  h.toggle.focus(); assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.fromError.textContent, '');
+  h.type(h.fromDate, '11081998'); h.type(h.toDate, '12081998'); h.toDate.dispatch('change');
+  await tick(); assert.equal(h.requests.length, 1); await complete(h);
 });
 test('drafts entered while metadata is pending survive and apply when it becomes available', async () => {
   const meta = deferred(), h = harness({ metaPromise: meta.promise }); const opening = h.explorer.open();
@@ -565,6 +680,14 @@ test('drafts entered while metadata is pending survive and apply when it becomes
   const pending = deferred(), changed = harness({ metaPromise: pending.promise }); const other = changed.explorer.open();
   await dates(changed); changed.type(changed.fromDate, '1508'); pending.resolve(metadata); await other; await tick(); assert.equal(changed.requests.length, 0);
   assert.equal(changed.fromDate.value, '15.08'); assert.equal(changed.explorer.state.fromDate, '2026-09-30');
+});
+test('an automatic open end entered before metadata is ready still applies after metadata arrives', async () => {
+  const meta = deferred(), h = harness({ metaPromise: meta.promise }); const opening = h.explorer.open();
+  h.type(h.fromDate, '04102026'); h.toggle.focus();
+  assert.equal(h.toDate.value, '');
+  meta.resolve(metadata); await tick();
+  assert.equal(h.explorer.state.fromDate, '2026-10-04'); assert.equal(h.explorer.state.openEnded, true);
+  await complete(h); await opening;
 });
 test('Enter and unchanged change events add no request after automatic application', async () => {
   const h = harness(); await open(h); h.type(h.fromDate, '29092026');
@@ -736,12 +859,13 @@ test('equal dates and incomplete, impossible or outside-lifetime start drafts ne
   }
 });
 
-test('clearing the end deliberately means the final available date and entering an explicit end exits that mode', async () => {
+test('clearing a finite end leaves the scale intact; blur restores it and a new complete end still applies', async () => {
   const h = harness(); await open(h); await dates(h, '04102026', '06102026'); await complete(h);
   h.type(h.toDate, ''); await tick();
-  assert.equal(h.explorer.state.openEnded, true); assert.equal(h.explorer.state.toDate, '2399-12-31');
-  assert.equal(h.toDate.value, ''); assert.equal(h.toDate.placeholder, 'До конца');
-  assert.equal(h.range.disabled, false); assert.equal(h.range.max, String(Date.parse('2399-12-31T23:59:59.999Z')));
+  assert.equal(h.explorer.state.openEnded, false); assert.equal(h.explorer.state.toDate, '2026-10-06');
+  assert.equal(h.toDate.value, ''); assert.equal(h.toDate.placeholder, 'ДД.ММ.ГГГГ');
+  assert.equal(h.range.disabled, false); assert.equal(h.range.max, String(Date.parse('2026-10-06T23:59:59.999Z')));
+  h.toggle.focus(); assert.equal(h.toDate.value, '06.10.2026');
   h.type(h.toDate, '07102026'); await tick(); await complete(h);
   assert.equal(h.explorer.state.openEnded, false); assert.equal(h.explorer.state.toDate, '2026-10-07');
   assert.equal(h.toDate.value, '07.10.2026'); assert.equal(h.toDate.placeholder, 'ДД.ММ.ГГГГ');
@@ -889,7 +1013,8 @@ test('personal decade marks use real birthdays and the clipped window without re
   h.explorer.setVisibleWindow(null);
   personal = null;
   h.explorer.setVisibleWindow({ minUtc, maxUtc });
-  assert.equal(h.hourMarks.children.length, 0, 'ordinary chronicle never inherits personal ages');
+  assert.ok(h.hourMarks.children.length >= 2);
+  assert.ok(h.hourMarks.children.every(mark => mark.dataset.age === undefined), 'ordinary chronicle never inherits personal ages');
 });
 
 test('personal marks honour the birth timezone and clear when returning to the day view', async () => {
@@ -1186,3 +1311,210 @@ for (const failureSource of ['metadata-network', 'point', 'exact']) test(`tempor
   assert.equal(Date.parse(h.explorer.current.utc), selected); assert.equal(h.explorer.state.retryCount, 0);
   h.explorer.close();
 });
+
+
+test('bounds arriving after both fields lost focus restore rejected dates without applying them', async () => {
+  const meta = deferred(), h = harness({ metaPromise: meta.promise });
+  const opening = h.explorer.open();
+  await dates(h, '01011800', '02011800'); h.toggle.focus();
+  meta.resolve(metadata); await opening; await tick();
+  assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.toDate.value, '30.09.2026');
+  assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+  assert.equal(h.requests.length, 0);
+});
+
+
+for (const [from, to] of [['01011800', '01011998'], ['01012300', '01012400']]) {
+  for (const leaveBoth of [false, true]) test(`a rejected pending pair ${from}/${to} restores its unapplied dates after blur (${leaveBoth})`, async () => {
+    const meta = deferred(), h = harness({ metaPromise: meta.promise });
+    const opening = h.explorer.open(); await dates(h, from, to);
+    if (leaveBoth) h.toggle.focus();
+    meta.resolve(metadata); await opening; await tick();
+    h.toggle.focus();
+    assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.toDate.value, '30.09.2026');
+    assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+    assert.equal(h.requests.length, 0);
+  });
+}
+
+
+test('typing a partial end preserves its complete start while metadata is pending', async t => {
+  const meta = deferred(), h = harness({ metaPromise: meta.promise });
+  t.after(() => h.explorer.close());
+  const opening = h.explorer.open();
+  h.type(h.fromDate, '11081998');
+  h.type(h.toDate, '12');
+  assert.equal(h.fromDate.value, '11.08.1998', 'an unfinished endpoint does not reject the pending pair');
+  assert.equal(h.toDate.value, '12');
+  assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+  assert.equal(h.requests.length, 0);
+  h.type(h.toDate, '12081998');
+  meta.resolve(metadata); await tick();
+  await complete(h);
+  await opening;
+  assert.equal(h.explorer.state.fromDate, '1998-08-11');
+  assert.equal(h.explorer.state.toDate, '1998-08-12');
+  assert.equal(h.fromDate.value, '11.08.1998'); assert.equal(h.toDate.value, '12.08.1998');
+  assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+});
+
+
+test('an explicitly selected returns year shares calendar ticks without new labels and preserves the accepted life range', async () => {
+  const natal = { utc: '2000-01-01T18:00:00Z', timezone: 'Asia/Tokyo' };
+  const h = harness({ getPersonalChart: () => natal });
+  h.hourMarks.getBoundingClientRect = () => ({ width: 640 });
+  await open(h); await dates(h, '01012000', '31122020');
+  const accepted = [h.explorer.state.minUtc, h.explorer.state.maxUtc], requests = h.requests.length;
+  const window = { minUtc: Date.parse('2009-12-31T15:00:00Z'), maxUtc: Date.parse('2010-12-31T14:59:59.999Z') };
+  h.explorer.setVisibleWindow({ ...window, calendar: true, timeZone: natal.timezone });
+  assert.ok(h.hourMarks.children.length > 2);
+  assert.ok(h.hourMarks.children.every(mark => mark.className.includes('calendar-time-mark') && !mark.children.length));
+  assert.equal(h.hourMarks.children[0].style['--hour-position'], '0%');
+  assert.equal(h.hourMarks.children.at(-1).style['--hour-position'], '100%');
+  assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], accepted);
+  assert.equal(h.requests.length, requests, 'decorations do not calculate or select a moment');
+  h.explorer.setVisibleWindow(window);
+  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10'], 'an equally sized age window remains an age window');
+  h.explorer.setVisibleWindow(null);
+  assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['0', '10', '20']);
+});
+
+test('a valid end before the start opens the start at the available lower bound', async () => {
+  const h = harness(); await open(h); await dates(h); await complete(h);
+  h.type(h.toDate, '10081998'); await tick(); await complete(h);
+  assert.equal(h.fromDate.value, ''); assert.equal(h.fromDate.placeholder, 'С начала');
+  assert.equal(h.toDate.value, '10.08.1998'); assert.equal(h.toError.textContent, '');
+  assert.equal(h.explorer.state.openStart, true); assert.equal(h.explorer.state.fromDate, '1801-01-01');
+  assert.equal(h.range.min, String(Date.parse(metadata.startUtc)));
+  h.toggle.focus(); h.setNow('2026-09-30T12:48:00Z');
+  assert.equal(h.fromDate.value, ''); assert.equal(h.fromDate.placeholder, 'С начала');
+  h.type(h.fromDate, '09081998'); await tick();
+  assert.equal(h.explorer.state.openStart, false); assert.equal(h.explorer.state.fromDate, '1998-08-09');
+  assert.equal(h.fromDate.value, '09.08.1998'); assert.equal(h.fromDate.placeholder, 'ДД.ММ.ГГГГ');
+});
+
+test('the end calendar allows dates before the current start and opens the start on acceptance', async () => {
+  const h = harness(); await open(h); h.toCalendar.dispatch('click');
+  const popup = h.document.body.children[1];
+  const click = text => { const choice = popup.all(node => node.tagName === 'button' && node.textContent === text)[0]; assert.ok(choice); assert.equal(choice.disabled, false); choice.dispatch('click'); };
+  click('2026–2050'); click('2001–2025'); click('2025');
+  h.document.dispatch('pointerdown', { target: h.panel });
+  await tick(); await complete(h);
+  assert.equal(h.toDate.value, '01.01.2025'); assert.equal(h.fromDate.value, '');
+  assert.equal(h.fromDate.placeholder, 'С начала'); assert.equal(h.explorer.state.openStart, true);
+  assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+});
+
+test('an automatic open start entered before metadata applies only after valid bounds arrive', async () => {
+  const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+  h.type(h.toDate, '10081998'); h.toggle.focus();
+  assert.equal(h.fromDate.value, '');
+  meta.resolve(metadata); await tick(); await complete(h); await opening;
+  assert.equal(h.explorer.state.openStart, true); assert.equal(h.explorer.state.fromDate, '1801-01-01');
+  assert.equal(h.explorer.state.toDate, '1998-08-10'); assert.equal(h.fromDate.placeholder, 'С начала');
+});
+
+
+test('incomplete, impossible and absolutely out-of-bounds ends cannot clear the start', async () => {
+  const h = harness(); await open(h); await dates(h); await complete(h);
+  for (const value of ['1008', '31021998', '01011800', '01012400', '100819981']) {
+    h.type(h.toDate, value); h.toDate.dispatch('keydown', { key: 'Enter' });
+    assert.equal(h.fromDate.value, '11.08.1998'); assert.equal(h.explorer.state.openStart, false);
+    h.toggle.focus(); assert.equal(h.toDate.value, '12.08.1998'); assert.equal(h.toError.textContent, '');
+  }
+});
+
+test('an invalid start draft restores the accepted open start when focus leaves it', async () => {
+  const h = harness(); await open(h); h.type(h.toDate, '10081998'); await tick(); await complete(h);
+  for (const value of ['', '1008', '31021998', '01011800', '01012400']) {
+    h.type(h.fromDate, value); h.toggle.focus();
+    assert.equal(h.fromDate.value, ''); assert.equal(h.fromDate.placeholder, 'С начала');
+    assert.equal(h.explorer.state.openStart, true); assert.equal(h.explorer.state.fromDate, '1801-01-01');
+    assert.equal(h.fromError.textContent, '');
+  }
+});
+
+test('late absolute bounds reject an unsupported early end without retaining its provisional open start', async () => {
+  const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+  h.type(h.toDate, '01011800'); h.toggle.focus();
+  meta.resolve(metadata); await opening; await tick();
+  assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.toDate.value, '30.09.2026');
+  assert.equal(h.explorer.state.openStart, false); assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+  assert.equal(h.requests.length, 0);
+});
+
+for (const openEdge of ['start', 'end']) for (const repeat of ['change', 'Enter']) {
+  test(`a pending open ${openEdge} survives repeated ${repeat} before metadata arrives`, async () => {
+    const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+    const input = openEdge === 'start' ? h.toDate : h.fromDate;
+    h.type(input, openEdge === 'start' ? '10081998' : '04102026');
+    if (repeat === 'change') h.toDate.dispatch('change');
+    else input.dispatch('keydown', { key: 'Enter' });
+    h.toggle.focus();
+    assert.equal(h[openEdge === 'start' ? 'fromDate' : 'toDate'].value, '');
+    assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+    meta.resolve(metadata); await tick(); await complete(h); await opening;
+    assert.equal(h.explorer.state[openEdge === 'start' ? 'openStart' : 'openEnded'], true);
+    assert.equal(h.explorer.state.fromDate, openEdge === 'start' ? '1801-01-01' : '2026-10-04');
+    assert.equal(h.explorer.state.toDate, openEdge === 'start' ? '1998-08-10' : '2399-12-31');
+  });
+}
+
+for (const openEdge of ['start', 'end']) {
+  test(`focusing and leaving a pending empty ${openEdge} preserves the submitted range`, async () => {
+    const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+    const edited = openEdge === 'start' ? h.toDate : h.fromDate;
+    const empty = openEdge === 'start' ? h.fromDate : h.toDate;
+    h.type(edited, openEdge === 'start' ? '10081998' : '04102026');
+    h.toDate.dispatch('change');
+    empty.focus();
+    empty.dispatch('keydown', { key: 'Enter' });
+    h.toggle.focus();
+    assert.equal(empty.value, '', 'leaving the unedited pending endpoint must preserve its open meaning');
+    assert.equal(edited.value, openEdge === 'start' ? '10.08.1998' : '04.10.2026');
+    h.toDate.dispatch('change');
+    meta.resolve(metadata); await tick(); await complete(h); await opening;
+    assert.equal(h.explorer.state[openEdge === 'start' ? 'openStart' : 'openEnded'], true);
+    assert.equal(h.explorer.state.fromDate, openEdge === 'start' ? '1801-01-01' : '2026-10-04');
+    assert.equal(h.explorer.state.toDate, openEdge === 'start' ? '1998-08-10' : '2399-12-31');
+    assert.equal(empty.value, ''); assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+  });
+}
+
+for (const openEdge of ['start', 'end']) for (const entry of ['replacement', 'digits']) for (const blur of [false, true]) {
+  test(`a pending open ${openEdge} survives ${entry} of its other date before metadata (blur: ${blur})`, async t => {
+    const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+    t.after(() => h.explorer.close());
+    const edited = openEdge === 'start' ? h.toDate : h.fromDate;
+    const empty = openEdge === 'start' ? h.fromDate : h.toDate;
+    const first = openEdge === 'start' ? '10081998' : '04102026';
+    const next = openEdge === 'start' ? '11081998' : '05102026';
+    h.type(edited, first);
+    for (const value of entry === 'digits' ? Array.from({ length: next.length + 1 }, (_, length) => next.slice(0, length)) : [next]) h.type(edited, value);
+    if (blur) h.toggle.focus();
+    meta.resolve(metadata); await tick();
+    assert.equal(h.explorer.state[openEdge === 'start' ? 'openStart' : 'openEnded'], true);
+    assert.equal(h.explorer.state.fromDate, openEdge === 'start' ? '1801-01-01' : '2026-10-05');
+    assert.equal(h.explorer.state.toDate, openEdge === 'start' ? '1998-08-11' : '2399-12-31');
+    assert.equal(empty.value, '');
+    assert.equal(edited.value, openEdge === 'start' ? '11.08.1998' : '05.10.2026');
+    assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+    assert.equal(h.requests.length, 1, 'only the final complete range loads a point');
+    await complete(h); await opening;
+  });
+}
+
+for (const openEdge of ['start', 'end']) {
+  test(`abandoning an incomplete replacement also discards its pending open ${openEdge}`, async t => {
+    const meta = deferred(), h = harness({ metaPromise: meta.promise }), opening = h.explorer.open();
+    t.after(() => h.explorer.close());
+    const edited = openEdge === 'start' ? h.toDate : h.fromDate;
+    h.type(edited, openEdge === 'start' ? '10081998' : '04102026');
+    h.type(edited, '11'); h.toggle.focus();
+    assert.equal(h.fromDate.value, '30.09.2026'); assert.equal(h.toDate.value, '30.09.2026');
+    meta.resolve(metadata); await opening; await tick();
+    assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.requests.length, 0);
+    assert.equal(h.explorer.state.openStart, false); assert.equal(h.explorer.state.openEnded, false);
+    assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
+  });
+}

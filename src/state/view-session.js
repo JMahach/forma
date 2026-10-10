@@ -34,7 +34,7 @@ export function createViewSession({
     // a pre-existing ready range cannot consume a target we have not sent yet.
     if (pendingLifetime && pendingLifetime === startedLifetime && lifetimeState?.opened
         && lifetimeState.status === 'ready' && lifetimeState.mode === pendingLifetime.mode
-        && (lifetimeState.mode === 'day' || lifetimeState.fromDate === pendingLifetime.fromDate
+        && (lifetimeState.mode === 'day' || (pendingLifetime.openStart ? lifetimeState.openStart : lifetimeState.fromDate === pendingLifetime.fromDate)
           && (pendingLifetime.openEnded ? lifetimeState.openEnded : lifetimeState.toDate === pendingLifetime.toDate))) pendingLifetime = null;
   }
   function snapshot() {
@@ -50,7 +50,7 @@ export function createViewSession({
     return {
       version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId, mandala: mandala.enabled,
       camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k },
-      lifetime: lifetimeTarget || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
+      lifetime: lifetimeTarget || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openStart ? { openStart: true } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
       transit: pendingTransit || (live.timeline ? { live: live.live, date: live.timeline.date, timeZone: live.timeline.timeZone, index: live.index } : null),
       natalDay: pendingNatal || { opened: day.opened, exactOriginal: day.exactOriginal, index: day.index },
       planets: planetFilter.snapshot,

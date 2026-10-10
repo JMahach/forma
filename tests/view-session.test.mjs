@@ -1003,3 +1003,16 @@ test('changing filters during exact reload keeps the chart request and saves the
   second.view.flush(); const saved = JSON.parse(storage.get('liniya.view.v1')).returns;
   assert.deepEqual(saved.bodies, []); assert.equal(saved.year, 2060); assert.equal(saved.eventId, event.id);
 });
+
+
+test('reload preserves an empty start and its selected UTC moment', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange(null, '2020-01-03');
+  await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
+  const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
+  const restored = second.ensureLifetime();
+  assert.equal(restored.state.openStart, true); assert.equal(restored.state.fromDate, '2020-01-01');
+  assert.equal(restored.state.toDate, '2020-01-03'); assert.equal(restored.state.minUtc, Date.parse('2020-01-01T00:00:00Z'));
+  assert.equal(restored.state.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
+  assert.equal(second.view.pendingLifetime, null);
+});

@@ -85,6 +85,21 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     session.showOriginal();
     return openTimeline();
   }
+  async function openReturnsList() {
+    if (!personal()) return false;
+    const natal = session.original, returns = getReturns();
+    // Record intent before loading the timeline, so closing or changing charts
+    // during that load cannot reopen the list when it eventually completes.
+    const opening = returns.open();
+    if (!returnsEnabled()) {
+      session.showOriginal();
+      if (!await openTimeline()) {
+        if (session.original === natal && !returnsEnabled()) returns.close();
+        return false;
+      }
+    }
+    return opening;
+  }
   function followNow() {
     if (!personal()) return false;
     invalidateTimeline();
@@ -212,7 +227,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     }
     syncTransitWanted();
   }
-  return { select, selected, openDay, resetMoment, toggleTransit, toggleReturns,
+  return { select, selected, openDay, resetMoment, toggleTransit, toggleReturns, openReturnsList,
     toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
     get returnsEnabled() { return returnsEnabled(); },
     get transitEnabled() { return session.selectedId === 'current-transit' && Boolean(timelineOpening || getLifetime()?.state.opened); },

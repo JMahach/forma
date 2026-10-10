@@ -126,6 +126,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   chartSummary = attachChartSummary({
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
     search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
+    returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration.openReturnsList(); },
     onSelect: graph.choose, onLines: graph.chooseSummary,
     onOpen: () => { returns?.close(); activationPopover.close(); hoverPreview?.clear(); library.close(); },
     onClose: () => returns?.close(),
@@ -306,6 +307,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     const heading = $('lifetimeControls').querySelector('.lifetime-heading');
     heading.hidden = state.available; heading.inert = state.available;
     $('lifetimeControls').dataset.personalLife = String(state.available);
+    $('summaryReturns').hidden = !state.available;
     // Source labels describe the same resolved chart as the scene.
     const chart = currentChart();
     const viewState = { ...state, timelineVisible,
@@ -324,7 +326,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     lifetimeToggle.setAttribute('aria-pressed', String(enabled));
     const valid = timelineVisible && metadata;
     const window = valid ? returnsVisibleWindow(state.natal, state.year, lifetimeState) : null;
-    lifetime?.setVisibleWindow(window);
+    lifetime?.setVisibleWindow(window && { ...window, calendar: Number.isInteger(state.year),
+      timeZone: cycleTimeZone(state.natal?.timezone) });
     returnMarkers?.update({ events: state.events, natal: state.natal, displayedUtc: chart?.utc,
       fromUtc: window?.minUtc ?? NaN,
       toUtc: window?.maxUtc ?? NaN,
