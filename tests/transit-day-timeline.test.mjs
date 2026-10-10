@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLocalDayTimeline, localDateAt, timelineIndexAt, timelineMinute, formatTimelineMinute } from '../src/domain/day-timeline.js';
+import { createLocalDayTimeline, localDateAt, startOfLocalDate, timelineIndexAt, timelineMinute, formatTimelineMinute } from '../src/domain/day-timeline.js';
+
+test('exact historical calendar boundaries and UTC-minute day samples retain different precision', () => {
+  const exact = startOfLocalDate('1900-01-01', 'Europe/Paris');
+  const day = createLocalDayTimeline(Date.parse('1900-01-01T12:00:00Z'), 'Europe/Paris');
+  assert.equal(new Date(exact).toISOString(), '1899-12-31T23:50:39.000Z');
+  assert.equal(new Date(day.startUtc).toISOString(), '1899-12-31T23:51:00.000Z');
+  assert.ok(Number.isInteger(day.startUtc / 60000));
+  assert.equal(day.minutes, 1440);
+  assert.equal(startOfLocalDate('1900-01-01', 'UTC'), Date.parse('1900-01-01T00:00:00Z'));
+});
 
 test('a Nepal local day starts at the previous UTC day, including its 45-minute offset', () => {
   const day = createLocalDayTimeline(Date.parse('2026-09-24T12:00:00Z'), 'Asia/Kathmandu');

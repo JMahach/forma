@@ -1,4 +1,4 @@
-import { computeStudioLayout, STUDIO_BOTTOM_INSET, TIMELINE_INLINE_HEIGHT, returnsPlacement, computeTimelineDock } from './layout.js';
+import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, TIMELINE_DATE_HEIGHT, returnsPlacement, computeTimelineDock } from './layout.js';
 import { STUDIO_FRAME } from './geometry/frames.js';
 
 // Phone chrome is presentation, not a branch in camera or chart geometry.
@@ -33,8 +33,8 @@ function timelineControlWidth(panel) {
 export function createStudioLayout({ canvas, panels, studio = canvas.parentElement, drawing = null, art = null, readStyle = element => getComputedStyle(element),
   media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport }) {
   const phone = () => media.matches;
-  let current, dockHeight = 0;
-  const document = studio?.ownerDocument, window = document?.defaultView;
+  let current, dock;
+  const document = studio.ownerDocument, window = document?.defaultView;
   let editingFinished = false, focusFrame = null;
   const editable = element => Boolean(element && !element.readOnly && !element.disabled &&
     (element.isContentEditable || element.tagName === 'TEXTAREA' || element.tagName === 'INPUT' &&
@@ -42,7 +42,6 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
   // Keyboard and browser chrome can resize/pan only the visual viewport.
   // Move the controls as one surface without changing the scene or camera fit.
   function refreshViewport() {
-    if (!studio) return;
     const full = studio.getBoundingClientRect();
     const bottom = full.bottom ?? (full.top || 0) + full.height;
     const valid = viewport && Number.isFinite(viewport.height) && viewport.height > 0 && Number.isFinite(viewport.offsetTop);
@@ -54,44 +53,39 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
     const lift = valid && !editingFinished ? Math.max(0, Math.min(full.height, bottom - viewport.offsetTop - viewport.height)) : 0;
     studio.style?.setProperty('--timeline-viewport-lift', `${lift}px`);
     // The fixed backing reaches the viewport edge, including behind Safari UI.
-    studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - dockHeight}px`);
+    const backingHeight = dock.backingHeight;
+    studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - backingHeight}px`);
   }
   function refresh() {
     const style = readStyle(canvas);
+    const full = studio.getBoundingClientRect();
+    const safeInset = parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0;
+    const safeBottom = Math.max(safeInset, parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
+    // Keep the low rail backing for scale, and use headroom to clear the
+    // date controls. Their placement preference is identical in every mode.
     const insets = { side: parseFloat(style.scrollPaddingLeft) || 4,
       top: parseFloat(style.scrollPaddingTop) || 112,
-      bottom: parseFloat(style.scrollPaddingBottom) || STUDIO_BOTTOM_INSET };
-    let dock = null, dockOptions = null, safeInset = 0;
-    if (studio) {
-      const full = studio.getBoundingClientRect();
-      safeInset = parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0;
-      const safeBottom = Math.max(safeInset, parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
-      const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
-      const natal = panels.find(panel => panel.id === 'natalDayControls');
-      const timelineKind = natal && !natal.hidden ? 'natal-day'
-        : lifetime && !lifetime.hidden && lifetime.dataset.personalLife !== 'true' ? 'chronicle' : 'day';
-      dockOptions = { width: full.width, height: full.height, side: insets.side, safeBottom,
-        kind: timelineKind, controlWidth: timelineControlWidth(lifetime) };
-      // Panels cover the scene; opening a second row must not reframe Home.
-      insets.bottom = TIMELINE_INLINE_HEIGHT + safeBottom;
-      insets.footerHeight = insets.bottom;
-      insets.safeBottom = safeBottom;
-      const placement = returnsPlacement({ width: full.width, height: full.height, ...insets },
-        { phone: phone(), reserve: parseFloat(style.getPropertyValue('--returns-side-space')) });
-      if (studio.dataset.returnsLayout !== placement) studio.dataset.returnsLayout = placement;
-    }
+      bottom: TIMELINE_BAR_HEIGHT + safeBottom,
+      footerHeight: TIMELINE_WITH_DATES_HEIGHT + safeBottom };
+    const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
+    const natal = panels.find(panel => panel.id === 'natalDayControls');
+    const timelineKind = natal && !natal.hidden ? 'natal-day'
+      : lifetime && !lifetime.hidden && lifetime.dataset.personalLife !== 'true' ? 'chronicle' : 'day';
+    const controlWidth = timelineControlWidth(lifetime);
+    const placement = returnsPlacement({ width: full.width, height: full.height, ...insets },
+      { phone: phone(), reserve: parseFloat(style.getPropertyValue('--returns-side-space')) });
+    if (studio.dataset.returnsLayout !== placement) studio.dataset.returnsLayout = placement;
     // Placement changes the canvas width. Measure after its CSS is applied.
-    const rect = canvas.getBoundingClientRect(), offsetLeft = canvas.offsetLeft || 0;
+    const rect = canvas.getBoundingClientRect();
     current = computeStudioLayout({ width: rect.width, height: rect.height, ...insets });
-    if (dockOptions) {
-      // Use the actual Home geometry after drawer placement, never live zoom.
-      dock = computeTimelineDock({ ...dockOptions, mandalaWidth: current.mandalaRadius * 2 });
-      dockHeight = dock.height;
-      studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
-      studio.style?.setProperty('--timeline-heading-top', `${dockOptions.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeInset - 44) / 2 : 0)}px`);
-      studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);
-      studio.style?.setProperty('--timeline-content-width', `${Math.max(1, dockOptions.width - 2 * dock.gutter)}px`);
-    }
+    // Use the actual Home geometry after drawer placement, never live zoom.
+    dock = computeTimelineDock({ width: full.width, height: full.height, side: insets.side, safeBottom,
+      kind: timelineKind, controlWidth, mandalaWidth: current.mandalaRadius * 2 });
+    studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
+    studio.style?.setProperty('--timeline-heading-height', `${TIMELINE_DATE_HEIGHT}px`);
+    studio.style?.setProperty('--timeline-heading-top', `${full.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeInset - TIMELINE_DATE_HEIGHT) / 2 : 0)}px`);
+    studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);
+    studio.style?.setProperty('--timeline-content-width', `${Math.max(1, full.width - 2 * dock.gutter)}px`);
     canvas.dataset.layout = phone() ? 'phone' : 'desktop';
     canvas.dataset.mandalaColumns = current.showMandalaColumns ? 'visible' : 'hidden';
     if (art) {
@@ -100,18 +94,14 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
       const { x, y, width, height } = current.area;
       Object.assign(art.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, visibility: 'visible' });
     }
-    const { placement } = current;
-    const panel = dock?.rail || current.panel;
-    const left = `${panel.x + (dock ? 0 : offsetLeft)}px`;
+    const panel = dock.rail;
+    const left = `${panel.x}px`;
     for (const element of panels) {
-      element.dataset.placement = placement;
       element.style.left = left;
       element.style.top = `${panel.y}px`;
       element.style.width = `${panel.width}px`;
-      if (dock) {
-        element.style.setProperty('--rail-left', left);
-        element.style.setProperty('--rail-top', `${panel.y}px`);
-      }
+      element.style.setProperty('--rail-left', left);
+      element.style.setProperty('--rail-top', `${panel.y}px`);
     }
     if (drawing) {
       // The small control surface covers only its own footprint. A footer-wide
@@ -144,10 +134,9 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
     });
   });
   return {
-    get returnsLayout() { return studio?.dataset.returnsLayout || 'sheet'; },
+    get returnsLayout() { return studio.dataset.returnsLayout; },
     get phone() { return phone(); },
     get showMandalaColumns() { return current.showMandalaColumns; },
-    get placement() { return current.placement; },
     get mandalaTop() { return current.center.y - current.mandalaRadius; },
     frame() { return STUDIO_FRAME; },
     refresh,

@@ -23,7 +23,7 @@ export function createLifetimeExplorer({
   let interacting = false, selection = 0, selectionBounds = null, selectionRound = Math.round;
   let opened = false, mode = 'day', status = 'idle', error = '', sequence = 0, active = null, notifiedReference = null;
   let retryCount = 0, retryTimer = null;
-  let openEnded = false, fromDate = null, toDate = null, minDate = null, maxDate = null, minUtc = null, maxUtc = null, rangeCeiling = null;
+  let openStart = false, openEnded = false, fromDate = null, toDate = null, minDate = null, maxDate = null, minUtc = null, maxUtc = null, rangeCeiling = null;
   const shownUtc = () => fullChart ? Date.parse(fullChart.utc) : null;
   const clampUtc = value => Math.max(minUtc, Math.min(maxUtc, value));
   const indexAt = utc => (utc - Date.parse(metadata.startUtc)) / (metadata.stepSeconds * 1000);
@@ -46,7 +46,7 @@ export function createLifetimeExplorer({
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc ? value : null;
   }
   const state = () => ({ opened, mode, status, error, retryCount, metadata, current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
-    fromDate, toDate, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
+    fromDate, toDate, openStart, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
     ...planetFilter.state });
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
   function cancel() {
@@ -58,7 +58,7 @@ export function createLifetimeExplorer({
     const day = getDayState(), chart = day?.current || null, date = dayDate(day);
     const changed = chart !== fullChart || date !== fromDate || date !== toDate;
     fullChart = chart; manualChart = null; requestedUtc = shownUtc();
-    fromDate = toDate = date; openEnded = false;
+    fromDate = toDate = date; openStart = openEnded = false;
     if (!['error', 'preparing'].includes(status) && retryCount === 0) status = fullChart ? 'ready' : 'loading';
     return changed;
   }
@@ -132,10 +132,11 @@ export function createLifetimeExplorer({
           maxDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
         }
         if (restoration?.mode === 'lifetime') {
+          const from = restoration.openStart ? minDate : restoration.fromDate;
           const through = restoration.openEnded || (restoration.minimumUtc && restoration.toDate > maxDate)
             ? maxDate : restoration.toDate;
-          const start = dateStart(restoration.fromDate), end = dateStart(through) + dayMilliseconds;
-          if (restoration.fromDate < minDate || through > maxDate || restoration.fromDate > through) {
+          const start = dateStart(from), end = dateStart(through) + dayMilliseconds;
+          if (from < minDate || through > maxDate || from > through) {
             pendingRestore = null; mode = 'day'; borrowDay();
             onModeAccepted({ opened, mode });
             if (generation === sequence && opened) notify();
@@ -147,7 +148,7 @@ export function createLifetimeExplorer({
           // their selected minute even when its day must be loaded explicitly.
           if (restoration.requestedUtc === undefined) requestedUtc = gridUtc(requestedUtc);
           else if (restoration.requestedUtc > maxUtc) requestedUtc = Math.max(minUtc, Math.floor(maxUtc / 60000) * 60000);
-          mode = 'lifetime'; fromDate = restoration.fromDate; toDate = through; openEnded = restoration.openEnded;
+          mode = 'lifetime'; fromDate = from; toDate = through; openStart = restoration.openStart; openEnded = restoration.openEnded;
           status = 'loading';
         }
         if (restoration) onModeAccepted({ opened, mode });
@@ -234,8 +235,8 @@ export function createLifetimeExplorer({
         if (failure?.code === 'unsupported_version') {
           // A new file can move indexes. Keep the user's UTC and range while
           // the data owner discards the rejected revision and loads its successor.
-          pendingRestore = mode === 'lifetime' ? { mode, fromDate, toDate, openEnded, requestedUtc,
-            ...(minUtc !== null ? { minimumUtc: new Date(minUtc).toISOString() } : {}),
+          pendingRestore = mode === 'lifetime' ? { mode, fromDate, toDate, openStart, openEnded, requestedUtc,
+            ...(!openStart && minUtc !== null ? { minimumUtc: new Date(minUtc).toISOString() } : {}),
             ...(rangeCeiling ? { maximumUtc: rangeCeiling } : {}) } : { mode };
           client.invalidateMetadata?.(metadata); metadata = null; manualChart = null;
         }
@@ -280,7 +281,8 @@ export function createLifetimeExplorer({
   function restore(snapshot) {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
         || snapshot.opened !== true || !['day', 'lifetime'].includes(snapshot.mode)
-        || snapshot.openEnded !== undefined && typeof snapshot.openEnded !== 'boolean') return Promise.resolve(false);
+        || snapshot.openEnded !== undefined && typeof snapshot.openEnded !== 'boolean'
+        || snapshot.openStart !== undefined && typeof snapshot.openStart !== 'boolean') return Promise.resolve(false);
     if (snapshot.mode === 'lifetime' && (!(snapshot.requestedUtc === undefined ? Number.isSafeInteger(snapshot.index)
         : Number.isSafeInteger(snapshot.requestedUtc) && Number.isFinite(new Date(snapshot.requestedUtc).getTime()))
         || !Number.isFinite(dateStart(snapshot.fromDate))
@@ -296,11 +298,11 @@ export function createLifetimeExplorer({
         || Date.parse(snapshot.maximumUtc) >= dateStart(snapshot.toDate) + dayMilliseconds)) return Promise.resolve(false);
     // Copy before awaiting metadata so caller mutation cannot change the restore target.
     const restoration = { mode: snapshot.mode, fromDate: snapshot.fromDate, toDate: snapshot.toDate,
-      openEnded: snapshot.openEnded === true, requestedUtc: snapshot.requestedUtc, index: snapshot.index, minimumUtc: snapshot.minimumUtc, maximumUtc: snapshot.maximumUtc };
+      openStart: snapshot.openStart === true, openEnded: snapshot.openEnded === true, requestedUtc: snapshot.requestedUtc, index: snapshot.index, minimumUtc: snapshot.minimumUtc, maximumUtc: snapshot.maximumUtc };
     cancel(); opened = true; mode = restoration.mode; minUtc = maxUtc = rangeCeiling = null; manualChart = null;
     planetFilter.setExpanded(true); status = 'idle'; error = '';
     if (mode === 'day') borrowDay();
-    else { fullChart = null; requestedUtc = restoration.requestedUtc ?? null; fromDate = restoration.fromDate; toDate = restoration.toDate; openEnded = restoration.openEnded; }
+    else { fullChart = null; requestedUtc = restoration.requestedUtc ?? null; fromDate = restoration.fromDate; toDate = restoration.toDate; openStart = restoration.openStart; openEnded = restoration.openEnded; }
     pendingRestore = restoration;
     return load(restoration, Boolean(getPersonalChart()));
   }
@@ -373,6 +375,8 @@ export function createLifetimeExplorer({
     toggleAllPlanets(...args) { return applySelection('toggleAllPlanets', ...args); },
     retry: load,
     setDateRange(from, through) {
+      const nextOpenStart = from === null || from === undefined || from === '';
+      if (nextOpenStart) from = minDate;
       const nextOpenEnded = through === null || through === undefined || through === '';
       if (nextOpenEnded) through = maxDate;
       const start = dateStart(from), end = dateStart(through) + dayMilliseconds;
@@ -380,7 +384,7 @@ export function createLifetimeExplorer({
           || from < minDate || through > maxDate || from > through) return false;
       selectionBounds = null; selectionRound = Math.round;
       const currentDay = dayDate(getDayState());
-      if (!nextOpenEnded && from === currentDay && through === currentDay) {
+      if (!nextOpenStart && !nextOpenEnded && from === currentDay && through === currentDay) {
         if (mode === 'day') return true;
         cancel(); mode = 'day'; minUtc = maxUtc = rangeCeiling = null;
         status = 'idle'; error = ''; borrowDay();
@@ -391,9 +395,9 @@ export function createLifetimeExplorer({
         return true;
       }
       if (mode === 'lifetime' && from === fromDate && through === toDate) {
-        if (openEnded === nextOpenEnded) return true;
+        if (openStart === nextOpenStart && openEnded === nextOpenEnded) return true;
         if (restoring || pendingRestore || retryTimer !== null) cancel();
-        openEnded = nextOpenEnded;
+        openStart = nextOpenStart; openEnded = nextOpenEnded;
         const generation = sequence;
         onModeAccepted({ opened, mode });
         if (generation !== sequence || !opened) return false;
@@ -411,7 +415,7 @@ export function createLifetimeExplorer({
       const target = chooseTarget(mode === 'lifetime' ? requestedUtc : Number.isFinite(shown) ? shown : minUtc, Math.floor);
       selectionRound = Math.floor;
       requestedUtc = target.utc;
-      mode = 'lifetime'; fromDate = from; toDate = through; openEnded = nextOpenEnded;
+      mode = 'lifetime'; fromDate = from; toDate = through; openStart = nextOpenStart; openEnded = nextOpenEnded;
       const generation = sequence;
       onModeAccepted({ opened, mode });
       if (generation !== sequence || !opened) return false;

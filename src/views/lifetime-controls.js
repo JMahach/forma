@@ -1,5 +1,5 @@
 import { createLifetimeExplorer } from '../state/lifetime.js';
-import { bindNumericInput, formatDateInput, normalizeDate } from './date-input.js';
+import { bindNumericInput, datePartAt, formatDateInput, normalizeDate } from './date-input.js';
 import { attachTimelineRange, isReferenceMoment } from './timeline-range.js';
 import { attachTimelineMarks } from './timeline-marks.js';
 import { attachDatePicker } from './date-picker.js';
@@ -75,18 +75,24 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     },
   });
 
+  function matchingPending(pending = submitted, edited = null) {
+    return pending && (edited === fromDate || pending.fromText === fromDate.value)
+      && (edited === toDate || pending.toText === toDate.value) ? pending : null;
+  }
+
   function updateDates(state, preparingDate = null) {
     if (submitted && state.fromDate === submitted.from && state.toDate === submitted.to) {
       if (fromDate.value === submitted.fromText) dirty.delete(fromDate);
       if (toDate.value === submitted.toText) dirty.delete(toDate);
       submitted = null;
     }
+    fromDate.placeholder = state.openStart && !preparingDate ? 'С начала' : 'ДД.ММ.ГГГГ';
     toDate.placeholder = state.openEnded && !preparingDate ? 'До конца' : 'ДД.ММ.ГГГГ';
     for (const [input, value] of [[fromDate, preparingDate || state.fromDate], [toDate, preparingDate || state.toDate]]) {
-      // Live minute updates and lifetime completions must not replace either
-      // unfinished input, including the first field after the user presses Tab.
+      // Keep active edits intact; blur restores rejected drafts from this state.
       if (!dirty.has(input) && panel.ownerDocument.activeElement !== input && value) {
-        const formatted = input === toDate && state.openEnded && !preparingDate ? '' : formatDateInput(value);
+        const open = input === fromDate ? state.openStart : state.openEnded;
+        const formatted = open && !preparingDate ? '' : formatDateInput(value);
         if (input.value !== formatted) input.value = formatted;
       }
     }
@@ -129,7 +135,10 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     else if (dayMode) {
       timelineMarks.day(day?.timeline, day?.timeline?.minutes, (timeline, index) => formatTimelineMinute(timeline, index).time);
     } else {
-      timelineMarks.life(options.getPersonalChart?.(), Number(range.min), Number(range.max));
+      const natal = options.getPersonalChart?.();
+      if (natal && !visibleWindow?.calendar) timelineMarks.life(natal, Number(range.min), Number(range.max));
+      else timelineMarks.calendar({ fromUtc: Number(range.min), toUtc: Number(range.max),
+        timeZone: visibleWindow?.timeZone || 'UTC', labels: !natal });
     }
     const momentUtc = momentState?.current && state.metadata ? Math.max(state.minUtc, Math.min(state.maxUtc,
       Date.parse(momentState.current.utc))) : null;
@@ -170,19 +179,20 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       const pending = submitted;
       waitingForMetadata = false;
       queueMicrotask(() => {
-        if (explorer.state.opened && pending && fromDate.value === pending.fromText && toDate.value === pending.toText) applyDates();
+        if (explorer.state.opened && matchingPending(pending)) applyDates(true, pending.allowOpenEnd, pending.allowOpenStart);
       });
     }
   }
 
   const explorer = createLifetimeExplorer({ ...options, onStateChange: update });
+  function clearDateError(input) {
+    input.setAttribute('aria-invalid', 'false');
+    const message = dateErrors.get(input);
+    if (message) setText(message, '');
+    inputError = inputs.some(field => field.getAttribute('aria-invalid') === 'true');
+  }
   function clearInputError() {
-    inputError = false;
-    for (const input of inputs) {
-      input.setAttribute('aria-invalid', 'false');
-      const message = dateErrors.get(input);
-      if (message) setText(message, '');
-    }
+    inputs.forEach(clearDateError);
   }
   function showDateError(input, text) {
     inputError = true;
@@ -190,23 +200,39 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     const message = dateErrors.get(input);
     if (message) setText(message, text);
   }
-  function resetEndBeforeStart() {
+  function restoreDate(input) {
+    const state = explorer.state;
+    const open = input === fromDate ? state.openStart : state.openEnded;
+    input.value = open ? '' : formatDateInput(input === fromDate ? state.fromDate : state.toDate);
+    dirty.delete(input);
+    clearDateError(input);
+  }
+  function rejectDates() {
+    submitted = null; waitingForMetadata = false;
+    for (const input of inputs) {
+      if (input.ownerDocument.activeElement !== input && (dirty.has(input) || input.getAttribute('aria-invalid') === 'true')) restoreDate(input);
+    }
+  }
+  function resetCrossedEndpoint(input) {
+    if (inputs.some(field => field.value.replace(/\D/g, '').length !== 8)) return false;
     let start, end;
     try { start = normalizeDate(fromDate.value); end = normalizeDate(toDate.value); }
     catch { return false; }
     const { minDate, maxDate } = explorer.state;
-    if (start <= end || minDate && start < minDate || maxDate && start > maxDate) return false;
-    toDate.value = ''; dirty.add(toDate);
+    const edited = input === fromDate ? start : end;
+    if (start <= end || minDate && edited < minDate || maxDate && edited > maxDate) return false;
+    const opposite = input === fromDate ? toDate : fromDate;
+    opposite.value = ''; dirty.add(opposite);
     waitingForMetadata = false; submitted = null; clearInputError();
     return true;
   }
-  function applyDates(reportIncomplete = true) {
+  function applyDates(reportIncomplete = true, allowOpenEnd = explorer.state.openEnded, allowOpenStart = explorer.state.openStart) {
     if (!explorer.state.opened) return;
     clearInputError();
     let incomplete = false;
     const { minDate, maxDate } = explorer.state;
     const [from, through] = inputs.map(input => {
-      if (input === toDate && !input.value.trim()) return null;
+      if ((input === fromDate ? allowOpenStart : allowOpenEnd) && !input.value.trim()) return null;
       const digits = input.value.replace(/\D/g, '').length;
       if (digits > 8) { showDateError(input, 'Дата некорректна'); return null; }
       // A draft is quiet until submit; every complete field owns its error.
@@ -220,42 +246,93 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
       return date;
     });
     if (!incomplete && !inputError && through && from > through) showDateError(toDate, 'Вне диапазона');
-    if (incomplete || inputError) { update(explorer.state); return; }
-    submitted = { from, to: through ?? explorer.state.maxDate, fromText: fromDate.value, toText: toDate.value };
+    if (incomplete || inputError) {
+      if (inputError) {
+        // A rejected period cannot leave an unapplied endpoint behind. Bounds
+        // may arrive after editing, so restore inactive drafts as one range.
+        // An unfinished endpoint is still being typed and does not reject it.
+        rejectDates();
+      }
+      update(explorer.state); return;
+    }
+    submitted = { from: from ?? explorer.state.minDate, to: through ?? explorer.state.maxDate, fromText: fromDate.value, toText: toDate.value, allowOpenEnd, allowOpenStart };
     const result = explorer.setDateRange(from, through);
     if (result === false && !explorer.state.metadata) waitingForMetadata = true;
     update(explorer.state);
     Promise.resolve(result).catch(() => update(explorer.state));
   }
 
+  function applyDateEdit(input, reportIncomplete) {
+    // Editing one date retains the pending meaning of its unchanged empty
+    // neighbour. Loading still requires an exact match of both complete texts.
+    const pending = matchingPending(submitted, input);
+    submitted = pending;
+    const reset = resetCrossedEndpoint(input);
+    applyDates(reportIncomplete, input === fromDate && reset || pending?.allowOpenEnd || explorer.state.openEnded,
+      input === toDate && reset || pending?.allowOpenStart || explorer.state.openStart);
+  }
+
   for (const input of inputs) {
+    let selectWholeOnClick = false, selectionTimer;
+    function selectAfterClick(whole, clientX) {
+      clearTimeout(selectionTimer);
+      // Let the browser finish placing its caret inside previously selected
+      // text before choosing a component. A drag retains its native selection.
+      selectionTimer = setTimeout(() => {
+        if (input.ownerDocument.activeElement !== input) return;
+        if (whole) input.select();
+        else if (input.selectionStart === input.selectionEnd) {
+          const part = datePartAt(input, clientX);
+          if (part) input.setSelectionRange(part.index, part.index + part[0].length);
+        }
+      }, 0);
+    }
+    input.addEventListener('pointerdown', event => {
+      clearTimeout(selectionTimer);
+      if (event.button !== 0) return;
+      selectWholeOnClick = input.ownerDocument.activeElement !== input || event.pointerType === 'touch';
+    });
     input.addEventListener('focus', () => input.select());
-    input.addEventListener('click', () => input.select());
+    input.addEventListener('click', event => {
+      if (event.button !== undefined && event.button !== 0) return;
+      selectAfterClick(selectWholeOnClick || event.detail >= 2 || event.detail === 0, event.clientX);
+      selectWholeOnClick = false;
+    });
+    input.addEventListener('dblclick', () => selectAfterClick(true));
+    input.addEventListener('blur', () => {
+      clearTimeout(selectionTimer);
+      selectWholeOnClick = false;
+      const pending = matchingPending();
+      if (pending && !input.value.trim() && (input === fromDate ? pending.allowOpenStart : pending.allowOpenEnd)) return;
+      if (input.value.replace(/\D/g, '').length >= 8 && input.getAttribute('aria-invalid') !== 'true' && (!dirty.has(input) || pending)) return;
+      restoreDate(input);
+      if (submitted) rejectDates();
+    });
     // A numeric paste can contain nine digits while still fitting maxlength=10.
     // Retain that invalid draft instead of silently committing its first eight.
     let rawInput = '';
-    input.addEventListener('input', () => { rawInput = input.value; });
+    input.addEventListener('input', () => { clearTimeout(selectionTimer); rawInput = input.value; });
     bindNumericInput(input, formatDateInput);
     input.addEventListener('input', () => {
-      dirty.add(input); clearInputError(); waitingForMetadata = false; submitted = null;
+      dirty.add(input); clearInputError(); waitingForMetadata = false;
       if (rawInput.replace(/\D/g, '').length > 8) {
         input.value = rawInput;
         input.setSelectionRange(rawInput.length, rawInput.length);
         applyDates(false);
         return;
       }
-      if (input === fromDate) resetEndBeforeStart();
-      applyDates(false);
+      applyDateEdit(input, false);
     });
     input.addEventListener('keydown', event => {
+      clearTimeout(selectionTimer);
       if (input === fromDate && event.key === 'Tab' && !event.shiftKey) {
         event.preventDefault(); toDate.focus(); return;
       }
       if (event.key !== 'Enter') return;
-      event.preventDefault(); applyDates();
+      event.preventDefault(); applyDateEdit(input, true);
     });
   }
-  toDate.addEventListener('change', () => applyDates());
+  toDate.addEventListener('change', () => applyDateEdit(toDate, true));
   explorer.setAvailable = value => {
     if (typeof value !== 'boolean' || value === available) return;
     available = value;
@@ -265,8 +342,9 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
   explorer.refreshTargets = dayRange.refreshTargets;
   explorer.setVisibleWindow = value => {
     const next = value && Number.isFinite(value.minUtc) && Number.isFinite(value.maxUtc) && value.minUtc <= value.maxUtc
-      ? { minUtc: value.minUtc, maxUtc: value.maxUtc } : null;
-    if (next?.minUtc === visibleWindow?.minUtc && next?.maxUtc === visibleWindow?.maxUtc) return;
+      ? { minUtc: value.minUtc, maxUtc: value.maxUtc, calendar: Boolean(value.calendar), timeZone: value.timeZone || 'UTC' } : null;
+    if (next?.minUtc === visibleWindow?.minUtc && next?.maxUtc === visibleWindow?.maxUtc
+      && next?.calendar === visibleWindow?.calendar && next?.timeZone === visibleWindow?.timeZone) return;
     visibleWindow = next;
     update(explorer.state, options.getMomentState?.(), false);
   };
@@ -286,8 +364,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
         onMomentInput();
         input.value = formatDateInput(value); dirty.add(input);
         waitingForMetadata = false; submitted = null;
-        if (input === fromDate) resetEndBeforeStart();
-        applyDates();
+        applyDateEdit(input, true);
       },
     }));
   }

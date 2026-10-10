@@ -160,3 +160,159 @@ for (const explicitPreview of [undefined, true]) test(`real restoration at birth
     assert.equal(session.current.utc, natal.utc);
   }
 });
+
+// Keep the real chart and return owners; the deferred lifetime port controls only
+// when the lazy timeline is available, so navigation races remain observable.
+function returnListHarness({ active = false, restoreResult = true } = {}) {
+  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const second = { ...natal, id: 'second-list-chart', name: 'Вторая карта' };
+  let returns, exploration, lifetime = null, finishLoad, loads = 0, dayCloses = 0;
+  const restorations = [];
+  const rail = {
+    state: { opened: false, mode: 'lifetime', requestedUtc: Date.parse('2040-03-02T12:00:00Z'), fromDate: '2039-01-01', toDate: '2041-12-31' },
+    restore(saved) {
+      restorations.push(saved);
+      if (restoreResult) Object.assign(this.state, saved);
+      return Promise.resolve(restoreResult);
+    },
+    close() { this.state.opened = false; },
+    setAvailable() {},
+  };
+  const natalDay = {
+    state: { opened: false, available: true },
+    close() { this.state.opened = false; dayCloses++; },
+    select() {}, reset() {}, open() { this.state.opened = true; return true; },
+  };
+  const session = createChartSession({
+    store: { get: id => [natal, second].find(chart => chart.id === id), has: id => [natal.id, second.id].includes(id) },
+    getReturns: () => returns, getLifetime: () => lifetime, getNatalDay: () => natalDay,
+    onSelect: () => exploration?.selected(),
+  });
+  exploration = createChartExploration({ session, getReturns: () => returns, getLifetime: () => lifetime,
+    getNatalDay: () => natalDay, getTransit: () => null,
+    loadLifetime() { loads++; return new Promise(resolve => { finishLoad = resolve; }); },
+  });
+  returns = createReturnsController({ client: { events: async () => ({ events: [] }) } });
+  session.select(natal.id);
+  natalDay.state.opened = !active;
+  if (active) { lifetime = rail; rail.state.opened = true; }
+  return { session, returns, exploration, natalDay, rail, restorations, natal, second,
+    get loads() { return loads; }, get dayCloses() { return dayCloses; },
+    installRail() { lifetime = rail; rail.state.opened = true; },
+    finishLoad(value = rail) { if (value) lifetime = value; finishLoad(value); },
+  };
+}
+
+test('return list entry is unavailable for the current transit and does not load a personal timeline', async () => {
+  const h = returnListHarness();
+  h.session.select('current-transit');
+  assert.equal(await h.exploration.openReturnsList(), false);
+  assert.equal(h.returns.state.opened, false);
+  assert.equal(h.loads, 0);
+  assert.deepEqual(h.restorations, []);
+});
+
+test('return list entry records its opening immediately and opens the existing personal timeline', async () => {
+  const h = returnListHarness(), shown = h.session.current, dayCloses = h.dayCloses;
+  await h.returns.setBodies(['saturn']); await h.returns.setYear(2050);
+  const opening = h.exploration.openReturnsList();
+  assert.equal(h.returns.state.opened, true, 'the controller owns the intent before the lazy timeline arrives');
+  assert.equal(h.loads, 1);
+  assert.equal(h.dayCloses, dayCloses + 1);
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.session.current, shown, 'opening a list does not replace the accepted chart');
+  h.finishLoad(); await opening;
+  assert.equal(h.restorations.length, 1);
+  assert.equal(h.rail.state.opened, true);
+  assert.equal(h.rail.state.mode, 'lifetime');
+  assert.equal(h.rail.state.minimumUtc, h.natal.utc);
+  assert.equal(h.returns.state.opened, true);
+  assert.equal(h.returns.state.year, 2050);
+  assert.deepEqual(h.returns.state.bodies, ['saturn']);
+});
+
+test('opening the return list on an active timeline preserves its range, moment and filters', async () => {
+  const h = returnListHarness({ active: true });
+  const preview = moment('2040-03-02T12:00:00Z');
+  h.session.publish(h.session.expect('lifetime'), preview);
+  await h.returns.setBodies(['saturn']); await h.returns.setYear(2050);
+  const shown = h.session.current, range = { ...h.rail.state }, dayCloses = h.dayCloses;
+  const opening = h.exploration.openReturnsList();
+  assert.equal(h.returns.state.opened, true);
+  await opening;
+  assert.equal(h.loads, 0);
+  assert.deepEqual(h.restorations, [], 're-entering the list must not restore the full life range');
+  assert.deepEqual(h.rail.state, range);
+  assert.equal(h.session.current, shown);
+  assert.equal(h.session.current.secondary, preview);
+  assert.equal(h.dayCloses, dayCloses);
+  assert.equal(h.returns.state.year, 2050);
+  assert.deepEqual(h.returns.state.bodies, ['saturn']);
+});
+
+test('closing the return list while the timeline loads prevents a late list reopening', async () => {
+  const h = returnListHarness();
+  const opening = h.exploration.openReturnsList();
+  assert.equal(h.returns.state.opened, true);
+  h.returns.close();
+  h.finishLoad(); await opening;
+  assert.equal(h.returns.state.opened, false);
+  assert.equal(h.returns.state.natal, h.natal);
+});
+
+test('a return list opening from the previous chart cannot open the list on a newly selected chart', async () => {
+  const h = returnListHarness();
+  const opening = h.exploration.openReturnsList();
+  h.session.select(h.second.id);
+  h.finishLoad(); await opening;
+  assert.equal(h.returns.state.natal, h.second);
+  assert.equal(h.returns.state.opened, false);
+  assert.deepEqual(h.restorations, [], 'the canceled request cannot restore its old birth range');
+});
+
+for (const failure of ['load', 'restore']) test(`failed ${failure} during return list opening clears its otherwise hidden opening intent`, async () => {
+  const h = returnListHarness({ restoreResult: failure !== 'restore' });
+  const shown = h.session.current;
+  const opening = h.exploration.openReturnsList();
+  assert.equal(h.returns.state.opened, true);
+  h.finishLoad(failure === 'load' ? null : h.rail);
+  assert.equal(await opening, false);
+  assert.equal(h.returns.state.opened, false);
+  assert.equal(h.exploration.returnsEnabled, false);
+  assert.equal(h.session.current, shown);
+});
+
+test('an obsolete opening failure does not close the return list of the newly selected chart', async () => {
+  const h = returnListHarness();
+  const opening = h.exploration.openReturnsList();
+  h.session.select(h.second.id);
+  await h.returns.open();
+  h.finishLoad(null); await opening;
+  assert.equal(h.returns.state.natal, h.second);
+  assert.equal(h.returns.state.opened, true);
+});
+
+test('an opening failure does not close the list when another action already enabled this charts timeline', async () => {
+  const h = returnListHarness();
+  const opening = h.exploration.openReturnsList();
+  h.installRail();
+  h.finishLoad(null); await opening;
+  assert.equal(h.exploration.returnsEnabled, true);
+  assert.equal(h.returns.state.opened, true);
+  assert.deepEqual(h.restorations, []);
+});
+
+test('entering returns from a birthday-minute preview restores the natal chart before opening its life range', async () => {
+  const h = returnListHarness();
+  const minute = moment(new Date(Date.parse(h.natal.utc) + 60_000).toISOString());
+  h.session.publish(h.session.expect('natal-day'), minute);
+  assert.equal(h.session.current.primary, minute);
+  const opening = h.exploration.openReturnsList();
+  assert.equal(h.session.owner, 'original', 'the closed Day tool cannot keep ownership of the life timeline');
+  assert.equal(h.session.current.primary, h.natal);
+  assert.equal(h.session.current.secondary, null);
+  assert.equal(h.natalDay.state.opened, false);
+  h.finishLoad(); await opening;
+  assert.equal(h.rail.state.requestedUtc, Date.parse(h.natal.utc));
+  assert.equal(h.session.current.utc, h.natal.utc, 'the displayed chart and initial rail position agree');
+});

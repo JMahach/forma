@@ -116,13 +116,13 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     const previous = control('‹', view === 'years' ? 'Предыдущие годы' : view === 'months' ? 'Предыдущий год' : 'Предыдущий месяц', () => navigate(-1));
     const next = control('›', view === 'years' ? 'Следующие годы' : view === 'months' ? 'Следующий год' : 'Следующий месяц', () => navigate(1));
     const title = view === 'periods' ? 'Выберите период' : view === 'years' ? `${page}–${Math.min(page + PAGE_YEARS - 1, maxYear())}` : view === 'months' ? String(year) : `${MONTHS[month - 1]} ${year}`;
-    const heading = control(title, view === 'years' ? `${title}. Выбрать период` : view === 'months' ? `${title}. Выбрать год` : view === 'days' ? `${title}. Выбрать месяц` : title,
+    const heading = view === 'periods' ? node('h3', title, 'date-picker-title') : control(title, view === 'years' ? `${title}. Выбрать период` : view === 'months' ? `${title}. Выбрать год` : view === 'days' ? `${title}. Выбрать месяц` : title,
       () => { view = view === 'years' ? 'periods' : view === 'days' ? 'months' : 'years'; render(); }, 'date-picker-title');
     heading.setAttribute('aria-live', 'polite');
     previous.hidden = next.hidden = view === 'periods';
     previous.disabled = view === 'years' ? page === minYear() : view === 'months' ? year === minYear() : isoDate(year, month) <= minimum;
     next.disabled = view === 'years' ? page + PAGE_YEARS > maxYear() : view === 'months' ? year === maxYear() : isoDate(year, month, 31) >= maximum;
-    firstHeader = presentation?.title ? dismiss : previous.hidden || previous.disabled ? heading : previous;
+    firstHeader = presentation?.title || view === 'periods' ? dismiss : previous.disabled ? heading : previous;
     header.append(previous, heading, next);
     if (!presentation?.title) header.append(dismiss);
     popup.append(header);

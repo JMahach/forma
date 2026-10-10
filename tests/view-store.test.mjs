@@ -171,3 +171,11 @@ test('lifetime UTC rejects invalid timestamps while accepting dates before the U
   const storage = memory({ ...snapshot, lifetime: { ...snapshot.lifetime, requestedUtc: -60000 } });
   assert.equal(createViewStore({ getStorage: () => storage }).read().lifetime.requestedUtc, -60000);
 });
+
+
+test('the empty-start meaning survives storage without losing its effective first date', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  store.write({ ...snapshot, lifetime: { ...snapshot.lifetime, openStart: true } });
+  const restored = createViewStore({ getStorage: () => storage }).read();
+  assert.equal(restored.lifetime.openStart, true); assert.equal(restored.lifetime.fromDate, '2020-10-04');
+});

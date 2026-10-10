@@ -1,7 +1,7 @@
 import test from 'node:test';
 import * as geometry from '../src/scene/layout.js';
 import assert from 'node:assert/strict';
-import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, STUDIO_BOTTOM_INSET, returnsPlacement } from '../src/scene/layout.js';
+import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, returnsPlacement } from '../src/scene/layout.js';
 import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
@@ -20,40 +20,49 @@ import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../s
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-7, `${message}: ${actual} != ${expected}`);
 const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.scale,
   y: layout.center.y + (box.y - 398) * layout.scale, width: box.width * layout.scale, height: box.height * layout.scale });
+const railFor = (layout, width, height, safeBottom = 0) => geometry.computeTimelineDock({
+  width, height, safeBottom, mandalaWidth: layout.mandalaRadius * 2,
+}).rail;
 
 
 function layoutHarness(phone = true, width = 390, height = 844) {
   const media = { matches: phone }, rect = { width, height };
-  const canvas = { dataset: {}, getBoundingClientRect: () => ({ top: 50, left: 20, bottom: 50 + rect.height, ...rect }) };
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ top: 50, bottom: 50 + rect.height, ...rect }) };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => ({ top: 50, left: 20, bottom: 50 + rect.height, ...rect }) };
   const drawing = { style: {} };
-  let style = { scrollPaddingTop: '112px', scrollPaddingBottom: '64px', scrollPaddingLeft: '12px' };
-  const panels = [0, 1].map(() => ({ hidden: true, dataset: {}, style: {},
+  let style = { scrollPaddingTop: '112px', scrollPaddingLeft: '12px' };
+  const panels = [0, 1].map(() => ({ hidden: true, dataset: {}, style: { setProperty(name, value) { this[name] = value; } },
     getBoundingClientRect() { assert.fail('panel content and visibility must never determine Home'); },
   }));
-  const layout = createStudioLayout({ canvas, drawing, panels, media, readStyle: () => style });
+  const layout = createStudioLayout({ canvas, drawing, panels, media, viewport: null,
+    readStyle: () => ({ getPropertyValue: () => '0px', ...style }) });
   return { layout, media, canvas, drawing, panels, style(value) { style = value; },
     resize(width, height) { Object.assign(rect, { width, height }); return layout.refresh(); } };
 }
 
-test('layout reads the shared canvas offset once before writing any panel styles', () => {
+test('layout positions every rail in the full studio without reading a canvas offset', () => {
   const events = [];
   let offset = 40;
-  const writes = () => new Proxy({}, { set(target, key, value) { events.push('write'); target[key] = value; return true; } });
-  const canvas = { dataset: writes(), getBoundingClientRect: () => ({ width: 1000, height: 800 }),
-    get offsetLeft() { events.push('offset'); return offset; } };
+  const writes = () => new Proxy({ setProperty(name, value) { this[name] = value; } }, { set(target, key, value) { events.push('write'); target[key] = value; return true; } });
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ width: 1200, height: 800 }) };
+  const canvas = { dataset: writes(), parentElement: studio, getBoundingClientRect() { events.push('canvas'); return { left: offset, width: 1000, height: 800 }; },
+    get offsetLeft() { assert.fail('studio rails do not use the narrower canvas offset'); } };
   const panels = Array.from({ length: 3 }, () => ({ dataset: writes(), style: writes() }));
-  const layout = createStudioLayout({ canvas, panels, art: { style: writes() }, media: { matches: false },
-    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '64px', scrollPaddingLeft: '12px' }) });
+  const layout = createStudioLayout({ canvas, panels, art: { style: writes() }, media: { matches: false }, viewport: null,
+    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '12px', getPropertyValue: () => '0px' }) });
   const assertReads = () => {
-    assert.equal(events.filter(event => event === 'offset').length, 1);
-    assert.ok(events.indexOf('offset') < events.indexOf('write'), 'geometry is read before styles or data attributes change');
+    assert.equal(events.filter(event => event === 'canvas').length, 1);
+    assert.ok(events.indexOf('canvas') < events.indexOf('write'), 'canvas geometry is read before writing panel styles');
   };
   assertReads();
   const initialLeft = parseFloat(panels[0].style.left);
   events.length = 0; offset = 120;
   layout.refresh();
   assertReads();
-  for (const panel of panels) assert.equal(parseFloat(panel.style.left), initialLeft + 80, 'all timelines follow the changed canvas offset');
+  for (const panel of panels) {
+    assert.equal(parseFloat(panel.style.left), initialLeft, 'canvas offset cannot move the shared rail');
+    close(parseFloat(panel.style.left) + parseFloat(panel.style.width) / 2, 600, 'rail remains centered in the studio');
+  }
 });
 
 test('one studio square contains the drawing, ring cursors and full planet lanes', () => {
@@ -110,12 +119,13 @@ test('outside planet glyphs fit every Home and leave the entire day touch target
     source, planet: `planet-${index}`, longitude: (index % 4) * 90 + index * .01,
   })));
   const glyphs = layoutMandalaPlanets(entries);
-  for (const [width, height, top, bottom] of [
-    [320, 568, 112, 64], [393, 747, 112, 64], [505, 692, 112, 64],
-    [759, 747, 64, 64], [1002, 817, 64, 64], [844, 390, 64, 98], [1440, 900, 64, 64],
+  for (const [width, height, top, safeBottom] of [
+    [320, 568, 112, 0], [393, 747, 112, 8], [505, 692, 112, 8],
+    [759, 747, 64, 0], [1002, 817, 64, 0], [844, 390, 64, 34], [1440, 900, 64, 0],
   ]) {
     const h = layoutHarness(width < 700, width, height);
-    h.style({ scrollPaddingTop: `${top}px`, scrollPaddingBottom: `${bottom}px`, scrollPaddingLeft: '12px' });
+    h.style({ scrollPaddingTop: `${top}px`, scrollPaddingLeft: '12px',
+      getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' });
     const layout = h.layout.refresh();
     for (const glyph of glyphs) {
       const x = layout.center.x + (glyph.x - MANDALA_GEOMETRY.centerX) * MANDALA_SCENE_SCALE * layout.scale;
@@ -124,11 +134,11 @@ test('outside planet glyphs fit every Home and leave the entire day touch target
       assert.ok(x - radius >= layout.area.x, `${width}×${height}: left glyph edge stays inside`);
       assert.ok(x + radius <= width - layout.area.x, `${width}×${height}: right glyph edge stays inside`);
       assert.ok(y - radius >= top - 1e-7, `${width}×${height}: the planet clears the top inset`);
-      assert.ok(y + radius <= layout.panel.y - 17 - 4 + .001, `${width}×${height}: glyph clears the date fields above the slider`);
+      assert.ok(y + radius <= height - safeBottom - TIMELINE_BAR_HEIGHT - 4 + .001, `${width}×${height}: glyph clears the low rail backing`);
       assert.ok(h.layout.mandalaTop <= y - radius + .001, 'caption overlap sees the glyph envelope');
     }
     close(h.layout.mandalaTop, layout.center.y - layout.mandalaRadius, 'caption uses full planet extent');
-    assert.ok(h.layout.mandalaTop < layout.center.y - layout.panel.width / 2, 'the ring edge is insufficient for header overlap');
+    assert.ok(h.layout.mandalaTop < layout.center.y - MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE * layout.scale, 'the ring edge is insufficient for header overlap');
     if (layout.showMandalaColumns) {
       // Conservative inner edges of the actual row hit areas after scale and travel.
       const leftInner = project(layout, { x: -62.68 - ACTIVATION_COLUMN_REVEAL_DISTANCE, y: 49.56, width: 126.004, height: 712.86 });
@@ -150,16 +160,17 @@ test('Home preserves its fitted square size within the translated studio area', 
     assert.ok(box.y + box.height <= area.y + area.height + 1e-7);
     assert.ok(Math.abs(box.width - area.width) < 1e-7 || Math.abs(box.height - area.height) < 1e-7,
       'one edge must limit Home; optional columns must never shrink it');
-    assert.ok(layout.panel.x >= 0 && layout.panel.y >= 0);
-    assert.ok(layout.panel.x + layout.panel.width <= width + 1e-7);
-    assert.ok(layout.panel.y + layout.panel.height <= height + 1e-7);
+    const rail = railFor(layout, width, height);
+    assert.ok(rail.x >= 0 && rail.y >= 0);
+    assert.ok(rail.x + rail.width <= width + 1e-7);
+    assert.ok(rail.y + rail.height <= height + 1e-7);
   }
   const asymmetric = computeStudioLayout({ width: 1200, height: 800, top: 112, bottom: 64 });
   close(asymmetric.center.y - asymmetric.insets.offsetY, 414,
     'the fitting center accounts for the date heading above the unchanged footer');
 });
 
-test('the shared composition moves toward the day line while protecting the full touch target', () => {
+test('the shared composition stays centered or uses only available headroom for the dates', () => {
   for (const [width, height, top, bottom, side] of [
     [393, 747, 112, 64, 12], [997, 747, 64, 64, 20], [1440, 900, 64, 64, 20],
     [844, 390, 64, 98, 12], [320, 100, 64, 64, 12], [2400, 220, 112, 64, 20],
@@ -167,22 +178,21 @@ test('the shared composition moves toward the day line while protecting the full
     const layout = computeStudioLayout({ width, height, top, bottom, side });
     const originalTop = Math.min(top, height * .49), originalBottom = Math.min(bottom, height * .49);
     const cameraBottom = Math.min(originalBottom + DAY_CONTROL_TOP_CLEARANCE, height * .49);
-    const reserved = cameraBottom - originalBottom;
     const originalHeight = Math.max(1, height - originalTop - cameraBottom);
     const originalCenter = originalTop + originalHeight / 2;
-    const lineY = layout.panel.y + 26;
     const visibleRadius = MANDALA_PLANET_LAYOUT.visualRadius * MANDALA_SCENE_SCALE * layout.scale;
-    const originalGap = lineY - originalCenter - visibleRadius;
-    const expectedShift = Math.max(0, Math.min(originalGap / 4, layout.panel.y - reserved - 4 - originalCenter - visibleRadius));
-    close(layout.insets.offsetY, expectedShift, 'translation is a quarter-gap shift capped by the control clearance');
-    close(layout.center.y, originalCenter + expectedShift, 'the whole scene has one shifted center');
-    close(layout.area.y, originalTop + expectedShift, 'the fit area is translated with the scene');
+    const headroom = originalCenter - visibleRadius - originalTop;
+    const overlap = Math.max(0, originalCenter + visibleRadius - (height - TIMELINE_WITH_DATES_HEIGHT - 4));
+    close(layout.insets.offsetY, -Math.min(headroom, overlap), 'move up only enough to clear dates without crossing the heading');
+    close(layout.center.y, originalCenter + layout.insets.offsetY, 'the whole scene has one shifted center');
+    close(layout.area.y, originalTop + layout.insets.offsetY, 'the fit area is translated with the scene');
     close(layout.area.height, originalHeight, 'the fitting height reserves the date heading separately from the footer');
     close(layout.scale, Math.min(width - 2 * side, originalHeight) / STUDIO_FRAME.bounds.width, 'Home uses all space above the date heading');
-    assert.ok(lineY - layout.center.y - visibleRadius >= originalGap * .75 - 1e-7, 'at least three quarters of the original gap remain');
+    assert.ok(layout.center.y - visibleRadius >= originalTop - 1e-7, 'the full envelope stays below the heading');
+    if (headroom >= overlap) assert.ok(layout.center.y + visibleRadius <= height - TIMELINE_WITH_DATES_HEIGHT - 4 + 1e-7);
     assert.equal(layout.insets.top, originalTop);
     assert.equal(layout.insets.bottom, cameraBottom);
-    assert.ok(layout.insets.offsetY >= 0);
+    assert.ok(layout.insets.offsetY <= 1e-7);
   }
 });
 
@@ -224,7 +234,7 @@ test('columns follow real side room and do not reduce scale when crossing their 
     assert.equal(previous.showMandalaColumns, false);
     assert.equal(previous.scale, safe.scale, 'column capacity never shrinks the ring at its threshold');
     assert.equal(previous.center.y, safe.center.y);
-    assert.equal(previous.panel.y, safe.panel.y);
+    assert.equal(railFor(previous, safeWidth - 1, height).y, railFor(safe, safeWidth, height).y);
   }
 });
 
@@ -239,30 +249,22 @@ test('enlarged calculation blocks fit the ring height and keep room at the narro
       x: ACTIVATION_BLOCK_BOUNDS.x - 14, width: ACTIVATION_BLOCK_BOUNDS.width + 28 });
     assert.ok(resting.x >= layout.area.x, `${width}px leaves the full Design block inside the viewport`);
     assert.ok(resting.x + resting.width <= width - layout.area.x, `${width}px leaves the full Personality block inside the viewport`);
-    assert.ok(resting.y + resting.height <= layout.panel.y + 13, 'the enlarged bottom row clears the visible day control');
+    assert.ok(resting.y + resting.height <= height - TIMELINE_BAR_HEIGHT, 'the enlarged bottom row clears the visible day control');
   }
 });
 
-test('the day timeline stays below the chart and spans the visible ring at every aspect ratio', () => {
+test('the studio rail stays centered within its date edges and clear of the chart across aspect ratios', () => {
   for (const height of [100, 110, 120, 180, 220, 390, 747, 800, 1100]) {
     let previous;
     for (let width = 320; width <= 1440; width += 4) {
       const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
-      const { panel } = layout;
-      const ring = project(layout, {
-        x: MANDALA_GEOMETRY.centerX - MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
-        y: MANDALA_GEOMETRY.centerY - MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
-        width: 2 * MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
-        height: 2 * MANDALA_GEOMETRY.outerRadius * MANDALA_SCENE_SCALE,
-      });
-      assert.equal(layout.placement, 'bottom', `${width}×${height} never moves the timeline to one side`);
+      const panel = railFor(layout, width, height);
       assert.equal(panel.height, DAY_CONTROL_HEIGHT);
       close(panel.x + panel.width / 2, width / 2, 'timeline center');
-      close(panel.x, ring.x, 'left endpoint matches the visible ring');
-      close(panel.x + panel.width, ring.x + ring.width, 'right endpoint matches the visible ring');
-      assert.ok(panel.width < 2 * layout.radius, 'the outside planet lanes are not part of the visible timeline width');
-      close(panel.y, height - DAY_CONTROL_HEIGHT - Math.max(0, Math.min(64, height * .49) - STUDIO_BOTTOM_INSET), 'timeline retains its original safe-area allowance, independently of the camera reserve');
-      assert.ok(panel.y + 13 >= layout.center.y + layout.radius - 1e-7, 'the ring and outer cursor clear the visible backing even when the transparent hit area overlaps');
+      assert.ok(panel.width >= Math.min(width - 48, layout.mandalaRadius * 2), 'rail covers the Home envelope unless the outer date edges cap it');
+      assert.ok(panel.x >= 24 && panel.x + panel.width <= width - 24 + 1e-7, 'rail never exceeds the outer date edges');
+      close(panel.y, height - DAY_CONTROL_HEIGHT, 'timeline position is independent of the camera reserve');
+      assert.ok(height - TIMELINE_BAR_HEIGHT >= layout.center.y + layout.mandalaRadius - 1e-7, 'the full planet envelope clears the backing');
       assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 1e-7);
       assert.ok(panel.y + panel.height <= height + 1e-7);
       const boxes = [{ ...ACTIVATION_BLOCK_BOUNDS,
@@ -271,12 +273,12 @@ test('the day timeline stays below the chart and spans the visible ring at every
         x: ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE, width: ACTIVATION_BLOCK_BOUNDS.width + 2 * ACTIVATION_COLUMN_REVEAL_DISTANCE });
       for (const box of boxes) {
         const column = project(layout, box);
-        assert.ok(column.y + column.height <= panel.y + 13 + 1e-7, 'no calculation column in either mode is covered by the visible backing');
+        assert.ok(column.y + column.height <= height - TIMELINE_BAR_HEIGHT + 1e-7, 'no calculation column in either mode is covered by the visible backing');
       }
       if (previous) {
         assert.deepEqual({ ...layout.insets, offsetY: 0 }, { ...previous.insets, offsetY: 0 });
         close(layout.center.y - layout.insets.offsetY, previous.center.y - previous.insets.offsetY, 'the original vertical fitting center remains unchanged');
-        assert.ok(Math.abs(layout.insets.offsetY - previous.insets.offsetY) <= 2 + 1e-7, 'the quarter-gap shift and its touch-clearance cap change continuously through width and column thresholds');
+        assert.ok(Math.abs(layout.insets.offsetY - previous.insets.offsetY) <= 2 + 1e-7, 'headroom adjustment changes continuously through width and column thresholds');
         // A four-pixel viewport change can grow a width-limited circle by at most four pixels.
         assert.ok(Math.abs(layout.scale - previous.scale) <= 4 / STUDIO_FRAME.bounds.width + 1e-10);
       }
@@ -285,7 +287,7 @@ test('the day timeline stays below the chart and spans the visible ring at every
   }
 });
 
-test('the real camera applies a CSS-pixel quarter-gap shift without scaling or mode-toggle drift', t => {
+test('the real camera applies the shared CSS-pixel headroom adjustment without scaling or mode-toggle drift', t => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'DOMPoint');
   globalThis.DOMPoint = class {
     constructor(x, y) { this.x = x; this.y = y; }
@@ -322,7 +324,7 @@ test('the real camera applies a CSS-pixel quarter-gap shift without scaling or m
     offsetEnabled = true;
     gestures.reset();
     const shiftedHome = gestures.getFittedView(), svgScale = Math.min(width / 640, height / 820);
-    close(shiftedHome.k, originalHome.k, 'moving toward the timeline does not change scale');
+    close(shiftedHome.k, originalHome.k, 'clearing the date row does not change scale');
     close(shiftedHome.x, originalHome.x, 'horizontal camera position stays fixed');
     close((shiftedHome.y - originalHome.y) * svgScale, h.layout.insets().offsetY, 'offset is applied in CSS pixels after the SVG aspect-ratio transform');
     for (const zoom of [1, 1.8]) {
@@ -359,10 +361,9 @@ test('hidden, loading, error and differently sized panels retain the frame witho
       }
       h.drawing.style.clipPath = 'inset(0 0 80px 0)';
       assert.deepEqual(h.layout.refresh(), before);
-      assert.deepEqual(h.layout.insets(), { side: 12, top: 112, bottom: 64 + DAY_CONTROL_TOP_CLEARANCE, offsetY: before.insets.offsetY });
+      assert.deepEqual(h.layout.insets(), { side: 12, top: 112, bottom: TIMELINE_BAR_HEIGHT + DAY_CONTROL_TOP_CLEARANCE, offsetY: before.insets.offsetY });
       assert.equal(h.drawing.style.clipPath, 'none', 'refresh also clears a stale cutoff from an older layout');
       assert.deepEqual(h.panels.map(panel => panel.style), coordinates);
-      assert.equal(h.panels[0].dataset.placement, h.panels[1].dataset.placement);
     }
   }
 });
@@ -450,22 +451,24 @@ test('narrow Home uses a four-pixel outer planet margin without shrinking either
     const layout = computeStudioLayout({ width, height: 844, side: 4, top: 112, bottom: 52 });
     close(layout.center.x - planetRadius * layout.scale, 4, `${width}px left outer planet edge`);
     close(width - layout.center.x - planetRadius * layout.scale, 4, `${width}px right outer planet edge`);
-    assert.ok(layout.center.y + planetRadius * layout.scale <= layout.panel.y - 4);
+    assert.ok(layout.center.y + planetRadius * layout.scale <= 844 - TIMELINE_BAR_HEIGHT - 4);
   }
 });
 
-test('Home clears both date fields while the footer stays fixed and roomy phones keep their scale', () => {
-  for (const [width, height, top, bottom] of [
-    [320, 568, 112, 52], [390, 844, 112, 52], [505, 692, 112, 64],
-    [844, 390, 74, 98], [1025, 775, 74, 52], [1366, 400, 74, 52], [1440, 500, 74, 64],
+test('Home clears the low backing while dates use available headroom and roomy phones keep their scale', () => {
+  for (const [width, height, top, safeBottom] of [
+    [320, 568, 112, 0], [390, 844, 112, 8], [505, 692, 112, 12],
+    [844, 390, 74, 34], [1025, 775, 74, 0], [1366, 400, 74, 0], [1440, 500, 74, 12],
   ]) {
-    const layout = computeStudioLayout({ width, height, side: 4, top, bottom });
-    const footerY = height - DAY_CONTROL_HEIGHT - Math.max(0, bottom - STUDIO_BOTTOM_INSET);
-    const dateFieldTop = footerY - 13 + (22 - 30) / 2;
+    const bottom = TIMELINE_BAR_HEIGHT + safeBottom, footerHeight = TIMELINE_WITH_DATES_HEIGHT + safeBottom;
+    const layout = computeStudioLayout({ width, height, side: 4, top, bottom, footerHeight });
+    const rail = railFor(layout, width, height, safeBottom);
     const envelopeBottom = layout.center.y + layout.mandalaRadius;
-    close(layout.panel.y, footerY, `${width}×${height}: the timeline does not move`);
-    assert.ok(envelopeBottom <= dateFieldTop - 4, `${width}×${height}: full red and black planet envelope clears the input boxes`);
+    close(rail.y, height - safeBottom - DAY_CONTROL_HEIGHT, `${width}×${height}: the timeline does not move`);
+    assert.ok(envelopeBottom <= height - bottom - 4, `${width}×${height}: full red and black planet envelope clears the backing`);
     assert.ok(layout.center.y - layout.mandalaRadius >= top - 1e-7, `${width}×${height}: the top cannot be clipped`);
+    if (top + 2 * layout.mandalaRadius <= height - footerHeight - 4)
+      assert.ok(envelopeBottom <= height - footerHeight - 4 + 1e-7, 'available headroom is used to clear the full date row');
     if (width - 8 <= height - top - bottom - DAY_CONTROL_TOP_CLEARANCE) {
       close(layout.scale, (width - 8) / STUDIO_FRAME.bounds.width, `${width}×${height}: width-limited Home is unchanged`);
     }
@@ -481,7 +484,7 @@ test('camera and loading-area bounds agree when the extra date clearance is clam
     assert.ok(layout.insets.bottom <= height * .49);
     assert.ok(layout.area.y >= 0 && layout.area.y + layout.area.height <= height + 1e-7);
     assert.ok(Number.isFinite(layout.scale) && layout.scale > 0);
-    close(layout.panel.y, height - DAY_CONTROL_HEIGHT - Math.max(0, Math.min(64, height * .49) - STUDIO_BOTTOM_INSET), 'clamping does not shift the footer');
+    close(railFor(layout, width, height).y, height - DAY_CONTROL_HEIGHT, 'clamping the camera does not shift the rail');
   }
 });
 
@@ -497,8 +500,8 @@ test('compact exterior spacing preserves width-limited phone Home while reservin
     const layout = computeStudioLayout({ width, height, side: 4, top, bottom: 52 });
     if (width < 700) assert.ok(layout.scale > previousScale, `${width}×${height}: phone Home retains its established width`);
     assert.ok(layout.center.y - layout.mandalaRadius >= top - 1e-7, 'the heading keeps its protected area');
-    assert.ok(layout.center.y + layout.mandalaRadius <= layout.panel.y - 17 - 4 + 1e-7, 'the date fields have at least a four-pixel gap');
-    if (width >= 1000) close(layout.panel.y - layout.center.y - layout.mandalaRadius, DAY_CONTROL_TOP_CLEARANCE + 4, 'height-limited Home uses the space above the date heading');
+    assert.ok(layout.center.y + layout.mandalaRadius <= height - TIMELINE_BAR_HEIGHT - 4 + 1e-7, 'the backing has at least a four-pixel gap');
+    if (width >= 1000) close(layout.center.y - layout.mandalaRadius, top, 'height-limited Home does not cross the heading to clear the date row');
   }
 });
 
@@ -549,7 +552,7 @@ test('return placement respects actual safe-area insets, including landscape not
 
 
 test('only visible chronicle dates require a second row; every mode shares one rail', () => {
-  for (const [width, mandalaWidth, expectedWidth] of [[390, 382, 382], [1200, 600, 784]]) {
+  for (const [width, mandalaWidth, expectedWidth] of [[390, 382, 342], [1200, 600, 784]]) {
     const rails = [];
     for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
       const dock = geometry.computeTimelineDock({ width, height: 844, mandalaWidth, kind });
@@ -558,7 +561,7 @@ test('only visible chronicle dates require a second row; every mode shares one r
       assert.equal(dock.rail.y, 796);
       const stacked = kind === 'chronicle' && width === 390;
       assert.equal(dock.mode, stacked ? 'stacked' : 'inline');
-      assert.equal(dock.height, stacked ? 74.8 : 40.8);
+      assert.equal(dock.height, stacked ? 88.8 : 40.8);
       rails.push(dock.rail);
     }
     for (const rail of rails) assert.deepEqual(rail, rails[0]);
@@ -615,7 +618,7 @@ test('a tall 924px window keeps the full Home envelope and moves dates above', (
   const home = computeStudioLayout({ width: 924, height: 889, top: 74, bottom: 40.8, footerHeight: 40.8 });
   const dock = geometry.computeTimelineDock({ width: 924, height: 889, mandalaWidth: 2 * home.mandalaRadius, kind: 'chronicle' });
   assert.equal(dock.mode, 'stacked');
-  assert.equal(dock.height, 74.8);
+  assert.equal(dock.height, 88.8);
   close(dock.rail.width, 2 * home.mandalaRadius, 'stacked rail is exactly the Home envelope');
 });
 
@@ -641,7 +644,7 @@ test('the visible rail stays centered in every mode and inside safe side insets'
   }
 });
 
-function viewportLayoutHarness({ width = 390, height = 844, top = 0, safeBottom = 0, edgeSpace = 0, viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 }) } = {}) {
+function viewportLayoutHarness({ width = 390, height = 844, top = 0, canvasTop = top, safeBottom = 0, edgeSpace = 0, viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 }) } = {}) {
   const rect = { width, height, top, bottom: top + height };
   const values = new Map(), writes = [];
   const frames = new Map(); let nextFrame = 0;
@@ -651,7 +654,7 @@ function viewportLayoutHarness({ width = 390, height = 844, top = 0, safeBottom 
   const fromDate = { tagName: 'INPUT', type: 'text' }, toDate = { tagName: 'INPUT', type: 'text' }, slider = { tagName: 'INPUT', type: 'range' };
   const studio = { ownerDocument: document, dataset: {}, style: { setProperty(key, value) { values.set(key, value); writes.push([key, value]); } }, getBoundingClientRect: () => rect };
   let canvasReads = 0;
-  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => { canvasReads++; return rect; } };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => { canvasReads++; return { ...rect, top: canvasTop }; } };
   const panel = { id: 'lifetimeControls', hidden: false, dataset: {}, style: { setProperty() {} }, contains: node => [fromDate, toDate, slider].includes(node) };
   const layout = createStudioLayout({ canvas, panels: [panel], viewport, media: { matches: true },
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
@@ -680,22 +683,23 @@ test('the whole chronicle dock follows the visible bottom without reframing the 
   const lift = () => parseFloat(h.values.get('--timeline-viewport-lift'));
   const dockTop = () => parseFloat(h.values.get('--timeline-dock-top'));
   assert.equal(lift(), 0);
-  assert.equal(dockTop(), 769.2);
+  assert.equal(dockTop(), 803.2);
   h.focus(h.fromDate); h.viewport.height = 500;
   h.viewport.dispatchEvent(new Event('resize'));
   assert.equal(lift(), 344, 'keyboard moves every dock control by the same amount');
-  assert.equal(dockTop(), 425.2, 'the entire 74.8px date-and-rail platform is above the keyboard');
+  assert.equal(dockTop(), 459.2, 'the backing leaves the covered map visible between dates above the keyboard');
+  assert.equal(h.values.get('--timeline-dock-height'), '88.8px', 'keyboard does not collapse date content');
   h.viewport.offsetTop = 70;
   h.viewport.dispatchEvent(new Event('scroll'));
   assert.equal(lift(), 274, 'Safari autopan is counted once');
-  assert.equal(dockTop(), 495.2);
+  assert.equal(dockTop(), 529.2);
   assert.equal(h.layout.insets(), before.insets, 'camera fit keeps its original insets object');
   assert.equal(h.panel.style.top, before.top, 'base rail geometry does not change');
   assert.equal(h.canvasReads(), before.reads, 'viewport events do not measure or refresh the scene');
   h.viewport.height = 844; h.viewport.offsetTop = 0;
   h.viewport.dispatchEvent(new Event('resize'));
   assert.equal(lift(), 0, 'closing the keyboard restores the exact baseline');
-  assert.equal(dockTop(), 769.2);
+  assert.equal(dockTop(), 803.2);
 });
 
 test('visible dock positioning includes the studio offset and follows full layout changes', () => {
@@ -703,7 +707,7 @@ test('visible dock positioning includes the studio offset and follows full layou
   h.focus(h.fromDate); h.viewport.height = 450; h.viewport.offsetTop = 80;
   h.viewport.dispatchEvent(new Event('scroll'));
   assert.equal(parseFloat(h.values.get('--timeline-viewport-lift')), 294);
-  assert.equal(parseFloat(h.values.get('--timeline-dock-top')), 455.2);
+  assert.equal(parseFloat(h.values.get('--timeline-dock-top')), 489.2);
   h.rect.width = 844; h.rect.height = 390; h.rect.top = 0; h.rect.bottom = 390;
   h.viewport.height = 390; h.viewport.offsetTop = 0;
   h.layout.refresh();
@@ -718,7 +722,7 @@ test('missing or invalid visual viewport metrics leave the normal dock in place'
     Object.assign(new EventTarget(), { height: 900, offsetTop: 0 })]) {
     const h = viewportLayoutHarness({ viewport });
     assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
-    assert.equal(h.values.get('--timeline-dock-top'), '769.2px');
+    assert.equal(h.values.get('--timeline-dock-top'), '803.2px');
   }
 });
 
@@ -726,16 +730,16 @@ test('missing or invalid visual viewport metrics leave the normal dock in place'
 test('compact controls keep a small edge clearance even when an embedded browser reports no safe inset', () => {
   const mobile = viewportLayoutHarness({ edgeSpace: 8 });
   assert.equal(mobile.panel.style.top, '788px', 'rail and its labels rise above the bottom browser overlap');
-  assert.equal(mobile.values.get('--timeline-dock-height'), '82.8px', 'the continuous backing includes the clearance');
+  assert.equal(mobile.values.get('--timeline-dock-height'), '96.8px', 'the continuous backing includes the clearance');
   const homeIndicator = viewportLayoutHarness({ edgeSpace: 8, safeBottom: 34 });
   assert.equal(homeIndicator.panel.style.top, '762px', 'a larger native safe area is not padded twice');
-  assert.equal(homeIndicator.values.get('--timeline-dock-height'), '108.8px');
+  assert.equal(homeIndicator.values.get('--timeline-dock-height'), '122.8px');
   const desktop = viewportLayoutHarness({ edgeSpace: 0 });
   assert.equal(desktop.panel.style.top, '796px', 'desktop has no extra edge allowance');
   mobile.focus(mobile.fromDate); mobile.viewport.height = 500;
   mobile.viewport.dispatchEvent(new Event('resize'));
   assert.equal(mobile.values.get('--timeline-viewport-lift'), '344px');
-  assert.equal(mobile.values.get('--timeline-dock-top'), '417.2px', 'keyboard and edge clearance compose once');
+  assert.equal(mobile.values.get('--timeline-dock-top'), '451.2px', 'keyboard and edge clearance compose once');
 });
 
 
@@ -747,7 +751,7 @@ test('Done lowers the dock before delayed Safari viewport metrics catch up', () 
   assert.equal(h.values.get('--timeline-viewport-lift'), '344px');
   h.focus(null); h.frame();
   assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'Done must not wait for resize');
-  assert.equal(h.values.get('--timeline-dock-top'), '761.2px', 'no keyboard-sized grey gap');
+  assert.equal(h.values.get('--timeline-dock-top'), '795.2px', 'no keyboard-sized grey gap');
   for (const event of ['scroll', 'resize']) {
     h.viewport.dispatchEvent(new Event(event));
     assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'late metrics cannot lift a closed editor');
@@ -760,7 +764,7 @@ test('Done lowers the dock before delayed Safari viewport metrics catch up', () 
   assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'intermediate closing frame stays dismissed');
   h.viewport.height = 844; h.viewport.offsetTop = 0;
   h.viewport.dispatchEvent(new Event('resize'));
-  assert.equal(h.values.get('--timeline-dock-top'), '761.2px');
+  assert.equal(h.values.get('--timeline-dock-top'), '795.2px');
   assert.equal(h.layout.insets(), before.insets);
   assert.equal(h.panel.style.top, before.top);
   assert.equal(h.canvasReads(), before.reads, 'focus and keyboard never reframe the camera');
@@ -872,4 +876,57 @@ test('hidden period fields reserve their real width in every mode and restore or
   assert.throws(() => layout.refresh(), /measurement failed/);
   assert.equal(panel.getAttribute('style'), originalPanelStyle, 'even a failed measurement restores the exact style attribute');
   assert.equal(heading.getAttribute('style'), 'color: inherit');
+});
+
+test('Home stays centered when possible and rises only enough for the two-row footer', () => {
+  for (const [height, shift] of [[844, 0], [626.8, 0], [618, -4.4], [594.8, -16], [568, -2.6]]) {
+    const h = viewportLayoutHarness({ height, edgeSpace: 8, viewport: null });
+    const home = h.layout.refresh();
+    close(home.insets.offsetY, shift, `${height}: smallest necessary upward shift`);
+    const base = computeStudioLayout({ width: 390, height, top: 112, bottom: 48.8, footerHeight: 48.8 });
+    close(home.scale, base.scale, 'reserving the potential second row never shrinks the map');
+    assert.ok(home.center.y - home.mandalaRadius >= 112 - 1e-7, 'the complete envelope clears the heading');
+    close(parseFloat(h.values.get('--timeline-dock-top')), height - 48.8, 'the backing always stays below the date row');
+    assert.equal(h.values.get('--timeline-dock-height'), '96.8px', 'date content retains two rows');
+    assert.equal(h.panel.style.top, `${height - 56}px`, 'rail stays in place');
+    const before = { ...home };
+    h.panel.hidden = true;
+    assert.deepEqual(h.layout.refresh(), before, 'closing chronicle never changes Home');
+    h.panel.hidden = false;
+    assert.deepEqual(h.layout.refresh(), before, 'opening chronicle never changes Home');
+  }
+});
+
+test('Home remains continuous where chronicle dates wrap beside the rail', () => {
+  const sizes = [935.199, 935.2, 935.201].map(width => {
+    const h = viewportLayoutHarness({ width, height: 700, edgeSpace: 8, viewport: null });
+    return { home: h.layout.refresh(), height: h.values.get('--timeline-dock-height') };
+  });
+  assert.equal(sizes[0].height, '96.8px');
+  assert.equal(sizes[2].height, '48.8px');
+  for (const { home } of sizes) {
+    close(home.center.y, sizes[0].home.center.y, 'wrap cannot move the scene');
+    close(home.scale, sizes[0].home.scale, 'wrap cannot change scale');
+  }
+});
+
+test('every mode keeps one low backing regardless of available space or the canvas offset', () => {
+  for (const safeBottom of [0, 8, 34]) for (const [width, height] of [[390, 844], [390, 568], [1080, 930], [1440, 900]]) {
+    const h = viewportLayoutHarness({ width, height, safeBottom, top: 20, canvasTop: 32, viewport: null });
+    for (const opened of [false, true]) {
+      h.panel.hidden = !opened; h.layout.refresh();
+      close(height + 20 - parseFloat(h.values.get('--timeline-dock-top')), 40.8 + safeBottom, 'one shared backing height');
+    }
+  }
+});
+
+test('stacked dates fit their whole focus and error frame above the rail backing', () => {
+  for (const safeBottom of [0, 8, 34]) {
+    const h = viewportLayoutHarness({ width: 1080, height: 930, safeBottom, viewport: null });
+    const top = parseFloat(h.values.get('--timeline-heading-top'));
+    const fieldBottom = top + 42; // 40px field, centered in the existing 44px heading.
+    const backingTop = parseFloat(h.values.get('--timeline-dock-top'));
+    assert.ok(fieldBottom + 6 <= backingTop + 1e-7, 'focus frame and inline error have a quiet six-pixel gap');
+    assert.equal(h.panel.style.top, `${930 - safeBottom - 48}px`, 'the rail does not move');
+  }
 });

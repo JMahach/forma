@@ -226,3 +226,17 @@ test('empty or invalid input has a browsing fallback but no invented actual sele
     h.click('×'); assert.deepEqual(h.selected, ['1801-01-01']);
   }
 });
+
+test('the period chooser title is a heading, while close remains the first keyboard control', () => {
+  const h = harness();
+  h.button.dispatch('click'); h.click('2001–2025');
+  const title = h.popup.all(node => node.textContent === 'Выберите период')[0];
+  assert.equal(title.tagName, 'h3');
+  title.dispatch('click');
+  assert.equal(h.popup.dataset.view, 'periods');
+  assert.deepEqual(h.selected, []);
+  h.buttons().find(button => button.textContent === '×').focus();
+  h.popup.dispatch('keydown', { key: 'Tab', shiftKey: true });
+  assert.equal(h.popup.hidden, true);
+  assert.equal(h.document.activeElement, h.button);
+});

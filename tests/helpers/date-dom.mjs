@@ -23,7 +23,14 @@ export function dateDom() {
       getAttribute(name) { return attributes.get(name) ?? null; },
       setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
       select() { this.setSelectionRange(0, this.value.length); },
-      focus() { document.activeElement = this; this.dispatch('focus'); document.dispatch('focusin', { target: this }); },
+      focus() {
+        if (document.activeElement === this) return;
+        const previous = document.activeElement;
+        document.activeElement = document.body;
+        previous?.dispatch('blur', { relatedTarget: this });
+        document.activeElement = this;
+        this.dispatch('focus', { relatedTarget: previous }); document.dispatch('focusin', { target: this });
+      },
       append(...nodes) { for (const node of nodes) this.insertBefore(node, null); },
       insertBefore(node, reference) {
         if (node === reference) return node;

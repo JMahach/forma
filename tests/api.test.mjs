@@ -5,7 +5,7 @@ import { readdirSync } from 'node:fs';
 // Explicit opt-in: the normal offline test suite must not require a running server.
 // Start the application separately, then run RUN_API_TESTS=1 npm test.
 const apiTest = process.env.RUN_API_TESTS === '1' ? test : test.skip;
-const base = process.env.API_TEST_BASE_URL || 'http://127.0.0.1:4176';
+const base = process.env.API_TEST_BASE_URL || 'http://127.0.0.1:3636';
 const birth = {
   mode: 'natal', name: 'API regression test', date: '1990-06-15', time: '14:30',
   cityId: '524901', cityName: 'Москва'
