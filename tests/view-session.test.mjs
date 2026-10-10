@@ -70,7 +70,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
     dayClient: { getDay: transitDay }, onStateChange: changed, onRender: exploration.publishTransit });
   natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onStateChange: changed, onRender: exploration.publishDay });
   const camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: () => STUDIO_FRAME,
-    measureFit: () => ({ area: { x: 0, y: 0, width: size, height: size }, min: .1 }), onChange: changed });
+    measureFit: () => ({ area: { x: 0, y: 0, width: size, height: size }, viewport: { x: 0, y: 0, width: size, height: size }, min: .1 }), onChange: changed });
   const motion = createMandalaMotion({ viewport: { style: { setProperty: (name, value) => styles.set(name, value) } },
     requestFrame: () => { assert.fail('restoration must reveal the saved mode without an animation from zero'); },
     onFinish: enabled => mandala.finishTransition(enabled) });

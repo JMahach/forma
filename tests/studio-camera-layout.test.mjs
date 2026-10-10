@@ -348,8 +348,9 @@ for (const [width, height] of [[390, 844], [390, 664], [1228, 705], [844, 390]])
       const home = h.controls.getFittedView(), homeDrawing = h.project(home);
       h.controls.zoom(2);
       h.controls.pan(dx, dy);
-      for (const excess of [.0001, .000001]) {
+      for (const excess of [.03, .019, .005, .0001, .000001]) {
         h.controls.zoomAt({ x: 10, y: 790 }, home.k * (1 + excess) / h.controls.getView().k);
+        closeTo(h.controls.getView().k, home.k * (1 + excess), 'outward zoom does not snap before the floor');
         const drawing = h.project();
         const distance = Math.max(...['left', 'right', 'top', 'bottom'].map(edge => Math.abs(drawing[edge] - homeDrawing[edge])));
         assert.ok(distance < Math.max(width, height) * excess * 3,
@@ -405,3 +406,61 @@ test('camera chrome avoids repeated visibility writes without skipping dependent
   change(home, home);
   assert.equal(writes, 4, 'Home still updates both controls once');
 });
+
+
+for (const [width, height] of [[404, 872], [550, 590], [1440, 900]]) {
+  test(`chronicle changes its backing without reframing Home or a moved camera at ${width}×${height}`, t => {
+    const values = new Map();
+    const studio = { dataset: {}, style: { setProperty: (key, value) => values.set(key, value) },
+      getBoundingClientRect: () => ({ width, height, top: 0, bottom: height }) };
+    const canvas = { parentElement: studio, dataset: {}, getBoundingClientRect: () => ({ width, height }) };
+    const panel = { id: 'lifetimeControls', hidden: true, dataset: {}, style: { setProperty() {} } };
+    const layout = createStudioLayout({ canvas, panels: [panel], viewport: null, media: { matches: width < 700 },
+      readStyle: () => ({ scrollPaddingLeft: '4px', scrollPaddingTop: '112px', scrollPaddingBottom: '52px',
+        getPropertyValue: () => '8px' }) });
+    const h = harness(t, width, height, false, layout.insets(), true);
+    const home = h.controls.getFittedView(), initialInsets = { ...layout.insets() }, columns = layout.showMandalaColumns;
+    for (const factor of [1, 2]) {
+      h.controls.reset(); h.controls.zoom(factor); h.controls.pan(-100, 80);
+      const before = h.controls.getView();
+      for (const open of [true, false, true, false]) {
+        panel.hidden = !open; layout.refresh(); h.setInsets(layout.insets()); h.controls.resize();
+        assert.deepEqual(layout.insets(), initialInsets, 'dock visibility cannot change the Home fitting area');
+        assert.deepEqual(h.controls.getFittedView(), home);
+        assert.deepEqual(h.controls.getView(), before, 'both scale and translation remain exact');
+        assert.equal(layout.showMandalaColumns, columns, 'dock cannot change mandala content visibility');
+        assert.equal(values.get('--timeline-dock-height'), open && width < 628 ? '82.8px' : '48.8px');
+      }
+    }
+  });
+}
+
+// Project the rectangle visible at Home through the moved camera, independently
+// of the drawing envelope. Full white margins are part of this field too.
+function projectedHomeField(h) {
+  const home = h.controls.getFittedView(), view = h.controls.getView(), { width, height } = h.rect;
+  const scale = Math.min(width / 640, height / 820), ratio = view.k / home.k;
+  const left = scale * (view.x - home.x * ratio) + (1 - ratio) * (width - 640 * scale) / 2;
+  const top = scale * (view.y - home.y * ratio) + (1 - ratio) * (height - 820 * scale) / 2;
+  return { left, top, right: left + width * ratio, bottom: top + height * ratio };
+}
+for (const [width, height] of [[404, 872], [1440, 900], [844, 390]]) {
+  test(`mouse and touch can reach exactly every edge of the original full field at ${width}×${height}`, t => {
+    const h = harness(t, width, height, false, { side: 4, top: 112, bottom: 68.8 }, true);
+    const toggle = h.attachMandalaToggle();
+    for (const pointerType of ['mouse', 'touch']) for (const [dx, dy] of [[10000, 10000], [-10000, 10000], [-10000, -10000], [10000, -10000]]) {
+      h.controls.reset(); h.controls.zoom(2);
+      h.send('pointerdown', { pointerType });
+      h.send('pointermove', { pointerType, clientX: h.rect.left + width / 2 + dx, clientY: h.rect.top + height / 2 + dy });
+      h.send('pointerup', { pointerType, clientX: h.rect.left + width / 2 + dx, clientY: h.rect.top + height / 2 + dy });
+      const field = projectedHomeField(h), before = h.controls.getView();
+      closeTo(dx > 0 ? field.left : field.right, dx > 0 ? 0 : width, 'horizontal edge is reachable but cannot pass the screen edge');
+      closeTo(dy > 0 ? field.top : field.bottom, dy > 0 ? 0 : height, 'vertical edge is reachable but cannot pass the screen edge');
+      assert.ok(field.left <= 1e-8 && field.top <= 1e-8 && field.right >= width - 1e-8 && field.bottom >= height - 1e-8);
+      toggle(); toggle(); h.controls.zoom(1); h.controls.resize();
+      assert.deepEqual(h.controls.getView(), before, 'mode switches and unchanged size cannot alter pan boundaries');
+      h.controls.zoom(.0001);
+      assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
+    }
+  });
+}

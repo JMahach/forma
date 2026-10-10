@@ -48,8 +48,10 @@ export function createStudioLayout({ canvas, panels, returnsControls = null, stu
       const fields = timelineKind === 'chronicle' ? [...(lifetime.querySelectorAll?.('.lifetime-date-control') || [])] : [];
       const controlWidth = fields.length ? Math.ceil(Math.max(...fields.map(field => field.getBoundingClientRect().width))) || undefined : undefined;
       dock = computeTimelineDock({ width: full.width, height: full.height, ...insets, safeBottom, kind: timelineKind, controlWidth });
-      insets.bottom = dock.height;
-      insets.footerHeight = dock.height;
+      // Panels cover the scene; opening a second row must not reframe Home.
+      const baseDock = computeTimelineDock({ width: full.width, height: full.height, ...insets, safeBottom });
+      insets.bottom = baseDock.height;
+      insets.footerHeight = baseDock.height;
       insets.safeBottom = safeBottom;
       studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
       dockHeight = dock.height;

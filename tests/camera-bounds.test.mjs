@@ -8,7 +8,7 @@ import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 
 const closeTo = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} ≈ ${expected}`);
 
-test('zooming out near Home completes scale and translation, but a small zoom in remains intentional', () => {
+test('zooming out preserves the last two percent until the exact Home floor', () => {
   const camera = createCamera({ measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, min: 0.1 }), onChange() {} });
   camera.reset();
   const home = camera.getFittedView();
@@ -16,10 +16,12 @@ test('zooming out near Home completes scale and translation, but a small zoom in
   closeTo(camera.getView().k, home.k * 1.005, 'small zoom in does not stick');
   camera.zoomAt({ x: 160, y: 300 }, 2);
   camera.zoomAt({ x: 220, y: 400 }, home.k * 1.015 / camera.getView().k, 17, -9);
-  assert.deepEqual(camera.getView(), home, 'pinch translation cannot leave a nearly Home camera offset');
+  closeTo(camera.getView().k, home.k * 1.015, 'pinch keeps the requested zoom above Home');
   camera.zoom(1.5);
   camera.zoom(home.k * 1.01 / camera.getView().k);
-  assert.deepEqual(camera.getView(), home, 'button zoom uses the same finishing behavior');
+  closeTo(camera.getView().k, home.k * 1.01, 'button zoom keeps the requested last percent');
+  camera.zoom(.001);
+  assert.deepEqual(camera.getView(), home, 'only the exact floor completes Home');
 });
 const projected = (view, bounds = DRAWING_BOUNDS) => ({
   left: view.x + bounds.x * view.k,

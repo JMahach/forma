@@ -23,7 +23,7 @@ export function isHomeView(view, fitted) {
     && Math.abs(view.x - fitted.x) <= 1e-7 && Math.abs(view.y - fitted.y) <= 1e-7;
 }
 
-// The home drawing frame stays covered by the zoomed drawing: at 100% each
+// The chosen Home field stays covered by its zoomed projection: at 100% each
 // interval collapses to its home coordinate, so the camera cannot drift.
 export function constrainView(view, fitted, bounds = DRAWING_BOUNDS) {
   const k = clamp(view.k, fitted.k, 4.5);
@@ -47,9 +47,10 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   const activeFrame = () => getFrame() ?? CHART_FRAME;
   const homeFrame = () => getHomeFrame?.() ?? activeFrame();
   const studioHome = typeof getHomeFrame === 'function';
-  // One live camera. The studio can share a Home baseline across modes while
-  // navigation admits the larger visible drawing without moving that camera.
+  // Studio navigation belongs to the fixed surface, not to mode-specific art.
+  // Standalone diagrams retain their expandable drawing frame.
   let navigationFrame = activeFrame(), navigationFit = { ...view };
+  let homeField = navigationFrame.bounds;
   const sameView = (a, b) => a.x === b.x && a.y === b.y && a.k === b.k;
   const rebase = (value, from, to) => {
     if (sameView(from, to)) return { ...value };
@@ -57,39 +58,41 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     const ratio = to.k / from.k;
     return { x: to.x + (value.x - from.x) * ratio, y: to.y + (value.y - from.y) * ratio, k: value.k * ratio };
   };
-  // Studio Home is the zoom floor even when wider navigation bounds permit
-  // panning around a ring. Standalone diagrams keep their existing frame floor.
+  // Studio modes share the same Home floor. Standalone diagrams keep their
+  // existing drawing-frame floor.
   const minimumScale = () => studioHome ? fittedView.k : navigationFit.k;
   const zoom = (anchor, factor) => zoomAt(view, anchor, factor, { min: minimumScale(), max: 4.5 });
-  function finishZoom(factor) {
-    // Only an outward gesture completes Home. A small deliberate zoom in
-    // and an unrelated resize keep their exact position.
-    if (factor < 1 && view.k >= fittedView.k && view.k <= fittedView.k * 1.02) view = { ...fittedView };
-    apply();
-  }
   function publish() {
     onChange({ ...view }, { ...fittedView }, { minScale: minimumScale() });
   }
-  // Expanded bounds allow panning, but their limits must converge at the true
-  // Home scale. A smaller navigation fit leaves an offset until the last step.
-  const constrain = candidate => constrainView(candidate, studioHome ? fittedView : navigationFit, navigationFrame.bounds);
+  // Studio pan limits converge at Home; standalone limits follow their frame.
+  const constrain = candidate => constrainView(candidate, studioHome ? fittedView : navigationFit, studioHome ? homeField : navigationFrame.bounds);
   function apply() {
     view = constrain(view);
     publish();
   }
-  function defaultView(frame = activeFrame()) {
-    const { area, min } = measureFit(frame);
+  function defaultView(frame = activeFrame(), { area, min } = measureFit(frame)) {
     return fitView(frame.bounds, area, { min });
+  }
+  function measureHome() {
+    const frame = homeFrame(), measured = measureFit(frame), next = defaultView(frame, measured);
+    if (studioHome) {
+      const { viewport } = measured;
+      homeField = { x: (viewport.x - next.x) / next.k, y: (viewport.y - next.y) / next.k,
+        width: viewport.width / next.k, height: viewport.height / next.k };
+    }
+    return next;
   }
   function fit() {
     navigationFrame = homeFrame();
-    fittedView = defaultView(navigationFrame);
+    fittedView = measureHome();
     navigationFit = { ...fittedView };
     view = { ...fittedView };
     expandNavigation();
     apply();
   }
   function expandNavigation() {
+    if (studioHome) return;
     const nextFrame = activeFrame(), previous = navigationFrame.bounds, next = nextFrame.bounds;
     const nextFit = defaultView(nextFrame);
     // Showing a larger drawing may extend navigation immediately. Hiding it
@@ -104,7 +107,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     }
   }
   function rebaseHome() {
-    const previous = fittedView, next = defaultView(homeFrame());
+    const previous = fittedView, next = measureHome();
     view = rebase(view, previous, next);
     navigationFit = rebase(navigationFit, previous, next);
     fittedView = next;
@@ -114,11 +117,11 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   const controls = {
     minimumScale,
     pan(dx, dy) { view.x += dx; view.y += dy; apply(); },
-    zoomAt(anchor, factor, dx = 0, dy = 0) { view = zoom(anchor, factor); view.x += dx; view.y += dy; finishZoom(factor); },
-    zoom(factor) { view = zoom({ x: 320, y: 410 }, factor); finishZoom(factor); },
+    zoomAt(anchor, factor, dx = 0, dy = 0) { view = zoom(anchor, factor); view.x += dx; view.y += dy; apply(); },
+    zoom(factor) { view = zoom({ x: 320, y: 410 }, factor); apply(); },
     reset() { fit(); },
     refreshFrame() {
-      fittedView = defaultView(homeFrame());
+      fittedView = measureHome();
       expandNavigation();
       publish();
     },
@@ -132,7 +135,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
         view = { x: next.x + (view.x - navigationFit.x) * ratio, y: next.y + (view.y - navigationFit.y) * ratio, k: view.k * ratio };
       }
       navigationFit = next;
-      fittedView = defaultView(homeFrame());
+      fittedView = measureHome();
       expandNavigation();
       apply();
     },

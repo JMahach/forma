@@ -84,5 +84,9 @@ export function computeCameraFit(frame, rect, insets, project) {
   const bottom = project(rect.right - side, rect.bottom - bottomInset + offsetY);
   const area = { x: top.x, y: top.y, width: Math.max(flexible ? 1 : 100, bottom.x - top.x), height: Math.max(flexible ? 1 : 100, bottom.y - top.y) };
   const min = flexible ? Math.min(minScale, area.width / bounds.width, area.height / bounds.height) : minScale;
-  return { area, min };
+  // Navigation includes the full fixed surface, including its white margins.
+  // Fitting insets only position the drawing within that field.
+  const first = project(rect.left, rect.top), last = project(rect.right, rect.bottom);
+  const viewport = { x: first.x, y: first.y, width: last.x - first.x, height: last.y - first.y };
+  return { area, min, viewport };
 }
