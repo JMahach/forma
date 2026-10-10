@@ -125,7 +125,7 @@ test('a personality-only transit fills one native-size column without an empty D
   assert.equal(column.querySelector('.cycle-source-headings').getAttribute('display'), 'none');
 });
 
-test('dual values widen clearly in the normal view and fit the native separated columns beside the mandala', () => {
+test('dual number highlights have equal size and meet without overlap in normal and mandala views', () => {
   for (const showMandala of [false, true]) {
   const root = fixture(overlayFixture(natal, cycle, RETURN_OVERLAY), { showMandala });
   for (const origin of ['natal', 'cycle']) {
@@ -133,10 +133,13 @@ test('dual values widen clearly in the normal view and fit the native separated 
     const boxes = [...row.querySelectorAll('.cycle-activation-value')].map(value => {
       const x = Number(/translate\(([-\d.]+) 0\)/.exec(value.getAttribute('transform'))[1]);
       const rect = value.querySelector('rect');
-      return { left: x + Number(rect.getAttribute('x')), right: x + Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) };
+      return { left: x + Number(rect.getAttribute('x')), right: x + Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')),
+        width: Number(rect.getAttribute('width')), height: Number(rect.getAttribute('height')) };
     });
-    assert.ok(boxes[1].left - boxes[0].right >= 12, 'the two hit areas leave a visible gap');
-    assert.ok(boxes[0].left >= 20 && boxes[1].right <= (showMandala ? 108 : 122), 'the wider gap cannot push the outer value beyond the fitted column');
+    assert.equal(boxes[0].right, boxes[1].left, 'neighboring highlights share a border without a gap or overlap');
+    assert.equal(boxes[0].width, boxes[1].width, 'both source highlights have the same width');
+    assert.equal(boxes[0].height, boxes[1].height, 'both source highlights have the same height');
+    assert.ok(boxes[0].left >= 20 && boxes[1].right <= (showMandala ? 120 : 136), 'both complete targets stay inside the expanded column envelope');
     assert.equal(row.querySelector('.cycle-activation-value text').getAttribute('font-size'), showMandala ? '18' : '20');
   }
   }
