@@ -548,53 +548,40 @@ test('return placement respects actual safe-area insets, including landscape not
 });
 
 
-test('only a chronicle with crowded period fields needs a second row', () => {
-  for (const kind of ['day', 'natal-day', 'returns']) {
-    for (const width of [320, 390, 699, 948, 1440, 1920]) {
-      const dock = geometry.computeTimelineDock({ width, height: 844, kind });
-      assert.equal(dock.height, 40.8, `${kind} stays compact at ${width}px`);
-      assert.equal(dock.mode, 'inline');
+test('only visible chronicle dates require a second row; every mode shares one rail', () => {
+  for (const [width, mandalaWidth, expectedWidth] of [[390, 382, 382], [1200, 600, 784]]) {
+    const rails = [];
+    for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
+      const dock = geometry.computeTimelineDock({ width, height: 844, mandalaWidth, kind });
+      assert.equal(dock.rail.width, expectedWidth);
+      assert.equal(dock.rail.x, (width - expectedWidth) / 2);
       assert.equal(dock.rail.y, 796);
+      const stacked = kind === 'chronicle' && width === 390;
+      assert.equal(dock.mode, stacked ? 'stacked' : 'inline');
+      assert.equal(dock.height, stacked ? 74.8 : 40.8);
+      rails.push(dock.rail);
     }
+    for (const rail of rails) assert.deepEqual(rail, rails[0]);
   }
-  const narrow = geometry.computeTimelineDock({ width: 451, height: 932, kind: 'chronicle' });
-  const wide = geometry.computeTimelineDock({ width: 924, height: 889, kind: 'chronicle' });
-  assert.equal(narrow.mode, 'stacked');
-  assert.equal(narrow.height, 74.8);
-  assert.equal(wide.mode, 'inline');
-  assert.equal(wide.height, 40.8);
-  assert.ok(wide.rail.x >= wide.gutter + wide.controlWidth + 8, 'left period field clears the rail');
-  assert.ok(wide.rail.x + wide.rail.width <= 924 - wide.gutter - wide.controlWidth - 8, 'right field clears the rail');
 });
 
-test('timeline uses the available window width regardless of the mandala diameter or window height', () => {
-  for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
-    const short = geometry.computeTimelineDock({ width: 1440, height: 390, kind });
-    const tall = geometry.computeTimelineDock({ width: 1440, height: 1200, kind });
-    assert.equal(short.rail.x, tall.rail.x);
-    assert.equal(short.rail.width, tall.rail.width);
-    assert.ok(short.rail.width > 1000, `${kind} uses the wide screen instead of the small ring`);
-    const wider = geometry.computeTimelineDock({ width: 1600, height: 390, kind });
-    assert.equal(wider.rail.width - short.rail.width, 160, 'additional screen width all goes to the rail');
+test('timeline reaches the Home mandala envelope continuously at the date-wrap boundary', () => {
+  // 400px mandala + two 140px dates, 24px safe gutters and 24px target clearances.
+  const threshold = 776;
+  for (const delta of [-1, -.001, 0, .001, 1]) {
+    const dock = geometry.computeTimelineDock({ width: threshold + delta, height: 844,
+      mandalaWidth: 400, controlWidth: 140, kind: 'chronicle' });
+    close(dock.rail.width, 400 + Math.max(0, delta), 'no jump on date wrapping');
+    assert.equal(dock.mode, delta < 0 ? 'stacked' : 'inline');
+    if (delta >= 0) assert.ok(dock.rail.x - dock.gutter - dock.controlWidth >= 22,
+      'the invisible native thumb target clears the date field');
   }
-  const plain = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'natal-day' });
-  assert.equal(plain.rail.x, 24, 'birth marker has room at the left edge');
-  assert.equal(plain.rail.x + plain.rail.width, 366);
-  const returns = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'returns' });
-  assert.equal(returns.rail.x, 26);
-  assert.equal(returns.actionGutter, 0, 'the narrow action uses the existing edge space');
-  assert.equal(390 - returns.actionGutter - returns.actionWidth - returns.rail.x - returns.rail.width, 2, 'the end of the rail clears the action target');
-  assert.equal(returns.actionSize, 39.6);
-  const safe = geometry.computeTimelineDock({ width: 844, height: 390, kind: 'returns', side: 40 });
-  assert.equal(safe.actionGutter, 36, 'the glyph retains its safe device inset inside the narrow target');
-  const day = geometry.computeTimelineDock({ width: 390, height: 844, kind: 'day' });
-  assert.deepEqual(day.rail, plain.rail, 'day no longer reserves a column for Now');
 });
 
 test('safe area extends the shared dock without changing its content height', () => {
   assert.equal(typeof geometry.computeTimelineDock, 'function');
-  const normal=geometry.computeTimelineDock({width:390,height:844,top:112,safeBottom:0});
-  const safe=geometry.computeTimelineDock({width:390,height:844,top:112,safeBottom:34});
+  const normal=geometry.computeTimelineDock({width:390,height:844,mandalaWidth:382,safeBottom:0});
+  const safe=geometry.computeTimelineDock({width:390,height:844,mandalaWidth:382,safeBottom:34});
   assert.equal(safe.height, normal.height+34);
   assert.equal(safe.mode, normal.mode);
   assert.equal(safe.rail.y, normal.rail.y-34);
@@ -624,30 +611,33 @@ test('returns uses the user supplied narrow-window reference before the map beco
 });
 
 
-test('924px reference fits date and action beside a shorter useful rail', () => {
-  const dock=geometry.computeTimelineDock({width:924,height:889,top:74,kind:'chronicle'});
-  assert.equal(dock.mode,'inline');
-  assert.equal(dock.height,40.8);
-  assert.ok(dock.rail.width>=530, 'period fields leave all remaining width to the rail');
-  assert.ok(dock.rail.x<=194, 'no oversized side columns');
+test('a tall 924px window keeps the full Home envelope and moves dates above', () => {
+  const home = computeStudioLayout({ width: 924, height: 889, top: 74, bottom: 40.8, footerHeight: 40.8 });
+  const dock = geometry.computeTimelineDock({ width: 924, height: 889, mandalaWidth: 2 * home.mandalaRadius, kind: 'chronicle' });
+  assert.equal(dock.mode, 'stacked');
+  assert.equal(dock.height, 74.8);
+  close(dock.rail.width, 2 * home.mandalaRadius, 'stacked rail is exactly the Home envelope');
 });
 
-
-test('chronicle adapts to the measured period controls instead of clipping wider text', () => {
-  const options = { width: 650, height: 844, kind: 'chronicle' };
-  const normal = geometry.computeTimelineDock({ ...options, controlWidth: 140 });
-  const largeText = geometry.computeTimelineDock({ ...options, controlWidth: 210 });
-  assert.equal(normal.mode, 'inline');
-  assert.equal(largeText.mode, 'stacked');
-  assert.ok(normal.rail.x >= 140 + normal.gutter + 8);
-  assert.ok(largeText.rail.width > normal.rail.width, 'moving the fields above returns their width to the rail');
+test('chronicle adapts to measured dates while other modes reserve the same space', () => {
+  const options = { width: 700, height: 844, mandalaWidth: 280 };
+  for (const kind of ['day', 'natal-day', 'chronicle', 'returns']) {
+    const normal = geometry.computeTimelineDock({ ...options, kind, controlWidth: 140 });
+    const largeText = geometry.computeTimelineDock({ ...options, kind, controlWidth: 210 });
+    assert.equal(normal.mode, 'inline');
+    assert.equal(largeText.mode, kind === 'chronicle' ? 'stacked' : 'inline');
+    assert.equal(normal.rail.width, 324);
+    assert.equal(largeText.rail.width, 280);
+  }
 });
 
-
-test('the visible rail stays centered in every mode, including the returns action', () => {
+test('the visible rail stays centered in every mode and inside safe side insets', () => {
   for (const width of [320, 390, 844, 1440]) for (const kind of ['day', 'natal-day', 'chronicle', 'returns']) {
-    const dock = geometry.computeTimelineDock({ width, height: 844, kind });
-    assert.ok(Math.abs(dock.rail.x - (width - dock.rail.x - dock.rail.width)) < 1e-9, `${kind} at ${width}px has equal screen-edge margins`);
+    const mandalaWidth = Math.min(width - 80, 640);
+    const dock = geometry.computeTimelineDock({ width, height: 844, kind, side: 40, mandalaWidth });
+    close(dock.rail.x, width - dock.rail.x - dock.rail.width, `${kind} equal margins`);
+    assert.ok(dock.rail.x >= 40);
+    assert.ok(dock.rail.width >= mandalaWidth);
   }
 });
 
@@ -825,4 +815,61 @@ test('closing the keyboard on a zoomed page restores its prior viewport geometry
   close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - viewport.height, 'closed keyboard at non-unit scale with fractional rounding');
   viewport.offsetTop = 80; viewport.dispatchEvent(new Event('scroll'));
   close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - viewport.height - 80, 'later page pan is not suppressed');
+});
+
+test('hidden period fields reserve their real width in every mode and restore original styles', () => {
+  function node(hidden, initial = null) {
+    let attribute = initial;
+    const properties = new Map();
+    return { hidden, inert: hidden, dataset: {},
+      getAttribute: () => attribute,
+      setAttribute(name, value) { attribute = value; properties.clear(); },
+      removeAttribute() { attribute = null; properties.clear(); },
+      style: { setProperty(name, value, priority) {
+        properties.set(name, value); attribute = `${attribute || ''};${name}:${value}${priority ? '!important' : ''}`;
+      } }, properties };
+  }
+  const rect = { width: 700, height: 440 };
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => rect };
+  const canvas = { parentElement: studio, dataset: {}, getBoundingClientRect: () => rect };
+  const panel = Object.assign(node(true), { id: 'lifetimeControls' });
+  const heading = node(true, 'color: inherit');
+  let fieldWidth = 210, failMeasurement = false;
+  const field = { getBoundingClientRect() {
+    if (failMeasurement) throw new Error('measurement failed');
+    const laidOut = (!panel.hidden || panel.properties.get('display') === 'block') &&
+      (!heading.hidden || heading.properties.get('display') === 'flex');
+    if (panel.hidden || heading.hidden) {
+      assert.equal(heading.properties.get('visibility'), 'hidden');
+      assert.equal(heading.properties.get('width'), 'max-content');
+    }
+    return { width: laidOut ? fieldWidth : 0 };
+  } };
+  panel.querySelector = () => heading;
+  panel.querySelectorAll = () => [field, field];
+  const layout = createStudioLayout({ canvas, panels: [panel], media: { matches: false }, viewport: null,
+    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
+  const initialHome = layout.refresh();
+  close(Number.parseFloat(panel.style.width), 2 * initialHome.mandalaRadius, 'hidden wide dates already require the Home width');
+  const initialRail = [panel.style.left, panel.style.width, panel.style.top];
+  for (const [hidden, headingHidden] of [[false, true], [false, false], [true, false], [true, true]]) {
+    panel.hidden = hidden; heading.hidden = headingHidden;
+    panel.dataset.personalLife = String(headingHidden);
+    const home = layout.refresh();
+    assert.deepEqual(home, initialHome);
+    assert.deepEqual([panel.style.left, panel.style.width, panel.style.top], initialRail);
+    assert.equal(panel.hidden, hidden); assert.equal(heading.hidden, headingHidden);
+    assert.equal(panel.inert, true); assert.equal(heading.inert, true);
+    assert.equal(heading.getAttribute('style'), 'color: inherit');
+    assert.equal(panel.properties.has('display'), false);
+    assert.equal(panel.properties.has('visibility'), false);
+  }
+  fieldWidth = 140;
+  layout.refresh();
+  assert.equal(panel.style.width, '324px', 'responsive field widths are measured again without a cache');
+  const originalPanelStyle = panel.getAttribute('style');
+  failMeasurement = true;
+  assert.throws(() => layout.refresh(), /measurement failed/);
+  assert.equal(panel.getAttribute('style'), originalPanelStyle, 'even a failed measurement restores the exact style attribute');
+  assert.equal(heading.getAttribute('style'), 'color: inherit');
 });

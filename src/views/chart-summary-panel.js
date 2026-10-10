@@ -45,20 +45,19 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panel, summaryScreen, returnsPanel, returnsEntry, content, overview, search, switcher, backdrop, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
+export function attachChartSummary({ panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
   const document = panel.ownerDocument;
   const window = document.defaultView;
   const summaryLabel = panel.getAttribute('aria-labelledby');
   let summaryOpened = false, returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
   let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedScreen = null, currentChart = null;
   const screen = () => returnsVisible ? 'returns' : summaryOpened ? 'summary' : 'closed';
-  const entryFor = value => value === 'returns' ? returnsEntry || switcher : switcher;
   function layout() {
     // Camera callbacks read only this cheap projection, never cycle results.
     const next = screen();
     if (appliedScreen === next) return;
     const previous = appliedScreen;
-    if (next === 'closed' && panel.contains(document.activeElement)) entryFor(previous).focus({ preventScroll: true });
+    if (next === 'closed' && panel.contains(document.activeElement)) switcher.focus({ preventScroll: true });
     appliedScreen = next;
     const opened = next !== 'closed';
     // Retain the last screen and its placement throughout the closing slide.
@@ -92,7 +91,7 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, returns
   function close({ focus = false } = {}) {
     const active = screen();
     if (active === 'closed') return;
-    if (focus || panel.contains(document.activeElement)) entryFor(active).focus({ preventScroll: true });
+    if (focus || panel.contains(document.activeElement)) switcher.focus({ preventScroll: true });
     summaryOpened = false;
     onClose(); // Closes the returns owner too, even when only that screen is open.
     layout();

@@ -20,10 +20,3 @@ export function returnMomentDetails(utc, natal) {
   const clock = formats.clock.format(date);
   return { utc, date: label, time: clock, age: ageText(completedAge(utc, natal)) };
 }
-
-// The entry is available before the event drawer is loaded. The main heading
-// owns the displayed moment; this control only opens the event list.
-export function updateReturnsEntry({ footer, entry }, state) {
-  footer.hidden = !state.available || !state.timelineVisible;
-  entry.setAttribute('aria-expanded', String(!footer.hidden && state.opened));
-}

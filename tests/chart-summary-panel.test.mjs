@@ -175,7 +175,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   }
   const studio = node(), panel = node('aside', { 'aria-labelledby': 'chartSummaryTitle' });
   const summaryScreen = node(), returnsPanel = node('section', { 'aria-labelledby': 'returnsTitle' });
-  const returnsEntry = node('button'), returnsBack = node('button');
+  const returnsBack = node('button');
   const content = node(), overview = node(), search = node('input');
   const switcher = node('button', { 'aria-controls': 'chartSummary', 'aria-expanded': 'false' });
   const backdrop = withBackdrop ? node() : null;
@@ -200,7 +200,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   let openCalls = 0, closeCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panel, summaryScreen, returnsPanel, returnsEntry, content, overview, search, switcher, backdrop,
+    panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop,
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
   };
@@ -217,7 +217,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   const searchFor = value => { search.value = value; search.dispatch('input'); };
   const disclosure = (id, open) => { const section = content.querySelectorAll('[data-summary-section]').find(section => section.dataset.summarySection === id); assert.ok(section); section.open = open; content.dispatch('toggle', { target: section }); };
   return {
-    controller, globals, document, window, panel, summaryScreen, returnsPanel, returnsEntry, returnsBack,
+    controller, globals, document, window, panel, summaryScreen, returnsPanel, returnsBack,
     content, overview, search, switcher, canvas, camera, studio, backdrop,
     lineCalls, lineOptions, selectionCalls, click, mode, lineButton, entityButton, searchFor, disclosure,
     resize(value) { window.innerWidth = value; window.dispatch('resize'); controller.layout(); },
@@ -656,7 +656,7 @@ test('compositions keep summary lazy and name the real natal lines beside the un
 
 test('returns alone opens the shared shell without opening or rendering the summary', () => {
   const h = harness();
-  h.returnsEntry.focus();
+  h.switcher.focus();
   assert.equal(typeof h.controller.setReturnsVisible, 'function');
   h.controller.setReturnsVisible(true);
   assert.equal(h.controller.opened, true);
@@ -670,7 +670,7 @@ test('returns alone opens the shared shell without opening or rendering the summ
   assert.equal(h.returnsPanel.hidden, false);
   assert.equal(h.backdrop.hidden, false);
   assert.equal(h.switcher.getAttribute('aria-expanded'), 'true');
-  assert.equal(h.globals.activeElement, h.returnsEntry, 'the returns view chooses its own initial focus');
+  assert.equal(h.globals.activeElement, h.switcher, 'the returns view chooses its own initial focus');
   assert.equal(h.content.markupWrites, 0);
   assert.equal(h.openCalls, 0);
   assert.equal(h.closeCalls, 0);
@@ -713,8 +713,8 @@ test('closing a returns-only shell closes its owner once and keeps content for t
     assert.equal(h.switcher.getAttribute('aria-expanded'), 'false');
     assert.equal(h.panel.dataset.screen, 'returns', 'closing keeps the same presentation for its slide out');
     assert.equal(h.returnsPanel.hidden, false, 'the inert shell can still animate its contents');
-    assert.equal(h.globals.activeElement, h.returnsEntry);
-    assert.deepEqual(h.returnsEntry.focusOptions, { preventScroll: true });
+    assert.equal(h.globals.activeElement, h.switcher);
+    assert.deepEqual(h.switcher.focusOptions, { preventScroll: true });
     assert.equal(h.closeCalls, 1);
     h.controller.close(); h.controller.layout();
     assert.equal(h.closeCalls, 1);
@@ -732,7 +732,7 @@ test('Escape consumed by a nested return control leaves the shell open; the next
   assert.equal(event.defaultPrevented, true);
   assert.equal(h.controller.screen, 'closed');
   assert.equal(h.closeCalls, 1);
-  assert.equal(h.globals.activeElement, h.returnsEntry);
+  assert.equal(h.globals.activeElement, h.switcher);
 });
 
 test('returns projection and camera layout repeats preserve focus and avoid shell DOM writes', () => {
@@ -772,7 +772,7 @@ test('externally hidden returns releases shell focus without issuing a second cl
   h.controller.setReturnsVisible(false);
   assert.equal(h.controller.screen, 'closed');
   assert.equal(h.panel.inert, true);
-  assert.equal(h.globals.activeElement, h.returnsEntry);
+  assert.equal(h.globals.activeElement, h.switcher);
   assert.equal(h.closeCalls, 0);
   h.controller.setReturnsVisible(true); h.canvas.focus();
   h.controller.setReturnsVisible(false);

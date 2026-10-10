@@ -30,7 +30,7 @@ const noop = () => {};
 function browser() {
   const elements = new Map(), listeners = new Map();
   const document = { body: { dataset: {} }, activeElement: null,
-    getElementById: element, querySelector: () => null, querySelectorAll: () => [],
+    getElementById: id => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: () => null, querySelectorAll: () => [],
     addEventListener(type, handler) { listeners.set(type, handler); } };
   function element(id) {
     if (!elements.has(id)) {
@@ -68,9 +68,9 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
     const rect = () => ({ ...dimensions, top: 0, left: 0, bottom: dimensions.height, right: dimensions.width });
     const studio = element('studio'), canvas = element('canvasWrap');
     studio.getBoundingClientRect = canvas.getBoundingClientRect = rect; canvas.parentElement = studio;
-    for (const id of ['lifetimeControls', 'natalDayControls', 'returnsControls']) element(id).hidden = true;
+    for (const id of ['lifetimeControls', 'natalDayControls']) element(id).hidden = true;
     element('viewport').querySelector = () => null;
-    layout = createStudioLayout({ canvas, studio, returnsControls: element('returnsControls'),
+    layout = createStudioLayout({ canvas, studio,
       panels: ['transitControls', 'natalDayControls', 'lifetimeControls'].map(element),
       media: { matches: dimensions.width < 700 }, viewport: null,
       readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
@@ -116,7 +116,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: () => ({ close: noop, setReturnsVisible: noop, update: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
     attachChartLoading: () => ({ update: noop }), createCyclesClient: options => { assert.equal(options.memory, memory); return { events: async input => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
-    updateReturnsEntry: noop, attachReturnMarkers: () => ({ update: noop }),
+    attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView',

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { renderReturnEvents, attachReturnsPanel } from '../src/views/returns-panel.js';
 import { attachChartSummary } from '../src/views/chart-summary-panel.js';
 import { completedAge } from '../src/domain/personal-age.js';
-import { returnMomentDetails, updateReturnsEntry } from '../src/views/returns-clock.js';
+import { returnMomentDetails } from '../src/views/returns-clock.js';
 import { readFileSync } from 'node:fs';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
 import { dateDom } from './helpers/date-dom.mjs';
@@ -141,8 +141,8 @@ test('cached first touches keep the exact present boundary and notice appended o
   } finally { Date.now = now; }
 });
 
-function panelHarness({ rows = false, pageOwned = true, getLayout = () => 'sheet' } = {}) {
-  const document = dateDom(), ids = ['chartSummary', 'summaryScreen', 'summaryOverview', 'summarySearch', 'chartSummaryContent', 'summarySwitch', 'summaryBackdrop', 'returnsBack', 'returnsPanel', 'returnsControls', 'returnsToggle', 'returnsContent', 'returnsStatus', 'returnsYear', 'returnsYearCalendar', 'returnsBody', 'returnsClose', 'returnsRetry', 'returnsYearField', 'returnsBodyField', 'returnsNote', 'returnsBodiesToggle', 'returnsBodiesLabel', 'returnsYearLabel', 'returnsBodyMenu', 'returnsBodiesClose', 'returnsBodiesClear', 'returnsBodiesDefault'];
+function panelHarness({ rows = false, getLayout = () => 'sheet' } = {}) {
+  const document = dateDom(), ids = ['chartSummary', 'summaryScreen', 'summaryOverview', 'summarySearch', 'chartSummaryContent', 'summarySwitch', 'summaryBackdrop', 'returnsBack', 'returnsPanel', 'returnsContent', 'returnsStatus', 'returnsYear', 'returnsYearCalendar', 'returnsBody', 'returnsClose', 'returnsRetry', 'returnsYearField', 'returnsBodyField', 'returnsNote', 'returnsBodiesToggle', 'returnsBodiesLabel', 'returnsYearLabel', 'returnsBodyMenu', 'returnsBodiesClose', 'returnsBodiesClear', 'returnsBodiesDefault'];
   const nodes = Object.fromEntries(ids.map(id => [id, Object.assign(document.createElement(id === 'chartSummary' ? 'aside' : 'div'), { nodeType: 1 })]));
   if (rows) {
     const rowDocument = svgDocument();
@@ -169,8 +169,7 @@ function panelHarness({ rows = false, pageOwned = true, getLayout = () => 'sheet
   if (rows) nodes.returnsContent.parentNode = nodes.returnsPanel;
   else nodes.returnsContent.parentElement = nodes.returnsPanel;
   nodes.chartSummary.append(nodes.summaryScreen, nodes.returnsPanel);
-  nodes.returnsControls.append(nodes.returnsToggle);
-  document.body.append(nodes.chartSummary, nodes.summarySwitch, nodes.summaryBackdrop, nodes.returnsControls);
+  document.body.append(nodes.chartSummary, nodes.summarySwitch, nodes.summaryBackdrop);
   const shellClasses = new Set();
   nodes.chartSummary.classList = {
     toggle(name, value) { if (value) shellClasses.add(name); else shellClasses.delete(name); },
@@ -178,7 +177,7 @@ function panelHarness({ rows = false, pageOwned = true, getLayout = () => 'sheet
   };
   nodes.chartSummary.setAttribute('aria-labelledby', 'chartSummaryTitle');
   nodes.returnsPanel.setAttribute('aria-labelledby', 'returnsTitle');
-  for (const id of ['returnsPanel', 'returnsControls', 'summaryBackdrop']) nodes[id].hidden = true;
+  for (const id of ['returnsPanel', 'summaryBackdrop']) nodes[id].hidden = true;
   nodes.returnsContent.scrollTop = 0; nodes.returnsContent.clientHeight = 200;
   if (!rows) nodes.returnsContent.querySelector = () => null;
   nodes.returnsPanel.querySelector = () => null;
@@ -187,21 +186,15 @@ function panelHarness({ rows = false, pageOwned = true, getLayout = () => 'sheet
   document.defaultView.matchMedia = () => ({ matches: true, addEventListener() {} });
   let current = { available: true, opened: false, natal, events: [], errors: [], pendingBodies: [], year: null, bodies: ['jupiter', 'north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus'] }, layouts = 0, view;
   const selected = [], years = [], moments = [], bodySelections = [], backs = [];
-  const clock = { footer: nodes.returnsControls, entry: nodes.returnsToggle };
   const update = next => {
     current = { ...current, ...next };
-    if (pageOwned) updateReturnsEntry(clock, current);
     summary.setReturnsVisible(Boolean(current.available && current.timelineVisible && current.opened));
     view.update(current);
   };
   const summary = attachChartSummary({ panel: nodes.chartSummary, summaryScreen: nodes.summaryScreen,
-    returnsPanel: nodes.returnsPanel, returnsEntry: nodes.returnsToggle, content: nodes.chartSummaryContent,
+    returnsPanel: nodes.returnsPanel, content: nodes.chartSummaryContent,
     overview: nodes.summaryOverview, search: nodes.summarySearch, switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
     onOpen: () => update({ opened: false }), onClose: () => update({ opened: false }),
-  });
-  if (pageOwned) nodes.returnsToggle.addEventListener('click', () => {
-    if (current.opened) update({ opened: false });
-    else { summary.close(); update({ opened: true }); }
   });
   view = attachReturnsPanel({ document, getLayout, onClose: () => summary.close({ focus: true }), onBack: () => { backs.push('summary'); summary.open(); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
@@ -258,18 +251,6 @@ test('planet checkboxes combine selections and clear/default preserve the menu a
   h.escape();
   assert.equal(h.nodes.returnsBodyMenu.hidden, true);
   assert.equal(h.nodes.returnsPanel.hidden, false, 'Escape dismisses the filter before the whole drawer');
-});
-
-test('a loaded return panel does not bind or render its independently available footer', () => {
-  const h = panelHarness({ pageOwned: false });
-  h.nodes.returnsControls.hidden = false;
-
-  h.update({ timelineVisible: true, opened: false });
-  h.nodes.returnsToggle.dispatch('click');
-  assert.equal(h.nodes.returnsPanel.hidden, true, 'only the page owner toggles the lower entry');
-  h.update({ timelineVisible: false });
-  assert.equal(h.nodes.returnsControls.hidden, false);
-
 });
 
 test('selecting a lunar return preserves all 1336 rows and changes only the old and new event state', () => {
@@ -357,43 +338,43 @@ test('Returns shares the existing calendar and closes it when the planet menu or
   assert.equal(h.document.body.children.filter(node => node.className.split(' ').includes('date-picker')).length, 1);
 });
 
-test('return footer and drawer require an explicit visible Lifetime owner', () => {
+test('return drawer requires an explicit visible Lifetime owner', () => {
   const h = panelHarness(); h.update({ opened: true });
-  assert.equal(h.nodes.returnsControls.hidden, true);
   assert.equal(h.nodes.returnsPanel.hidden, true); assert.equal(h.nodes.chartSummary.inert, true);
   assert.equal(h.summary.screen, 'closed');
-  assert.equal(h.nodes.summaryBackdrop.hidden, true); assert.equal(h.nodes.returnsToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(h.nodes.summaryBackdrop.hidden, true);
   assert.equal(h.layouts, 0, 'an opened state without a visible drawer cannot move the studio');
 });
 
-test('closing only the return drawer keeps the Lifetime footer and reopens the same selected exact event', () => {
+test('a restored return drawer closes and restores the same selected exact event', () => {
   const h = panelHarness(), selectedEvent = event('saturn', '2076-10-03T22:30:00Z');
-  h.update({ timelineVisible: true, selectedEvent });
-  assert.equal(h.nodes.returnsControls.hidden, false); assert.equal(h.nodes.returnsPanel.hidden, true);
-  h.nodes.returnsToggle.dispatch('click');
+  h.update({ timelineVisible: true, selectedEvent, events: [selectedEvent] });
+  assert.equal(h.nodes.returnsPanel.hidden, true);
+  h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.nodes.summaryBackdrop.hidden, false);
   h.nodes.returnsClose.dispatch('click');
-  assert.equal(h.nodes.returnsControls.hidden, false); assert.equal(h.summary.opened, false);
+  assert.equal(h.summary.opened, false);
   assert.equal(h.nodes.chartSummary.inert, true, 'the shared shell disables the retained exit-animation content');
   assert.equal(h.nodes.returnsPanel.hidden, false);
-  h.nodes.returnsToggle.dispatch('click');
+  h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, false);
+  assert.match(h.nodes.returnsContent.innerHTML, /aria-pressed="true"/);
 
   assert.equal(h.layouts, 3); assert.equal(h.document.activeElement, h.nodes.returnsBack);
 });
 
-test('hiding Lifetime while its return drawer is open hides both views and backdrop, requests layout and releases Escape', () => {
+test('hiding Lifetime while its return drawer is open hides the drawer and backdrop, requests layout and releases Escape', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true });
   assert.equal(h.layouts, 1); assert.equal(h.nodes.returnsPanel.hidden, false);
   h.update({ timelineVisible: false });
-  assert.equal(h.nodes.returnsControls.hidden, true); assert.equal(h.summary.opened, false);
+  assert.equal(h.summary.opened, false);
   assert.equal(h.nodes.chartSummary.inert, true); assert.equal(h.nodes.chartSummary.getAttribute('aria-hidden'), 'true');
   assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true'); assert.equal(h.nodes.summaryBackdrop.hidden, true);
   assert.equal(h.layouts, 2, 'owner visibility closes the real drawer without needing opened to change first');
   const otherControl = h.document.createElement('input'); otherControl.focus();
   h.document.dispatch('keydown', { key: 'Escape' }); assert.equal(h.document.activeElement, otherControl);
-  h.update({ timelineVisible: true, opened: false }); h.nodes.returnsToggle.dispatch('click');
-  assert.equal(h.nodes.returnsControls.hidden, false); assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.layouts, 3);
+  h.update({ timelineVisible: true, opened: false }); h.update({ opened: true });
+  assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.layouts, 3);
 });
 
 test('first touches retain cycle ordinals and never treat a later pass as another cycle', () => {
@@ -544,9 +525,6 @@ test('an open phone return sheet remains nonmodal so native navigation and the p
   assert.equal(h.nodes.chartSummary.inert, false);
   assert.equal(h.nodes.chartSummary.getAttribute('aria-hidden'), 'false');
   assert.equal(h.nodes.chartSummary.getAttribute('aria-labelledby'), 'returnsTitle');
-  assert.equal(h.nodes.returnsControls.hidden, false);
-  assert.equal(h.nodes.returnsControls.inert, undefined, 'the persistent footer is not made inert with the open sheet');
-  assert.equal(h.nodes.returnsToggle.getAttribute('aria-expanded'), 'true');
   assert.equal(h.nodes.summaryBackdrop.hidden, false, 'outside dismissal remains available without claiming modal ownership');
 });
 
@@ -590,9 +568,8 @@ test('back opens the ordinary summary and filter Escape stays inside the returns
   assert.equal(h.summary.screen,'summary');
   assert.equal(h.nodes.summaryScreen.hidden,false);
   assert.equal(h.nodes.returnsPanel.hidden,true);
-  assert.equal(h.nodes.returnsControls.hidden,false);
   assert.equal(h.document.activeElement,h.nodes.summarySearch);
-  h.nodes.returnsToggle.dispatch('click');
+  h.update({ opened: true });
   assert.equal(h.summary.screen,'returns');
   assert.equal(h.nodes.returnsYearLabel.textContent,'2028');
   h.nodes.returnsBodiesToggle.dispatch('click');
@@ -603,7 +580,7 @@ test('back opens the ordinary summary and filter Escape stays inside the returns
   assert.equal(h.summary.screen,'returns');
   h.escape();
   assert.equal(h.summary.opened,false);
-  assert.equal(h.document.activeElement,h.nodes.returnsToggle);
+  assert.equal(h.document.activeElement,h.nodes.summarySwitch);
 });
 
 test('calendar Escape closes its popup before the shared return shell', () => {
@@ -617,7 +594,7 @@ test('calendar Escape closes its popup before the shared return shell', () => {
   assert.equal(h.document.activeElement,h.nodes.returnsYearCalendar);
   h.escape();
   assert.equal(h.summary.opened,false);
-  assert.equal(h.document.activeElement,h.nodes.returnsToggle);
+  assert.equal(h.document.activeElement,h.nodes.summarySwitch);
 });
 
 

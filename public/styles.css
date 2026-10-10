@@ -314,7 +314,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .summary-source-dot.personality { background: #49443d; }
 
 /* Minute-day timeline. */
-.day-controls { position: absolute; z-index: 90; width: min(360px, calc(100% - 24px)); height: 48px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: #777777; font-size: 11px; }
+.day-controls { touch-action: none; overscroll-behavior: none; translate: 0 calc(0px - var(--timeline-viewport-lift, 0px)); position: absolute; z-index: 90; width: min(360px, calc(100% - 24px)); height: 48px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: #777777; font-size: 11px; }
 .transit-controls-heading { position: absolute; z-index: 2; left: calc(var(--timeline-content-width) - var(--rail-left) + var(--timeline-gutter) - 60px); top: 2px; display: flex; align-items: center; justify-content: flex-end; width: 60px; height: 44px; pointer-events: none; }
 .transit-controls-heading > button { display: block; width: 60px; height: 44px; padding: 0 4px; color: #555555; background: transparent; font-size: 12px; pointer-events: auto; }
 .day-controls input[type='range'] { position: relative; display: block; appearance: none; -webkit-appearance: none; width: 100%; height: 44px; margin: 0; background: transparent; accent-color: #888888; cursor: grab; touch-action: none; }
@@ -335,6 +335,8 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .day-hour-mark { position: absolute; left: var(--hour-position); top: 50%; height: 6px; width: 1px; transform: translate(-50%, -50%); background: #bdbdbd; }
 .day-hour-mark.is-major { height: 10px; background: #999999; }
 .day-hour-mark > span { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.day-hour-mark:first-child > span { transform: none; }
+.day-hour-mark:last-child > span { transform: translateX(-100%); }
 .life-year-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 4px; transform: translate(-50%, -50%); background: #c7c7c7; }
 .life-year-mark.is-major { height: 7px; background: #adadad; }
 .day-reference-rail { position: absolute; inset: 0 22px; pointer-events: none; }
@@ -467,12 +469,6 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 }
 
 /* Returns share compact filters above a full-height event list. */
-/* The single returns action stays at the end of the full-width rail. */
-.returns-controls { position: absolute; z-index: 91; top: calc(var(--timeline-heading-top) + (44px - var(--timeline-action-size)) / 2); right: var(--timeline-action-gutter, 0px); width: var(--timeline-action-width); height: var(--timeline-action-size); padding: 0; color: #555555; background: transparent; pointer-events: none; }
-.returns-toggle { position: relative; display: grid; place-items: center; width: 100%; height: 100%; padding: 0; color: #555555; background: transparent; border-radius: 6px; }
-.returns-toggle::before { content: ''; position: absolute; inset: calc((var(--timeline-action-size) - 44px) / 2) 0; }
-.returns-toggle svg { display: block; width: 16.2px; height: 16.2px; }
-.returns-toggle:hover, .returns-toggle[aria-expanded='true'] { background: #e2e2e2; }
 .returns-panel { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: max(78px, calc(env(safe-area-inset-top) + 64px)) 16px 0; color: #514b43; }
 .returns-screen-heading { display: flex; align-items: center; gap: 8px; flex: none; }
 .returns-screen-heading h2 { margin: 0; font-size: 15px; font-weight: 500; }
@@ -532,7 +528,7 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
 .returns-status { flex: none; margin: 10px 0 0; }
 .returns-status:empty { display: none; }
 .returns-retry { min-height: 44px; color: #65775b; font-size: 12px; background: transparent; }
-.returns-panel button:focus-visible, .returns-controls button:focus-visible { outline: 1px solid #89947b; outline-offset: 2px; }
+.returns-panel button:focus-visible { outline: 1px solid #89947b; outline-offset: 2px; }
 .studio[data-returns-layout='side']:has(.chart-summary.open[data-screen='returns']) > .canvas-wrap { left: 0; right: var(--returns-side-space); width: calc(100% - var(--returns-side-space)); }
 .studio[data-returns-layout='side']:has(.chart-summary.open[data-screen='returns']) > .studio-header { left: calc((100% - var(--returns-side-space)) / 2); }
 .studio[data-returns-layout='sheet'] .chart-summary[data-screen='returns'] { left: 0; right: 0; top: max(114px, calc(env(safe-area-inset-top) + 108px)); bottom: calc(var(--timeline-dock-height) + var(--timeline-viewport-lift, 0px)); width: auto; border: 1px solid #d3d8ca; border-bottom: 0; border-radius: 20px 20px 0 0; transform: translateY(calc(100% + 24px)); }
@@ -545,15 +541,12 @@ dialog { max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0;
   .studio[data-returns-layout] .returns-body-menu { top: 8px; max-height: calc(100% - 16px); }
   .studio[data-returns-layout='side'] .returns-body-menu { top: max(64px, calc(env(safe-area-inset-top) + 58px)); max-height: calc(100% - max(72px, calc(env(safe-area-inset-top) + 66px))); }
 }
-@media (prefers-reduced-motion: reduce) { .returns-toggle svg { transition: none; } }
-@media print { .returns-panel, .returns-controls, .timeline-dock { display: none !important; } }
+@media print { .returns-panel, .timeline-dock { display: none !important; } }
 
 /* One continuous footer; its two heights come from full-studio geometry. */
 .timeline-dock { position: fixed; z-index: 89; inset: var(--timeline-dock-top, calc(100% - 74.8px)) 0 0; border-top: 1px solid #d1d1d1; background: var(--timeline-background); touch-action: none; }
 .studio:not(:has(.day-controls:not([hidden]))) .timeline-dock { display: none; }
 
-.returns-controls > * { pointer-events: auto; }
-.day-controls, .returns-controls { touch-action: none; overscroll-behavior: none; translate: 0 calc(0px - var(--timeline-viewport-lift, 0px)); }
 
 
 
