@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chartTitle } from '../src/views/chart-display.js';
+import { createChartComposition } from '../src/domain/chart-composition.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.js';
 import { libraryDom } from './helpers/library-dom.mjs';
 import { attachTransitNavigation } from '../src/views/live-transit.js';
@@ -29,7 +31,7 @@ test('transit is consistently named without renaming saved personal charts', () 
     [{ id: 'manual', name: 'Текущий момент', source: 'manual' }, 'Текущий момент'],
   ]) {
     Object.freeze(c);
-    assert.equal(chartTitle(c), expected);
+    assert.equal(chartTitle(createChartComposition(extractChartData(c), { id: c.id, primaryLabel: c.name })), expected);
   }
 });
 

@@ -22,7 +22,19 @@ class TransitDayTests(unittest.TestCase):
         for date in ('1800-12-31', '2400-01-01'):
             with self.assertRaises(ChartError) as error:
                 transit_day.calculate_day(date)
-            self.assertEqual(error.exception.payload['error'], 'unsupported_date')
+            self.assertEqual(error.exception.payload, dict(error='unsupported_date', message='Доступны даты с 1801 по 2399 год.'))
+
+    def test_both_ephemeris_boundary_days_retain_every_utc_minute(self):
+        for date in ('1801-01-01', '2300-01-01', '2399-12-31'):
+            with self.subTest(date=date):
+                day = transit_day.calculate_day(date)
+                self.assertEqual(day['startUtc'], date + 'T00:00:00Z')
+                self.assertEqual(day['samples'], 1440)
+                self.assertEqual([len(column) for column in day['columns']], [1440] * 24)
+                for index, clock in ((0, '00:00:00'), (1439, '23:59:00')):
+                    moment = dt.datetime.fromisoformat(date + 'T' + clock + '+00:00')
+                    expected = astro.sample_columns([moment])
+                    self.assertEqual([column[index] for column in day['columns']], [column[0] for column in expected])
 
     def test_month_and_leap_day_are_exactly_1440_utc_minutes(self):
         for date in ('2024-02-29', '2026-09-30', '2026-12-31'):

@@ -27,7 +27,7 @@ const entityButton = (type, id, title, detail) => `<button type="button" class="
 
 // New sections supply only data presentation. Disclosure, search, scrolling,
 // selection and drawer behaviour remain shared panel behaviour.
-export const SUMMARY_SECTIONS = [
+const SUMMARY_SECTIONS = [
   { id: 'lines', title: 'Линии', count: m => m.hasLines ? m.totals.activations : null, render: lineRows },
   { id: 'centers', title: 'Центры', count: m => m.totals.centers, render: (m, q) => m.centers.filter(c => matches(q, 'центры', c.name)).map(c => entityButton('center', c.id, c.name, c.defined ? `${c.activeGates.length} ворот` : 'не определён')).join('') },
   { id: 'channels', title: 'Каналы', count: m => m.totals.channels, render: (m, q) => m.channels.filter(c => matches(q, 'каналы', c.id, c.name)).map(c => entityButton('channel', c.id, c.id.replace('-', '–'), esc(c.name))).join('') || (!q ? '<p class="summary-note">Полных каналов нет.</p>' : '') },
@@ -137,7 +137,7 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
     const chart = currentChart;
     if (!chart) return;
     const rowsChart = primaryChart(chart), topology = chartTopology(chart);
-    const key = JSON.stringify([chart.id, chart.kind, rowsChart.source, rowsChart.name, topology.personality, topology.design, ['design', 'personality'].map(source => rowsChart.activations?.[source]?.map(a => [a.planet, a.gate, a.line]))]);
+    const key = JSON.stringify([chart.id, chart.kind, rowsChart.source, chart.primaryLabel, topology.personality, topology.design, ['design', 'personality'].map(source => rowsChart.activations?.[source]?.map(a => [a.planet, a.gate, a.line]))]);
     if (lastId !== chart.id) { search.value = ''; content.scrollTop = 0; lastId = chart.id; }
     if (key !== fingerprint) {
       fingerprint = key; model = buildChartSummary(chart);

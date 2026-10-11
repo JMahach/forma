@@ -1,12 +1,12 @@
 import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.js';
-import { NatalDayError, validateNatalDate, validateNatalZone } from '../services/natal-days.mjs';
+import { NatalDayError, validateNatalDayDate, validateNatalZone } from '../services/natal-days.mjs';
 import { negotiateEncoding } from './content-encoding.mjs';
 
 export function validateNatalDayRequest(input, cities, calculationVersion = null) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new NatalDayError('invalid_request', 'Некорректные данные.', 400, null);
   if (input.v !== NATAL_DAY_VERSION) throw new NatalDayError('unsupported_version', 'Версия дня рождения не поддерживается. Обновите страницу.', 400, null);
   if (input.r !== undefined && (typeof input.r !== 'string' || !/^[a-f0-9]{64}$/.test(input.r) || input.r !== calculationVersion)) throw new NatalDayError('unsupported_version', 'Версия расчёта изменилась. Обновите страницу.', 400, null);
-  validateNatalDate(input.birthDate);
+  validateNatalDayDate(input.birthDate);
   const city = typeof input.cityId === 'string' && input.cityId.length <= 40 ? cities.find(input.cityId) : null;
   if (!city) throw new NatalDayError('city_required', 'Выберите город из списка подсказок.', 422, null);
   validateNatalZone(city.timezone);

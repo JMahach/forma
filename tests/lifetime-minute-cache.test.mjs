@@ -91,11 +91,14 @@ test('cache growth never moves target and manual minute survives day eviction wi
 
 test('borrowed exact return at the same UTC still requires manual lifetime acquisition', async () => {
   const h = harness(); await openLifetime(h);
-  const exact = { ...transitChartAt(dayAt('2026-09-29'), 60), id: 'exact-return' };
+  const exact = transitChartAt(dayAt('2026-09-29'), 60);
   h.explorer.alignMoment(exact);
+  const borrowed = h.explorer.current;
   const pending = h.explorer.scrub(utc('29T01:00:00')); await tick();
   assert.equal(h.requests.length, 2); h.requests.at(-1).resolve(); await pending;
-  assert.equal(h.explorer.current.id, 'lifetime-preview');
+  assert.notEqual(h.explorer.current, borrowed, 'sharing UTC does not retain a borrowed result as a lifetime acquisition');
+  assert.equal(h.explorer.current.utc, exact.utc);
+  assert.equal(h.explorer.current.activations.personality[0].longitude, 12, 'the acquired point supplies the displayed calculation');
 });
 
 test('cold scrubs preserve intermediate progress and admit one point at a time', async () => {
@@ -342,7 +345,7 @@ function delayedMinute(t) {
     client: { getMeta: async () => metadata, hasMinute: value => value === target,
       readMinute: value => value === target ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null),
       getPoint: async index => { points.push(index); return point(index); },
-      getMinute: async value => { exact.push(value); return minute; } },
+      getMoment: async value => { exact.push(value); return minute; } },
     onRender: () => { if (explorer.current) renders.push(explorer.current.utc); },
   });
   t.after(() => { explorer.close(); finish?.(null); });

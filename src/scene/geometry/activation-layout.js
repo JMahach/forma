@@ -7,7 +7,7 @@ export const ACTIVATION_COLUMN_REVEAL_DISTANCE = 244;
 
 // The chart, incremental painter and loading illustration share these anchors.
 export const ACTIVATION_COLUMN_LAYOUT = Object.freeze({
-  x: Object.freeze({ design: -32, personality: 584 }),
+  x: Object.freeze({ left: -32, right: 584 }),
   width: 108,
   firstRowY: 118, rowStep: 48,
   glyphOffsetX: 8, valueOffsetX: 34,
@@ -15,7 +15,7 @@ export const ACTIVATION_COLUMN_LAYOUT = Object.freeze({
   headingWidths: Object.freeze({ 'Дизайн': 58, 'Личность': 74, 'Транзит': 58 }),
 });
 export const activationRowY = index => ACTIVATION_COLUMN_LAYOUT.firstRowY + index * ACTIVATION_COLUMN_LAYOUT.rowStep;
-export const activationHeadingX = source => ACTIVATION_COLUMN_LAYOUT.x[source] + ACTIVATION_COLUMN_LAYOUT.headingOffsetX;
+export const activationHeadingX = columnSide => ACTIVATION_COLUMN_LAYOUT.x[columnSide] + ACTIVATION_COLUMN_LAYOUT.headingOffsetX;
 
 // Ordinary rows and single overlay rows share the same presentation metrics.
 export const ACTIVATION_ROW_LAYOUT = Object.freeze({
@@ -30,12 +30,12 @@ const adjacentValues = valueX => ({ valueX: Object.freeze(valueX), hitWidth: val
 // Overlay sources use the same row anchors. Normal dual values have a wider
 // text spacing; beside the mandala their envelope determines visibility/frames.
 const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
-  single: Object.freeze({ ...ACTIVATION_ROW_LAYOUT, natalOffsetX: 0,
+  single: Object.freeze({ ...ACTIVATION_ROW_LAYOUT, leftOffsetX: 0,
     headingWidth: null, captionX: Object.freeze([40, 88]), captionSize: 9 }),
-  dual: Object.freeze({ ...adjacentValues([22, 72]), natalOffsetX: 0,
+  dual: Object.freeze({ ...adjacentValues([22, 72]), leftOffsetX: 0,
     fontSize: 18, textX: 1, rectX: -2, glyphX: 6, glyphSize: 23,
     headingWidth: 109, captionX: Object.freeze([40, 88]), captionSize: 9 }),
-  'dual-wide': Object.freeze({ ...adjacentValues([22, 80]), natalOffsetX: -14,
+  'dual-wide': Object.freeze({ ...adjacentValues([22, 80]), leftOffsetX: -14,
     fontSize: 20, textX: 1, rectX: -2, glyphX: 6, glyphSize: 23,
     headingWidth: 123, captionX: Object.freeze([40, 100]), captionSize: 10 }),
 });
@@ -52,12 +52,12 @@ export function activationPlanetLayout(metrics = ACTIVATION_ROW_LAYOUT) {
     hitWidth, x: metrics.glyphX, y: 2, fontSize: metrics.glyphSize };
 }
 
-export function overlayActivationColumnLayout(side, { single, showMandala, label }) {
+export function overlayActivationColumnLayout(columnSide, { single, showMandala, label }) {
   const layout = single ? 'single' : showMandala ? 'dual' : 'dual-wide';
   const metrics = OVERLAY_ACTIVATION_COLUMN_LAYOUT[layout];
-  const x = ACTIVATION_COLUMN_LAYOUT.x[side] + (side === 'design' ? metrics.natalOffsetX : 0);
+  const x = ACTIVATION_COLUMN_LAYOUT.x[columnSide] + (columnSide === 'left' ? metrics.leftOffsetX : 0);
   const headingSize = 16;
-  return { x, layout, single, transform: activationBlockTransform(side),
+  return { x, layout, single, transform: activationBlockTransform(columnSide),
     headingX: x + ACTIVATION_COLUMN_LAYOUT.headingOffsetX, headingY: ACTIVATION_COLUMN_LAYOUT.headingY,
     ruleY: ACTIVATION_COLUMN_LAYOUT.ruleY, headingSize,
     headingTop: ACTIVATION_COLUMN_LAYOUT.headingY - headingSize, headingHeight: headingSize * 1.5,
@@ -70,40 +70,40 @@ export function overlayActivationColumnLayout(side, { single, showMandala, label
   };
 }
 
-// Both source blocks grow outward from their inner edge and the heading baseline,
+// Both column blocks grow outward from their inner edge and the heading baseline,
 // then rise together to align their last numbers with gate 41's hover rim.
 // All values use the chart's SVG coordinates; the camera remains independent.
 export const ACTIVATION_BLOCK_SCALE = 1.09;
 const ACTIVATION_BLOCK_LIFT = 15.75;
 const PIVOT_Y = ACTIVATION_COLUMN_LAYOUT.headingY;
-const PIVOT_X = Object.freeze({ design: 212, personality: 428 });
+const PIVOT_X = Object.freeze({ left: 212, right: 428 });
 
 // Start between the full mandala envelope and glyphs, then leave the requested
-// extra breathing room before each planet. Both source columns share this slot.
+// extra breathing room before each planet. Both columns share this slot.
 const planetTargetLeft = -8;
 const ringRight = MANDALA_GEOMETRY.centerX + MANDALA_PLANET_LAYOUT.visualRadius * MANDALA_SCENE_SCALE;
-const planetLeft = PIVOT_X.personality + (ACTIVATION_COLUMN_LAYOUT.x.personality + planetTargetLeft - PIVOT_X.personality)
+const planetLeft = PIVOT_X.right + (ACTIVATION_COLUMN_LAYOUT.x.right + planetTargetLeft - PIVOT_X.right)
   * ACTIVATION_BLOCK_SCALE + ACTIVATION_COLUMN_REVEAL_DISTANCE;
-const filterCenter = ((ringRight + planetLeft) / 2 - ACTIVATION_COLUMN_REVEAL_DISTANCE - PIVOT_X.personality)
-  / ACTIVATION_BLOCK_SCALE + PIVOT_X.personality - ACTIVATION_COLUMN_LAYOUT.x.personality;
+const filterCenter = ((ringRight + planetLeft) / 2 - ACTIVATION_COLUMN_REVEAL_DISTANCE - PIVOT_X.right)
+  / ACTIVATION_BLOCK_SCALE + PIVOT_X.right - ACTIVATION_COLUMN_LAYOUT.x.right;
 export const ACTIVATION_PLANET_FILTER_LAYOUT = Object.freeze({
   centerX: Number((filterCenter - 5).toFixed(3)), size: 13.5,
   hitLeft: planetTargetLeft - 33.5, hitWidth: 28,
 });
 
-export function activationBlockTransform(source) {
-  const x = PIVOT_X[source];
+export function activationBlockTransform(columnSide) {
+  const x = PIVOT_X[columnSide];
   return `translate(${x} ${PIVOT_Y - ACTIVATION_BLOCK_LIFT}) scale(${ACTIVATION_BLOCK_SCALE}) translate(${-x} ${-PIVOT_Y})`;
 }
 
 // Conservative envelope includes row hit areas and fixing marks on both sides.
 // Mandala separation is applied outside this scale, by its existing motion layer.
-const left = PIVOT_X.design + (ACTIVATION_COLUMN_LAYOUT.x.design + Math.min(-20, ACTIVATION_PLANET_FILTER_LAYOUT.hitLeft) - PIVOT_X.design) * ACTIVATION_BLOCK_SCALE;
+const left = PIVOT_X.left + (ACTIVATION_COLUMN_LAYOUT.x.left + Math.min(-20, ACTIVATION_PLANET_FILTER_LAYOUT.hitLeft) - PIVOT_X.left) * ACTIVATION_BLOCK_SCALE;
 const columnRight = Math.max(ACTIVATION_COLUMN_LAYOUT.width, ...['single', 'dual'].map(layout => {
   const metrics = OVERLAY_ACTIVATION_COLUMN_LAYOUT[layout];
   return metrics.valueX.at(-1) + metrics.rectX + metrics.hitWidth;
 }));
-const right = PIVOT_X.personality + (ACTIVATION_COLUMN_LAYOUT.x.personality + columnRight - PIVOT_X.personality) * ACTIVATION_BLOCK_SCALE;
+const right = PIVOT_X.right + (ACTIVATION_COLUMN_LAYOUT.x.right + columnRight - PIVOT_X.right) * ACTIVATION_BLOCK_SCALE;
 const top = Math.min(PIVOT_Y, activationRowY(0)) - 20;
 const bottom = Math.max(ACTIVATION_COLUMN_LAYOUT.ruleY, activationRowY(PLANETS.length - 1) + 22);
 export const ACTIVATION_BLOCK_BOUNDS = Object.freeze({

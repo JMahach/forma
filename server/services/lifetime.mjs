@@ -9,6 +9,8 @@ import { PERSONALITY_COLUMN, DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN, DESIGN_R
 import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.js';
 import { consumeJob, aborted } from '../runtime/job-consumers.mjs';
 import { inputFingerprint, calculationVersion } from '../runtime/calculation-version.mjs';
+import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE } from '../../shared/date-limits.js';
+import { lifetimeProvenanceMatches } from './lifetime-compatibility.mjs';
 
 const MAX_METADATA_BYTES = 16_384;
 
@@ -67,7 +69,7 @@ function momentUtc(value) {
   if (!Number.isFinite(milliseconds) || ![new Date(milliseconds).toISOString(), new Date(milliseconds).toISOString().replace('.000Z', 'Z')].includes(value)) {
     throw new LifetimeError('invalid_utc', 'Нужен корректный момент UTC.', 400);
   }
-  if (milliseconds < Date.UTC(1801, 0, 1) || milliseconds >= Date.UTC(2400, 0, 1)) {
+  if (milliseconds < SUPPORTED_START || milliseconds >= SUPPORTED_END_EXCLUSIVE) {
     throw new LifetimeError('unsupported_date', 'Доступны даты с 1801 по 2399 год.', 422);
   }
   return new Date(milliseconds).toISOString().replace('.000Z', 'Z');
@@ -198,7 +200,7 @@ function validateMetadata(input) {
   const start = epoch(input.startUtc), end = epoch(input.endExclusiveUtc);
   const bytes = input.sampleCount * LIFETIME_POINT_BYTES;
   if (!Number.isSafeInteger(bytes) || input.bytes !== bytes
-    || start < Date.UTC(1801, 0, 1) || end > Date.UTC(2400, 0, 1)
+    || start < SUPPORTED_START || end > SUPPORTED_END_EXCLUSIVE
     || end - start !== input.sampleCount * LIFETIME_STEP_SECONDS * 1000) throw unavailable();
   return { start, bytes, sha256: input.sha256, metadata: Object.freeze({ startUtc: input.startUtc, endExclusiveUtc: input.endExclusiveUtc,
     stepSeconds: LIFETIME_STEP_SECONDS, samples: input.sampleCount, planets: LIFETIME_PLANETS, engine: input.engine }) };
@@ -226,9 +228,7 @@ export async function createLifetimeFile({ file, metadataFile, root = fileURLToP
     if (!info.isFile() || info.size > MAX_METADATA_BYTES) throw unavailable();
     const input = JSON.parse(await fs.readFile(metadataFile, 'utf8'));
     const validated = validateMetadata(input);
-    if (input.provenance?.version !== '1'
-        || typeof input.provenance.calculationFingerprint !== 'string'
-        || input.provenance.calculationFingerprint !== await lifetimeFileFingerprint(root)) throw unavailable();
+    if (!lifetimeProvenanceMatches(input, await lifetimeFileFingerprint(root))) throw unavailable();
     handle = await fs.open(file, 'r');
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size !== validated.bytes) throw unavailable();

@@ -59,7 +59,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     syncTransitWanted();
     getReturns()?.reset(); getNatalDay().reset();
     const lifetime = getLifetime(), lifetimeState = lifetime?.state;
-    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' && lifetimeState.metadata) lifetime.alignMoment(session.original);
+    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' && lifetimeState.metadata) lifetime.alignMoment(session.baseChart);
     // Birth may already have the same UTC as the preview; still repaint its
     // exact saved chart when child controllers have nothing left to reset.
     session.refresh();
@@ -86,14 +86,14 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   async function openReturnsList() {
     if (!personal()) return false;
-    const natal = session.original, returns = getReturns();
+    const natal = session.record, returns = getReturns();
     // Record intent before loading the timeline, so closing or changing charts
     // during that load cannot reopen the list when it eventually completes.
     const opening = returns.open();
     if (!returnsEnabled()) {
       session.showOriginal();
       if (!await openTimeline()) {
-        if (session.original === natal && !returnsEnabled()) returns.close();
+        if (session.record === natal && !returnsEnabled()) returns.close();
         return false;
       }
     }
@@ -154,7 +154,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     // The accepted range supplies that boundary after metadata is available.
     if (session.selectedId !== 'current-transit' && restoreBirthBoundary
         && state.opened && state.mode === 'lifetime' && state.metadata && state.minUtc !== null) {
-      const target = restoreBirthBoundary, birth = Date.parse(session.original.utc);
+      const target = restoreBirthBoundary, birth = Date.parse(session.record.utc);
       restoreBirthBoundary = false;
       const atBirth = Number.isSafeInteger(target.index)
         ? target.index === Math.round((birth - Date.parse(state.metadata.startUtc)) / (state.metadata.stepSeconds * 1000))
@@ -176,12 +176,12 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     }
     if (live()) return getTransit()?.state;
     if (personal() && session.owner === 'original')
-      return { current: session.original, status: 'ready', live: false };
+      return { current: session.baseChart, status: 'ready', live: false };
     return null;
   }
   async function openTimeline() {
     if (!personal()) return false;
-    const natal = session.original, span = lifeTimelineForChart(natal);
+    const natal = session.record, span = lifeTimelineForChart(natal);
     if (!span) return false;
     returnsPreferred = true;
     const request = {};
@@ -210,10 +210,10 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime');
     if (returnsPreferred) {
       const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns().selectedEvent);
-      if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.original); }
+      if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.baseChart); }
       else if (session.owner !== 'return' && !live()) {
         const atBirth = lifetimeState?.metadata && lifetimeState.requestedUtc === lifetimeState.minUtc
-          && lifetimeState.minUtc === Date.parse(session.original.utc);
+          && lifetimeState.minUtc === Date.parse(session.record.utc);
         if (!atBirth && saved?.lifetime?.personalPreview !== false) {
           session.expect('lifetime'); publishLifetime();
         }

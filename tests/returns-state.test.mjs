@@ -2,17 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as cycles from '../src/domain/cycles.js';
 import { createReturnsController } from '../src/state/returns.js';
-import { createChartComposition } from '../src/domain/chart-composition.js';
+import { createChartSession } from '../src/state/chart-session.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { chartCaption } from '../src/views/chart-display.js';
-const shown = control => createChartComposition(control.state.natal, { secondary: control.current, kind: 'return', event: control.state.selectedEvent });
+function shown(control) {
+  const record = control.state.natal;
+  const session = createChartSession({ store: { get: id => id === record.id ? record : null, has: id => id === record.id } });
+  session.select(record.id);
+  session.publish(session.expect('return'), control.current, control.state.selectedEvent);
+  return session.current;
+}
 const caption = control => chartCaption(shown(control), control.state.natal).title;
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 const majorBodies = cycles.DEFAULT_CYCLE_BODIES;
 const centuryAge = (Date.parse('2100-01-01T00:00:00Z') - Date.parse('2000-01-01T00:00:00Z')) / (365.2425 * 86400000);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-function natal(overrides = {}) { return { ...chartAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal', name: 'Анна' })), ...overrides }; }
+function natal(overrides = {}) { return { ...libraryRecordAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal', name: 'Анна' })), ...overrides }; }
 function event(body = 'saturn', utc = '2028-07-21T12:36:05.920740Z') { return { id: `${body}:${utc}`, body, utc, age: (Date.parse(utc) - Date.parse('2000-01-01T00:00:00Z')) / (365.2425 * 86400000), cycle: 1, pass: 1, cycleId: `${body}:1`, direction: 'direct' }; }
 const packet = (input, events = [event(input.body)]) => ({ events, range: { fromAge: input.fromAge, toAge: input.toAge } });
 const chartPacket = selected => ({ chart: { ...natal(), utc: selected.utc, timezone: 'UTC', engine: 'Exact worker', designArcResidualDegrees: 1e-12 } });
@@ -211,14 +218,21 @@ test('year browsing clamps a late year to the same hundred-year life range', asy
 });
 test('exact result is temporary and metadata-rich; selecting an event keeps the desktop list open and natal unchanged', async () => {
   const source = freeze(natal()), before = JSON.stringify(source), selected = event(); const requests = [];
-  const { control } = fast({ client: { chart: async input => { requests.push(input); return chartPacket(selected); } } });
+  const response = chartPacket(selected), retained = []; let released = 0;
+  const { control } = fast({ client: { chart: async input => { requests.push(input); return response; },
+    retainChart(input, result) { retained.push(result); return () => { released++; }; },
+  } });
   control.select(source); await control.open(); await control.selectEvent({ ...selected, body: 'moon', utc: '2030-01-01T00:00:00Z' });
   assert.equal(requests[0].body, 'saturn'); assert.equal(requests[0].eventUtc, selected.utc); assert.equal(requests[0].timezone, 'UTC');
   assert.equal(shown(control).id, `${source.id}:cycle:${selected.id}`); assert.equal(caption(control), 'Анна · Возврат Сатурна 1');
   assert.equal(control.current.engine, 'Exact worker'); assert.equal(control.current.designArcResidualDegrees, 1e-12); assert.equal(control.current.utc, selected.utc);
   assert.equal(control.state.opened, true); assert.equal(JSON.stringify(source), before);
+  assert.equal(retained.length, 1); assert.equal(retained[0], response, 'cache ownership remains on the raw response');
+  assert.deepEqual(control.current, extractChartData(response.chart));
   const preview = control.current; control.close(); assert.equal(control.current, preview); assert.equal(control.state.opened, false);
-  await control.open(); control.reset(); assert.equal(control.current, null); assert.equal(control.state.opened, true); control.exit(); assert.equal(control.state.opened, false);
+  assert.equal(released, 0, 'closing the list retains its displayed result');
+  await control.open(); control.reset(); assert.equal(control.current, null); assert.equal(released, 1);
+  assert.equal(control.state.opened, true); control.exit(); assert.equal(control.state.opened, false);
 });
 test('later selection wins, and close and reset cannot resurrect a pending chart', async () => {
   const first = event(), second = event('saturn', '2029-04-01T23:24:11.690590Z'), jobs = [];
@@ -378,7 +392,8 @@ test('an exact return overlays both original charts without mutating natal owner
   control.select(source); await control.open(); await control.selectEvent(selected.id);
   assert.equal(control.state.natal, source);
   assert.equal(control.current.utc, selected.utc);
-  assert.equal(control.current, cycle);
+  assert.deepEqual(control.current, extractChartData(cycle));
+  assert.equal(shown(control).secondary, control.current);
   assert.deepEqual(shown(control).topology.personality, [...new Set([...source.personality, 2, 14])].sort((a,b) => a-b));
   assert.deepEqual(shown(control).topology.design, [...new Set([...source.design, 3, 60])].sort((a,b) => a-b));
   assert.equal(control.current.utc, selected.utc);
@@ -418,7 +433,7 @@ function deferredRestore() {
   } };
 }
 
-test('a saved exact descriptor waits only for its verified body and never trusts a stored ordinal', async () => {
+test('an exact saved target waits only for its current body list and ignores an old stored ordinal', async () => {
   for (const filter of [{ opened: true, bodies: ['sun', 'moon'] }, { opened: false, bodies: ['moon'] }, { opened: false, bodies: [] }]) {
     const h = deferredRestore(), selected = event();
     const restoring = h.control.restore({ ...filter, year: 2040, eventId: selected.id, event: { ...selected, cycle: 99 } });
@@ -466,7 +481,7 @@ test('fast exact restore failure is independent of markers and cancelled failure
   }
 });
 
-test('a failed remembered chart retains the current preview and a malformed descriptor uses the legacy lookup', async () => {
+test('a failed exact restore retains the current preview and ignores a malformed old descriptor', async () => {
   const previous = event(), selected = event('saturn', '2057-07-21T12:36:05Z');
   const { control } = fast({ client: { events: async input => packet(input, input.body === 'saturn' ? [previous, selected] : []), chart: async input => {
     if (input.eventUtc === selected.utc) throw new Error('Exact chart unavailable');

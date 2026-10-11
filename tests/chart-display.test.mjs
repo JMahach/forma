@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { overlayFixture } from './helpers/chart-composition.mjs';
-import { chartSubtitle, chartCaption } from '../src/views/chart-display.js';
+import { createChartComposition } from '../src/domain/chart-composition.js';
+import { extractChartData } from '../src/domain/chart-data.js';
+import { chartSubtitle, chartCaption, savedBirthTime } from '../src/views/chart-display.js';
+
+// Pass distinct library/transport payloads through the real runtime boundary.
+const single = payload => createChartComposition(extractChartData(payload), { id: payload.id, primaryLabel: payload.name || '' });
+const overlayFixture = (record, payload, options) => createChartComposition(extractChartData(record), { ...options,
+  secondary: extractChartData(payload), id: `${record.id}:preview`, primaryLabel: record.name });
 
 test('personal previews keep the name but show the accepted moment, its birth-zone offset and age', () => {
   const owner = Object.freeze({ id: 'anna', source: 'calculated', name: 'Анна', utc: '1998-08-18T14:00:00Z',
@@ -20,16 +26,16 @@ test('header distinguishes repeated local minutes and never carries the previous
   assert.equal(chartCaption(overlayFixture(owner, first, { kind: 'transit' }), owner).subtitle, '1 ноября 2026 г. · 01:30 · UTC-4 · 28\u00a0лет');
   const second = { ...first, utc: '2026-11-01T06:30:00Z' };
   assert.equal(chartCaption(overlayFixture(owner, second, { kind: 'transit' }), owner).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5 · 28\u00a0лет');
-  assert.equal(chartCaption(second).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5');
+  assert.equal(chartCaption(single(second), null).subtitle, '1 ноября 2026 г. · 01:30 · UTC-5');
 });
 
 test('closing a preview restores saved birth facts with the same date formatting', () => {
   const owner = { id: 'anna', source: 'calculated', name: 'Анна', utc: '1998-08-18T14:00:00Z',
     birthDate: '1998-08-18', birthTime: '18:00', utcOffset: 'UTC+04:00', timezone: 'Europe/Moscow', birthPlace: 'Мурманск' };
-  assert.equal(chartCaption(owner, owner).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск');
-  assert.equal(chartCaption(owner, owner, { showAge: true }).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск · 0\u00a0лет');
+  assert.equal(chartCaption(single(owner), owner).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск');
+  assert.equal(chartCaption(single(owner), owner, { showAge: true }).subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск · 0\u00a0лет');
   const minute = { ...owner, utc: '1998-08-18T14:01:00Z', birthTime: '18:01' };
-  assert.equal(chartCaption(minute, owner).subtitle, '18 августа 1998 г. · 18:01 · UTC+4 · Мурманск');
+  assert.equal(chartCaption(single(minute), owner).subtitle, '18 августа 1998 г. · 18:01 · UTC+4 · Мурманск');
 });
 
 test('birth-day captions use todays age of the original person across their local birthday', () => {
@@ -37,11 +43,11 @@ test('birth-day captions use todays age of the original person across their loca
     birthDate: '1998-08-18', birthTime: '18:00', utcOffset: 'UTC+04:00', timezone: 'Europe/Moscow' });
   for (const [ageUtc, age] of [['2026-08-17T20:59:59Z', 27], ['2026-08-17T21:00:00Z', 28]]) {
     for (const minute of [owner, { ...owner, utc: '1998-08-18T14:01:00Z', birthTime: '18:01' }]) {
-      const caption = chartCaption(minute, owner, { showAge: true, ageUtc });
+      const caption = chartCaption(single(minute), owner, { showAge: true, ageUtc });
       assert.equal(caption.subtitle, `18 августа 1998 г. · ${minute.birthTime} · UTC+4 · ${age}\u00a0лет`);
     }
   }
-  assert.equal(chartCaption(owner, owner).subtitle, '18 августа 1998 г. · 18:00 · UTC+4');
+  assert.equal(chartCaption(single(owner), owner).subtitle, '18 августа 1998 г. · 18:00 · UTC+4');
 });
 
 test('today override cannot replace a return or life-event age or add an age to global transit', () => {
@@ -53,13 +59,13 @@ test('today override cannot replace a return or life-event age or add an age to 
   for (const caption of [chartCaption(overlay, owner, options), chartCaption(overlayFixture(owner, minute, { kind: 'transit' }), owner, options)]) {
     assert.equal(caption.subtitle, '1 января 2050 г. · 03:00 · UTC+3 · 51\u00a0год');
   }
-  assert.equal(chartCaption(minute, minute, options).subtitle, '1 января 2050 г. · 00:00 · UTC');
+  assert.equal(chartCaption(single(minute), null, { ...options, useUtc: true }).subtitle, '1 января 2050 г. · 00:00 · UTC');
 });
 
 test('stored historical offsets retain their minutes and seconds in the unified header', () => {
   const chart = { id: 'old', name: 'Карта', birthDate: '1890-01-01', birthTime: '02:30:17',
     utc: '1890-01-01T00:00:00Z', utcOffset: 'UTC+02:30:17' };
-  assert.equal(chartCaption(chart).subtitle, '1 января 1890 г. · 02:30:17 · UTC+2:30:17');
+  assert.equal(chartCaption(single(chart), chart).subtitle, '1 января 1890 г. · 02:30:17 · UTC+2:30:17');
 });
 
 test('a return keeps its exact seconds and does not invent an age or timezone from malformed birth data', () => {
@@ -82,26 +88,26 @@ test('transit caption follows the selected calculation minute and its local date
   localZone(t, 'Europe/Moscow');
   const chart = Object.freeze({ id: 'current-transit', source: 'transit',
     utc: '2026-09-26T21:28:00Z', birthDate: '2026-09-26', birthTime: '21:28', timezone: 'UTC' });
-  assert.equal(chartSubtitle(chart), '27 сентября 2026 г. · 00:28 · UTC+3');
-  assert.equal(chartSubtitle({ ...chart, utc: '2026-09-26T20:15:00Z' }), '26 сентября 2026 г. · 23:15 · UTC+3');
+  assert.equal(chartSubtitle(single(chart)), '27 сентября 2026 г. · 00:28 · UTC+3');
+  assert.equal(chartSubtitle(single({ ...chart, utc: '2026-09-26T20:15:00Z' })), '26 сентября 2026 г. · 23:15 · UTC+3');
 });
 
 test('transit caption uses minute precision in the browser timezone', t => {
   localZone(t, 'Asia/Kathmandu');
-  assert.equal(chartSubtitle({ source: 'transit', utc: '2026-09-26T18:20:59Z' }), '27 сентября 2026 г. · 00:05 · UTC+5:45');
+  assert.equal(chartSubtitle(single({ source: 'transit', utc: '2026-09-26T18:20:59Z' })), '27 сентября 2026 г. · 00:05 · UTC+5:45');
 });
 
 test('century preview caption uses the same UTC grid as its slider, including historical offsets', t => {
   localZone(t, 'Europe/Moscow');
-  assert.equal(chartSubtitle({ id: 'lifetime-preview', source: 'transit', utc: '1900-01-01T00:10:00Z' }),
+  assert.equal(chartSubtitle(single({ source: 'transit', utc: '1900-01-01T00:10:00Z' }), null, { useUtc: true }),
     '1 января 1900 г. · 00:10 · UTC');
 });
 
 test('a lifetime can display a shared day minute in UTC without cloning or renaming that chart', t => {
   localZone(t, 'Europe/Moscow');
   const minute = Object.freeze({ id: 'current-transit', source: 'transit', utc: '2026-10-05T12:01:00Z' });
-  assert.equal(chartCaption(minute, minute, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');
-  assert.equal(chartCaption(minute).subtitle, '5 октября 2026 г. · 15:01 · UTC+3');
+  assert.equal(chartCaption(single(minute), null, { useUtc: true }).subtitle, '5 октября 2026 г. · 12:01 · UTC');
+  assert.equal(chartCaption(single(minute), null).subtitle, '5 октября 2026 г. · 15:01 · UTC+3');
 });
 
 test('legacy transit placeholders never fabricate a time when UTC is missing or invalid', () => {
@@ -112,16 +118,16 @@ test('legacy transit placeholders never fabricate a time when UTC is missing or 
     { source: 'transit', utc: '' },
     { source: 'transit', utc: null },
     { source: 'transit', utc: 'not a date' },
-  ]) assert.equal(chartSubtitle(Object.freeze(chart)), '');
+  ]) assert.equal(chartSubtitle(single(Object.freeze(chart))), '');
 });
 
 test('saved transit moments work regardless of their id; natal captions keep their recorded birthplace time', t => {
   localZone(t, 'Europe/Moscow');
-  assert.equal(chartSubtitle({ id: 'old-transit', source: 'transit', utc: '2020-02-29T12:34:56Z' }), '29 февраля 2020 г. · 15:34 · UTC+3');
-  assert.equal(chartSubtitle({ id: 'current-transit', utc: '2020-02-29T12:34:56Z' }), '29 февраля 2020 г. · 15:34 · UTC+3');
+  assert.equal(chartSubtitle(single({ id: 'old-transit', source: 'transit', utc: '2020-02-29T12:34:56Z' })), '29 февраля 2020 г. · 15:34 · UTC+3');
+  assert.equal(chartSubtitle(single({ id: 'current-transit', utc: '2020-02-29T12:34:56Z' })), '29 февраля 2020 г. · 15:34 · UTC+3');
   for (const source of ['manual', 'calculated']) {
-    assert.equal(chartSubtitle({ id: 'personal', source, utc: '2000-01-01T12:00:00Z',
-      birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин' }), '2 января 2000 г. · 03:04 · Берлин');
+    assert.equal(chartSubtitle(single({ id: 'personal', source, utc: '2000-01-01T12:00:00Z',
+      birthDate: '2000-01-02', birthTime: '03:04' }), { birthPlace: 'Берлин' }), '2 января 2000 г. · 03:04 · Берлин');
   }
 });
 
@@ -137,7 +143,7 @@ test('cached formatting follows live timezone changes, DST and historical second
         new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(date),
         new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(date),
       ].join(' · ');
-      assert.equal(chartSubtitle({ source: 'transit', utc }).split(' · ').slice(0, 2).join(' · '), expected, `${zone} ${utc}`);
+      assert.equal(chartSubtitle(single({ source: 'transit', utc })).split(' · ').slice(0, 2).join(' · '), expected, `${zone} ${utc}`);
     }
   }
 });
@@ -152,7 +158,7 @@ test('120 selected minutes reuse two formatters, including after changing the de
     for (let index = 0; index < 120; index++) {
       if (index === 60) process.env.TZ = 'Asia/Kathmandu';
       const utc = new Date(Date.UTC(2026, 8, 29, 0, index)).toISOString();
-      assert.equal(isolated({ source: 'transit', utc }), chartSubtitle({ source: 'transit', utc }));
+      assert.equal(isolated(single({ source: 'transit', utc })), chartSubtitle(single({ source: 'transit', utc })));
     }
     assert.equal(constructors, 2);
   } finally { Intl.DateTimeFormat = original; }
@@ -163,7 +169,7 @@ test('personal life preview retains its selected chart caption while transit kee
   const owner = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '12:00' };
   const preview = { id: 'lifetime-preview', source: 'transit', name: 'Транзит', utc: '2050-01-01T00:00:00Z' };
   assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
-  assert.equal(chartCaption(preview).title, 'Транзит');
+  assert.equal(chartCaption(single(preview), null).title, 'Транзит');
   const event = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:2:1', body: 'saturn', cycle: 2, utc: preview.utc } });
   assert.equal(chartCaption(event, owner).title, 'Марат · Возврат Сатурна 2');
   assert.match(chartCaption(event, owner).subtitle, /2050/);
@@ -175,4 +181,19 @@ test('a personal transit overlay names both context and moment while preserving 
   const moment = { source: 'transit', utc: '2050-01-01T00:10:00Z', personality: [20], design: [] };
   const chart = overlayFixture(natal, moment, { kind: 'transit' });
   assert.deepEqual(chartCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
+});
+
+
+test('accepted local fields belong to calculation data while name and place stay with the record', () => {
+  const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated', birthDate: '1998-08-18', birthTime: '18:00', birthPlace: 'Мурманск' });
+  const data = Object.freeze({ source: 'calculated', personality: [], design: [], localDate: '1998-08-19', localTime: '00:01', utc: '1998-08-18T20:01:00Z', utcOffset: 'UTC+04:00' });
+  const shown = createChartComposition(data, { id: record.id, primaryLabel: record.name });
+  assert.deepEqual(chartCaption(shown, record), { title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' });
+});
+
+test('saved seconds and the second fold survive a minute-only input display', () => {
+  const record = Object.freeze({ id: 'fold', name: 'Карта', source: 'calculated', birthDate: '2024-11-03', birthTime: '01:30',
+    utc: '2024-11-03T06:30:29Z', utcOffset: 'UTC-05:00', timezone: 'America/New_York', fold: 1 });
+  assert.equal(savedBirthTime(record), '01:30:29');
+  assert.equal(chartCaption(single(record), record).subtitle, '3 ноября 2024 г. · 01:30:29 · UTC-5');
 });

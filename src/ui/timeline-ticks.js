@@ -1,4 +1,4 @@
-import { localDateAt, startOfLocalDate } from './day-timeline.js';
+import { localDateAt, startOfLocalDate } from '../domain/day-timeline.js';
 
 const DAY = 86400000, HOUR = 3600000, TICK_GAP = 40, EDGE_GAP = 12, MAX_TICKS = 24;
 const pad = value => String(value).padStart(2, '0');

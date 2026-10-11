@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseGates, validateChart,
+  parseGates, validateLibraryChart,
   readCharts, writeChartChanges, STORAGE_KEY, TRASH_KEY, CHART_DELETED_PREFIX, deleteChart
 } from '../src/data/storage.js';
 import { zoomAt, validView, fitView } from '../src/scene/camera.js';
@@ -37,7 +37,7 @@ function createMemoryStorage() {
 
 test('permanent deletion removes only the selected card without creating a recovery copy', () => {
   const storage = createMemoryStorage();
-  const charts = [validateChart(exampleChart()), validateChart(exampleChart({ id: 'other', name: 'Другая' }))];
+  const charts = [validateLibraryChart(exampleChart()), validateLibraryChart(exampleChart({ id: 'other', name: 'Другая' }))];
   writeChartChanges(storage, charts, []);
   const removed = deleteChart(storage, charts, 'chart-test');
   assert.deepEqual(removed.map(c => c.id), ['other']);
@@ -52,7 +52,7 @@ test('permanent deletion commits its tombstone before cleanup and preserves live
   let failKey = null;
   const storage = { get length() { return values.size; }, key: index => [...values.keys()][index] ?? null,
     getItem: key => values.get(key) ?? null, setItem: (key, value) => { if (key === failKey) throw new Error('full'); values.set(key, value); } };
-  const charts = [validateChart(exampleChart())];
+  const charts = [validateLibraryChart(exampleChart())];
   storage.setItem(STORAGE_KEY, JSON.stringify(charts));
   storage.setItem(TRASH_KEY, JSON.stringify(charts));
   failKey = `${CHART_DELETED_PREFIX}chart-test`;
@@ -88,29 +88,29 @@ test('chart storage preserves Unicode and script-looking strings as data', () =>
   const original = exampleChart();
   writeChartChanges(storage, [original], []);
   const [roundtrip] = readCharts(storage);
-  assert.deepEqual(roundtrip, validateChart(original));
+  assert.deepEqual(roundtrip, validateLibraryChart(original));
   assert.equal(roundtrip.name, original.name);
   assert.equal(roundtrip.note, original.note);
   assert.deepEqual(roundtrip.personality, [1, 22, 37]);
 });
 
 test('chart validation deduplicates activations and rejects invalid numbers', () => {
-  for (const invalid of [undefined, null, [], {}]) assert.throws(() => validateChart(invalid), Error);
-  assert.deepEqual(validateChart(exampleChart({ personality: [37, 1, 37] })).personality, [1, 37]);
+  for (const invalid of [undefined, null, [], {}]) assert.throws(() => validateLibraryChart(invalid), Error);
+  assert.deepEqual(validateLibraryChart(exampleChart({ personality: [37, 1, 37] })).personality, [1, 37]);
   for (const key of ['personality', 'design']) {
     for (const values of [null, '37, 40', {}, [0], [65], [-1], [1.5], ['37'], [NaN], [Infinity]]) {
-      assert.throws(() => validateChart(exampleChart({ [key]: values })), Error);
+      assert.throws(() => validateLibraryChart(exampleChart({ [key]: values })), Error);
     }
   }
 });
 
 test('chart limits reject oversized input; bounded note fields are trimmed', () => {
-  assert.throws(() => validateChart(exampleChart({ name: 'я'.repeat(81) })), Error);
-  assert.throws(() => validateChart(exampleChart({ name: ' \n ' })), Error);
+  assert.throws(() => validateLibraryChart(exampleChart({ name: 'я'.repeat(81) })), Error);
+  assert.throws(() => validateLibraryChart(exampleChart({ name: ' \n ' })), Error);
   for (const key of ['personality', 'design']) {
-    assert.throws(() => validateChart(exampleChart({ [key]: Array(65).fill(1) })), Error);
+    assert.throws(() => validateLibraryChart(exampleChart({ [key]: Array(65).fill(1) })), Error);
   }
-  const chart = validateChart(exampleChart({ name: 'я'.repeat(80), note: 'н'.repeat(2100), birthPlace: 'м'.repeat(130) }));
+  const chart = validateLibraryChart(exampleChart({ name: 'я'.repeat(80), note: 'н'.repeat(2100), birthPlace: 'м'.repeat(130) }));
   assert.equal(chart.name.length, 80);
   assert.equal(chart.note.length, 2000);
   assert.equal(chart.birthPlace.length, 120);
@@ -121,7 +121,7 @@ test('legacy chart library reads valid data and preserves corrupt or oversized s
   const storage = { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
   assert.deepEqual(readCharts(storage), []);
   storage.setItem(STORAGE_KEY, JSON.stringify([exampleChart()]));
-  assert.deepEqual(readCharts(storage), [validateChart(exampleChart())]);
+  assert.deepEqual(readCharts(storage), [validateLibraryChart(exampleChart())]);
   for (const content of ['{invalid', 'null', '{}', '[null]', '[{}]', '[[]]', JSON.stringify(Array(501).fill(exampleChart()))]) {
     storage.setItem(STORAGE_KEY, content);
     const invalid = [];
@@ -767,20 +767,20 @@ test('calculated chart validation rejects invalid activation records', () => {
   ]) {
     const chart = calculatedChart();
     Object.assign(chart.activations.personality[0], invalid);
-    assert.throws(() => validateChart(chart), Error, JSON.stringify(invalid));
+    assert.throws(() => validateLibraryChart(chart), Error, JSON.stringify(invalid));
   }
   for (const invalid of [null, {}, '33.3', []]) {
     const chart = calculatedChart();
     chart.activations.personality = invalid;
-    assert.throws(() => validateChart(chart), Error);
+    assert.throws(() => validateLibraryChart(chart), Error);
   }
 });
 
 test('calculated chart validation rejects duplicate planets and gates inconsistent with activation details', () => {
   const duplicate = calculatedChart();
   duplicate.activations.personality[1] = { ...duplicate.activations.personality[0] };
-  assert.throws(() => validateChart(duplicate), Error);
+  assert.throws(() => validateLibraryChart(duplicate), Error);
   const inconsistent = calculatedChart();
   inconsistent.personality = [1];
-  assert.throws(() => validateChart(inconsistent), Error);
+  assert.throws(() => validateLibraryChart(inconsistent), Error);
 });

@@ -1,6 +1,7 @@
 import { CHANNELS, GATES } from './geometry/chart-geometry.js';
 import { STEM_POINTS } from './geometry/integration-geometry.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
+import { OVERLAY_PALETTE } from '../ui/overlay-palette.js';
 import { pointString, offsetPoints, splitAtHalfLength, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.js';
 export const PALETTE = {
   ink: '#202020', design: '#c32d35', outline: '#c6c2b9', paper: '#ffffff',
@@ -47,24 +48,27 @@ const stemHalves = splitAtHalfLength(STEM_POINTS);
 export const armPaintPoints = new Map(INTEGRATION_ARMS.map(arm => [arm.gate, arm.reversePaint ? [...arm.points].reverse() : arm.points]));
 // The catalogue of stroke paths is finite; geometry is prepared once, not on a minute/hover update.
 const strokePaths = new WeakMap();
-export function stroke(points, color, width, offset = 0) {
+function stroke(points, color, width, offset = 0) {
   let paths = strokePaths.get(points);
   if (!paths) { paths = new Map(); strokePaths.set(points, paths); }
   if (!paths.has(offset)) paths.set(offset, pointString(offset ? offsetPoints(points, offset) : points));
   return `<path d="${paths.get(offset)}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="butt" stroke-linejoin="round" pointer-events="none"/>`;
 }
-const paintActivation = (points, black, red) => black && red
-  ? stroke(points, PALETTE.ink, CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, PALETTE.design, CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
-  : black || red ? stroke(points, black ? PALETTE.ink : PALETTE.design, CHANNEL_WIDTH.paint) : '';
+// Lane order is shared by channel paint and the gate disc's two gradient halves.
+export const activationLaneColor = (state, lane) => state.overlaySources
+  ? OVERLAY_PALETTE[lane === 0 ? 'cycle' : 'natal'] : PALETTE[lane === 0 ? 'ink' : 'design'];
+const paintActivation = (points, first, second, state) => first && second
+  ? stroke(points, activationLaneColor(state, 0), CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, activationLaneColor(state, 1), CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
+  : first || second ? stroke(points, activationLaneColor(state, first ? 0 : 1), CHANNEL_WIDTH.paint) : '';
 
 // General graph paint shows two origins. The four independent source bits
 // remain in the snapshot for exact activation details and cache ownership.
 export function paintGateActivation(points, state, gates) {
   const ids = Array.isArray(gates) ? gates : [gates];
   if (!state.overlaySources) return paintActivation(points,
-    ids.some(gate => state.personality.has(gate)), ids.some(gate => state.design.has(gate)));
+    ids.some(gate => state.personality.has(gate)), ids.some(gate => state.design.has(gate)), state);
   const mask = ids.reduce((value, gate) => value | (state.overlaySources.masks.get(gate) || 0), 0);
-  return paintActivation(points, Boolean(mask & 12), Boolean(mask & 3));
+  return paintActivation(points, Boolean(mask & 12), Boolean(mask & 3), state);
 }
 
 // The static SVG and persistent painter use the same visual decisions.
@@ -99,7 +103,7 @@ export function gatePaint(gate, state, options = {}) {
   const red = state.overlaySources ? Boolean(mask & 3) : state.design.has(gate.id);
   const active = black || red;
   const selected = state.selectedGates.has(gate.id), related = state.relatedGates.has(gate.id);
-  const fill = black && red ? `url(#${state.prefix}-dual)` : black ? PALETTE.ink : red ? PALETTE.design : PALETTE.paper;
+  const fill = black && red ? `url(#${state.prefix}-dual)` : black ? activationLaneColor(state, 0) : red ? activationLaneColor(state, 1) : PALETTE.paper;
   const source = state.overlaySources ? state.overlaySources.sources.filter(source => source.gates.has(gate.id)).map(source => source.label).join('; ') || 'не активированы'
     : black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
   return { active, selected, related, label: `Ворота ${gate.id}: ${gate.name}, ${source}`,
@@ -128,16 +132,16 @@ export function integrationPaint(state, options) {
     : [...selectedIntegrationChannels.flatMap(channel => channel.gates), ...INTEGRATION_ARMS.filter(({ gate }) => halfGates.has(gate)).map(({ gate }) => gate)]);
   const integrationArmState = INTEGRATION_ARMS.map((arm) => {
     const { gate } = arm;
-    const black = personality.has(gate), red = design.has(gate);
+    const active = personality.has(gate) || design.has(gate);
     const highlighted = highlightedArms.has(gate);
-    const opacity = options.dimInactive && !black && !red && !highlighted ? 0.2 : 1;
-    return { ...arm, black, red, highlighted, opacity };
+    const opacity = options.dimInactive && !active && !highlighted ? 0.2 : 1;
+    return { ...arm, active, highlighted, opacity };
   });
   const active = (gate) => personality.has(gate) || design.has(gate);
   const crossesStem = [20, 10].some(active) && [34, 57].some(active);
   const stemHighlighted = integrationSelected || selectedIntegrationChannels.some(channel => [20, 10].includes(channel.gates[0]) !== [20, 10].includes(channel.gates[1]));
   const connectedIntegrationGates = [...new Set(selectedIntegrationChannels.flatMap(channel => channel.gates))];
-  const activeIntegrationParts = [...integrationArmState.filter(({ black, red }) => black || red).map(({ path }) => path), ...(crossesStem ? [STEM_PATH] : [])];
+  const activeIntegrationParts = [...integrationArmState.filter(({ active }) => active).map(({ path }) => path), ...(crossesStem ? [STEM_PATH] : [])];
   const stemOpacity = options.dimInactive && !crossesStem && !stemHighlighted ? 0.2 : 1;
 
   const selectionPath = integrationSelected ? INTEGRATION_PATH

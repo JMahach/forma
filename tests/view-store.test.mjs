@@ -96,6 +96,19 @@ test('return exploration saves only navigation metadata and cannot inject a comp
   assert.equal(createViewStore({ getStorage: () => storage }).read().returns, undefined);
 });
 
+test('old return descriptors are ignored while their exact target and filters survive read and write', () => {
+  const returns = { opened: false, year: 2050, bodies: ['saturn'], eventId: 'saturn:2050-01-01T12:00:00.123456Z' };
+  const event = { id: returns.eventId, body: 'saturn', utc: '2050-01-01T12:00:00.123456Z',
+    cycle: 99, cycleId: 'saturn:99', pass: 9, direction: 'retrograde' };
+  const old = { ...snapshot, returns: { ...returns, event } };
+  const storage = memory(old), store = createViewStore({ getStorage: () => storage });
+  assert.deepEqual(store.read().returns, returns);
+  assert.equal(storage.writes.length, 0, 'reading an old tab does not rewrite its snapshot');
+  assert.deepEqual(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)), old);
+  store.write({ ...old, mandala: false });
+  assert.deepEqual(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)).returns, returns);
+});
+
 test('closed empty return filters round-trip without inventing default planets or a year', () => {
   const returns = { opened: false, year: null, bodies: [], eventId: null };
   const storage = memory(), store = createViewStore({ getStorage: () => storage });

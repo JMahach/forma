@@ -22,10 +22,14 @@ export function validCycleEvent(event, input) {
     && ['direct', 'retrograde', 'stationary'].includes(event.direction);
 }
 
-function validActivations(entries) {
-  return Array.isArray(entries) && entries.length === PLANETS.size && new Set(entries.map(entry => entry?.planet)).size === PLANETS.size
-    && entries.every(entry => entry && PLANETS.has(entry.planet) && Number.isFinite(entry.longitude) && entry.longitude >= 0 && entry.longitude < 360
+function validChartSide(gates, entries) {
+  const validActivations = Array.isArray(entries) && entries.length === PLANETS.size && new Set(entries.map(entry => entry?.planet)).size === PLANETS.size
+    && Array.from(entries).every(entry => entry && PLANETS.has(entry.planet) && Number.isFinite(entry.longitude) && entry.longitude >= 0 && entry.longitude < 360
       && Number.isInteger(entry.gate) && entry.gate >= 1 && entry.gate <= 64 && Number.isInteger(entry.line) && entry.line >= 1 && entry.line <= 6);
+  if (!validActivations || !Array.isArray(gates)) return false;
+  // Drawing and details must describe the same calculation, in any gate order.
+  const expectedGates = new Set(entries.map(entry => entry.gate));
+  return gates.length === expectedGates.size && gates.every(gate => expectedGates.delete(gate)) && expectedGates.size === 0;
 }
 
 // Subtract integer milliseconds before adding the fractional tails. Absolute
@@ -58,5 +62,5 @@ export function validCycleResult(action, data, input) {
     && cycleUtcMilliseconds(chart.utc) >= SUPPORTED_START && cycleUtcMilliseconds(chart.utc) < SUPPORTED_END_EXCLUSIVE && resolvedEventMatches(chart.utc, input.eventUtc)
     && chart.timezone === (input.timezone ?? 'UTC')
     && Number.isFinite(chart.designArcResidualDegrees) && Math.abs(chart.designArcResidualDegrees) <= 1e-7
-    && validActivations(chart.activations?.personality) && validActivations(chart.activations?.design);
+    && validChartSide(chart.personality, chart.activations?.personality) && validChartSide(chart.design, chart.activations?.design);
 }

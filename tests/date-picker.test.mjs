@@ -80,7 +80,7 @@ test('an optional all-years action clears the filter and returns focus without s
 });
 test('year precision keeps period navigation and cancel without inventing a year', () => {
   const h = harness('', { min: '1996-01-01', max: '2096-12-31' }, { precision: 'year' });
-  h.button.dispatch('click'); h.click('1996–2020'); h.click('2071–2095'); h.click('2095');
+  h.button.dispatch('click'); h.click('1996–2006'); h.click('2085–2096'); h.click('2095');
   assert.deepEqual(h.selected, ['2095-01-01']);
   h.button.dispatch('click'); h.popup.dispatch('keydown', { key: 'Escape' });
   assert.deepEqual(h.selected, ['2095-01-01']);
@@ -308,4 +308,70 @@ test('an injected viewport still follows nested scrolling without duplicating pa
   assert.equal(h.popup.style.top, '362px');
   h.picker.close();
   assert.equal(h.document.defaultView.listenerCount('scroll'), 0);
+});
+
+
+test('nine balanced year periods cover the whole century exactly once', () => {
+  const h = harness('2026', { min: '2000-01-01', max: '2100-12-31' }, { precision: 'year' });
+  const gridChoices = () => h.popup.all(node => node.getAttribute('role') === 'grid')[0]
+    .all(node => node.tagName === 'button');
+  h.button.dispatch('click'); h.click('2022–2032');
+  const periods = gridChoices().map(button => button.textContent);
+  assert.deepEqual(periods, ['2000–2010', '2011–2021', '2022–2032', '2033–2043', '2044–2054',
+    '2055–2065', '2066–2076', '2077–2088', '2089–2100']);
+  const years = [];
+  for (const period of periods) {
+    h.click(period);
+    const offered = gridChoices();
+    assert.ok(offered.every(button => !button.disabled));
+    assert.equal(offered.length, periods.indexOf(period) < 7 ? 11 : 12);
+    years.push(...offered.map(button => Number(button.textContent)));
+    h.click(period);
+  }
+  assert.equal(years.length, 101); assert.equal(new Set(years).size, 101);
+  assert.equal(years[0], 2000); assert.equal(years.at(-1), 2100);
+  h.click('2089–2100'); h.click('2100');
+  assert.deepEqual(h.selected, ['2100-01-01']);
+});
+
+test('year navigation includes the final endpoint and follows the displayed three-column grid', () => {
+  const h = harness('2100', { min: '2000-01-01', max: '2100-12-31' }, { precision: 'year' });
+  const key = key => h.popup.dispatch('keydown', { key });
+  h.button.dispatch('click');
+  assert.equal(h.document.activeElement.textContent, '2100');
+  assert.equal(h.buttons().find(button => button.textContent === '›').disabled, true);
+  key('PageUp'); assert.equal(h.document.activeElement.textContent, '2077');
+  key('ArrowDown'); assert.equal(h.document.activeElement.textContent, '2080');
+  key('End'); assert.equal(h.document.activeElement.textContent, '2082');
+  key('PageDown'); assert.equal(h.document.activeElement.textContent, '2100');
+  key('Escape'); assert.deepEqual(h.selected, []);
+});
+
+test('short year ranges keep their real endpoint without a separate singleton period', () => {
+  for (const [min, max, labels, lastCount] of [
+    [2398, 2399, ['2398–2399'], 2],
+    [2399, 2399, ['2399'], 1],
+    [2389, 2399, ['2389–2399'], 11],
+    [2379, 2399, ['2379–2388', '2389–2399'], 11],
+  ]) {
+    const h = harness(String(max), { min: `${min}-01-01`, max: `${max}-12-31` }, { precision: 'year' });
+    h.button.dispatch('click');
+    h.buttons().find(button => button.className === 'date-picker-title').dispatch('click');
+    const grid = () => h.popup.all(node => node.getAttribute('role') === 'grid')[0];
+    assert.deepEqual(grid().all(node => node.tagName === 'button').map(node => node.textContent), labels);
+    h.click(labels.at(-1));
+    assert.equal(grid().all(node => node.tagName === 'button').length, lastCount);
+    grid().all(node => node.tagName === 'button').at(-1).dispatch('click');
+    assert.deepEqual(h.selected, [`${max}-01-01`]);
+  }
+});
+
+
+test('vertical arrows follow the centered final pair of years', () => {
+  const h = harness('2032', { min: '2000-01-01', max: '2100-12-31' }, { precision: 'year' });
+  h.button.dispatch('click');
+  h.popup.dispatch('keydown', { key: 'ArrowUp' });
+  assert.equal(h.document.activeElement.textContent, '2029');
+  h.popup.dispatch('keydown', { key: 'ArrowDown' });
+  assert.equal(h.document.activeElement.textContent, '2031');
 });

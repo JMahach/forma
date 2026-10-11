@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateChart, readCharts, writeChartChanges, STORAGE_KEY, CHART_RECORD_PREFIX } from '../src/data/storage.js';
+import { validateLibraryChart, readCharts, writeChartChanges, STORAGE_KEY, CHART_RECORD_PREFIX } from '../src/data/storage.js';
 
 const chart = name => Object.freeze({ id: 'saved-name', name, personality: [1], design: [8] });
 const cases = [
@@ -9,10 +9,10 @@ const cases = [
 ];
 test('saved chart names capitalize only the first Unicode letter while preserving the rest', () => {
   for (const [input, expected] of cases) {
-    const original = chart(input), normalized = validateChart(original);
+    const original = chart(input), normalized = validateLibraryChart(original);
     assert.equal(normalized.name, expected);
     assert.equal(original.name, input, 'normalization must not mutate the provided chart');
-    assert.equal(validateChart(normalized).name, expected, 'normalization is idempotent');
+    assert.equal(validateLibraryChart(normalized).name, expected, 'normalization is idempotent');
   }
 });
 test('legacy reads and newly written names share the same normalization without altering their original records', () => {

@@ -31,7 +31,7 @@ function dayChart(utc = '2026-09-30T09:34:56.789Z') {
   const design = designAt(utc);
   const values = [...point(0).longitudes, ...design.longitudes, Date.parse(design.designUtc) / 1000, design.designArcResidualDegrees];
   const chart = transitChartAt({ startUtc: utc, samples: 1, columns: values.map(value => Float64Array.of(value)) }, 0);
-  return { ...chart, id: 'day-preview', birthDate: '2026-09-30', birthTime: '12:34:56',
+  return { ...chart, localDate: '2026-09-30', localTime: '12:34:56',
     timezone: 'Europe/Moscow', utcOffset: 'UTC+03:00', verification: 'Exact current day sample.' };
 }
 function explorerHarness(metadata = fullMeta, { planetFilter, getMomentState } = {}) {
@@ -45,7 +45,7 @@ function explorerHarness(metadata = fullMeta, { planetFilter, getMomentState } =
   onRender: () => renders.push(explorer.current), onStateChange: state => states.push(state) });
   return { explorer, calls, metaCalls, renders, states, get day() { return day; }, utc: index => Date.parse(metadata.startUtc) + index * 600000,
     setNow(value) { time = Date.parse(value); },
-    setDay(current, timeline = { date: current.birthDate, timeZone: current.timezone }) { day = { current, timeline }; } };
+    setDay(current, timeline = { date: current.localDate, timeZone: current.timezone }) { day = { current, timeline }; } };
 }
 
 test('aligning an existing exact moment cancels an invisible lifetime request and same-slot manual scrub still loads the grid', async () => {
@@ -97,7 +97,8 @@ test('a live owner still waiting for its minute packet never falls back to an in
 
 test('lifetime chart contains all13 planets including Moon with exact derived boundary values', () => {
   const chart = lifetimeChartAt(meta, point(0));
-  assert.equal(chart.id, 'lifetime-preview'); assert.equal(chart.source, 'transit');
+  for (const key of ['id', 'name', 'note', 'createdAt', 'updatedAt', 'birthDate', 'birthTime']) assert.equal(Object.hasOwn(chart, key), false);
+  assert.equal(chart.source, 'transit'); assert.equal(chart.localDate, '1900-01-01'); assert.equal(chart.localTime, '00:00');
   assert.equal(chart.activations.personality.length, 13); assert.deepEqual(chart.activations.design, []);
   assert.deepEqual(chart.activations.personality.map(entry => entry.planet), PLANET_IDS);
   for (let index = 0; index < LIFETIME_PLANETS.length; index++) {
@@ -291,7 +292,7 @@ test('Lifetime opens seamlessly on the exact current day chart and loads metadat
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], ['2026-09-30', '2026-09-30']);
   assert.deepEqual([h.explorer.state.minDate, h.explorer.state.maxDate], ['1801-01-01', '2399-12-31']);
   assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.explorer.state.status, 'ready');
-  for (const key of ['utc', 'id', 'birthDate', 'birthTime', 'timezone', 'utcOffset', 'verification']) assert.equal(h.explorer.current[key], original[key]);
+  for (const key of ['utc', 'localDate', 'localTime', 'timezone', 'utcOffset', 'verification']) assert.equal(h.explorer.current[key], original[key]);
   assert.deepEqual(h.explorer.current.activations.personality, original.activations.personality);
   assert.deepEqual(h.day.current, original);
   assert.equal(h.explorer.setDateRange('2026-09-30', '2026-09-30'), true);
@@ -301,7 +302,7 @@ test('Lifetime opens seamlessly on the exact current day chart and loads metadat
 test('day sync follows the borrowed exact chart and local date without rendering or requesting astronomy', async () => {
   const h = explorerHarness(); await h.explorer.open(); h.explorer.setPlanet('moon', false);
   const renders = h.renders.length, notices = h.states.length;
-  const next = { ...dayChart('2026-09-30T21:01:23.456Z'), birthDate: '2026-10-01', birthTime: '00:01:23' };
+  const next = { ...dayChart('2026-09-30T21:01:23.456Z'), localDate: '2026-10-01', localTime: '00:01:23' };
   h.setDay(next); h.explorer.syncDay();
   assert.equal(h.explorer.current.utc, next.utc);
   assert.equal(h.explorer.current.planetFilter.activations, next.activations.personality);
@@ -710,7 +711,7 @@ for (const source of ['metadata', 'point', 'minute']) test(`${source} failures r
   const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
     getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
     getPoint: async index => { failFirst(); return moment(index, fullMeta); },
-    getMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
+    getMoment: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
   } });
   t.after(() => explorer.close());
   if (source === 'metadata') await explorer.open();

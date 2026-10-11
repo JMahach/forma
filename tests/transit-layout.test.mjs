@@ -96,25 +96,25 @@ test('consolidated form styles retain their small-screen overrides', () => {
   assert.equal(declarationsAt('.dialog-content', 320, 568).padding, '18px');
 });
 
-test('normal activation spacing moves each complete source block symmetrically on the main chart and loading art only', () => {
+test('normal activation spacing moves each complete column block symmetrically on the main chart and loading art only', () => {
   const shifts = rules.filter(rule => rule.declarations.translate?.includes('--activation-rest-gap'));
-  assert.equal(shifts.length, 2, 'one source-level translation per side, not another shift on each child');
+  assert.equal(shifts.length, 2, 'one column-level translation per side, not another shift on each child');
   const seen = [];
   for (const rule of shifts) {
-    const match = /^:is\(#bodygraph,\s*#chartLoadingArt\) :is\(([^)]+)\)\[data-source=['"](design|personality)['"]\]$/.exec(rule.selector);
+    const match = /^:is\(#bodygraph,\s*#chartLoadingArt\) :is\(([^)]+)\)\[data-column-side=['"](left|right)['"]\]$/.exec(rule.selector);
     assert.ok(match, 'the extra spacing is shared by the main bodygraph and its loading art, never library thumbnails');
     assert.deepEqual(match[1].split(',').map(selector => selector.trim()).sort(),
       ['.activation-column', '.variable-block'],
       'planetary values, Color/Tone labels and arrows move together, but neither channels nor centers move');
-    const source = match[2];
-    seen.push(source);
-    assert.deepEqual(rule.media, [], 'both sources use the same spacing across responsive sizes');
+    const columnSide = match[2];
+    seen.push(columnSide);
+    assert.deepEqual(rule.media, [], 'both columns use the same spacing across responsive sizes');
     assert.deepEqual(Object.keys(rule.declarations), ['translate'], 'independent translation preserves existing SVG and mandala transforms');
-    assert.equal(rule.declarations.translate, source === 'design' ? 'calc(-1 * var(--activation-rest-gap)) 0' : 'var(--activation-rest-gap) 0');
+    assert.equal(rule.declarations.translate, columnSide === 'left' ? 'calc(-1 * var(--activation-rest-gap)) 0' : 'var(--activation-rest-gap) 0');
   }
-  assert.deepEqual(seen.sort(), ['design', 'personality']);
-  assert.equal(declarationsAt(".activation-column[data-source='design']", 1440, 900).transform, 'translateX(calc(-1 * var(--activation-column-offset, 0px)))');
-  assert.equal(declarationsAt(".activation-column[data-source='personality']", 1440, 900).transform, 'translateX(var(--activation-column-offset, 0px))');
+  assert.deepEqual(seen.sort(), ['left', 'right']);
+  assert.equal(declarationsAt(".activation-column[data-column-side='left']", 1440, 900).transform, 'translateX(calc(-1 * var(--activation-column-offset, 0px)))');
+  assert.equal(declarationsAt(".activation-column[data-column-side='right']", 1440, 900).transform, 'translateX(var(--activation-column-offset, 0px))');
   for (const rule of rules.filter(rule => /\.bodygraph-variable(?:\[|\s|,|\))/.test(rule.selector))) {
     assert.equal(rule.declarations.transform, undefined, 'arrow placement attributes must not be overwritten by a CSS transform');
   }

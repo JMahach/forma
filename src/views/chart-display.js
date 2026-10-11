@@ -1,15 +1,13 @@
-import { primaryChart, isChartOverlay } from '../domain/chart-composition.js';
+import { isChartOverlay } from '../domain/chart-composition.js';
 import { cycleEventLabel } from '../domain/cycles.js';
 import { ageText, completedAge } from '../domain/personal-age.js';
 
-export const canManageChart = value => {
-  const chart = primaryChart(value);
-  return chart && chart.id !== 'current-transit' && chart.source !== 'transit';
-};
-export const chartTitle = value => {
-  const chart = primaryChart(value);
-  if (isChartOverlay(value)) return `${chart.name?.trim() || 'Личная карта'} · ${value.kind === 'return' ? cycleEventLabel(value.event) : 'Транзит'}`;
-  return chart.id === 'current-transit' || chart.source === 'transit' ? 'Транзит' : chart.name;
+export const canManageLibraryRecord = record => Boolean(record?.id && record.id !== 'current-transit' && record.source !== 'transit');
+const isTransit = composition => composition.id === 'current-transit' || composition.primary.source === 'transit';
+export const chartTitle = (composition, record = null) => {
+  const label = record?.name ?? composition.primaryLabel;
+  if (isChartOverlay(composition)) return `${label?.trim() || 'Личная карта'} · ${composition.kind === 'return' ? cycleEventLabel(composition.event) : 'Транзит'}`;
+  return isTransit(composition) ? 'Транзит' : label;
 };
 const formatters = new Map();
 function formats(timeZone) {
@@ -53,34 +51,36 @@ function storedOffsetSeconds(chart) {
   const offset = /^(?:UTC)?([+−-])(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(chart?.utcOffset || '');
   return offset ? (Number(offset[2]) * 3600 + Number(offset[3]) * 60 + Number(offset[4] || 0)) * (offset[1] === '+' ? 1 : -1) : null;
 }
-export function savedBirthTime(chart) {
+function localTime(chart, recordedTime) {
   const seconds = storedOffsetSeconds(chart);
   const utc = Date.parse(chart?.utc);
-  if (seconds === null || !Number.isFinite(utc)) return chart?.birthTime || '';
+  if (seconds === null || !Number.isFinite(utc)) return recordedTime || '';
   const clock = new Date(utc + seconds * 1000).toISOString().slice(11, 19);
-  return clock.endsWith(':00') && (chart.birthTime || '').length <= 5 ? clock.slice(0, 5) : clock;
+  return clock.endsWith(':00') && (recordedTime || '').length <= 5 ? clock.slice(0, 5) : clock;
 }
-export const chartSubtitle = (value, { useUtc } = {}) => {
-  const chart = primaryChart(value);
-  if (isChartOverlay(value)) return momentLabel(value.utc, chart.timezone || 'UTC', value.kind === 'return');
-  if (chart.id === 'current-transit' || chart.source === 'transit') return momentLabel(chart.utc, (useUtc ?? chart.id === 'lifetime-preview') ? 'UTC' : null);
-  const birth = chart.birthDate && new Date(`${chart.birthDate}T00:00:00Z`);
-  const date = birth && Number.isFinite(birth.getTime()) ? formats('UTC').date.format(birth) : '';
+export function savedBirthTime(record) {
+  return localTime(record, record?.birthTime);
+}
+export const chartSubtitle = (composition, record = null, { useUtc } = {}) => {
+  const chart = composition.primary;
+  if (isChartOverlay(composition)) return momentLabel(composition.utc, record?.timezone || chart.timezone || 'UTC', composition.kind === 'return');
+  if (isTransit(composition)) return momentLabel(chart.utc, useUtc ? 'UTC' : null);
+  const localDate = chart.localDate && new Date(`${chart.localDate}T00:00:00Z`);
+  const date = localDate && Number.isFinite(localDate.getTime()) ? formats('UTC').date.format(localDate) : '';
   const offset = storedOffsetSeconds(chart);
   const zone = offset !== null ? offsetLabel(offset) : chart.utcOffset || (chart.timezone && Number.isFinite(Date.parse(chart.utc))
     ? momentLabel(chart.utc, chart.timezone).split(' · ').at(-1) : chart.timezone);
-  return [date, savedBirthTime(chart), zone, chart.birthPlace].filter(Boolean).join(' · ');
+  return [date, localTime(chart, chart.localTime), zone, record?.birthPlace].filter(Boolean).join(' · ');
 };
 
 // A personal timeline is a preview owned by the selected natal chart. Its
 // calculation uses transit data, but navigation and the header retain identity.
-export function chartCaption(chart, owner = chart, options) {
-  const personalMoment = isChartOverlay(chart);
-  const natal = personalMoment ? chart.primary : owner;
-  const subtitle = personalMoment ? momentLabel(chart.utc, natal.timezone || 'UTC', chart.kind === 'return') : chartSubtitle(chart, options);
+export function chartCaption(composition, record = null, options) {
+  const personalMoment = isChartOverlay(composition);
+  const subtitle = chartSubtitle(composition, record, options);
   // The natal caption uses today's age regardless of the open rail; a personal
   // preview or overlay always keeps the age of its displayed moment.
-  const ageUtc = personalMoment ? chart.utc : options?.ageUtc ?? chart.utc;
-  const age = personalMoment || options?.showAge ? completedAge(ageUtc, primaryChart(natal)) : null;
-  return { title: chartTitle(chart), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
+  const ageUtc = personalMoment ? composition.utc : options?.ageUtc ?? composition.utc;
+  const age = personalMoment || options?.showAge && !isTransit(composition) ? completedAge(ageUtc, record) : null;
+  return { title: chartTitle(composition, record), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
 }

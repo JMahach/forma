@@ -6,6 +6,7 @@ import { createCycles } from '../server/services/cycles.mjs';
 import { createCyclesClient } from '../src/data/cycles-client.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
+import { createChartComposition } from '../src/domain/chart-composition.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const utc = '2028-07-21T12:36:05.920740Z';
@@ -35,6 +36,22 @@ test('server and client reject the same corrupt successful chart before it enter
     ['unknown planet', data => { data.chart.activations.personality = data.chart.activations.personality.map((entry, i) => i ? entry : { ...entry, planet: 'unknown' }); }],
     ['missing residual', data => { delete data.chart.designArcResidualDegrees; }],
     ['invalid residual', data => { data.chart.designArcResidualDegrees = -0.01; }],
+    ...['personality', 'design'].flatMap(side => [
+      [`missing ${side} gates`, data => { delete data.chart[side]; }],
+      [`empty ${side} gates`, data => { data.chart[side] = []; }],
+      [`sparse ${side} gates`, data => { data.chart[side] = Array(data.chart[side].length); }],
+      [`missing ${side} activation slot`, data => {
+        const entries = [...data.chart.activations[side]];
+        delete entries[0];
+        data.chart.activations[side] = entries;
+        data.chart[side] = [...new Set(Array.from(data.chart.activations[side], entry => entry?.gate))];
+      }],
+      [`foreign ${side} gate`, data => {
+        const foreign = Array.from({ length: 64 }, (_, index) => index + 1).find(gate => !data.chart[side].includes(gate));
+        data.chart[side] = [foreign, ...data.chart[side].slice(1)];
+      }],
+      [`duplicate ${side} gate`, data => { data.chart[side] = [...data.chart[side], data.chart[side][0]]; }],
+    ]),
   ];
   for (const [name, change] of changes) {
     const data = result(); change(data);
@@ -45,6 +62,20 @@ test('server and client reject the same corrupt successful chart before it enter
       await assert.rejects(client.chart(input), /неполные данные/, name);
     } finally { await service.close(); }
   }
+});
+
+test('a stored return with contradictory gate sets is replaced before building the displayed composition', async () => {
+  const corrupt = result(); corrupt.chart.personality = []; corrupt.chart.design = [];
+  const fresh = result(); let calls = 0;
+  const client = createCyclesClient({ cacheVersion: 'a'.repeat(64),
+    returnStorage: { getChart: async () => corrupt, removeChart: async () => {}, putChart: async () => {} },
+    request: async () => { calls++; return fresh; } });
+  const received = await client.chart(input);
+  const shown = createChartComposition(received.chart);
+  for (const side of ['personality', 'design']) {
+    assert.deepEqual(shown.topology[side], [...new Set(received.chart.activations[side].map(entry => entry.gate))].sort((a, b) => a - b));
+  }
+  assert.equal(calls, 1, 'a contradictory stored result cannot substitute for a complete calculation');
 });
 
 test('both chart boundaries enforce the same symmetric one-second window down to the microsecond', async () => {

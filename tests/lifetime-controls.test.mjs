@@ -999,7 +999,7 @@ test('an unchanged cold pointer target restores its resolved UTC thumb', async (
 
 test('personal decade marks use real birthdays and the clipped window without relabelling its left edge', async () => {
   let personal = { utc: '2000-02-29T12:00:00Z', timezone: 'UTC' };
-  const h = harness({ getPersonalChart: () => personal });
+  const h = harness({ getPersonalRecord: () => personal });
   await open(h);
   await dates(h, '29022000', '01032100');
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100']);
@@ -1029,7 +1029,7 @@ test('personal decade marks use real birthdays and the clipped window without re
 });
 
 test('personal marks honour the birth timezone and clear when returning to the day view', async () => {
-  const h = harness({ getPersonalChart: () => ({ utc: '2000-01-01T18:00:00Z', timezone: 'Asia/Tokyo' }) });
+  const h = harness({ getPersonalRecord: () => ({ utc: '2000-01-01T18:00:00Z', timezone: 'Asia/Tokyo' }) });
   await open(h); await dates(h, '01012000', '31122020');
   const minUtc = Date.parse('2009-12-31T15:00:00Z'), maxUtc = Date.parse('2010-12-31T15:00:00Z');
   h.controls.setVisibleWindow({ minUtc, maxUtc });
@@ -1055,7 +1055,7 @@ test('personal marks honour the birth timezone and clear when returning to the d
 
 test('reference titles distinguish the current moment from a personal transit', async () => {
   let personal = null, owner = null;
-  const h = harness({ getPersonalChart: () => personal, getMomentState: () => owner });
+  const h = harness({ getPersonalRecord: () => personal, getMomentState: () => owner });
   await open(h); assert.equal(h.marker.title, 'Текущий момент');
   await dates(h, '29092026', '01102026'); await complete(h);
   assert.equal(h.marker.title, 'Текущий момент');
@@ -1312,7 +1312,7 @@ for (const failureSource of ['metadata-network', 'point', 'exact']) test(`tempor
   const h = harness({ client: {
     async getMeta() { if (failureSource === 'metadata-network') failOnce(); return metadata; },
     async getPoint(index) { if (failureSource === 'point') failOnce(); return moment(index); },
-    async getMinute(value) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
+    async getMoment(value) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
   } });
   assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected }), false);
   assert.equal(h.explorer.state.status, 'loading'); assert.equal(h.explorer.state.retryCount, 1);
@@ -1372,7 +1372,7 @@ test('typing a partial end preserves its complete start while metadata is pendin
 
 test('an explicitly selected returns year shares calendar ticks without new labels and preserves the accepted life range', async () => {
   const natal = { utc: '2000-01-01T18:00:00Z', timezone: 'Asia/Tokyo' };
-  const h = harness({ getPersonalChart: () => natal });
+  const h = harness({ getPersonalRecord: () => natal });
   h.hourMarks.getBoundingClientRect = () => ({ width: 640 });
   await open(h); await dates(h, '01012000', '31122020');
   const accepted = [h.explorer.state.minUtc, h.explorer.state.maxUtc], requests = h.requests.length;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { attachBirthForm } from '../src/views/birth-form.js';
 import { createChartStore } from '../src/data/chart-store.js';
 import { STORAGE_KEY, CHART_RECORD_PREFIX, readCharts } from '../src/data/storage.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const city = (id, name) => ({ id, name, country: 'DE', region: '', timezone: 'Europe/Berlin' });
@@ -398,7 +398,7 @@ test('editing only the name and note preserves the full exact calculated chart w
 });
 
 test('metadata editing with the real store retains every supported saved calculation field and exact UTC', async t => {
-  const exact = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:45.321Z', birthTime: '12:34:45', city: city('test-city', 'Берлин'), calculation: { unknown: true } };
+  const exact = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:45.321Z', birthTime: '12:34:45', city: city('test-city', 'Берлин'), calculation: { unknown: true } };
   const { chartStore, storage } = persistentStore([exact]);
   const original = chartStore.get(exact.id);
   assert.equal(original.birthTime, '12:34:45'); assert.deepEqual(original.calculation, exact.calculation);

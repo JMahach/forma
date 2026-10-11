@@ -156,7 +156,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     document, store, session, toast,
     onSave: (id, { metadataOnly = false } = {}) => {
       if (id !== session.selectedId) selectChart(id);
-      else if (metadataOnly) session.refreshOriginal();
+      else if (metadataOnly) session.refreshRecord();
       else graph.changeChart(id);
     },
     beforeOpen: () => { returns?.close(); library.close(); chartSummary.close(); },
@@ -216,7 +216,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     const chart = currentChart();
     // The accepted composition describes the shown moment, even while another
     // source is loading. A pending owner must not change the natal caption.
-    const caption = chartCaption(chart, session.original,
+    const caption = chartCaption(chart, session.record,
       { useUtc: session.shownSource === 'lifetime',
         showAge: Boolean(returns?.available),
         ageUtc: new Date().toISOString() });
@@ -267,8 +267,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     viewSession?.schedule();
   }
 
-  returns.select(session.original);
-  natalDay.select(session.original);
+  returns.select(session.record);
+  natalDay.select(session.record, session.baseChart);
   updatePage();
   gestures.reset();
   const layoutObserver = new ResizeObserver(refreshStudioLayout);
@@ -330,7 +330,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     // Source labels describe the same resolved chart as the scene.
     const chart = currentChart();
     const viewState = { ...state, visible: view.returnsVisible,
-      birthSelected: !exploration.live && chart.primary === session.original && !chart.secondary, live: exploration.live };
+      birthSelected: !exploration.live && chart.primary === session.baseChart && !chart.secondary, live: exploration.live };
     chartSummary.setReturnsVisible(Boolean(returnsView && view.returnsVisible));
     if (returnsView) returnsView.update(viewState);
     else if (view.returnsVisible) void loadReturnsView();
@@ -366,11 +366,11 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
           import('./state/lifetime.js'), import('./views/lifetime-controls.js'),
         ]);
         const getDayState = () => session.selectedId === 'current-transit' ? transit.state : null;
-        const getPersonalChart = () => returns.available ? returns.natal : null;
+        const getPersonalRecord = () => returns.available ? returns.natal : null;
         let controls;
         const controller = createLifetimeExplorer({
           dayClient, natalDayClient, planetFilter: transitPlanets,
-          getDayState, getPersonalChart, getMomentState: exploration.momentState,
+          getDayState, getPersonalRecord, getMomentState: exploration.momentState,
           onRender: exploration.publishLifetime,
           onModeAccepted: exploration.acceptLifetimeMode,
           onStateChange(state) {
@@ -382,9 +382,9 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
           },
         });
         controls = attachLifetimeControls({
-          explorer: controller, viewportLayout: layout, getDayState, getPersonalChart,
+          explorer: controller, viewportLayout: layout, getDayState, getPersonalRecord,
           formatEndpoints: state => {
-            const natal = session.original;
+            const natal = session.record;
             if (eligibleCycleChart(natal) && !natalDay.state.opened && Number.isInteger(returns.year)) {
               const visible = returnsVisibleWindow(natal, returns.year, state);
               if (visible) {

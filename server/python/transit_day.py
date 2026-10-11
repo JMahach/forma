@@ -7,10 +7,12 @@ import sys
 if __package__:
     from . import astronomy as astro
     from . import civil_time as civil
+    from .date_limits import full_range_year, EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR
     from .errors import ChartError
 else:
     import astronomy as astro
     import civil_time as civil
+    from date_limits import full_range_year, EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR
     from errors import ChartError
 
 
@@ -21,8 +23,8 @@ def calculate_day(date):
         start = dt.datetime.combine(dt.date.fromisoformat(date), dt.time(), civil.UTC)
     except ValueError:
         raise ChartError('invalid_date', 'Некорректная дата UTC.')
-    if not 1801 <= start.year <= 2399:
-        raise ChartError('unsupported_date', 'Доступны даты с 1801 по 2399 год.')
+    if not full_range_year(start.year):
+        raise ChartError('unsupported_date', f'Доступны даты с {EPHEMERIS_FIRST_YEAR} по {EPHEMERIS_LAST_YEAR} год.')
     columns = astro.sample_columns(start + dt.timedelta(minutes=minute) for minute in range(1440))
     return dict(
         date=date, startUtc=civil.iso(start), stepSeconds=60, samples=1440,

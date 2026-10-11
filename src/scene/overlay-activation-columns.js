@@ -1,5 +1,6 @@
 import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget } from './activation-targets.js';
-import { OVERLAY_SOURCES, OVERLAY_PALETTE, overlayOriginLabel } from '../domain/chart-overlay.js';
+import { OVERLAY_SOURCES, overlayOriginLabel } from '../domain/chart-overlay.js';
+import { OVERLAY_PALETTE } from '../ui/overlay-palette.js';
 import { isChartOverlay } from '../domain/chart-composition.js';
 import { PLANETS } from '../domain/planets.js';
 import { activationRowY, overlayActivationColumnLayout } from './geometry/activation-layout.js';
@@ -15,8 +16,7 @@ function describeOverlayActivationColumns(chart, selected = new Set(), pressed =
   if (!isChartOverlay(chart)) return [];
   const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
   const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
-  return [['natal', chart.primary], ['cycle', chart.secondary]].map(([origin, owner], index) => {
-    const side = index ? 'personality' : 'design';
+  return [['natal', chart.primary, 'left'], ['cycle', chart.secondary, 'right']].map(([origin, owner, columnSide]) => {
     const label = overlayOriginLabel(chart, origin);
     const records = Object.fromEntries(['design', 'personality'].map(source => {
       const entries = new Map();
@@ -25,7 +25,7 @@ function describeOverlayActivationColumns(chart, selected = new Set(), pressed =
     }));
     const sources = ['design', 'personality'].filter(source => [...records[source].values()].some(valid));
     const single = sources.length === 1;
-    const geometry = overlayActivationColumnLayout(side, { single, showMandala, label });
+    const geometry = overlayActivationColumnLayout(columnSide, { single, showMandala, label });
     const rows = PLANETS.map(([planet, symbol, name], rowIndex) => ({ planet, symbol, name, x: geometry.x, y: activationRowY(rowIndex),
       values: sources.flatMap((source, sourceIndex) => {
         const entry = records[source].get(planet);
@@ -46,7 +46,7 @@ function describeOverlayActivationColumns(chart, selected = new Set(), pressed =
     for (const row of rows) row.planetTarget = describePlanetTarget({ id: `${origin}-${row.planet}`,
       symbol: row.symbol, label: `${label}, ${row.name}`, geometry: geometry.planet, color: OVERLAY_PALETTE[origin],
       selections, pressedSelections, available: row.values.length > 0 });
-    return { ...geometry, origin, side, label, rows };
+    return { ...geometry, origin, columnSide, label, rows };
   });
 }
 
@@ -63,7 +63,7 @@ export function renderOverlayActivationColumns(chart, selected, pressed, options
 
 function columnsMarkup(columns) {
   if (!columns.length) return '';
-  return `<g class="activation-columns cycle-activation-columns">${columns.map(column => `<g class="activation-column" data-source="${column.side}" data-cycle-origin="${column.origin}" data-cycle-layout="${column.layout}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
+  return `<g class="activation-columns cycle-activation-columns">${columns.map(column => `<g class="activation-column" data-column-side="${column.columnSide}" data-cycle-origin="${column.origin}" data-cycle-layout="${column.layout}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
     <g class="activation-block-content" transform="${column.transform}">
       <svg class="activation-heading-viewport" x="${column.headingX}" y="${column.headingTop}" width="${column.headingViewportWidth}" height="${column.headingHeight}" viewBox="${column.headingX} ${column.headingTop} ${column.headingViewportWidth} ${column.headingHeight}" overflow="hidden" aria-label="${esc(column.label)}"><title>${esc(column.label)}</title><text class="activation-heading" x="${column.headingX}" y="${column.headingY}" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.headingSize}" font-weight="500">${esc(column.label)}</text></svg>
       <path class="activation-header-rule" d="M ${column.headingX} ${column.ruleY} h ${column.headingWidth}" stroke="#8e897e" stroke-opacity=".25" stroke-width="1" fill="none"/>

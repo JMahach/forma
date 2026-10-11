@@ -5,7 +5,7 @@ const validGates = values => (Array.isArray(values) ? values : []).map(Number)
   .filter(gate => Number.isInteger(gate) && gate >= 1 && gate <= 64);
 const union = (a, b) => Object.freeze([...new Set([...validGates(a), ...validGates(b)])].sort((a, b) => a - b));
 
-export function createChartComposition(primary, { secondary = null, kind = 'single', event = null } = {}) {
+export function createChartComposition(primary, { secondary = null, kind = 'single', event = null, id = null, primaryLabel = '' } = {}) {
   if (!primary || typeof primary !== 'object') throw new TypeError('A primary chart is required');
   if (!['single', 'transit', 'return'].includes(kind)) throw new TypeError('Composition kind must be single, transit or return');
   if (kind === 'single' && secondary) throw new TypeError('A single composition has only one source');
@@ -13,8 +13,9 @@ export function createChartComposition(primary, { secondary = null, kind = 'sing
   if (kind === 'return' && !event?.id) throw new TypeError('Return composition requires its event');
   if (kind !== 'return' && event) throw new TypeError('Only a return composition has an event');
   const topology = Object.freeze({ personality: union(primary.personality, secondary?.personality), design: union(primary.design, secondary?.design) });
-  const id = kind === 'single' ? primary.id : kind === 'return' ? `${primary.id}:cycle:${event.id}` : `${primary.id}:transit-preview`;
-  return Object.freeze({ kind, primary, secondary, event, topology, utc: (secondary || primary).utc, id });
+  // Navigation supplies identity and captions. Chart data has neither a
+  // library ID nor a person's name, even when it describes their birth.
+  return Object.freeze({ kind, primary, secondary, event, topology, utc: (secondary || primary).utc, id, primaryLabel });
 }
 
 // Plain charts remain supported by standalone previews and low-level tools.

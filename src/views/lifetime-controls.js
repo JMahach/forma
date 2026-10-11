@@ -19,7 +19,7 @@ function clock(utc, timeZone = null) {
 
 export function attachLifetimeControls({ explorer, panel, range, fromDate, toDate, status, fromError = null, toError = null,
   hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, viewportLayout,
-  getDayState = () => null, getMomentState = () => null, getPersonalChart = () => null,
+  getDayState = () => null, getMomentState = () => null, getPersonalRecord = () => null,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, resolveTap }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
@@ -134,7 +134,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     else if (dayMode) {
       timelineMarks.day(day?.timeline, day?.timeline?.minutes, (timeline, index) => formatTimelineMinute(timeline, index).time);
     } else {
-      const natal = getPersonalChart();
+      const natal = getPersonalRecord();
       if (natal && !visibleWindow?.calendar) timelineMarks.life(natal, Number(range.min), Number(range.max));
       else timelineMarks.calendar({ fromUtc: Number(range.min), toUtc: Number(range.max),
         timeZone: visibleWindow?.timeZone || 'UTC', labels: !natal });
@@ -146,7 +146,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     range.setAttribute('data-cursor-visible', String(cursorVisible));
     range.value = String(cursor);
     // A pending file previews the existing transit; its saved range stays intact.
-    const preparingDate = preparing && (day?.timeline?.date || day?.current?.birthDate);
+    const preparingDate = preparing && (day?.timeline?.date || day?.current?.localDate);
     updateDates(state, preparingDate);
 
     const shown = clock(dayMode ? day?.current?.utc || state.current?.utc : momentState ? momentState.current?.utc : state.current?.utc, dayMode ? day?.timeline?.timeZone : null);
@@ -158,7 +158,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     dayRange.updateReference({ value: reference, visible: state.opened && !preparing && (!dayMode || dayReady) && Number.isFinite(reference)
       && reference >= Number(range.min) && reference <= Number(range.max),
       label: 'Вернуться к текущему времени',
-      title: !dayMode && getPersonalChart() ? 'Текущий транзит' : 'Текущий момент',
+      title: !dayMode && getPersonalRecord() ? 'Текущий транзит' : 'Текущий момент',
       active: isReferenceMoment(displayedUtc, referenceUtc) });
     const pending = displayStatus === 'loading';
     const unshown = !dayMode && !momentState && Boolean(state.metadata && state.requestedUtc !== state.displayedUtc && (pending || state.displayedUtc !== null));

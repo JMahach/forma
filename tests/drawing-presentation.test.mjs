@@ -58,10 +58,10 @@ function measure(root, mandala) {
   near(bodyPoint[0], 320, 'G stays horizontally centered');
   near(bodyPoint[1], 398 + 26 / .96, 'G keeps the approved location in both modes');
   const result = { bodyPoint, silhouette: project(backdrop, [320, 80]), columns: [] };
-  for (const source of ['design', 'personality']) {
-    const column = root.querySelector(`.activation-column[data-source="${source}"]`);
+  for (const columnSide of ['left', 'right']) {
+    const column = root.querySelector(`.activation-column[data-column-side="${columnSide}"]`);
     const text = column.querySelector('.planet-symbol');
-    near(scale(text), 1.09 / .96, `${source} inherits both column and shared scales exactly once`);
+    near(scale(text), 1.09 / .96, `${columnSide} inherits both column and shared scales exactly once`);
     result.columns.push(project(text, [Number(text.getAttribute('x')), Number(text.getAttribute('y'))]));
   }
   const variables = root.querySelector('.bodygraph-variables');
@@ -119,9 +119,9 @@ test('loading paths and both column row centers have the same complete ancestor 
     assert.deepEqual(project(loading.querySelector('.loading-centers'), point), project(live.querySelector('.bodygraph-centers'), point));
     assert.deepEqual(project(loading.querySelector('.loading-channels'), point), project(live.querySelector('.bodygraph-channels'), point));
   }
-  for (const source of ['design', 'personality']) {
-    const empty = loading.querySelector(`.activation-column[data-source="${source}"]`).querySelectorAll('.loading-activation-row');
-    const actual = live.querySelector(`.activation-column[data-source="${source}"]`).querySelectorAll('.activation-row');
+  for (const columnSide of ['left', 'right']) {
+    const empty = loading.querySelector(`.activation-column[data-column-side="${columnSide}"]`).querySelectorAll('.loading-activation-row');
+    const actual = live.querySelector(`.activation-column[data-column-side="${columnSide}"]`).querySelectorAll('.activation-row');
     assert.equal(empty.length, actual.length);
     empty.forEach((row, index) => {
       const glyph = row.querySelector('circle'), rect = actual[index].querySelector('.bg-planet rect');

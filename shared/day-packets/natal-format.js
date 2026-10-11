@@ -1,5 +1,6 @@
 import { MOMENT_PLANETS, MOMENT_COLUMN_COUNT, validMomentValue } from './moment-columns.js';
 import { validOrder } from './float64-codec.js';
+import { EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR } from '../date-limits.js';
 
 // Separate from the public UTC transit contract: local minute grids may contain
 // gaps, repeated hours, or historical UTC offsets measured in seconds.
@@ -17,7 +18,8 @@ function offsetLabel(seconds) {
 export function validateNatalDayMetadata(header) {
   if (!header || header.version !== NATAL_DAY_VERSION || !Number.isInteger(header.samples) || header.samples < 1 || header.samples > NATAL_DAY_MAX_SAMPLES
     || header.stepSeconds !== 60 || !Array.isArray(header.orders) || header.orders.length !== NATAL_DAY_COLUMNS || !header.orders.every(validOrder)
-    || typeof header.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(header.date) || header.date < '1801-01-01' || header.date > '2399-12-31'
+    || typeof header.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(header.date)
+    || header.date < `${EPHEMERIS_FIRST_YEAR}-01-01` || header.date > `${EPHEMERIS_LAST_YEAR}-12-31`
     || typeof header.timezone !== 'string' || !header.timezone || header.timezone.length > 160
     || !Array.isArray(header.segments) || !header.segments.length || header.segments.length > 128
     || header.nodeModel !== 'true' || header.zodiac !== 'tropical-geocentric-apparent') return failNatalDayPacket();

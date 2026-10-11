@@ -50,7 +50,7 @@ test('cold historical 12:31 restores both sides outside Day window; 12:30 reads 
   assert.deepEqual(h.dayRequests, []);
   assert.deepEqual(calls, [{ mode: 'transit_moment', utc }]);
   assert.equal(new URL(h.requests[1].url, 'http://test').pathname, '/api/lifetime/moment');
-  const chart = await h.client.getMinute(milliseconds - 60000);
+  const chart = await h.client.getMoment(milliseconds - 60000);
   assert.equal(chart.utc, '2026-10-02T12:30:00Z');
   assert.equal(new URL(h.requests[2].url, 'http://test').pathname, '/api/lifetime');
   assert.equal(chart.activations.personality[0].longitude, 21);
@@ -114,11 +114,11 @@ test('two consumers share exact transport; only last cancellation aborts it and 
   } });
   await client.getMeta();
   const a = new AbortController(), b = new AbortController();
-  const first = client.getMinute(milliseconds, { signal: a.signal }), second = client.getMinute(milliseconds, { signal: b.signal });
+  const first = client.getMoment(milliseconds, { signal: a.signal }), second = client.getMoment(milliseconds, { signal: b.signal });
   await tick(); assert.equal(calls, 1); a.abort(); await assert.rejects(first, { name: 'AbortError' });
   assert.equal(responses[0].signal.aborted, false);
   b.abort(); await assert.rejects(second, { name: 'AbortError' }); assert.equal(responses[0].signal.aborted, true);
-  const retry = client.getMinute(milliseconds); await tick(); assert.equal(calls, 2);
+  const retry = client.getMoment(milliseconds); await tick(); assert.equal(calls, 2);
   responses[0].resolve({ ok: true, json: async () => ({ ...full(utc), version: '1' }) });
   responses[1].resolve({ ok: true, json: async () => ({ ...full(utc), version: '1' }) });
   assert.equal((await retry).utc, utc);
@@ -127,7 +127,7 @@ test('two consumers share exact transport; only last cancellation aborts it and 
 test('real calculator through HTTP and client restores exact historical Swiss values', async t => {
   const calculate = createCalculator({ root }); t.after(() => calculate.close());
   const expected = (await calculate({ mode: 'natal', name: 'Parity', date: utc.slice(0, 10), time: '12:31', city: { id: 'utc', name: 'UTC', timezone: 'UTC' } })).chart;
-  const h = harness(calculate), chart = await h.client.getMinute(milliseconds);
+  const h = harness(calculate), chart = await h.client.getMoment(milliseconds);
   assert.equal(chart.utc, expected.utc); assert.equal(chart.designUtc, expected.designUtc);
   for (const side of ['personality', 'design']) assert.deepEqual(chart.activations[side].map(entry => entry.longitude), expected.activations[side].map(entry => entry.longitude));
   assert.deepEqual(h.dayRequests, []);
@@ -171,9 +171,9 @@ test('server exact caching is independent from browser requests that never retai
     requests.push({ url, cache: options.cache }); const result = await http(h.handler, url);
     return { ok: result.status === 200, json: async () => result.value };
   } });
-  const first = await client.getMinute(milliseconds);
-  assert.deepEqual(first, await client.getMinute(milliseconds));
-  await client.getPoint(0); await client.getMinute(milliseconds);
+  const first = await client.getMoment(milliseconds);
+  assert.deepEqual(first, await client.getMoment(milliseconds));
+  await client.getPoint(0); await client.getMoment(milliseconds);
   assert.equal(requests.length, 5);
   assert.ok(requests.every(request => request.cache === 'no-store'));
   assert.equal(client.peekMinute(milliseconds), null);
@@ -188,7 +188,7 @@ test('client rejects mismatched exact UTC, contract versions and malformed sides
       if (url.endsWith('/meta')) return metadata;
       const value = { ...full(utc), version: '1' }; return ++calls === 1 ? mutate(value) : value;
     } }) });
-    await assert.rejects(client.getMinute(milliseconds), /Некорректные данные/);
-    assert.equal((await client.getMinute(milliseconds)).utc, utc); assert.equal(calls, 2);
+    await assert.rejects(client.getMoment(milliseconds), /Некорректные данные/);
+    assert.equal((await client.getMoment(milliseconds)).utc, utc); assert.equal(calls, 2);
   }
 });

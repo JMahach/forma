@@ -77,7 +77,7 @@ export function buildChartFacts(chart = {}) {
   return {
     isTransit,
     scope: isChartOverlay(chart) ? 'overlay' : 'single',
-    rowsLabel: isChartOverlay(chart) ? rowsChart.name?.trim() || 'Личная карта' : null,
+    rowsLabel: isChartOverlay(chart) ? chart.primaryLabel?.trim() || 'Личная карта' : null,
     hasLines,
     profile: rowsChart.source === 'calculated' && designSun && personalitySun
       ? `${personalitySun}/${designSun}` : null,

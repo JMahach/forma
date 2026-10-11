@@ -69,12 +69,12 @@ test('HTTP delivery and exact projection adopt the same updated response contrac
     responses.push(res.body);
     return { ok: res.status === 200, json: async () => res.body };
   } });
-  const chart = await client.getMinute(Date.parse(utc));
+  const chart = await client.getMoment(Date.parse(utc));
   assert.equal(responses.at(-1).version, '2');
   assert.equal(chart.utc, utc);
   const cached = client.peekMinute(Date.parse(utc));
   assert.equal(cached, null);
-  assert.equal((await client.getMinute(Date.parse(utc))).utc, utc);
+  assert.equal((await client.getMoment(Date.parse(utc))).utc, utc);
   assert.equal(urls.length, 3, 'metadata is reused, but each independent point visit returns to the exact API');
 });
 

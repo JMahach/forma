@@ -10,7 +10,7 @@ import { createAbortError, shareRequest } from './shared-request.js';
 // Only completed days are reusable. A point or exact minute belongs to its
 // current view; independent visits use the server again without HTTP storage.
 export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, timeoutMs = 20_000, dayClient = null,
-  days = dayClient?.days || createTransitDayCache(), natalDayClient = null, getPersonalChart = () => null,
+  days = dayClient?.days || createTransitDayCache(), natalDayClient = null, getPersonalRecord = () => null,
 } = {}) {
   const pending = new Map();
   // Only the selected natal's small timeline survives RAM eviction. Numeric
@@ -74,15 +74,15 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
       && day.nodeModel === 'true' && day.zodiac === 'tropical-geocentric-apparent';
   }
   function activeNatalPreparation(meta = metadata) {
-    return natalPreparation && natalPreparation.original === getPersonalChart() && natalPreparation.meta === meta ? natalPreparation : null;
+    return natalPreparation && natalPreparation.record === getPersonalRecord() && natalPreparation.meta === meta ? natalPreparation : null;
   }
   const timelineOf = day => ({ samples: day.samples, segments: day.segments });
   async function prepareNatalDay(meta, signal, refresh) {
-    const original = getPersonalChart();
-    if (!original || !natalDayClient) { natalPreparation = null; return; }
-    const context = !refresh && activeNatalPreparation(meta) || (natalPreparation = { original, meta, ready: false, timeline: null });
+    const record = getPersonalRecord();
+    if (!record || !natalDayClient) { natalPreparation = null; return; }
+    const context = !refresh && activeNatalPreparation(meta) || (natalPreparation = { record, meta, ready: false, timeline: null });
     if (context.ready) return;
-    const day = await natalDayClient.readDay(original, { signal });
+    const day = await natalDayClient.readDay(record, { signal });
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     if (activeNatalPreparation(meta) === context) {
       context.ready = true;
@@ -90,7 +90,7 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
     }
   }
   function natalDay(meta = metadata) {
-    const original = getPersonalChart(), day = original && natalDayClient?.peekDay(original);
+    const record = getPersonalRecord(), day = record && natalDayClient?.peekDay(record);
     if (!compatibleNatalDay(day, meta)) return null;
     const context = activeNatalPreparation(meta);
     if (context) context.timeline = timelineOf(day);
@@ -132,14 +132,14 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
   async function readSample(milliseconds, meta, signal) {
     if (!validMoment(milliseconds, meta) || !meta.calculationVersion) return null;
     const hot = cachedMinute(milliseconds, meta); if (hot) return hot;
-    const original = getPersonalChart();
-    if (original && natalDayClient && hasNatalMinute(milliseconds, meta)) {
-      const day = await natalDayClient.readDay(original, { signal });
+    const record = getPersonalRecord();
+    if (record && natalDayClient && hasNatalMinute(milliseconds, meta)) {
+      const day = await natalDayClient.readDay(record, { signal });
       if (metadata !== meta || signal?.aborted) throw createAbortError();
-      const natal = original === getPersonalChart() ? natalSample(milliseconds, meta, day) : null;
+      const natal = record === getPersonalRecord() ? natalSample(milliseconds, meta, day) : null;
       if (natal) return natal;
       const context = activeNatalPreparation(meta);
-      if (context?.original === original) context.timeline = null;
+      if (context?.record === record) context.timeline = null;
     }
     if (!validMinute(milliseconds, meta)) return null;
     // This owner reads existing RAM/IDB only. Never call dayClient.getDay here:
@@ -161,7 +161,7 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
     const sample = await readSample(milliseconds, metadata, signal);
     return sample ? chartAt(sample) : null;
   }
-  async function getMinute(milliseconds, { signal } = {}) {
+  async function getMoment(milliseconds, { signal } = {}) {
     const meta = await getMeta({ signal });
     if (!validMoment(milliseconds, meta)) throw new Error('Некорректная минута летописи.');
     const index = (milliseconds - Date.parse(meta.startUtc)) / (meta.stepSeconds * 1000);
@@ -193,5 +193,5 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
       return validateLifetimeMoment(value, meta, index);
     }, signal);
   }
-  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, getMinute, invalidateMetadata };
+  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, getMoment, invalidateMetadata };
 }

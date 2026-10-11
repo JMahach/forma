@@ -1,4 +1,5 @@
-import { OVERLAY_SOURCES, OVERLAY_PALETTE, overlaySources } from '../domain/chart-overlay.js';
+import { OVERLAY_SOURCES, overlaySources } from '../domain/chart-overlay.js';
+import { OVERLAY_PALETTE } from '../ui/overlay-palette.js';
 import { isChartOverlay, primaryChart, chartTopology } from '../domain/chart-composition.js';
 import { PLANETS } from '../domain/planets.js';
 import { gatePositionAtLongitude } from '../domain/gate-wheel.js';

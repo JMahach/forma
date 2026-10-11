@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.js';
+import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE } from '../../shared/date-limits.js';
 import { decodeTransitDay } from '../../shared/day-packets/decode.js';
 import { encodeNumericColumn, encodeTransitDay } from '../packets/encode.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
@@ -25,7 +26,7 @@ export class TransitDayError extends Error {
 }
 export function transitDateMilliseconds(date) {
   const value = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
-  if (!Number.isFinite(value) || utcDate(value) !== date || date < '1801-01-01' || date > '2399-12-31') {
+  if (!Number.isFinite(value) || utcDate(value) !== date || value < SUPPORTED_START || value >= SUPPORTED_END_EXCLUSIVE) {
     throw new TransitDayError('invalid_date', 'Нужна корректная дата UTC в формате YYYY-MM-DD.', 400, null);
   }
   return value;

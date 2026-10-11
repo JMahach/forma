@@ -12,13 +12,13 @@ function dateStart(value) {
 // Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
 export function createLifetimeExplorer({
-  dayClient = null, natalDayClient = null, getPersonalChart = () => null,
-  client = createLifetimeClient({ dayClient, natalDayClient, getPersonalChart }), getDayState = () => null, now = () => Date.now(),
+  dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
+  client = createLifetimeClient({ dayClient, natalDayClient, getPersonalRecord }), getDayState = () => null, now = () => Date.now(),
   getMomentState = () => null,
   planetFilter = createTransitPlanetFilter(),
   onStateChange = () => {}, onRender = () => {}, onModeAccepted = () => {},
 } = {}) {
-  let metadata = null, fullChart = null, manualChart = null, requestedUtc = null, restoring = false, pendingRestore = null;
+  let metadata = null, fullChart = null, exploredChart = null, requestedUtc = null, restoring = false, pendingRestore = null;
   const current = () => planetFilter.filter(fullChart);
   let interacting = false, selection = 0, selectionBounds = null, selectionRound = Math.round;
   let opened = false, mode = 'day', status = 'idle', error = '', sequence = 0, active = null, notifiedReference = null;
@@ -53,11 +53,11 @@ export function createLifetimeExplorer({
     clearTimeout(retryTimer); retryTimer = null; retryCount = 0;
     sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null; selectionBounds = null; selectionRound = Math.round;
   }
-  const dayDate = day => day?.timeline?.date || day?.current?.birthDate || null;
+  const dayDate = day => day?.timeline?.date || day?.current?.localDate || null;
   function borrowDay() {
     const day = getDayState(), chart = day?.current || null, date = dayDate(day);
     const changed = chart !== fullChart || date !== fromDate || date !== toDate;
-    fullChart = chart; manualChart = null; requestedUtc = shownUtc();
+    fullChart = chart; exploredChart = null; requestedUtc = shownUtc();
     fromDate = toDate = date; openStart = openEnded = false;
     if (!['error', 'preparing'].includes(status) && retryCount === 0) status = fullChart ? 'ready' : 'loading';
     return changed;
@@ -81,13 +81,13 @@ export function createLifetimeExplorer({
     const utc = Date.parse(chart?.utc);
     if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(utc)) return false;
     const next = clampUtc(utc);
-    if (chart === fullChart && next === requestedUtc && !manualChart && status === 'ready' && !active) return true;
-    cancel(); requestedUtc = next; fullChart = chart; manualChart = null;
+    if (chart === fullChart && next === requestedUtc && !exploredChart && status === 'ready' && !active) return true;
+    cancel(); requestedUtc = next; fullChart = chart; exploredChart = null;
     status = 'ready'; error = ''; notify();
     return true;
   }
   function publishReady(chart, utc) {
-    cancel(); requestedUtc = utc; fullChart = manualChart = chart;
+    cancel(); requestedUtc = utc; fullChart = exploredChart = chart;
     status = 'ready'; error = '';
     const generation = sequence; notify();
     if (generation === sequence && opened && mode === 'lifetime') onRender();
@@ -97,9 +97,9 @@ export function createLifetimeExplorer({
     const { min, max } = limits(bounds);
     if (min > max) return null;
     const clamped = Math.max(min, Math.min(max, value));
-    // A selected manual snapshot survives eviction. A borrowed natal/return
-    // chart never becomes an lifetime snapshot merely by sharing its UTC.
-    if (manualChart && shownUtc() === clamped) return { utc: clamped, chart: manualChart };
+    // The accepted exploration result survives cache eviction. A borrowed natal/return
+    // chart never becomes an exploration result merely by sharing its UTC.
+    if (exploredChart && shownUtc() === clamped) return { utc: clamped, chart: exploredChart };
     const prepared = client.nearestMinute?.(clamped, { min, max }, round);
     if (Number.isFinite(prepared)) return { utc: prepared, chart: client.peekMinute(prepared) };
     const minute = Math.max(Math.ceil(min / 60000) * 60000,
@@ -124,7 +124,7 @@ export function createLifetimeExplorer({
         let receivedMetadata = false;
         // An explicit opening checks whether the selected natal's day has
         // appeared since the last visit. Scrubs reuse that preparation.
-        if (!metadata || refreshNatalDay || restoration?.mode === 'lifetime' && getPersonalChart()) {
+        if (!metadata || refreshNatalDay || restoration?.mode === 'lifetime' && getPersonalRecord()) {
           const value = await client.getMeta({ signal: request.controller.signal, refreshNatalDay });
           if (generation !== sequence || !opened) return false;
           metadata = validateLifetimeMetadata(value); receivedMetadata = true;
@@ -167,7 +167,7 @@ export function createLifetimeExplorer({
           if (momentState) {
             if (momentState.current) alignMoment(momentState.current);
             else {
-              manualChart = null; status = momentState.status || 'loading'; error = momentState.error || '';
+              exploredChart = null; status = momentState.status || 'loading'; error = momentState.error || '';
               pendingRestore = null; notify();
             }
             return true;
@@ -188,7 +188,7 @@ export function createLifetimeExplorer({
             // the selected UTC before starting another request for this target.
             if (!chart && (getMomentState() || target !== requestedUtc)) continue;
             if (!chart && restoration?.requestedUtc !== undefined && !Number.isInteger(indexAt(target))) {
-              chart = await client.getMinute(target, { signal: request.controller.signal });
+              chart = await client.getMoment(target, { signal: request.controller.signal });
             } else if (!chart) {
               // A catalogue can outlive a disk entry. A scrub may only read
               // prepared data; only explicit restoration permits exact work.
@@ -199,7 +199,7 @@ export function createLifetimeExplorer({
                   requestedUtc = shownUtc(); status = fullChart ? 'ready' : 'idle'; notify();
                   return false;
                 }
-                if (manualChart && shownUtc() === fallback) {
+                if (exploredChart && shownUtc() === fallback) {
                   requestedUtc = fallback; status = 'ready'; error = ''; pendingRestore = null; notify();
                   return true;
                 }
@@ -222,7 +222,7 @@ export function createLifetimeExplorer({
           // A changed range may exclude a completed point. Other completed
           // points still show progress during continuous dragging.
           if (target < minUtc || target > maxUtc || selected !== selection && !interacting) continue;
-          fullChart = manualChart = chart;
+          fullChart = exploredChart = chart;
           retryCount = 0;
           status = target === requestedUtc ? 'ready' : 'loading'; error = ''; notify();
           if (generation !== sequence || !opened || mode !== 'lifetime') return false;
@@ -238,7 +238,7 @@ export function createLifetimeExplorer({
           pendingRestore = mode === 'lifetime' ? { mode, fromDate, toDate, openStart, openEnded, requestedUtc,
             ...(!openStart && minUtc !== null ? { minimumUtc: new Date(minUtc).toISOString() } : {}),
             ...(rangeCeiling ? { maximumUtc: rangeCeiling } : {}) } : { mode };
-          client.invalidateMetadata?.(metadata); metadata = null; manualChart = null;
+          client.invalidateMetadata?.(metadata); metadata = null; exploredChart = null;
         }
         error = '';
         if (failure?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
@@ -274,7 +274,7 @@ export function createLifetimeExplorer({
     notify();
     if (!opened || generation !== sequence) return Promise.resolve(false);
     onRender();
-    const refreshNatalDay = Boolean(getPersonalChart());
+    const refreshNatalDay = Boolean(getPersonalRecord());
     return metadata && !refreshNatalDay ? Promise.resolve(true) : load(null, refreshNatalDay);
   }
 
@@ -299,12 +299,12 @@ export function createLifetimeExplorer({
     // Copy before awaiting metadata so caller mutation cannot change the restore target.
     const restoration = { mode: snapshot.mode, fromDate: snapshot.fromDate, toDate: snapshot.toDate,
       openStart: snapshot.openStart === true, openEnded: snapshot.openEnded === true, requestedUtc: snapshot.requestedUtc, index: snapshot.index, minimumUtc: snapshot.minimumUtc, maximumUtc: snapshot.maximumUtc };
-    cancel(); opened = true; mode = restoration.mode; minUtc = maxUtc = rangeCeiling = null; manualChart = null;
+    cancel(); opened = true; mode = restoration.mode; minUtc = maxUtc = rangeCeiling = null; exploredChart = null;
     planetFilter.setExpanded(true); status = 'idle'; error = '';
     if (mode === 'day') borrowDay();
     else { fullChart = null; requestedUtc = restoration.requestedUtc ?? null; fromDate = restoration.fromDate; toDate = restoration.toDate; openStart = restoration.openStart; openEnded = restoration.openEnded; }
     pendingRestore = restoration;
-    return load(restoration, Boolean(getPersonalChart()));
+    return load(restoration, Boolean(getPersonalRecord()));
   }
 
   function close() {
@@ -319,7 +319,7 @@ export function createLifetimeExplorer({
         || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
     const next = chooseTarget(value, round, bounds);
     if (!next) return;
-    if (next.utc === requestedUtc && status !== 'error' && (manualChart && shownUtc() === next.utc || active && !next.chart)) return;
+    if (next.utc === requestedUtc && status !== 'error' && (exploredChart && shownUtc() === next.utc || active && !next.chart)) return;
     if (restoring || pendingRestore || retryTimer !== null || active && client.hasMinute?.(next.utc)) cancel();
     // The visible year constrains this command and its disk-miss fallback,
     // while the explorer keeps the person's full range and saved UTC.
@@ -401,13 +401,13 @@ export function createLifetimeExplorer({
         const generation = sequence;
         onModeAccepted({ opened, mode });
         if (generation !== sequence || !opened) return false;
-        if (!manualChart && !getMomentState()) {
+        if (!exploredChart && !getMomentState()) {
           const target = chooseTarget(requestedUtc);
           requestedUtc = target.utc;
           if (target.chart) return publishReady(target.chart, target.utc);
         }
         notify();
-        return !manualChart || shownUtc() !== requestedUtc ? load() : true;
+        return !exploredChart || shownUtc() !== requestedUtc ? load() : true;
       }
       if (restoring || pendingRestore || retryTimer !== null) cancel();
       retryCount = 0; setBounds(start, end);
@@ -420,7 +420,7 @@ export function createLifetimeExplorer({
       onModeAccepted({ opened, mode });
       if (generation !== sequence || !opened) return false;
       if (target.chart && !getMomentState()) return publishReady(target.chart, target.utc);
-      const needsPoint = active || !manualChart || shownUtc() !== requestedUtc;
+      const needsPoint = active || !exploredChart || shownUtc() !== requestedUtc;
       status = needsPoint ? 'loading' : 'ready'; error = '';
       notify();
       return needsPoint ? load() : true;

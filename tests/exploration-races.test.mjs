@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartSession } from '../src/state/chart-session.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { createViewSession } from '../src/state/view-session.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { createNatalDayExplorer } from '../src/state/natal-day.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
@@ -21,7 +22,7 @@ const lifetimeMoment = index => {
   return { index, utc, longitudes: Array(11).fill(12), design: { utc,
     designUtc: new Date(Date.parse(utc) - 88 * 86400000).toISOString(), longitudes: Array(11).fill(34), designArcResidualDegrees: 1e-11 } };
 };
-const exactChart = id => ({ ...chartAtMinute(natalDayFixture({ date: '2050-01-01' }), 720,
+const exactChart = id => ({ ...libraryRecordAtMinute(natalDayFixture({ date: '2050-01-01' }), 720,
   personalChartFixture({ id, birthDate: '2050-01-01' })), utc: event.utc });
 
 // The transport intentionally keeps working after cancellation. Real controller
@@ -31,8 +32,8 @@ function deferredRequest(queue, details) {
 }
 function harness() {
   const people = [
-    { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture({ id: 'person-a', name: 'Person A' })), utc: '2026-09-24T12:34:45.678Z' },
-    chartAtMinute(natalDayFixture({ date: '2026-09-25' }), 620,
+    { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({ id: 'person-a', name: 'Person A' })), utc: '2026-09-24T12:34:45.678Z' },
+    libraryRecordAtMinute(natalDayFixture({ date: '2026-09-25' }), 620,
       personalChartFixture({ id: 'person-b', name: 'Person B', birthDate: '2026-09-25' })),
   ];
   const lifetimeJobs = [], returnJobs = [], frames = [];
@@ -69,7 +70,7 @@ test('enabled returns follow personal chart navigation and Transit clears that m
   assert.equal(h.lifetime.state.opened, true);
   assert.equal(h.returns.state.natal, h.people[1]);
   assert.equal(h.lifetime.state.minUtc, Date.parse(h.people[1].utc));
-  assert.equal(h.session.current.primary, h.people[1]);
+  assert.equal(h.session.record, h.people[1]); assert.equal(h.session.current.primary, h.session.baseChart);
   assert.equal(h.session.current.secondary, null);
   assert.equal(h.session.owner, 'original');
   await h.navigation.select('person-a');
@@ -103,12 +104,12 @@ test('returns stay preferred through a manual chart without opening an unsupport
   assert.equal(h.returns.state.available, false);
   assert.equal(h.lifetime.state.opened, false);
   assert.equal(h.natalDay.state.opened, false);
-  assert.equal(h.session.current.primary, h.people[2]);
+  assert.equal(h.session.record, h.people[2]); assert.equal(h.session.current.primary, h.session.baseChart);
   await h.navigation.select('person-b');
   assert.equal(h.exploration.returnsEnabled, true);
   assert.equal(h.natalDay.state.opened, false);
   assert.equal(h.lifetime.state.minUtc, Date.parse(h.people[1].utc));
-  assert.equal(h.session.current.primary, h.people[1]);
+  assert.equal(h.session.record, h.people[1]); assert.equal(h.session.current.primary, h.session.baseChart);
   assert.equal(h.session.current.secondary, null);
 });
 
@@ -143,7 +144,7 @@ test('restored returns remain preferred through an unsupported chart', async () 
   assert.equal(restored.lifetime.state.opened, false);
   await restored.exploration.select('person-b');
   assert.equal(restored.exploration.returnsEnabled, true);
-  assert.equal(restored.session.current.primary, restored.people[1]);
+  assert.equal(restored.session.record, restored.people[1]); assert.equal(restored.session.current.primary, restored.session.baseChart);
   assert.equal(restored.session.current.secondary, null);
 });
 
@@ -163,15 +164,17 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
 
     await h.navigation.select('person-b');
     assert.equal(h.lifetimeJobs[0].signal.aborted, true); assert.equal(h.returnJobs[0].signal.aborted, true);
-    assert.equal(h.session.current.primary, h.people[1]); assert.equal(h.session.current.secondary, null);
+    assert.equal(h.session.record, h.people[1]); assert.equal(h.session.current.primary, h.session.baseChart); assert.equal(h.session.current.secondary, null);
     assert.equal(h.navigation.returnsEnabled, true);
     const currentReturn = h.returns.selectEvent(event.id); await tick();
     assert.equal(h.returnJobs.length, 2); assert.equal(h.returnJobs[1].input.birthUtc, h.people[1].utc);
     const acceptedChart = exactChart('person-b-return'), acceptedEvent = h.returns.state.events.find(item => item.id === event.id);
     h.returnJobs[1].resolve({ chart: acceptedChart }); assert.equal(await currentReturn, true);
     const accepted = h.session.current, count = h.frames.length;
-    assert.equal(accepted.kind, 'return'); assert.equal(accepted.primary, h.people[1]);
-    assert.equal(accepted.secondary, acceptedChart); assert.equal(accepted.event, acceptedEvent);
+    assert.equal(accepted.kind, 'return'); assert.equal(accepted.primary, h.session.baseChart);
+    assert.equal(accepted.primaryLabel, h.people[1].name);
+    assert.equal(accepted.secondary, h.returns.current);
+    assert.deepEqual(accepted.secondary, extractChartData(acceptedChart)); assert.equal(accepted.event, acceptedEvent);
     assert.equal(accepted.utc, '2050-01-01T12:00:29.432Z');
 
     if (lifetimeOutcome === 'success') h.lifetimeJobs[0].resolve(lifetimeMoment(h.lifetimeJobs[0].index));
@@ -181,7 +184,7 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
     assert.deepEqual(await Promise.all([oldLifetime, oldReturn]), [false, false]); await tick();
     assert.equal(h.session.selectedId, 'person-b'); assert.equal(h.session.owner, 'return');
     assert.equal(h.session.current, accepted); assert.equal(h.frames.length, count, 'stale work cannot publish or repaint person B');
-    assert.equal(h.returns.current, acceptedChart); assert.equal(h.returns.state.selectedEvent, acceptedEvent);
+    assert.equal(h.returns.current, accepted.secondary); assert.equal(h.returns.state.selectedEvent, acceptedEvent);
     assert.equal(h.returns.state.chartError, ''); assert.equal(h.returns.state.loadingChart, false);
     assert.equal(h.lifetime.state.error, ''); assert.equal(h.lifetime.state.status, 'ready');
     assert.equal(h.lifetimeJobs.length, 1, 'the abandoned lifetime cannot queue another point');
@@ -191,7 +194,7 @@ for (const lifetimeOutcome of ['success', 'error']) for (const returnOutcome of 
 
 function lazyPersonalHarness({ phase = 'module' } = {}) {
   const people = ['person-a', 'person-b'].map(id => ({
-    ...chartAtMinute(natalDayFixture(), 754, personalChartFixture({ id })), utc: '2026-09-24T12:34:56.789Z',
+    ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({ id })), utc: '2026-09-24T12:34:56.789Z',
   }));
   const metadataJobs = [], points = [], modeChanges = [];
   let lifetime = null, exploration, returns, natalDay, releaseImport;
@@ -227,7 +230,7 @@ for (const phase of ['module', 'metadata']) test(`personal OFF while ${phase} is
   else { assert.equal(h.metadataJobs[0].signal.aborted, true); h.metadataJobs[0].resolve(metadata); }
   assert.equal(await opening, false);
   assert.equal(h.controller.state.opened, false);
-  assert.equal(h.session.current.primary, h.people[0]);
+  assert.equal(h.session.record, h.people[0]); assert.equal(h.session.current.primary, h.session.baseChart);
   assert.equal(h.session.current.utc, '2026-09-24T12:34:56.789Z');
   assert.deepEqual(h.points, []);
 });
@@ -258,7 +261,7 @@ for (const phase of ['module', 'metadata']) test(`A to manual to B to A cannot r
   assert.equal(h.exploration.returnsEnabled, true);
   assert.equal(h.controller.state.mode, 'lifetime');
   assert.equal(h.controller.state.requestedUtc, Date.parse('2026-09-24T12:34:56.789Z'));
-  assert.equal(h.controller.current, h.people[0]);
+  assert.equal(h.session.record, h.people[0]); assert.equal(h.controller.current, h.session.baseChart);
   assert.deepEqual(h.points, []);
 });
 
@@ -276,7 +279,7 @@ test('interrupting a pending personal opening retains its accepted range and ori
   assert.equal(h.controller.state.fromDate, '2026-09-24');
   assert.equal(h.controller.state.toDate, '2050-12-31', 'the file bounds limit the personal range');
   assert.equal(h.controller.state.minUtc, Date.parse(h.people[0].utc));
-  assert.equal(h.controller.current, h.people[0]);
+  assert.equal(h.session.record, h.people[0]); assert.equal(h.controller.current, h.session.baseChart);
   assert.equal(h.metadataJobs.length, 1);
   assert.deepEqual(h.points, []);
 });
@@ -289,7 +292,7 @@ test('the birth-boundary command cancels a pending lifetime point and directly r
   const pending = h.lifetime.scrub(target); await tick();
   assert.equal(h.exploration.beforeScrub(h.lifetime.state.minUtc), false);
   assert.equal(h.session.owner, 'original');
-  assert.equal(h.session.current.primary, h.people[0]);
+  assert.equal(h.session.record, h.people[0]); assert.equal(h.session.current.primary, h.session.baseChart);
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(h.people[0].utc));
   assert.equal(h.lifetimeJobs[0].signal.aborted, true);
   h.lifetimeJobs[0].resolve(lifetimeMoment(h.lifetimeJobs[0].index));
@@ -404,7 +407,7 @@ test('live preview remains live until a failed Return pins its accepted moment f
   const h = harness(), saved = savedView(h);
   await saved.view.restore();
   await h.exploration.select('person-a'); await h.exploration.toggleReturns();
-  const liveChart = { ...exactChart('live'), source: 'transit', utc: '2027-01-01T03:20:00Z' };
+  const liveChart = extractChartData({ ...exactChart('live'), source: 'transit', utc: '2027-01-01T03:20:00Z' });
   h.transit.current = liveChart;
   Object.assign(h.transit.state, { current: liveChart, status: 'ready', live: true });
   h.transit.goNow = () => true;
@@ -492,7 +495,7 @@ for (const outcome of ['error', 'menu-cancel']) test(`accepted lifetime survives
   assert.equal(snapshot.lifetime.personalPreview, true);
 });
 
-test('a confirmed Return remains the saved exact event after a subsequent request fails', async () => {
+test('a confirmed Return remains the saved exact target after a subsequent request fails', async () => {
   const h = harness(), saved = savedView(h);
   await saved.view.restore();
   await h.exploration.select('person-a'); await h.exploration.toggleReturns();
@@ -504,7 +507,7 @@ test('a confirmed Return remains the saved exact event after a subsequent reques
   saved.view.flush(); const snapshot = saved.writes.at(-1);
   assert.equal(snapshot.lifetime.personalPreview, false);
   assert.equal(snapshot.returns.eventId, event.id);
-  assert.deepEqual(snapshot.returns.event, event);
+  assert.equal(Object.hasOwn(snapshot.returns, 'event'), false);
   const restored = harness();
   const input = { ...snapshot, lifetime: { ...snapshot.lifetime, minimumUtc: restored.people[0].utc } };
   const next = savedView(restored, input), restoring = next.view.restore(); await tick();

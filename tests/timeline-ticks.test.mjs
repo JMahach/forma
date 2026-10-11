@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calendarTimelineTicks } from '../src/domain/timeline-ticks.js';
+import { calendarTimelineTicks } from '../src/ui/timeline-ticks.js';
 
 const utc = value => Date.parse(value);
 const ticks = (from, to, width = 600, extra = {}) => calendarTimelineTicks({

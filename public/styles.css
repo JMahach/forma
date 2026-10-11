@@ -259,12 +259,12 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
    stays unchanged. Independent translate preserves each arrow's SVG transform. */
 #bodygraph .bodygraph-drawing, #chartLoadingArt { --activation-rest-gap: calc(14px * (1 - var(--mandala-reveal, 0))); }
 #bodygraph .mandala-drawing { --activation-rest-gap: calc(14px * (1 - var(--mandala-reveal, 1))); }
-:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-source='design'] { translate: calc(-1 * var(--activation-rest-gap)) 0; }
-:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-source='personality'] { translate: var(--activation-rest-gap) 0; }
-.activation-column[data-source='design'] { transform: translateX(calc(-1 * var(--activation-column-offset, 0px))); }
-.activation-column[data-source='personality'] { transform: translateX(var(--activation-column-offset, 0px)); }
-.mandala-drawing .activation-column[data-source='design'] { transform: translateX(calc(-1 * var(--activation-column-offset, var(--activation-column-expanded-offset)))); }
-.mandala-drawing .activation-column[data-source='personality'] { transform: translateX(var(--activation-column-offset, var(--activation-column-expanded-offset))); }
+:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-column-side='left'] { translate: calc(-1 * var(--activation-rest-gap)) 0; }
+:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-column-side='right'] { translate: var(--activation-rest-gap) 0; }
+.activation-column[data-column-side='left'] { transform: translateX(calc(-1 * var(--activation-column-offset, 0px))); }
+.activation-column[data-column-side='right'] { transform: translateX(var(--activation-column-offset, 0px)); }
+.mandala-drawing .activation-column[data-column-side='left'] { transform: translateX(calc(-1 * var(--activation-column-offset, var(--activation-column-expanded-offset)))); }
+.mandala-drawing .activation-column[data-column-side='right'] { transform: translateX(var(--activation-column-offset, var(--activation-column-expanded-offset))); }
 .mandala-scene > .bodygraph-mandala { transform-origin: 320px 398px; transform: scale(calc(.94 + .06 * var(--mandala-reveal, 1))); opacity: var(--mandala-reveal, 1); }
 
 /* Mandala view. */
@@ -531,11 +531,12 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .date-picker.returns-filter-popover { height: auto; }
 .returns-filter-popover .date-picker-heading { flex: none; gap: 4px; margin-bottom: 4px; }
 .returns-filter-popover .date-picker-heading > button { width: 40px; height: 40px; border-radius: 7px; }
-.returns-filter-popover .date-picker-heading > .date-picker-title { flex: 1; width: auto; font-size: 13px; }
-.returns-filter-popover .date-picker-grid { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 2px; padding-bottom: 8px; }
-.returns-filter-popover .date-picker-row { flex: none; gap: 2px; }
-.returns-filter-popover .date-picker-row button { height: 40px; border-radius: 7px; font-size: 13px; }
-.returns-filter-popover[data-view='periods'] .date-picker-row button { font-size: 11px; }
+.returns-filter-popover .date-picker-heading > .date-picker-title { flex: 1; display: grid; place-items: center; width: auto; min-height: 40px; margin: 0; font-size: 13px; }
+.returns-filter-popover .date-picker-grid { justify-content: space-between; flex: 1 1 auto; height: calc(var(--calendar-rows, 4) * 42px + 6px); min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 2px; padding-bottom: 8px; }
+.returns-filter-popover .date-picker-row { display: flex; justify-content: center; flex: 0 0 40px; gap: 2px; }
+.returns-filter-popover .date-picker-row > [role='gridcell'] { flex: 0 0 calc((100% - (var(--calendar-columns) - 1) * 2px) / var(--calendar-columns)); min-width: 0; }
+.returns-filter-popover .date-picker-row button { height: auto; min-height: 40px; border-radius: 7px; font-size: 13px; }
+.returns-filter-popover[data-view='periods'] .date-picker-row button { font-size: 13px; }
 .returns-filter-popover button[data-selected='true'] { background: #e8e8e8; box-shadow: inset 0 0 0 1px #888888; color: #383838; font-weight: 600; }
 .returns-content { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 2px; }
 .returns-event { width: 100%; text-align: left; color: inherit; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 72px; padding: 10px 2px; border-bottom: 1px solid #e7e6de; }

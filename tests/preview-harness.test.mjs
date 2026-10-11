@@ -84,9 +84,11 @@ function browserHarness(t, config) {
   const nodes = new Map(['previewSurface', 'preview', 'viewport', 'activationPopover', ...config.controls.map(control => control.id)].map(id => [id, surface()]));
   const svg = nodes.get('preview'), viewport = nodes.get('viewport'), panel = nodes.get('activationPopover'), anchors = new Map();
   panel.id = 'activationPopover';
-  const target = dataset => ({ ...surface(), dataset, closest() { return this; }, dispatchEvent(event) { svg.send(event.type, { ...event, target: this }); } });
-  for (const side of ['design', 'personality']) for (const entry of config.chart.activations[side]) {
-    anchors.set(`[data-activation="${side}-${entry.planet}"]`, target({ type: 'gate', id: String(entry.gate), activation: `${side}-${entry.planet}` }));
+  const target = (dataset, column = null) => ({ ...surface(), dataset,
+    closest(selector) { return selector === '.activation-column' ? column : this; },
+    dispatchEvent(event) { svg.send(event.type, { ...event, target: this }); } });
+  for (const [source, columnSide] of [['design', 'left'], ['personality', 'right']]) for (const entry of config.chart.activations[source]) {
+    anchors.set(`[data-activation="${source}-${entry.planet}"]`, target({ type: 'gate', id: String(entry.gate), activation: `${source}-${entry.planet}` }, { dataset: { columnSide } }));
   }
   anchors.set('[data-type="center"][data-id="throat"]', target({ type: 'center', id: 'throat' }));
   svg.querySelector = selector => anchors.get(selector) || null;

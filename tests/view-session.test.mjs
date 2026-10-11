@@ -17,7 +17,7 @@ import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { createMandalaMotion } from '../src/scene/modes/mandala-motion.js';
 import { createCamera } from '../src/scene/camera.js';
 import { STUDIO_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { transitChartAt } from '../src/domain/transit-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { dateDom } from './helpers/date-dom.mjs';
@@ -47,7 +47,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
   const frames = [], writes = [], pending = new Map(), attributes = {}, styles = new Map();
   const storagePort = { getItem: key => storage.get(key) ?? null,
     setItem(key, value) { storage.set(key, value); writes.push([key, value]); } };
-  const saved = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const saved = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   if (!storage.has('liniya.charts.v1')) storage.set('liniya.charts.v1', JSON.stringify([saved, { ...saved, id: 'second' }]));
   const chartStore = createChartStore({ getStorage: () => storagePort });
   const viewStore = createViewStore({ getStorage: () => storagePort });
@@ -151,7 +151,10 @@ test('a deleted chart falls back to transit and malformed presentation never cle
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   first.session.select('missing'); first.view.flush();
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
-  assert.equal(second.session.selectedId, 'current-transit'); assert.equal(second.transit.current.id, 'current-transit');
+  assert.equal(second.session.selectedId, 'current-transit'); assert.equal(second.session.current.id, 'current-transit');
+  assert.equal(second.session.record, null);
+  assert.equal(second.session.current.primary.source, 'transit');
+  assert.equal(second.session.current.utc, second.transit.current.utc);
   assert.equal(JSON.parse(second.storage.get('liniya.charts.v1')).length, 2);
 });
 
@@ -271,7 +274,7 @@ test('eligible personal Lifetime restores exact saved range and moment ahead of 
   assert.deepEqual([lifetime.mode, lifetime.fromDate, lifetime.toDate, lifetime.requestedUtc], ['lifetime', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
   assert.deepEqual(calls, [200]); assert.equal(second.session.current.utc, '2020-01-02T09:20:00Z');
   assert.equal(second.session.current.kind, 'transit');
-  assert.equal(second.session.current.primary, second.session.original);
+  assert.equal(second.session.current.primary, second.session.baseChart);
   assert.equal(second.session.current.secondary, second.ensureLifetime().current);
   assert.equal(second.returns.current, null, 'an intermediate moment restores without inventing a return event');
 });
@@ -343,11 +346,12 @@ test('same-tab reload restores the exact personal return and transit navigation 
   assert.equal(second.session.selectedId, source.id);
   assert.equal(second.returns.state.opened, true); assert.equal(second.returns.state.selectedEvent.id, first.returnEvent.id);
   assert.equal(second.view.pendingReturns, null);
-  assert.equal(second.session.current.primary.id, source.id);
-  assert.equal(chartCaption(second.session.current, second.session.original).title, source.name + ' · Возврат Сатурна 1');
+  assert.equal(second.session.record.id, source.id);
+  assert.equal(second.session.current.primary, second.session.baseChart);
+  assert.equal(chartCaption(second.session.current, second.session.record).title, source.name + ' · Возврат Сатурна 1');
   assert.equal(second.storage.get('liniya.charts.v1'), beforeLibrary);
   second.session.select('current-transit'); second.view.flush();
-  assert.equal(second.session.current.primary.name, 'Транзит'); assert.equal(second.returns.current, null);
+  assert.equal(second.session.current.primaryLabel, 'Транзит'); assert.equal(second.session.record, null); assert.equal(second.returns.current, null);
   assert.equal(JSON.parse(second.storage.get('liniya.view.v1')).returns, undefined);
 });
 
@@ -365,7 +369,7 @@ test('navigation during a restored exact return cannot resurrect its personal ov
   second.view.interrupt(); second.session.select('current-transit');
   resolveChart({ event: first.returnEvent, chart: { ...source, utc: first.returnEvent.utc } }); await restoring;
   assert.equal(second.session.selectedId, 'current-transit'); assert.equal(second.returns.current, null);
-  assert.equal(second.session.current.primary.name, 'Транзит');
+  assert.equal(second.session.current.primaryLabel, 'Транзит'); assert.equal(second.session.record, null);
 });
 
 
@@ -399,8 +403,11 @@ async function saveExactLifetime(t) {
   return { storage: first.storage, source, event, target: snapshot.lifetime };
 }
 
-test('exact reload waits only for its current body list before owning Lifetime without rounded point work', async t => {
+test('an old exact snapshot ignores its stale descriptor and restores from the current body list without rounded point work', async t => {
   const { storage, source, event, target } = await saveExactLifetime(t), points = [], lists = [], order = [];
+  const old = JSON.parse(storage.get('liniya.view.v1'));
+  old.returns.event = { ...event, cycle: 99, cycleId: 'saturn:99', pass: 9 };
+  storage.set('liniya.view.v1', JSON.stringify(old));
   const refreshed = { ...event, pass: 2, direction: 'retrograde' };
   t.after(() => lists.forEach(job => job.resolve({ events: job.input.body === event.body ? [refreshed] : [] })));
   let releaseChart, restored;
@@ -428,6 +435,9 @@ test('exact reload waits only for its current body list before owning Lifetime w
   assert.equal(second.ensureLifetime().state.requestedUtc, target.requestedUtc); assert.equal(second.ensureLifetime().state.displayedUtc, Date.parse(event.utc));
   assert.equal(second.returns.state.opened, false); assert.deepEqual(second.returns.state.bodies, ['moon']);
   assert.equal(second.view.pendingReturns, null); assert.equal(second.view.pendingLifetime, null);
+  const savedReturns = JSON.parse(storage.get('liniya.view.v1')).returns;
+  assert.equal(savedReturns.eventId, 'saturn:2055-10-01T12:03:07.123456Z');
+  assert.equal(Object.hasOwn(savedReturns, 'event'), false, 'a new snapshot retains the target without copying an event descriptor');
   assert.deepEqual(second.camera.getView(), pose);
   assert.equal(lists.length, DEFAULT_CYCLE_BODIES.length + 1, 'body preparation is shared with restoration and never duplicated');
   assert.deepEqual(second.returns.state.pendingBodies, ['moon'], 'the visible Moon list is still pending while the exact Saturn chart is ready');
@@ -461,7 +471,7 @@ test('an early exact failure is not retried twice and metadata failure keeps its
     if (failure === 'chart') {
       assert.equal(second.view.pendingReturns.eventId, event.id); assert.equal(second.view.pendingLifetime, null);
       assert.deepEqual(points, [], 'an unavailable exact event does not calculate a hidden rounded substitute');
-      assert.equal(second.session.current.primary, second.session.original);
+      assert.equal(second.session.current.primary, second.session.baseChart);
       assert.equal(second.session.current.utc, source.utc);
       assert.equal(second.exploration.momentState().current.utc, source.utc);
       assert.equal(second.returns.state.chartError, 'Exact unavailable');
@@ -475,7 +485,7 @@ test('an early exact failure is not retried twice and metadata failure keeps its
 
 test('legacy return IDs restore through event lookup while the original remains accepted', async t => {
   const { storage, source, event } = await saveExactLifetime(t), order = [];
-  const snapshot = JSON.parse(storage.get('liniya.view.v1')); delete snapshot.returns.event;
+  const snapshot = JSON.parse(storage.get('liniya.view.v1'));
   snapshot.returns = { ...snapshot.returns, group: 'major', year: 2055, body: 'saturn' }; delete snapshot.returns.bodies; storage.set('liniya.view.v1', JSON.stringify(snapshot));
   const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
     getMeta: async () => returnMetadata, getPoint: async index => { order.push('point'); return point(index, returnMetadata); },
@@ -773,7 +783,7 @@ test('a saved lifetime minute restores its exact UTC before writing a fresh snap
   const minutes = [], points = [];
   const second = harness(first.storage, { lifetimeClient: { getMeta: async () => metadata,
     getPoint: async index => { points.push(index); return point(index); },
-    getMinute: async utc => { minutes.push(utc); return transitChartAt(day('2020-01-02'), 561); },
+    getMoment: async utc => { minutes.push(utc); return transitChartAt(day('2020-01-02'), 561); },
   } });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);

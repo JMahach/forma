@@ -1,6 +1,6 @@
 import { renderChartThumbnail } from './thumbnail.js';
 import { formatDateInput } from './date-input.js';
-import { canManageChart } from './chart-display.js';
+import { canManageLibraryRecord } from './chart-display.js';
 import { escapeHtml as esc } from '../ui/html.js';
 
 const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Транзит' };
@@ -104,7 +104,7 @@ export function createChartLibraryView({
   return {
     update(nextCharts, nextSelectedId) {
       if (charts !== nextCharts) {
-        charts = nextCharts; personal = charts.filter(canManageChart);
+        charts = nextCharts; personal = charts.filter(canManageLibraryRecord);
         libraryCount.textContent = personal.length;
       }
       if (selectedId !== nextSelectedId) {
@@ -159,7 +159,7 @@ export function attachChartLibrary({ document, store, session, onSelect, onEdit,
     const action = e.target.closest('[data-chart-action]');
     if (action) {
       const c = store.charts.find(item => item.id === action.dataset.actionChartId);
-      if (!canManageChart(c)) return;
+      if (!canManageLibraryRecord(c)) return;
       action.closest('details').open = false;
       if (action.dataset.chartAction === 'edit') onEdit(c.id);
       else openDeleteChart(c);
@@ -174,7 +174,7 @@ export function attachChartLibrary({ document, store, session, onSelect, onEdit,
   document.addEventListener('pointerdown', e => document.querySelectorAll('.chart-actions[open]').forEach(item => { if (!item.contains(e.target)) item.open = false; }));
   $('newChartButton').addEventListener('click', () => onNew());
   function openDeleteChart(c) {
-    if (!canManageChart(c)) return;
+    if (!canManageLibraryRecord(c)) return;
     deletingId = c.id;
     $('deleteChartName').textContent = `«${c.name}»`;
     $('deleteChartError').textContent = '';

@@ -29,6 +29,11 @@ function fixture(chart, renderOptions = {}, renderState = createRenderState(char
 test('overlay keeps exact natal and return source values in two side groups at native vertical row anchors', () => {
   const chart = overlayFixture(natal, cycle, RETURN_OVERLAY), root = fixture(chart);
   assert.equal(root.querySelectorAll('[data-cycle-origin]').length, 2);
+  for (const [origin, columnSide] of [['natal', 'left'], ['cycle', 'right']]) {
+    const column = root.querySelector(`[data-cycle-origin="${origin}"]`);
+    assert.equal(column.dataset.columnSide, columnSide);
+    assert.equal(column.dataset.source, undefined, 'a two-source overlay column has no invented Design or Personality source');
+  }
   for (const [id, gate, line] of [['natal-design-sun', 19, 2], ['natal-personality-sun', 41, 1], ['cycle-design-sun', 49, 3], ['cycle-personality-sun', 41, 6]]) {
     const node = root.querySelector(`[data-activation="${id}"]`);
     assert.ok(node, id);

@@ -5,6 +5,7 @@ import { createChartStore } from '../src/data/chart-store.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createGraphController } from '../src/scene/updates.js';
 import { transitChartAt } from '../src/domain/transit-day.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 
 const day = date => ({
   date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
@@ -193,7 +194,8 @@ test('a new local day replaces the paused timeline with today and preserves a si
   assert.equal(h.live.state.index, 0);
   assert.equal(h.live.state.live, true);
   assert.equal(h.live.current.utc, '2026-09-24T18:15:00Z');
-  assert.equal(h.live.current.id, 'current-transit');
+  assert.equal(h.live.current, h.live.state.current, 'the controller exposes one accepted ephemeral calculation');
+  assert.equal(Object.hasOwn(h.live.current, 'id'), false, 'a moment does not borrow library identity');
 });
 
 test('late previous-day loads cannot replace the current local day', async () => {
@@ -283,20 +285,22 @@ test('the running clock waits for the next minute boundary and uses no per-secon
 
 test('scrubbing through the real graph controller preserves pinned selection, camera transform and stored charts', async () => {
   const personal = { id: 'personal', name: 'Saved chart', source: 'manual', personality: [1], design: [8] };
-  const complete = transitChartAt(day('2026-09-23'), 720);
+  const { localDate, localTime, ...complete } = transitChartAt(day('2026-09-23'), 720);
   // Older saved transit fallbacks contain only Personality. Live two-sided
   // charts remain ephemeral and never rewrite that legacy stored record.
-  const fallback = { ...complete, design: [], designUtc: null, designArcResidualDegrees: null,
+  const fallback = { ...complete, id: 'current-transit', name: 'Транзит', birthDate: localDate, birthTime: localTime,
+    design: [], designUtc: null, designArcResidualDegrees: null,
     activations: { ...complete.activations, design: [] } };
   const writes = [], stored = JSON.stringify([personal, fallback]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => stored, setItem: (...args) => writes.push(args) }) });
   const originalCharts = store.charts, originalValues = JSON.stringify(store.charts);
+  const fallbackData = extractChartData(store.get('current-transit'));
   const viewport = { innerHTML: '', transform: 'translate(-50,30) scale(1.25)', querySelector: () => null };
   const popoverCharts = [];
   let live;
   const graph = createGraphController({
     scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } },
-    getChart: () => live?.current || store.get('current-transit'), hasChart: () => true, viewport,
+    getChart: () => live?.current || fallbackData, hasChart: () => true, viewport,
     getMandala: () => ({ enabled: true }),
     activationPopover: { close() {}, show() {}, refresh(chart) { popoverCharts.push(chart); } },
   });

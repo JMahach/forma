@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createChartStore } from '../src/data/chart-store.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { STORAGE_KEY, TRASH_KEY, CHART_RECORD_PREFIX, CHART_DELETED_PREFIX, readCharts } from '../src/data/storage.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const personal = { id: 'personal', name: 'Test chart', source: 'manual', personality: [1], design: [8] };
@@ -28,12 +28,15 @@ test('chart store loads without writing and keeps selection independent of saved
   const session = createChartSession({ store });
   assert.equal(store.storageAvailable, true);
   assert.equal(session.selectedId, 'current-transit');
-  assert.equal(session.original.source, 'transit');
-  assert.deepEqual(session.original.personality, []);
+  assert.equal(session.record, null, 'global transit is not an invented library record');
+  assert.equal(session.baseChart.source, 'transit');
+  assert.deepEqual(session.baseChart.personality, []);
+  assert.equal(session.current.primary, session.baseChart);
+  assert.equal(session.current.id, 'current-transit');
   assert.equal(store.has('personal'), true);
   session.select('personal');
-  assert.equal(session.original, store.charts[0]);
-  assert.equal(session.original.name, personal.name);
+  assert.equal(session.record, store.charts[0]);
+  assert.equal(session.record.name, personal.name);
   assert.equal(storage.writes.length, 0);
 });
 
@@ -50,7 +53,7 @@ test('failed persistence retains existing state until the caller explicitly keep
   assert.match(errors[0], /Не удалось сохранить/);
   store.replace(next);
   session.select('unsaved');
-  assert.equal(session.original.id, 'unsaved');
+  assert.equal(session.record.id, 'unsaved');
   assert.equal(JSON.parse(storage.values.get(STORAGE_KEY)).length, 1);
   storage.fail = false;
   assert.equal(store.persist(), true);
@@ -67,7 +70,7 @@ test('denied storage access leaves a usable in-memory store without erasing save
   assert.equal(store.persist([personal]), false);
   store.replace([personal]);
   session.select(personal.id);
-  assert.equal(session.original, personal);
+  assert.equal(session.record, personal);
   assert.equal(errors.length, 1);
 });
 
@@ -271,7 +274,7 @@ test('deleting another card preserves an explicitly retained unsaved chart and i
 });
 
 test('real-store saves, reloads, and edits retain exact time and opaque calculation metadata', () => {
-  const exact = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()),
+  const exact = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()),
     utc: '2026-09-24T12:34:45.321Z', birthTime: '12:34:45', calculation: { unknown: true, precision: [1e-14, 0.123456789012345] } };
   const storage = storageHarness([]), store = createChartStore({ getStorage: () => storage });
   assert.equal(store.persist([exact]), true);

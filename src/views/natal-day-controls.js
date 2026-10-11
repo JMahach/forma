@@ -17,7 +17,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     panel.setAttribute('aria-busy', String(state.status === 'loading'));
     panel.dataset.original = String(state.exactOriginal);
     panel.dataset.status = state.status;
-    timelineMarks.day(state.opened ? state.day : null, state.day?.samples, (day, index) => natalDayMinute(day, index).birthTime);
+    timelineMarks.day(state.opened ? state.day : null, state.day?.samples, (day, index) => natalDayMinute(day, index).localTime);
     range.disabled = state.status !== 'ready';
     retryButton.hidden = state.status !== 'error';
     retryButton.disabled = state.status === 'loading';
@@ -25,7 +25,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     retryButton.title = 'Повторить загрузку дня рождения';
     setText(status, state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '');
     const chart = state.current;
-    const date = chart?.birthDate ? formatDateInput(chart.birthDate) : '';
+    const date = chart?.localDate ? formatDateInput(chart.localDate) : '';
     if (state.day) {
       range.min = '0'; range.max = String(state.day.samples - 1); range.step = '1'; range.value = String(state.index);
     } else { range.min = '0'; range.max = '1439'; range.value = '0'; }
@@ -34,7 +34,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
       visible: state.opened && state.status === 'ready' && Boolean(state.day),
       label: 'Вернуться к сохранённому времени рождения', title: 'Сохраненное время карты', active: isReferenceMoment(state.current?.utc, state.original?.utc) });
     const offset = chart?.utcOffset || '';
-    const clock = state.exactOriginal ? savedBirthTime(chart) : chart?.birthTime || '';
+    const clock = state.exactOriginal ? savedBirthTime(state.original) : chart?.localTime || '';
     const zone = chart?.timezone || state.day?.timezone || '';
     const utcOffset = offset && /^[-+]/.test(offset) ? `UTC${offset}` : offset;
     range.setAttribute('aria-valuetext', [date, clock, utcOffset, zone, state.exactOriginal ? 'сохранённое время рождения' : ''].filter(Boolean).join(', '));

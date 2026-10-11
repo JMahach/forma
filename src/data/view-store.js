@@ -8,15 +8,6 @@ const index = value => Number.isSafeInteger(value) && value >= 0;
 const utc = value => Number.isSafeInteger(value) && Math.abs(value) <= 8640000000000000;
 const date = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
   && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
-function normalizeReturnEvent(event, id) {
-  if (!object(event) || event.id !== id || !CYCLE_BODIES.some(body => body.id === event.body)
-    || typeof event.utc !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(event.utc)
-    || !Number.isFinite(Date.parse(event.utc)) || !Number.isInteger(event.cycle) || event.cycle < 1 || event.cycle > 10000) return null;
-  return { id, body: event.body, utc: event.utc, cycle: event.cycle,
-    pass: Number.isInteger(event.pass) && event.pass > 0 && event.pass <= 10 ? event.pass : 1,
-    cycleId: typeof event.cycleId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(event.cycleId) ? event.cycleId : `${event.body}:${event.cycle}`,
-    direction: ['direct', 'retrograde', 'stationary'].includes(event.direction) ? event.direction : 'direct' };
-}
 function normalizeReturns(value) {
   if (!object(value) || typeof value.opened !== 'boolean'
     || !(value.eventId === null || typeof value.eventId === 'string' && /^[a-z0-9_:.+Z-]{1,180}$/i.test(value.eventId))) return null;
@@ -35,8 +26,7 @@ function normalizeReturns(value) {
       : value.group === 'year' ? ['sun', 'mercury', 'venus', 'mars'] : [value.body];
     year = value.group === 'year' ? value.year : null;
   }
-  const event = normalizeReturnEvent(value.event, value.eventId);
-  return { opened: value.opened, year, bodies, eventId: value.eventId, ...(event ? { event } : {}) };
+  return { opened: value.opened, year, bodies, eventId: value.eventId };
 }
 function normalize(value) {
   if (!object(value) || value.version !== 1) return null;

@@ -1,22 +1,19 @@
 import { getDefinition } from './topology.js';
 import { isChartOverlay } from './chart-composition.js';
 
-// Two origins share one palette across graph, mandala and source captions.
-export const OVERLAY_PALETTE = Object.freeze({ natal: '#c32d35', cycle: '#202020' });
-
 // Source identity survives every projection: gate unions describe topology,
 // while the four independent inputs describe whose activation made it.
 export const OVERLAY_SOURCES = Object.freeze([
-  { id: 'natal-personality', origin: 'natal', source: 'personality', bit: 1, color: OVERLAY_PALETTE.natal },
-  { id: 'natal-design', origin: 'natal', source: 'design', bit: 2, color: OVERLAY_PALETTE.natal },
-  { id: 'cycle-personality', origin: 'cycle', source: 'personality', bit: 4, color: OVERLAY_PALETTE.cycle },
-  { id: 'cycle-design', origin: 'cycle', source: 'design', bit: 8, color: OVERLAY_PALETTE.cycle },
+  { id: 'natal-personality', origin: 'natal', source: 'personality', bit: 1 },
+  { id: 'natal-design', origin: 'natal', source: 'design', bit: 2 },
+  { id: 'cycle-personality', origin: 'cycle', source: 'personality', bit: 4 },
+  { id: 'cycle-design', origin: 'cycle', source: 'design', bit: 8 },
 ].map(Object.freeze));
 const validGates = values => (Array.isArray(values) ? values : []).map(Number)
   .filter(gate => Number.isInteger(gate) && gate >= 1 && gate <= 64);
 
 const originChart = (chart, origin) => isChartOverlay(chart) ? origin === 'natal' ? chart.primary : chart.secondary : null;
-export const overlayOriginLabel = (chart, origin) => origin === 'natal' ? originChart(chart, 'natal')?.name?.trim() || 'Личная карта'
+export const overlayOriginLabel = (chart, origin) => origin === 'natal' ? chart?.primaryLabel?.trim() || 'Личная карта'
   : chart?.kind === 'transit' ? 'Транзит' : 'Возврат';
 const sourceLabel = (chart, source) => `${overlayOriginLabel(chart, source.origin)} · ${source.source === 'design' ? 'Дизайн' : 'Личность'}`;
 

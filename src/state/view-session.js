@@ -42,7 +42,7 @@ export function createViewSession({
     const personalPreview = getPersonalPreview();
     const personalLive = getPersonalLive();
     const cycles = getReturns()?.state;
-    const returnView = pendingReturns || (cycles?.available && (cycles.opened || cycles.markersEnabled || cycles.selectedEvent) ? { opened: cycles.opened, bodies: [...cycles.bodies], year: cycles.year, eventId: cycles.selectedEvent?.id || null, ...(cycles.selectedEvent ? { event: cycles.selectedEvent } : {}) } : null);
+    const returnView = pendingReturns || (cycles?.available && (cycles.opened || cycles.markersEnabled || cycles.selectedEvent) ? { opened: cycles.opened, bodies: [...cycles.bodies], year: cycles.year, eventId: cycles.selectedEvent?.id || null } : null);
     const lifetimeState = getLifetime()?.state, day = natalDay.state, live = transit.state;
     const pendingUtc = lifetimeUtc(pendingLifetime, lifetimeState);
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)

@@ -1,7 +1,7 @@
 import { natalDateAllowed, NATAL_DATE_MESSAGE } from '../../shared/date-limits.js';
 import { createChartId, normalizeChartName, parseGates } from '../data/storage.js';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.js';
-import { canManageChart } from './chart-display.js';
+import { canManageLibraryRecord } from './chart-display.js';
 import { escapeHtml as esc } from '../ui/html.js';
 import { requestJSON as defaultRequestJSON } from '../data/api-client.js';
 
@@ -81,8 +81,8 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   function closeForm() { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); closeCityResults(); $('chartDialog').close(); }
 
   function openForm(edit = false, id = session.selectedId) {
-    const c = store.charts.find(item => item.id === id) || session.original;
-    if (edit && !canManageChart(c)) return;
+    const c = store.charts.find(item => item.id === id) || session.record;
+    if (edit && !canManageLibraryRecord(c)) return;
     calculationController?.abort(); clearTimeout(cityTimer); cityController?.abort(); citySequence += 1;
     $('chartForm').reset(); $('formError').textContent = ''; setFormBusy(false); selectedCity = null; cityResults = []; closeCityResults();
     $('cityStatus').classList.remove('is-error');

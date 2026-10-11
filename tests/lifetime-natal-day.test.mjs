@@ -32,7 +32,7 @@ function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = nu
   const meta = { calculationVersion: revision, cacheVersion: revision, startUtc: new Date(start).toISOString().replace('.000Z', 'Z'),
     endExclusiveUtc: new Date(end).toISOString().replace('.000Z', 'Z'), samples: 432, stepSeconds: 600,
     planets: LIFETIME_PLANETS, engine: day.engine, nodeModel: day.nodeModel, zodiac: day.zodiac };
-  const client = createLifetimeClient({ natalDayClient: natal, getPersonalChart: () => chart,
+  const client = createLifetimeClient({ natalDayClient: natal, getPersonalRecord: () => chart,
     days: days || { prepare: async () => {}, peekDay: () => null, getDay: async () => null, hasMinute: () => false },
     fetch: async url => {
       if (url.endsWith('/meta')) return { ok: true, json: async () => meta };
@@ -65,7 +65,7 @@ for (const [name, make, indices] of [['ordinary', () => natalDayFixture(), [700]
     for (const index of indices) {
       const utc = Date.parse(natalDayMinute(h.day, index).utc), expected = chartAtMinute(h.day, index, h.chart());
       assert.equal(h.client.hasMinute(utc), true);
-      const actual = await h.client.getMinute(utc);
+      const actual = await h.client.getMoment(utc);
       assert.equal(actual.utc, expected.utc);
       assert.deepEqual(actual.activations, expected.activations);
       assert.equal(actual.designUtc, expected.designUtc);
@@ -127,7 +127,7 @@ test('natal reuse does not lend a rounded instant, another original chart, or a 
   assert.equal(h.client.peekMinute(Math.floor(exact / 60000) * 60000), null);
   h.setChart({ ...h.chart(), birthDate: '1900-01-02' });
   assert.equal(h.client.peekMinute(exact), null);
-  await h.client.getMinute(exact); assert.equal(h.requests.length, 1); assert.match(h.requests[0], /23%3A51%3A39Z/);
+  await h.client.getMoment(exact); assert.equal(h.requests.length, 1); assert.match(h.requests[0], /23%3A51%3A39Z/);
 });
 
 test('a missing prepared natal day falls back to lifetime without calculating the whole natal day', async () => {
@@ -141,7 +141,7 @@ test('a different numerical revision cannot lend a natal day to lifetime', async
   await h.client.getMeta();
   const utc = Date.parse(natalDayMinute(h.day, 700).utc);
   assert.equal(h.client.hasMinute(utc), false); assert.equal(h.client.peekMinute(utc), null);
-  await h.client.getMinute(utc); assert.equal(h.requests.length, 1);
+  await h.client.getMoment(utc); assert.equal(h.requests.length, 1);
 });
 
 test('two cache-only natal readers cancel independently and do not wait for pending calculation', async () => {
@@ -167,7 +167,7 @@ test('two cache-only natal readers cancel independently and do not wait for pend
 test('a ready natal packet from disk is used even when the shared reuse budget cannot retain it', async () => {
   const h = harness(historical(), { memoryLimit: 0 }); await h.prepare();
   const expected = natalDayMinute(h.day, 1).utc;
-  const chart = await h.client.getMinute(Date.parse(expected));
+  const chart = await h.client.getMoment(Date.parse(expected));
   assert.equal(chart.utc, expected);
   assert.deepEqual(h.requests, []);
   assert.equal(h.memory.size, 0);
@@ -189,7 +189,7 @@ for (const firstMode of ['readDay', 'getDay']) test(`a stale ${firstMode} disk m
 
 test('switching the original natal prepares its stored day even when lifetime metadata was already loaded', async t => {
   const h = harness(); await h.prepare();
-  const explorer = createLifetimeExplorer({ client: h.client, getPersonalChart: h.chart,
+  const explorer = createLifetimeExplorer({ client: h.client, getPersonalRecord: h.chart,
     getMomentState: () => ({ current: h.chart(), status: 'ready' }) });
   t.after(() => explorer.close());
   const snapshot = { opened: true, mode: 'lifetime', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
@@ -242,7 +242,7 @@ test('a missing historical natal minute still reads the ready transit day for it
 
 for (const command of ['open', 'restore']) test(`explicit ${command} discovers the same natal day saved after an earlier miss`, async t => {
   const h = harness();
-  const explorer = createLifetimeExplorer({ client: h.client, getPersonalChart: h.chart,
+  const explorer = createLifetimeExplorer({ client: h.client, getPersonalRecord: h.chart,
     getMomentState: () => ({ current: h.chart(), status: 'ready' }) });
   t.after(() => explorer.close());
   const snapshot = { opened: true, mode: 'lifetime', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
@@ -256,7 +256,7 @@ for (const command of ['open', 'restore']) test(`explicit ${command} discovers t
   await show();
   assert.equal(h.reads, before + 1, 'one cache-only lookup belongs to the explicit opening');
   assert.equal(h.client.hasMinute(minute), true);
-  assert.equal((await h.client.getMinute(minute)).utc, natalDayMinute(h.day, 1).utc);
+  assert.equal((await h.client.getMoment(minute)).utc, natalDayMinute(h.day, 1).utc);
   assert.deepEqual(h.requests, []);
   for (const index of [150, 151, 152]) await h.client.getPoint(index);
   assert.equal(h.reads, before + 1, 'scrubbing does not repeat the opening lookup');

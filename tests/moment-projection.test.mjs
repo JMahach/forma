@@ -8,7 +8,7 @@ import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 import { PLANET_IDS } from '../src/domain/planets.js';
 import * as momentProjection from '../src/domain/moment-projection.js';
 import { NATAL_DAY_PLANETS } from '../shared/day-packets/natal-format.js';
-import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
+import { natalDayFixture } from './fixtures/natal-day.mjs';
 
 const startUtc = '2026-10-05T00:00:00Z';
 const metadata = () => validateLifetimeMetadata({ startUtc, endExclusiveUtc: '2026-10-06T00:00:00Z',
@@ -19,8 +19,8 @@ const packet = () => ({ startUtc, samples: 1440, engine: 'Swiss Ephemeris 2.10.0
 });
 
 // Frozen natal projection before sharing projectLongitudes. Compare each full
-// chart, including calendar segments, independently of the shared projection.
-function previousNatalProjection(day, index, original) {
+// chart data, including calendar segments, independently of the shared projection.
+function previousNatalProjection(day, index) {
   const iso = value => new Date(value).toISOString().replace('.000Z', 'Z');
   const segment = day.segments.findLast(value => value.index <= index);
   const moment = Date.parse(segment.startUtc) + (index - segment.index) * 60000;
@@ -29,8 +29,8 @@ function previousNatalProjection(day, index, original) {
     values.earth = (values.sun + 180) % 360; values.south_node = (values.north_node + 180) % 360;
     return [side, PLANET_IDS.map(planet => ({ planet, ...gatePositionAtLongitude(values[planet]) }))];
   }));
-  return { ...original, source: 'calculated', birthDate: day.date, timezone: day.timezone,
-    utc: iso(moment), birthTime: iso(moment + segment.offsetSeconds * 1000).slice(11, 16), utcOffset: segment.utcOffset, fold: segment.fold,
+  return { source: 'calculated', localDate: day.date, timezone: day.timezone,
+    utc: iso(moment), localTime: iso(moment + segment.offsetSeconds * 1000).slice(11, 16), utcOffset: segment.utcOffset, fold: segment.fold,
     activations, personality: [...new Set(activations.personality.map(entry => entry.gate))].sort((a, b) => a - b),
     design: [...new Set(activations.design.map(entry => entry.gate))].sort((a, b) => a - b),
     designUtc: iso(day.columns[22][index] * 1000), designArcResidualDegrees: day.columns[23][index],
@@ -38,7 +38,6 @@ function previousNatalProjection(day, index, original) {
 }
 
 test('every natal minute and both activation sides match the prior projection across ordinary, historical and folded days', () => {
-  const original = Object.freeze(personalChartFixture());
   const days = [natalDayFixture(), natalDayFixture({ date: '1900-01-01', timezone: 'Europe/Paris', segments: [
     { index: 0, startUtc: '1899-12-31T23:50:39Z', utcOffset: 'UTC+00:09:21', offsetSeconds: 561, fold: 0 },
   ] }), natalDayFixture({ date: '2026-11-01', timezone: 'America/New_York', samples: 1500, segments: [
@@ -49,10 +48,10 @@ test('every natal minute and both activation sides match the prior projection ac
   for (const day of days) {
     for (const side of [0, 11]) day.columns[side].set([-0, 307.62499999999994, 307.625, 359.99999999999994]);
     for (let minute = 0; minute < day.samples; minute++) {
-      assert.deepEqual(chartAtMinute(day, minute, original), previousNatalProjection(day, minute, original), `${day.date}, minute ${minute}`);
+      assert.deepEqual(chartAtMinute(day, minute), previousNatalProjection(day, minute), `${day.date}, minute ${minute}`);
     }
-    const first = chartAtMinute(day, 0, original); day.columns[0][0] = 12.345; day.columns[11][0] = 67.89;
-    assert.deepEqual(chartAtMinute(day, 0, original), previousNatalProjection(day, 0, original));
+    const first = chartAtMinute(day, 0); day.columns[0][0] = 12.345; day.columns[11][0] = 67.89;
+    assert.deepEqual(chartAtMinute(day, 0), previousNatalProjection(day, 0));
     assert.equal(first.activations.personality[0].longitude, 0, 'a later mutable column cannot change an earlier projection');
   }
 });
@@ -79,7 +78,7 @@ test('revisiting an immutable Lifetime moment reuses its chart without changing 
   const first = lifetimeChartAt(meta, firstPoint);
   lifetimeChartAt(meta, secondPoint);
   assert.equal(lifetimeChartAt(meta, firstPoint), first);
-  assert.equal(first.id, 'lifetime-preview');
+  assert.equal(Object.hasOwn(first, 'id'), false, 'view identity does not belong to chart data');
   assert.equal(first.utc, startUtc);
   assert.equal(first.engine, 'Swiss Ephemeris 2.10.03');
   assert.deepEqual(first.activations.personality[0], { planet: 'sun', longitude: 302, gate: 41, line: 1 });
@@ -92,11 +91,11 @@ test('Lifetime retains its supplied exact sample while Day independently project
   assert.equal(point.design.longitudes, sample.design.longitudes);
   assert.deepEqual(yearChart.activations.personality, dayChart.activations.personality);
   assert.deepEqual(yearChart.activations.design, dayChart.activations.design);
-  assert.equal(dayChart.id, 'current-transit');
-  assert.equal(yearChart.id, 'lifetime-preview');
+  assert.equal(Object.hasOwn(dayChart, 'id'), false);
+  assert.equal(Object.hasOwn(yearChart, 'id'), false);
 });
 
-test('Day and Lifetime keep identical chart facts while adapters retain their own identity and provenance', () => {
+test('Day and Lifetime keep identical chart facts while adapters retain their own provenance without view identity', () => {
   const provenance = { engine: 'Swiss Ephemeris test', ephemeris: 'test ephemeris', timezoneDatabase: 'test tzdata',
     nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
   const day = Object.assign(packet(), provenance), minute = 20;
@@ -110,10 +109,12 @@ test('Day and Lifetime keep identical chart facts while adapters retain their ow
   assert.equal(current.utc, '2026-10-05T00:20:00Z');
   assert.equal(current.designUtc, '2026-07-09T00:20:37.125Z');
   assert.equal(current.designArcResidualDegrees, 7.654321e-11);
-  assert.equal(current.createdAt, day.startUtc); assert.equal(lifetime.createdAt, meta.startUtc);
+  for (const chart of [current, lifetime]) for (const key of ['id', 'name', 'note', 'createdAt', 'updatedAt', 'birthDate', 'birthTime']) {
+    assert.equal(Object.hasOwn(chart, key), false, `${key} is not a numeric chart fact`);
+  }
   assert.equal(current.verification, 'Lossless minute-grid Swiss Ephemeris transit; official Human Design reference-chart validation pending.');
   assert.equal(lifetime.verification, 'Exact Swiss Ephemeris longitudes on a ten-minute grid.');
-  assert.deepEqual({ ...lifetime, id: current.id, createdAt: current.createdAt, verification: current.verification }, current);
+  assert.deepEqual({ ...lifetime, verification: current.verification }, current);
   for (const side of ['personality', 'design']) {
     assert.deepEqual(current[side], lifetime[side]); assert.deepEqual(current.activations[side], lifetime.activations[side]);
   }
@@ -130,11 +131,11 @@ test('a standalone lifetime point retains an empty immutable Design and its expl
   assert.deepEqual(chart.design, []); assert.deepEqual(chart.activations.design, []);
   assert.equal(chart.design, chart.activations.design); assert.ok(Object.isFrozen(chart.design));
   const { personality, design, activations, ...details } = chart;
-  assert.deepEqual(details, { id: 'lifetime-preview', name: 'Транзит', source: 'transit', utc: startUtc,
-    birthDate: '2026-10-05', birthTime: '00:00', birthPlace: '', timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0,
-    designUtc: null, cityId: null, city: null, engine: 'Swiss Ephemeris 2.10.03', ephemeris: undefined,
+  assert.deepEqual(details, { source: 'transit', utc: startUtc,
+    localDate: '2026-10-05', localTime: '00:00', timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0,
+    designUtc: null, engine: 'Swiss Ephemeris 2.10.03', ephemeris: undefined,
     timezoneDatabase: undefined, nodeModel: undefined, zodiac: undefined, designArcResidualDegrees: null,
-    updatedAt: startUtc, createdAt: startUtc, note: '', verification: 'Exact Swiss Ephemeris longitudes on a ten-minute grid.' });
+    verification: 'Exact Swiss Ephemeris longitudes on a ten-minute grid.' });
 });
 
 test('the common moment constructor retains exact UTC, frozen projected references and only declared chart metadata', () => {
@@ -146,11 +147,11 @@ test('the common moment constructor retains exact UTC, frozen projected referenc
   assert.equal(typeof momentProjection.projectMomentChart, 'function');
   const chart = momentProjection.projectMomentChart(moment, LIFETIME_PLANETS, metadata);
   const { personality, design, activations, ...details } = chart;
-  assert.deepEqual(details, { id: metadata.id, name: 'Транзит', source: 'transit', utc,
-    birthDate: '2026-10-05', birthTime: '12:34', birthPlace: '', timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0,
-    designUtc: moment.design.designUtc, cityId: null, city: null, engine: metadata.engine, ephemeris: metadata.ephemeris,
+  assert.deepEqual(details, { source: 'transit', utc,
+    localDate: '2026-10-05', localTime: '12:34', timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0,
+    designUtc: moment.design.designUtc, engine: metadata.engine, ephemeris: metadata.ephemeris,
     timezoneDatabase: metadata.timezoneDatabase, nodeModel: metadata.nodeModel, zodiac: metadata.zodiac,
-    designArcResidualDegrees: 0, updatedAt: utc, createdAt: metadata.createdAt, note: '', verification: metadata.verification });
+    designArcResidualDegrees: 0, verification: metadata.verification });
   for (const [side, longitudes] of [['personality', moment.longitudes], ['design', moment.design.longitudes]]) {
     const projected = momentProjection.projectLongitudes(longitudes, LIFETIME_PLANETS);
     assert.equal(chart[side], projected.gates); assert.equal(activations[side], projected.activations);
@@ -163,7 +164,7 @@ test('the common moment constructor retains exact UTC, frozen projected referenc
 test('immutable projections and longitude snapshots cannot be corrupted by their consumers', () => {
   const day = packet(), sample = transitSampleAt(day, 0), chart = transitChartAt(day, 0);
   for (const mutate of [() => { sample.longitudes[0] = 0; }, () => { sample.design.longitudes[0] = 0; },
-    () => { sample.design.utc = ''; }, () => { chart.name = ''; }, () => { chart.activations.design = []; },
+    () => { sample.design.utc = ''; }, () => { chart.localTime = ''; }, () => { chart.activations.design = []; },
     () => { chart.activations.personality[0].gate = 1; }, () => { chart.personality.push(1); }]) assert.throws(mutate, TypeError);
   const year = lifetimeChartAt(metadata(), { index: 0, ...sample });
   assert.throws(() => { year.activations.design[0].longitude = 0; }, TypeError);

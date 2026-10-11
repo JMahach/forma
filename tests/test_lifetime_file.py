@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import hashlib
+import io
 import json
 import shutil
 from pathlib import Path
@@ -114,7 +115,7 @@ class LifetimeFileTests(unittest.TestCase):
                     lifetime.generate_lifetime_file(file, '2024-01-01', '2024-01-02', workers=1)
             self.assertEqual(list(Path(directory).iterdir()), [])
 
-    def test_fingerprint_tracks_optional_ephemeris_and_shared_contract(self):
+    def test_fingerprint_tracks_optional_ephemeris_shared_contract_and_date_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for name in ('server/python', 'shared', 'data/ephe'):
@@ -131,9 +132,28 @@ class LifetimeFileTests(unittest.TestCase):
                     before = changed
                 optional.unlink()
                 self.assertEqual(lifetime.calculation_fingerprint(), original)
-                contract = root / 'shared/day-packets/moment-columns.js'
-                contract.write_bytes(contract.read_bytes() + b'\n')
-                self.assertNotEqual(lifetime.calculation_fingerprint(), original)
+                for name in ('shared/day-packets/moment-columns.js', 'server/python/date_limits.py', 'shared/date-limits.js'):
+                    with self.subTest(name=name):
+                        contract = root / name
+                        payload = contract.read_bytes()
+                        contract.write_bytes(payload + b'\n')
+                        self.assertNotEqual(lifetime.calculation_fingerprint(), original)
+                        contract.write_bytes(payload)
+
+    def test_cli_without_interval_prepares_the_full_supported_range(self):
+        # Intercept only the expensive file preparation; exercise real parsing
+        # and interval validation for omitted CLI options.
+        prepared = []
+        def prepare(file, start, end, workers, progress):
+            first, last = lifetime.interval(start, end)
+            prepared.append((file, first, last, workers))
+            return dict(sampleCount=31_504_320, bytes=6_048_829_440, sha256='a' * 64, generationSeconds=0)
+        with mock.patch.object(sys, 'argv', ['lifetime_file', '--file', 'full.f64le']), \
+             mock.patch.object(lifetime, 'generate_lifetime_file', side_effect=prepare), \
+             mock.patch('sys.stdout', new_callable=io.StringIO):
+            lifetime.main()
+        self.assertEqual(prepared, [('full.f64le', dt.datetime(1801, 1, 1, tzinfo=dt.timezone.utc),
+                                    dt.datetime(2400, 1, 1, tzinfo=dt.timezone.utc), 3)])
 
     def test_only_supported_exact_calendar_intervals_are_accepted(self):
         for start, end in (('1800-12-31', '1801-01-02'), ('2399-12-31', '2400-01-02'),
@@ -143,6 +163,14 @@ class LifetimeFileTests(unittest.TestCase):
                 lifetime.interval(start, end)
         first, last = lifetime.interval('1801-01-01', '2400-01-01')
         self.assertEqual((last-first).days * 144, 31_504_320)
+        for start, end in (('1801-01-01', '1801-01-02'), ('2299-12-31', '2300-01-01'),
+                           ('2399-12-31', '2400-01-01')):
+            with self.subTest(start=start, end=end):
+                first, last = lifetime.interval(start, end)
+                self.assertEqual((last-first).total_seconds(), 86400)
+        with self.assertRaises(ValueError) as error:
+            lifetime.interval('1800-12-31', '1801-01-02')
+        self.assertEqual(str(error.exception), 'Lifetime file interval must be within 1801-01-01 through 2400-01-01 exclusive')
 
 
 if __name__ == '__main__':

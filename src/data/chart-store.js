@@ -1,6 +1,7 @@
 import { readCharts, writeChartChanges, changedChartRecords, deleteChart, STORAGE_KEY } from './storage.js';
 
-// Own only the saved collection; the chart session owns navigation.
+// Own the working library, including drafts kept after a failed save.
+// The private saved snapshot tracks confirmed storage; the chart session owns navigation.
 // A denied storage access still permits a calculated chart to remain in memory.
 export function createChartStore({ getStorage = () => globalThis.localStorage, onStorageError = () => {} } = {}) {
   let charts = [], storageAvailable = true, saveError = null;

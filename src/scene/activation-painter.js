@@ -123,13 +123,13 @@ export function createActivationPainter(root, rendered = null) {
         let column = columns.get(model.source);
         if (!column) {
           const node = elementFrom(group, renderActivationColumn(model));
-          group.insertBefore(node, model.source === 'design' ? group.firstChild : null);
+          group.insertBefore(node, model.columnSide === 'left' ? group.firstChild : null);
           column = captureColumn(node); columns.set(model.source, column);
         }
         if (column.label !== model.label) {
           text(column.heading, model.label);
-          setAttributes(column.heading, { x: activationHeadingX(model.source), 'text-anchor': null });
-          setAttribute(column.rule, 'd', `M ${activationHeadingX(model.source)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${model.headingWidth}`);
+          setAttributes(column.heading, { x: activationHeadingX(model.columnSide), 'text-anchor': null });
+          setAttribute(column.rule, 'd', `M ${activationHeadingX(model.columnSide)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${model.headingWidth}`);
           column.label = model.label;
         }
         if (model.hasMasterControl) {

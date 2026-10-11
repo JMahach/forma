@@ -10,14 +10,15 @@ function harness() {
   session.select(natal.id);
   return { session, natal, set lifetime(value) { lifetime = value; } };
 }
-const moment = utc => ({ id: `moment:${utc}`, source: 'transit', utc, personality: [4], design: [] });
+const moment = utc => ({ source: 'transit', utc, personality: [4], design: [] });
 
 test('controller data and repaint notifications cannot replace the accepted result without publication', () => {
   const h = harness(), accepted = h.session.current;
   h.lifetime = moment('2050-01-01T12:10:00Z');
   h.session.refresh();
   assert.equal(h.session.current, accepted);
-  assert.equal(h.session.current.primary, h.natal);
+  assert.equal(h.session.record, h.natal);
+  assert.equal(h.session.current.primary, h.session.baseChart);
 });
 
 test('pending exact return retains the accepted subject and UTC until its verified event arrives atomically', () => {
@@ -28,7 +29,8 @@ test('pending exact return retains the accepted subject and UTC until its verifi
   const accepted = session.current, request = session.expect('return');
   assert.equal(session.shownSource, 'lifetime');
   assert.equal(session.current, accepted);
-  assert.equal(accepted.primary, natal);
+  assert.equal(session.record, natal);
+  assert.equal(accepted.primary, session.baseChart);
   assert.equal(accepted.utc, first.utc);
   const exact = moment('2050-01-01T12:14:59.123456Z');
   const verified = { id: 'saturn:2050-01-01T12:14:59.123456Z', body: 'saturn', utc: exact.utc };
@@ -44,11 +46,14 @@ test('a canceled owner cannot publish after another mode or another selection ha
   const old = session.expect('lifetime');
   session.expect('natal-day');
   assert.equal(session.publish(old, moment('2050-01-01T12:10:00Z')), false);
-  assert.equal(session.current.primary, natal);
+  assert.equal(session.record, natal);
+  assert.equal(session.current.primary, session.baseChart);
+  const oldBase = session.baseChart;
   const oldDay = session.expect('natal-day');
   session.select('current-transit');
   const selected = session.current;
-  assert.equal(session.publish(oldDay, { ...natal, utc: '1998-08-18T16:00:00Z' }), false);
+  assert.equal(session.record, null);
+  assert.equal(session.publish(oldDay, { ...oldBase, utc: '1998-08-18T16:00:00Z' }), false);
   assert.equal(session.current, selected);
 });
 
@@ -60,7 +65,8 @@ test('one lifetime owner accepts intermediate ready progress and keeps reference
   session.publish(owner, first);
   assert.equal(session.current, accepted);
   assert.equal(session.publish(owner, next), true);
-  assert.equal(session.current.primary, natal);
+  assert.equal(session.record, natal);
+  assert.equal(session.current.primary, session.baseChart);
   assert.equal(session.current.secondary, next);
 });
 
@@ -68,7 +74,7 @@ test('one lifetime owner accepts intermediate ready progress and keeps reference
 test('changing the accepted source notifies captions while retaining an unchanged composition', () => {
   const chart = moment('2026-10-09T12:01:00Z'), changes = [];
   let session;
-  session = createChartSession({ store: { get: () => chart, has: () => true },
+  session = createChartSession({ store: { get: () => null, has: () => false },
     onChange: () => changes.push({ composition: session.current, source: session.shownSource }) });
   session.publish('transit', chart);
   const accepted = session.current;

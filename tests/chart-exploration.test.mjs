@@ -1,21 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartSession } from '../src/state/chart-session.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { createViewSession } from '../src/state/view-session.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { createNatalDayExplorer } from '../src/state/natal-day.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const event = { id: 'saturn:2050-01-01T12:00:00Z', body: 'saturn', utc: '2050-01-01T12:00:00Z', cycle: 1 };
-const moment = utc => ({ id: `moment:${utc}`, utc, source: 'transit', personality: [4], design: [63] });
+const moment = utc => ({ utc, source: 'transit', personality: [4], design: [63] });
 
 test('real lifetime state follows live time and closes on unsupported navigation without a controls view', async () => {
-  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const manual = { id: 'manual', source: 'manual', personality: [1], design: [8] };
+  const legacyTransit = Object.freeze({ id: 'legacy-transit', name: 'Saved transit', source: 'transit', utc: '2020-01-01T00:00:00Z',
+    personality: natal.personality, design: [], activations: { personality: natal.activations.personality, design: [] } });
+  const records = [natal, manual, legacyTransit];
   const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
     stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] };
   let exploration, lifetime;
@@ -25,7 +29,7 @@ test('real lifetime state follows live time and closes on unsupported navigation
   const transit = { current, state: { current, wanted: false, status: 'ready', live: true },
     setWanted(value) { this.state.wanted = value; }, goNow() {} };
   const session = createChartSession({
-    store: { get: id => [natal, manual].find(chart => chart.id === id), has: id => [natal.id, manual.id].includes(id) },
+    store: { get: id => records.find(record => record.id === id), has: id => records.some(record => record.id === id) },
     getLifetime: () => lifetime, getReturns: () => returns, getNatalDay: () => natalDay, getTransit: () => transit,
     onSelect: () => exploration.selected(),
   });
@@ -38,7 +42,7 @@ test('real lifetime state follows live time and closes on unsupported navigation
   session.select(natal.id);
   assert.equal(await exploration.toggleReturns(), true);
   assert.equal(lifetime.state.opened, true);
-  assert.equal(session.current.primary, natal);
+  assert.equal(session.record, natal); assert.equal(session.current.primary, session.baseChart);
   assert.equal(exploration.followNow(), true);
   assert.equal(session.current.secondary, current);
   assert.equal(lifetime.current.utc, current.utc);
@@ -46,12 +50,19 @@ test('real lifetime state follows live time and closes on unsupported navigation
   await exploration.select(manual.id);
   assert.equal(lifetime.state.opened, false);
   assert.equal(returns.available, false);
-  assert.equal(session.current.primary, manual);
+  assert.equal(session.record, manual); assert.equal(session.current.primary, session.baseChart);
+  assert.deepEqual(session.baseChart.personality, [1]); assert.deepEqual(session.baseChart.design, [8]);
   assert.equal(session.current.secondary, null);
+  await exploration.select(legacyTransit.id);
+  assert.equal(session.record, legacyTransit); assert.equal(session.current.primary, session.baseChart);
+  assert.equal(session.current.kind, 'single'); assert.equal(session.current.secondary, null);
+  assert.deepEqual(session.current.primary.design, []);
+  assert.equal(returns.available, false); assert.equal(natalDay.state.available, false);
+  assert.equal(lifetime.state.opened, false);
 });
 
 function harness() {
-  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...natal, id: 'second', name: 'Вторая карта' };
   let returns, exploration;
   const jobs = [];
@@ -96,8 +107,10 @@ test('late exact data from the previous person is rejected even after the same r
   h.jobs[0]({ chart: moment(event.utc), event });
   assert.equal(await first, false);
   assert.equal(h.session.current, shown);
-  assert.equal(shown.primary, h.second);
-  assert.equal(shown.secondary, accepted);
+  assert.equal(h.session.record, h.second);
+  assert.equal(shown.primary, h.session.baseChart);
+  assert.equal(shown.secondary, h.returns.current);
+  assert.deepEqual(shown.secondary, extractChartData(accepted));
 });
 
 test('covered global Day keeps its minute owner active and lifetime explicitly suspends that owner', () => {
@@ -159,7 +172,7 @@ test('turning off a still-loading global rail retains the already accepted trans
 });
 
 for (const explicitPreview of [undefined, true]) test(`real restoration at birth preserves ${explicitPreview ? 'explicit sampled lifetime' : 'legacy exact original'} before the first publication`, async () => {
-  const natal = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:56.789Z' };
+  const natal = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:56.789Z' };
   const metadata = { startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] };
   const saved = { selectedId: natal.id, natalDay: { opened: false },
     lifetime: { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, index: 75,
@@ -195,7 +208,7 @@ for (const explicitPreview of [undefined, true]) test(`real restoration at birth
     assert.equal(session.current.utc, '2026-09-24T12:40:00Z');
   } else {
     assert.deepEqual(points, []); assert.ok(frames.every(utc => utc === natal.utc));
-    assert.equal(session.current.primary, natal); assert.equal(session.current.secondary, null);
+    assert.equal(session.current.primary, session.baseChart); assert.equal(session.current.secondary, null);
     assert.equal(session.current.utc, natal.utc);
   }
 });
@@ -203,7 +216,7 @@ for (const explicitPreview of [undefined, true]) test(`real restoration at birth
 // Keep the real chart and return owners; the deferred lifetime port controls only
 // when the lazy timeline is available, so navigation races remain observable.
 function returnListHarness({ active = false, restoreResult = true } = {}) {
-  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...natal, id: 'second-list-chart', name: 'Вторая карта' };
   let returns, exploration, lifetime = null, finishLoad, loads = 0, dayCloses = 0;
   const restorations = [];
@@ -347,7 +360,7 @@ test('entering returns from a birthday-minute preview restores the natal chart b
   assert.equal(h.session.current.primary, minute);
   const opening = h.exploration.openReturnsList();
   assert.equal(h.session.owner, 'original', 'the closed Day tool cannot keep ownership of the life timeline');
-  assert.equal(h.session.current.primary, h.natal);
+  assert.equal(h.session.current.primary, h.session.baseChart);
   assert.equal(h.session.current.secondary, null);
   assert.equal(h.natalDay.state.opened, false);
   h.finishLoad(); await opening;

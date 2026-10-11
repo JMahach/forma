@@ -1,4 +1,4 @@
-import { calendarTimelineTicks } from '../domain/timeline-ticks.js';
+import { calendarTimelineTicks } from '../ui/timeline-ticks.js';
 import { lifeDecadeMarks } from '../domain/personal-age.js';
 
 // One owner replaces a rail's decorations and retains its current mode. Changing

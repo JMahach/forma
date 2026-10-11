@@ -32,12 +32,12 @@ export function projectMomentChart(moment, planets, metadata) {
   const personality = projectLongitudes(moment.longitudes, planets);
   const design = moment.design ? projectLongitudes(moment.design.longitudes, planets) : null;
   const utc = moment.utc;
-  return Object.freeze({ id: metadata.id, name: 'Транзит', source: 'transit',
+  return Object.freeze({ source: 'transit',
     personality: personality.gates, design: design?.gates || empty,
     activations: Object.freeze({ personality: personality.activations, design: design?.activations || empty }),
-    utc, birthDate: utc.slice(0, 10), birthTime: utc.slice(11, 16),
-    birthPlace: '', timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0, designUtc: moment.design?.designUtc || null, cityId: null, city: null,
+    utc, localDate: utc.slice(0, 10), localTime: utc.slice(11, 16),
+    timezone: 'UTC', utcOffset: 'UTC+00:00', fold: 0, designUtc: moment.design?.designUtc || null,
     engine: metadata.engine, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
     nodeModel: metadata.nodeModel, zodiac: metadata.zodiac, designArcResidualDegrees: moment.design?.designArcResidualDegrees ?? null,
-    updatedAt: utc, createdAt: metadata.createdAt, note: '', verification: metadata.verification });
+    verification: metadata.verification });
 }

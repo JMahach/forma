@@ -79,7 +79,7 @@ function headingHarness(options = {}) {
     node('variableRule', { d: 'M 437 88 H 582' }),
     node('popover', { 'data-anchor': 'personality-sun', open: 'true' }),
   ];
-  const column = node('column', { 'data-source': 'personality', fill: '#202020' });
+  const column = node('column', { 'data-source': 'personality', 'data-column-side': 'right', fill: '#202020' });
   column.getCTM = () => model.camera.multiply(model.columnLocal);
   column.querySelector = selector => {
     queries.push(['column', selector]);
@@ -95,7 +95,7 @@ function headingHarness(options = {}) {
   const root = {
     querySelector(selector) {
       queries.push(['root', selector]);
-      assert.equal(selector, '.activation-column[data-source="personality"]', 'the left column is never selected');
+      assert.equal(selector, '.activation-column[data-source="personality"]', 'only the ordinary Personality heading is measured');
       return model.missing.includes('column') ? null : column;
     },
   };

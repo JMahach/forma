@@ -1,7 +1,7 @@
 import { CENTERS, GATES } from './geometry/chart-geometry.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
 import { paintOrder } from './geometry/drawing-geometry.js';
-import { PALETTE, CHANNEL_WIDTH, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
+import { PALETTE, CHANNEL_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
   integrationOutlineMask, integrationChannels, armPaintPoints } from './bodygraph-paint.js';
 import { isSelectionPressed } from './render-state.js';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.js';
@@ -51,6 +51,7 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
   const focus = integrationChannels.map((channel, index) => ({ channel,
     target: byType('channel', channel.id), halo: focusHalos[index] }));
   const defs = root.querySelector('defs');
+  const dualStops = [...defs.querySelector('linearGradient').querySelectorAll('stop')];
   const selectionMaskSignature = paint => JSON.stringify([paint.selectionPath, paint.integrationSelected,
     [...paint.highlightedArms], paint.stemHighlighted, paint.connectedIntegrationGates, paint.activeIntegrationParts]);
   const focusMaskSignature = paint => JSON.stringify(paint.activeIntegrationParts);
@@ -72,6 +73,7 @@ export function createBodygraphPainter(root, initialState = null, initialOptions
       const key = coreKey(state, options);
       if (key === previous) return false;
       previous = key;
+      dualStops.forEach((stop, lane) => setAttribute(stop, 'stop-color', activationLaneColor(state, lane)));
       const { definedChannels, relatedChannels, selectedChannels, prefix } = state;
       for (const item of channels) {
         const { channel, node, halo } = item, paint = channelPaint(channel, state, options);

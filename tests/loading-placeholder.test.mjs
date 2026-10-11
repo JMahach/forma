@@ -32,9 +32,9 @@ test('loading centers and both columns occupy the exact live SVG anchors, includ
   assert.deepEqual(loading.querySelectorAll('.loading-centers path').map(node => node.getAttribute('d')),
     live.querySelectorAll('.bg-center-shape').map(node => node.getAttribute('d')));
   const columns = loading.querySelectorAll('.activation-column');
-  assert.deepEqual(columns.map(node => node.dataset.source), ['design', 'personality']);
+  assert.deepEqual(columns.map(node => node.dataset.columnSide), ['left', 'right']);
   for (const column of columns) {
-    const actual = live.querySelector(`.activation-column[data-source="${column.dataset.source}"]`);
+    const actual = live.querySelector(`.activation-column[data-column-side="${column.dataset.columnSide}"]`);
     assert.equal(column.querySelector('.activation-block-content').getAttribute('transform'), actual.querySelector('.activation-block-content').getAttribute('transform'));
     const rows = column.querySelectorAll('.loading-activation-row'), actualRows = actual.querySelectorAll('.activation-row');
     assert.equal(rows.length, PLANETS.length);
@@ -51,13 +51,13 @@ test('loading centers and both columns occupy the exact live SVG anchors, includ
   assert.doesNotMatch(renderLoadingPlaceholder(), /data-type=|data-activation=|tabindex=|role=|<script|<text/);
 });
 
-test('loading and live columns share one resting-gap CSS rule on the same source wrappers', () => {
+test('loading and live columns share one resting-gap CSS rule on the same side wrappers', () => {
   assert.match(styles, /#bodygraph \.bodygraph-drawing, #chartLoadingArt\s*\{\s*--activation-rest-gap:\s*calc\(14px \* \(1 - var\(--mandala-reveal, 0\)\)\)/);
-  for (const source of ['design', 'personality']) {
-    const selector = `:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-source='${source}']`;
+  for (const columnSide of ['left', 'right']) {
+    const selector = `:is(#bodygraph, #chartLoadingArt) :is(.activation-column, .variable-block)[data-column-side='${columnSide}']`;
     const rule = styles.slice(styles.indexOf(selector)).split('}')[0];
-    assert.ok(styles.includes(selector), `${source} applies its translation to loading and live columns together`);
-    assert.ok(rule.includes(source === 'design' ? 'translate: calc(-1 * var(--activation-rest-gap)) 0' : 'translate: var(--activation-rest-gap) 0'));
+    assert.ok(styles.includes(selector), `${columnSide} applies its translation to loading and live columns together`);
+    assert.ok(rule.includes(columnSide === 'left' ? 'translate: calc(-1 * var(--activation-rest-gap)) 0' : 'translate: var(--activation-rest-gap) 0'));
   }
 });
 

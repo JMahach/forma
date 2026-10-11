@@ -20,12 +20,14 @@ import time
 
 if __package__:
     from . import astronomy as astro
+    from .date_limits import SUPPORTED_START, SUPPORTED_END_EXCLUSIVE
 else:
     import astronomy as astro
+    from date_limits import SUPPORTED_START, SUPPORTED_END_EXCLUSIVE
 
 ROOT = Path(__file__).resolve().parents[2]
 UTC = dt.timezone.utc
-MIN_DATE, MAX_DATE = dt.date(1801, 1, 1), dt.date(2400, 1, 1)
+MIN_DATE, MAX_DATE = SUPPORTED_START.date(), SUPPORTED_END_EXCLUSIVE.date()
 CHUNK_DAYS = 7
 
 
@@ -72,7 +74,7 @@ def lifetime_format():
 def interval(start, end):
     first, last = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
     if first.isoformat() != start or last.isoformat() != end or not MIN_DATE <= first < last <= MAX_DATE:
-        raise ValueError('Lifetime file interval must be within 1801-01-01 through 2400-01-01 exclusive')
+        raise ValueError(f'Lifetime file interval must be within {MIN_DATE} through {MAX_DATE} exclusive')
     return dt.datetime.combine(first, dt.time(), UTC), dt.datetime.combine(last, dt.time(), UTC)
 
 
@@ -104,7 +106,7 @@ def publish_new(temporary, destination):
     os.unlink(temporary)
 
 
-def generate_lifetime_file(file, start='1801-01-01', end='2400-01-01', workers=3, progress=None):
+def generate_lifetime_file(file, start=MIN_DATE.isoformat(), end=MAX_DATE.isoformat(), workers=3, progress=None):
     destination = Path(file)
     if destination.suffix != '.f64le':
         raise ValueError('Lifetime file must end in .f64le')
@@ -205,8 +207,8 @@ def generate_lifetime_file(file, start='1801-01-01', end='2400-01-01', workers=3
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--file', required=True)
-    parser.add_argument('--start', default='1801-01-01')
-    parser.add_argument('--end', default='2400-01-01')
+    parser.add_argument('--start', default=MIN_DATE.isoformat())
+    parser.add_argument('--end', default=MAX_DATE.isoformat())
     parser.add_argument('--workers', type=int, default=3)
     args = parser.parse_args()
     last_progress = [0.0]

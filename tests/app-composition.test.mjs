@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
@@ -13,7 +14,7 @@ import { attachKnowledgeEntry } from '../src/views/knowledge-entry.js';
 import { chartCaption } from '../src/views/chart-display.js';
 import { ageText, completedAge } from '../src/domain/personal-age.js';
 import { returnsVisibleWindow } from '../src/domain/returns-window.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createStudioLayout } from './fixtures/studio-layout.mjs';
@@ -202,7 +203,7 @@ test('lazy Lifetime uses a separate controls view and leaves the real controller
 });
 
 test('explicit library and Transit navigation return a zoomed and panned camera Home before async work completes', async () => {
-  const first = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const first = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...first, id: 'second' };
   const h = harness({ charts: [first, second] });
   await tick();
@@ -210,7 +211,7 @@ test('explicit library and Transit navigation return a zoomed and panned camera 
     h.camera.zoom(2); h.camera.pan(-40, 25);
     assert.notDeepEqual(h.camera.getView(), h.camera.getFittedView());
     h.select(id);
-    assert.equal(h.shown.primary.id, id);
+    assert.equal(h.shown.id, id);
     assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'navigation resets synchronously, including reselection');
     h.camera.zoom(1.5); h.camera.pan(-30, 20);
     const exploring = h.camera.getView();
@@ -220,23 +221,23 @@ test('explicit library and Transit navigation return a zoomed and panned camera 
   for (let click = 0; click < 2; click++) {
     h.camera.zoom(2); h.camera.pan(-40, 25);
     await h.element('nowButton').click();
-    assert.equal(h.shown.primary.id, 'current-transit');
+    assert.equal(h.shown.id, 'current-transit');
     assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'entering or reselecting Transit uses Home');
   }
 });
 
 test('saving the current chart preserves the camera while opening a different saved chart uses Home', async t => {
-  const first = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const first = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const other = { ...first, id: 'other' };
   const manual = { id: 'manual', name: 'Manual chart', source: 'manual', personality: [1, 41], design: [8, 31] };
   for (const { name, selected, saved, options, home } of [
     { name: 'create a calculated chart', selected: first.id, saved: { ...first, id: 'new' }, home: true },
     { name: 'create a manual chart', selected: first.id, saved: { ...manual, id: 'new-manual' }, home: true },
-    { name: 'recalculate the selected chart', selected: first.id, saved: chartAtMinute(natalDayFixture(), 755, first), home: false },
+    { name: 'recalculate the selected chart', selected: first.id, saved: libraryRecordAtMinute(natalDayFixture(), 755, first), home: false },
     { name: 'save the selected chart metadata', selected: first.id, saved: { ...first, name: 'Renamed chart' }, options: { metadataOnly: true }, home: false },
     { name: 'save the selected manual chart', selected: manual.id, saved: { ...manual, personality: [2, 41] }, home: false },
     { name: 'change the selected chart to manual', selected: first.id, saved: { ...manual, id: first.id }, home: false },
-    { name: 'recalculate another chart', selected: first.id, saved: chartAtMinute(natalDayFixture(), 755, other), home: true },
+    { name: 'recalculate another chart', selected: first.id, saved: libraryRecordAtMinute(natalDayFixture(), 755, other), home: true },
     { name: 'save another chart metadata', selected: first.id, saved: { ...other, name: 'Renamed chart' }, options: { metadataOnly: true }, home: true },
   ]) await t.test(name, async () => {
     const h = harness({ charts: [first, other, manual] });
@@ -245,7 +246,8 @@ test('saving the current chart preserves the camera while opening a different sa
     const exploring = h.camera.getView();
     assert.notDeepEqual(exploring, h.camera.getFittedView());
     h.saveChart(saved, options);
-    assert.deepEqual(h.shown.primary, saved, 'the saved content must replace the old chart even when its ID is unchanged');
+    assert.deepEqual(h.shown.primary, extractChartData(saved), 'the saved numbers must replace the old data even when the record ID is unchanged');
+    assert.equal(h.shown.primaryLabel, saved.name);
     assert.deepEqual(h.camera.getView(), home ? h.camera.getFittedView() : exploring,
       home ? 'opening another saved chart resets immediately' : 'updating the current chart preserves the camera');
     h.camera.zoom(1.2); h.camera.pan(-10, 15);
@@ -256,7 +258,7 @@ test('saving the current chart preserves the camera while opening a different sa
 });
 
 test('deleting the selected chart uses Home for the automatically opened fallback', async t => {
-  const selected = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const selected = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const remaining = { ...selected, id: 'remaining' };
   for (const { name, charts, fallback } of [
     { name: 'another saved chart remains', charts: [selected, remaining], fallback: 'remaining' },
@@ -269,7 +271,7 @@ test('deleting the selected chart uses Home for the automatically opened fallbac
     await h.removeChart(selected.id);
     assert.equal(h.element('deleteChartError').textContent, '');
     assert.equal(h.element('deleteChartDialog').open, false);
-    assert.equal(h.shown.primary.id, fallback);
+    assert.equal(h.shown.id, fallback);
     assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'opening the fallback resets the camera');
     h.camera.zoom(1.2); h.camera.pan(-10, 15);
     const afterRemoval = h.camera.getView();
@@ -279,7 +281,7 @@ test('deleting the selected chart uses Home for the automatically opened fallbac
 });
 
 test('deleting an unselected chart keeps the current chart and camera', async () => {
-  const selected = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const selected = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const other = { ...selected, id: 'other' };
   const h = harness({ charts: [selected, other] });
   await tick(); h.select(selected.id); await tick();
@@ -292,7 +294,7 @@ test('deleting an unselected chart keeps the current chart and camera', async ()
 });
 
 test('clock updates, day and lifetime scrubs, and exact returns preserve the explored camera', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   const h = harness({ charts: [chart], returnEvents: [event], getReturn: async () => ({ event, chart: exact }),
@@ -317,13 +319,13 @@ test('clock updates, day and lifetime scrubs, and exact returns preserve the exp
   assert.equal(h.shown.kind, 'transit');
   assert.deepEqual(h.camera.getView(), exploring);
   await h.returns.selectEvent(event.id);
-  assert.equal(h.shown.kind, 'return'); assert.equal(h.shown.secondary, exact);
+  assert.equal(h.shown.kind, 'return'); assert.equal(h.shown.secondary, h.returns.current);
   assert.deepEqual(h.camera.getView(), exploring);
 });
 
 test('the natal caption keeps todays age across day, life and closed rails while events keep their moment', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-09-23T23:59:59Z') });
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await h.select(chart.id);
   assert.match(h.element('chartSubtitle').textContent, /12:34.*1\u00a0год$/);
@@ -415,7 +417,7 @@ test('two real toolbar clicks cancel cold Lifetime without reopening it after mo
 });
 
 test('a pending toolbar click cannot switch a newly selected personal card from Day to Returns', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick();
   await h.element('lifetimeToggle').click();
@@ -438,7 +440,7 @@ test('failed Lifetime import keeps the reload action visible after its opening i
 });
 
 test('the personal rail endpoint uses the shared completed-age wording at a truncated lifetime boundary', async () => {
-  const chart = chartAtMinute(natalDayFixture({ date: '2378-01-01' }), 0,
+  const chart = libraryRecordAtMinute(natalDayFixture({ date: '2378-01-01' }), 0,
     personalChartFixture({ birthDate: '2378-01-01', utc: '2378-01-01T00:00:00Z' }));
   const h = harness({ charts: [chart] });
   await tick(); await h.element('lifetimeToggle').click();
@@ -450,7 +452,7 @@ test('the personal rail endpoint uses the shared completed-age wording at a trun
 
 
 test('a real day publication reaches the scene once without repeating navigation or changing the accepted source during reads', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick();
   const count = h.renders;
@@ -465,7 +467,7 @@ test('a real day publication reaches the scene once without repeating navigation
 });
 
 test('entering personal Lifetime closes the Day controller only once', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick();
   let closes = 0;
@@ -476,12 +478,12 @@ test('entering personal Lifetime closes the Day controller only once', async () 
   assert.equal(h.lifetime.state.opened, true);
   assert.equal(h.lifetime.state.mode, 'lifetime');
   assert.equal(h.natalDay.state.opened, false);
-  assert.equal(h.shown.primary, chart);
+  assert.deepEqual(h.shown.primary, extractChartData(chart));
   assert.equal(closes, 1, 'the command closes Day; a loading notification must not repeat that command');
 });
 
 test('metadata editing retains a personal minute and updates future scrubs without another Day request or chart selection', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] });
   await tick(); h.select(chart.id); await tick(); h.natalDay.scrub(800);
   const selectedUtc = h.shown.utc, requests = h.dayRequests, selections = h.chartSelections;
@@ -490,17 +492,17 @@ test('metadata editing retains a personal minute and updates future scrubs witho
   assert.equal(h.shown.utc, selectedUtc);
   const updated = { ...chart, name: 'Обновлённое имя', note: 'Новая заметка' };
   h.saveMetadata(updated); await tick();
-  assert.equal(h.shown.utc, selectedUtc); assert.equal(h.shown.primary.name, updated.name);
-  assert.equal(h.shown.primary.note, updated.note); assert.equal(h.natalDay.state.index, 800);
+  assert.equal(h.shown.utc, selectedUtc); assert.equal(h.shown.primaryLabel, updated.name);
+  assert.equal(h.natalDay.state.original.note, updated.note); assert.equal(h.natalDay.state.index, 800);
   assert.equal(h.natalDay.state.exactOriginal, false);
   assert.equal(h.dayRequests, requests); assert.equal(h.chartSelections, selections, 'metadata never enters graph navigation, which clears selection/camera context');
   h.natalDay.scrub(810);
-  assert.equal(h.shown.primary.name, updated.name); assert.equal(h.shown.primary.note, updated.note);
-  h.natalDay.reset(); assert.equal(h.shown.primary, updated);
+  assert.equal(h.shown.primaryLabel, updated.name); assert.equal(h.natalDay.state.original.note, updated.note);
+  h.natalDay.reset(); assert.deepEqual(h.shown.primary, extractChartData(updated));
 });
 
 test('renaming keeps the confirmed exact return and list filters while updating its natal source', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   let returnRequests = 0;
@@ -515,15 +517,15 @@ test('renaming keeps the confirmed exact return and list filters while updating 
   assert.equal(h.shown.kind, 'return'); assert.equal(h.shown.utc, '2050-01-01T12:00:29.432Z');
   assert.match(h.element('chartTitle').textContent, /^Новое имя · Возврат Сатурна/);
   assert.equal(h.element('chartSubtitle').textContent, '1 января 2050 г. · 12:00:29 · UTC · 23\u00a0года');
-  assert.equal(h.shown.primary, updated); assert.equal(h.shown.secondary, exact); assert.equal(h.shown.event, event);
-  assert.equal(h.returns.state.selectedEvent, event); assert.equal(h.returns.current, exact);
+  assert.deepEqual(h.shown.primary, extractChartData(updated)); assert.equal(h.shown.secondary, h.returns.current); assert.equal(h.shown.event, event);
+  assert.equal(h.returns.state.selectedEvent, event); assert.deepEqual(h.returns.current, extractChartData(exact));
   assert.equal(h.returns.state.natal, updated); assert.deepEqual(h.returns.state.bodies, ['venus']);
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(event.utc));
   assert.equal(h.dayRequests, requests); assert.equal(returnRequests, 1); assert.equal(h.chartSelections, selections);
 });
 
 test('opening the editor still cancels a pending return and its late answer cannot overwrite renamed birth', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   let complete, signal;
   const h = harness({ charts: [chart], returnEvents: [event], getReturn: (_query, requestSignal) => {
@@ -538,7 +540,7 @@ test('opening the editor still cancels a pending return and its late answer cann
   assert.equal(signal.aborted, true);
   const updated = { ...chart, name: 'Новое имя', note: 'Новая заметка' }; h.saveMetadata(updated);
   complete({ event, chart: { ...chart, utc: event.utc } }); assert.equal(await pending, false);
-  assert.equal(h.shown.primary, updated); assert.equal(h.shown.secondary, null);
+  assert.deepEqual(h.shown.primary, extractChartData(updated)); assert.equal(h.shown.secondary, null);
   assert.equal(h.element('chartTitle').textContent, 'Новое имя');
   assert.equal(h.element('chartSubtitle').textContent, previousCaption, 'late return metadata cannot replace the accepted birth caption');
   assert.equal(h.returns.state.loadingChart, false); assert.equal(h.returns.state.selectedEvent, null);
@@ -547,7 +549,7 @@ test('opening the editor still cancels a pending return and its late answer cann
 
 test('pending personal life data retains todays natal age until the new moment is actually shown', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-10-08T12:00:00Z') });
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   let resolve;
   const response = new Promise(done => { resolve = done; });
   const h = harness({ charts: [chart], getPoint: async index => {
@@ -573,7 +575,7 @@ test('pending personal life data retains todays natal age until the new moment i
 });
 
 test('year endpoint captions also use UTC when a saved timezone is obsolete', async () => {
-  const chart = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), timezone: 'Obsolete/Zone' };
+  const chart = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()), timezone: 'Obsolete/Zone' };
   const h = harness({ charts: [chart] });
   await tick(); await h.element('lifetimeToggle').click();
   h.select(chart.id); await h.element('natalDayToggle').click();
@@ -595,7 +597,7 @@ test('timeline entry stays available without a server HTML availability flag', a
 
 
 test('opening a personal timeline before its file is ready retains a restorable life range and the natal chart', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart], metaError: Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' }) });
   await h.select(chart.id);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
@@ -603,13 +605,13 @@ test('opening a personal timeline before its file is ready retains a restorable 
   assert.equal(h.lifetime.state.mode, 'lifetime');
   assert.equal(h.lifetime.state.fromDate, '2026-09-24');
   assert.equal(h.lifetime.state.toDate, '2126-09-24');
-  assert.equal(h.shown.primary, chart);
+  assert.deepEqual(h.shown.primary, extractChartData(chart));
   assert.equal(h.natalDay.state.opened, false);
 });
 
 
 test('opening chronicle preserves scene presentation while a real resize can change mandala columns', async () => {
-  const transit = { ...chartAtMinute(natalDayFixture(), 754, personalChartFixture()), id: 'current-transit', source: 'transit' };
+  const transit = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()), id: 'current-transit', source: 'transit' };
   const h = harness({ charts: [transit], studioSize: { width: 550, height: 590 } });
   await tick(); await h.element('mandalaSwitch').click();
   const shown = h.shown, insets = { ...h.layout.insets() };
@@ -637,9 +639,9 @@ test('opening chronicle preserves scene presentation while a real resize can cha
 
 
 test('the personal timeline and natal-day tool share one prepared-day client', async () => {
-  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] }); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   assert.equal(h.lifetimeStateOptions.natalDayClient, h.natalClient);
-  assert.equal(h.lifetimeStateOptions.getPersonalChart(), chart);
+  assert.equal(h.lifetimeStateOptions.getPersonalRecord(), chart);
 });

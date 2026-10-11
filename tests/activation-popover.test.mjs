@@ -34,35 +34,35 @@ test('popover placement stays inside large and phone viewports at every edge and
   ]) {
     const xs = [viewport.left + 2, viewport.left + (viewport.width - 68) / 2, viewport.left + viewport.width - 70];
     const ys = [viewport.top + 2, viewport.top + (viewport.height - 40) / 2, viewport.top + viewport.height - 42];
-    for (const x of xs) for (const y of ys) for (const source of ['personality', 'design']) {
+    for (const x of xs) for (const y of ys) for (const columnSide of ['right', 'left']) {
       const anchor = rectAt(x, y);
       const before = JSON.stringify({ anchor, viewport, panelSize });
-      assertContained(placeActivationPopover(anchor, panelSize, viewport, source), panelSize, viewport);
+      assertContained(placeActivationPopover(anchor, panelSize, viewport, columnSide), panelSize, viewport);
       assert.equal(JSON.stringify({ anchor, viewport, panelSize }), before, 'placement leaves its inputs unchanged');
     }
   }
 });
 
-test('placement prefers the source-facing side, flips at a horizontal edge, and uses above or below on phones', () => {
+test('placement prefers the column-facing side, flips at a horizontal edge, and uses above or below on phones', () => {
   const desktop = { left: 0, top: 0, width: 1440, height: 900 };
   const centered = rectAt(680, 400);
-  const design = placeActivationPopover(centered, panelSize, desktop, 'design');
-  const personality = placeActivationPopover(centered, panelSize, desktop, 'personality');
-  assert.equal(design.side, 'left');
-  assert.equal(centered.left - (design.left + panelSize.width), 14, 'design has a 14px gap');
-  assert.equal(personality.side, 'right');
-  assert.equal(personality.left - centered.right, 12, 'personality keeps its 12px gap');
+  const fromLeft = placeActivationPopover(centered, panelSize, desktop, 'left');
+  const fromRight = placeActivationPopover(centered, panelSize, desktop, 'right');
+  assert.equal(fromLeft.side, 'left');
+  assert.equal(centered.left - (fromLeft.left + panelSize.width), 14, 'the left column has a 14px gap');
+  assert.equal(fromRight.side, 'right');
+  assert.equal(fromRight.left - centered.right, 12, 'the right column keeps its 12px gap');
   const left = rectAt(12, 400), right = rectAt(1360, 400);
-  assert.equal(placeActivationPopover(left, panelSize, desktop, 'design').side, 'right');
-  assert.equal(placeActivationPopover(right, panelSize, desktop, 'personality').side, 'left');
+  assert.equal(placeActivationPopover(left, panelSize, desktop, 'left').side, 'right');
+  assert.equal(placeActivationPopover(right, panelSize, desktop, 'right').side, 'left');
   const phone = { left: 0, top: 0, width: 390, height: 844 };
-  for (const source of ['personality', 'design']) {
-    const below = placeActivationPopover(rectAt(161, 100), panelSize, phone, source);
-    const above = placeActivationPopover(rectAt(161, 770), panelSize, phone, source);
+  for (const columnSide of ['right', 'left']) {
+    const below = placeActivationPopover(rectAt(161, 100), panelSize, phone, columnSide);
+    const above = placeActivationPopover(rectAt(161, 770), panelSize, phone, columnSide);
     assert.equal(below.side, 'bottom');
-    assert.equal(below.top, source === 'design' ? 154 : 152);
+    assert.equal(below.top, columnSide === 'left' ? 154 : 152);
     assert.equal(above.side, 'top');
-    assert.equal(above.top + panelSize.height, source === 'design' ? 756 : 758);
+    assert.equal(above.top + panelSize.height, columnSide === 'left' ? 756 : 758);
   }
 });
 
@@ -143,14 +143,17 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
   };
   function addAnchor(id, rect = rectAt(660, 320)) {
     const attributes = new Map();
+    const [prefix] = id.split('-');
+    const column = { dataset: { columnSide: { design: 'left', personality: 'right', natal: 'left', cycle: 'right' }[prefix],
+      ...(['natal', 'cycle'].includes(prefix) ? { cycleOrigin: prefix } : {}) } };
     const anchor = {
-      dataset: { activation: id }, rect,
+      dataset: { activation: id }, rect, column,
       getBoundingClientRect() { measurements.push(id); return this.rect; },
       setAttribute(name, value) { attributes.set(name, String(value)); },
       getAttribute(name) { return attributes.get(name) ?? null; },
       removeAttribute(name) { attributes.delete(name); },
       focus(options) { focusCalls.push({ anchor: this, options }); },
-      closest(selector) { return selector === '[data-activation]' ? this : null; },
+      closest(selector) { return selector === '[data-activation]' ? this : selector === '.activation-column' ? column : null; },
     };
     anchors.set(id, anchor);
     return anchor;
@@ -264,6 +267,12 @@ test('personality keeps positioning 12px right of its number even when a planet 
   assert.equal(number.getAttribute('aria-describedby'), harness.panel.id);
   assert.equal(planet.getAttribute('aria-describedby'), null);
   assert.ok(!harness.queries.some(query => query.includes('personality-mercury-planet')), 'personality does not resolve the symbol as a positioning reference');
+  const content = harness.panel.innerHTML;
+  number.column.dataset.columnSide = 'left';
+  harness.controller.reposition();
+  assert.equal(harness.panel.dataset.side, 'left');
+  assert.equal(panelPosition(harness.panel).left + panelSize.width, planet.rect.left - 14, 'the ordinary left slot uses the matching planet independently of its semantic source');
+  assert.equal(harness.panel.innerHTML, content);
 });
 
 test('a red popup flipped right clears the numeric trigger by 14px so a second click can still reach it', t => {
@@ -614,10 +623,17 @@ test('overlay popovers resolve four exact origins rather than borrowing the nata
     ['cycle-personality-mercury', 'Возврат · Личность', 6],
     ['cycle-design-mercury', 'Возврат · Дизайн', 6],
   ]) {
-    h.addAnchor(id); h.controller.show(chart, id);
+    const anchor = h.addAnchor(id); h.controller.show(chart, id);
     assert.equal(h.panel.hidden, false, id);
     assert.ok(h.panel.innerHTML.includes(caption));
     assert.equal(renderedRows(h.panel)[1].value, line);
+    const originalSide = anchor.column.dataset.columnSide;
+    assert.equal(h.panel.dataset.side, originalSide, 'both sources use the actual origin column side');
+    const content = h.panel.innerHTML;
+    anchor.column.dataset.columnSide = originalSide === 'left' ? 'right' : 'left';
+    h.controller.reposition();
+    assert.equal(h.panel.dataset.side, anchor.column.dataset.columnSide, 'placement follows the container, never a source or origin inferred from the activation ID');
+    assert.equal(h.panel.innerHTML, content, 'moving a column does not change its exact activation details');
   }
   cycle.activations.design = [];
   h.controller.refresh(chart); assert.equal(h.panel.hidden, true, 'a missing original entry closes rather than falling back to natal');

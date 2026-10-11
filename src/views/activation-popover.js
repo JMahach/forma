@@ -1,13 +1,14 @@
 import { primaryChart } from '../domain/chart-composition.js';
-import { resolveOverlayActivation, OVERLAY_PALETTE } from '../domain/chart-overlay.js';
+import { resolveOverlayActivation } from '../domain/chart-overlay.js';
+import { OVERLAY_PALETTE } from '../ui/overlay-palette.js';
 import { activationDetails } from './activation-details.js';
 import { escapeHtml as esc } from '../ui/html.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 // Screen-space placement keeps text readable while the SVG camera moves.
-export function placeActivationPopover(anchor, size, viewport, source) {
-  const margin = 12, gap = source === 'design' ? 14 : 12;
+export function placeActivationPopover(anchor, size, viewport, columnSide) {
+  const margin = 12, gap = columnSide === 'left' ? 14 : 12;
   const minX = viewport.left + margin, minY = viewport.top + margin;
   const maxX = viewport.left + viewport.width - margin - size.width;
   const maxY = viewport.top + viewport.height - margin - size.height;
@@ -15,7 +16,7 @@ export function placeActivationPopover(anchor, size, viewport, source) {
   const middleY = (anchor.top + anchor.bottom) / 2;
   const fitsRight = anchor.right + gap <= maxX;
   const fitsLeft = anchor.left - gap - size.width >= minX;
-  let side = source === 'design' ? 'left' : 'right';
+  let side = columnSide;
   if (side === 'right' && !fitsRight) side = fitsLeft ? 'left' : 'bottom';
   if (side === 'left' && !fitsLeft) side = fitsRight ? 'right' : 'bottom';
   if (side === 'bottom' && anchor.bottom + gap > maxY && anchor.top - gap - size.height >= minY) side = 'top';
@@ -31,9 +32,6 @@ export function attachActivationPopover(panel, svg, { viewportLayout }) {
   let currentId = null, maxHeight = null, arrowOffset = null, unsubscribeViewport = null;
   const anchor = () => currentId ? svg.querySelector(`[data-activation="${currentId}"]`) : null;
   const overlayId = () => /^(natal|cycle)-/.test(currentId || '');
-  const sideSource = () => currentId?.startsWith('natal-') ? 'design' : currentId?.startsWith('cycle-') ? 'personality' : currentId?.split('-')[0];
-  const positionAnchor = () => currentId?.startsWith('design-')
-    ? svg.querySelector(`[data-activation="${currentId}-planet"]`) || anchor() : anchor();
   function close(restoreFocus = false) {
     const previous = anchor();
     previous?.removeAttribute('aria-describedby');
@@ -44,11 +42,14 @@ export function attachActivationPopover(panel, svg, { viewportLayout }) {
   }
   function reposition() {
     if (!currentId || panel.hidden) return;
-    const target = positionAnchor();
-    if (!target) { close(); return; }
+    const trigger = anchor(), column = trigger?.closest('.activation-column');
+    const columnSide = column?.dataset.columnSide;
+    if (columnSide !== 'left' && columnSide !== 'right') { close(); return; }
+    const besidePlanet = columnSide === 'left' && !column.dataset.cycleOrigin;
+    const target = besidePlanet ? svg.querySelector(`[data-activation="${currentId}-planet"]`) || trigger : trigger;
     const targetRect = target.getBoundingClientRect();
-    const triggerRect = currentId.startsWith('design-') ? anchor()?.getBoundingClientRect() : null;
-    // Red normally points left from the planet. If it must flip right, clear
+    const triggerRect = besidePlanet ? trigger.getBoundingClientRect() : null;
+    // The ordinary left column points from the planet. If it must flip right, clear
     // the adjacent number too, keeping that trigger available for a second tap.
     const rect = { left: targetRect.left, right: Math.max(targetRect.right, triggerRect?.right ?? targetRect.right), top: targetRect.top, bottom: targetRect.bottom };
     const viewport = viewportLayout.readViewport();
@@ -57,7 +58,7 @@ export function attachActivationPopover(panel, svg, { viewportLayout }) {
     if (panel.style.maxWidth !== width) panel.style.maxWidth = width;
     if (maxHeight !== height) { panel.style.setProperty('--popover-max-height', height); maxHeight = height; }
     const size = panel.getBoundingClientRect();
-    const position = placeActivationPopover(rect, size, viewport, sideSource());
+    const position = placeActivationPopover(rect, size, viewport, columnSide);
     // A fixed origin plus 2D translation moves the popup without changing its
     // layout coordinates. Keep actual measurements and unrounded CSS pixels.
     const transform = `translate(${position.left}px, ${position.top}px)`;

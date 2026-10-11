@@ -6,6 +6,9 @@ import { PALETTE, gatePaint } from '../src/scene/bodygraph-paint.js';
 import { MANDALA_PALETTE, mandalaGateSets, mandalaSectorPaint, mandalaPlanetPaint } from '../src/scene/mandala-paint-rules.js';
 import { createRenderState } from '../src/scene/render-state.js';
 import { MANDALA_SECTORS } from '../src/scene/geometry/mandala-geometry.js';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { createBodygraphPainter } from '../src/scene/bodygraph-painter.js';
+import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
 const colors = { natal: '#c32d35', cycle: '#202020' };
 const luminance = color => {
   const channels = color.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
@@ -29,13 +32,34 @@ function paintFor(source) {
 test('overlay uses two distinct origins consistently while retaining four source identities', () => {
   assert.deepEqual(OVERLAY_SOURCES.map(source => [source.id, source.bit]), [
     ['natal-personality', 1], ['natal-design', 2], ['cycle-personality', 4], ['cycle-design', 8] ]);
-  for (const source of OVERLAY_SOURCES) {
-    assert.equal(source.color, colors[source.origin]);
-    const paint = paintFor(source);
-    assert.equal(paint.gate.fill, source.color);
-    assert.equal(paint.sector.sources[0].color, source.color);
-    assert.equal(paint.planet.color, source.color);
-  }
+  // A change to ordinary chart styling must not recolor overlay provenance.
+  const original = { ink: PALETTE.ink, design: PALETTE.design };
+  try {
+    Object.assign(PALETTE, { ink: '#123456', design: '#654321' });
+    for (const source of OVERLAY_SOURCES) {
+      const paint = paintFor(source), color = colors[source.origin];
+      assert.equal(paint.gate.fill, color);
+      assert.equal(paint.sector.sources[0].color, color);
+      assert.equal(paint.planet.color, color);
+    }
+    const ordinary = { personality: [63], design: [63] };
+    const overlay = overlayFixture(ordinary, ordinary, { kind: 'transit' });
+    const root = svgDocument().createElementNS(SVG_NS, 'svg');
+    root.innerHTML = renderBodygraph(ordinary);
+    const painter = createBodygraphPainter(root);
+    const gradient = root.querySelector('linearGradient');
+    for (const [chart, expected] of [[overlay, ['#202020', '#c32d35']], [ordinary, ['#123456', '#654321']], [overlay, ['#202020', '#c32d35']]]) {
+      painter.update(createRenderState(chart, null, {}));
+      assert.equal(root.querySelector('linearGradient'), gradient, 'the mounted gradient survives chart changes');
+      assert.deepEqual(gradient.querySelectorAll('stop').map(stop => stop.getAttribute('stop-color')), expected);
+      const channel = root.querySelector('.bodygraph-channels [data-id="4-63"]');
+      const lanes = channel.querySelectorAll('path').filter(path => path.getAttribute('stroke-width') === '3.036');
+      assert.deepEqual(lanes.map(path => path.getAttribute('stroke')), expected);
+      const fresh = svgDocument().createElementNS(SVG_NS, 'svg');
+      fresh.innerHTML = renderBodygraph(chart);
+      assert.deepEqual(fresh.querySelector('linearGradient').querySelectorAll('stop').map(stop => stop.getAttribute('stop-color')), expected);
+    }
+  } finally { Object.assign(PALETTE, original); }
 });
 test('both overlay origins keep white gate numbers and planet symbols readable on the light canvas', () => {
   for (const source of OVERLAY_SOURCES) {

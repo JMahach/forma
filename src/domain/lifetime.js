@@ -46,7 +46,7 @@ export function lifetimeChartAt(metadata, point) {
   metadata = validateLifetimeMetadata(metadata);
   point = point?.design ? validateLifetimeMoment(point, metadata) : validateLifetimePoint(point, metadata);
   if (projectedCharts.has(point)) return projectedCharts.get(point);
-  const chart = projectMomentChart(point, metadata.planets, { id: 'lifetime-preview', createdAt: metadata.startUtc,
+  const chart = projectMomentChart(point, metadata.planets, {
     engine: metadata.engine, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
     nodeModel: metadata.nodeModel, zodiac: metadata.zodiac,
     verification: 'Exact Swiss Ephemeris longitudes on a ten-minute grid.' });
@@ -72,7 +72,7 @@ export function lifetimeExactChartAt(value, metadata, milliseconds) {
       || value.utc !== utcText(milliseconds) || !validLongitudes(value.longitudes)) return fail();
   const moment = Object.freeze({ utc: value.utc, longitudes: snapshotLongitudes(value.longitudes),
     design: validateLifetimeDesign(value.design, value.utc) });
-  return projectMomentChart(moment, metadata.planets, { id: 'lifetime-preview', createdAt: metadata.startUtc,
+  return projectMomentChart(moment, metadata.planets, {
     engine: metadata.engine, ephemeris: metadata.ephemeris, timezoneDatabase: metadata.timezoneDatabase,
     nodeModel: metadata.nodeModel, zodiac: metadata.zodiac,
     verification: 'Exact Swiss Ephemeris longitudes for the selected UTC instant.' });

@@ -6,9 +6,10 @@ import { createChartSession } from '../src/state/chart-session.js';
 import { createChartStore } from '../src/data/chart-store.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createGraphController } from '../src/scene/updates.js';
-import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.js';
+import { natalDayMinute } from '../src/domain/natal-day.js';
+import { extractChartData } from '../src/domain/chart-data.js';
 import { attachBirthForm } from '../src/views/birth-form.js';
-import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
+import { natalDayFixture, personalChartFixture, libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { dateDom } from './helpers/date-dom.mjs';
 
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -30,23 +31,28 @@ test('only calculated personal charts opt into a day and selecting one never sta
   }
   assert.equal(h.requests.length, 0);
   h.explorer.select(chart);
+  const baseChart = h.explorer.state.current;
+  assert.notEqual(baseChart, chart);
+  assert.deepEqual(baseChart, extractChartData(chart));
+  assert.equal(h.explorer.state.original, chart);
   assert.equal(h.explorer.state.available, true);
   assert.equal(h.explorer.current, null);
   assert.equal(h.requests.length, 0);
   await h.explorer.open();
   assert.equal(h.requests.length, 1);
-  assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.current, baseChart);
   assert.equal(h.explorer.state.index, 754, 'the saved second stays in its own minute');
   assert.equal(h.explorer.state.referenceIndex, 754);
-  assert.equal(h.explorer.current.birthTime, '12:34:45');
+  assert.equal(h.explorer.current.localTime, '12:34:45');
   assert.deepEqual(h.renders, [], 'opening retains the original exact calculation');
 });
 
-test('scrub recalculates both sides locally; reset and close restore the original object including seconds', async () => {
+test('scrub recalculates both sides locally; reset and close restore the accepted base data including seconds', async () => {
   const h = harness(), chart = Object.freeze(personalChartFixture());
-  h.explorer.select(chart); await h.explorer.open();
+  const baseChart = extractChartData(chart);
+  h.explorer.select(chart, baseChart); await h.explorer.open();
   h.explorer.scrub(754);
-  assert.equal(h.explorer.current.birthTime, '12:34');
+  assert.equal(h.explorer.current.localTime, '12:34');
   assert.equal(h.explorer.current.utc, '2026-09-24T12:34:00Z');
   assert.equal(h.explorer.current.activations.personality.length, 13);
   assert.equal(h.explorer.current.activations.design.length, 13);
@@ -60,18 +66,20 @@ test('scrub recalculates both sides locally; reset and close restore the origina
   assert.equal(h.states.length, notifications);
   assert.equal(h.renders.length, renders);
   assert.notEqual(h.explorer.current.activations.design[0].longitude, previous.activations.design[0].longitude);
-  assert.equal(h.explorer.current.id, chart.id);
+  assert.equal(h.explorer.state.original, chart);
+  for (const key of ['id', 'name', 'note', 'createdAt', 'updatedAt', 'birthDate', 'birthTime']) assert.equal(Object.hasOwn(h.explorer.current, key), false);
   assert.equal(h.requests.length, 1);
   h.explorer.reset();
-  assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.current, baseChart);
+  assert.equal(h.explorer.current.localTime, '12:34:45');
   assert.equal(h.explorer.state.index, 754);
   assert.equal(h.explorer.state.referenceIndex, 754);
   h.explorer.scrub(0); h.explorer.close();
   assert.equal(h.explorer.current, null);
   assert.equal(h.renders.at(-1), null, 'closed view resolves to saved chart at composition root');
-  assert.equal(h.explorer.state.current, chart);
+  assert.equal(h.explorer.state.current, baseChart);
   await h.explorer.open();
-  assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.current, baseChart);
   assert.equal(h.requests.length, 2, 'reopening reacquires the day through the common cache owner');
   assert.equal(h.explorer.state.referenceIndex, 754);
 });
@@ -99,12 +107,16 @@ test('day failures retain the saved chart and explicit retry recovers without na
   let fail = true;
   const h = harness(async () => { if (fail) throw new Error('Нет соединения'); return natalDayFixture(); });
   const chart = personalChartFixture();
-  h.explorer.select(chart); await h.explorer.open();
+  h.explorer.select(chart);
+  const baseChart = h.explorer.state.current;
+  await h.explorer.open();
   assert.equal(h.explorer.state.status, 'error');
   assert.equal(h.explorer.state.error, 'Нет соединения');
-  assert.equal(h.explorer.current, chart);
+  assert.deepEqual(baseChart, extractChartData(chart));
+  assert.equal(h.explorer.current, baseChart);
+  assert.equal(h.explorer.state.original, chart);
   h.explorer.scrub(10);
-  assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.current, baseChart);
   fail = false; await h.explorer.retry();
   assert.equal(h.explorer.state.status, 'ready');
   assert.equal(h.explorer.state.error, '');
@@ -132,6 +144,7 @@ test('scrubbing onto saved birth UTC lights the dot without resetting the saved 
     const h = uiHarness(async () => natalDayFixture());
     const chart = personalChartFixture({ utc: `2026-09-24T12:34:${seconds}Z` });
     h.explorer.select(chart); await h.explorer.open();
+    const baseChart = h.explorer.current;
     assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
     h.range.value = '755'; h.range.dispatch('input');
     assert.equal(h.marker.getAttribute('aria-pressed'), 'false');
@@ -139,7 +152,7 @@ test('scrubbing onto saved birth UTC lights the dot without resetting the saved 
     assert.equal(h.marker.getAttribute('aria-pressed'), String(seconds === '00.000'));
     assert.equal(h.explorer.state.exactOriginal, false, 'indicator does not restore or replace the chart');
     h.marker.dispatch('click');
-    assert.equal(h.explorer.current, chart); assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
+    assert.equal(h.explorer.current, baseChart); assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
   }
 });
 
@@ -182,14 +195,15 @@ test('only user natal scrubs and birth choices interrupt restoration; open, inte
   const h = uiHarness(async () => { if (fail) throw Error('Offline'); return natalDayFixture(); }, true,
     { onMomentInput: () => { interruptions++; } });
   const chart = personalChartFixture(); h.explorer.select(chart); await h.explorer.open();
+  const baseChart = h.explorer.current;
   fail = false; await h.retryButton.dispatch('click');
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(interruptions, 0);
   h.explorer.scrub(800); h.explorer.reset(); assert.equal(interruptions, 0);
   h.range.value = '801'; h.range.dispatch('input');
   assert.equal(h.explorer.current.utc, '2026-09-24T13:21:00Z'); assert.equal(interruptions, 1);
-  h.marker.dispatch('click'); assert.equal(h.explorer.current, chart); assert.equal(interruptions, 2);
+  h.marker.dispatch('click'); assert.equal(h.explorer.current, baseChart); assert.equal(interruptions, 2);
   h.explorer.scrub(802); h.marker.dispatch('click');
-  assert.equal(h.explorer.current, chart); assert.equal(interruptions, 3);
+  assert.equal(h.explorer.current, baseChart); assert.equal(interruptions, 3);
 });
 
 test('controls distinguish repeated local minutes by offset and select the original fold using its UTC instant', async () => {
@@ -201,6 +215,7 @@ test('controls distinguish repeated local minutes by offset and select the origi
   const h = uiHarness(async () => day);
   const chart = personalChartFixture({ birthDate: day.date, timezone: day.timezone, birthTime: '01:30:45', utc: '2026-11-01T06:30:45Z', utcOffset: 'UTC−05:00', fold: 1 });
   h.explorer.select(chart); await h.explorer.open();
+  const baseChart = h.explorer.current;
   assert.equal(h.range.max, '1499');
   assert.equal(h.range.value, '150');
   const reference = `${150 / 1499 * 100}%`;
@@ -217,14 +232,14 @@ test('controls distinguish repeated local minutes by offset and select the origi
   assert.equal(h.explorer.current.fold, 1);
   assert.match(h.range.getAttribute('aria-valuetext'), /UTC−05:00, America\/New_York/);
   h.marker.dispatch('click');
-  assert.equal(h.explorer.current, chart);
+  assert.equal(h.explorer.current, baseChart);
 
   assert.equal(h.retryButton.hidden, true);
   assert.equal(h.retryButton.title, 'Повторить загрузку дня рождения');
   assert.equal(h.marker.style.left, reference);
   h.range.value = '149'; h.range.dispatch('input');
   h.marker.dispatch('click');
-  assert.equal(h.explorer.current, chart, 'the reference button restores the saved object, not its rounded minute');
+  assert.equal(h.explorer.current, baseChart, 'the reference button restores the exact accepted data, not its rounded minute');
 
   assert.equal(h.marker.getAttribute('aria-label'), 'Вернуться к сохранённому времени рождения');
 });
@@ -249,7 +264,7 @@ test('opening the birth editor reads the saved birth time while the selected min
   node('chartForm').elements = Object.fromEntries(['name', 'birthPlace', 'note'].map(key => [key, node(key)]));
   const form = attachBirthForm({
     document: { getElementById: node, querySelectorAll: () => [] },
-    store: { charts: [original] }, session: { selectedId: original.id, original },
+    store: { charts: [original] }, session: { selectedId: original.id, record: original },
     onSave() {}, toast() {}, beforeOpen() {},
   });
   form.open(true, original.id);
@@ -257,23 +272,31 @@ test('opening the birth editor reads the saved birth time while the selected min
   assert.equal(h.renders.at(-1), preview, 'editing does not replace the displayed minute');
 });
 
-test('metadata replacement during a pending birth Day keeps its request valid and supplies new future captions', async () => {
+test('metadata replacement during a pending birth Day keeps the request and current data while updating its record', async () => {
   let complete;
   const h = harness(() => new Promise(resolve => { complete = resolve; })), original = personalChartFixture();
   h.explorer.select(original); const loading = h.explorer.open();
+  const baseChart = h.explorer.current;
   const updated = { ...original, name: 'Новое имя', note: 'Новая заметка' };
   h.explorer.updateMetadata(updated);
-  assert.equal(h.explorer.current, updated); assert.equal(h.requests.length, 1);
+  assert.equal(h.explorer.current, baseChart); assert.equal(h.explorer.state.original, updated);
+  assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].options.signal.aborted, false);
   complete(natalDayFixture()); assert.equal(await loading, true);
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.explorer.state.referenceIndex, 754);
   h.explorer.scrub(800);
-  assert.equal(h.explorer.current.name, updated.name); assert.equal(h.explorer.current.note, updated.note);
+  const current = h.explorer.current;
+  assert.equal(Object.hasOwn(current, 'name'), false); assert.equal(Object.hasOwn(current, 'note'), false);
+  const renamed = { ...updated, name: 'Ещё одно имя', note: 'Ещё одна заметка' };
+  h.explorer.updateMetadata(renamed);
+  assert.equal(h.explorer.current, current, 'editing record metadata never replaces the accepted minute');
+  assert.equal(h.explorer.state.original, renamed);
+  h.explorer.reset(); assert.equal(h.explorer.current, baseChart);
   assert.equal(h.requests.length, 1);
 });
 
 test('refreshing the accepted natal metadata retains real graph pins, crosses and camera transform', async () => {
-  let original = chartAtMinute(natalDayFixture(), 754, personalChartFixture()), graph, explorer;
+  let original = libraryRecordAtMinute(natalDayFixture(), 754), graph, explorer;
   const viewport = { innerHTML: '', transform: 'translate(-70,25) scale(1.4)', querySelector: () => null };
   const session = createChartSession({ store: { get: () => original, has: () => true }, getNatalDay: () => explorer, onChange: () => graph?.render() });
   explorer = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', explorer.state.current) });
@@ -283,9 +306,11 @@ test('refreshing the accepted natal metadata retains real graph pins, crosses an
     getMandala: () => ({ enabled: true }), activationPopover: { close() {}, show() {}, refresh() {} } });
   explorer.scrub(800); graph.choose({ type: 'gate', id: 41 });
   graph.choose({ type: 'mandala-cross', cross: { longitude: 0, source: 'personality' }, additive: true });
-  const pins = graph.selectionState.items, crosses = graph.selectionState.crosses, utc = session.current.utc;
-  original = { ...original, name: 'Новое имя', note: 'Новая заметка' }; session.refreshOriginal();
-  assert.equal(session.current.utc, utc); assert.equal(session.current.primary.name, original.name);
+  const pins = graph.selectionState.items, crosses = graph.selectionState.crosses, utc = session.current.utc, current = session.current.primary;
+  original = { ...original, name: 'Новое имя', note: 'Новая заметка' }; session.refreshRecord();
+  assert.equal(session.current.utc, utc); assert.equal(session.current.primary, current);
+  assert.equal(session.current.primaryLabel, original.name); assert.equal(session.record, original);
+  assert.equal(explorer.state.original, original);
   assert.equal(graph.selectionState.items, pins); assert.equal(graph.selectionState.crosses, crosses);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
 });
@@ -329,6 +354,7 @@ test('saved birth marker has exact endpoints for different day lengths and never
       const utc = new Date(Date.parse(natalDayMinute(day, index).utc) + 45_000).toISOString();
       const original = personalChartFixture({ utc });
       h.explorer.select(original);
+      const baseChart = h.explorer.state.current;
       assert.equal(h.marker.hidden, true);
       await h.explorer.open();
       const reference = `${index / Math.max(1, samples - 1) * 100}%`;
@@ -343,7 +369,7 @@ test('saved birth marker has exact endpoints for different day lengths and never
       }
       h.explorer.reset();
       assert.equal(h.marker.style.left, reference);
-      assert.equal(h.explorer.current, original);
+      assert.equal(h.explorer.current, baseChart);
       assert.equal(requests, loaded, 'marking, scrubbing and resetting reuse the loaded day');
     }
   }
@@ -386,21 +412,22 @@ test('birth controls remain usable when the optional marker is omitted', async (
 });
 
 test('personal scrubbing keeps real graph pins, camera transform and saved storage intact', async () => {
-  const original = chartAtMinute(natalDayFixture(), 754, personalChartFixture()), writes = [], values = JSON.stringify([original]);
+  const original = libraryRecordAtMinute(natalDayFixture(), 754), writes = [], values = JSON.stringify([original]);
   const store = createChartStore({ getStorage: () => ({ getItem: () => values, setItem: (...args) => writes.push(args) }) });
-  const session = createChartSession({ store });
+  let explorer, graph;
+  const session = createChartSession({ store, getNatalDay: () => explorer, onChange: () => graph?.render() });
   session.select(original.id);
   const before = JSON.stringify(store.charts), charts = store.charts;
   const viewport = { innerHTML: '', transform: 'translate(-70,25) scale(1.4)', querySelector: () => null };
-  let explorer;
-  const graph = createGraphController({
+  graph = createGraphController({
     scene: { update(chart, selection, options) { viewport.innerHTML = renderBodygraph(chart, selection, options); }, clear() { viewport.innerHTML = ''; } },
-    getChart: () => explorer?.current || session.original, viewport,
+    getChart: () => session.current, viewport,
     getMandala: () => ({ enabled: true }), activationPopover: { close() {}, show() {}, refresh() {} },
-    onChartChange(id) { explorer.close(); session.select(id); explorer.select(session.original); graph.render(); },
+    onChartChange(id) { session.select(id); },
   });
-  explorer = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: graph.render });
-  explorer.select(session.original); await explorer.open();
+  explorer = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() },
+    onRender: () => session.publish('natal-day', explorer.state.current) });
+  explorer.select(session.record, session.baseChart); await explorer.open();
   graph.choose({ type: 'gate', id: 41 });
   graph.choose({ type: 'mandala-cross', cross: { longitude: 0, source: 'personality' }, additive: true });
   const pins = graph.selectionState.items, crosses = graph.selectionState.crosses, markup = viewport.innerHTML;
@@ -410,7 +437,8 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
   assert.equal(graph.selectionState.crosses, crosses);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
   explorer.reset();
-  assert.equal(explorer.current, session.original);
+  assert.equal(explorer.current, session.baseChart);
+  assert.equal(explorer.state.original, session.record);
   assert.equal(store.charts, charts);
   assert.equal(JSON.stringify(store.charts), before);
   assert.deepEqual(writes, []);
@@ -418,7 +446,8 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
   graph.changeChart(original.id);
   assert.equal(explorer.state.opened, false, 'explicit selection closes a preview even for the same saved card');
   assert.equal(explorer.current, null);
-  assert.equal(explorer.state.current, session.original);
+  assert.equal(explorer.state.current, session.baseChart);
+  assert.equal(explorer.state.original, session.record);
   assert.equal(viewport.transform, 'translate(-70,25) scale(1.4)');
   assert.deepEqual(writes, []);
 });

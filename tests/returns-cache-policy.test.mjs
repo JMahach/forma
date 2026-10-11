@@ -6,13 +6,13 @@ import { createReturnStorage } from '../src/data/return-storage.js';
 import { createMemoryCache, estimateBytes } from '../src/data/memory-cache.js';
 import { createReturnsController } from '../src/state/returns.js';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.js';
-import { chartAtMinute } from '../src/domain/natal-day.js';
+import { libraryRecordAtMinute } from './fixtures/natal-day.mjs';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 
 const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
 const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'moon', fromAge: 0, toAge: 100 };
 const packet = value => ({ range: { fromAge: value.fromAge ?? 0, toAge: value.toAge ?? 100 }, events: [] });
-const natal = () => chartAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal' }));
+const natal = () => libraryRecordAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal' }));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 function device() {
   const records = new Map(), reads = [], writes = [];

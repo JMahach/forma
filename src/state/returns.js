@@ -3,6 +3,7 @@ import { EPHEMERIS_FIRST_YEAR, EPHEMERIS_LAST_YEAR } from '../../shared/date-lim
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES, eligibleCycleChart, cycleRangeForChart,
   cycleYearBoundsForChart, cycleEventWithinRange, cycleTimeZone, cycleCalendarYear } from '../domain/cycles.js';
 import { createCyclesClient } from '../data/cycles-client.js';
+import { extractChartData } from '../domain/chart-data.js';
 
 const BODY_IDS = CYCLE_BODIES.map(item => item.id);
 const normalizeBodies = value => Array.isArray(value) && value.every(id => BODY_IDS.includes(id))
@@ -52,7 +53,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
   function dropCurrent() { releaseCurrent?.(); releaseCurrent = null; current = null; }
   function acceptChart(input, data, event) {
     const release = client.retainChart?.(input, data);
-    dropCurrent(); releaseCurrent = release; current = data.chart;
+    dropCurrent(); releaseCurrent = release; current = extractChartData(data.chart);
     selectedEvent = event; failedEvent = null; chartError = ''; loadingChart = false; pendingEvent = null; chartJob = null; emit(true);
   }
   function cancelSearch(record) { abortJob(record.job); record.job = null; }
@@ -179,8 +180,8 @@ export function createReturnsController({ client = createCyclesClient(), onState
     year = Number.isInteger(saved.year) ? Math.max(minYear, Math.min(maxYear, saved.year)) : null;
     opened = saved.opened === true; markersEnabled ||= Boolean(eventId); emit();
     if (!owns()) return false;
-    // A saved descriptor is presentation history, not numerical authority.
-    // Only a current-revision calculation or its exact UTC list can confirm it.
+    // The saved event ID is only a target. Its descriptor comes from a
+    // current-revision calculation or the current exact UTC list.
     const eventBody = typeof eventId === 'string' ? eventId.split(':')[0] : null;
     if (BODY_IDS.includes(eventBody) && client.readChart) {
       // The complete calculation owns one verified event label. A session's

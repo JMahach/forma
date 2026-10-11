@@ -1,4 +1,4 @@
-import { PALETTE, CHANNEL_WIDTH, paintGateActivation, integrationPaint, integrationStemPaint, integrationOutlineMask, integrationChannels, armPaintPoints, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.js';
+import { PALETTE, CHANNEL_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, integrationOutlineMask, integrationChannels, armPaintPoints, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.js';
 import { CENTERS, GATES } from './geometry/chart-geometry.js';
 import { renderActivationColumns } from './activation-columns.js';
 import { renderVariableArrows, visibleVariables } from './variable-arrows.js';
@@ -133,7 +133,7 @@ export function renderBodygraphState(chart, state, options = {},
   }).join('');
 
   return `${thumbnail ? '' : `<defs>
-    <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${PALETTE.ink}"/><stop offset="50%" stop-color="${PALETTE.design}"/></linearGradient>
+    <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${activationLaneColor(state, 0)}"/><stop offset="50%" stop-color="${activationLaneColor(state, 1)}"/></linearGradient>
     <clipPath id="${prefix}-integration-inner-side" clipPathUnits="userSpaceOnUse"><path d="${INTEGRATION_INNER_SIDE}"/></clipPath>
     ${integrationOuterOwnership.map(({ gate, path }) => `<clipPath id="${prefix}-integration-outer-owner-${gate}" clipPathUnits="userSpaceOnUse"><path class="bg-integration-outer-side" d="${INTEGRATION_OUTER_SIDE}"/><path class="bg-integration-fork-side" d="${path}"/></clipPath>`).join('')}
     ${integrationEndPlanes.map(({ gate, polygon }) => `<clipPath id="${prefix}-integration-end-${gate}" clipPathUnits="userSpaceOnUse"><polygon data-terminal-gate="${gate}" points="${polygon}"/></clipPath>`).join('')}

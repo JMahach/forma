@@ -1,5 +1,6 @@
 import { createNatalDayClient } from '../data/natal-day-client.js';
 import { chartAtMinute, natalDayIndexAt } from '../domain/natal-day.js';
+import { extractChartData } from '../domain/chart-data.js';
 
 export const canExploreNatalDay = chart => Boolean(chart?.source === 'calculated'
   && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
@@ -10,7 +11,7 @@ export const canExploreNatalDay = chart => Boolean(chart?.source === 'calculated
 export function createNatalDayExplorer({
   dayClient = createNatalDayClient(), onStateChange = () => {}, onRender = () => {},
 } = {}) {
-  let original = null, current = null, day = null, index = 0, referenceIndex = null;
+  let original = null, baseChart = null, current = null, day = null, index = 0, referenceIndex = null;
   let releaseDay = null;
   let opened = false, status = 'idle', error = '', exactOriginal = true, sequence = 0, active = null;
   const state = () => ({ original, current, day, index, referenceIndex, opened, status, error, exactOriginal, available: canExploreNatalDay(original) });
@@ -46,8 +47,8 @@ export function createNatalDayExplorer({
 
   function reset() {
     if (!original) return;
-    const changed = current !== original;
-    current = original; exactOriginal = true;
+    const changed = current !== baseChart;
+    current = baseChart; exactOriginal = true;
     if (day) index = referenceIndex;
     notify();
     if (changed) onRender();
@@ -62,14 +63,13 @@ export function createNatalDayExplorer({
   return {
     get current() { return opened ? current : null; },
     get state() { return state(); },
-    select(chart) {
-      if (chart === original) return;
-      cancel(); discardDay(); original = chart; current = chart;
+    select(record, chart = record ? extractChartData(record) : null) {
+      if (record === original) return;
+      cancel(); discardDay(); original = record; baseChart = current = chart;
       opened = false; status = 'idle'; error = ''; exactOriginal = true; notify();
     },
-    updateMetadata(chart) {
-      original = chart;
-      current = exactOriginal ? chart : { ...current, name: chart.name, note: chart.note, updatedAt: chart.updatedAt };
+    updateMetadata(record) {
+      original = record;
       notify();
     },
     async open() {
@@ -84,7 +84,7 @@ export function createNatalDayExplorer({
       if (!opened || status !== 'ready' || !day || !Number.isFinite(value)) return;
       const nextIndex = Math.min(day.samples - 1, Math.max(0, Math.trunc(value)));
       if (!exactOriginal && index === nextIndex) return;
-      index = nextIndex; current = chartAtMinute(day, index, original); exactOriginal = false;
+      index = nextIndex; current = chartAtMinute(day, index); exactOriginal = false;
       notify(); onRender();
     },
   };

@@ -9,5 +9,5 @@ export const LIFETIME_FILE_VERSION = '3';
 export const LIFETIME_EXACT_VERSION = '1';
 // Hash files in order; directories recurse in UTF-8 name byte order. Each file
 // contributes root-relative name, NUL, byte length, NUL and bytes.
-export const LIFETIME_PROVENANCE_INPUTS = Object.freeze(['server/python/astronomy.py', 'server/python/errors.py', 'server/python/lifetime_file.py', 'requirements.txt', 'shared/lifetime-format.js', 'shared/day-packets/moment-columns.js', 'data/ephe']);
+export const LIFETIME_PROVENANCE_INPUTS = Object.freeze(['server/python/astronomy.py', 'server/python/errors.py', 'server/python/date_limits.py', 'server/python/lifetime_file.py', 'requirements.txt', 'shared/lifetime-format.js', 'shared/date-limits.js', 'shared/day-packets/moment-columns.js', 'data/ephe']);
 export const LIFETIME_FILE_FORMAT = 'Float64 little-endian, sample-major; byte offset=(sample*24+column)*8';

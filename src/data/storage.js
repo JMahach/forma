@@ -29,7 +29,9 @@ export function parseGates(value) {
   return [...new Set(tokens.map(Number))].sort((a, b) => a - b);
 }
 
-export function validateChart(raw) {
+// Validate a library record, including supported legacy records. This is not
+// the contract for every live moment or return calculation shown by the studio.
+export function validateLibraryChart(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('В файле нет карты.');
   const name = normalizeChartName(raw.name);
   if (typeof raw.name !== 'string' || !name || raw.name.length > 80 || name.length > 80) throw new Error('У карты должно быть имя длиной до 80 символов.');
@@ -83,7 +85,7 @@ function legacyCharts(storage, key, onInvalid) {
   } catch { onInvalid(key); return []; }
   return data.flatMap((raw, index) => {
     try {
-      const chart = { ...raw, ...validateChart(raw) };
+      const chart = { ...raw, ...validateLibraryChart(raw) };
       if (!chart.id) throw new Error();
       return [chart];
     } catch { onInvalid(`${key}:${index}`); return []; }
@@ -107,7 +109,7 @@ export function readCharts(storage, key = STORAGE_KEY, onInvalid = () => {}) {
       const id = recordKey.slice(CHART_RECORD_PREFIX.length), value = storage.getItem(recordKey);
       if (value === null) continue;
       try {
-        const record = JSON.parse(value), chart = { ...record.chart, ...validateChart(record.chart) };
+        const record = JSON.parse(value), chart = { ...record.chart, ...validateLibraryChart(record.chart) };
         if (record.version !== 2 || chart.id !== id) throw new Error();
         records.set(id, chart);
       } catch { onInvalid(recordKey); deleted.add(id); }
@@ -152,7 +154,7 @@ export function writeChartChanges(storage, charts, previous) {
   let changed;
   try {
     const checked = charts.map(chart => {
-      const validated = validateChart(chart);
+      const validated = validateLibraryChart(chart);
       if (!validated.id) throw new Error('Некорректный идентификатор карты.');
       return { ...chart, name: validated.name };
     });
@@ -170,7 +172,7 @@ export function writeChartChanges(storage, charts, previous) {
     if (stored !== null) {
       try {
         const record = JSON.parse(stored);
-        if (record.version !== 2 || validateChart(record.chart).id !== chart.id) throw new Error();
+        if (record.version !== 2 || validateLibraryChart(record.chart).id !== chart.id) throw new Error();
       } catch { throw saveFailure('corrupt', 'Сохранённая карта повреждена. Исходные данные оставлены без изменений.'); }
     }
     ids.add(chart.id);

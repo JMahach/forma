@@ -2,15 +2,16 @@ import { consumeJob } from '../runtime/job-consumers.mjs';
 import { encodeNatalDayColumn, encodeNatalDay } from '../packets/encode.mjs';
 import { runJsonWorker } from '../runtime/json-worker.mjs';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.mjs';
+import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE } from '../../shared/date-limits.js';
 
 export class NatalDayError extends Error {
   constructor(code, message, status = 503, retryAfter = 5) {
     super(message); this.code = code; this.status = status; this.retryAfter = retryAfter;
   }
 }
-export function validateNatalDate(date) {
+export function validateNatalDayDate(date) {
   const moment = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00Z`) : NaN;
-  if (!Number.isFinite(moment) || new Date(moment).toISOString().slice(0, 10) !== date || date < '1801-01-01' || date > '2399-12-31') {
+  if (!Number.isFinite(moment) || new Date(moment).toISOString().slice(0, 10) !== date || moment < SUPPORTED_START || moment >= SUPPORTED_END_EXCLUSIVE) {
     throw new NatalDayError('invalid_date', 'Нужна корректная дата рождения с 1801 по 2399 год.', 422, null);
   }
 }
@@ -20,7 +21,7 @@ export function validateNatalZone(timezone) {
   }
 }
 export function generateNatalDay({ root, date, timezone, spawnWorker, computeQueue, signal, priority, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }) {
-  validateNatalDate(date); validateNatalZone(timezone);
+  validateNatalDayDate(date); validateNatalZone(timezone);
   const unavailable = () => new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
   return runJsonWorker({
     root, script: 'natal_day.py', input: { date, timezone }, spawnWorker, computeQueue, signal, priority, timeoutMs, maxOutput: maxOutputBytes, unavailable,
@@ -82,7 +83,7 @@ export function createNatalDays({ root, computeQueue, calculationVersion = null,
   }
   function get(date, timezone, { signal } = {}) {
     if (signal?.aborted) return Promise.reject(aborted());
-    try { validateNatalDate(date); validateNatalZone(timezone); } catch (error) { return Promise.reject(error); }
+    try { validateNatalDayDate(date); validateNatalZone(timezone); } catch (error) { return Promise.reject(error); }
     const key = `${date}@${timezone}`;
     prune();
     if (memory.has(key)) {

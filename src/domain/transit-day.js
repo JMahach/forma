@@ -15,7 +15,7 @@ export function transitSampleAt(day, index) {
 }
 
 export function transitChartAt(day, index) {
-  return projectMomentChart(transitSampleAt(day, index), TRANSIT_PLANETS, { id: 'current-transit', createdAt: day.startUtc,
+  return projectMomentChart(transitSampleAt(day, index), TRANSIT_PLANETS, {
     engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase,
     nodeModel: day.nodeModel, zodiac: day.zodiac,
     verification: 'Lossless minute-grid Swiss Ephemeris transit; official Human Design reference-chart validation pending.' });

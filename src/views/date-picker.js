@@ -4,7 +4,7 @@ const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', '�
 const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 const isoDate = (year, month = 1, day = 1) => `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const PAGE_YEARS = 25;
+const PAGE_YEARS = 25, YEAR_PERIODS = 9, YEAR_COLUMNS = 3, MAX_YEARS_PER_PERIOD = 12;
 
 // A non-modal calendar: typed input remains independent, and Tab can leave the
 // popup. Only its active grid choice is tabbable; arrows move between choices.
@@ -18,9 +18,11 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', popup.id); button.setAttribute('aria-expanded', 'false');
   document.body.append(popup);
   let view = 'years', selected = '', cursor = '', pending = '', year = 0, month = 1, page = 0, minimum = '', maximum = '';
-  let choices = [], positions = [], columns = 5, firstHeader = null, unsubscribeViewport = null;
+  let choices = [], positions = [], periods = [], columns = 5, firstHeader = null, unsubscribeViewport = null;
   const minYear = () => Number(minimum.slice(0, 4)), maxYear = () => Number(maximum.slice(0, 4));
-  const pageFor = value => minYear() + Math.floor((value - minYear()) / PAGE_YEARS) * PAGE_YEARS;
+  const pageFor = value => periods.find(period => value <= period.end).start;
+  const currentPeriod = () => periods.find(period => period.start === page);
+  const periodLabel = ({ start, end }) => precision === 'year' && start === end ? String(start) : `${start}–${end}`;
   const allowed = value => value >= minimum && value <= maximum;
   const overlaps = (start, end) => start <= maximum && end >= minimum;
   const bounded = value => value < minimum ? minimum : value > maximum ? maximum : value;
@@ -96,7 +98,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     target?.focus();
   }
   function navigate(direction) {
-    if (view === 'years') page = clamp(page + direction * PAGE_YEARS, minYear(), pageFor(maxYear()));
+    if (view === 'years') page = periods[clamp(periods.findIndex(period => period.start === page) + direction, 0, periods.length - 1)].start;
     else if (view === 'months') year = clamp(year + direction, minYear(), maxYear());
     else if (view === 'days') {
       const date = new Date(Date.UTC(year, month - 1 + direction, 1));
@@ -120,19 +122,19 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     const header = node('div', '', 'date-picker-heading');
     const previous = control('‹', view === 'years' ? 'Предыдущие годы' : view === 'months' ? 'Предыдущий год' : 'Предыдущий месяц', () => navigate(-1));
     const next = control('›', view === 'years' ? 'Следующие годы' : view === 'months' ? 'Следующий год' : 'Следующий месяц', () => navigate(1));
-    const title = view === 'periods' ? 'Выберите период' : view === 'years' ? `${page}–${Math.min(page + PAGE_YEARS - 1, maxYear())}` : view === 'months' ? String(year) : `${MONTHS[month - 1]} ${year}`;
+    const title = view === 'periods' ? 'Выберите период' : view === 'years' ? periodLabel(currentPeriod()) : view === 'months' ? String(year) : `${MONTHS[month - 1]} ${year}`;
     const heading = view === 'periods' ? node('h3', title, 'date-picker-title') : control(title, view === 'years' ? `${title}. Выбрать период` : view === 'months' ? `${title}. Выбрать год` : view === 'days' ? `${title}. Выбрать месяц` : title,
       () => { view = view === 'years' ? 'periods' : view === 'days' ? 'months' : 'years'; render(); }, 'date-picker-title');
     heading.setAttribute('aria-live', 'polite');
     previous.hidden = next.hidden = view === 'periods';
     previous.disabled = view === 'years' ? page === minYear() : view === 'months' ? year === minYear() : isoDate(year, month) <= minimum;
-    next.disabled = view === 'years' ? page + PAGE_YEARS > maxYear() : view === 'months' ? year === maxYear() : isoDate(year, month, 31) >= maximum;
+    next.disabled = view === 'years' ? page === periods.at(-1).start : view === 'months' ? year === maxYear() : isoDate(year, month, 31) >= maximum;
     firstHeader = presentation?.title || view === 'periods' ? dismiss : previous.disabled ? heading : previous;
     header.append(previous, heading, next);
     if (!presentation?.title) header.append(dismiss);
     popup.append(header);
     const grid = node('div', '', 'date-picker-grid'); grid.setAttribute('role', 'grid'); grid.setAttribute('aria-label', title);
-    columns = view === 'days' ? 7 : view === 'months' ? 3 : view === 'periods' ? 4 : 5;
+    columns = precision === 'year' ? YEAR_COLUMNS : view === 'days' ? 7 : view === 'months' ? 3 : view === 'periods' ? 4 : 5;
     grid.style.setProperty('--calendar-columns', columns);
     let row = null, count = 0, focused = -1;
     function cell(text, label, action, { enabled = true, active = false, preferred = active, current = false, empty = false, weekday = false } = {}) {
@@ -147,13 +149,13 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
       if (enabled) { if (preferred) focused = choices.length; choices.push(choice); positions.push(count - 1); }
     }
     if (view === 'periods') {
-      for (let start = minYear(); start <= maxYear(); start += PAGE_YEARS) {
-        const end = Math.min(start + PAGE_YEARS - 1, maxYear());
-        cell(`${start}–${end}`, `Годы ${start}–${end}`, () => { page = start; view = 'years'; render(); },
+      for (const period of periods) {
+        const { start, end } = period;
+        cell(periodLabel(period), `Годы ${periodLabel(period)}`, () => { page = start; view = 'years'; render(); },
           { active: Number(selected.slice(0, 4)) >= start && Number(selected.slice(0, 4)) <= end, preferred: year >= start && year <= end, current: currentYear >= start && currentYear <= end });
       }
     } else if (view === 'years') {
-      for (let value = page; value <= Math.min(page + PAGE_YEARS - 1, maxYear()); value++) {
+      for (let value = page; value <= currentPeriod().end; value++) {
         const date = isoDate(value);
         cell(String(value), precision === 'year' ? `${value} год` : `${value} год, 1 января`,
           () => precision === 'year' ? choose(bounded(date)) : choose(date, 'months'),
@@ -186,6 +188,26 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
   function open() {
     const bounds = getBounds(); minimum = bounds?.min; maximum = bounds?.max;
     if (!minimum || !maximum || minimum > maximum || button.disabled) return;
+    const yearCount = maxYear() - minYear() + 1;
+    const periodCount = precision === 'year'
+      ? Math.min(YEAR_PERIODS, Math.ceil(yearCount / MAX_YEARS_PER_PERIOD))
+      : Math.ceil(yearCount / PAGE_YEARS);
+    const yearsPerPeriod = Math.floor(yearCount / periodCount);
+    const longerPeriods = yearCount % periodCount;
+    periods = [];
+    // Balance the year picker without dropping or repeating the century's
+    // endpoint. The day calendar retains its existing 25-year pages.
+    for (let index = 0, start = minYear(); index < periodCount; index++) {
+      const length = precision === 'year'
+        ? yearsPerPeriod + Number(index >= periodCount - longerPeriods)
+        : PAGE_YEARS;
+      const end = Math.min(start + length - 1, maxYear());
+      periods.push({ start, end }); start = end + 1;
+    }
+    if (precision === 'year') {
+      const count = Math.max(periods.length, ...periods.map(period => period.end - period.start + 1));
+      popup.style.setProperty('--calendar-rows', Math.ceil(count / YEAR_COLUMNS));
+    }
     try { selected = precision === 'year'
       ? /^\d{4}$/.test(input.value.trim()) ? isoDate(Number(input.value)) : ''
       : normalizeDate(input.value); } catch { selected = ''; }
@@ -219,7 +241,15 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     }
     if (current < 0) return;
     const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
-    if (Object.hasOwn(moves, event.key)) { event.preventDefault(); focusChoice(current + moves[event.key]); }
+    if (precision === 'year' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const lastRow = Math.floor((choices.length - 1) / columns);
+      const row = Math.floor(current / columns);
+      const targetRow = clamp(row + (event.key === 'ArrowUp' ? -1 : 1), 0, lastRow);
+      const visualColumn = index => index % columns + (Math.floor(index / columns) === lastRow ? (columns - (choices.length % columns || columns)) / 2 : 0);
+      const candidates = choices.map((_, index) => index).filter(index => Math.floor(index / columns) === targetRow);
+      focusChoice(candidates.reduce((nearest, index) => Math.abs(visualColumn(index) - visualColumn(current)) < Math.abs(visualColumn(nearest) - visualColumn(current)) ? index : nearest));
+    } else if (Object.hasOwn(moves, event.key)) { event.preventDefault(); focusChoice(current + moves[event.key]); }
     else if (event.key === 'Home' || event.key === 'End') {
       event.preventDefault();
       const row = Math.floor(positions[current] / columns);

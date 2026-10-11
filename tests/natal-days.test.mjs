@@ -196,8 +196,10 @@ test('real historical and fold days survive production compression and reconstru
     const script = `import json\nfrom server.python import calculator as c\nfrom server.python import civil_time as d\nminutes=d.local_minutes(${JSON.stringify(date)},${JSON.stringify(timezone)})\ncharts=[]\nfor i in ${JSON.stringify(indices)}:\n m,offset,fold,seconds=minutes[i]\n local=m+c.dt.timedelta(seconds=seconds)\n charts.append(c.calculate(dict(mode='natal',name='Reference',date=${JSON.stringify(date)},time=local.strftime('%H:%M'),fold=fold,city=dict(id='test',name='Test',timezone=${JSON.stringify(timezone)})))['chart'])\nprint(json.dumps(charts))`;
     const references = JSON.parse((await run(`${root}.venv/bin/python`, ['-c', script], { cwd: root, maxBuffer: 100000 })).stdout);
     indices.forEach((index, i) => {
-      const chart = chartAtMinute(decoded, index, { id: 'same-id', name: 'Original' }), reference = references[i];
-      for (const key of ['activations', 'personality', 'design', 'utc', 'birthTime', 'utcOffset', 'fold', 'designUtc', 'designArcResidualDegrees']) assert.deepEqual(chart[key], reference[key], `${timezone} sample ${index}: ${key}`);
+      const chart = chartAtMinute(decoded, index), reference = references[i];
+      for (const key of ['activations', 'personality', 'design', 'utc', 'utcOffset', 'fold', 'designUtc', 'designArcResidualDegrees']) assert.deepEqual(chart[key], reference[key], `${timezone} sample ${index}: ${key}`);
+      assert.equal(chart.localDate, reference.birthDate, `${timezone} sample ${index}: local date`);
+      assert.equal(chart.localTime, reference.birthTime, `${timezone} sample ${index}: local time`);
       assert.equal(natalDayMinute(decoded, index).utc, reference.utc);
     });
   }

@@ -93,7 +93,7 @@ test('domain rules and packet contracts are pure and do not import presentation,
     for (const dependency of graph.get(file)) visit(dependency);
   }
   visit('shared/day-packets/decode.js');
-  assert.ok([...decoderDependencies].every(file => file.startsWith('shared/day-packets/')));
+  assert.ok([...decoderDependencies].every(file => file.startsWith('shared/day-packets/') || file === 'shared/date-limits.js'));
   assert.doesNotMatch(source('shared/day-packets/decode.js'), /\b(?:encodeTransitDay|encodeNatalDay|encodeNumericColumn|compressDayPacket)\b/);
 });
 

@@ -217,11 +217,11 @@ test('both checkbox columns fit inside the activation envelope and remain clear 
   assert.ok(centerX + size / 2 <= -14, 'the visible frame leaves extra breathing room before the glyph');
   assert.ok(hitLeft + hitWidth < -8, 'the whole checkbox target ends before the glyph target');
   assert.ok(centerX - size / 2 >= hitLeft && centerX + size / 2 <= hitLeft + hitWidth);
-  for (const [source, pivot] of [['design', 212], ['personality', 428]]) {
-    const left = pivot + (ACTIVATION_COLUMN_LAYOUT.x[source] + hitLeft - pivot) * ACTIVATION_BLOCK_SCALE;
+  for (const [columnSide, pivot] of [['left', 212], ['right', 428]]) {
+    const left = pivot + (ACTIVATION_COLUMN_LAYOUT.x[columnSide] + hitLeft - pivot) * ACTIVATION_BLOCK_SCALE;
     const right = left + hitWidth * ACTIVATION_BLOCK_SCALE;
-    assert.ok(left >= ACTIVATION_BLOCK_BOUNDS.x, `${source} checkbox fits the shared left bound`);
-    assert.ok(right <= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width, `${source} checkbox fits the shared right bound`);
+    assert.ok(left >= ACTIVATION_BLOCK_BOUNDS.x, `${columnSide} checkbox fits the shared left bound`);
+    assert.ok(right <= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width, `${columnSide} checkbox fits the shared right bound`);
   }
 });
 

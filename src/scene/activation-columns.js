@@ -69,7 +69,7 @@ export function alignPersonalityHeading(root) {
   if (!Number.isFinite(bounds.width) || bounds.width <= 0) return;
   const relative = columnMatrix.inverse().multiply(valueMatrix);
   const right = relative.a * (bounds.x + bounds.width) + relative.c * bounds.y + relative.e;
-  const startX = activationHeadingX('personality');
+  const startX = activationHeadingX(column.getAttribute('data-column-side'));
   if (!Number.isFinite(right) || right <= startX) return;
   heading.setAttribute('x', String(right));
   heading.setAttribute('text-anchor', 'end');
@@ -91,7 +91,7 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
   const planetFilter = chart.planetFilter;
   const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
   const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
-  const columns = ['design', 'personality'].map(source => {
+  const columns = [['design', 'left'], ['personality', 'right']].map(([source, columnSide]) => {
     const hasPlanetFilter = Boolean(planetFilter);
     const hasPlanetControl = hasPlanetFilter && planetFilter.perPlanetControls === true;
     const hasMasterControl = hasPlanetFilter && (source === 'design' || hasPlanetControl);
@@ -99,7 +99,7 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
     const filterPrefix = source === 'design' ? 'design:' : '';
     const entries = hasPlanetFilter ? (source === 'design' ? planetFilter.designActivations : planetFilter.activations) : chart.activations?.[source];
     if (!Array.isArray(entries) || !entries.length) return null;
-    const x = ACTIVATION_COLUMN_LAYOUT.x[source];
+    const x = ACTIVATION_COLUMN_LAYOUT.x[columnSide];
     const label = source === 'design' ? 'Дизайн' : chart.source === 'transit' ? 'Транзит' : 'Личность';
     const color = source === 'design' ? '#c32d35' : '#202020';
     const rows = PLANETS.map(([planet, symbol, name], index) => {
@@ -127,9 +127,9 @@ export function describeActivationColumns(chart, selectedGates = new Set(), sele
       };
     }).filter(Boolean);
     const enabledCount = PLANETS.filter(([planet]) => selectedPlanets.has(planet)).length;
-    return { source, x, label, color, rows, hasMasterControl, filterId: `${filterPrefix}all`,
+    return { source, columnSide, x, label, color, rows, hasMasterControl, filterId: `${filterPrefix}all`,
       allPlanetsChecked: enabledCount === PLANETS.length ? true : enabledCount ? 'mixed' : false,
-      transform: activationBlockTransform(source), headingWidth: ACTIVATION_COLUMN_LAYOUT.headingWidths[label] };
+      transform: activationBlockTransform(columnSide), headingWidth: ACTIVATION_COLUMN_LAYOUT.headingWidths[label] };
   }).filter(Boolean);
   return columns;
 }
@@ -149,11 +149,11 @@ export function renderActivationRow(row) {
 }
 
 export function renderActivationColumn(column) {
-  const { source, x, label, color, transform, headingWidth, rows, hasMasterControl, filterId, allPlanetsChecked } = column;
-  return `<g class="activation-column" data-source="${source}" fill="${color}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
+  const { source, columnSide, x, label, color, transform, headingWidth, rows, hasMasterControl, filterId, allPlanetsChecked } = column;
+  return `<g class="activation-column" data-source="${source}" fill="${color}" data-column-side="${columnSide}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
       <g class="activation-block-content" transform="${transform}">
-      <text class="activation-heading" x="${activationHeadingX(source)}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" font-size="16" font-weight="500">${label}</text>
-      <path class="activation-header-rule" d="M ${activationHeadingX(source)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${headingWidth}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
+      <text class="activation-heading" x="${activationHeadingX(columnSide)}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" font-size="16" font-weight="500">${label}</text>
+      <path class="activation-header-rule" d="M ${activationHeadingX(columnSide)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${headingWidth}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
       ${hasMasterControl ? renderPlanetFilterControl(filterId, `${label}, все планеты`, allPlanetsChecked, `translate(${x} ${ACTIVATION_COLUMN_LAYOUT.headingY - 6})`) : ''}
       ${rows.map(renderActivationRow).join('')}
       </g>

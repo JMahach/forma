@@ -4,7 +4,7 @@ import { encodeTransitDay, encodeNumericColumn } from '../server/packets/encode.
 import { decodeTransitDay } from '../shared/day-packets/decode.js';
 import { transitChartAt } from '../src/domain/transit-day.js';
 import { TRANSIT_PLANETS, TRANSIT_DAY_COLUMNS } from '../shared/day-packets/transit-format.js';
-import { validateChart } from '../src/data/storage.js';
+import { validateLibraryChart } from '../src/data/storage.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 
 function fixture() {
@@ -59,10 +59,15 @@ test('materialized minutes use exact two-sided positions and retain a valid lega
     assert.equal(chart.activations.design.length, 13);
     assert.equal(Date.parse(chart.designUtc) / 1000, day.columns[22][minute]);
     assert.equal(chart.designArcResidualDegrees, day.columns[23][minute]);
-    const legacyFallback = { ...chart, design: [], designUtc: null, designArcResidualDegrees: null,
+    for (const key of ['id', 'name', 'note', 'createdAt', 'updatedAt', 'birthDate', 'birthTime']) assert.equal(Object.hasOwn(chart, key), false);
+    const { localDate, localTime, ...data } = chart;
+    const legacyFallback = { ...data, id: 'saved-transit', name: 'Saved transit', birthDate: localDate, birthTime: localTime,
+      birthPlace: '', cityId: null, city: null, note: '', createdAt: day.startUtc, updatedAt: chart.utc,
+      design: [], designUtc: null, designArcResidualDegrees: null,
       activations: { personality: chart.activations.personality, design: [] } };
-    assert.equal(validateChart(legacyFallback).utc, chart.utc);
+    assert.equal(validateLibraryChart(legacyFallback).utc, chart.utc);
     assert.equal(chart.utc, new Date(Date.parse(day.startUtc) + minute * 60000).toISOString().replace('.000Z', 'Z'));
+    assert.equal(localDate, chart.utc.slice(0, 10)); assert.equal(localTime, chart.utc.slice(11, 16));
     for (const [column, planet] of TRANSIT_PLANETS.entries()) {
       assert.deepEqual(chart.activations.personality.find(a => a.planet === planet), { planet, ...gatePositionAtLongitude(day.columns[column][minute]) });
       assert.deepEqual(chart.activations.design.find(a => a.planet === planet), { planet, ...gatePositionAtLongitude(day.columns[11 + column][minute]) });

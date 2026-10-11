@@ -11,7 +11,7 @@ function minuteAt(day, index) {
 }
 export function natalDayMinute(day, index) {
   const { segment, moment } = minuteAt(day, index);
-  return { index, utc: iso(moment), birthTime: iso(moment + segment.offsetSeconds * 1000).slice(11, 16), utcOffset: segment.utcOffset, fold: segment.fold };
+  return { index, utc: iso(moment), localTime: iso(moment + segment.offsetSeconds * 1000).slice(11, 16), utcOffset: segment.utcOffset, fold: segment.fold };
 }
 export function natalDayIndexAt(day, utc) {
   const moment = typeof utc === 'number' ? utc : Date.parse(utc);
@@ -45,14 +45,14 @@ export function natalDaySampleAt(day, index) {
       designUtc: iso(day.columns[DESIGN_UNIX_SECONDS_COLUMN][index] * 1000),
       designArcResidualDegrees: day.columns[DESIGN_RESIDUAL_COLUMN][index] } };
 }
-export function chartAtMinute(day, index, originalChart) {
+export function chartAtMinute(day, index) {
   const minute = natalDayMinute(day, index);
   const [personality, design] = [PERSONALITY_COLUMN, DESIGN_COLUMN].map(offset => projectLongitudes(
     NATAL_DAY_PLANETS.map((_, column) => day.columns[offset + column][index]), NATAL_DAY_PLANETS));
   const activations = { personality: personality.activations, design: design.activations };
-  return { ...originalChart, source: 'calculated', birthDate: day.date, timezone: day.timezone,
-    utc: minute.utc, birthTime: minute.birthTime, utcOffset: minute.utcOffset, fold: minute.fold,
+  return Object.freeze({ source: 'calculated', localDate: day.date, timezone: day.timezone,
+    utc: minute.utc, localTime: minute.localTime, utcOffset: minute.utcOffset, fold: minute.fold,
     activations, personality: personality.gates, design: design.gates,
     designUtc: iso(day.columns[DESIGN_UNIX_SECONDS_COLUMN][index] * 1000), designArcResidualDegrees: day.columns[DESIGN_RESIDUAL_COLUMN][index],
-    engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac };
+    engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac });
 }
