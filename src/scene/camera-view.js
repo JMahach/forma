@@ -1,4 +1,4 @@
-import { computeCameraFit } from './layout.js';
+import { computeCameraFit } from './camera-fit.js';
 
 // The fixed surface owns input coordinates and clipping; its SVG fills the box
 // without borders or padding. Moving the SVG never changes the camera's ruler.

@@ -44,7 +44,7 @@ function renderPreparedReturnEvents(state, events, now) {
   return `<div class="returns-timeline">${birthRow}${rows}${marked ? '' : marker()}</div>`;
 }
 
-export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClose, onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }) {
+export function attachReturnsPanel({ document, viewportLayout, getLayout = () => 'sheet', onClose, onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }) {
   const $ = id => document.getElementById(id);
   const panel = $('returnsPanel');
   let visible = false;
@@ -52,7 +52,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
   const yearButton = $('returnsYearCalendar');
   const bodyButton = $('returnsBodiesToggle'), bodyMenu = $('returnsBodyMenu');
   const sheet = () => getLayout() === 'sheet';
-  let state = { available: false, timelineVisible: false, opened: false, events: [], errors: [], pendingBodies: [], year: null, bodies: [] }, markup = '', listSnapshot = null, filterKey = '', jumpPending = false;
+  let state = { visible: false, events: [], errors: [], pendingBodies: [], year: null, bodies: [] }, markup = '', listSnapshot = null, filterKey = '', jumpPending = false;
   const checks = new Map();
   bodyMenu.hidden = true;
   bodyMenu.tabIndex = -1;
@@ -130,7 +130,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
     year.value = String(Number(value));
     if (Number(value) !== state.year) onYear(Number(value));
   }
-  const yearCalendar = attachDatePicker({ input: year, button: yearButton, precision: 'year',
+  const yearCalendar = attachDatePicker({ input: year, button: yearButton, precision: 'year', viewportLayout,
     presentation: { className: 'returns-filter-popover', title: 'Период', preferBelow: true,
       getBounds: () => {
         const bounds = panel.getBoundingClientRect();
@@ -191,7 +191,7 @@ export function attachReturnsPanel({ document, getLayout = () => 'sheet', onClos
   function update(next) {
     const wasVisible = visible;
     const nextKey = JSON.stringify([next.natal?.id || next.natal?.utc, next.year, next.bodies]);
-    const nextVisible = Boolean(next.available && next.timelineVisible && next.opened);
+    const nextVisible = Boolean(next.visible);
     const loadingStarted = !state.pendingBodies?.length && Boolean(next.pendingBodies?.length);
     if (nextVisible && (!wasVisible || filterKey !== nextKey || loadingStarted)) jumpPending = true;
     filterKey = nextKey;

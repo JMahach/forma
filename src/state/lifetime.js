@@ -110,7 +110,7 @@ export function createLifetimeExplorer({
     // Keep the minute until a cache-only lookup can confirm it or miss.
     if (minute <= max && client.readMinute && !Number.isInteger(indexAt(minute))) return { utc: minute, chart: null };
     const utc = gridUtc(clamped, round, bounds);
-    return utc === null ? null : { utc, chart: client.peekMoment?.(utc) || null };
+    return utc === null ? null : { utc, chart: client.peekMinute?.(utc) || null };
   }
   function load(restoration = pendingRestore, refreshNatalDay = false) {
     if (!opened) return Promise.resolve(false);
@@ -176,7 +176,7 @@ export function createLifetimeExplorer({
           const selected = selection, bounds = selectionBounds, round = selectionRound;
           let chart, checkedDay = null;
           try {
-            chart = client.peekMoment?.(target) || client.peekMinute?.(target);
+            chart = client.peekMinute?.(target);
             if (!chart && client.readMinute && (client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
               chart = await client.readMinute(target, { signal: request.controller.signal });
               // Historical natal minutes can have UTC seconds; their miss

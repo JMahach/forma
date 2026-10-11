@@ -6,11 +6,50 @@ import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createReturnsController } from '../src/state/returns.js';
+import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const event = { id: 'saturn:2050-01-01T12:00:00Z', body: 'saturn', utc: '2050-01-01T12:00:00Z', cycle: 1 };
 const moment = utc => ({ id: `moment:${utc}`, utc, source: 'transit', personality: [4], design: [63] });
+
+test('real lifetime state follows live time and closes on unsupported navigation without a controls view', async () => {
+  const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const manual = { id: 'manual', source: 'manual', personality: [1], design: [8] };
+  const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
+    stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] };
+  let exploration, lifetime;
+  const returns = createReturnsController({ client: { events: async () => ({ events: [] }) } });
+  const natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() } });
+  const current = moment('2026-10-05T12:00:00Z');
+  const transit = { current, state: { current, wanted: false, status: 'ready', live: true },
+    setWanted(value) { this.state.wanted = value; }, goNow() {} };
+  const session = createChartSession({
+    store: { get: id => [natal, manual].find(chart => chart.id === id), has: id => [natal.id, manual.id].includes(id) },
+    getLifetime: () => lifetime, getReturns: () => returns, getNatalDay: () => natalDay, getTransit: () => transit,
+    onSelect: () => exploration.selected(),
+  });
+  exploration = createChartExploration({ session, getLifetime: () => lifetime, getReturns: () => returns,
+    getNatalDay: () => natalDay, getTransit: () => transit, loadLifetime: async () => lifetime });
+  lifetime = createLifetimeExplorer({ client: { getMeta: async () => metadata,
+    getPoint() { assert.fail('the accepted birth/live chart already owns the moment'); } },
+    getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
+    onRender: exploration.publishLifetime, onStateChange: exploration.lifetimeChanged });
+  session.select(natal.id);
+  assert.equal(await exploration.toggleReturns(), true);
+  assert.equal(lifetime.state.opened, true);
+  assert.equal(session.current.primary, natal);
+  assert.equal(exploration.followNow(), true);
+  assert.equal(session.current.secondary, current);
+  assert.equal(lifetime.current.utc, current.utc);
+  assert.equal(lifetime.state.requestedUtc, Date.parse(current.utc));
+  await exploration.select(manual.id);
+  assert.equal(lifetime.state.opened, false);
+  assert.equal(returns.available, false);
+  assert.equal(session.current.primary, manual);
+  assert.equal(session.current.secondary, null);
+});
+
 function harness() {
   const natal = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...natal, id: 'second', name: 'Вторая карта' };
@@ -176,7 +215,6 @@ function returnListHarness({ active = false, restoreResult = true } = {}) {
       return Promise.resolve(restoreResult);
     },
     close() { this.state.opened = false; },
-    setAvailable() {},
   };
   const natalDay = {
     state: { opened: false, available: true },

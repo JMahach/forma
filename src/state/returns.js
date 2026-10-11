@@ -222,5 +222,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
     return ensure();
   }
   return { select, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore,
+    get available() { return available(); }, get natal() { return natal; }, get opened() { return opened; },
+    get year() { return year; }, get selectedEvent() { return selectedEvent; },
     get state() { return state(); }, get current() { return current; } };
 }

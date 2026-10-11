@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { attachLifetimeControls } from '../src/views/lifetime-controls.js';
+import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { lifetimeChartAt } from '../src/domain/lifetime.js';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
 import { createLocalDayTimeline, timelineIndexAt } from '../src/domain/day-timeline.js';
 import { completedAge } from '../src/domain/personal-age.js';
 import { dateDom } from './helpers/date-dom.mjs';
+import { createViewportLayout } from './helpers/viewport-layout.mjs';
 import { IDBFactory } from 'fake-indexeddb';
 import { createTransitDayCache } from '../src/data/transit-day-cache.js';
 import { createLifetimeClient } from '../src/data/lifetime-client.js';
@@ -32,23 +34,28 @@ function harness(options = {}) {
     wanted: true, status: 'ready', index: 937, referenceIndex: 937, live: true,
     current: { ...lifetimeChartAt(metadata, point(0)), id: 'current-transit', utc, birthDate: '2026-09-30' } };
   const requests = [], notifications = [], dayScrubs = [], dayReturns = [];
-  const explorer = attachLifetimeControls({ ...elements, getDayState: () => day, now: () => now, ...options,
-    onDayScrub: value => dayScrubs.push(value), onDayNow: (...args) => dayReturns.push(args),
+  let controls;
+  const explorer = createLifetimeExplorer({ getDayState: () => day, now: () => now, ...options,
     client: { async getMeta() { return options.metaPromise || metadata; },
       getPoint(index) { const request = { index, ...deferred() }; requests.push(request); return request.promise; },
       ...options.client,
     },
-    onStateChange(state) { notifications.push({ opened: state.opened, status: state.status }); },
+    onStateChange(state) { notifications.push({ opened: state.opened, status: state.status }); controls?.update(state); },
   });
+  controls = attachLifetimeControls({ ...elements, explorer: Object.freeze(explorer), getDayState: () => day,
+    viewportLayout: createViewportLayout(document), ...options,
+    onDayScrub: value => dayScrubs.push(value), onDayNow: (...args) => dayReturns.push(args),
+  });
+  function syncTransit() { if (!explorer.syncDay() && !explorer.syncClock()) controls.refreshMoment(); }
   function type(input, value) { input.focus(); input.value = value; input.setSelectionRange(value.length, value.length); input.dispatch('input'); }
-  return { ...elements, marks, explorer, requests, notifications, document, type, dayScrubs, dayReturns,
+  return { ...elements, marks, explorer, controls, syncTransit, requests, notifications, document, type, dayScrubs, dayReturns,
     get day() { return day; },
-    setDayState(overrides) { day = { ...day, ...overrides }; explorer.syncTransit(); },
+    setDayState(overrides) { day = { ...day, ...overrides }; syncTransit(); },
     setNow(utc) { now = Date.parse(utc); explorer.syncClock(); },
     setDay(utc, timeZone = 'Europe/Moscow') {
       const timeline = createLocalDayTimeline(Date.parse(utc), timeZone);
       day = { ...day, timeline, index: timelineIndexAt(timeline, Date.parse(utc)),
-        current: { ...day.current, utc, birthDate: timeline.date } }; explorer.syncTransit();
+        current: { ...day.current, utc, birthDate: timeline.date } }; syncTransit();
     } };
 }
 async function complete(h, position = h.requests.length - 1) { const request = h.requests[position]; request.resolve(moment(request.index)); await tick(); }
@@ -143,7 +150,7 @@ test('a visible year changes only rail bounds and hides a shown moment outside t
   h.explorer.scrub(Date.parse('1998-08-11T12:00:00Z')); await tick(); await complete(h);
   const current = h.explorer.current, before = h.explorer.state.requestedUtc, requests = h.requests.length;
   const window = { minUtc: Date.parse('1999-01-01T00:00:00Z'), maxUtc: Date.parse('1999-08-12T23:59:59Z') };
-  h.explorer.setVisibleWindow(window);
+  h.controls.setVisibleWindow(window);
   assert.equal(h.explorer.current, current);
   assert.equal(h.explorer.state.requestedUtc, before);
   assert.equal(h.requests.length, requests, 'a filter is not a new chart request');
@@ -151,7 +158,7 @@ test('a visible year changes only rail bounds and hides a shown moment outside t
   assert.equal(h.range.getAttribute('data-cursor-visible'), 'false');
   h.range.dispatch('keydown', { key: 'ArrowRight' });
   assert.equal(h.explorer.state.requestedUtc, window.minUtc, 'keyboard input enters the visible year');
-  h.explorer.setVisibleWindow(null);
+  h.controls.setVisibleWindow(null);
   assert.equal(Number(h.range.min), h.explorer.state.minUtc);
   assert.equal(h.range.getAttribute('data-cursor-visible'), 'true');
 });
@@ -219,10 +226,10 @@ test('personal reference uses accepted UTC during manual, pending and failed ret
   await open(h); await dates(h, '29092026', '01102026'); await complete(h);
   for (const status of ['ready', 'loading', 'error']) {
     owner = { ...h.day, status, live: false, requestedUtc: Date.parse('2026-09-30T13:00:00Z') };
-    h.explorer.syncTransit(); assert.equal(h.marker.getAttribute('aria-pressed'), 'true', status);
+    h.syncTransit(); assert.equal(h.marker.getAttribute('aria-pressed'), 'true', status);
     owner = { ...owner, live: true, requestedUtc: h.explorer.state.referenceUtc,
       current: { ...owner.current, utc: '2026-09-30T12:38:00Z' } };
-    h.explorer.syncTransit(); assert.equal(h.marker.getAttribute('aria-pressed'), 'false', status);
+    h.syncTransit(); assert.equal(h.marker.getAttribute('aria-pressed'), 'false', status);
   }
   owner = null; h.explorer.close();
 });
@@ -269,23 +276,27 @@ test('personal live lifetime clock borrows each exact day minute without request
   await open(h); await dates(h, '29092026', '01102026'); await complete(h);
   assert.equal(h.marker.hidden, false, 'the current-time reference remains on the rail');
   const requests = h.requests.length;
-  liveState = h.day; h.explorer.syncTransit();
+  const ownTimeText = h.range.getAttribute('aria-valuetext'), ownPosition = h.range.value;
+  const notifications = h.notifications.length;
+  liveState = h.day; h.syncTransit();
 
   assert.match(h.range.getAttribute('aria-valuetext'), /12:37/);
   assert.equal(h.marker.getAttribute('aria-pressed'), 'true');
   liveState = { ...liveState, current: { ...liveState.current, utc: '2026-09-30T12:38:00Z' } };
-  h.explorer.syncTransit();
+  h.syncTransit();
 
   assert.equal(h.requests.length, requests);
   h.marker.dispatch('click', { detail: 0 });
   assert.equal(nowCalls, 1);
   assert.equal(h.requests.length, requests, 'live Now is not a lifetime scrub');
-  liveState = { ...liveState, status: 'error', error: 'Текущий день недоступен' }; h.explorer.syncTransit();
+  liveState = { ...liveState, status: 'error', error: 'Текущий день недоступен' }; h.syncTransit();
   assert.equal(h.status.textContent, '');
   assert.equal(nowCalls, 1, 'feedback does not reselect the live moment');
   assert.equal(h.requests.length, requests, 'retry stays with the failed live owner');
-  liveState = null; h.explorer.syncTransit();
-
+  liveState = null; h.syncTransit();
+  assert.equal(h.range.value, ownPosition, 'removing the borrowed moment restores the lifetime cursor immediately');
+  assert.equal(h.range.getAttribute('aria-valuetext'), ownTimeText, 'borrowed feedback cannot survive its owner');
+  assert.equal(h.notifications.length, notifications, 'external presentation updates do not publish lifetime state');
   h.range.value = String(h.explorer.state.requestedUtc + 600000); h.range.dispatch('input');
   await tick(); await complete(h);
 
@@ -320,7 +331,7 @@ test('a borrowed live minute has the same exact UTC position in the control and 
 
   assert.equal(h.explorer.state.requestedUtc, Date.parse(owner.current.utc)); assert.equal(Number(h.range.value), h.explorer.state.requestedUtc);
   owner = { ...owner, current: { ...owner.current, utc: '2026-09-30T12:38:00Z' } };
-  h.explorer.alignMoment(owner.current); h.explorer.syncTransit();
+  h.explorer.alignMoment(owner.current); h.syncTransit();
   assert.equal(Number(h.range.value), h.explorer.state.requestedUtc);
   assert.equal(h.requests.length, 0);
 });
@@ -375,19 +386,19 @@ test('reused day labels retain active drafts and refresh readiness, reference an
     Object.defineProperty(h[name], property, { get: () => value, set(next) { value = next; writes.push(name); } });
   }
   const notices = h.notifications.length;
-  h.explorer.syncTransit(); h.setDayState({ referenceIndex: 940, live: false });
+  h.syncTransit(); h.setDayState({ referenceIndex: 940, live: false });
   assert.deepEqual(writes, []);
-  assert.equal(h.notifications.length, notices + 2, 'text reuse cannot suppress owner notifications');
+  assert.equal(h.notifications.length, notices, 'presentation refresh must not synthesize lifetime state notifications');
   assert.equal(h.marker.style.left, `${940 / 1439 * 100}%`);
   h.setDayState({ status: 'loading' });
   assert.deepEqual(writes.splice(0), []); assert.equal(h.range.disabled, true);
   h.setDayState({ status: 'error', error: 'Нет сети', retryCount: 3 });
   assert.deepEqual(writes.splice(0), ['status']); h.type(h.fromDate, '1508'); writes.length = 0;
-  h.setDayState({ status: 'ready', error: '' }); h.explorer.syncTransit();
+  h.setDayState({ status: 'ready', error: '' }); h.syncTransit();
   assert.equal(h.fromDate.value, '15.08');
   assert.ok(!writes.includes('fromDate') && !writes.includes('toDate'));
   assert.equal(h.range.disabled, false); for (const width of [400, 800]) {
-    h.explorer.syncTransit();
+    h.syncTransit();
     h.range.getBoundingClientRect = () => ({ left: 0, width, height: 56 });
     const event = { pointerType: 'touch', pointerId: 1, button: 0, clientX: 100, clientY: 20 };
     h.range.dispatch('pointerdown', event); h.range.dispatch('pointerup', event);
@@ -793,12 +804,12 @@ test('calendar year selection commits Jan 1 for both endpoints on dismissal and 
   h.explorer.close(); assert.equal(from.hidden, true); assert.equal(to.hidden, true);
   assert.equal(h.panel.hidden, true);
 });
-test('unavailable/closed controls dismiss calendars and reopen with the current day and cleared validation', async () => {
+test('closed controls dismiss calendars and reopen with the current day and cleared validation', async () => {
   const h = harness(); await open(h); h.type(h.toDate, '31021998'); h.fromCalendar.dispatch('click');
-  h.explorer.setAvailable(false); assert.equal(h.panel.hidden, true); assert.equal(h.toggle.hidden, true);
+  h.explorer.close(); assert.equal(h.panel.hidden, true);
   assert.equal(h.document.body.children.every(node => node.hidden), true); const notifications = h.notifications.length;
-  h.explorer.setAvailable(false); assert.equal(h.notifications.length, notifications);
-  h.explorer.setAvailable(true); h.toggle.focus(); await open(h);
+  h.explorer.close(); assert.equal(h.notifications.length, notifications);
+  h.toggle.focus(); await open(h);
   assert.equal(h.toDate.value, '30.09.2026'); assert.equal(h.toDate.getAttribute('aria-invalid'), 'false'); assert.equal(h.status.textContent, '');
 });
 test('Lifetime owns one visible range in either mode without overlapping the ordinary transit panel', async () => {
@@ -918,12 +929,12 @@ test('retry feedback follows the live owner even when the lifetime is ready', as
   let live = null;
   const h = harness({ getMomentState: () => live });
   await open(h); await dates(h); await complete(h);
-  live = { ...h.day, status: 'error', retryCount: 2 }; h.explorer.syncTransit();
+  live = { ...h.day, status: 'error', retryCount: 2 }; h.syncTransit();
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
-  live = { ...live, retryCount: 3 }; h.explorer.syncTransit();
+  live = { ...live, retryCount: 3 }; h.syncTransit();
   assert.equal(h.status.textContent, 'Загружаю момент');
   assert.equal(h.panel.getAttribute('aria-busy'), 'true');
-  live = { ...live, status: 'ready', retryCount: 0 }; h.explorer.syncTransit();
+  live = { ...live, status: 'ready', retryCount: 0 }; h.syncTransit();
   assert.equal(h.status.textContent, ''); h.explorer.close();
 });
 
@@ -943,7 +954,7 @@ test('endpoint labels have one owner for personal and standalone ranges and unch
       let value = mark.textContent;
       Object.defineProperty(mark, 'textContent', { get: () => value, set: next => { writes++; value = next; } });
     }
-    for (let update = 0; update < 50; update++) h.explorer.syncTransit();
+    for (let update = 0; update < 50; update++) h.syncTransit();
     assert.equal(writes, 0, 'the displayed range did not change');
     h.explorer.close();
     assert.deepEqual(h.marks.map(mark => mark.textContent), ['', '']);
@@ -995,24 +1006,24 @@ test('personal decade marks use real birthdays and the clipped window without re
   const first = h.hourMarks.children[0];
   assert.match(first.className, /is-major/);
   const birth = Date.parse(personal.utc);
-  h.explorer.setVisibleWindow({ minUtc: birth, maxUtc: birth + 86400000 });
+  h.controls.setVisibleWindow({ minUtc: birth, maxUtc: birth + 86400000 });
   assert.equal(h.hourMarks.children[0].style['--hour-position'], '0%');
-  h.explorer.setVisibleWindow({ minUtc: birth + 1, maxUtc: birth + 86400000 });
+  h.controls.setVisibleWindow({ minUtc: birth + 1, maxUtc: birth + 86400000 });
   assert.equal(h.hourMarks.children.length, 0, 'birth uses its actual instant, not midnight or a rounded minute');
-  h.explorer.setVisibleWindow(null);
+  h.controls.setVisibleWindow(null);
   const restored = h.hourMarks.children[0];
-  h.explorer.setVisibleWindow({ minUtc: Number(h.range.min), maxUtc: Number(h.range.max) });
+  h.controls.setVisibleWindow({ minUtc: Number(h.range.min), maxUtc: Number(h.range.max) });
   assert.equal(h.hourMarks.children[0], restored, 'unchanged span reuses marks');
   const minUtc = Date.parse('2010-01-01T00:00:00Z'), maxUtc = Date.parse('2011-01-01T00:00:00Z');
-  h.explorer.setVisibleWindow({ minUtc, maxUtc });
+  h.controls.setVisibleWindow({ minUtc, maxUtc });
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10']);
   const position = Number.parseFloat(h.hourMarks.children[0].style['--hour-position']);
   assert.ok(Math.abs(position - 59 / 365 * 100) < 1e-8, '29 February reaches completed age on 1 March in a non-leap year');
-  h.explorer.setVisibleWindow({ minUtc: Date.parse('2010-06-01T00:00:00Z'), maxUtc });
+  h.controls.setVisibleWindow({ minUtc: Date.parse('2010-06-01T00:00:00Z'), maxUtc });
   assert.equal(h.hourMarks.children.length, 0, 'a clipped birthday must not move to the start of the year');
-  h.explorer.setVisibleWindow(null);
+  h.controls.setVisibleWindow(null);
   personal = null;
-  h.explorer.setVisibleWindow({ minUtc, maxUtc });
+  h.controls.setVisibleWindow({ minUtc, maxUtc });
   assert.ok(h.hourMarks.children.length >= 2);
   assert.ok(h.hourMarks.children.every(mark => mark.dataset.age === undefined), 'ordinary chronicle never inherits personal ages');
 });
@@ -1021,10 +1032,10 @@ test('personal marks honour the birth timezone and clear when returning to the d
   const h = harness({ getPersonalChart: () => ({ utc: '2000-01-01T18:00:00Z', timezone: 'Asia/Tokyo' }) });
   await open(h); await dates(h, '01012000', '31122020');
   const minUtc = Date.parse('2009-12-31T15:00:00Z'), maxUtc = Date.parse('2010-12-31T15:00:00Z');
-  h.explorer.setVisibleWindow({ minUtc, maxUtc });
+  h.controls.setVisibleWindow({ minUtc, maxUtc });
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10']);
   assert.ok(Math.abs(Number.parseFloat(h.hourMarks.children[0].style['--hour-position']) - 1 / 365 * 100) < 1e-8, 'local 2 January begins at 15:00 UTC on 1 January');
-  h.explorer.setVisibleWindow(null);
+  h.controls.setVisibleWindow(null);
   let writes = 0;
   const replaceChildren = h.hourMarks.replaceChildren.bind(h.hourMarks);
   h.hourMarks.replaceChildren = (...children) => { writes++; replaceChildren(...children); };
@@ -1034,7 +1045,7 @@ test('personal marks honour the birth timezone and clear when returning to the d
   assert.ok(h.hourMarks.children.every(mark => mark.dataset.age === undefined));
   assert.equal(writes, 1, 'changing scale replaces its marks once, without a separate clearing pass');
   writes = 0;
-  for (let update = 0; update < 20; update++) h.explorer.syncTransit();
+  for (let update = 0; update < 20; update++) h.syncTransit();
   assert.equal(writes, 0, 'unchanged day updates reuse the same marks');
   void h.explorer.setDateRange('2000-01-01', '2020-12-31');
   await tick();
@@ -1049,7 +1060,7 @@ test('reference titles distinguish the current moment from a personal transit', 
   await dates(h, '29092026', '01102026'); await complete(h);
   assert.equal(h.marker.title, 'Текущий момент');
   personal = { utc: '1998-08-18T14:00:00Z', timezone: 'Europe/Moscow' }; owner = h.day;
-  h.explorer.syncTransit(); assert.equal(h.marker.title, 'Текущий транзит');
+  h.syncTransit(); assert.equal(h.marker.title, 'Текущий транзит');
 });
 
 
@@ -1170,11 +1181,11 @@ test('thumb edges follow available neighbors inside a clipped lifetime window', 
   const h = harness(); await open(h); await dates(h, '01012000', '02012000'); await complete(h);
   const select = async utc => { void h.explorer.scrub(Date.parse(utc)); await tick(); await complete(h); };
   await select('2000-01-01T12:00:00Z');
-  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:05:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
+  h.controls.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:05:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
   assert.equal(h.range.getAttribute('data-edge'), 'end');
   await select('2000-01-01T00:10:00Z');
   assert.equal(h.range.getAttribute('data-edge'), 'start');
-  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-02T00:00:00Z'), maxUtc: Date.parse('2000-01-02T12:00:00Z') });
+  h.controls.setVisibleWindow({ minUtc: Date.parse('2000-01-02T00:00:00Z'), maxUtc: Date.parse('2000-01-02T12:00:00Z') });
   assert.equal(h.range.getAttribute('data-edge'), 'none');
   assert.equal(h.range.getAttribute('data-cursor-visible'), 'false');
 });
@@ -1209,7 +1220,7 @@ for (const cache of ['cold', 'memory', 'missing-disk']) test(`a clipped year kee
   } });
   await open(h); await dates(h, '18081998', '18082098'); await complete(h);
   const full = { minUtc: h.explorer.state.minUtc, maxUtc: h.explorer.state.maxUtc };
-  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:00:00Z'), maxUtc: Date.parse('2000-12-31T23:59:59.999Z') });
+  h.controls.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:00:00Z'), maxUtc: Date.parse('2000-12-31T23:59:59.999Z') });
   h.range.dispatch('keydown', { key: 'End' }); await tick();
   if (cache !== 'memory') await complete(h);
   const expected = cache === 'memory' ? '2000-12-31T23:59:00.000Z' : '2000-12-31T23:50:00.000Z';
@@ -1226,7 +1237,7 @@ for (const cache of ['cold', 'memory', 'missing-disk']) test(`a clipped year kee
 
 test('a clipped left edge rounds inward for both Home and pointer input', async () => {
   const h = harness(); await open(h); await dates(h, '01012000', '02012000'); await complete(h);
-  h.explorer.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:04:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
+  h.controls.setVisibleWindow({ minUtc: Date.parse('2000-01-01T00:04:00Z'), maxUtc: Date.parse('2000-01-01T12:05:00Z') });
   h.range.dispatch('keydown', { key: 'Home' }); await tick(); await complete(h);
   assert.equal(h.explorer.current.utc, '2000-01-01T00:10:00Z');
   assert.equal(h.range.getAttribute('data-cursor-visible'), 'true');
@@ -1250,7 +1261,7 @@ test('an invalid lifetime file stops metadata retries and an explicit retry reta
   assert.equal(h.explorer.state.status, 'error');
   assert.equal(h.status.textContent, 'Данные летописи недоступны.');
   assert.equal(h.explorer.state.retryCount, 0);
-  t.mock.timers.tick(60_000); await tick(); h.explorer.syncTransit();
+  t.mock.timers.tick(60_000); await tick(); h.syncTransit();
   assert.equal(metadataCalls, 1, 'a rejected file cannot be repaired by repeating its metadata request');
   ready = true; assert.equal(await h.explorer.retry(), true);
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
@@ -1366,16 +1377,16 @@ test('an explicitly selected returns year shares calendar ticks without new labe
   await open(h); await dates(h, '01012000', '31122020');
   const accepted = [h.explorer.state.minUtc, h.explorer.state.maxUtc], requests = h.requests.length;
   const window = { minUtc: Date.parse('2009-12-31T15:00:00Z'), maxUtc: Date.parse('2010-12-31T14:59:59.999Z') };
-  h.explorer.setVisibleWindow({ ...window, calendar: true, timeZone: natal.timezone });
+  h.controls.setVisibleWindow({ ...window, calendar: true, timeZone: natal.timezone });
   assert.ok(h.hourMarks.children.length > 2);
   assert.ok(h.hourMarks.children.every(mark => mark.className.includes('calendar-time-mark') && !mark.children.length));
   assert.equal(h.hourMarks.children[0].style['--hour-position'], '0%');
   assert.equal(h.hourMarks.children.at(-1).style['--hour-position'], '100%');
   assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], accepted);
   assert.equal(h.requests.length, requests, 'decorations do not calculate or select a moment');
-  h.explorer.setVisibleWindow(window);
+  h.controls.setVisibleWindow(window);
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['10'], 'an equally sized age window remains an age window');
-  h.explorer.setVisibleWindow(null);
+  h.controls.setVisibleWindow(null);
   assert.deepEqual(h.hourMarks.children.map(mark => mark.dataset.age), ['0', '10', '20']);
 });
 

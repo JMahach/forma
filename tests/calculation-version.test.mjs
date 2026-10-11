@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { calculationVersion, CALCULATION_INPUTS } from '../server/runtime/calculation-version.mjs';
+import { lifetimeFileFingerprint } from '../server/services/lifetime.mjs';
+import { cyclesCalculationFingerprint } from '../server/services/cycles.mjs';
 
 test('public numeric revision follows every calculation input, independent of delivery and file location', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-numeric-version-'));
@@ -43,4 +45,22 @@ test('a lifetime generator correction invalidates previously stored public numbe
   const original = await calculationVersion(root);
   await fs.writeFile(path.join(root, 'server/python/lifetime_file.py'), 'corrected lifetime sample generation');
   assert.notEqual(await calculationVersion(root), original, 'old stored moments must not hide corrected prepared values');
+});
+
+test('a natal-day generator correction changes public numbers without invalidating prepared lifetime or cycles', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-natal-version-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  // Copy the real calculation owners independently of the list being tested:
+  // a forgotten worker must still exist here and exercise its version boundary.
+  for (const name of ['server/python', 'shared', 'requirements.txt', 'data/ephe']) {
+    await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
+    await fs.cp(new URL(`../${name}`, import.meta.url), path.join(root, name), { recursive: true });
+  }
+  const original = await calculationVersion(root);
+  const prepared = await lifetimeFileFingerprint(root), cycles = await cyclesCalculationFingerprint(root);
+  const file = path.join(root, 'server/python/natal_day.py');
+  await fs.appendFile(file, '\n# Changed natal-day calculation source.\n');
+  assert.notEqual(await calculationVersion(root), original, 'a stored natal day cannot keep the revision of an older generator');
+  assert.equal(await lifetimeFileFingerprint(root), prepared, 'natal-day changes do not reject the prepared ten-minute file');
+  assert.equal(await cyclesCalculationFingerprint(root), cycles, 'the independent return calculation has not changed');
 });

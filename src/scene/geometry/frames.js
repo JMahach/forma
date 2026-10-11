@@ -2,7 +2,7 @@ import { MANDALA_GEOMETRY, MANDALA_SCENE_SCALE } from './mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT } from './mandala-planets.js';
 import { MANDALA_COLUMN_SPAN } from './activation-layout.js';
 
-// SVG-space bounds. CSS-pixel layout insets are owned by scene/layout.
+// SVG-space bounds. CSS-pixel layout insets are owned by ui/layout.
 export const DRAWING_BOUNDS = Object.freeze({ x: -52, y: 28, width: 744, height: 740 });
 export const CHART_FRAME = Object.freeze({ bounds: DRAWING_BOUNDS, minScale: .65 });
 // One stable Home contains the complete painted planet envelope.
@@ -18,4 +18,11 @@ export const MANDALA_FRAME = Object.freeze({
     y: STUDIO_FRAME.bounds.y,
     width: MANDALA_COLUMN_SPAN.right - MANDALA_COLUMN_SPAN.left,
     height: STUDIO_FRAME.bounds.height }), minScale: .1,
+});
+
+// The page receives only this numeric footprint, never drawing internals.
+export const STUDIO_FOOTPRINT = Object.freeze({
+  frame: STUDIO_FRAME, radius,
+  columns: Object.freeze({ left: MANDALA_COLUMN_SPAN.left - MANDALA_GEOMETRY.centerX,
+    right: MANDALA_COLUMN_SPAN.right - MANDALA_GEOMETRY.centerX }),
 });

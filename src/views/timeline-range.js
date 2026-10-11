@@ -1,3 +1,5 @@
+import { TIMELINE_THUMB_SIZE } from '../ui/layout/metrics.js';
+
 // Compare the displayed chart with the reference, never a pending slider target.
 export function isReferenceMoment(displayedUtc, referenceUtc) {
   const utc = value => typeof value === 'string' ? Date.parse(value) : value;
@@ -36,7 +38,7 @@ function thumbImage(frame) {
 // A reference tap still waits for release; dragging always scrubs. The 44px thumb
 // width and 22px rail inset keep the visible endpoints and value mapping stable.
 export function attachTimelineRange({ range, marker = null, onScrub, onReference, onStep = null,
-  onInteractionChange = () => {}, thumbSize = 44, movementThreshold = 8, tapDuration = 500,
+  onInteractionChange = () => {}, thumbSize = TIMELINE_THUMB_SIZE, movementThreshold = 8, tapDuration = 500,
   now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null, resolveEdge = () => null,
 }) {
   let interacting = false;

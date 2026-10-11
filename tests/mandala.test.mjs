@@ -196,6 +196,20 @@ test('shared studio content enlarges around chart y=410 while its focus targets 
   GATES.forEach((gate, index) => inside([gate.x, gate.y], gateHits[index], `gate ${gate.id}`));
 });
 
+test('standalone drawing supplies the expanded column geometry without shadowing the live animation offset', () => {
+  for (const profile of [undefined, 'studio']) for (const showMandala of [false, true]) {
+    // No camera/motion owner is mounted around this independently rendered SVG.
+    const markup = renderBodygraph({}, null, { profile, showMandala, showActivations: true });
+    const drawing = attributes(markup.match(/<g class="bodygraph-drawing[^"]*"[^>]*>/)[0]);
+    const properties = Object.fromEntries((drawing.style || '').split(';').filter(Boolean).map(declaration =>
+      declaration.split(':').map(value => value.trim())));
+    assert.equal(properties['--activation-column-expanded-offset'], '244px',
+      'standalone columns use the established expanded geometry, including before a later mode switch');
+    assert.equal(properties['--activation-column-offset'], undefined,
+      'the inherited live offset must remain authoritative during animation');
+  }
+});
+
 test('gate-only rendering is deterministic and does not modify saved data', () => {
   const chart = { name: 'Private', source: 'calculated', birthDate: '1990-01-01', personality: [20, 20, 34], design: [10], activations: { personality: [] } };
   const before = structuredClone(chart);

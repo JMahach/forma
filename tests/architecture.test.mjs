@@ -122,7 +122,7 @@ test('production cache is the only writable service directory and API timeout co
 });
 
 test('layout and camera use measured inputs; geometry never imports rendering or gestures', () => {
-  for (const file of ['src/scene/layout.js', 'src/scene/camera.js']) {
+  for (const file of ['src/scene/camera-fit.js', 'src/scene/camera.js']) {
     only(file, ['src/scene/geometry/']);
     pure(file);
     assert.doesNotMatch(source(file), /\b(?:getBoundingClientRect|getScreenCTM|DOMPoint)\b/, `${file} must not measure the DOM`);
@@ -131,4 +131,26 @@ test('layout and camera use measured inputs; geometry never imports rendering or
     only(file, ['src/scene/geometry/', 'src/domain/', 'src/reference/']);
     pure(file);
   }
+});
+
+
+test('page layout owns placement without importing scene, feature state or views', () => {
+  for (const file of files('src/ui/layout')) only(file, ['src/ui/layout/']);
+  for (const file of ['src/ui/layout/studio.js', 'src/ui/layout/metrics.js']) {
+    pure(file);
+    assert.doesNotMatch(source(file), /\b(?:getBoundingClientRect|getScreenCTM|DOMPoint)\b/);
+  }
+  for (const file of files('src/scene')) {
+    assert.ok(!graph.get(file).some(dependency => dependency.startsWith('src/ui/layout/')), `${file} must not depend on page layout`);
+  }
+  for (const file of ['src/views/date-picker.js', 'src/views/activation-popover.js']) {
+    assert.doesNotMatch(source(file), /\bvisualViewport\b/, `${file} must receive the shared viewport port`);
+  }
+});
+
+test('state and data do not depend on feature views, page layout or drawing', () => {
+  for (const file of files('src/state')) only(file, ['src/state/', 'src/data/', 'src/domain/', 'shared/']);
+  for (const file of files('src/data')) only(file, ['src/data/', 'src/domain/', 'shared/']);
+  only('src/ui/studio-presentation.js', []);
+  pure('src/ui/studio-presentation.js');
 });

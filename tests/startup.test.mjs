@@ -1,13 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { STUDIO_FOOTPRINT } from '../src/scene/geometry/frames.js';
+import { attachPageGestures } from '../src/ui/page-gestures.js';
 
 // Run the entry module with its browser ports, leaving its actual initialization
 // order intact while replacing the network-loaded application.
 const source = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace("import('./app.js')", 'loadApp()');
-const run = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'loadApp', 'location', source);
+const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
+  'STUDIO_FOOTPRINT', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'loadApp', 'location', source);
+const run = (...args) => evaluate(STUDIO_FOOTPRINT, ...args);
+
+function assertPageZoomBlocked(document) {
+  const zoom = Object.assign(new Event('wheel', { cancelable: true }), { ctrlKey: true });
+  document.dispatchEvent(zoom);
+  assert.equal(zoom.defaultPrevented, true, 'native zoom is guarded before the application loads and after failure');
+}
 
 test('startup reads the tab once and prefetches only a day that owns the saved view', async () => {
   for (const [savedView, needsDay] of [
@@ -22,9 +31,12 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     let reads = 0, creates = 0, options, received;
     const toast = () => {}, layout = {}, client = {};
     const viewStore = { read() { reads++; return savedView; } };
-    const document = { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: () => ({}) };
-    await run(document, class { observe() {} disconnect() {} }, value => { options = value; return client; }, () => layout,
-      () => toast, () => { creates++; return viewStore; }, async () => ({ startApp(value) { received = value; } }));
+    const document = Object.assign(new EventTarget(), { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: () => ({}) });
+    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, value => { options = value; return client; }, () => layout,
+      () => toast, () => { creates++; return viewStore; }, async () => {
+        assertPageZoomBlocked(document);
+        return { startApp(value) { received = value; } };
+      });
     assert.equal(options.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
@@ -40,14 +52,16 @@ for (const failure of ['import', 'initialization']) {
     let retry, reloads = 0;
     const button = { hidden: true, addEventListener(type, callback) { assert.equal(type, 'click'); retry = callback; } };
     const nodes = { canvasWrap: canvas, chartLoadingStatus: status, chartLoadingRetry: button };
-    const document = { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: id => nodes[id] || {} };
+    const document = Object.assign(new EventTarget(), { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false, getElementById: id => nodes[id] || {} });
     const error = new Error('Startup failed');
     const loadApp = async () => {
+      assertPageZoomBlocked(document);
       if (failure === 'import') throw error;
       return { startApp() { throw error; } };
     };
-    await run(document, class { observe() {} disconnect() {} }, () => ({}), () => ({}), () => () => {},
+    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), () => ({}), () => () => {},
       () => ({ read: () => null }), loadApp, { reload() { reloads++; } });
+    assertPageZoomBlocked(document);
     assert.equal(canvas.dataset.chartState, 'error');
     assert.equal(attributes.get('aria-busy'), 'false');
     assert.equal(status.textContent, 'Не удалось загрузить приложение');

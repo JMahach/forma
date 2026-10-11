@@ -231,6 +231,13 @@ const originalActivationStyle = markup => markup.replace(
   '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n')
   // Explicit Safari baseline inheritance does not change channel geometry.
   .replace('    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */\n    .bg-activation tspan { dominant-baseline: inherit; }\n', '');
+// A later layout split supplies the standalone mandala fallback explicitly.
+// These historical cases render normal charts, where that property is inert.
+// Normalize only this exact metadata attribute, retaining every transform,
+// painted path, hit target and original hash. mandala.test.mjs covers its value.
+const originalDrawingStyle = markup => markup.replace(
+  /(<g class="bodygraph-drawing"(?: transform="[^"]*")?) style="--activation-column-expanded-offset:244px"/,
+  '$1');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center', id: 'throat' },
     { type: 'channel', id: '37-40' }, { type: 'integration', id: 'integration' }];
@@ -291,7 +298,7 @@ async function rendererAtScale(scale) {
 test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {
   const renderReverted = await rendererAtScale(1);
   for (const { name, args, hash } of rollbackCases) {
-    assert.equal(createHash('sha256').update(originalActivationStyle(originalGateFont(originalGateContour(renderReverted(...args))))).digest('hex'), hash, name);
+    assert.equal(createHash('sha256').update(originalDrawingStyle(originalActivationStyle(originalGateFont(originalGateContour(renderReverted(...args)))))).digest('hex'), hash, name);
   }
 });
 

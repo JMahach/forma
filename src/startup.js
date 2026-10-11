@@ -1,7 +1,11 @@
 import { createTransitDayClient } from './data/transit-day-client.js';
 import { createViewStore } from './data/view-store.js';
 import { createToast } from './ui/toast.js';
-import { createStudioLayout } from './scene/studio-controller.js';
+import { createStudioLayout } from './ui/layout/studio-controller.js';
+import { STUDIO_FOOTPRINT } from './scene/geometry/frames.js';
+import { attachPageGestures } from './ui/page-gestures.js';
+
+attachPageGestures(document);
 
 const element = id => document.getElementById(id);
 const toast = createToast(element('toast'));
@@ -15,7 +19,7 @@ const dayClient = createTransitDayClient({
   calculationVersion: document.body.dataset.calculationVersion,
   initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
-const layout = createStudioLayout({ canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
+const layout = createStudioLayout({ footprint: STUDIO_FOOTPRINT, canvas: element('canvasWrap'), drawing: element('bodygraph'), art: element('chartLoadingArt'),
   panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')] });
 // The shared layout positions the preview while the larger application loads.
 // Its temporary observer hands resize ownership to the app without recreating

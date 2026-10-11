@@ -29,7 +29,7 @@ const adjacentValues = valueX => ({ valueX: Object.freeze(valueX), hitWidth: val
 
 // Overlay sources use the same row anchors. Normal dual values have a wider
 // text spacing; beside the mandala their envelope determines visibility/frames.
-export const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
+const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
   single: Object.freeze({ ...ACTIVATION_ROW_LAYOUT, natalOffsetX: 0,
     headingWidth: null, captionX: Object.freeze([40, 88]), captionSize: 9 }),
   dual: Object.freeze({ ...adjacentValues([22, 72]), natalOffsetX: 0,
@@ -74,7 +74,7 @@ export function overlayActivationColumnLayout(side, { single, showMandala, label
 // then rise together to align their last numbers with gate 41's hover rim.
 // All values use the chart's SVG coordinates; the camera remains independent.
 export const ACTIVATION_BLOCK_SCALE = 1.09;
-export const ACTIVATION_BLOCK_LIFT = 15.75;
+const ACTIVATION_BLOCK_LIFT = 15.75;
 const PIVOT_Y = ACTIVATION_COLUMN_LAYOUT.headingY;
 const PIVOT_X = Object.freeze({ design: 212, personality: 428 });
 

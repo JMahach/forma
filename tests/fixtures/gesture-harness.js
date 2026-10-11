@@ -1,5 +1,5 @@
 import { attachGestures as attach } from '../../src/scene/gestures.js';
-import { computeCameraFit } from '../../src/scene/layout.js';
+import { computeCameraFit } from '../../src/scene/camera-fit.js';
 
 // Unit tests exercise gesture/camera rules through a fake screen port. The SVG
 // attribute here records logical poses; real CSS projection has separate tests.

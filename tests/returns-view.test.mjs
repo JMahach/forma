@@ -1,6 +1,8 @@
+import { studioPresentation } from '../src/ui/studio-presentation.js';
 import { cycleYearBoundsForChart, lifeTimelineForChart } from '../src/domain/cycles.js';
 import { returnsVisibleWindow } from '../src/domain/returns-window.js';
 import test from 'node:test';
+import { createViewportLayout } from './helpers/viewport-layout.mjs';
 import assert from 'node:assert/strict';
 import { renderReturnEvents, attachReturnsPanel } from '../src/views/returns-panel.js';
 import { attachChartSummary } from '../src/views/chart-summary-panel.js';
@@ -188,15 +190,17 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' } = {}) {
   const selected = [], years = [], moments = [], bodySelections = [], backs = [];
   const update = next => {
     current = { ...current, ...next };
-    summary.setReturnsVisible(Boolean(current.available && current.timelineVisible && current.opened));
-    view.update(current);
+    const facts = studioPresentation({ personalAvailable: current.available,
+      lifetime: { opened: current.timelineVisible, mode: 'lifetime' }, returnsOpened: current.opened });
+    summary.setReturnsVisible(facts.returnsVisible);
+    view.update({ ...current, visible: facts.returnsVisible });
   };
   const summary = attachChartSummary({ panel: nodes.chartSummary, summaryScreen: nodes.summaryScreen,
     returnsPanel: nodes.returnsPanel, content: nodes.chartSummaryContent,
     overview: nodes.summaryOverview, search: nodes.summarySearch, switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
     onOpen: () => update({ opened: false }), onClose: () => update({ opened: false }),
   });
-  view = attachReturnsPanel({ document, getLayout, onClose: () => summary.close({ focus: true }), onBack: () => { backs.push('summary'); summary.open(); },
+  view = attachReturnsPanel({ document, viewportLayout: createViewportLayout(document), getLayout, onClose: () => summary.close({ focus: true }), onBack: () => { backs.push('summary'); summary.open(); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
     onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ });
   function escape(target = document.activeElement || nodes.returnsPanel) {

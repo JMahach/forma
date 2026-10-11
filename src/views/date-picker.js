@@ -8,7 +8,7 @@ const PAGE_YEARS = 25;
 
 // A non-modal calendar: typed input remains independent, and Tab can leave the
 // popup. Only its active grid choice is tabbable; arrows move between choices.
-export function attachDatePicker({ input, button, getBounds, onSelect, precision = 'day', clearLabel = '', onClear = null, getInitialDate = () => null, presentation = null }) {
+export function attachDatePicker({ input, button, getBounds, onSelect, viewportLayout, precision = 'day', clearLabel = '', onClear = null, getInitialDate = () => null, presentation = null }) {
   const document = input.ownerDocument, window = document.defaultView;
   const popup = document.createElement('section');
   popup.className = ['date-picker', presentation?.className].filter(Boolean).join(' ');
@@ -18,7 +18,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-controls', popup.id); button.setAttribute('aria-expanded', 'false');
   document.body.append(popup);
   let view = 'years', selected = '', cursor = '', pending = '', year = 0, month = 1, page = 0, minimum = '', maximum = '';
-  let choices = [], positions = [], columns = 5, firstHeader = null;
+  let choices = [], positions = [], columns = 5, firstHeader = null, unsubscribeViewport = null;
   const minYear = () => Number(minimum.slice(0, 4)), maxYear = () => Number(maximum.slice(0, 4));
   const pageFor = value => minYear() + Math.floor((value - minYear()) / PAGE_YEARS) * PAGE_YEARS;
   const allowed = value => value >= minimum && value <= maximum;
@@ -39,9 +39,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
   function position() {
     if (popup.hidden) return;
     const anchor = button.getBoundingClientRect();
-    const viewport = window.visualViewport;
-    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
-    const width = viewport?.width || window.innerWidth, height = viewport?.height || window.innerHeight;
+    const { left, top, width, height } = viewportLayout.readViewport();
     // A containing panel may reserve its header. Selection and keyboard logic
     // stay independent of that optional presentation boundary.
     const bounds = presentation?.getBounds?.();
@@ -57,20 +55,24 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     const preferredTop = presentation?.preferBelow || above < area.top ? anchor.bottom + 8 : above;
     popup.style.top = `${clamp(preferredTop, area.top, Math.max(area.top, area.bottom - box.height))}px`;
   }
-  function close(restoreFocus = false) {
+  function close(restoreFocus = false, commit = true) {
     if (popup.hidden) return;
     popup.hidden = true; button.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('focusin', focusOutside);
-    window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true);
-    window.visualViewport?.removeEventListener('resize', position);
-    window.visualViewport?.removeEventListener('scroll', position);
+    window.removeEventListener('scroll', scrollPosition, true);
+    unsubscribeViewport?.(); unsubscribeViewport = null;
     const value = pending; pending = '';
-    if (value) onSelect(value);
+    if (commit && value) onSelect(value);
     if (restoreFocus) button.focus({ preventScroll: true });
   }
   function outside(event) { if (!popup.contains(event.target) && !button.contains(event.target)) close(); }
   function focusOutside(event) { if (!popup.contains(event.target) && !button.contains(event.target)) close(); }
+  function scrollPosition(event) {
+    // The shared owner publishes page movement after updating the dock. A
+    // nested scroller can move this anchor without changing viewport bounds.
+    if (event.target !== window && event.target !== document) position();
+  }
   function choose(value, next) {
     const [chosenYear, chosenMonth] = value.split('-').map(Number);
     if (next) {
@@ -107,7 +109,10 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     const now = new Date(), currentYear = now.getFullYear();
     const today = isoDate(currentYear, now.getMonth() + 1, now.getDate());
     choices = []; positions = []; popup.replaceChildren(); popup.dataset.view = view;
-    const dismiss = control('×', 'Закрыть календарь', () => close(true));
+    // A rebuilt grid is not a new pointer gesture. Wait for actual movement
+    // before highlighting whatever replaced the choice under the pointer.
+    popup.dataset.pointerHover = 'false';
+    const dismiss = control('×', 'Закрыть календарь', () => close(true, false));
     if (presentation?.title) {
       const heading = node('div', '', 'returns-menu-heading');
       heading.append(node('strong', presentation.title), dismiss); popup.append(heading);
@@ -189,12 +194,21 @@ export function attachDatePicker({ input, button, getBounds, onSelect, precision
     [year, month] = cursor.split('-').map(Number); page = pageFor(year); view = 'years';
     popup.hidden = false; button.setAttribute('aria-expanded', 'true'); render();
     document.addEventListener('pointerdown', outside, true); document.addEventListener('focusin', focusOutside);
-    window.addEventListener('resize', position); window.addEventListener('scroll', position, true);
-    window.visualViewport?.addEventListener('resize', position);
-    window.visualViewport?.addEventListener('scroll', position);
+    window.addEventListener('scroll', scrollPosition, true);
+    unsubscribeViewport = viewportLayout.subscribeViewport(position);
   }
+  // iOS Safari enables native :active feedback only with a touch listener.
+  // Keep it passive: scrolling and activation stay under browser control.
+  // https://bugs.webkit.org/show_bug.cgi?id=138816
+  popup.addEventListener('touchstart', () => {}, { passive: true });
+  popup.addEventListener('pointermove', event => {
+    popup.dataset.pointerHover = String(event.pointerType === 'mouse' || event.pointerType === 'pen');
+  });
+  popup.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'touch') popup.dataset.pointerHover = 'false';
+  });
   popup.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); return; }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true, false); return; }
     const current = choices.indexOf(document.activeElement);
     if (event.key === 'Tab') {
       // The popup follows its trigger logically, even though it is portalled

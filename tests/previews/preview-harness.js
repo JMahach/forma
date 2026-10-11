@@ -4,14 +4,22 @@ import { attachActivationPopover } from '../../src/views/activation-popover.js';
 import { attachHoverPreview } from '../../src/selection/hover-preview.js';
 import { attachGestures } from '../../src/scene/gestures.js';
 import { createCameraView } from '../../src/scene/camera-view.js';
+import { createViewport } from '../../src/ui/layout/viewport.js';
 
 // A synthetic chart and its own controllers; no application globals, storage,
 // calculation requests, or function extraction from app.js.
 export function mountPreview({ chart, controls }, { scene } = {}) {
   const element = id => document.getElementById(id);
   const svg = element('preview'), viewport = element('viewport');
+  const viewportSubscribers = new Set();
+  const environment = createViewport({ surface: element('previewSurface'), onChange: () => {
+    for (const notify of [...viewportSubscribers]) notify();
+  } });
+  const viewportLayout = { readViewport: environment.read,
+    subscribeViewport(callback) { viewportSubscribers.add(callback); return () => viewportSubscribers.delete(callback); },
+  };
   const selectionState = createSelectionState();
-  const activationPopover = attachActivationPopover(element('activationPopover'), svg);
+  const activationPopover = attachActivationPopover(element('activationPopover'), svg, { viewportLayout });
   let hoverPreview = null;
   const graph = createGraphController({
     scene, selectionState, getChart: () => chart, viewport, activationPopover,

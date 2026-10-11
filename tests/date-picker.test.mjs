@@ -2,14 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachDatePicker } from '../src/views/date-picker.js';
 import { dateDom } from './helpers/date-dom.mjs';
+import { createViewportLayout } from './helpers/viewport-layout.mjs';
 function harness(value = '15.08.2025', bounds = { min: '1801-01-01', max: '2399-12-31' }, options = {}) {
   const document = dateDom(), input = document.createElement('input'), button = document.createElement('button');
+  document.defaultView.visualViewport = Object.assign(new EventTarget(), { offsetLeft: 0, offsetTop: 0, width: 320, height: 800 });
+  const viewportLayout = options.viewportLayout || createViewportLayout(document);
   input.id = 'date'; input.value = value; input.setAttribute('aria-label', 'Дата'); document.body.append(input, button);
-  const selected = [], picker = attachDatePicker({ input, button, getBounds: () => bounds, onSelect: value => selected.push(value), ...options });
+  const selected = [], picker = attachDatePicker({ input, button, getBounds: () => bounds, onSelect: value => selected.push(value), viewportLayout, ...options });
   const popup = document.body.children.at(-1);
   const buttons = () => popup.all(node => node.tagName === 'button');
   const click = text => { const target = buttons().find(node => node.textContent === text && !node.hidden); assert.ok(target, text); target.dispatch('click'); };
-  return { document, input, button, popup, picker, selected, buttons, click };
+  return { document, input, button, popup, picker, selected, buttons, click, viewportLayout };
 }
 test('an optional presentation shares a header without duplicating close or changing year selection', () => {
   const h = harness('2026', { min: '1996-01-01', max: '2096-12-31' }, {
@@ -48,8 +51,7 @@ test('optional placement stays below its trigger within panel and visual viewpor
   assert.equal(h.popup.style.left, '30px'); assert.equal(h.popup.style.top, '220px');
   assert.equal(h.popup.style.maxWidth, '280px'); assert.equal(h.popup.style.maxHeight, '560px');
   // A reduced visual viewport models the available area above a phone keyboard.
-  h.document.defaultView.visualViewport = { offsetLeft: 20, offsetTop: 100, width: 240, height: 300,
-    addEventListener() {}, removeEventListener() {} };
+  Object.assign(h.document.defaultView.visualViewport, { offsetLeft: 20, offsetTop: 100, width: 240, height: 300 });
   area = { ...area, top: 150 };
   h.document.defaultView.dispatch('resize');
   assert.equal(h.popup.style.left, '30px'); assert.equal(h.popup.style.top, '150px');
@@ -99,8 +101,8 @@ test('same-year drill-down keeps the actual October 4 selection and commits only
 });
 test('dismissing a chosen year commits January 1 exactly once across close paths', () => {
   for (const dismiss of [h => h.document.dispatch('pointerdown', { target: h.input }), h => h.input.focus(),
-    h => h.popup.dispatch('keydown', { key: 'Escape' }), h => h.popup.dispatch('keydown', { key: 'Tab' }),
-    h => h.click('×'), h => h.button.dispatch('click'), h => h.picker.close()]) {
+    h => h.popup.dispatch('keydown', { key: 'Tab' }),
+    h => h.button.dispatch('click'), h => h.picker.close()]) {
     const h = harness('04.10.2026'); h.button.dispatch('click'); h.click('2027');
     assert.deepEqual(h.selected, []); dismiss(h);
     assert.equal(h.popup.hidden, true); assert.deepEqual(h.selected, ['2027-01-01']);
@@ -109,7 +111,7 @@ test('dismissing a chosen year commits January 1 exactly once across close paths
 });
 test('dismissing a chosen month commits its first day and a new session has no pending choice', () => {
   const h = harness('04.10.2026'); h.button.dispatch('click'); h.click('2027'); h.click('Октябрь');
-  assert.deepEqual(h.selected, []); h.click('×'); assert.deepEqual(h.selected, ['2027-10-01']);
+  assert.deepEqual(h.selected, []); h.document.dispatch('pointerdown', { target: h.input }); assert.deepEqual(h.selected, ['2027-10-01']);
   h.button.dispatch('click'); h.click('×'); assert.deepEqual(h.selected, ['2027-10-01']);
 });
 test('preserved day clamps at leap-year and shorter-month boundaries without intermediate commits', () => {
@@ -127,7 +129,7 @@ test('partial boundary years and months remain selectable and coarse commits sta
   h.click('2026'); assert.equal(h.buttons().find(button => button.textContent === 'Сентябрь').disabled, true);
   assert.equal(h.buttons().find(button => button.textContent === 'Октябрь').disabled, false);
   h.click('Октябрь'); assert.equal(h.buttons().find(button => button.textContent === '3').disabled, true);
-  h.click('×'); assert.deepEqual(h.selected, ['2026-10-04']);
+  h.document.dispatch('pointerdown', { target: h.input }); assert.deepEqual(h.selected, ['2026-10-04']);
   const upper = harness('31.10.2026', bounds); upper.button.dispatch('click'); upper.click('2027');
   assert.equal(upper.document.activeElement.textContent, 'Февраль'); upper.click('Февраль');
   assert.equal(upper.document.activeElement.textContent, '10');
@@ -156,14 +158,17 @@ test('arrows/Home/End/PageDown navigate the grid; Escape returns focus and leave
   key('Escape'); assert.equal(h.picker.opened, false); assert.equal(h.document.activeElement, h.button);
   assert.equal(h.input.value, '01.01.2026'); assert.deepEqual(h.selected, []);
 });
-test('outside pointer, focus departure and repeated opens clean up document/window listeners', () => {
+test('outside pointer, focus departure and repeated opens clean up popup subscriptions without replacing the viewport owner', () => {
   const h = harness();
   for (let i = 0; i < 5; i++) {
     h.button.dispatch('click'); assert.equal(h.document.listenerCount('pointerdown'), 1);
     h.document.dispatch('pointerdown', { target: h.input }); assert.equal(h.picker.opened, false);
-    assert.equal(h.document.listenerCount('pointerdown'), 0); assert.equal(h.document.defaultView.listenerCount('resize'), 0);
+    assert.equal(h.document.listenerCount('pointerdown'), 0);
+    assert.equal(h.viewportLayout.subscriberCount, 0);
+    assert.equal(h.document.defaultView.listenerCount('resize'), 1, 'one page-lifetime viewport owner survives popup dismissal');
   }
   h.button.dispatch('click'); h.input.focus(); assert.equal(h.picker.opened, false);
+  h.viewportLayout.destroy(); assert.equal(h.document.defaultView.listenerCount('resize'), 0);
 });
 test('popup clamps to the narrow viewport and is positioned above the bottom controls', () => {
   const h = harness(); h.button.dispatch('click');
@@ -172,7 +177,7 @@ test('popup clamps to the narrow viewport and is positioned above the bottom con
 
 test('visual viewport keyboard height limits the scrollable popup before it is positioned', () => {
   const h = harness();
-  h.document.defaultView.visualViewport = { width: 320, height: 210, offsetTop: 100, offsetLeft: 0, addEventListener() {}, removeEventListener() {} };
+  Object.assign(h.document.defaultView.visualViewport, { width: 320, height: 210, offsetTop: 100, offsetLeft: 0 });
   h.button.dispatch('click');
   assert.equal(h.popup.style.maxHeight, '194px'); assert.equal(h.popup.style.top, '108px');
 });
@@ -223,7 +228,7 @@ test('empty or invalid input has a browsing fallback but no invented actual sele
     assert.deepEqual(h.buttons().filter(button => button.dataset.selected === 'true').map(button => button.textContent), []);
     h.click('Январь');
     assert.deepEqual(h.buttons().filter(button => button.dataset.selected === 'true').map(button => button.textContent), []);
-    h.click('×'); assert.deepEqual(h.selected, ['1801-01-01']);
+    h.document.dispatch('pointerdown', { target: h.input }); assert.deepEqual(h.selected, ['1801-01-01']);
   }
 });
 
@@ -239,4 +244,68 @@ test('the period chooser title is a heading, while close remains the first keybo
   h.popup.dispatch('keydown', { key: 'Tab', shiftKey: true });
   assert.equal(h.popup.hidden, true);
   assert.equal(h.document.activeElement, h.button);
+});
+
+
+test('close button and Escape discard a browsed year or month and reopen at the accepted date', () => {
+  for (const month of [false, true]) for (const cancel of [h => h.click('×'), h => h.popup.dispatch('keydown', { key: 'Escape' })]) {
+    const h = harness('04.10.2026');
+    h.button.dispatch('click'); h.click('2027');
+    if (month) h.click('Май');
+    cancel(h);
+    assert.deepEqual(h.selected, []);
+    assert.equal(h.input.value, '04.10.2026');
+    assert.equal(h.popup.hidden, true);
+    assert.equal(h.document.activeElement, h.button);
+    h.button.dispatch('click');
+    assert.equal(h.document.activeElement.textContent, '2026');
+    h.document.dispatch('pointerdown', { target: h.input });
+    assert.deepEqual(h.selected, [], 'cancelled draft must not leak to the next session');
+  }
+});
+
+test('calendar follows the layout viewport and updated anchor in the same notification, then unsubscribes', () => {
+  const listeners = new Set();
+  let viewport = { left: 0, top: 100, width: 320, height: 210 };
+  let anchor = { left: 260, top: 270, bottom: 298 };
+  const h = harness(undefined, undefined, { viewportLayout: {
+    readViewport: () => viewport,
+    subscribeViewport: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+  } });
+  // Safari's raw viewport intentionally stays at the keyboard height throughout.
+  h.document.defaultView.visualViewport = { offsetLeft: 0, offsetTop: 100, width: 320, height: 210, addEventListener() {}, removeEventListener() {} };
+  h.button.getBoundingClientRect = () => anchor;
+  h.button.dispatch('click');
+  assert.equal(h.document.defaultView.listenerCount('resize'), 0, 'the layout owner is the only native resize source');
+  assert.equal(h.popup.style.maxHeight, '194px');
+  viewport = { left: 0, top: 0, width: 320, height: 800 };
+  anchor = { left: 260, top: 710, bottom: 738 };
+  for (const notify of listeners) notify();
+  assert.equal(h.popup.style.maxHeight, '784px');
+  assert.equal(h.popup.style.top, '422px');
+  h.document.defaultView.dispatch('resize');
+  assert.equal(h.popup.style.top, '422px', 'a stale raw viewport must not pull the calendar back up');
+  h.click('×'); assert.equal(listeners.size, 0);
+  h.button.dispatch('click'); assert.equal(listeners.size, 1);
+  h.picker.close(); assert.equal(listeners.size, 0);
+});
+
+test('an injected viewport still follows nested scrolling without duplicating page scroll notifications', () => {
+  const listeners = new Set();
+  const h = harness(undefined, undefined, { viewportLayout: {
+    readViewport: () => ({ left: 0, top: 0, width: 320, height: 800 }),
+    subscribeViewport: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+  } });
+  let top = 710, reads = 0;
+  h.button.getBoundingClientRect = () => { reads++; return { left: 260, top, bottom: top + 28 }; };
+  h.button.dispatch('click'); reads = 0;
+  h.document.defaultView.dispatch('scroll', { target: h.document });
+  h.document.defaultView.dispatch('scroll');
+  assert.equal(reads, 0, 'page scrolling is delivered by the layout owner after dock placement');
+  const scroller = h.document.createElement('div'); top = 650;
+  h.document.defaultView.dispatch('scroll', { target: scroller });
+  assert.equal(reads, 1, 'a nested scroller moves the anchor without changing viewport bounds');
+  assert.equal(h.popup.style.top, '362px');
+  h.picker.close();
+  assert.equal(h.document.defaultView.listenerCount('scroll'), 0);
 });

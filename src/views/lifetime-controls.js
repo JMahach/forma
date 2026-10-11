@@ -1,4 +1,3 @@
-import { createLifetimeExplorer } from '../state/lifetime.js';
 import { bindNumericInput, datePartAt, formatDateInput, normalizeDate } from './date-input.js';
 import { attachTimelineRange, isReferenceMoment } from './timeline-range.js';
 import { attachTimelineMarks } from './timeline-marks.js';
@@ -18,10 +17,11 @@ function clock(utc, timeZone = null) {
   return { date: formatDateInput(iso.slice(0, 10)), time, zone: 'UTC', utc: iso };
 }
 
-export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate, status, fromError = null, toError = null,
-  hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, available = true,
+export function attachLifetimeControls({ explorer, panel, range, fromDate, toDate, status, fromError = null, toError = null,
+  hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, viewportLayout,
+  getDayState = () => null, getMomentState = () => null, getPersonalChart = () => null,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
-  formatEndpoints = () => null, onMomentInput = () => {}, resolveTap, ...options }) {
+  formatEndpoints = () => null, onMomentInput = () => {}, resolveTap }) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
   const inputs = [fromDate, toDate], dirty = new Set();
@@ -61,14 +61,14 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
         range.value = String(explorer.state.requestedUtc);
         return null;
       }
-      const day = options.getDayState?.();
+      const day = getDayState();
       return Math.max(0, Math.min((day?.timeline?.minutes ?? 1) - 1, (day?.index ?? 0) + direction));
     },
     onReference() {
       if (!explorer.state.opened) return;
       onMomentInput();
       if (explorer.state.mode === 'lifetime' && onLifetimeNow() === true) return;
-      const reference = explorer.state.mode === 'day' ? options.getDayState?.()?.referenceIndex : explorer.state.referenceUtc;
+      const reference = explorer.state.mode === 'day' ? getDayState()?.referenceIndex : explorer.state.referenceUtc;
       if (beforeScrub(reference) === false) return;
       if (explorer.state.mode === 'day') onDayNow();
       else explorer.goNow();
@@ -102,13 +102,12 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     if (marks[1]) setText(marks[1], endpoints[1]);
   }
 
-  function update(state, momentState = options.getMomentState?.(), notify = true) {
+  function update(state, momentState = getMomentState()) {
     if (wasOpened && !state.opened) { calendars.forEach(calendar => calendar.close()); dirty.clear(); clearInputError(); submitted = null; waitingForMetadata = false; }
     wasOpened = state.opened;
-    toggle.hidden = !available;
     panel.hidden = !state.opened;
     const preparing = state.status === 'preparing';
-    const transitDay = options.getDayState?.();
+    const transitDay = getDayState();
     const dayMode = state.mode === 'day' || preparing && Boolean(transitDay);
     if (rangeLabel) setText(rangeLabel, dayMode ? 'Шкала дня: время транзита' : 'Шкала выбранных лет: время UTC');
     if (dayMode || !state.opened) momentState = null;
@@ -135,7 +134,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     else if (dayMode) {
       timelineMarks.day(day?.timeline, day?.timeline?.minutes, (timeline, index) => formatTimelineMinute(timeline, index).time);
     } else {
-      const natal = options.getPersonalChart?.();
+      const natal = getPersonalChart();
       if (natal && !visibleWindow?.calendar) timelineMarks.life(natal, Number(range.min), Number(range.max));
       else timelineMarks.calendar({ fromUtc: Number(range.min), toUtc: Number(range.max),
         timeZone: visibleWindow?.timeZone || 'UTC', labels: !natal });
@@ -159,7 +158,7 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     dayRange.updateReference({ value: reference, visible: state.opened && !preparing && (!dayMode || dayReady) && Number.isFinite(reference)
       && reference >= Number(range.min) && reference <= Number(range.max),
       label: 'Вернуться к текущему времени',
-      title: !dayMode && options.getPersonalChart?.() ? 'Текущий транзит' : 'Текущий момент',
+      title: !dayMode && getPersonalChart() ? 'Текущий транзит' : 'Текущий момент',
       active: isReferenceMoment(displayedUtc, referenceUtc) });
     const pending = displayStatus === 'loading';
     const unshown = !dayMode && !momentState && Boolean(state.metadata && state.requestedUtc !== state.displayedUtc && (pending || state.displayedUtc !== null));
@@ -174,7 +173,6 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     setText(status, fileStatus && state.status === 'error' ? state.error
       : preparing ? 'Создаём летопись'
       : state.opened && retryCount >= 3 && ['loading', 'error'].includes(displayStatus) ? 'Загружаю момент' : '');
-    if (notify) options.onStateChange?.(state);
     if (waitingForMetadata && state.metadata && state.opened) {
       const pending = submitted;
       waitingForMetadata = false;
@@ -184,7 +182,6 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     }
   }
 
-  const explorer = createLifetimeExplorer({ ...options, onStateChange: update });
   function clearDateError(input) {
     input.setAttribute('aria-invalid', 'false');
     const message = dateErrors.get(input);
@@ -333,32 +330,24 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     });
   }
   toDate.addEventListener('change', () => applyDateEdit(toDate, true));
-  explorer.setAvailable = value => {
-    if (typeof value !== 'boolean' || value === available) return;
-    available = value;
-    if (!available) explorer.close();
-    toggle.hidden = !available;
-  };
-  explorer.refreshTargets = dayRange.refreshTargets;
-  explorer.setVisibleWindow = value => {
+  function setVisibleWindow(value) {
     const next = value && Number.isFinite(value.minUtc) && Number.isFinite(value.maxUtc) && value.minUtc <= value.maxUtc
       ? { minUtc: value.minUtc, maxUtc: value.maxUtc, calendar: Boolean(value.calendar), timeZone: value.timeZone || 'UTC' } : null;
     if (next?.minUtc === visibleWindow?.minUtc && next?.maxUtc === visibleWindow?.maxUtc
       && next?.calendar === visibleWindow?.calendar && next?.timeZone === visibleWindow?.timeZone) return;
     visibleWindow = next;
-    update(explorer.state, options.getMomentState?.(), false);
-  };
+    update(explorer.state);
+  }
   // Readiness and the real-clock marker can change without a new chart object.
   // The existing day controller remains the sole owner of its minute range.
-  explorer.syncTransit = () => {
-    if (explorer.syncDay() || explorer.syncClock()) return;
+  function refreshMoment() {
     const state = explorer.state;
-    const momentState = options.getMomentState?.();
+    const momentState = getMomentState();
     if (state.opened && (state.mode === 'day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
-  };
+  }
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]]) {
     if (!button) continue;
-    calendars.push(attachDatePicker({ input, button,
+    calendars.push(attachDatePicker({ input, button, viewportLayout,
       getBounds: () => ({ min: explorer.state.minDate, max: explorer.state.maxDate }),
       onSelect(value) {
         onMomentInput();
@@ -369,5 +358,5 @@ export function attachLifetimeControls({ toggle, panel, range, fromDate, toDate,
     }));
   }
   update(explorer.state);
-  return explorer;
+  return { update, refreshMoment, setVisibleWindow, refreshTargets: dayRange.refreshTargets };
 }

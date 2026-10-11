@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createChartHeadingLayout } from '../src/views/chart-heading-layout.js';
+import { createChartHeadingLayout } from '../src/ui/layout/chart-heading.js';
 
 function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts } = {}) {
-  const observed = new Set();
+  const observed = new Map();
   let resized, disconnected = false;
   const node = (left, top, width, height) => {
     const styles = new Map();
@@ -27,6 +27,8 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
     return { ...rect, top, bottom: top + rect.height };
   };
   const title = node(0, 0, 60, 22), subtitle = node(0, 0, 240, 16);
+  const content = node(0, 0, 260, 51);
+  Object.assign(content.computed, { paddingLeft: '10px', paddingRight: '10px' });
   title.scrollWidth = titleWidth;
   subtitle.scrollWidth = textWidth;
   const leftControls = node(origin + 16, 114, 44, 44);
@@ -38,14 +40,19 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
   setButtons(buttons);
   class Observer {
     constructor(callback) { resized = callback; }
-    observe(element) { observed.add(element); }
+    observe(element, options) { observed.set(element, options); }
     disconnect() { disconnected = true; }
   }
-  const layout = createChartHeadingLayout({ header, title, subtitle, leftControls, rightControls, canvas,
+  const layout = createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas,
     getMandalaTop: () => mandalaTop,
     readStyle: element => element.computed, ResizeObserver: Observer });
-  return { layout, header, title, subtitle, leftControls, rightControls, canvas, setButtons, observed,
+  return { layout, header, content, title, subtitle, leftControls, rightControls, canvas, setButtons, observed,
     setMandalaTop(value) { mandalaTop = value; },
+    changePadding(left, right) {
+      Object.assign(content.computed, { paddingLeft: left, paddingRight: right });
+      // Padding changes the border box while fit-content text keeps its size.
+      if (observed.get(content)?.box === 'border-box') resized([{ target: content }]);
+    },
     resize() { resized(); }, get disconnected() { return disconnected; } };
 }
 
@@ -55,6 +62,15 @@ test('a transit caption with minute stays above at both reported desktop widths'
     assert.equal(header.dataset.captionPlacement, 'top');
     assert.ok(layout.refresh().width >= 260);
   }
+});
+
+test('caption placement follows the actual horizontal padding when its styling changes', () => {
+  const h = harness({ width: 576, textWidth: 200 });
+  assert.equal(h.header.dataset.captionPlacement, 'top');
+  h.changePadding('10.25px', '22px');
+  assert.equal(h.header.dataset.captionPlacement, 'below', 'the padded caption exceeds the 232px gap between controls');
+  h.changePadding('0px', '0px');
+  assert.equal(h.header.dataset.captionPlacement, 'top', 'removing padding makes the caption fit again');
 });
 
 test('unchanged caption text causes no DOM writes or layout reads while a new minute is measured', () => {

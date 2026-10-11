@@ -1,8 +1,10 @@
 import test from 'node:test';
-import * as geometry from '../src/scene/layout.js';
+import * as geometry from '../src/ui/layout/studio.js';
 import assert from 'node:assert/strict';
-import { computeStudioLayout, computeCameraFit, DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, returnsPlacement } from '../src/scene/layout.js';
-import { createStudioLayout, PHONE_LAYOUT_QUERY } from '../src/scene/studio-controller.js';
+import { DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT } from '../src/ui/layout/studio.js';
+import { computeCameraFit } from '../src/scene/camera-fit.js';
+import { createStudioLayout, computeStudioLayout, returnsPlacement } from './fixtures/studio-layout.mjs';
+import { PHONE_LAYOUT_QUERY } from '../src/ui/layout/studio-controller.js';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
@@ -23,6 +25,14 @@ const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.
 const railFor = (layout, width, height, safeBottom = 0) => geometry.computeTimelineDock({
   width, height, safeBottom, mandalaWidth: layout.mandalaRadius * 2,
 }).rail;
+
+test('page layout uses the supplied scene footprint instead of importing a particular drawing', () => {
+  const footprint = { frame: { bounds: { width: 200 } }, radius: 50, columns: { left: -60, right: 60 } };
+  const result = computeStudioLayout({ width: 600, height: 400, side: 0, top: 0, bottom: 0, footerHeight: 0, footprint });
+  close(result.scale, 1.9, 'supplied 200-unit frame fits the 380-pixel area');
+  close(result.mandalaRadius, 95, 'painted radius comes from the same footprint');
+  assert.equal(result.showMandalaColumns, true);
+});
 
 
 function layoutHarness(phone = true, width = 390, height = 844) {
@@ -127,6 +137,9 @@ test('outside planet glyphs fit every Home and leave the entire day touch target
     h.style({ scrollPaddingTop: `${top}px`, scrollPaddingLeft: '12px',
       getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' });
     const layout = h.layout.refresh();
+    for (const panel of h.panels) {
+      assert.equal(panel.style.height, '48px', `${width}×${height}: the full day touch target retains its height`);
+    }
     for (const glyph of glyphs) {
       const x = layout.center.x + (glyph.x - MANDALA_GEOMETRY.centerX) * MANDALA_SCENE_SCALE * layout.scale;
       const y = layout.center.y + (glyph.y - MANDALA_GEOMETRY.centerY) * MANDALA_SCENE_SCALE * layout.scale;
@@ -656,7 +669,7 @@ function viewportLayoutHarness({ width = 390, height = 844, top = 0, canvasTop =
   let canvasReads = 0;
   const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => { canvasReads++; return { ...rect, top: canvasTop }; } };
   const panel = { id: 'lifetimeControls', hidden: false, dataset: {}, style: { setProperty() {} }, contains: node => [fromDate, toDate, slider].includes(node) };
-  const layout = createStudioLayout({ canvas, panels: [panel], viewport, media: { matches: true },
+  const layout = createStudioLayout({ canvas, panels: [panel], timelineKind: 'chronicle', viewport, media: { matches: true },
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
       getPropertyValue: name => `${name === '--timeline-safe-bottom' ? safeBottom : name === '--timeline-edge-space' ? edgeSpace : 0}px` }) });
   function dispatchFocus(type, target, relatedTarget) {
@@ -929,4 +942,36 @@ test('stacked dates fit their whole focus and error frame above the rail backing
     assert.ok(fieldBottom + 6 <= backingTop + 1e-7, 'focus frame and inline error have a quiet six-pixel gap');
     assert.equal(h.panel.style.top, `${930 - safeBottom - 48}px`, 'the rail does not move');
   }
+});
+
+test('calendar viewport subscribers observe the same completed keyboard layout as the dock', () => {
+  const h = viewportLayoutHarness();
+  const snapshots = [];
+  const stop = h.layout.subscribeViewport(() => snapshots.push({ viewport: h.layout.readViewport(),
+    dockBottom: parseFloat(h.values.get('--timeline-dock-top')) + 40.8 }));
+  assert.deepEqual(h.layout.readViewport(), { left: 0, top: 0, width: 390, height: 844 });
+  h.focus(h.fromDate); h.viewport.height = 500; h.viewport.offsetTop = 40;
+  h.viewport.dispatchEvent(new Event('resize'));
+  assert.deepEqual(snapshots.at(-1), { viewport: { left: 0, top: 40, width: 390, height: 500 }, dockBottom: 540 });
+  h.focus(h.slider); h.frame();
+  assert.deepEqual(snapshots.at(-1), { viewport: { left: 0, top: 0, width: 390, height: 844 }, dockBottom: 844 });
+  h.viewport.offsetTop = 70; h.viewport.dispatchEvent(new Event('scroll'));
+  assert.deepEqual(snapshots.at(-1).viewport, { left: 0, top: 0, width: 390, height: 844 }, 'stale Safari panning cannot split the popup from the lowered dock');
+  const notifications = snapshots.length;
+  stop(); h.viewport.height = 844; h.viewport.offsetTop = 0; h.viewport.dispatchEvent(new Event('resize'));
+  assert.equal(snapshots.length, notifications, 'closed popups can unsubscribe');
+  assert.equal(h.canvasReads(), 1, 'keyboard notifications never refit the scene');
+});
+
+test('shared viewport retains native page zoom and pan after keyboard geometry catches up', () => {
+  const viewport = Object.assign(new EventTarget(), { width: 260, height: 844 / 1.5, offsetTop: 60, offsetLeft: 40, scale: 1.5 });
+  const h = viewportLayoutHarness({ viewport });
+  assert.deepEqual(h.layout.readViewport(), { left: 40, top: 60, width: 260, height: 844 / 1.5 });
+  h.focus(h.fromDate); viewport.height = 300; viewport.dispatchEvent(new Event('resize'));
+  h.focus(h.slider); h.frame();
+  assert.deepEqual(h.layout.readViewport(), { left: 40, top: 0, width: 260, height: 844 }, 'dismissal uses the same temporary full height as the dock');
+  viewport.height = (844 - 0.25) / 1.5; viewport.dispatchEvent(new Event('resize'));
+  assert.deepEqual(h.layout.readViewport(), { left: 40, top: 60, width: 260, height: viewport.height });
+  viewport.offsetTop = 100; viewport.offsetLeft = 70; viewport.dispatchEvent(new Event('scroll'));
+  assert.deepEqual(h.layout.readViewport(), { left: 70, top: 100, width: 260, height: viewport.height });
 });

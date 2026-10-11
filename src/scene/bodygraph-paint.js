@@ -43,7 +43,7 @@ export function integrationOutlineMask(id, gates = [20, 10, 34, 57], includeStem
 
 
 export const integrationChannels = CHANNELS.filter(channel => INTEGRATION_IDS.has(channel.id));
-export const stemHalves = splitAtHalfLength(STEM_POINTS);
+const stemHalves = splitAtHalfLength(STEM_POINTS);
 export const armPaintPoints = new Map(INTEGRATION_ARMS.map(arm => [arm.gate, arm.reversePaint ? [...arm.points].reverse() : arm.points]));
 // The catalogue of stroke paths is finite; geometry is prepared once, not on a minute/hover update.
 const strokePaths = new WeakMap();
@@ -53,7 +53,7 @@ export function stroke(points, color, width, offset = 0) {
   if (!paths.has(offset)) paths.set(offset, pointString(offset ? offsetPoints(points, offset) : points));
   return `<path d="${paths.get(offset)}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="butt" stroke-linejoin="round" pointer-events="none"/>`;
 }
-export const paintActivation = (points, black, red) => black && red
+const paintActivation = (points, black, red) => black && red
   ? stroke(points, PALETTE.ink, CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, PALETTE.design, CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
   : black || red ? stroke(points, black ? PALETTE.ink : PALETTE.design, CHANNEL_WIDTH.paint) : '';
 

@@ -1,5 +1,6 @@
-import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, TIMELINE_DATE_HEIGHT, returnsPlacement, computeTimelineDock } from './layout.js';
-import { STUDIO_FRAME } from './geometry/frames.js';
+import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, TIMELINE_DATE_HEIGHT, returnsPlacement, computeTimelineDock } from './studio.js';
+import { createViewport } from './viewport.js';
+import { applyTimelineMetrics } from './metrics.js';
 
 // Phone chrome is presentation, not a branch in camera or chart geometry.
 export const PHONE_LAYOUT_QUERY = '(max-width: 699px), (pointer: coarse) and (max-width: 1099px) and (max-height: 500px)';
@@ -30,32 +31,22 @@ function timelineControlWidth(panel) {
   }
 }
 
-export function createStudioLayout({ canvas, panels, studio = canvas.parentElement, drawing = null, art = null, readStyle = element => getComputedStyle(element),
-  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport }) {
+export function createStudioLayout({ canvas, panels, footprint, studio = canvas.parentElement, drawing = null, art = null, readStyle = element => getComputedStyle(element),
+  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport, timelineKind = 'day' }) {
   const phone = () => media.matches;
   let current, dock;
-  const document = studio.ownerDocument, window = document?.defaultView;
-  let editingFinished = false, focusFrame = null;
-  const editable = element => Boolean(element && !element.readOnly && !element.disabled &&
-    (element.isContentEditable || element.tagName === 'TEXTAREA' || element.tagName === 'INPUT' &&
-      ['text', 'search', 'tel', 'url', 'email', 'password', 'number'].includes(element.type)));
-  // Keyboard and browser chrome can resize/pan only the visual viewport.
-  // Move the controls as one surface without changing the scene or camera fit.
-  function refreshViewport() {
+  const viewportSubscribers = new Set();
+  function applyViewport(visible) {
     const full = studio.getBoundingClientRect();
     const bottom = full.bottom ?? (full.top || 0) + full.height;
-    const valid = viewport && Number.isFinite(viewport.height) && viewport.height > 0 && Number.isFinite(viewport.offsetTop);
-    // Safari can keep the keyboard's old height after Done. Do not let a
-    // delayed resize/scroll lift the dock again after editing has finished.
-    const scale = Number.isFinite(viewport?.scale) && viewport.scale > 0 ? viewport.scale : 1;
-    // Visual pixels shrink under native page zoom; allow subpixel rounding.
-    if (valid && viewport.height * scale >= full.height - 1) editingFinished = false;
-    const lift = valid && !editingFinished ? Math.max(0, Math.min(full.height, bottom - viewport.offsetTop - viewport.height)) : 0;
+    const lift = Math.max(0, Math.min(full.height, bottom - visible.top - visible.height));
     studio.style?.setProperty('--timeline-viewport-lift', `${lift}px`);
-    // The fixed backing reaches the viewport edge, including behind Safari UI.
-    const backingHeight = dock.backingHeight;
-    studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - backingHeight}px`);
+    studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - dock.backingHeight}px`);
+    // Popup anchors are measured only after the dock has accepted its position.
+    for (const notify of [...viewportSubscribers]) notify();
   }
+  const environment = createViewport({ surface: studio, viewport, onChange: applyViewport });
+  applyTimelineMetrics(studio);
   function refresh() {
     const style = readStyle(canvas);
     const full = studio.getBoundingClientRect();
@@ -68,16 +59,13 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
       bottom: TIMELINE_BAR_HEIGHT + safeBottom,
       footerHeight: TIMELINE_WITH_DATES_HEIGHT + safeBottom };
     const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
-    const natal = panels.find(panel => panel.id === 'natalDayControls');
-    const timelineKind = natal && !natal.hidden ? 'natal-day'
-      : lifetime && !lifetime.hidden && lifetime.dataset.personalLife !== 'true' ? 'chronicle' : 'day';
     const controlWidth = timelineControlWidth(lifetime);
-    const placement = returnsPlacement({ width: full.width, height: full.height, ...insets },
+    const placement = returnsPlacement({ footprint, width: full.width, height: full.height, ...insets },
       { phone: phone(), reserve: parseFloat(style.getPropertyValue('--returns-side-space')) });
     if (studio.dataset.returnsLayout !== placement) studio.dataset.returnsLayout = placement;
     // Placement changes the canvas width. Measure after its CSS is applied.
     const rect = canvas.getBoundingClientRect();
-    current = computeStudioLayout({ width: rect.width, height: rect.height, ...insets });
+    current = computeStudioLayout({ footprint, width: rect.width, height: rect.height, ...insets });
     // Use the actual Home geometry after drawer placement, never live zoom.
     dock = computeTimelineDock({ width: full.width, height: full.height, side: insets.side, safeBottom,
       kind: timelineKind, controlWidth, mandalaWidth: current.mandalaRadius * 2 });
@@ -100,6 +88,7 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
       element.style.left = left;
       element.style.top = `${panel.y}px`;
       element.style.width = `${panel.width}px`;
+      element.style.height = `${panel.height}px`;
       element.style.setProperty('--rail-left', left);
       element.style.setProperty('--rail-top', `${panel.y}px`);
     }
@@ -109,37 +98,25 @@ export function createStudioLayout({ canvas, panels, studio = canvas.parentEleme
       // The canvas's existing drawer clip remains responsible for side drawers.
       drawing.style.clipPath = 'none';
     }
-    refreshViewport();
+    environment.refresh();
     return current;
   }
   refresh();
-  // This singleton survives the startup → app handoff for the page lifetime.
-  viewport?.addEventListener('resize', refreshViewport);
-  viewport?.addEventListener('scroll', refreshViewport);
-  document?.addEventListener('focusin', event => {
-    if (!editable(event.target)) return;
-    if (focusFrame !== null) window.cancelAnimationFrame(focusFrame);
-    focusFrame = null;
-    editingFinished = false;
-    refreshViewport();
-  });
-  document?.addEventListener('focusout', event => {
-    if (!editable(event.target) || editable(event.relatedTarget) || focusFrame !== null) return;
-    // Resolve the completed focus transition, not the temporary body focus
-    // inside blur. A new editor cancels this frame, including С → По.
-    focusFrame = window.requestAnimationFrame(() => {
-      focusFrame = null;
-      editingFinished = !editable(document.activeElement);
-      refreshViewport();
-    });
-  });
   return {
     get returnsLayout() { return studio.dataset.returnsLayout; },
     get phone() { return phone(); },
     get showMandalaColumns() { return current.showMandalaColumns; },
     get mandalaTop() { return current.center.y - current.mandalaRadius; },
-    frame() { return STUDIO_FRAME; },
+    frame() { return footprint.frame; },
     refresh,
+    setTimelineKind(kind) {
+      if (timelineKind === kind) return false;
+      timelineKind = kind;
+      return true;
+    },
+    readViewport: environment.read,
+    destroy() { environment.destroy(); viewportSubscribers.clear(); },
+    subscribeViewport(callback) { viewportSubscribers.add(callback); return () => viewportSubscribers.delete(callback); },
     insets() { return current.insets; },
   };
 }

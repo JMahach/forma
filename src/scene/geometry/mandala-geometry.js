@@ -21,12 +21,12 @@ export function mandalaPoint(longitude, radius = MANDALA_GEOMETRY.outerRadius) {
   ].map(format);
 }
 
-export const mandalaPointString = (longitude, radius) => mandalaPoint(longitude, radius).join(' ');
+const mandalaPointString = (longitude, radius) => mandalaPoint(longitude, radius).join(' ');
 export const MANDALA_CENTER = `${MANDALA_GEOMETRY.centerX} ${MANDALA_GEOMETRY.centerY}`;
-export function sectorPath(start, end, inner, outer) {
+function sectorPath(start, end, inner, outer) {
   return `M ${mandalaPointString(start, inner)} L ${mandalaPointString(start, outer)} A ${outer} ${outer} 0 0 0 ${mandalaPointString(end, outer)} L ${mandalaPointString(end, inner)} A ${inner} ${inner} 0 0 1 ${mandalaPointString(start, inner)} Z`;
 }
-export function fanPath(start, end) {
+function fanPath(start, end) {
   const radius = MANDALA_GEOMETRY.rayRadius;
   return `M ${MANDALA_CENTER} L ${mandalaPointString(start, radius)} A ${radius} ${radius} 0 0 0 ${mandalaPointString(end, radius)} Z`;
 }

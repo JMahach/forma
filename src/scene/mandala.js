@@ -69,7 +69,7 @@ export function renderMandala(chart = {}, { interactive = true, selectedGates = 
 
 // Separate selection layers: original planetary rays and chart activations
 // never move. Angle categories describe profiles, not a mirrored solar arc.
-export function renderCrossPreview(cross, { pinned = false } = {}) {
+function renderCrossPreview(cross, { pinned = false } = {}) {
   if (!mandalaCrossKey(cross)) return '';
   return renderCrossOverlay(mandalaCrossGeometry(cross), { pinned });
 }

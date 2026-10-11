@@ -1,7 +1,7 @@
 // Floating caption only: the drawing's composition and camera do not depend on
 // this placement. Navigation takes precedence when the full text cannot fit.
-export function createChartHeadingLayout({ header, title, subtitle, leftControls, rightControls, canvas,
-  gap = 8, edgePadding = 16, textPadding = 20, belowGap = 7,
+export function createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas,
+  gap = 8, edgePadding = 16, belowGap = 7,
   getMandalaTop = () => Infinity, mandalaGap = 8,
   readStyle = element => getComputedStyle(element), ResizeObserver = globalThis.ResizeObserver }) {
   let current;
@@ -28,7 +28,9 @@ export function createChartHeadingLayout({ header, title, subtitle, leftControls
     const leftEdge = Math.max(frame.left + edgePadding, left ? left.right + gap : frame.left);
     const rightEdge = Math.min(frame.right - edgePadding, right ? right.left - gap : frame.right);
     const topWidth = Math.max(0, 2 * Math.min(center - leftEdge, rightEdge - center));
-    const textWidth = Math.max(title.scrollWidth, subtitle?.scrollWidth || 0) + textPadding;
+    const contentStyle = readStyle(content);
+    const textWidth = Math.max(title.scrollWidth, subtitle?.scrollWidth || 0)
+      + (parseFloat(contentStyle.paddingLeft) || 0) + (parseFloat(contentStyle.paddingRight) || 0);
     const placement = textWidth <= topWidth ? 'top' : 'below';
     const width = placement === 'top' ? topWidth : Math.max(0, frame.width - 2 * edgePadding);
     const belowTop = Math.max(0, (left?.bottom || frame.top) - frame.top,
@@ -47,6 +49,8 @@ export function createChartHeadingLayout({ header, title, subtitle, leftControls
   for (const element of new Set([header, title, subtitle, leftControls, rightControls, canvas].filter(Boolean))) {
     observer?.observe(element);
   }
+  // Padding may change while the fit-content text keeps the same dimensions.
+  observer?.observe(content, { box: 'border-box' });
   const fonts = header.ownerDocument?.fonts;
   fonts?.addEventListener('loadingdone', refresh);
   function updateText(titleText, subtitleText) {

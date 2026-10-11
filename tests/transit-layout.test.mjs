@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachTimelineRange } from '../src/views/timeline-range.js';
+import { applyTimelineMetrics } from '../src/ui/layout/metrics.js';
 import { dateDom } from './helpers/date-dom.mjs';
 
 const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -51,6 +52,15 @@ function parseRules(source, media = []) {
   return parsed;
 }
 const rules = parseRules(screenStyles);
+// Use the properties the real layout owner applies to the studio. Resolve only
+// those shared dimensions and simple pixel sums; percentages and other CSS
+// policies remain authored expressions in this small stylesheet harness.
+const timelineMetrics = {};
+applyTimelineMetrics({ style: { setProperty(name, value) { timelineMetrics[name] = value; } } });
+const resolveTimelineMetrics = value => value
+  .replace(/var\((--timeline-(?:thumb-size|rail-inset))\)/g, (_, name) => timelineMetrics[name])
+  .replace(/calc\((-?[\d.]+)px ([+-]) (-?[\d.]+)px\)/g,
+    (_, left, operator, right) => `${Number(left) + (operator === '+' ? 1 : -1) * Number(right)}px`);
 function declarationsAt(selector, width, height, { coarse = false } = {}) {
   const matches = query => query.split(',').some(branch => branch.trim().split(/\s+and\s+/).every(condition => {
     const pointer = /^\(pointer:\s*(coarse|fine)\)$/.exec(condition);
@@ -62,8 +72,9 @@ function declarationsAt(selector, width, height, { coarse = false } = {}) {
     const value = parts[2] === 'width' ? width : height, limit = Number(parts[3]);
     return parts[1] === 'min' ? value >= limit : value <= limit;
   }));
-  return Object.assign({}, ...rules.filter(rule => rule.selector.split(',').some(value => value.trim() === selector)
+  const declarations = Object.assign({}, ...rules.filter(rule => rule.selector.split(',').some(value => value.trim() === selector)
     && rule.media.every(matches)).map(rule => rule.declarations));
+  return Object.fromEntries(Object.entries(declarations).map(([name, value]) => [name, resolveTimelineMetrics(value)]));
 }
 
 test('component defaults have one home and no removed zoom-toolbar styles remain', () => {
@@ -193,7 +204,7 @@ test('all timelines keep their native hit area above a permanent full-width foot
   for (const [width, height] of [[320, 568], [393, 747], [844, 390], [1440, 900]]) {
     const controls = declarationsAt('.day-controls', width, height);
     assert.equal(controls.position, 'absolute', 'measured layout owns placement, independent of panel contents');
-    assert.equal(controls.height, '48px');
+    assert.equal(controls.height, undefined, 'the layout owner applies the rail height');
     assert.equal(controls.padding, '0');
     assert.equal(controls.border, '0');
     assert.equal(controls['box-shadow'], 'none');
@@ -242,13 +253,12 @@ test('compact day actions retain accessible targets without a hover-only heading
   }
 });
 
-test('all viewport shapes keep the same full-width native range and permanent panel height', () => {
+test('all viewport shapes keep the same full-width native range', () => {
   for (const [width, height] of [[320, 568], [393, 747], [699, 501], [844, 390], [1009, 747], [1099, 900], [1100, 900], [1920, 1080]]) {
     const range = declarationsAt(".day-controls input[type='range']", width, height);
     assert.equal(range.height, '44px');
     assert.equal(range.width, '100%');
     assert.equal(range['touch-action'], 'none');
-    assert.equal(declarationsAt('.day-controls', width, height).height, '48px');
     assert.equal(declarationsAt('.day-range', width, height).height, '44px');
     assert.equal(declarationsAt('.transit-status', width, height).position, 'absolute');
     assert.equal(declarationsAt('.transit-status:empty', width, height).display, 'none');

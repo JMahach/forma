@@ -408,7 +408,6 @@ test('live preview remains live until a failed Return pins its accepted moment f
   h.transit.current = liveChart;
   Object.assign(h.transit.state, { current: liveChart, status: 'ready', live: true });
   h.transit.goNow = () => true;
-  h.lifetime.syncTransit = () => h.lifetime.syncDay() || h.lifetime.syncClock();
   assert.equal(h.exploration.followNow(), true);
   saved.view.flush();
   assert.equal(saved.writes.at(-1).lifetime.personalLive, true);

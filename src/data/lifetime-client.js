@@ -193,5 +193,5 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
       return validateLifetimeMoment(value, meta, index);
     }, signal);
   }
-  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, peekMoment: peekMinute, getMinute, invalidateMetadata };
+  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, getMinute, invalidateMetadata };
 }

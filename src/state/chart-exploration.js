@@ -5,7 +5,7 @@ import { lifeTimelineForChart } from '../domain/cycles.js';
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
   loadLifetime, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }) {
   let timelineOpening = null, restoreBirthBoundary = false, returnsPreferred = false;
-  const personal = () => Boolean(getReturns()?.state.available);
+  const personal = () => Boolean(getReturns()?.available);
   const returnsEnabled = () => personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened);
   const live = () => personal() && session.owner === 'transit';
   // Lifetime requests must resume even before their first result. A pending or
@@ -21,7 +21,6 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   function selected() {
     if (session.selectedId === 'current-transit') returnsPreferred = false;
     invalidateTimeline();
-    getLifetime()?.setAvailable(session.selectedId === 'current-transit' || personal());
   }
   function select(id) {
     // Keep the chosen tool through unsupported charts, without opening it there
@@ -108,7 +107,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     void getTransit().goNow();
     syncTransitWanted();
     publishTransit();
-    getLifetime()?.syncTransit(); onChange();
+    onChange();
     return true;
   }
   function requestReturn() {
@@ -210,7 +209,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     returnsPreferred = Boolean(lifetimeState?.opened && lifetimeState.mode === 'lifetime'
       || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime');
     if (returnsPreferred) {
-      const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns().state.selectedEvent);
+      const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns().selectedEvent);
       if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.original); }
       else if (session.owner !== 'return' && !live()) {
         const atBirth = lifetimeState?.metadata && lifetimeState.requestedUtc === lifetimeState.minUtc
@@ -222,7 +221,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       getReturns().enableMarkers(true); session.refresh();
     } else {
       const savedClosed = saved?.selectedId === session.selectedId && saved?.natalDay?.opened === false;
-      if (!savedClosed && !getNatalDay().state.opened && session.current.kind !== 'return' && !getReturns().state.opened && !timelineOpening)
+      if (!savedClosed && !getNatalDay().state.opened && session.current.kind !== 'return' && !getReturns().opened && !timelineOpening)
         void getNatalDay().open();
     }
     syncTransitWanted();

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachTimelineRange } from '../src/views/timeline-range.js';
+import { applyTimelineMetrics } from '../src/ui/layout/metrics.js';
 
 function element() {
   const listeners = new Map(), attributes = new Map(), captured = new Set();
@@ -38,6 +39,21 @@ function harness({ value = 200, reference = 500, withMarker = true, resolveTap }
   update();
   return { range, marker, scrubs, returns, update, advance(ms) { time += ms; } };
 }
+
+test('range pointer mapping shares the native thumb endpoints published to CSS', () => {
+  const range = element(), values = [];
+  applyTimelineMetrics(range);
+  const size = Number.parseFloat(range.style['--timeline-thumb-size']);
+  const inset = Number.parseFloat(range.style['--timeline-rail-inset']);
+  assert.equal(inset * 2, size, 'the rail starts at the native thumb center');
+  attachTimelineRange({ range, onScrub: value => values.push(value) });
+  const { left, width } = range.getBoundingClientRect();
+  for (const clientX of [left + inset, left + width - inset]) {
+    range.send('pointerdown', { pointerType: 'touch', clientX });
+    range.send('pointerup', { pointerType: 'touch', clientX });
+  }
+  assert.deepEqual(values, [0, 1000], 'CSS endpoints remain exact pointer targets');
+});
 
 test('touching or dragging across the reference previews its dot without committing early', () => {
   for (const pointerType of ['touch', 'pen', 'mouse']) {

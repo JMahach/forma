@@ -1,6 +1,7 @@
 import { CYCLE_BODIES, cycleEventLabel, cycleTimeZone } from '../domain/cycles.js';
 import { isReferenceMoment } from './timeline-range.js';
 import { ageText, completedAge } from '../domain/personal-age.js';
+import { TIMELINE_THUMB_SIZE } from '../ui/layout/metrics.js';
 
 const SYMBOLS = Object.fromEntries(CYCLE_BODIES.map(body => [body.id, body.symbol]));
 const BODIES = new Set(CYCLE_BODIES.map(body => body.id));
@@ -92,7 +93,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   function render() {
     hitMetrics = null; hitBoxes = null;
     const { events, natal, fromUtc, toUtc, visible } = inputs;
-    if (visible && width === null) width = Math.max(0, container.getBoundingClientRect().width - 44);
+    if (visible && width === null) width = Math.max(0, container.getBoundingClientRect().width - TIMELINE_THUMB_SIZE);
     const groups = visible ? groupReturnMarkers(events, { fromUtc, toUtc, width }) : [];
     const nextLabelKey = JSON.stringify([natal?.utc, natal?.timezone]);
     if (groups.length && nextLabelKey !== labelKey) { label = labelsFor(natal); labelKey = nextLabelKey; }
@@ -144,7 +145,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   const Observer = document.defaultView?.ResizeObserver || globalThis.ResizeObserver;
   if (Observer) new Observer(entries => {
     const measured = entries?.find(entry => entry.target === container)?.contentRect?.width ?? container.getBoundingClientRect().width;
-    const nextWidth = Math.max(0, measured - 44);
+    const nextWidth = Math.max(0, measured - TIMELINE_THUMB_SIZE);
     if (nextWidth === width) return;
     width = nextWidth;
     if (inputs) render();

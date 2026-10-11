@@ -5,6 +5,7 @@ import { attachActivationPopover, placeActivationPopover } from '../src/views/ac
 import { overlayFixture } from './helpers/chart-composition.mjs';
 import { createChartComposition } from '../src/domain/chart-composition.js';
 import { activationDetails } from '../src/views/activation-details.js';
+import { createViewportLayout } from './helpers/viewport-layout.mjs';
 
 const rectAt = (left, top, width = 68, height = 40) => ({ left, top, width, height, right: left + width, bottom: top + height });
 const panelSize = { width: 254, height: 147 };
@@ -82,7 +83,7 @@ const chartFixture = () => ({
 
 // The controller runs against a small DOM surface and synthetic chart data.
 // No browser storage, app bootstrap, real charts, timers, or network are used.
-function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 900 }, visual = true, measurePanel } = {}) {
+function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 900 }, visual = true, measurePanel, viewportLayout } = {}) {
   const originalGlobals = new Map(['document', 'window'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   t.after(() => {
     for (const [key, descriptor] of originalGlobals) {
@@ -95,17 +96,28 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
     if (!listeners.has(key)) listeners.set(key, []);
     listeners.get(key).push({ callback, options });
   };
-  const document = { addEventListener: addListener('document') };
+  const removeListener = surface => (type, callback) => {
+    const key = `${surface}:${type}`;
+    listeners.set(key, (listeners.get(key) || []).filter(listener => listener.callback !== callback));
+  };
+  const document = { addEventListener: addListener('document'), removeEventListener: removeListener('document') };
   const window = {
     innerWidth: viewport.width, innerHeight: viewport.height,
     addEventListener: addListener('window'),
+    removeEventListener: removeListener('window'),
     scrollTo(...args) { cameraMutations.push(['scrollTo', ...args]); },
     scrollBy(...args) { cameraMutations.push(['scrollBy', ...args]); },
     visualViewport: visual ? {
       offsetLeft: viewport.left, offsetTop: viewport.top, width: viewport.width, height: viewport.height,
       addEventListener: addListener('visualViewport'),
+      removeEventListener: removeListener('visualViewport'),
     } : undefined,
   };
+  document.defaultView = window;
+  if (!viewportLayout) {
+    viewportLayout = createViewportLayout(document);
+    t.after(() => viewportLayout.destroy());
+  }
   Object.defineProperty(globalThis, 'document', { configurable: true, writable: true, value: document });
   Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: window });
   const panelChild = {}, styleWrites = [], measurements = [];
@@ -148,8 +160,8 @@ function popoverHarness(t, { viewport = { left: 0, top: 0, width: 1440, height: 
     for (const { callback } of listeners.get(`${surface}:${type}`) || []) callback(event);
     return event;
   }
-  const controller = attachActivationPopover(panel, svg);
-  return { controller, panel, panelChild, styleWrites, measurements, anchors, addAnchor, dispatch, listeners, queries, focusCalls, cameraMutations, window };
+  const controller = attachActivationPopover(panel, svg, { viewportLayout });
+  return { controller, panel, panelChild, styleWrites, measurements, anchors, addAnchor, dispatch, listeners, queries, focusCalls, cameraMutations, window, viewportLayout };
 }
 
 function renderedRows(panel) {
@@ -468,7 +480,7 @@ test('Escape and explicit close clean up the description, and only Escape restor
   assert.deepEqual(harness.cameraMutations, []);
 });
 
-test('resize and visual viewport movement reposition the popup using current screen coordinates', t => {
+test('shared viewport resize and movement reposition the popup using current screen coordinates', t => {
   const viewport = { left: 35, top: 80, width: 320, height: 520 };
   const harness = popoverHarness(t, { viewport }), chart = chartFixture();
   const anchor = harness.addAnchor('personality-mercury', rectAt(160, 200));
@@ -489,9 +501,48 @@ test('resize and visual viewport movement reposition the popup using current scr
     checkPlacement();
   }
   assert.deepEqual(harness.cameraMutations, []);
+  harness.controller.close();
+  assert.equal(harness.viewportLayout.subscriberCount, 0);
+  for (const key of ['window:resize', 'visualViewport:resize', 'visualViewport:scroll']) {
+    assert.equal(harness.listeners.get(key)?.length || 0, 1, 'the page viewport owner survives popup dismissal');
+  }
+  harness.controller.show(chart, 'personality-mercury');
+  assert.equal(harness.viewportLayout.subscriberCount, 1);
+  assert.equal(harness.listeners.get('window:resize').length, 1, 'reopening cannot create another native subscription');
 });
 
-test('the layout viewport is a fallback when visualViewport is unavailable', t => {
+test('an open activation uses corrected layout bounds and subscribes only until dismissal', t => {
+  const listeners = new Set();
+  let corrected = { left: 0, top: 0, width: 390, height: 844 };
+  const h = popoverHarness(t, { viewport: { left: 0, top: 100, width: 390, height: 300 }, viewportLayout: {
+    readViewport: () => corrected,
+    subscribeViewport: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+  } });
+  assert.equal(listeners.size, 0, 'a hidden popup has no viewport work');
+  const anchor = h.addAnchor('personality-mercury', rectAt(161, 650));
+  h.controller.show(chartFixture(), 'personality-mercury');
+  assert.equal(h.panel.hidden, false, 'stale Safari keyboard bounds cannot dismiss a visible activation');
+  assert.equal(h.panel.style['--popover-max-height'], '820px');
+  assert.equal(listeners.size, 1);
+  for (const key of ['window:resize', 'visualViewport:resize', 'visualViewport:scroll']) {
+    assert.equal(h.listeners.get(key)?.length || 0, 0, `${key} belongs to the layout owner`);
+  }
+  corrected = { left: 0, top: 20, width: 390, height: 500 };
+  anchor.rect = rectAt(161, 300); h.measurements.length = 0;
+  for (const notify of listeners) notify();
+  assert.equal(h.panel.style['--popover-max-height'], '476px');
+  assert.equal(h.measurements.filter(value => value === 'personality-mercury').length, 1);
+  const previous = panelPosition(h.panel).top;
+  anchor.rect = rectAt(161, 330); h.controller.reposition();
+  assert.notEqual(panelPosition(h.panel).top, previous, 'camera changes retain their independent reposition command');
+  h.controller.close(); assert.equal(listeners.size, 0);
+  h.controller.show(chartFixture(), 'personality-mercury'); assert.equal(listeners.size, 1);
+  anchor.rect = rectAt(161, 700);
+  for (const notify of [...listeners]) notify();
+  assert.equal(h.panel.hidden, true); assert.equal(listeners.size, 0, 'offscreen dismissal releases its subscription');
+});
+
+test('the shared viewport supplies full page bounds when visualViewport is unavailable', t => {
   const harness = popoverHarness(t, { visual: false, viewport: { left: 0, top: 0, width: 390, height: 844 } });
   harness.addAnchor('personality-mercury', rectAt(161, 300));
   harness.controller.show(chartFixture(), 'personality-mercury');

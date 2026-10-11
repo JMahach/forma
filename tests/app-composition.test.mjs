@@ -16,10 +16,13 @@ import { returnsVisibleWindow } from '../src/domain/returns-window.js';
 import { chartAtMinute } from '../src/domain/natal-day.js';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.mjs';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.js';
-import { createStudioLayout } from '../src/scene/studio-controller.js';
+import { createStudioLayout } from './fixtures/studio-layout.mjs';
 import { createGraphController } from '../src/scene/updates.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { createCamera } from '../src/scene/camera.js';
+import { attachTransitNavigation } from '../src/views/live-transit.js';
+import { studioPresentation } from '../src/ui/studio-presentation.js';
 
 // Execute the whole composition root, preserving declaration and attachment
 // order. Browser-heavy views use ports; library/knowledge and state owners are real.
@@ -31,7 +34,8 @@ function browser() {
   const elements = new Map(), listeners = new Map();
   const document = { body: { dataset: {} }, activeElement: null,
     getElementById: id => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: () => null, querySelectorAll: () => [],
-    addEventListener(type, handler) { listeners.set(type, handler); } };
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    dispatch(type, event) { return listeners.get(type)?.(event); } };
   function element(id) {
     if (!elements.has(id)) {
       const classes = new Set(), attributes = new Map(), handlers = new Map();
@@ -53,6 +57,7 @@ function browser() {
           }
         },
         click() { return this.dispatch('click'); },
+        showModal() { this.open = true; }, close() { this.open = false; },
       });
     }
     return elements.get(id);
@@ -63,7 +68,7 @@ function browser() {
 function harness({ studioSize = null, metaError = null, charts = [], returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser();
   const dimensions = studioSize && { ...studioSize };
-  let resizeLayout, layout = { refresh: noop };
+  let resizeLayout, layout = { refresh: noop, setTimelineKind: noop };
   if (dimensions) {
     const rect = () => ({ ...dimensions, top: 0, left: 0, bottom: dimensions.height, right: dimensions.width });
     const studio = element('studio'), canvas = element('canvasWrap');
@@ -76,12 +81,13 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
       readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px',
         getPropertyValue: name => name === '--timeline-edge-space' ? '8px' : '0px' }) });
   }
-  const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id) };
-  let graph, gestures, natalDay, returns, birthOptions, lifetime, lifetimeOptions, transitOptions, finishModule, failModule, loads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
+  const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id),
+    remove(id) { charts = store.charts = charts.filter(chart => chart.id !== id); } };
+  let graph, gestures, camera, natalDay, returns, birthOptions, lifetime, lifetimeOptions, lifetimeStateOptions, transitOptions, finishModule, failModule, loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const memory = {}, natalClient = {};
   const ports = {
-    createChartSession, createChartExploration, createTransitPlanetFilter,
+    createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation,
     createNatalDayClient: options => { assert.equal(options.memory, memory); return natalClient; },
     createReturnsController: options => returns = createReturnsController(options),
     eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
@@ -89,7 +95,13 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
       load: async () => ({ attachKnowledge: dialog => ({ show() { dialog.open = true; } }) }) }),
     attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
     attachHoverPreview: () => ({ clear: noop }),
-    attachGestures: (_svg, options) => { gestures = options; return { reset: noop, resize: noop }; },
+    attachGestures: (_svg, options) => {
+      gestures = options;
+      camera = createCamera({ getFrame: options.getFrame, getHomeFrame: options.getHomeFrame,
+        measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 },
+          viewport: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }), onChange: options.onChange });
+      return camera;
+    },
     pointerTarget: noop, createCameraView: noop,
     attachMandalaMode: options => dimensions ? attachMandalaMode(options) : ({ enabled: false }), createMandalaMotion: noop,
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
@@ -111,7 +123,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
       const current = dimensions ? store.get('current-transit') : null;
       return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, setWanted: noop };
     },
-    attachTransitNavigation: noop,
+    attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: () => ({ close: noop, setReturnsVisible: noop, update: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
@@ -119,38 +131,195 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
     attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
-  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView',
-    `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')}\nreturn startApp;`)(
+  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView', 'loadLifetimeState',
+    `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')
+      .replace("import('./state/lifetime.js')", 'loadLifetimeState()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search: '' },
-    { location: { reload() { reloads++; } } }, () => { loads++; return module; });
+    { location: { reload() { reloads++; } } }, () => { loads++; return module; }, async () => {
+      stateLoads++;
+      return { createLifetimeExplorer(options) {
+        lifetimeStateOptions = options;
+        lifetime = Object.freeze(createLifetimeExplorer({ ...options, client: {
+          getMeta: async () => { if (metaError) throw metaError; return { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
+            stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }; },
+          getPoint,
+        } }));
+        return lifetime;
+      } };
+    });
   startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView: null });
-  return { element, layout, natalClient, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select: id => graph.onChartChange(id), get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; },
+  return { element, layout, natalClient, camera, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select(id) {
+      const button = { dataset: { chartId: id } };
+      document.dispatch('click', { target: { closest: selector => selector === '[data-chart-id]' ? button : null } });
+    }, get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
     get interruptions() { return interruptions; },
     filter: id => gestures.onSelect({ type: 'planet-filter', id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
     get lifetimeOptions() { return lifetimeOptions; },
+    get lifetimeStateOptions() { return lifetimeStateOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
     clockTick() { transitOptions.onStateChange({ wanted: false }); },
     edit() { birthOptions.beforeOpen(); },
+    saveChart(chart, options) {
+      charts = store.charts = [...charts.filter(previous => previous.id !== chart.id), chart];
+      birthOptions.onSave(chart.id, options);
+    },
+    removeChart(id) {
+      const action = { dataset: { chartAction: 'delete', actionChartId: id }, closest: selector => selector === 'details' ? {} : null };
+      document.dispatch('click', { target: { closest: selector => selector === '[data-chart-action]' ? action : null } });
+      return element('confirmDeleteChart').click();
+    },
     saveMetadata(chart) { charts = store.charts = charts.map(previous => previous.id === chart.id ? chart : previous); birthOptions.onSave(chart.id, { metadataOnly: true }); },
     finishModule() { finishModule({ attachLifetimeControls(options) {
       lifetimeOptions = options;
-      lifetime = createLifetimeExplorer({ ...options, onStateChange(state) {
-        if (dimensions) options.panel.hidden = !state.opened;
-        options.onStateChange(state);
-      }, client: {
-        getMeta: async () => { if (metaError) throw metaError; return { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
-          stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] }; },
-        getPoint,
-      } });
-      lifetime.setAvailable = value => { if (!value) lifetime.close(); };
-      lifetime.syncTransit = noop;
-      lifetime.setVisibleWindow = value => { lifetime.visibleWindow = value; };
-      return lifetime;
+      const update = state => { options.panel.hidden = !state.opened; };
+      update(options.explorer.state);
+      return { update, refreshMoment: noop, setVisibleWindow: noop, refreshTargets: noop };
     } }); },
   };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('lazy Lifetime uses a separate controls view and leaves the real controller independent of DOM methods', async () => {
+  const h = harness();
+  await tick();
+  assert.equal(h.loads, 0); assert.equal(h.stateLoads, 0);
+  assert.equal(h.lifetime, undefined);
+  await h.element('lifetimeToggle').click();
+  h.finishModule(); await tick();
+  assert.equal(h.loads, 1); assert.equal(h.stateLoads, 1);
+  assert.equal(h.lifetimeOptions.explorer, h.lifetime);
+  for (const method of ['update', 'refreshMoment', 'setVisibleWindow', 'refreshTargets', 'setAvailable', 'syncTransit'])
+    assert.equal(method in h.lifetime, false, `state cannot acquire the ${method} view method`);
+  assert.equal(h.lifetime.state.opened, true);
+  assert.equal(h.element('lifetimeControls').hidden, false);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.lifetime.state.opened, false);
+  assert.equal(h.element('lifetimeControls').hidden, true);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.lifetime.state.opened, true);
+  assert.equal(h.loads, 1); assert.equal(h.stateLoads, 1);
+});
+
+test('explicit library and Transit navigation return a zoomed and panned camera Home before async work completes', async () => {
+  const first = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const second = { ...first, id: 'second' };
+  const h = harness({ charts: [first, second] });
+  await tick();
+  for (const id of [first.id, second.id, first.id, first.id]) {
+    h.camera.zoom(2); h.camera.pan(-40, 25);
+    assert.notDeepEqual(h.camera.getView(), h.camera.getFittedView());
+    h.select(id);
+    assert.equal(h.shown.primary.id, id);
+    assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'navigation resets synchronously, including reselection');
+    h.camera.zoom(1.5); h.camera.pan(-30, 20);
+    const exploring = h.camera.getView();
+    await tick();
+    assert.deepEqual(h.camera.getView(), exploring, 'late natal-day completion must not reset a new camera gesture');
+  }
+  for (let click = 0; click < 2; click++) {
+    h.camera.zoom(2); h.camera.pan(-40, 25);
+    await h.element('nowButton').click();
+    assert.equal(h.shown.primary.id, 'current-transit');
+    assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'entering or reselecting Transit uses Home');
+  }
+});
+
+test('saving the current chart preserves the camera while opening a different saved chart uses Home', async t => {
+  const first = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const other = { ...first, id: 'other' };
+  const manual = { id: 'manual', name: 'Manual chart', source: 'manual', personality: [1, 41], design: [8, 31] };
+  for (const { name, selected, saved, options, home } of [
+    { name: 'create a calculated chart', selected: first.id, saved: { ...first, id: 'new' }, home: true },
+    { name: 'create a manual chart', selected: first.id, saved: { ...manual, id: 'new-manual' }, home: true },
+    { name: 'recalculate the selected chart', selected: first.id, saved: chartAtMinute(natalDayFixture(), 755, first), home: false },
+    { name: 'save the selected chart metadata', selected: first.id, saved: { ...first, name: 'Renamed chart' }, options: { metadataOnly: true }, home: false },
+    { name: 'save the selected manual chart', selected: manual.id, saved: { ...manual, personality: [2, 41] }, home: false },
+    { name: 'change the selected chart to manual', selected: first.id, saved: { ...manual, id: first.id }, home: false },
+    { name: 'recalculate another chart', selected: first.id, saved: chartAtMinute(natalDayFixture(), 755, other), home: true },
+    { name: 'save another chart metadata', selected: first.id, saved: { ...other, name: 'Renamed chart' }, options: { metadataOnly: true }, home: true },
+  ]) await t.test(name, async () => {
+    const h = harness({ charts: [first, other, manual] });
+    await tick(); h.select(selected); await tick();
+    h.camera.zoom(2); h.camera.pan(-40, 25);
+    const exploring = h.camera.getView();
+    assert.notDeepEqual(exploring, h.camera.getFittedView());
+    h.saveChart(saved, options);
+    assert.deepEqual(h.shown.primary, saved, 'the saved content must replace the old chart even when its ID is unchanged');
+    assert.deepEqual(h.camera.getView(), home ? h.camera.getFittedView() : exploring,
+      home ? 'opening another saved chart resets immediately' : 'updating the current chart preserves the camera');
+    h.camera.zoom(1.2); h.camera.pan(-10, 15);
+    const afterSave = h.camera.getView();
+    await tick();
+    assert.deepEqual(h.camera.getView(), afterSave, 'late preparation must not reset a gesture made after saving');
+  });
+});
+
+test('deleting the selected chart uses Home for the automatically opened fallback', async t => {
+  const selected = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const remaining = { ...selected, id: 'remaining' };
+  for (const { name, charts, fallback } of [
+    { name: 'another saved chart remains', charts: [selected, remaining], fallback: 'remaining' },
+    { name: 'the last saved chart returns to Transit', charts: [selected], fallback: 'current-transit' },
+  ]) await t.test(name, async () => {
+    const h = harness({ charts });
+    await tick(); h.select(selected.id); await tick();
+    h.camera.zoom(2); h.camera.pan(-40, 25);
+    assert.notDeepEqual(h.camera.getView(), h.camera.getFittedView());
+    await h.removeChart(selected.id);
+    assert.equal(h.element('deleteChartError').textContent, '');
+    assert.equal(h.element('deleteChartDialog').open, false);
+    assert.equal(h.shown.primary.id, fallback);
+    assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'opening the fallback resets the camera');
+    h.camera.zoom(1.2); h.camera.pan(-10, 15);
+    const afterRemoval = h.camera.getView();
+    await tick();
+    assert.deepEqual(h.camera.getView(), afterRemoval, 'late fallback preparation must not reset a new gesture');
+  });
+});
+
+test('deleting an unselected chart keeps the current chart and camera', async () => {
+  const selected = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const other = { ...selected, id: 'other' };
+  const h = harness({ charts: [selected, other] });
+  await tick(); h.select(selected.id); await tick();
+  h.camera.zoom(2); h.camera.pan(-40, 25);
+  const exploring = h.camera.getView(), shown = h.shown;
+  await h.removeChart(other.id); await tick();
+  assert.equal(h.element('deleteChartError').textContent, '');
+  assert.equal(h.shown, shown);
+  assert.deepEqual(h.camera.getView(), exploring);
+});
+
+test('clock updates, day and lifetime scrubs, and exact returns preserve the explored camera', async () => {
+  const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
+  const exact = { ...chart, id: 'exact-return', utc: event.utc };
+  const h = harness({ charts: [chart], returnEvents: [event], getReturn: async () => ({ event, chart: exact }),
+    getPoint: async index => {
+      const utc = new Date(Date.parse('1801-01-01T00:00:00Z') + index * 600000).toISOString();
+      return { index, utc, longitudes: Array.from({ length: 11 }, (_, i) => i * 23),
+        design: { utc, designUtc: '2049-10-01T00:00:00Z', designArcResidualDegrees: 0,
+          longitudes: Array.from({ length: 11 }, (_, i) => i * 23 + 10) } };
+    } });
+  await tick(); h.select(chart.id); await tick();
+  h.camera.zoom(2); h.camera.pan(-40, 25);
+  const exploring = h.camera.getView();
+  h.clockTick();
+  assert.deepEqual(h.camera.getView(), exploring);
+  h.natalDay.scrub(800);
+  assert.equal(h.shown.utc, '2026-09-24T13:20:00Z');
+  assert.deepEqual(h.camera.getView(), exploring);
+  await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  assert.deepEqual(h.camera.getView(), exploring, 'opening the current chart timeline preserves the camera');
+  const target = Date.parse('2050-01-01T12:00:00Z');
+  h.lifetimeOptions.beforeScrub(target); await h.lifetime.scrub(target);
+  assert.equal(h.shown.kind, 'transit');
+  assert.deepEqual(h.camera.getView(), exploring);
+  await h.returns.selectEvent(event.id);
+  assert.equal(h.shown.kind, 'return'); assert.equal(h.shown.secondary, exact);
+  assert.deepEqual(h.camera.getView(), exploring);
+});
 
 test('the natal caption keeps todays age across day, life and closed rails while events keep their moment', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-09-23T23:59:59Z') });
@@ -471,6 +640,6 @@ test('the personal timeline and natal-day tool share one prepared-day client', a
   const chart = chartAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart] }); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
-  assert.equal(h.lifetimeOptions.natalDayClient, h.natalClient);
-  assert.equal(h.lifetimeOptions.getPersonalChart(), chart);
+  assert.equal(h.lifetimeStateOptions.natalDayClient, h.natalClient);
+  assert.equal(h.lifetimeStateOptions.getPersonalChart(), chart);
 });

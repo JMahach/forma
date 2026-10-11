@@ -26,8 +26,9 @@ export function placeActivationPopover(anchor, size, viewport, source) {
   return { left, top, side, arrow };
 }
 
-export function attachActivationPopover(panel, svg) {
-  let currentId = null, maxHeight = null, arrowOffset = null;
+export function attachActivationPopover(panel, svg, { viewportLayout }) {
+  const document = panel.ownerDocument || globalThis.document;
+  let currentId = null, maxHeight = null, arrowOffset = null, unsubscribeViewport = null;
   const anchor = () => currentId ? svg.querySelector(`[data-activation="${currentId}"]`) : null;
   const overlayId = () => /^(natal|cycle)-/.test(currentId || '');
   const sideSource = () => currentId?.startsWith('natal-') ? 'design' : currentId?.startsWith('cycle-') ? 'personality' : currentId?.split('-')[0];
@@ -38,6 +39,7 @@ export function attachActivationPopover(panel, svg) {
     previous?.removeAttribute('aria-describedby');
     currentId = null;
     panel.hidden = true;
+    unsubscribeViewport?.(); unsubscribeViewport = null;
     if (restoreFocus) previous?.focus({ preventScroll: true });
   }
   function reposition() {
@@ -49,8 +51,7 @@ export function attachActivationPopover(panel, svg) {
     // Red normally points left from the planet. If it must flip right, clear
     // the adjacent number too, keeping that trigger available for a second tap.
     const rect = { left: targetRect.left, right: Math.max(targetRect.right, triggerRect?.right ?? targetRect.right), top: targetRect.top, bottom: targetRect.bottom };
-    const visual = window.visualViewport;
-    const viewport = { left: visual?.offsetLeft || 0, top: visual?.offsetTop || 0, width: visual?.width || window.innerWidth, height: visual?.height || window.innerHeight };
+    const viewport = viewportLayout.readViewport();
     if (rect.right <= viewport.left || rect.left >= viewport.left + viewport.width || rect.bottom <= viewport.top || rect.top >= viewport.top + viewport.height) { close(); return; }
     const width = `${Math.max(0, viewport.width - 24)}px`, height = `${Math.max(0, viewport.height - 24)}px`;
     if (panel.style.maxWidth !== width) panel.style.maxWidth = width;
@@ -78,6 +79,7 @@ export function attachActivationPopover(panel, svg) {
     panel.innerHTML = `${provenance ? `<p class="cycle-activation-caption"><span class="cycle-activation-swatch" style="--cycle-source-color:${OVERLAY_PALETTE[provenance.origin]}" aria-hidden="true"></span>${esc(provenance.label)}</p>` : ''}<div class="activation-detail-content">${rows.map(row => `<div class="activation-detail-row"><span class="activation-detail-label">${row.label}</span><span class="activation-detail-value">${row.value}</span><span class="activation-detail-meter" aria-hidden="true"><i style="width:${row.percent}%"></i></span><span class="activation-detail-percent">${row.percent.toFixed(2)}%</span></div>`).join('')}</div>`;
     panel.hidden = false;
     anchor().setAttribute('aria-describedby', panel.id);
+    if (!unsubscribeViewport) unsubscribeViewport = viewportLayout.subscribeViewport(reposition);
     reposition();
   }
   function show(chart, id) {
@@ -94,8 +96,5 @@ export function attachActivationPopover(panel, svg) {
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && currentId) { close(true); event.preventDefault(); }
   });
-  window.addEventListener('resize', reposition);
-  window.visualViewport?.addEventListener('resize', reposition);
-  window.visualViewport?.addEventListener('scroll', reposition);
   return { show, close, refresh, reposition, get currentId() { return currentId; } };
 }

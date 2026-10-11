@@ -1,6 +1,5 @@
 import { LIFE_SPAN_YEARS, EPHEMERIS_LAST_YEAR, SUPPORTED_START, SUPPORTED_END_EXCLUSIVE, calendarAnniversaryUtc } from '../../shared/date-limits.js';
 
-export { LIFE_SPAN_YEARS };
 const DAY_MS = 86400000, ELAPSED_YEAR_MS = 365.2425 * DAY_MS;
 const SUPPORTED_END = SUPPORTED_END_EXCLUSIVE - 1;
 const cycleSearchEnd = chart => Math.min(SUPPORTED_END, calendarAnniversaryUtc(Date.parse(chart?.utc)));

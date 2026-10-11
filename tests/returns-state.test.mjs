@@ -28,13 +28,42 @@ test('unchanged returns reads reuse prepared events and exported arrays cannot c
   for (const year of [null, 2026]) {
     await control.setYear(year); const expected = control.state.events.map(value => value.id); reads = 0;
     const exported = control.state.events; exported.splice(0, exported.length);
-    for (let i = 0; i < 200; i++) assert.equal(control.state.available, true);
+    for (let i = 0; i < 200; i++) {
+      assert.equal(control.available, true);
+      assert.equal(control.state.available, true);
+    }
     assert.deepEqual(control.state.events.map(value => value.id), expected);
     assert.equal(reads, 0, 'unchanged reads must not parse event dates again');
   }
   await control.setBodies([]); assert.deepEqual(control.state.events, []);
   await control.setBodies(['moon']); assert.ok(control.state.events.length > 0);
   const prepared = control.state.events; control.exit(); assert.equal(control.state.opened, false); assert.deepEqual(control.state.events, prepared);
+});
+
+test('lightweight return properties follow the selected natal, list and exact event', async () => {
+  const { control } = fast();
+  const chart = natal();
+  assert.equal(control.available, false);
+  assert.equal(control.natal, null);
+  assert.equal(control.opened, false);
+  assert.equal(control.year, null);
+  assert.equal(control.selectedEvent, null);
+  await control.select(chart); await control.open(); await control.setYear(2028);
+  await control.selectEvent(event().id);
+  assert.equal(control.available, true);
+  assert.equal(control.natal, chart);
+  assert.equal(control.opened, true);
+  assert.equal(control.year, 2028);
+  assert.equal(control.selectedEvent.id, 'saturn:2028-07-21T12:36:05.920740Z');
+  control.close();
+  assert.equal(control.opened, false);
+  assert.equal(control.selectedEvent.id, 'saturn:2028-07-21T12:36:05.920740Z');
+  const unsupported = { ...chart, source: 'manual' };
+  await control.select(unsupported);
+  assert.equal(control.available, false);
+  assert.equal(control.natal, unsupported);
+  assert.equal(control.year, null);
+  assert.equal(control.selectedEvent, null);
 });
 
 test('combined filters reuse full-life results and retain an explicitly empty choice', async () => {

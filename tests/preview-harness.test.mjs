@@ -26,7 +26,7 @@ test('both preview pages serve the complete browser module graph without the app
         pending.push(target.pathname);
       }
     }
-    for (const path of ['/src/scene/mandala.js', '/src/scene/backdrop.js', '/src/domain/gate-wheel.js']) {
+    for (const path of ['/src/scene/mandala.js', '/src/scene/backdrop.js', '/src/domain/gate-wheel.js', '/src/ui/layout/viewport.js']) {
       assert.ok(visited.has(path), `${path} is reachable`);
     }
     assert.ok(!visited.has('/src/app.js'));
@@ -73,6 +73,7 @@ function browserHarness(t, config) {
     return {
       style: { setProperty() {} }, dataset: {}, hidden: true, innerHTML: '',
       addEventListener(type, callback) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(callback); },
+      removeEventListener(type, callback) { listeners.set(type, (listeners.get(type) || []).filter(listener => listener !== callback)); },
       send(type, properties = {}) { for (const callback of listeners.get(type) || []) callback({ type, target: this, buttons: 0, pointerType: 'mouse', preventDefault() {}, ...properties }); },
       setAttribute(name, value) { attributes.set(name, value); }, removeAttribute(name) { attributes.delete(name); },
       getBoundingClientRect: () => ({ left: 50, top: 60, right: 150, bottom: 110, width: 100, height: 50 }),
@@ -98,6 +99,8 @@ function browserHarness(t, config) {
   svg.preserveAspectRatio = { baseVal: { align: 6, meetOrSlice: 1 } };
   const document = { ...surface(), activeElement: null, getElementById: id => nodes.get(id) };
   const window = { ...surface(), innerWidth: 1000, innerHeight: 900 };
+  document.defaultView = window;
+  for (const node of nodes.values()) node.ownerDocument = document;
   const DOMPoint = class { constructor(x, y) { this.x = x; this.y = y; } matrixTransform() { return this; } };
   const PointerEvent = class { constructor(type, options) { this.type = type; Object.assign(this, options); } };
   for (const [key, value] of Object.entries({ document, window, DOMPoint, PointerEvent, fetch: () => { throw new Error('Preview must not fetch calculations'); } })) {

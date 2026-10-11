@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { attachGestures } from './fixtures/gesture-harness.js';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.js';
 import { attachCameraControls, createCameraChangeHandler } from '../src/views/camera-controls.js';
-import { createStudioLayout } from '../src/scene/studio-controller.js';
+import { createStudioLayout } from './fixtures/studio-layout.mjs';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { createSelectionModel } from '../src/selection/selection-model.js';
@@ -426,7 +426,7 @@ for (const [width, height] of [[404, 872], [550, 590], [1440, 900]]) {
       h.controls.reset(); h.controls.zoom(factor); h.controls.pan(-100, 80);
       const before = h.controls.getView();
       for (const open of [true, false, true, false]) {
-        panel.hidden = !open; layout.refresh(); h.setInsets(layout.insets()); h.controls.resize();
+        panel.hidden = !open; layout.setTimelineKind(open ? 'chronicle' : 'day'); layout.refresh(); h.setInsets(layout.insets()); h.controls.resize();
         assert.deepEqual(layout.insets(), initialInsets, 'dock visibility cannot change the Home fitting area');
         assert.deepEqual(h.controls.getFittedView(), home);
         assert.deepEqual(h.controls.getView(), before, 'both scale and translation remain exact');

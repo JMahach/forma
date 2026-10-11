@@ -84,8 +84,6 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
         getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
         onStateChange(state) { exploration.lifetimeChanged(state); changed(); } });
       lifetimeFixtures.push(lifetime);
-      lifetime.setAvailable = value => { if (!value) lifetime.close(); };
-      lifetime.refreshDay = () => {};
     }
     return lifetime;
   }

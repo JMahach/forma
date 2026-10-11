@@ -8,6 +8,7 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
 }) {
   const pointers = new Map();
+  let safariGesture = null;
   let moved = false, pinched = false, initialTarget = null, initialSelection = null, initialClient = null, initialPoint = null, initialAdditive = false;
   let tapTolerance = 6;
   const selectionFor = (target, event) => {
@@ -97,7 +98,10 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
       svg.focus?.({ preventScroll: true });
     }
     pointers.set(event.pointerId, current);
-    if (pointers.size > 1) pinched = true;
+    if (pointers.size > 1) {
+      pinched = true;
+      if (safariGesture) safariGesture.pointerOwned = true;
+    }
     surface.setPointerCapture(event.pointerId);
     updateCursor();
   });
@@ -143,8 +147,37 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
   surface.addEventListener('pointerup', release);
   surface.addEventListener('pointercancel', release);
   surface.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete(event.pointerId); updateCursor(); });
+  // Safari trackpad pinch uses cumulative GestureEvent scales. Touch pinch
+  // stays with PointerEvents, and Ctrl-wheel emitted in the same lifecycle
+  // must not apply the trackpad's zoom a second time.
+  surface.addEventListener('gesturestart', event => {
+    if (event.cancelable) event.preventDefault();
+    safariGesture = { scale: Number.isFinite(event.scale) && event.scale > 0 ? event.scale : 1,
+      pointerOwned: pointers.size > 1 };
+  }, { passive: false });
+  surface.addEventListener('gesturechange', event => {
+    if (event.cancelable) event.preventDefault();
+    if (!safariGesture || !Number.isFinite(event.scale) || event.scale <= 0) return;
+    const factor = event.scale / safariGesture.scale;
+    safariGesture.scale = event.scale;
+    if (safariGesture.pointerOwned || !Number.isFinite(factor) || factor <= 0) return;
+    let position = event;
+    if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+      const rect = surface.getBoundingClientRect();
+      position = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+    }
+    const anchor = point(position);
+    if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) return;
+    updateGesture(() => camera.zoomAt(anchor, factor));
+  }, { passive: false });
+  surface.addEventListener('gestureend', event => {
+    if (event.cancelable) event.preventDefault();
+    safariGesture = null;
+    flushPaint();
+  }, { passive: false });
   surface.addEventListener('wheel', event => {
     event.preventDefault();
+    if (event.ctrlKey && safariGesture) return;
     const anchor = point(event);
     updateGesture(() => camera.zoomAt(anchor, Math.exp(-clamp(event.deltaY, -200, 200) * 0.003)));
   }, { passive: false });

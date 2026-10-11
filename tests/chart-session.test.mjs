@@ -114,6 +114,7 @@ function scaleHarness() {
   let cycle = null, scales;
   const calls = [];
   const returns = { get current() { return cycle; }, state: { available: false, opened: false },
+    get available() { return this.state.available; }, get opened() { return this.state.opened; },
     select(chart) { this.state.available = chart.id !== 'current-transit'; },
     exit() { cycle = null; this.state.opened = false; },
     reset() { cycle = null; }, enableMarkers() {},
