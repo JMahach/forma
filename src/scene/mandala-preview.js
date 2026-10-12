@@ -2,19 +2,20 @@ import { MANDALA_GEOMETRY } from './geometry/mandala-geometry.js';
 import { GATE_ORDER, GATE_LONGITUDE_START, GATE_WIDTH } from '../domain/gate-wheel.js';
 import { crossAtLongitude } from '../domain/mandala-cross.js';
 
-// Convert from the screen through the wheel's own matrix. This keeps angular
-// picking exact after pan, zoom, browser scaling and responsive camera fitting.
+// The wheel only pans and scales along the screen axes. Measure its own circle,
+// not the whole group (planet labels extend it). Safari's SVG screen matrix can
+// omit CSS scaling, while these bounds follow the circle actually on screen.
 export function mandalaPreviewFromPointer(event, target) {
   if (!target.classList?.contains('mandala-gate')) return null;
+  if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return null;
   const wheel = target.closest('.bodygraph-mandala');
-  const matrix = wheel?.getScreenCTM();
-  if (!matrix || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return null;
-  let local;
-  try { local = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse()); }
-  catch { return null; }
-  if (!Number.isFinite(local.x) || !Number.isFinite(local.y)) return null;
-  const dx = local.x - MANDALA_GEOMETRY.centerX, dy = local.y - MANDALA_GEOMETRY.centerY;
-  if (Math.hypot(dx, dy) < 1) return null;
+  const bounds = wheel?.querySelector('.mandala-well')?.getBoundingClientRect();
+  if (!bounds || ![bounds.left, bounds.top, bounds.width, bounds.height].every(Number.isFinite)
+    || bounds.width <= 0 || bounds.height <= 0) return null;
+  const dx = (event.clientX - bounds.left - bounds.width / 2) / (bounds.width / 2);
+  const dy = (event.clientY - bounds.top - bounds.height / 2) / (bounds.height / 2);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)
+    || Math.hypot(dx, dy) < 1 / MANDALA_GEOMETRY.outerRadius) return null;
   const longitude = (Math.atan2(dy, -dx) * 180 / Math.PI + 360) % 360;
   return { ...previewAt(longitude), focusGate: Number(target.dataset.id) };
 }

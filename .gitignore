@@ -10,6 +10,14 @@ __pycache__/
 .cache/transit/
 dist/
 
+# Keep agent instructions, working reports and workflows outside the repository.
+AGENTS.md
+/*_AUDIT.md
+/*_PLAN.md
+/docs/*_AUDIT.md
+/docs/*_PLAN.md
+/.github/workflows/
+
 # Generated lifetime files and their completion metadata.
 *.f64le
 *.f64le.*.tmp

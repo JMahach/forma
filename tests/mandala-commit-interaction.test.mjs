@@ -23,7 +23,7 @@ function matrix(a = 1, b = 0, c = 0, d = 1, e = 0, f = 0) {
 
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} equals ${expected}`);
 
-function harness(t, transform = matrix()) {
+function harness(t, transform = matrix(), reportedTransform = transform) {
   const handlers = new Map(), captures = new Set(), selections = [], resolutions = [];
   const listen = surface => (type, handler) => {
     const key = `${surface}:${type}`;
@@ -59,12 +59,23 @@ function harness(t, transform = matrix()) {
     onPreview: value => onPreview(value),
   });
   const target = (gate = 41, ring = true) => {
+    const { centerX, centerY, outerRadius } = MANDALA_GEOMETRY;
+    const circle = { getBoundingClientRect: () => ({
+      left: (centerX - outerRadius) * transform.a + transform.e,
+      top: (centerY - outerRadius) * transform.d + transform.f,
+      width: 2 * outerRadius * transform.a,
+      height: 2 * outerRadius * transform.d,
+    }) };
+    const wheel = {
+      getScreenCTM: () => reportedTransform,
+      querySelector: selector => selector === '.mandala-well' ? circle : null,
+    };
     const element = {
       connected: true, dataset: { type: 'gate', id: String(gate) },
       classList: { contains: name => ring && name === 'mandala-gate' },
       closest(selector) {
         if (!this.connected) return null;
-        return selector === '[data-type]' ? this : selector === '.bodygraph-mandala' ? { getScreenCTM: () => transform } : null;
+        return selector === '[data-type]' ? this : selector === '.bodygraph-mandala' ? wheel : null;
       },
     };
     return element;
@@ -91,7 +102,7 @@ function harness(t, transform = matrix()) {
 }
 
 test('a ring tap commits the exact pointerdown angle after redraw detaches the pressed target', t => {
-  const h = harness(t, matrix(.7, .05, -.02, .7, 100, 30)), target = h.target();
+  const h = harness(t, matrix(.7, 0, 0, .7, 100, 30), matrix(.7, 0, 0, .7, 171.8, 119.3)), target = h.target();
   h.send('pointermove', { target, ...h.point(305.6) });
   assert.equal(h.hover.currentSelection.cross.type, 'right-angle');
   h.send('pointerdown', { target, shiftKey: true, ...h.point(305.64) });

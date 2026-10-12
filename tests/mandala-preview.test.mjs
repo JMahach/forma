@@ -42,8 +42,23 @@ function matrix(a = 1, b = 0, c = 0, d = 1, e = 0, f = 0) {
   };
 }
 
-function target({ gate = 41, transform = matrix(), ring = true, insideSvg = true } = {}) {
-  const wheel = transform === null ? null : { getScreenCTM: () => transform };
+function circleBounds(transform = matrix()) {
+  const { centerX, centerY, outerRadius } = MANDALA_GEOMETRY;
+  return {
+    left: (centerX - outerRadius) * transform.a + transform.e,
+    top: (centerY - outerRadius) * transform.d + transform.f,
+    width: 2 * outerRadius * transform.a,
+    height: 2 * outerRadius * transform.d,
+  };
+}
+
+function target({ gate = 41, transform = matrix(), reportedTransform = transform,
+  bounds = transform && circleBounds(transform), ring = true, insideSvg = true } = {}) {
+  const circle = bounds === null ? null : { getBoundingClientRect: () => typeof bounds === 'function' ? bounds() : bounds };
+  const wheel = transform === null ? null : {
+    getScreenCTM: () => reportedTransform,
+    querySelector: selector => selector === '.mandala-well' ? circle : null,
+  };
   return {
     dataset: { type: 'gate', id: String(gate) }, insideSvg,
     classList: { contains: name => ring && name === 'mandala-gate' },
@@ -51,15 +66,29 @@ function target({ gate = 41, transform = matrix(), ring = true, insideSvg = true
   };
 }
 
+test('visible ring positions select all 64 gates when Safari reports a shifted screen matrix', t => {
+  patchGlobals(t, { DOMPoint: Point });
+  const transform = matrix(.63, 0, 0, .63, 9.4, 93.26);
+  const reportedTransform = matrix(.63, 0, 0, .63, 81.2, 182.56);
+  for (const [index, gate] of MANDALA_GATE_ORDER.entries()) {
+    const longitude = normalize(302 + (index + .5) * 5.625);
+    const point = screenPoint(longitude, transform);
+    const result = mandalaPreviewFromPointer({ clientX: point.x, clientY: point.y },
+      target({ gate, transform, reportedTransform }));
+    close(result.id, longitude);
+    assert.equal(result.cross.positions[0].gate, gate);
+  }
+});
+
 function screenPoint(longitude, transform = matrix()) {
   const angle = longitude * Math.PI / 180, radius = MANDALA_GEOMETRY.labelRadius;
   return new Point(MANDALA_GEOMETRY.centerX - radius * Math.cos(angle),
     MANDALA_GEOMETRY.centerY + radius * Math.sin(angle)).matrixTransform(transform);
 }
 
-test('pointer longitude uses inverse screen transform after translation, scaling, rotation and skew', t => {
+test('pointer longitude follows the visible ring after translation and scaling', t => {
   patchGlobals(t, { DOMPoint: Point });
-  for (const transform of [matrix(), matrix(.38, 0, 0, .38, 125, -48), matrix(0, 1.2, -1.2, 0, 900, 70), matrix(.8, .1, .25, .7, -200, 300)]) {
+  for (const transform of [matrix(), matrix(.38, 0, 0, .38, 125, -48), matrix(1.72, 0, 0, 1.72, -200, 300)]) {
     for (const longitude of [0, .125, 89.99, 180, 270, 305.625, 305.75, 359.999]) {
       const point = screenPoint(longitude, transform);
       const result = mandalaPreviewFromPointer({ clientX: point.x, clientY: point.y }, target({ transform }));
@@ -68,6 +97,20 @@ test('pointer longitude uses inverse screen transform after translation, scaling
       assert.equal(result.cross.source, 'personality', 'pointer longitude always anchors the conscious Sun, independent of saved gate colors');
       assert.equal(result.cross.positions[0].longitude, result.id);
     }
+  }
+});
+
+test('the same ring target follows its current bounds throughout zoom, pan and reveal', t => {
+  patchGlobals(t, { DOMPoint: Point });
+  let transform = matrix(.63, 0, 0, .63, 9.4, 93.26);
+  const sameCell = target({ bounds: () => circleBounds(transform) });
+  for (const next of [transform, matrix(.95, 0, 0, .95, -93, -34),
+    matrix(.95, 0, 0, .95, -28, 120), matrix(1.01, 0, 0, 1.01, -47.2, 96.12)]) {
+    transform = next;
+    const point = screenPoint(305.64, transform);
+    const result = mandalaPreviewFromPointer({ clientX: point.x, clientY: point.y }, sameCell);
+    close(result.id, 305.64);
+    assert.equal(result.cross.profile, '4/1');
   }
 });
 
@@ -83,20 +126,25 @@ test('pointer preview is continuous within a single ring cell, including the nar
   assert.equal(new Set(results.map(result => result.id)).size, 3, 'id tracks angular motion, not the gate id');
 });
 
-test('non-ring, unavailable matrix, invalid screen position and center cannot create a pointer preview', t => {
+test('non-ring, missing wheel or circle, invalid screen position and center cannot create a pointer preview', t => {
   patchGlobals(t, { DOMPoint: Point });
   const valid = { clientX: 100, clientY: 200 };
   assert.equal(mandalaPreviewFromPointer(valid, target({ ring: false })), null);
   assert.equal(mandalaPreviewFromPointer(valid, target({ transform: null })), null);
-  assert.equal(mandalaPreviewFromPointer(valid, target({ transform: { inverse() { throw new Error('not invertible'); } } })), null);
+  assert.equal(mandalaPreviewFromPointer(valid, target({ bounds: null })), null);
   assert.equal(mandalaPreviewFromPointer({ clientX: NaN, clientY: 1 }, target()), null);
   assert.equal(mandalaPreviewFromPointer({ clientX: 1, clientY: Infinity }, target()), null);
   assert.equal(mandalaPreviewFromPointer({ clientX: MANDALA_GEOMETRY.centerX, clientY: MANDALA_GEOMETRY.centerY }, target()), null);
 });
 
-test('singular screen transforms fail closed instead of throwing or rendering invalid geometry', t => {
+test('empty and non-finite circle bounds cannot create a pointer preview', t => {
   patchGlobals(t, { DOMPoint: Point });
-  assert.equal(mandalaPreviewFromPointer({ clientX: 1, clientY: 1 }, target({ transform: matrix(0, 0, 0, 0) })), null);
+  const bounds = circleBounds();
+  for (const invalid of [{ width: 0 }, { height: 0 }, { width: -1 }, { height: -1 },
+    { left: NaN }, { top: Infinity }, { width: Infinity }, { height: NaN }]) {
+    assert.equal(mandalaPreviewFromPointer({ clientX: 100, clientY: 200 },
+      target({ bounds: { ...bounds, ...invalid } })), null);
+  }
 });
 
 test('keyboard preview starts at each gate midpoint and can reach all angle categories without a pointer', () => {
