@@ -117,9 +117,7 @@ export function createLifetimeExplorer({
     if (active) return active.promise;
     clearTimeout(retryTimer); retryTimer = null;
     const request = { controller: new AbortController(), promise: null }, generation = ++sequence;
-    active = request; restoring = Boolean(restoration);
-    if (status !== 'preparing' || metadata) status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading';
-    error = '';
+    active = request; restoring = Boolean(restoration); status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = '';
     request.promise = Promise.resolve().then(async () => {
       if (generation !== sequence || !opened) return false;
       try {
@@ -130,7 +128,6 @@ export function createLifetimeExplorer({
           const value = await client.getMeta({ signal: request.controller.signal, refreshNatalDay });
           if (generation !== sequence || !opened) return false;
           metadata = validateLifetimeMetadata(value); receivedMetadata = true;
-          if (status === 'preparing') status = 'loading';
           minDate = metadata.startUtc.slice(0, 10);
           maxDate = new Date(Date.parse(metadata.endExclusiveUtc) - 1).toISOString().slice(0, 10);
         }
@@ -244,19 +241,16 @@ export function createLifetimeExplorer({
           client.invalidateMetadata?.(metadata); metadata = null; exploredChart = null;
         }
         error = '';
-        let delay = null;
-        if (failure?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; delay = 30_000; }
+        if (failure?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
         else if (!metadata && failure?.code === 'lifetime_unavailable') {
           // Opening rejected the prepared file. A repaired file can be tried
           // again explicitly; repeating the same validation cannot repair it.
           status = 'error'; retryCount = 0; error = failure.message || 'Данные летописи недоступны.';
         } else {
           status = 'loading'; retryCount++;
-          delay = Math.min(30_000, 1000 * 2 ** Math.min(retryCount - 1, 5));
-        }
-        if (delay !== null) {
-          // The current view owns both preparation checks and failure retries.
-          // Closing or replacing its target cancels the wait in cancel().
+          // Keep the selected target and last good chart. A new command cancels
+          // this wait; only the still-current load may retry after its backoff.
+          const delay = Math.min(30_000, 1000 * 2 ** Math.min(retryCount - 1, 5));
           retryTimer = setTimeout(() => {
             if (generation !== sequence || !opened) return;
             retryTimer = null; void load();

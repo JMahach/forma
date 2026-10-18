@@ -151,31 +151,18 @@ export function createReturnsController({ client = createCyclesClient(), onState
     onRequest(selected);
     loadingChart = true; pendingEvent = selected; failedEvent = null; chartError = ''; emit();
     const job = start(async signal => {
-      const input = { birthUtc: owner.utc, body: selected.body, eventUtc: selected.utc, timezone: owner.timezone || 'UTC' };
-      while (version === chartGeneration && !signal.aborted) {
+      if (version !== chartGeneration || signal.aborted) return false;
+      try {
+        const input = { birthUtc: owner.utc, body: selected.body, eventUtc: selected.utc, timezone: owner.timezone || 'UTC' };
+        const data = await client.chart(input, signal, { event: selected });
+        if (version !== chartGeneration || signal.aborted) return false;
         if (!valid()) { cancelChart(); emit(); return false; }
-        try {
-          const data = await client.chart(input, signal, { event: selected });
-          if (version !== chartGeneration || signal.aborted) return false;
-          if (!valid()) { cancelChart(); emit(); return false; }
-          acceptChart(input, data, selected); return true;
-        } catch (error) {
-          if (version !== chartGeneration || signal.aborted || error?.name === 'AbortError') return false;
-          if (!valid()) { cancelChart(); emit(); return false; }
-          if (error?.code === 'return_index_unavailable') {
-            // The selected chart owns this wait too; cancellation settles it
-            // immediately without leaving a timer to revive an obsolete event.
-            await new Promise(resolve => {
-              const resume = () => { clearTimeout(timer); signal.removeEventListener('abort', resume); resolve(); };
-              const timer = setTimeout(resume, 30_000);
-              signal.addEventListener('abort', resume, { once: true });
-            });
-            continue;
-          }
-          chartError = error.message || 'Не удалось загрузить карту возврата.'; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
-        }
+        acceptChart(input, data, selected); return true;
+      } catch (error) {
+        if (version !== chartGeneration || signal.aborted || error?.name === 'AbortError') return false;
+        if (!valid()) { cancelChart(); emit(); return false; }
+        chartError = error.message || 'Не удалось загрузить карту возврата.'; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
       }
-      return false;
     });
     chartJob = job; return job.promise;
   }
