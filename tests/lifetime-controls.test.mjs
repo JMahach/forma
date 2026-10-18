@@ -1064,13 +1064,16 @@ test('reference titles distinguish the current moment from a personal transit', 
 });
 
 
-test('preparing keeps the disabled lifetime rail and stays visible through live-day updates until a fresh request succeeds', async () => {
+test('preparing keeps the disabled lifetime rail visible and automatically enables it when the file is ready', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let ready = false, requests = 0;
+  const preparedMetadata = deferred();
   const h = harness({ client: { async getMeta() {
     requests++;
     if (!ready) throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
-    return metadata;
+    return preparedMetadata.promise;
   } } });
+  t.after(() => h.explorer.close());
   await h.explorer.open();
   assert.equal(h.toggle.hidden, false);
   assert.equal(h.panel.hidden, false);
@@ -1095,12 +1098,65 @@ test('preparing keeps the disabled lifetime rail and stays visible through live-
   assert.equal(h.status.textContent, 'Создаём летопись');
   assert.equal(requests, 1, 'clock updates do not poll for the file');
   ready = true; h.setDayState({ status: 'ready' });
-  h.explorer.close(); await h.explorer.open();
+  t.mock.timers.tick(29_999); await tick();
+  assert.equal(requests, 1, 'preparation waits between checks');
+  t.mock.timers.tick(1); await tick();
+  assert.equal(requests, 2, 'the open timeline checks again without a user action');
+  assert.equal(h.explorer.state.status, 'preparing');
+  assert.equal(h.explorer.state.retryCount, 0);
+  assert.equal(h.status.textContent, 'Создаём летопись');
+  assert.equal(h.range.disabled, true, 'the rail stays disabled while the file is opening');
+  preparedMetadata.resolve(metadata); await tick();
   assert.equal(h.explorer.state.status, 'ready');
   assert.equal(h.range.parentElement.hidden, false);
   assert.equal(h.fromDate.disabled, false);
   assert.equal(h.status.textContent, '');
   assert.equal(requests, 2);
+});
+
+test('closing the timeline cancels automatic preparation checks', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let requests = 0;
+  const h = harness({ client: { async getMeta() {
+    requests++;
+    throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
+  } } });
+  await h.explorer.open();
+  h.explorer.close();
+  t.mock.timers.tick(60_000); await tick();
+  assert.equal(requests, 1);
+  assert.equal(h.explorer.state.opened, false);
+  assert.equal(h.explorer.state.status, 'idle');
+});
+
+test('replacing a personal range cancels its preparation wait and automatically restores only the latest range', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let ready = false, requests = 0;
+  const h = harness({ client: {
+    async getMeta() {
+      requests++;
+      if (!ready) throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
+      return metadata;
+    },
+    async getPoint(index) { return moment(index); },
+  } });
+  t.after(() => h.explorer.close());
+  const first = { opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18', requestedUtc: Date.parse('2000-01-01T00:00:00Z') };
+  const latest = { ...first, fromDate: '2001-02-03', toDate: '2101-02-03', requestedUtc: Date.parse('2005-02-03T12:30:00Z') };
+  await h.explorer.restore(first);
+  t.mock.timers.tick(10_000); await tick();
+  await h.explorer.restore(latest);
+  t.mock.timers.tick(20_000); await tick();
+  assert.equal(requests, 2, 'the previous range cannot trigger its cancelled check');
+  ready = true;
+  t.mock.timers.tick(10_000); await tick();
+  assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.explorer.state.retryCount, 0);
+  assert.equal(h.explorer.state.fromDate, latest.fromDate);
+  assert.equal(h.explorer.state.toDate, latest.toDate);
+  assert.equal(h.explorer.state.requestedUtc, latest.requestedUtc);
+  assert.equal(h.explorer.state.displayedUtc, latest.requestedUtc);
+  assert.equal(h.range.disabled, false);
 });
 
 
@@ -1137,10 +1193,11 @@ test('a personal range accepted before metadata preserves an unfinished date dra
 });
 
 
-test('preparing previews the current transit day without overwriting a saved lifetime range', async () => {
+test('preparing previews the current transit day without overwriting a saved lifetime range', async t => {
   const h = harness({ client: { async getMeta() {
     throw Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' });
   } } });
+  t.after(() => h.explorer.close());
   await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18',
     requestedUtc: Date.parse('2000-01-01T00:00:00Z') });
   assert.equal(h.fromDate.value, '30.09.2026');

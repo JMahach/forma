@@ -596,9 +596,10 @@ test('timeline entry stays available without a server HTML availability flag', a
 });
 
 
-test('opening a personal timeline before its file is ready retains a restorable life range and the natal chart', async () => {
+test('opening a personal timeline before its file is ready retains a restorable life range and the natal chart', async t => {
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const h = harness({ charts: [chart], metaError: Object.assign(new Error('Создаём летопись'), { code: 'lifetime_preparing' }) });
+  t.after(() => h.lifetime?.close());
   await h.select(chart.id);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   assert.equal(h.lifetime.state.status, 'preparing');
