@@ -70,6 +70,7 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
     dock = computeTimelineDock({ width: full.width, height: full.height, side: insets.side, safeBottom,
       kind: timelineKind, controlWidth, mandalaWidth: current.mandalaRadius * 2 });
     studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
+    studio.style?.setProperty('--timeline-date-background', dock.mode === 'inline' ? 'var(--timeline-background)' : 'var(--canvas-background)');
     studio.style?.setProperty('--timeline-heading-height', `${TIMELINE_DATE_HEIGHT}px`);
     studio.style?.setProperty('--timeline-heading-top', `${full.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeInset - TIMELINE_DATE_HEIGHT) / 2 : 0)}px`);
     studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);

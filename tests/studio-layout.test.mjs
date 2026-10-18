@@ -271,11 +271,12 @@ test('the studio rail stays centered within its date edges and clear of the char
     let previous;
     for (let width = 320; width <= 1440; width += 4) {
       const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
-      const panel = railFor(layout, width, height);
+      const dock = geometry.computeTimelineDock({ width, height, mandalaWidth: layout.mandalaRadius * 2 });
+      const panel = dock.rail;
       assert.equal(panel.height, DAY_CONTROL_HEIGHT);
       close(panel.x + panel.width / 2, width / 2, 'timeline center');
       assert.ok(panel.width >= Math.min(width - 48, layout.mandalaRadius * 2), 'rail covers the Home envelope unless the outer date edges cap it');
-      assert.ok(panel.x >= 24 && panel.x + panel.width <= width - 24 + 1e-7, 'rail never exceeds the outer date edges');
+      assert.ok(panel.x >= dock.gutter && panel.x + panel.width <= width - dock.gutter + 1e-7, 'rail never exceeds the outer date edges');
       close(panel.y, height - DAY_CONTROL_HEIGHT, 'timeline position is independent of the camera reserve');
       assert.ok(height - TIMELINE_BAR_HEIGHT >= layout.center.y + layout.mandalaRadius - 1e-7, 'the full planet envelope clears the backing');
       assert.ok(panel.x >= 0 && panel.x + panel.width <= width + 1e-7);
@@ -974,4 +975,14 @@ test('shared viewport retains native page zoom and pan after keyboard geometry c
   assert.deepEqual(h.layout.readViewport(), { left: 40, top: 60, width: 260, height: viewport.height });
   viewport.offsetTop = 100; viewport.offsetLeft = 70; viewport.dispatchEvent(new Event('scroll'));
   assert.deepEqual(h.layout.readViewport(), { left: 70, top: 100, width: 260, height: viewport.height });
+});
+
+
+test('a narrow chronicle keeps both outlined date controls inside the viewport', () => {
+  const dock = geometry.computeTimelineDock({ width: 320, height: 720, mandalaWidth: 300,
+    kind: 'chronicle', controlWidth: 148, side: 4 });
+  assert.equal(dock.mode, 'stacked');
+  assert.ok(320 - 2 * dock.gutter >= 2 * dock.controlWidth, 'both controls fit without overlapping');
+  assert.ok(dock.gutter >= 8, 'the controls retain space at the screen edges');
+  assert.equal(dock.backingHeight, geometry.TIMELINE_BAR_HEIGHT, 'the backing stays a single low strip');
 });

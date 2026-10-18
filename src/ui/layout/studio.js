@@ -51,7 +51,7 @@ export function returnsPlacement(options, { phone = false, reserve = 0 } = {}) {
 // Every mode reserves the same date columns. If they cannot fit beside the
 // Home mandala envelope, dates move above. Their outer edges cap the rail.
 export function computeTimelineDock({ width, height, mandalaWidth, side = 4, safeBottom = 0, kind = 'day', controlWidth = TIMELINE_SIDE_CONTROL_WIDTH }) {
-  const gutter = Math.max(24, side);
+  const gutter = Math.max(side, Math.min(24, (width - 2 * controlWidth) / 2));
   const available = width - 2 * (gutter + controlWidth + TIMELINE_CONTROL_GAP);
   const railWidth = Math.max(1, Math.min(width - 2 * gutter, Math.max(mandalaWidth, available)));
   const inline = kind !== 'chronicle' || available >= mandalaWidth;

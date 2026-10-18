@@ -4,7 +4,7 @@ limit_conn_zone $binary_remote_addr zone=forma_compute_connections:1m;
 limit_conn_zone $binary_remote_addr zone=forma_connections:1m;
 server {
     listen 80;
-    server_name 153.76.161.24;
+    server_name 153.76.169.160;
     client_max_body_size 20k;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
