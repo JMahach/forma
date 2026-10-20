@@ -1,62 +1,20 @@
-import { renderChartThumbnail } from './thumbnail.js';
+import { createPanelState } from '../state/panels.js';
 import { formatDateInput } from './date-input.js';
 import { canManageLibraryRecord } from './chart-display.js';
 import { escapeHtml as esc } from '../ui/html.js';
 
 const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Транзит' };
 
-function rowContent(chart, selected) {
+export function renderChartLibraryRow(chart, selected, { preview = false } = {}) {
   const caption = chart.birthDate ? [formatDateInput(chart.birthDate), chart.birthTime].filter(Boolean).join(' · ') : sourceNames[chart.source] || 'Ручные активации';
-  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}"><img class="chart-thumbnail" alt="" aria-hidden="true" width="44" height="68" decoding="async"><span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(chart.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
+  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}">${preview ? '<canvas class="chart-preview" width="0" height="0" aria-hidden="true"></canvas>' : ''}<span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(chart.name)}»" title="Действия с картой"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
 }
 
-// Saved data never lives here. Rows retain DOM identity across selection and
-// minute updates; only visible rows plus a small scroll margin need images.
-export function createChartLibraryView({
-  chartList, libraryCount, nowButton, document = chartList.ownerDocument,
-  thumbnail = renderChartThumbnail,
-  createObserver = typeof globalThis.IntersectionObserver === 'function'
-    ? (callback, options) => new globalThis.IntersectionObserver(callback, options) : null,
-  schedule = callback => setTimeout(callback, 0), cancel = clearTimeout,
-}) {
-  const rows = new Map(), rowRecords = new WeakMap(), pending = new Set();
-  let charts = [], personal = [], renderedCharts = null, selectedId = null, opened = false, job = null;
-  function paintBatch() {
-    job = null;
-    if (!opened) return;
-    let count = 0;
-    for (const entry of pending) {
-      pending.delete(entry);
-      if (rows.get(entry.key) !== entry || entry.ready) continue;
-      entry.image.src = thumbnail(entry.chart); entry.ready = true;
-      observer?.unobserve(entry.row);
-      if (++count === 4) break;
-    }
-    if (pending.size) job = schedule(paintBatch);
-  }
-  function enqueue(entry) {
-    if (!opened || entry.ready) return;
-    pending.add(entry);
-    if (job === null) job = schedule(paintBatch);
-  }
-  const observer = createObserver?.(entries => {
-    if (!opened) return;
-    for (const item of entries) {
-      const entry = rowRecords.get(item.target);
-      if (!entry) continue;
-      if (item.isIntersecting) enqueue(entry); else pending.delete(entry);
-    }
-  }, { root: chartList, rootMargin: '120px 0px' });
-  function measureVisible() {
-    if (!opened || observer) return;
-    const bounds = chartList.getBoundingClientRect();
-    for (const entry of rows.values()) {
-      const rect = entry.row.getBoundingClientRect();
-      if (rect.bottom >= bounds.top - 120 && rect.top <= bounds.bottom + 120) enqueue(entry);
-      else pending.delete(entry);
-    }
-  }
-  chartList.addEventListener('scroll', measureVisible, { passive: true });
+// Saved data never lives here. Compact navigation rows keep their identity
+// across selection and minute updates; a closed list defers reconciliation.
+export function createChartLibraryView({ chartList, libraryCount, nowButton, document = chartList.ownerDocument }) {
+  const rows = new Map();
+  let charts = [], personal = [], renderedCharts = null, selectedId, opened = false;
   function markEntry(entry, active) {
     entry.row.dataset.active = String(active);
     entry.button.dataset.active = String(active);
@@ -77,7 +35,7 @@ export function createChartLibraryView({
     });
     const retained = new Set(entries.map(entry => entry.key));
     for (const [id, entry] of rows) if (!retained.has(id)) {
-      observer?.unobserve(entry.row); pending.delete(entry); entry.row.remove(); rows.delete(id);
+      entry.row.remove(); rows.delete(id);
     }
     let previous = null;
     for (const { chart, key } of entries) {
@@ -85,21 +43,19 @@ export function createChartLibraryView({
       if (!entry) {
         const row = document.createElement('div');
         row.className = 'chart-row has-actions';
-        entry = { key, chart: null, row, ready: false }; rows.set(key, entry); rowRecords.set(row, entry);
+        entry = { key, chart: null, row }; rows.set(key, entry);
       }
       if (entry.chart !== chart) {
-        pending.delete(entry); entry.chart = chart; entry.ready = false;
-        entry.row.innerHTML = rowContent(chart, chart.id === selectedId);
-        entry.button = entry.row.querySelector('.chart-card'); entry.image = entry.row.querySelector('img');
+        entry.chart = chart;
+        entry.row.innerHTML = renderChartLibraryRow(chart, chart.id === selectedId);
+        entry.button = entry.row.querySelector('.chart-card');
         markEntry(entry, chart.id === selectedId);
       }
       const position = previous ? previous.nextSibling : chartList.firstChild;
       if (position !== entry.row) chartList.insertBefore(entry.row, position);
       previous = entry.row;
-      if (!entry.ready) observer?.observe(entry.row);
     }
     renderedCharts = charts;
-    measureVisible();
   }
   return {
     update(nextCharts, nextSelectedId) {
@@ -113,47 +69,54 @@ export function createChartLibraryView({
       }
       reconcile();
     },
+    setScreen(screen) {
+      for (const [id, section] of [['openKnowledge', 'library'], ['openAllCharts', 'charts'], ['openAccount', 'account']]) {
+        const selected = screen === section, button = document.getElementById(id);
+        button.setAttribute('aria-pressed', String(selected));
+        if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+      }
+    },
     show() {
       if (opened) return;
       opened = true;
-      if (renderedCharts !== charts) reconcile();
-      else {
-        for (const entry of rows.values()) if (!entry.ready) observer?.observe(entry.row);
-        measureVisible();
-      }
+      reconcile();
     },
-    hide() {
-      opened = false; observer?.disconnect(); pending.clear();
-      if (job !== null) cancel(job);
-      job = null;
-    },
+    hide() { opened = false; },
   };
 }
 
-export function attachChartLibrary({ document, store, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {} }) {
+export function attachChartLibrary({ panels = createPanelState(), document, view = null, store, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {}, getSelectedId = () => session.selectedId }) {
   const $ = id => document.getElementById(id);
-  let deletingId = null;
-  const view = createChartLibraryView({ chartList: $('chartList'), libraryCount: $('libraryCount'), nowButton: $('nowButton'), document });
-  function render() { view.update(store.charts, session.selectedId); }
+  let deletingId = null, appliedOpen = null;
+  view ??= createChartLibraryView({ chartList: $('chartList'), libraryCount: $('libraryCount'), nowButton: $('nowButton'), document });
+  function render() { view.update(store.charts, getSelectedId()); }
 
+  function syncOpen() {
+    const opened = panels.left;
+    if (appliedOpen === opened) return;
+    appliedOpen = opened;
+    $('library').inert = !opened;
+    $('library').classList.toggle('open', opened);
+    $('library').setAttribute('aria-hidden', String(!opened));
+    $('libraryBackdrop').hidden = !opened;
+    $('openLibrary').setAttribute('aria-expanded', String(opened));
+    if (opened) { render(); view.show(); } else view.hide();
+  }
   function openLibrary() {
+    if (panels.left) return;
     beforeOpen();
-    $('library').inert = false;
-    $('library').classList.add('open');
-    $('libraryBackdrop').hidden = false;
-    $('openLibrary').setAttribute('aria-expanded', 'true');
-    render(); view.show();
+    panels.setLeft(true);
+    syncOpen();
     $('nowButton').focus({ preventScroll: true });
   }
   function closeLibrary() {
+    if (!panels.left) return;
     const restoreFocus = $('library').contains(document.activeElement);
-    view.hide();
-    $('library').classList.remove('open');
-    $('library').inert = true;
-    $('libraryBackdrop').hidden = true;
-    $('openLibrary').setAttribute('aria-expanded', 'false');
+    panels.setLeft(false);
+    syncOpen();
     if (restoreFocus) $('openLibrary').focus({ preventScroll: true });
   }
+  const toggle = () => panels.left ? closeLibrary() : openLibrary();
 
   document.addEventListener('click', e => {
     const action = e.target.closest('[data-chart-action]');
@@ -192,14 +155,16 @@ export function attachChartLibrary({ document, store, session, onSelect, onEdit,
     } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
   });
 
-  $('openLibrary').addEventListener('click', openLibrary);
+  $('openLibrary').addEventListener('click', toggle);
   $('libraryBackdrop').addEventListener('click', closeLibrary);
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('dialog[open]')) return;
     const menu = document.querySelector('.chart-actions[open]');
     if (menu) { menu.open = false; menu.querySelector('summary').focus(); e.preventDefault(); return; }
-    closeLibrary();
+    if (panels.left) { closeLibrary(); e.preventDefault(); }
   });
 
-  return { open: openLibrary, close: closeLibrary, render };
+  panels.subscribe(syncOpen);
+  syncOpen();
+  return { open: openLibrary, close: closeLibrary, toggle, render, syncOpen, get opened() { return panels.left; } };
 }

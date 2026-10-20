@@ -367,16 +367,17 @@ test('a restored return drawer closes and restores the same selected exact event
   assert.equal(h.layouts, 3); assert.equal(h.document.activeElement, h.nodes.returnsBack);
 });
 
-test('hiding Lifetime while its return drawer is open hides the drawer and backdrop, requests layout and releases Escape', () => {
+test('hiding Lifetime returns to summary while keeping the right panel open until explicit dismissal', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true });
   assert.equal(h.layouts, 1); assert.equal(h.nodes.returnsPanel.hidden, false);
   h.update({ timelineVisible: false });
-  assert.equal(h.summary.opened, false);
-  assert.equal(h.nodes.chartSummary.inert, true); assert.equal(h.nodes.chartSummary.getAttribute('aria-hidden'), 'true');
-  assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true'); assert.equal(h.nodes.summaryBackdrop.hidden, true);
-  assert.equal(h.layouts, 2, 'owner visibility closes the real drawer without needing opened to change first');
+  assert.equal(h.summary.screen, 'summary');
+  assert.equal(h.nodes.chartSummary.inert, false); assert.equal(h.nodes.chartSummary.getAttribute('aria-hidden'), 'false');
+  assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true'); assert.equal(h.nodes.summaryBackdrop.hidden, false);
+  assert.equal(h.layouts, 2, 'leaving returns updates layout without closing its shared panel');
   const otherControl = h.document.createElement('input'); otherControl.focus();
-  h.document.dispatch('keydown', { key: 'Escape' }); assert.equal(h.document.activeElement, otherControl);
+  h.document.dispatch('keydown', { key: 'Escape' });
+  assert.equal(h.summary.opened, false); assert.equal(h.document.activeElement, h.nodes.summarySwitch);
   h.update({ timelineVisible: true, opened: false }); h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.layouts, 3);
 });

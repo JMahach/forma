@@ -194,7 +194,7 @@ for (const explicitPreview of [undefined, true]) test(`real restoration at birth
   } }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
     onStateChange: exploration.lifetimeChanged, onRender: exploration.publishLifetime });
   const view = createViewSession({ store: { read: () => saved, write() {} }, chartStore, session,
-    mandala: { setEnabled() {}, enabled: false }, camera: { reset() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
+    mandala: { setEnabled() {}, enabled: false }, camera: { restoreView() {}, reset() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
     transit, natalDay, planetFilter: { snapshot: {} }, getReturns: () => returns, getLifetime: () => lifetime,
     loadLifetime: async () => lifetime, canRestoreLifetime: () => true,
     getPersonalLive: () => exploration.live, getPersonalPreview: () => exploration.preview,

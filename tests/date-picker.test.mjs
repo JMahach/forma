@@ -375,3 +375,23 @@ test('vertical arrows follow the centered final pair of years', () => {
   h.popup.dispatch('keydown', { key: 'ArrowDown' });
   assert.equal(h.document.activeElement.textContent, '2031');
 });
+
+
+test('a calendar closes without committing or focusing a date hidden by an overlay panel', () => {
+  let notify, unsubscribed = 0, visibility = 'visible';
+  const h = harness('04.10.2026', undefined, { viewportLayout: {
+    readViewport: () => ({ left: 0, top: 0, width: 1021, height: 727 }),
+    subscribeViewport(callback) { notify = callback; return () => { unsubscribed++; }; },
+  } });
+  h.document.defaultView.getComputedStyle = () => ({ visibility });
+  h.button.dispatch('click'); h.click('2027');
+  assert.equal(h.popup.hidden, false);
+  visibility = 'hidden'; notify();
+  assert.equal(h.popup.hidden, true, 'no detached calendar remains above the panel');
+  assert.equal(h.button.getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(h.selected, [], 'resizing cannot silently apply a partly selected date');
+  assert.notEqual(h.document.activeElement, h.button, 'focus is not sent to a hidden anchor');
+  assert.equal(unsubscribed, 1);
+  visibility = 'visible'; h.button.dispatch('click');
+  assert.equal(h.popup.hidden, false, 'calendar can open again after the panel is gone');
+});

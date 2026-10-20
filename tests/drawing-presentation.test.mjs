@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createSceneRenderer } from '../src/scene/renderer.js';
 import { renderLoadingPlaceholder } from '../src/scene/loading-placeholder.js';
-import { renderChartThumbnail } from '../src/views/thumbnail.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.js';
 import { MANDALA_SCENE_TRANSFORM } from '../src/scene/geometry/mandala-geometry.js';
@@ -113,8 +112,9 @@ test('persistent toggles and reversals retain body targets, parents and presenta
   assert.deepEqual(measure(root, false), expected, 'a remount uses the same approved geometry');
 });
 
-test('loading paths and both column row centers have the same complete ancestor transform as the initial studio', () => {
-  const loading = parse(renderLoadingPlaceholder()), live = parse(renderBodygraph(natalChart(), null, options));
+test('loading paths and both column row centers retain the same complete ancestors in every studio mode', () => {
+  for (const mode of modes) {
+  const loading = parse(renderLoadingPlaceholder()), live = parse(renderBodygraph(natalChart(), null, { ...options, ...mode }));
   for (const point of [[320, 40], [320, 436], [320, 756]]) {
     assert.deepEqual(project(loading.querySelector('.loading-centers'), point), project(live.querySelector('.bodygraph-centers'), point));
     assert.deepEqual(project(loading.querySelector('.loading-channels'), point), project(live.querySelector('.bodygraph-channels'), point));
@@ -131,16 +131,5 @@ test('loading paths and both column row centers have the same complete ancestor 
         project(rect, center), 'the loading dot shares the live target center; glyph text has an optical offset');
     });
   }
-});
-
-test('library thumbnails keep their raw geometry inside the tightly fitted image viewBox', () => {
-  const image = decodeURIComponent(renderChartThumbnail(natalChart()).split(',').slice(1).join(','));
-  const root = parse(image), svg = root.firstElementChild;
-  const [x, y, width, height] = svg.getAttribute('viewBox').split(' ').map(Number);
-  const centers = root.querySelector('.bodygraph-centers'), backdrop = root.querySelector('.chart-backdrop');
-  near(scale(centers), 1, 'thumbnail centers do not inherit studio enlargement');
-  near(scale(backdrop), 1, 'thumbnail silhouette does not inherit studio enlargement');
-  const head = project(centers, [320, 40]);
-  assert.ok(head[0] > x && head[0] < x + width && head[1] > y && head[1] < y + height, 'the top of Head remains inside the exported image');
-  assert.equal(root.querySelector('.activation-columns'), null);
+  }
 });

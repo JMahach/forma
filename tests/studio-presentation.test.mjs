@@ -35,3 +35,12 @@ test('timeline modes are explicit and independent of DOM visibility', () => {
   assert.equal(studioPresentation({ isTransit: true, transitEnabled: true }).toggleEnabled, true);
   assert.equal(studioPresentation({ loadFailed: true }).toggleLabel, 'Обновить страницу и загрузить летопись');
 });
+
+
+test('the same presentation identifies the actual timeline panel for initial loading', () => {
+  assert.equal(studioPresentation({ isTransit: true }).timelinePanel, 'transit');
+  assert.equal(studioPresentation({ isTransit: true, lifetime: { opened: true } }).timelinePanel, 'lifetime');
+  assert.equal(studioPresentation(personal).timelinePanel, 'lifetime');
+  assert.equal(studioPresentation({ ...personal, dayOpened: true }).timelinePanel, 'natal-day');
+  assert.equal(studioPresentation({}).timelinePanel, null);
+});

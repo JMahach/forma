@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extractChartData } from '../src/domain/chart-data.js';
+import { createPanelState } from '../src/state/panels.js';
+import { createWorkspaceState } from '../src/state/workspace.js';
+import { attachAllCharts } from '../src/views/all-charts.js';
 import { createChartSession } from '../src/state/chart-session.js';
 import { createChartExploration } from '../src/state/chart-exploration.js';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.js';
@@ -9,7 +12,7 @@ import { createReturnsController } from '../src/state/returns.js';
 import { createNatalDayExplorer } from '../src/state/natal-day.js';
 import { createLifetimeExplorer } from '../src/state/lifetime.js';
 import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from '../src/domain/cycles.js';
-import { attachChartLibrary } from '../src/views/library.js';
+import { attachChartLibrary, createChartLibraryView } from '../src/views/library.js';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.js';
 import { chartCaption } from '../src/views/chart-display.js';
 import { ageText, completedAge } from '../src/domain/personal-age.js';
@@ -22,7 +25,9 @@ import { createGraphController } from '../src/scene/updates.js';
 import { attachMandalaMode } from '../src/scene/modes/mandala.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createCamera } from '../src/scene/camera.js';
+import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachTransitNavigation } from '../src/views/live-transit.js';
+import { holdLoadingContent } from '../src/views/chart-loading.js';
 import { studioPresentation } from '../src/ui/studio-presentation.js';
 
 // Execute the whole composition root, preserving declaration and attachment
@@ -32,19 +37,25 @@ const imports = [...source.matchAll(/^import \{ (.*?) \} from .*;$/gm)].flatMap(
 const body = source.replace(/^import .*;\n/gm, '').replace('export function startApp', 'function startApp');
 const noop = () => {};
 function browser() {
-  const elements = new Map(), listeners = new Map();
+  const elements = new Map(), listeners = new Map(); let created = 0;
   const document = { body: { dataset: {} }, activeElement: null,
-    getElementById: id => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: () => null, querySelectorAll: () => [],
+    createElement: tag => element(`${tag}-${++created}`),
+    getElementById: id => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: selector => selector === '.app-shell' ? element('shell') : null, querySelectorAll: () => [],
     addEventListener(type, handler) { listeners.set(type, handler); },
     dispatch(type, event) { return listeners.get(type)?.(event); } };
   function element(id) {
     if (!elements.has(id)) {
-      const classes = new Set(), attributes = new Map(), handlers = new Map();
+      const classes = new Set(), attributes = new Map(), handlers = new Map(), children = [];
       elements.set(id, { id, ownerDocument: document, dataset: {}, hidden: false, inert: false, innerHTML: '',
         style: { setProperty(name, value) { this[name] = value; } },
+        children, get firstChild() { return children[0] ?? null; },
+        get nextSibling() { return this.parentElement?.children[this.parentElement.children.indexOf(this) + 1] ?? null; },
+        insertBefore(child, before) { child.remove(); children.splice(before ? children.indexOf(before) : children.length, 0, child); child.parentElement = this; },
+        replaceChildren(...next) { for (const child of [...children]) child.remove(); for (const child of next) this.insertBefore(child, null); },
+        remove() { const siblings = this.parentElement?.children; if (siblings) { const index = siblings.indexOf(this); if (index >= 0) siblings.splice(index, 1); } this.parentElement = null; },
         contains(node) { return node === this || id === 'library' && ['nowButton', 'openKnowledge'].includes(node?.id); },
-        focus() { document.activeElement = this; }, querySelector: () => element(`${id}-child`), querySelectorAll: () => [],
-        getBoundingClientRect: () => ({ top: 0, bottom: 200 }),
+        focus() { document.activeElement = this; }, querySelector: selector => element(`${id}:${selector}`), querySelectorAll: () => [],
+        getBoundingClientRect: () => ({ top: 0, bottom: 820, left: 0, right: 640, width: 640, height: 820 }),
         setAttribute(name, value) { attributes.set(name, String(value)); },
         getAttribute: name => attributes.get(name) ?? null, removeAttribute: name => attributes.delete(name),
         classList: { add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name),
@@ -63,13 +74,16 @@ function browser() {
     }
     return elements.get(id);
   }
+  element('canvasWrap').parentElement = element('studio');
   return { document, element };
 }
 
-function harness({ studioSize = null, metaError = null, charts = [], returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
+function harness({ restore = async () => true, savedView = null, fonts, initialPresentation = null, previewLoading = false, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser();
+  if (fonts !== undefined) document.fonts = { ready: fonts };
   const dimensions = studioSize && { ...studioSize };
-  let resizeLayout, layout = { refresh: noop, setTimelineKind: noop };
+  const timelineKinds = [];
+  let resizeLayout, layout = { refresh: noop, setTimelineKind: kind => timelineKinds.push(kind), setSidePanels: noop, sideInsets: { width: 640, left: 0, right: 0 } };
   if (dimensions) {
     const rect = () => ({ ...dimensions, top: 0, left: 0, bottom: dimensions.height, right: dimensions.width });
     const studio = element('studio'), canvas = element('canvasWrap');
@@ -85,26 +99,34 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id),
     remove(id) { charts = store.charts = charts.filter(chart => chart.id !== id); } };
   let graph, gestures, camera, natalDay, returns, birthOptions, lifetime, lifetimeOptions, lifetimeStateOptions, transitOptions, finishModule, failModule, loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
-  let captionUpdates = 0;
+  let captionUpdates = 0, workspace, panels, knowledgeOptions, knowledgeLoads = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const memory = {}, natalClient = {};
   const ports = {
-    createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation,
+    createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent,
+    attachAllCharts: options => {
+      const view = attachAllCharts({ ...options, preview: (_canvas, _chart, { onReady }) => { onReady(true); return noop; } });
+      return chartsReady ? { ...view, whenReady: chartsReady } : view;
+    },
     createNatalDayClient: options => { assert.equal(options.memory, memory); return natalClient; },
     createReturnsController: options => returns = createReturnsController(options),
     eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
-    attachKnowledgeEntry: options => attachKnowledgeEntry({ ...options, eventTarget: document,
-      load: async () => ({ attachKnowledge: dialog => ({ show() { dialog.open = true; } }) }) }),
+    attachKnowledgeEntry: options => {
+      knowledgeOptions = options;
+      return attachKnowledgeEntry({ ...options, load: async () => {
+        knowledgeLoads++; if (loadKnowledge) await loadKnowledge();
+        return { attachKnowledge: page => ({ show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
+      } });
+    },
     attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
     attachHoverPreview: () => ({ clear: noop }),
     attachGestures: (_svg, options) => {
       gestures = options;
-      camera = createCamera({ getFrame: options.getFrame, getHomeFrame: options.getHomeFrame,
-        measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 },
-          viewport: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }), onChange: options.onChange });
+      camera = options.camera;
+      camera.setOnChange(options.onChange);
       return camera;
     },
-    pointerTarget: noop, createCameraView: noop,
+    pointerTarget: noop,
     attachMandalaMode: options => dimensions ? attachMandalaMode(options) : ({ enabled: false }), createMandalaMotion: noop,
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
     createGraphController: options => { graph = options;
@@ -115,8 +137,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
       return { choose: noop, chooseSummary: noop, changeChart: id => { chartSelections++; options.onChartChange(id); },
       clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
-    createChartStore: () => store,
-    createViewSession: () => ({ restore: async () => true, interrupt: () => { interruptions++; }, schedule: noop }),
+    createViewSession: options => { assert.equal(options.cameraRestored, true); return { restore, interrupt: () => { interruptions++; }, schedule: noop }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a, b) { title.textContent = a; subtitle.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
@@ -128,16 +149,16 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: () => ({ close: noop, setReturnsVisible: noop, update: noop }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
+    attachChartSummary: options => ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
     attachChartLoading: () => ({ update: noop }), createCyclesClient: options => { assert.equal(options.memory, memory); return { events: async input => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name], 'function', `provide the explicit browser port ${name}`);
-  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'loadLifetimeView', 'loadLifetimeState',
+  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState',
     `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')
       .replace("import('./state/lifetime.js')", 'loadLifetimeState()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search: '' },
-    { location: { reload() { reloads++; } } }, () => { loads++; return module; }, async () => {
+    { location: { reload() { reloads++; } } }, () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
       stateLoads++;
       return { createLifetimeExplorer(options) {
         lifetimeStateOptions = options;
@@ -149,8 +170,18 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
         return lifetime;
       } };
     });
-  startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView: null });
-  return { element, layout, natalClient, camera, resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select(id) {
+  element('shell').dataset.booting = 'true';
+  panels = createPanelState(); workspace = createWorkspaceState();
+  panels.restore(savedView?.panels); workspace.restore(savedView?.workspace);
+  camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: () => dimensions ? layout.frame() : STUDIO_FRAME,
+    measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 },
+      viewport: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }), onChange: noop });
+  camera.reset();
+  const cameraView = { surface: element('canvasWrap'), paint: noop };
+  const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document });
+  startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation, previewLoading });
+  return { element, layout, natalClient, camera, workspace, panels, timelineKinds,
+    get knowledgeLoads() { return knowledgeLoads; }, showKnowledgeSelection: selection => knowledgeOptions.onSelect(selection), resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select(id) {
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: selector => selector === '[data-chart-id]' ? button : null } });
     }, get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
@@ -390,13 +421,14 @@ test('lifetime planet gestures publish the owner projection once and retain both
   assert.deepEqual(h.shown.primary.activations.design, full.planetFilter.designActivations);
 });
 
-test('application starts before the lazy knowledge entry closes its initialized library', async () => {
+test('the lazy knowledge entry replaces the center while retaining the persistent navigation', async () => {
   const { element } = harness();
   await element('openLibrary').click();
   assert.equal(element('library').inert, false);
-  await element('openKnowledge').click();
-  assert.equal(element('library').inert, true, 'opening the lazy reference dismisses the actual library');
-  assert.equal(element('knowledgeDialog').open, true, 'the reference opens after successful application composition');
+  await element('openKnowledge').click(); await tick();
+  assert.equal(element('library').inert, false, 'the persistent navigation stays available beside the reference');
+  assert.equal(element('knowledgeDialog').hidden, false, 'the reference page opens after successful application composition');
+  assert.equal(element('studio').dataset.workspaceScreen, 'library');
 });
 
 test('two real toolbar clicks cancel cold Lifetime without reopening it after module arrival', async () => {
@@ -651,4 +683,177 @@ test('the personal timeline and natal-day tool share one prepared-day client', a
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   assert.equal(h.lifetimeStateOptions.natalDayClient, h.natalClient);
   assert.equal(h.lifetimeStateOptions.getPersonalRecord(), chart);
+});
+
+
+test('workspace pages preserve the chart moment and camera while keeping one current navigation item', async () => {
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ charts: [chart] });
+  await tick(); h.select(chart.id); await tick(); h.natalDay.scrub(800);
+  h.camera.zoom(2); h.camera.pan(-40, 25); h.panels.setRight(true);
+  const shown = h.shown, camera = h.camera.getView(), interrupted = h.interruptions;
+  const pages = [['openKnowledge', 'library', 'knowledgeDialog'], ['openAllCharts', 'charts', 'allChartsDialog'], ['openAccount', 'account', 'accountPage']];
+  for (const [button, screen, page] of pages) {
+    await h.element(button).click(); await tick();
+    assert.equal(h.workspace.screen, screen); assert.equal(h.element('studio').dataset.workspaceScreen, screen);
+    for (const [otherButton, otherScreen, otherPage] of pages) {
+      assert.equal(h.element(otherPage).hidden, otherPage !== page);
+      assert.equal(h.element(otherButton).getAttribute('aria-current'), otherScreen === screen ? 'page' : null);
+    }
+    assert.equal(h.element('chartSummary').hidden, true);
+    assert.equal(h.panels.right, true, 'hiding the chart does not discard its open panel');
+    assert.equal(h.shown, shown); assert.equal(h.shown.utc, '2026-09-24T13:20:00Z');
+    assert.deepEqual(h.camera.getView(), camera);
+    assert.equal(h.interruptions, interrupted, 'changing an auxiliary page must not cancel a pending chart restoration');
+  }
+  await h.element('openKnowledge').click();
+  h.showKnowledgeSelection({ type: 'gate', id: 37 });
+  assert.equal(h.workspace.screen, 'chart'); assert.equal(h.element('chartSummary').hidden, false);
+  for (const [button, , page] of pages) {
+    assert.equal(h.element(page).hidden, true); assert.equal(h.element(button).getAttribute('aria-current'), null);
+  }
+  assert.equal(h.shown, shown); assert.deepEqual(h.camera.getView(), camera); assert.equal(h.interruptions, interrupted);
+});
+
+test('selecting a saved chart or Transit returns from a workspace page to the chart at Home', async () => {
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ charts: [chart] }); await tick();
+  await h.element('openAllCharts').click();
+  h.camera.zoom(2); h.select(chart.id);
+  assert.equal(h.workspace.screen, 'chart'); assert.equal(h.shown.id, chart.id);
+  assert.equal(h.element('allChartsDialog').hidden, true);
+  assert.deepEqual(h.camera.getView(), h.camera.getFittedView());
+  await tick(); await h.element('openAccount').click(); h.camera.zoom(2);
+  await h.element('nowButton').click();
+  assert.equal(h.workspace.screen, 'chart'); assert.equal(h.shown.id, 'current-transit');
+  assert.equal(h.element('accountPage').hidden, true);
+  assert.deepEqual(h.camera.getView(), h.camera.getFittedView());
+});
+
+for (const [button, screen] of [['openAccount', 'account'], ['openAllCharts', 'charts'], ['nowButton', 'chart']]) {
+  test(`late knowledge loading cannot replace the newer ${screen} screen`, async () => {
+    let release;
+    const h = harness({ loadKnowledge: () => new Promise(done => { release = done; }) }); await tick();
+    const opening = h.element('openKnowledge').click(); await tick();
+    assert.equal(h.workspace.screen, 'library'); assert.equal(h.knowledgeLoads, 1);
+    await h.element(button).click(); release(); await opening; await tick();
+    assert.equal(h.workspace.screen, screen); assert.equal(h.element('studio').dataset.workspaceScreen, screen);
+    assert.equal(h.element('knowledgeDialog').hidden, true);
+    assert.equal(h.element('openKnowledge').getAttribute('aria-current'), null);
+    assert.equal(h.element('openKnowledge').getAttribute('aria-busy'), null);
+    await h.element('openKnowledge').click(); await tick();
+    assert.equal(h.workspace.screen, 'library'); assert.equal(h.element('knowledgeDialog').hidden, false);
+    assert.equal(h.knowledgeLoads, 1, 'intentional reopening reuses the loaded page without resurrecting an old navigation');
+  });
+}
+
+
+test('initial loading keeps panel navigation available while content and tools stay inert', () => {
+  const h = harness({ restore: () => new Promise(() => {}) });
+  assert.equal(h.element('shell').dataset.pageState, 'loading');
+  assert.equal(h.element('shell').dataset.booting, 'true');
+  assert.equal(h.element('shell').inert, false);
+  assert.equal(h.element('mainNavigation').inert, true);
+  assert.equal(h.element('lifetimeControls').inert, true);
+});
+
+test('the initial chart and chrome reveal together after restoration and fonts, then stay revealed', async () => {
+  let finishRestore, finishFonts;
+  const moment = { id: 'current-transit', source: 'transit', personality: [1], design: [] };
+  const h = harness({ charts: [moment], restore: () => new Promise(done => { finishRestore = done; }),
+    fonts: new Promise(done => { finishFonts = done; }) });
+  assert.equal(h.element('shell').dataset.pageState, 'loading');
+  finishRestore(true); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'loading', 'the font metrics are part of the first screen');
+  finishFonts(); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'ready');
+  assert.equal(h.element('shell').dataset.booting, undefined);
+  assert.equal(h.element('shell').inert, false);
+  await h.element('nowButton').click(); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'ready', 'later data updates never cover the whole page again');
+});
+
+test('a failed first restoration reveals the existing recovery interface instead of an endless shell', async () => {
+  const h = harness({ restore: async () => false }); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'error');
+  assert.equal(h.element('shell').inert, false); assert.equal(h.element('shell').dataset.booting, undefined);
+});
+
+test('workspace readiness waits for its lazy content but never for the hidden chart restoration', async () => {
+  let finishKnowledge;
+  const h = harness({ savedView: { workspace: 'library' }, restore: () => new Promise(() => {}),
+    loadKnowledge: () => new Promise(done => { finishKnowledge = done; }) });
+  await tick(); assert.equal(h.element('shell').dataset.pageState, 'loading');
+  finishKnowledge(); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'ready');
+  assert.equal(h.element('knowledgeDialog').hidden, false);
+  const account = harness({ savedView: { workspace: 'account' }, restore: () => new Promise(() => {}) });
+  await tick(); assert.equal(account.element('shell').dataset.pageState, 'ready');
+});
+
+test('a local preview mounts its panel toggles while retaining the loading presentation', async () => {
+  const moment = { id: 'current-transit', source: 'transit', personality: [1], design: [] };
+  const h = harness({ charts: [moment], previewLoading: true }); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'loading');
+  assert.equal(h.element('shell').inert, false);
+  assert.equal(h.element('mainNavigation').inert, true);
+  await h.element('openLibrary').click(); assert.equal(h.panels.left, true);
+  await h.element('openLibrary').click(); assert.equal(h.panels.left, false);
+});
+
+
+test('the saved timeline layout is retained through lazy restoration before accepting the actual panel', async () => {
+  let finish;
+  const initialPresentation = studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'lifetime' } });
+  const h = harness({ initialPresentation, restore: () => new Promise(done => { finish = done; }) });
+  await tick();
+  assert.equal(h.timelineKinds.at(-1), 'chronicle');
+  h.clockTick();
+  assert.equal(h.timelineKinds.at(-1), 'chronicle', 'intermediate live-transit updates cannot remove the saved dates layout');
+  finish(false); await tick();
+  assert.equal(h.timelineKinds.at(-1), 'day', 'completion accepts the actual state, including its failure recovery');
+  assert.equal(h.element('shell').dataset.pageState, 'error');
+});
+
+
+test('a resized initial card viewport is measured again before revealing its new thumbnails', async () => {
+  let calls = 0, finish;
+  const h = harness({ savedView: { workspace: 'charts' }, restore: () => new Promise(() => {}), chartsReady: () => {
+    calls++;
+    return calls === 1 ? Promise.resolve(null) : new Promise(done => { finish = done; });
+  } });
+  await tick();
+  assert.equal(calls, 2);
+  assert.equal(h.element('shell').dataset.pageState, 'loading');
+  finish(true); await tick();
+  assert.equal(h.element('shell').dataset.pageState, 'ready');
+});
+
+test('initial workspace and font failures release the existing navigation', async () => {
+  const knowledge = harness({ savedView: { workspace: 'library' }, loadKnowledge: async () => { throw new Error('missing module'); },
+    fonts: Promise.reject(new Error('font failed')), restore: () => new Promise(() => {}) });
+  await tick();
+  assert.equal(knowledge.element('shell').dataset.pageState, 'error');
+  assert.equal(knowledge.element('shell').inert, false);
+  const charts = harness({ savedView: { workspace: 'charts' }, chartsReady: async () => false, restore: () => new Promise(() => {}) });
+  await tick();
+  assert.equal(charts.element('shell').dataset.pageState, 'error');
+  assert.equal(charts.element('shell').inert, false);
+});
+
+
+test('real pending loading accepts menu changes and releases its content restriction on completion', async () => {
+  let finish;
+  const h = harness({ restore: () => new Promise(done => { finish = done; }) });
+  await h.element('openLibrary').click();
+  assert.equal(h.panels.left, true); assert.equal(h.element('library').inert, false);
+  assert.equal(h.element('mainNavigation').inert, true);
+  h.panels.setRight(true);
+  await h.element('libraryBackdrop').click();
+  assert.equal(h.panels.left, false); assert.equal(h.element('library').inert, true);
+  finish(false); await tick();
+  assert.deepEqual(h.panels.snapshot, { left: false, right: true });
+  assert.equal(h.element('mainNavigation').inert, false);
+  assert.equal(h.element('lifetimeControls').inert, false);
+  assert.equal(h.element('library').inert, true, 'reveal does not unlock the closed panel');
 });

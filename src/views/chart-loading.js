@@ -4,8 +4,8 @@ export function attachChartLoading({ canvas, drawing, art, message, status, retr
   let previous = null;
   retry.addEventListener('click', onRetry);
   return {
-    update({ hasChart, failed = false, loading = false }) {
-      const state = hasChart ? 'ready' : failed && !loading ? 'error' : 'loading';
+    update({ hasChart, failed = false, loading = false, holdLoading = false }) {
+      const state = hasChart && !holdLoading ? 'ready' : failed && !loading ? 'error' : 'loading';
       if (state === previous) return;
       previous = state;
       const ready = state === 'ready';
@@ -21,4 +21,18 @@ export function attachChartLoading({ canvas, drawing, art, message, status, retr
       retry.hidden = state !== 'error';
     },
   };
+}
+
+
+// Keep panel buttons usable while their contents and chart tools are still
+// loading. The caller releases only restrictions introduced by this hold;
+// panel shells and the drawing retain their own accessibility owners.
+export function holdLoadingContent(document) {
+  const contents = [
+    ...['mainNavigation', 'savedChartsSection', 'summaryScreen', 'returnsPanel', 'accountPage', 'knowledgeDialog', 'allChartsDialog',
+      'transitControls', 'natalDayControls', 'lifetimeControls'].map(id => document.getElementById(id)),
+    ...['.sidebar-footer', '.chart-view-tools'].map(selector => document.querySelector(selector)),
+  ].filter(element => element && !element.inert);
+  for (const element of contents) element.inert = true;
+  return () => { for (const element of contents.splice(0)) element.inert = false; };
 }

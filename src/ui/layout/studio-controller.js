@@ -1,4 +1,4 @@
-import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, TIMELINE_DATE_HEIGHT, returnsPlacement, computeTimelineDock } from './studio.js';
+import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, computeSidePanelLayout, computeTimelineDock } from './studio.js';
 import { createViewport } from './viewport.js';
 import { applyTimelineMetrics } from './metrics.js';
 
@@ -31,10 +31,10 @@ function timelineControlWidth(panel) {
   }
 }
 
-export function createStudioLayout({ canvas, panels, footprint, studio = canvas.parentElement, drawing = null, art = null, readStyle = element => getComputedStyle(element),
-  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport, timelineKind = 'day' }) {
+export function createStudioLayout({ canvas, panels, footprint, studio = canvas.parentElement, drawing = null, readStyle = element => getComputedStyle(element),
+  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport, timelineKind = 'day', sidePanels = () => null }) {
   const phone = () => media.matches;
-  let current, dock;
+  let current, dock, sideInsets;
   const viewportSubscribers = new Set();
   function applyViewport(visible) {
     const full = studio.getBoundingClientRect();
@@ -42,6 +42,7 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
     const lift = Math.max(0, Math.min(full.height, bottom - visible.top - visible.height));
     studio.style?.setProperty('--timeline-viewport-lift', `${lift}px`);
     studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - dock.backingHeight}px`);
+    studio.parentElement?.style?.setProperty('--timeline-panels-bottom', `${Math.max(0, lift + dock.backingHeight)}px`);
     // Popup anchors are measured only after the dock has accepted its position.
     for (const notify of [...viewportSubscribers]) notify();
   }
@@ -60,29 +61,34 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
       footerHeight: TIMELINE_WITH_DATES_HEIGHT + safeBottom };
     const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
     const controlWidth = timelineControlWidth(lifetime);
-    const placement = returnsPlacement({ footprint, width: full.width, height: full.height, ...insets },
-      { phone: phone(), reserve: parseFloat(style.getPropertyValue('--returns-side-space')) });
+    sideInsets = computeSidePanelLayout({ ...sidePanels(), width: full.width, phone: phone() });
+    studio.style?.setProperty('--studio-left-space', `${sideInsets.left}px`);
+    studio.style?.setProperty('--studio-right-space', `${sideInsets.right}px`);
+    if (studio.dataset.panelsLayout !== sideInsets.mode) studio.dataset.panelsLayout = sideInsets.mode;
+    const placement = sideInsets.mode === 'side' ? 'side' : 'sheet';
     if (studio.dataset.returnsLayout !== placement) studio.dataset.returnsLayout = placement;
     // Placement changes the canvas width. Measure after its CSS is applied.
     const rect = canvas.getBoundingClientRect();
     current = computeStudioLayout({ footprint, width: rect.width, height: rect.height, ...insets });
-    // Use the actual Home geometry after drawer placement, never live zoom.
+    // Preserve the natural full-studio rail length, then fit its position and
+    // visible span into the actual animated free area without changing camera geometry.
+    const timelineHome = computeStudioLayout({ footprint, width: full.width, height: full.height, ...insets });
+    const area = { x: (rect.left || 0) - (full.left || 0), width: rect.width };
     dock = computeTimelineDock({ width: full.width, height: full.height, side: insets.side, safeBottom,
-      kind: timelineKind, controlWidth, mandalaWidth: current.mandalaRadius * 2 });
+      kind: timelineKind, controlWidth, chartWidth: timelineHome.columns.right - timelineHome.columns.left,
+      area });
     studio.style?.setProperty('--timeline-dock-height', `${dock.height}px`);
-    studio.style?.setProperty('--timeline-date-background', dock.mode === 'inline' ? 'var(--timeline-background)' : 'var(--canvas-background)');
-    studio.style?.setProperty('--timeline-heading-height', `${TIMELINE_DATE_HEIGHT}px`);
-    studio.style?.setProperty('--timeline-heading-top', `${full.height - dock.height + (dock.mode === 'inline' ? (dock.height - safeInset - TIMELINE_DATE_HEIGHT) / 2 : 0)}px`);
+    studio.style?.setProperty('--timeline-area-left', `${area.x}px`);
+    studio.style?.setProperty('--timeline-area-width', `${area.width}px`);
+    studio.style?.setProperty('--timeline-dates-left', `${dock.dates.x}px`);
+    studio.style?.setProperty('--timeline-dates-width', `${dock.dates.width}px`);
+    studio.style?.setProperty('--timeline-heading-height', `${dock.dates.height}px`);
+    studio.style?.setProperty('--timeline-heading-top', `${dock.dates.y}px`);
     studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);
-    studio.style?.setProperty('--timeline-content-width', `${Math.max(1, full.width - 2 * dock.gutter)}px`);
+    studio.style?.setProperty('--timeline-content-left', `${area.x + dock.gutter}px`);
+    studio.style?.setProperty('--timeline-content-width', `${Math.max(1, area.width - 2 * dock.gutter)}px`);
     canvas.dataset.layout = phone() ? 'phone' : 'desktop';
     canvas.dataset.mandalaColumns = current.showMandalaColumns ? 'visible' : 'hidden';
-    if (art) {
-      // Its STUDIO_FRAME viewBox uses the camera's exact fitting rectangle,
-      // including the shared vertical shift and responsive safe-area insets.
-      const { x, y, width, height } = current.area;
-      Object.assign(art.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, visibility: 'visible' });
-    }
     const panel = dock.rail;
     const left = `${panel.x}px`;
     for (const element of panels) {
@@ -105,6 +111,8 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
   refresh();
   return {
     get returnsLayout() { return studio.dataset.returnsLayout; },
+    get sideInsets() { return { ...sideInsets }; },
+    setSidePanels(getter) { sidePanels = getter; },
     get phone() { return phone(); },
     get showMandalaColumns() { return current.showMandalaColumns; },
     get mandalaTop() { return current.center.y - current.mandalaRadius; },

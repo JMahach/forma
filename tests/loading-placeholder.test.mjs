@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 import { renderLoadingPlaceholder } from '../src/scene/loading-placeholder.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createStudioLayout } from './fixtures/studio-layout.mjs';
-import { computeCameraFit } from '../src/scene/camera-fit.js';
-import { fitView } from '../src/scene/camera.js';
+import { createCameraView } from '../src/scene/camera-view.js';
+import { createCamera } from '../src/scene/camera.js';
 import { DRAWING_TRANSFORM } from '../src/scene/geometry/drawing-presentation.js';
-import { STUDIO_FRAME } from '../src/scene/geometry/frames.js';
+import { MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { CHANNEL_WIDTH } from '../src/scene/bodygraph-paint.js';
 import { CENTERS } from '../src/scene/geometry/chart-geometry.js';
 import { PLANETS } from '../src/domain/planets.js';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
@@ -61,67 +62,84 @@ test('loading and live columns share one resting-gap CSS rule on the same side w
   }
 });
 
-test('loading art becomes visible only at the exact camera placement, including initialization, resize and safe areas', () => {
+test('loading and live use one full-surface projection across panel space, safe areas, saved zoom and resize', () => {
   const firstRule = styles.match(/#chartLoadingArt\s*\{([^}]+)\}/)?.[1];
-  assert.match(firstRule, /visibility:\s*hidden/, 'the CSS-only placeholder cannot expose an unplaced frame');
-  let visible = false, revealed = 0;
-  const art = { style: {
-    get visibility() { return visible ? 'visible' : 'hidden'; },
-    set visibility(value) {
-      assert.ok(['left', 'top', 'width', 'height'].every(key => Number.isFinite(parseFloat(this[key]))),
-        'all measured placement fields are written before the first visible frame');
-      visible = value === 'visible'; revealed++;
-    },
-  } }, canvas = { dataset: {} };
-  let rect, style;
-  canvas.getBoundingClientRect = () => rect;
-  canvas.parentElement = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => rect };
-  const resize = ([width, height, side, top, safeBottom]) => {
-    rect = { left: 20, top: 50, right: 20 + width, bottom: 50 + height, width, height };
-    style = { scrollPaddingLeft: `${side}px`, scrollPaddingTop: `${top}px`,
-      getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' };
-  };
-  resize([390, 844, 12, 112, 8]);
-  assert.equal(art.style.visibility, 'hidden');
-  const controller = createStudioLayout({ canvas, panels: [], art, media: { matches: true }, viewport: null, readStyle: () => style });
-  assert.equal(art.style.visibility, 'visible', 'layout reveals the art immediately without waiting for app or data');
-  assert.equal(revealed, 1);
-  const bounds = parse(renderLoadingPlaceholder()).firstElementChild.getAttribute('viewBox').split(' ').map(Number);
-  assert.deepEqual(bounds, [STUDIO_FRAME.bounds.x, STUDIO_FRAME.bounds.y, STUDIO_FRAME.bounds.width, STUDIO_FRAME.bounds.height]);
+  assert.match(firstRule, /visibility:\s*hidden/, 'no frame is visible before camera painting');
+  const box = parse(renderLoadingPlaceholder()).firstElementChild.getAttribute('viewBox').split(' ').map(Number);
+  const liveBox = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8').match(/id="bodygraph" viewBox="([^"]+)"/)[1].split(' ').map(Number);
+  assert.deepEqual(box, liveBox, 'the silhouette and live drawing have the same SVG viewport');
+  let full = { left: 20, top: 50, width: 1440, height: 900 }, left = false, right = false, phone = false;
+  const values = new Map();
+  const studio = { dataset: {}, style: { setProperty: (key, value) => values.set(key, value) },
+    getBoundingClientRect: () => ({ ...full, right: full.left + full.width, bottom: full.top + full.height }) };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect() {
+    const x = parseFloat(values.get('--studio-left-space')) || 0, end = parseFloat(values.get('--studio-right-space')) || 0;
+    return { left: full.left + x, top: full.top, width: full.width - x - end, height: full.height,
+      right: full.left + full.width - end, bottom: full.top + full.height };
+  } };
+  const art = { style: {} }, drawing = { style: {}, viewBox: { baseVal: { x: box[0], y: box[1], width: box[2], height: box[3] } },
+    preserveAspectRatio: { baseVal: { align: 6, meetOrSlice: 1 } } };
+  const layout = createStudioLayout({ canvas, panels: [], art, media: { get matches() { return phone; } }, viewport: null,
+    readStyle: () => ({ scrollPaddingLeft: '20px', scrollPaddingTop: '74px', getPropertyValue: () => '8px' }),
+    sidePanels: () => ({ left, right, leftWidth: 236, rightWidth: 320 }) });
+  assert.deepEqual(art.style, {}, 'layout never publishes a competing placeholder rectangle or visibility');
+  const view = createCameraView({ svg: drawing, surface: canvas, mirrors: [art] });
+  const camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: layout.frame,
+    measureFit: frame => view.measureFit(frame, layout.insets), onChange: pose => view.paint(pose) });
   const [a, b, c, d, tx, ty] = DRAWING_TRANSFORM.slice(7, -1).split(',').map(Number);
   const points = CENTERS.flatMap(center => center.points.split(' ').map(point => {
-    const [x, y] = point.split(',').map(Number);
-    return [a * x + c * y + tx, b * x + d * y + ty];
+    const [x, y] = point.split(',').map(Number); return [a * x + c * y + tx, b * x + d * y + ty];
   }));
-  // Exercise a nonidentity outer SVG screen matrix as well as both aspect ratios.
-  const screenScale = .7, screenOffset = { x: 38, y: -23 };
-  for (const dimensions of [[390, 844, 12, 112, 8], [1440, 900, 20, 74, 0], [844, 390, 28, 74, 34], [320, 180, 4, 112, 8]]) {
-    resize(dimensions);
-    const layout = controller.refresh();
-    const { area, min } = computeCameraFit(controller.frame(), rect, controller.insets(), (x, y) => ({
-      x: (x - rect.left - screenOffset.x) / screenScale, y: (y - rect.top - screenOffset.y) / screenScale,
-    }));
-    const view = fitView(controller.frame().bounds, area, { min });
-    const left = parseFloat(art.style.left), top = parseFloat(art.style.top), width = parseFloat(art.style.width), height = parseFloat(art.style.height);
-    assert.deepEqual({ x: left, y: top, width, height }, layout.area, 'controller positions the placeholder from the shared computed area');
-    assert.equal(art.style.visibility, 'visible');
-    const scale = Math.min(width / bounds[2], height / bounds[3]);
-    for (const [x, y] of points) {
-      const loadingX = left + (width - bounds[2] * scale) / 2 + (x - bounds[0]) * scale;
-      const loadingY = top + (height - bounds[3] * scale) / 2 + (y - bounds[1]) * scale;
-      close(loadingX, screenOffset.x + (view.x + x * view.k) * screenScale, `${dimensions[0]}×${dimensions[1]} center x`);
-      close(loadingY, screenOffset.y + (view.y + y * view.k) * screenScale, `${dimensions[0]}×${dimensions[1]} center y`);
+  for (const size of [[1440, 900], [1021, 727], [390, 844], [844, 390]]) {
+    [full.width, full.height] = size; phone = full.width < 700;
+    for (const state of [[false, false], [true, false], [false, true], [true, true]]) {
+      [left, right] = state; layout.refresh();
+      for (const saved of [null, { x: -170, y: -240, k: 2.4, maxK: 7 }]) {
+        camera.restoreView(saved);
+        const rect = canvas.getBoundingClientRect(), pose = camera.getView();
+        const scale = Math.min(rect.width / box[2], rect.height / box[3]);
+        const ox = (rect.width - box[2] * scale) / 2 - box[0] * scale;
+        const oy = (rect.height - box[3] * scale) / 2 - box[1] * scale;
+        assert.equal(art.style.transform, drawing.style.transform);
+        assert.equal(art.style.visibility, 'visible');
+        const matrix = art.style.transform.slice(7, -1).split(',').map(Number);
+        for (const [x, y] of points) {
+          const px = scale * x + ox, py = scale * y + oy;
+          close(matrix[0] * px + matrix[4], scale * (pose.x + pose.k * x) + ox, 'loading center x');
+          close(matrix[3] * py + matrix[5], scale * (pose.y + pose.k * y) + oy, 'loading center y');
+        }
+      }
+      const transform = art.style.transform;
+      layout.refresh();
+      assert.equal(art.style.transform, transform, 'layout refresh cannot replace camera presentation');
+      assert.ok(!['left', 'top', 'width', 'height'].some(key => key in art.style));
     }
   }
+});
+
+test('loading mandala and channel outlines reuse the live geometry without inventing data', () => {
+  const loading = parse(renderLoadingPlaceholder());
+  const live = parse(renderBodygraph(chart, null, { profile: 'studio', showActivations: true, showMandala: true }));
+  assert.equal(loading.querySelector('.mandala-scene')?.getAttribute('transform'), live.querySelector('.mandala-scene').getAttribute('transform'));
+  assert.deepEqual(loading.querySelectorAll('.loading-mandala circle').map(node => ['cx', 'cy', 'r'].map(key => node.getAttribute(key))),
+    live.querySelectorAll('.mandala-engraving-edge circle').map(node => ['cx', 'cy', 'r'].map(key => node.getAttribute(key))));
+  assert.deepEqual(loading.querySelectorAll('.loading-mandala path').map(node => node.getAttribute('d')),
+    live.querySelectorAll('.mandala-separator').map(node => node.getAttribute('d')));
+  assert.equal(Number(loading.querySelector('.loading-channels').getAttribute('stroke-width')), CHANNEL_WIDTH.outline);
+  assert.doesNotMatch(renderLoadingPlaceholder(), /data-type=|data-activation=|tabindex=|role=|<script|<text/);
 });
 
 test('startup positions the loading SVG before importing the app and passes the same layout to its camera', () => {
   const startup = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-  assert.match(startup, /createStudioLayout\(\{[^}]*art: element\('chartLoadingArt'\)/);
+  assert.match(startup, /createCameraView\(\{[^}]*mirrors: \[element\('chartLoadingArt'\)\]/);
   assert.ok(startup.indexOf('const layout = createStudioLayout(') < startup.indexOf("await import('./app.js')"));
   assert.ok(startup.indexOf('loadingLayoutObserver.disconnect()') < startup.indexOf('app.startApp('));
-  assert.match(startup, /app\.startApp\(\{ dayClient, layout, toast, viewStore, savedView \}\)/);
-  assert.match(app, /startApp\(\{ dayClient, layout, toast, viewStore, savedView \}\)/);
-  assert.doesNotMatch(app, /createStudioLayout/);
+  const passed = startup.match(/app\.startApp\(\{ ([^}]+) \}\)/)?.[1].split(', ');
+  const accepted = app.match(/startApp\(\{ ([^}]+) \}\)/)?.[1].split(', ');
+  for (const owner of ['layout', 'viewStore', 'panels', 'workspace', 'store', 'libraryView', 'camera', 'cameraView']) {
+    assert.ok(passed?.includes(owner), `startup passes its ${owner} owner`);
+    assert.ok(accepted?.includes(owner), `app accepts the same ${owner} owner`);
+  }
+  assert.doesNotMatch(app, /createStudioLayout|createCameraView|createCamera\(/);
 });

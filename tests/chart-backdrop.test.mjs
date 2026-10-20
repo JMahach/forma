@@ -4,7 +4,7 @@ import { CHART_SURFACE, CHART_SURFACE_RIM_WIDTH, CHART_MANDALA_SURFACE_OPACITY, 
 import { LOTUS_BACKDROP_BOUNDS, LOTUS_SILHOUETTE_PATH, LOTUS_DETAIL_PATHS } from '../src/scene/geometry/lotus-backdrop.js';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { crossAtLongitude } from '../src/domain/mandala-cross.js';
-import { renderChartThumbnail } from '../src/views/thumbnail.js';
+import { chartPreviewSource } from './helpers/chart-preview-source.mjs';
 import { renderLoveDiagram } from '../src/stories/vessel-of-love.js';
 
 const freeze = value => {
@@ -107,7 +107,7 @@ test('outline stays opt-in: saved thumbnails enable it, love diagrams remain und
   for (const options of [{}, { showBackdrop: false }, { interactive: false, idPrefix: 'thumbnail' }]) {
     assert.doesNotMatch(renderBodygraph(chart, null, options), /chart-backdrop|mandala-underlay/);
   }
-  assert.match(decodeURIComponent(renderChartThumbnail(chart)), /class="chart-backdrop"/);
+  assert.match(chartPreviewSource(chart), /class="chart-backdrop"/);
   assert.doesNotMatch(renderLoveDiagram(), /chart-backdrop|mandala-underlay/);
   assert.equal(renderBodygraph(chart), renderBodygraph(chart, null, { showBackdrop: false }));
 });

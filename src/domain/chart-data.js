@@ -10,3 +10,8 @@ export function extractChartData(payload) {
   if (Object.hasOwn(payload, 'birthTime')) data.localTime = payload.birthTime;
   return Object.freeze(data);
 }
+
+// Eligibility is shared by the early loading projection and the day owner.
+export const canExploreNatalDay = chart => Boolean(chart?.source === 'calculated'
+  && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
+  && String(chart.cityId ?? chart.city?.id ?? '').length > 0 && Number.isFinite(Date.parse(chart.utc)));

@@ -23,21 +23,22 @@ const close = (actual, expected, message) => assert.ok(Math.abs(actual - expecte
 const project = (layout, box) => ({ x: layout.center.x + (box.x - 320) * layout.scale,
   y: layout.center.y + (box.y - 398) * layout.scale, width: box.width * layout.scale, height: box.height * layout.scale });
 const railFor = (layout, width, height, safeBottom = 0) => geometry.computeTimelineDock({
-  width, height, safeBottom, mandalaWidth: layout.mandalaRadius * 2,
+  width, height, safeBottom, chartWidth: layout.columns.right - layout.columns.left,
 }).rail;
 
 test('page layout uses the supplied scene footprint instead of importing a particular drawing', () => {
-  const footprint = { frame: { bounds: { width: 200 } }, radius: 50, columns: { left: -60, right: 60 } };
+  const footprint = { frame: { bounds: { width: 200 } }, radius: 50, columns: { left: -60, right: 75 } };
   const result = computeStudioLayout({ width: 600, height: 400, side: 0, top: 0, bottom: 0, footerHeight: 0, footprint });
   close(result.scale, 1.9, 'supplied 200-unit frame fits the 380-pixel area');
   close(result.mandalaRadius, 95, 'painted radius comes from the same footprint');
   assert.equal(result.showMandalaColumns, true);
+  assert.deepEqual(result.columns, { left: 186, right: 442.5 }, 'asymmetric calculation edges retain their separate Home projections');
 });
 
 
 function layoutHarness(phone = true, width = 390, height = 844) {
   const media = { matches: phone }, rect = { width, height };
-  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ top: 50, bottom: 50 + rect.height, ...rect }) };
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ left: 20, top: 50, bottom: 50 + rect.height, ...rect }) };
   const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => ({ top: 50, left: 20, bottom: 50 + rect.height, ...rect }) };
   const drawing = { style: {} };
   let style = { scrollPaddingTop: '112px', scrollPaddingLeft: '12px' };
@@ -50,28 +51,32 @@ function layoutHarness(phone = true, width = 390, height = 844) {
     resize(width, height) { Object.assign(rect, { width, height }); return layout.refresh(); } };
 }
 
-test('layout positions every rail in the full studio without reading a canvas offset', () => {
+test('layout centers the natural calculation span in the measured free canvas', () => {
   const events = [];
-  let offset = 40;
+  let offset = 40, canvasWidth = 1000;
   const writes = () => new Proxy({ setProperty(name, value) { this[name] = value; } }, { set(target, key, value) { events.push('write'); target[key] = value; return true; } });
-  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ width: 1200, height: 800 }) };
-  const canvas = { dataset: writes(), parentElement: studio, getBoundingClientRect() { events.push('canvas'); return { left: offset, width: 1000, height: 800 }; },
-    get offsetLeft() { assert.fail('studio rails do not use the narrower canvas offset'); } };
+  const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ left: 75, width: 1200, height: 800 }) };
+  const canvas = { dataset: writes(), parentElement: studio, getBoundingClientRect() { events.push('canvas'); return { left: 75 + offset, width: canvasWidth, height: 800 }; },
+    get offsetLeft() { assert.fail('the timeline does not depend on the canvas offset'); } };
   const panels = Array.from({ length: 3 }, () => ({ dataset: writes(), style: writes() }));
-  const layout = createStudioLayout({ canvas, panels, art: { style: writes() }, media: { matches: false }, viewport: null,
+  const footprint = { frame: { bounds: { width: 200 } }, radius: 50, columns: { left: -80, right: 50 } };
+  const layout = createStudioLayout({ canvas, panels, footprint, art: { style: writes() }, media: { matches: false }, viewport: null,
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '12px', getPropertyValue: () => '0px' }) });
   const assertReads = () => {
     assert.equal(events.filter(event => event === 'canvas').length, 1);
     assert.ok(events.indexOf('canvas') < events.indexOf('write'), 'canvas geometry is read before writing panel styles');
   };
   assertReads();
-  const initialLeft = parseFloat(panels[0].style.left);
-  events.length = 0; offset = 120;
-  layout.refresh();
+  const initial = { left: parseFloat(panels[0].style.left), width: parseFloat(panels[0].style.width) };
+  events.length = 0; offset = 120; canvasWidth = 500;
+  const home = layout.refresh();
   assertReads();
+  close(home.center.x, 250, 'the chart still fits its actual narrowed canvas');
+  close(initial.width, 407.68, 'the full-studio Home projects the 130-unit calculation span at scale 3.136');
   for (const panel of panels) {
-    assert.equal(parseFloat(panel.style.left), initialLeft, 'canvas offset cannot move the shared rail');
-    close(parseFloat(panel.style.left) + parseFloat(panel.style.width) / 2, 600, 'rail remains centered in the studio');
+    close(parseFloat(panel.style.left), 166.16, 'moving the canvas also moves the rail into its free area');
+    close(parseFloat(panel.style.width), initial.width, 'the natural rail length remains when the free area can fit it');
+    close(parseFloat(panel.style.left) + parseFloat(panel.style.width) / 2, 370, 'asymmetric calculations still give a rail centered in the free area');
   }
 });
 
@@ -266,16 +271,16 @@ test('enlarged calculation blocks fit the ring height and keep room at the narro
   }
 });
 
-test('the studio rail stays centered within its date edges and clear of the chart across aspect ratios', () => {
+test('the studio rail centers the Home calculation span within the available window across aspect ratios', () => {
   for (const height of [100, 110, 120, 180, 220, 390, 747, 800, 1100]) {
     let previous;
     for (let width = 320; width <= 1440; width += 4) {
       const layout = computeStudioLayout({ width, height, top: 64, bottom: 64, side: 12 });
-      const dock = geometry.computeTimelineDock({ width, height, mandalaWidth: layout.mandalaRadius * 2 });
+      const dock = geometry.computeTimelineDock({ width, height, chartWidth: layout.columns.right - layout.columns.left });
       const panel = dock.rail;
       assert.equal(panel.height, DAY_CONTROL_HEIGHT);
-      close(panel.x + panel.width / 2, width / 2, 'timeline center');
-      assert.ok(panel.width >= Math.min(width - 48, layout.mandalaRadius * 2), 'rail covers the Home envelope unless the outer date edges cap it');
+      close(panel.width, Math.min(width - 2 * dock.gutter, layout.columns.right - layout.columns.left), 'window width caps the full Home calculation span');
+      close(panel.x + panel.width / 2, width / 2, 'rail remains centered regardless of asymmetric calculation columns');
       assert.ok(panel.x >= dock.gutter && panel.x + panel.width <= width - dock.gutter + 1e-7, 'rail never exceeds the outer date edges');
       close(panel.y, height - DAY_CONTROL_HEIGHT, 'timeline position is independent of the camera reserve');
       assert.ok(height - TIMELINE_BAR_HEIGHT >= layout.center.y + layout.mandalaRadius - 1e-7, 'the full planet envelope clears the backing');
@@ -536,19 +541,19 @@ test('returns measures the mandala without requiring exterior calculation column
   }
 });
 
-test('drawer placement stays stable when opening changes the canvas width', () => {
+test('side panel placement stays stable when opening changes the canvas width', () => {
   const full = { width: 1280, height: 800 }, dataset = {};
   let open = false;
   const studio = { dataset, getBoundingClientRect: () => full };
   const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => ({ ...full, width: full.width - (open && dataset.returnsLayout === 'side' ? 352 : 0) }) };
-  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false },
-    readStyle: () => ({ scrollPaddingTop: '74px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px', getPropertyValue: name => name === '--returns-side-space' ? '352px' : '0px' }) });
+  const layout = createStudioLayout({ canvas, panels: [], media: { matches: false }, sidePanels: () => ({ right: open, rightWidth: 352 }),
+    readStyle: () => ({ scrollPaddingTop: '74px', scrollPaddingBottom: '52px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
   const before = layout.refresh();
   open = true;
   for (let i=0; i<3; i++) { close(layout.refresh().scale, before.scale, 'opening preserves scale'); assert.equal(layout.returnsLayout,'side'); }
-  full.width = 1000; full.height = 910;
+  full.width = 670; full.height = 910;
   for (let i=0; i<3; i++) { layout.refresh(); assert.equal(layout.returnsLayout,'sheet'); }
-  open = false; layout.refresh(); assert.equal(layout.returnsLayout,'sheet', 'closing does not change the arrow');
+  open = false; layout.refresh(); assert.equal(layout.sideInsets.right, 0, 'closing releases the side reservation');
 });
 
 
@@ -566,14 +571,14 @@ test('return placement respects actual safe-area insets, including landscape not
 
 
 test('only visible chronicle dates require a second row; every mode shares one rail', () => {
-  for (const [width, mandalaWidth, expectedWidth] of [[390, 382, 342], [1200, 600, 784]]) {
+  for (const [width, span, expectedWidth] of [[390, 382, 342], [1200, 600, 600]]) {
     const rails = [];
     for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
-      const dock = geometry.computeTimelineDock({ width, height: 844, mandalaWidth, kind });
+      const dock = geometry.computeTimelineDock({ width, height: 844, chartWidth: span, kind });
       assert.equal(dock.rail.width, expectedWidth);
       assert.equal(dock.rail.x, (width - expectedWidth) / 2);
       assert.equal(dock.rail.y, 796);
-      const stacked = kind === 'chronicle' && width === 390;
+      const stacked = kind === 'chronicle';
       assert.equal(dock.mode, stacked ? 'stacked' : 'inline');
       assert.equal(dock.height, stacked ? 88.8 : 40.8);
       rails.push(dock.rail);
@@ -582,23 +587,23 @@ test('only visible chronicle dates require a second row; every mode shares one r
   }
 });
 
-test('timeline reaches the Home mandala envelope continuously at the date-wrap boundary', () => {
-  // 400px mandala + two 140px dates, 24px safe gutters and 24px target clearances.
+test('chronicle dates stay above the rail through the former inline threshold', () => {
+  // 400px calculation span + two 140px dates, 24px safe gutters and 24px target clearances.
   const threshold = 776;
   for (const delta of [-1, -.001, 0, .001, 1]) {
     const dock = geometry.computeTimelineDock({ width: threshold + delta, height: 844,
-      mandalaWidth: 400, controlWidth: 140, kind: 'chronicle' });
-    close(dock.rail.width, 400 + Math.max(0, delta), 'no jump on date wrapping');
-    assert.equal(dock.mode, delta < 0 ? 'stacked' : 'inline');
-    if (delta >= 0) assert.ok(dock.rail.x - dock.gutter - dock.controlWidth >= 22,
-      'the invisible native thumb target clears the date field');
+      chartWidth: 400, controlWidth: 140, kind: 'chronicle' });
+    close(dock.rail.width, 400, 'date placement never stretches the calculation-aligned rail');
+    close(dock.rail.x, 188 + delta / 2, 'no horizontal jump when dates change rows');
+    assert.equal(dock.mode, 'stacked');
+    assert.ok(dock.dates.y + dock.dates.height + 4 <= 844 - dock.backingHeight, 'the complete date row stays above the backing');
   }
 });
 
 test('safe area extends the shared dock without changing its content height', () => {
   assert.equal(typeof geometry.computeTimelineDock, 'function');
-  const normal=geometry.computeTimelineDock({width:390,height:844,mandalaWidth:382,safeBottom:0});
-  const safe=geometry.computeTimelineDock({width:390,height:844,mandalaWidth:382,safeBottom:34});
+  const normal=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:0});
+  const safe=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:34});
   assert.equal(safe.height, normal.height+34);
   assert.equal(safe.mode, normal.mode);
   assert.equal(safe.rail.y, normal.rail.y-34);
@@ -628,38 +633,39 @@ test('returns uses the user supplied narrow-window reference before the map beco
 });
 
 
-test('a tall 924px window keeps the full Home envelope and moves dates above', () => {
+test('a tall 924px window clips wide calculation edges to the available space and moves dates above', () => {
   const home = computeStudioLayout({ width: 924, height: 889, top: 74, bottom: 40.8, footerHeight: 40.8 });
-  const dock = geometry.computeTimelineDock({ width: 924, height: 889, mandalaWidth: 2 * home.mandalaRadius, kind: 'chronicle' });
+  const dock = geometry.computeTimelineDock({ width: 924, height: 889, chartWidth: home.columns.right - home.columns.left, kind: 'chronicle' });
   assert.equal(dock.mode, 'stacked');
   assert.equal(dock.height, 88.8);
-  close(dock.rail.width, 2 * home.mandalaRadius, 'stacked rail is exactly the Home envelope');
+  close(dock.rail.x, 24, 'wide calculations reach the left date edge');
+  close(dock.rail.width, 876, 'only insufficient workspace caps the calculation span');
 });
 
-test('chronicle adapts to measured dates while other modes reserve the same space', () => {
-  const options = { width: 700, height: 844, mandalaWidth: 280 };
+test('chronicle adapts to measured dates without reserving their width at the expense of the rail', () => {
+  const options = { width: 700, height: 844, chartWidth: 280 };
   for (const kind of ['day', 'natal-day', 'chronicle', 'returns']) {
     const normal = geometry.computeTimelineDock({ ...options, kind, controlWidth: 140 });
     const largeText = geometry.computeTimelineDock({ ...options, kind, controlWidth: 210 });
-    assert.equal(normal.mode, 'inline');
+    assert.equal(normal.mode, kind === 'chronicle' ? 'stacked' : 'inline');
     assert.equal(largeText.mode, kind === 'chronicle' ? 'stacked' : 'inline');
-    assert.equal(normal.rail.width, 324);
+    assert.equal(normal.rail.width, 280);
     assert.equal(largeText.rail.width, 280);
   }
 });
 
 test('the visible rail stays centered in every mode and inside safe side insets', () => {
   for (const width of [320, 390, 844, 1440]) for (const kind of ['day', 'natal-day', 'chronicle', 'returns']) {
-    const mandalaWidth = Math.min(width - 80, 640);
-    const dock = geometry.computeTimelineDock({ width, height: 844, kind, side: 40, mandalaWidth });
+    const span = Math.min(width - 80, 640);
+    const dock = geometry.computeTimelineDock({ width, height: 844, kind, side: 40, chartWidth: span });
     close(dock.rail.x, width - dock.rail.x - dock.rail.width, `${kind} equal margins`);
     assert.ok(dock.rail.x >= 40);
-    assert.ok(dock.rail.width >= mandalaWidth);
+    close(dock.rail.width, span, 'rail stops at the calculation edges even with spare space');
   }
 });
 
 function viewportLayoutHarness({ width = 390, height = 844, top = 0, canvasTop = top, safeBottom = 0, edgeSpace = 0, viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0 }) } = {}) {
-  const rect = { width, height, top, bottom: top + height };
+  const rect = { left: 0, width, height, top, bottom: top + height };
   const values = new Map(), writes = [];
   const frames = new Map(); let nextFrame = 0;
   const document = Object.assign(new EventTarget(), { activeElement: null,
@@ -835,7 +841,7 @@ test('closing the keyboard on a zoomed page restores its prior viewport geometry
   close(parseFloat(h.values.get('--timeline-viewport-lift')), 844 - viewport.height - 80, 'later page pan is not suppressed');
 });
 
-test('hidden period fields reserve their real width in every mode and restore original styles', () => {
+test('hidden period fields determine date placement without changing the shared rail or original styles', () => {
   function node(hidden, initial = null) {
     let attribute = initial;
     const properties = new Map();
@@ -868,7 +874,8 @@ test('hidden period fields reserve their real width in every mode and restore or
   const layout = createStudioLayout({ canvas, panels: [panel], media: { matches: false }, viewport: null,
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
   const initialHome = layout.refresh();
-  close(Number.parseFloat(panel.style.width), 2 * initialHome.mandalaRadius, 'hidden wide dates already require the Home width');
+  close(Number.parseFloat(panel.style.left), (700 - initialHome.columns.right + initialHome.columns.left) / 2, 'hidden wide dates cannot shorten or displace the centered Home calculation span');
+  close(Number.parseFloat(panel.style.width), initialHome.columns.right - initialHome.columns.left, 'both calculation edges determine the rail');
   const initialRail = [panel.style.left, panel.style.width, panel.style.top];
   for (const [hidden, headingHidden] of [[false, true], [false, false], [true, false], [true, true]]) {
     panel.hidden = hidden; heading.hidden = headingHidden;
@@ -884,7 +891,7 @@ test('hidden period fields reserve their real width in every mode and restore or
   }
   fieldWidth = 140;
   layout.refresh();
-  assert.equal(panel.style.width, '324px', 'responsive field widths are measured again without a cache');
+  assert.deepEqual([panel.style.left, panel.style.width, panel.style.top], initialRail, 'changing date font width changes only date placement, never rail length');
   const originalPanelStyle = panel.getAttribute('style');
   failMeasurement = true;
   assert.throws(() => layout.refresh(), /measurement failed/);
@@ -911,17 +918,18 @@ test('Home stays centered when possible and rises only enough for the two-row fo
   }
 });
 
-test('Home remains continuous where chronicle dates wrap beside the rail', () => {
-  const sizes = [935.199, 935.2, 935.201].map(width => {
-    const h = viewportLayoutHarness({ width, height: 700, edgeSpace: 8, viewport: null });
-    return { home: h.layout.refresh(), height: h.values.get('--timeline-dock-height') };
+test('Home and rail remain continuous across the former date wrapping threshold', () => {
+  const wide = viewportLayoutHarness({ width: 2000, height: 700, edgeSpace: 8, viewport: null }).layout.refresh();
+  const threshold = wide.columns.right - wide.columns.left + 2 * (24 + 160 + 24);
+  const sizes = [-.001, .001].map(delta => {
+    const h = viewportLayoutHarness({ width: threshold + delta, height: 700, edgeSpace: 8, viewport: null });
+    return { home: h.layout.refresh(), height: h.values.get('--timeline-dock-height'), rail: [parseFloat(h.panel.style.left), parseFloat(h.panel.style.width)] };
   });
-  assert.equal(sizes[0].height, '96.8px');
-  assert.equal(sizes[2].height, '48.8px');
-  for (const { home } of sizes) {
-    close(home.center.y, sizes[0].home.center.y, 'wrap cannot move the scene');
-    close(home.scale, sizes[0].home.scale, 'wrap cannot change scale');
-  }
+  assert.equal(sizes[0].height, '96.8px'); assert.equal(sizes[1].height, '96.8px');
+  close(sizes[1].rail[0] - sizes[0].rail[0], .001, 'rail follows the changed center without a wrapping jump');
+  close(sizes[1].rail[1], sizes[0].rail[1], 'date wrapping keeps the same calculation span');
+  close(sizes[1].home.center.y, sizes[0].home.center.y, 'wrap cannot move the scene');
+  close(sizes[1].home.scale, sizes[0].home.scale, 'wrap cannot change scale');
 });
 
 test('every mode keeps one low backing regardless of available space or the canvas offset', () => {
@@ -979,10 +987,56 @@ test('shared viewport retains native page zoom and pan after keyboard geometry c
 
 
 test('a narrow chronicle keeps both outlined date controls inside the viewport', () => {
-  const dock = geometry.computeTimelineDock({ width: 320, height: 720, mandalaWidth: 300,
+  const dock = geometry.computeTimelineDock({ width: 320, height: 720, chartWidth: 300,
     kind: 'chronicle', controlWidth: 148, side: 4 });
   assert.equal(dock.mode, 'stacked');
   assert.ok(320 - 2 * dock.gutter >= 2 * dock.controlWidth, 'both controls fit without overlapping');
   assert.ok(dock.gutter >= 8, 'the controls retain space at the screen edges');
   assert.equal(dock.backingHeight, geometry.TIMELINE_BAR_HEIGHT, 'the backing stays a single low strip');
+});
+
+
+test('the full-studio calculation width stays centered and is capped only by the window', () => {
+  for (const [chartWidth, expected] of [
+    [490, { x: 355, width: 490 }],
+    [900, { x: 150, width: 900 }],
+    [1400, { x: 24, width: 1152 }],
+    [0, { x: 599.5, width: 1 }],
+  ]) for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
+    const dock = geometry.computeTimelineDock({ width: 1200, height: 800, chartWidth, kind });
+    assert.deepEqual({ x: dock.rail.x, width: dock.rail.width }, expected);
+  }
+});
+
+test('date wrapping and window clipping remain continuous without reserving rail width for controls', () => {
+  for (const delta of [-.001, 0, .001]) {
+    const dock = geometry.computeTimelineDock({ width: 1200, height: 800, chartWidth: 784 + delta, kind: 'chronicle' });
+    assert.equal(dock.mode, 'stacked', 'dates always remain on the white chart above the backing');
+    close(dock.rail.width, 784 + delta, 'wrapping never shortens the rail for date fields');
+    close(dock.rail.x + dock.rail.width / 2, 600, 'wrapping never displaces the rail');
+    const resized = geometry.computeTimelineDock({ width: 948 + delta, height: 800, chartWidth: 900 });
+    close(resized.rail.width, 900 + Math.min(0, delta), 'window clipping is continuous at the natural calculation width');
+    close(resized.rail.x, 24 + Math.max(0, delta) / 2, 'both gutters remain symmetric through the clipping threshold');
+  }
+});
+
+
+test('every timeline remains inside the free chart area without changing its natural span', () => {
+  const cases = [
+    [{ x: 0, width: 1400 }, { x: 310, width: 780 }],
+    [{ x: 280, width: 1120 }, { x: 450, width: 780 }],
+    [{ x: 0, width: 1080 }, { x: 150, width: 780 }],
+    [{ x: 280, width: 800 }, { x: 304, width: 752 }],
+    [{ x: 280, width: 320 }, { x: 292, width: 296 }],
+  ];
+  for (const kind of ['day', 'natal-day', 'returns', 'chronicle']) {
+    for (const [area, expected] of cases) {
+      const dock = geometry.computeTimelineDock({ width: 1400, height: 900, chartWidth: 780,
+        controlWidth: 148, kind, area });
+      assert.deepEqual({ x: dock.rail.x, width: dock.rail.width }, expected);
+      assert.ok(dock.dates.x >= area.x + 4);
+      assert.ok(dock.dates.x + dock.dates.width <= area.x + area.width - 4);
+      assert.ok(dock.dates.y + dock.dates.height + 4 <= 900 - dock.backingHeight);
+    }
+  }
 });

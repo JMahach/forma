@@ -38,8 +38,13 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     result.setAttribute('aria-label', label); result.addEventListener('click', action);
     return result;
   }
+  const anchorVisible = () => button.getClientRects?.().length !== 0
+    && window.getComputedStyle?.(button)?.visibility !== 'hidden';
   function position() {
     if (popup.hidden) return;
+    // A responsive drawer can cover the date row while this popup is open.
+    // Cancel the unfinished choice without sending focus to its hidden anchor.
+    if (!anchorVisible()) { close(false, false); return; }
     const anchor = button.getBoundingClientRect();
     const { left, top, width, height } = viewportLayout.readViewport();
     // A containing panel may reserve its header. Selection and keyboard logic
@@ -187,7 +192,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
   }
   function open() {
     const bounds = getBounds(); minimum = bounds?.min; maximum = bounds?.max;
-    if (!minimum || !maximum || minimum > maximum || button.disabled) return;
+    if (!minimum || !maximum || minimum > maximum || button.disabled || !anchorVisible()) return;
     const yearCount = maxYear() - minYear() + 1;
     const periodCount = precision === 'year'
       ? Math.min(YEAR_PERIODS, Math.ceil(yearCount / MAX_YEARS_PER_PERIOD))

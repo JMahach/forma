@@ -308,7 +308,7 @@ function savedView(h, saved = null) {
   const view = createViewSession({ store: { read: () => saved, write: value => writes.push(structuredClone(value)) },
     chartStore, session: h.session, transit: h.transit, natalDay: h.natalDay, planetFilter: { snapshot: {}, restore() {} },
     mandala: { enabled: false, setEnabled() {} },
-    camera: { reset() {}, setView() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
+    camera: { restoreView() {}, reset() {}, setView() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
     getReturns: () => h.returns, getLifetime: () => h.lifetime, loadLifetime: async () => h.lifetime,
     canRestoreLifetime: () => h.session.selectedId === 'current-transit' || h.returns.state.available,
     getPersonalPreview: () => h.exploration.preview, getPersonalLive: () => h.exploration.live,

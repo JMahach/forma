@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
-import { renderChartThumbnail } from '../src/views/thumbnail.js';
+import { chartPreviewSource } from './helpers/chart-preview-source.mjs';
 import { svgDocument, significantDOM, SVG_NS } from './helpers/svg-dom.mjs';
 
 const priorOptions = { interactive: false, showActivations: false, showLabels: false, showBackdrop: true, idPrefix: 'thumbnail' };
@@ -73,7 +73,8 @@ test('thumbnail profile excludes interaction-only geometry and is unaffected by 
   assert.doesNotMatch(expected, /<style\b|<mask\b|<clipPath\b|tabindex=|role="button"|bg-interactive|bg-focus-shape|bg-center-highlight|bg-channel-highlight|data-highlight-gate|bg-integration-(?:hover|focus|selection)|stroke="transparent"/);
   assert.doesNotMatch(expected, /<linearGradient id="thumbnail-dual"/);
   assert.match(expected, /<linearGradient id="thumbnail-chart-backdrop"/, 'the visible backdrop retains its own gradient');
-  assert.equal(decodeURIComponent(renderChartThumbnail(chart).split(',').slice(1).join(',')).includes(expected), true);
+  const canvasDrawing = renderBodygraph(chart, null, { ...profile, idPrefix: 'chart-preview' });
+  assert.ok(chartPreviewSource(chart).includes(canvasDrawing), 'the visible canvas consumes the same static profile');
 });
 
 test('noninteractive stories still retain their explicitly selected paint and supporting masks', () => {

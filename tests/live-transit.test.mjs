@@ -599,3 +599,139 @@ test('the live day retries at its backoff deadline and stops retrying when anoth
   fail = false; h.live.setWanted(true); await settle();
   assert.equal(h.live.state.status, 'ready'); assert.equal(h.live.state.retryCount, 0);
 });
+
+
+test('first-chart startup accepts a saved minute before the other UTC packet while normal startup waits for the day', async t => {
+  const pending = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise((resolve, reject) => pending.set(date, { resolve, reject })) });
+  t.after(() => h.live.stop());
+  let firstResult, complete = false;
+  const saved = { live: false, date: '2026-09-24', timeZone: 'Asia/Kathmandu', index: 0 };
+  const first = h.live.start(saved, { firstChart: true }).then(result => { firstResult = result; });
+  const full = h.live.start(saved).then(() => { complete = true; });
+  pending.get('2026-09-23').resolve(day('2026-09-23'));
+  await settle();
+  assert.equal(firstResult, true);
+  assert.equal(h.live.current.utc, '2026-09-23T18:15:00Z');
+  assert.equal(h.live.state.status, 'loading');
+  assert.equal(complete, false, 'the existing startup contract still waits for the full slider range');
+  let repeatedResult;
+  const repeated = h.live.start(saved, { firstChart: true }).then(result => { repeatedResult = result; });
+  await settle();
+  assert.equal(repeatedResult, true, 'the accepted target needs no second wait or request');
+  assert.equal(h.requests.length, 2);
+  pending.get('2026-09-24').resolve(day('2026-09-24'));
+  await Promise.all([first, full, repeated]);
+  assert.equal(h.live.state.status, 'ready');
+  assert.equal(h.live.current.utc, '2026-09-23T18:15:00Z');
+});
+
+test('first-chart startup reports its required packet failure without waiting for a hanging day edge', async t => {
+  const pending = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise((resolve, reject) => pending.set(date, { resolve, reject })) });
+  t.after(() => h.live.stop());
+  let result;
+  const first = h.live.start(null, { firstChart: true }).then(value => { result = value; });
+  pending.get('2026-09-24').reject(new Error('Current minute unavailable'));
+  await settle();
+  assert.equal(result, false);
+  assert.equal(h.live.current, null);
+  pending.get('2026-09-23').resolve(day('2026-09-23'));
+  await first;
+});
+
+test('a failed background packet cannot fail first-chart startup before its current packet arrives', async t => {
+  const pending = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise((resolve, reject) => pending.set(date, { resolve, reject })) });
+  t.after(() => h.live.stop());
+  let result;
+  const first = h.live.start(null, { firstChart: true }).then(value => { result = value; });
+  pending.get('2026-09-23').reject(new Error('Background edge unavailable'));
+  await settle();
+  assert.equal(result, undefined);
+  pending.get('2026-09-24').resolve(day('2026-09-24'));
+  await settle();
+  assert.equal(result, true);
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  await first;
+});
+
+for (const command of ['change owner', 'stop', 'change timezone', 'hide page']) {
+  test(`first-chart startup settles cancellation immediately on ${command}`, async t => {
+    const pending = [];
+    const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise(resolve => pending.push({ date, resolve })) });
+    t.after(() => h.live.stop());
+    let result;
+    const first = h.live.start(null, { firstChart: true }).then(value => { result = value; });
+    if (command === 'change owner') h.live.setWanted(false);
+    else if (command === 'stop') h.live.stop();
+    else if (command === 'hide page') { h.document.hidden = true; h.listeners.get('visibilitychange')(); }
+    else { h.zone = 'America/New_York'; void h.live.refresh(); }
+    await settle();
+    assert.equal(result, false);
+    for (const request of pending) request.resolve(day(request.date));
+    await first;
+  });
+}
+
+test('first-chart startup does not wait for a chart owned by another screen', async t => {
+  const h = harness({ getDay: () => assert.fail('hidden transit must not fetch') });
+  t.after(() => h.live.stop());
+  h.live.setWanted(false);
+  assert.equal(await h.live.start(null, { firstChart: true }), false);
+});
+
+test('first-chart startup cannot accept the previous local days retained chart', async t => {
+  let wait = false;
+  const pending = [];
+  const h = harness({ getDay: date => wait ? new Promise(resolve => pending.push({ date, resolve })) : Promise.resolve(day(date)) });
+  t.after(() => h.live.stop());
+  await h.live.start();
+  wait = true; h.utc = '2026-09-25T12:00:00Z';
+  let result;
+  const first = h.live.start(null, { firstChart: true }).then(value => { result = value; });
+  await settle();
+  assert.equal(result, undefined, 'an old chart is not the requested current minute');
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  pending[0].resolve(day('2026-09-25'));
+  await first;
+  assert.equal(result, true);
+  assert.equal(h.live.current.utc, '2026-09-25T12:00:00Z');
+});
+
+
+test('another first-chart observer receives an already failed current attempt while its edge is still pending', async t => {
+  const pending = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise((resolve, reject) => pending.set(date, { resolve, reject })) });
+  t.after(() => h.live.stop());
+  void h.live.start();
+  pending.get('2026-09-24').reject(new Error('Current minute unavailable'));
+  await settle();
+  let result;
+  const first = h.live.start(null, { firstChart: true }).then(value => { result = value; });
+  await settle();
+  assert.equal(result, false);
+  assert.equal(h.requests.length, 2, 'observing a settled attempt must not start duplicate requests');
+  pending.get('2026-09-23').resolve(day('2026-09-23'));
+  await first;
+});
+
+test('choosing Now cancels the previous first-chart wait before its paused packet arrives', async t => {
+  const pending = new Map();
+  const h = harness({ zone: 'Asia/Kathmandu', getDay: date => new Promise(resolve => pending.set(date, resolve)) });
+  t.after(() => h.live.stop());
+  let pausedResult, nowResult;
+  const first = h.live.start({ live: false, date: '2026-09-24', timeZone: 'Asia/Kathmandu', index: 0 },
+    { firstChart: true }).then(value => { pausedResult = value; });
+  void h.live.goNow();
+  const current = h.live.start(null, { firstChart: true }).then(value => { nowResult = value; });
+  await settle();
+  assert.equal(pausedResult, false);
+  assert.equal(nowResult, undefined);
+  pending.get('2026-09-24')(day('2026-09-24'));
+  await settle();
+  assert.equal(nowResult, true);
+  assert.equal(h.live.current.utc, '2026-09-24T12:00:00Z');
+  pending.get('2026-09-23')(day('2026-09-23'));
+  await Promise.all([first, current]);
+});

@@ -6,23 +6,14 @@ const catalog = { gate: GATES, center: CENTERS, channel: CHANNELS };
 const names = { gate: 'Ворота', center: 'Центры', channel: 'Каналы' };
 const jump = (type, id, label) => `<button class="knowledge-link" data-jump-type="${type}" data-jump-id="${id}">${escape(label)}<span aria-hidden="true">↗</span></button>`;
 
-export function attachKnowledge(dialog, onSelect) {
+export function attachKnowledge(page, onSelect) {
   let type = 'gate', id = 37;
-  let pressedOutside = false;
-  const index = dialog.querySelector('#knowledgeIndex');
-  const article = dialog.querySelector('#knowledgeArticle');
-  function outsideDialog(event) {
-    if (event.target !== dialog) return false;
-    const rect = dialog.getBoundingClientRect();
-    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
-  }
-  dialog.addEventListener('pointerdown', event => { pressedOutside = event.button === 0 && outsideDialog(event); });
-  dialog.addEventListener('pointercancel', () => { pressedOutside = false; });
-  dialog.addEventListener('close', () => { pressedOutside = false; });
+  const index = page.querySelector('#knowledgeIndex');
+  const article = page.querySelector('#knowledgeArticle');
   function render() {
     // Topics share their category's index, including its scroll and focus nodes.
     if (index.dataset.category !== type) {
-      dialog.querySelectorAll('[data-knowledge-category]').forEach(button => button.setAttribute('aria-pressed', button.dataset.knowledgeCategory === type));
+      page.querySelectorAll('[data-knowledge-category]').forEach(button => button.setAttribute('aria-pressed', button.dataset.knowledgeCategory === type));
       index.dataset.category = type;
       index.setAttribute('aria-label', names[type]);
       index.innerHTML = catalog[type].map(item => `<button data-topic-id="${item.id}" aria-label="${escape(type === 'gate' ? `Ворота ${item.id}: ${item.name}` : item.name)}" aria-pressed="${String(item.id) === String(id)}">${type === 'gate' ? item.id : type === 'channel' ? `<span>${item.id}</span><small>${escape(item.name)}</small>` : escape(item.name)}</button>`).join('');
@@ -52,21 +43,12 @@ export function attachKnowledge(dialog, onSelect) {
     }
     article.innerHTML = `<h3>${escape(title)}</h3>${text}<button class="knowledge-show" data-show-topic>Показать на схеме <span aria-hidden="true">↗</span></button><div class="knowledge-connections">${links}</div>`;
     article.scrollTop = 0;
-    if (dialog.open) index.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest' });
+    if (!page.hidden) index.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest' });
   }
-  dialog.addEventListener('click', event => {
-    const dismiss = pressedOutside && outsideDialog(event);
-    pressedOutside = false;
-    if (dismiss) {
-      event.preventDefault();
-      event.stopPropagation();
-      dialog.close();
-      return;
-    }
+  page.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
-    if (button.hasAttribute('data-close-knowledge')) { dialog.close(); return; }
-    if (button.hasAttribute('data-show-topic')) { dialog.close(); onSelect({type, id}); return; }
+    if (button.hasAttribute('data-show-topic')) { onSelect({type, id}); return; }
     if (button.dataset.knowledgeCategory) { type = button.dataset.knowledgeCategory; id = catalog[type][0].id; render(); }
     if (button.dataset.topicId) {
       id = type === 'gate' ? Number(button.dataset.topicId) : button.dataset.topicId;
@@ -76,6 +58,6 @@ export function attachKnowledge(dialog, onSelect) {
   });
   return { show(selection) {
     if (selection && catalog[selection.type]?.some(item => String(item.id) === String(selection.id))) { type = selection.type; id = selection.id; }
-    render(); dialog.showModal(); index.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest' });
-  }};
+    render(); page.hidden = false; index.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, hide() { page.hidden = true; }};
 }

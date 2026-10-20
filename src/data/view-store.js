@@ -31,6 +31,7 @@ function normalizeReturns(value) {
 function normalize(value) {
   if (!object(value) || value.version !== 1) return null;
   const returnView = normalizeReturns(value.returns);
+  const panels = value.panels;
   const camera = value.camera, lifetime = value.lifetime, transit = value.transit, natalDay = value.natalDay, planets = value.planets;
   // Read the former saved name once; the application uses only lifetime.
   const lifetimeMode = lifetime?.mode === 'archive' ? 'lifetime' : lifetime?.mode;
@@ -41,9 +42,13 @@ function normalize(value) {
     ...(returnView ? { returns: returnView } : {}),
     selectedId: typeof value.selectedId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.selectedId) ? value.selectedId : 'current-transit',
     mandala: value.mandala === true,
+    ...(['chart', 'library', 'charts', 'account'].includes(value.workspace) ? { workspace: value.workspace } : {}),
+    ...(object(panels) && typeof panels.left === 'boolean' && typeof panels.right === 'boolean'
+      ? { panels: { left: panels.left, right: panels.right } } : {}),
     camera: object(camera) && ['x', 'y', 'k'].every(key => Number.isFinite(camera[key]))
       && Math.abs(camera.x) <= 20000 && Math.abs(camera.y) <= 20000 && camera.k >= 1 && camera.k <= 100
-      ? { x: camera.x, y: camera.y, k: camera.k } : null,
+      ? { x: camera.x, y: camera.y, k: camera.k,
+        ...(Number.isFinite(camera.maxK) && camera.maxK >= camera.k && camera.maxK <= 100 ? { maxK: camera.maxK } : {}) } : null,
     lifetime: object(lifetime) && lifetime.opened === true && ['day', 'lifetime'].includes(lifetimeMode)
       && (lifetimeMode === 'day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
       ? { opened: true, mode: lifetimeMode, fromDate: date(lifetime.fromDate) ? lifetime.fromDate : null,

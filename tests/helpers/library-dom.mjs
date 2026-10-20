@@ -23,7 +23,13 @@ export function libraryDom() {
       const button = { dataset: {}, ...attributes() }, image = { src: '' };
       const row = {
         dataset: {}, className: '',
-        set innerHTML(value) { markup = value; image.src = ''; },
+        set innerHTML(value) {
+          markup = value; image.src = '';
+          const card = value.match(/<button class="chart-card"[^>]*>/)?.[0] || '';
+          button.dataset.active = card.match(/data-active="([^"]*)"/)?.[1];
+          const pressed = card.match(/aria-pressed="([^"]*)"/)?.[1];
+          if (pressed !== undefined) button.setAttribute('aria-pressed', pressed);
+        },
         get innerHTML() {
           return markup.replace(/(<button class="chart-card"[^>]*data-active=")[^"]*/, `$1${button.dataset.active}`)
             .replace(/(<button class="chart-card"[^>]*aria-pressed=")[^"]*/, `$1${button.getAttribute('aria-pressed')}`);

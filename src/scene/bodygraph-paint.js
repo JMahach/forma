@@ -3,23 +3,11 @@ import { STEM_POINTS } from './geometry/integration-geometry.js';
 import { INTEGRATION_IDS } from '../domain/topology.js';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.js';
 import { pointString, offsetPoints, splitAtHalfLength, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.js';
-export const PALETTE = {
-  ink: '#202020', design: '#c32d35', outline: '#c6c2b9', paper: '#ffffff',
-  halo: '#c4d9f1',
-  // Traditional center families, with flat colors rather than decorative fills.
-  // Reference: jovianarchive.com/blogs/human-design-basics/the-9-centers-in-human-design
-  head: '#edcd4c', ajna: '#79a367', throat: '#b58a60', g: '#edcd4c',
-  heart: '#da514b', spleen: '#b58a60', solar: '#b58a60', sacral: '#da514b', root: '#b58a60',
-};
+import { PALETTE } from '../ui/chart-palette.js';
+export { PALETTE } from '../ui/chart-palette.js';
 
-// Width-only tuning: 1 is original, 1.2 is the previous step, 1.32 adds 10% to it.
-// Keep paint, dual-source lanes and integration masks on the same scale.
-const CHANNEL_WIDTH_SCALE = 1.32;
-const channelWidth = value => Number((value * CHANNEL_WIDTH_SCALE).toFixed(3));
-export const CHANNEL_WIDTH = Object.freeze({
-  outline: channelWidth(6.4), paint: channelWidth(4.6),
-  lane: channelWidth(2.3), laneOffset: channelWidth(1.2), halo: channelWidth(10),
-});
+import { CHANNEL_WIDTH } from './geometry/drawing-presentation.js';
+export { CHANNEL_WIDTH } from './geometry/drawing-presentation.js';
 
 export function integrationOutlineMask(id, gates = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates = [], activeParts = []) {
   const whole = gates.length === 4 && includeStem;

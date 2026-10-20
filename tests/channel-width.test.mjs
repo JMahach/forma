@@ -284,15 +284,21 @@ const rollbackCases = [
 async function rendererAtScale(scale) {
   const rendererURL = new URL('../src/scene/bodygraph-svg.js', import.meta.url);
   const paintURL = new URL('../src/scene/bodygraph-paint.js', import.meta.url);
-  const paintSource = await readFile(paintURL, 'utf8');
+  const presentationURL = new URL('../src/scene/geometry/drawing-presentation.js', import.meta.url);
+  const presentationSource = await readFile(presentationURL, 'utf8');
   const setting = /^const CHANNEL_WIDTH_SCALE = 1\.32;$/gm;
-  assert.equal([...paintSource.matchAll(setting)].length, 1, 'one explicit width setting provides the rollback');
-  const link = (source, base) => source.replace(/from (['"])(\.\.?\/[^'"]+)\1/g,
-    (_, quote, name) => `from ${quote}${new URL(name, base).href}${quote}`);
+  assert.equal([...presentationSource.matchAll(setting)].length, 1, 'one explicit width setting provides the rollback');
+  const link = (source, base, replacements = {}) => source.replace(/from (['"])(\.\.?\/[^'"]+)\1/g,
+    (_, quote, name) => {
+      const url = new URL(name, base).href;
+      return `from ${quote}${replacements[url] || url}${quote}`;
+    });
   const moduleURL = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-  const paint = moduleURL(link(paintSource.replace(setting, `const CHANNEL_WIDTH_SCALE = ${scale};`), paintURL));
-  const source = (await readFile(rendererURL, 'utf8')).replace("'./bodygraph-paint.js'", `'${paint}'`);
-  return (await import(moduleURL(link(source, rendererURL)))).renderBodygraph;
+  const presentation = moduleURL(link(presentationSource.replace(setting, `const CHANNEL_WIDTH_SCALE = ${scale};`), presentationURL));
+  const replacements = { [presentationURL.href]: presentation };
+  const paint = moduleURL(link(await readFile(paintURL, 'utf8'), paintURL, replacements));
+  replacements[paintURL.href] = paint;
+  return (await import(moduleURL(link(await readFile(rendererURL, 'utf8'), rendererURL, replacements)))).renderBodygraph;
 }
 
 test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {

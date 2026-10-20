@@ -13,6 +13,12 @@ export function createLiveTransit({
   let status = 'idle', error = '', activeLoad = null, sequence = 0, failures = 0, nextRetry = 0;
   let timer = null, running = false, activated = false, loading = false, unavailable = false;
   const retained = new Map();
+  // Initial presentation can wait for its selected minute independently of the
+  // complete slider range. These are pending observers, never retained results.
+  const firstChartWaiters = new Set();
+  function finishFirstCharts(accepted) {
+    for (const finish of [...firstChartWaiters]) finish(accepted);
+  }
 
   const state = () => {
     const utc = now();
@@ -28,6 +34,12 @@ export function createLiveTransit({
 
   const isCurrentTimeline = () => timeline && timeline.timeZone === timeZone()
     && now() >= timeline.startUtc && now() < timeline.endUtc;
+  const selectedMinute = () => timeline && timelineMinute(timeline, live ? timelineIndexAt(timeline, now()) : index);
+  function acceptedCurrent() {
+    if (!visible() || !days || !isCurrentTimeline()) return false;
+    const minute = selectedMinute();
+    return days.has(minute.date) && Date.parse(current?.utc) === minute.utc;
+  }
 
   function retainActiveDays() {
     // Lifetime may need this day while live publication is disabled. Retention
@@ -54,12 +66,24 @@ export function createLiveTransit({
       onRender();
     }
     notify();
+    if (acceptedCurrent()) finishFirstCharts(true);
+  }
+
+  function waitForFirstChart(completion) {
+    return new Promise(resolve => {
+      const finish = value => { firstChartWaiters.delete(finish); resolve(Boolean(value)); };
+      firstChartWaiters.add(finish);
+      if (acceptedCurrent()) finish(true);
+      else if (!visible() || activeLoad?.failedDates.has(selectedMinute()?.date)) finish(false);
+      completion.then(() => finish(acceptedCurrent()), () => finish(false));
+    });
   }
 
   async function load(target) {
     const key = keyOf(target);
     if (activeLoad?.key === key) return activeLoad.promise;
-    const requestSequence = ++sequence;
+    finishFirstCharts(false);
+    const requestSequence = ++sequence, failedDates = new Set();
     // Keep successful packets on retry, but never mix different local days.
     const sameDay = keyOf(timeline) === key;
     if (!sameDay) { failures = 0; nextRetry = 0; }
@@ -77,11 +101,21 @@ export function createLiveTransit({
         const currentDate = timelineMinute(target, index).date;
         const dates = [currentDate, ...target.packetDates.filter(date => date !== currentDate)];
         const results = await Promise.allSettled(dates.map(async date => {
-          const packet = days.get(date) || await dayClient.getDay(date);
-          if (requestSequence !== sequence) return;
-          days.set(date, packet);
-          retainActiveDays();
-          publish(live ? timelineIndexAt(target, now()) : index);
+          try {
+            const packet = days.get(date) || await dayClient.getDay(date);
+            if (requestSequence !== sequence) return;
+            days.set(date, packet);
+            retainActiveDays();
+            if (!visible() || !isCurrentTimeline()) finishFirstCharts(false);
+            publish(live ? timelineIndexAt(target, now()) : index);
+          } catch (failure) {
+            failedDates.add(date);
+            // A missing background edge cannot invalidate the accepted minute.
+            // A failed selected packet must not wait for that edge to settle.
+            if (requestSequence === sequence && date === timelineMinute(target,
+              live ? timelineIndexAt(target, now()) : index).date) finishFirstCharts(false);
+            throw failure;
+          }
         }));
         if (requestSequence !== sequence) return false;
         if (!isCurrentTimeline()) { status = 'idle'; return false; }
@@ -106,14 +140,14 @@ export function createLiveTransit({
         }
       }
     })();
-    activeLoad = { key, promise };
+    activeLoad = { key, promise, failedDates };
     return promise;
   }
 
   async function refresh(resume = false) {
     activated = true;
-    if (resume) live = true;
-    if (!visible()) { notify(); return; }
+    if (resume) { finishFirstCharts(false); live = true; }
+    if (!visible()) { finishFirstCharts(false); notify(); return; }
     const utc = now(), zone = timeZone();
     const date = localDateAt(utc, zone);
     const target = timeline?.date === date && timeline.timeZone === zone
@@ -142,7 +176,7 @@ export function createLiveTransit({
 
   function visibilityChanged() {
     if (!activated) return;
-    if (isSuspended()) clearTimeout(timer);
+    if (isSuspended()) { clearTimeout(timer); finishFirstCharts(false); }
     else { refresh(); schedule(); }
   }
 
@@ -153,6 +187,7 @@ export function createLiveTransit({
     setWanted(value) {
       if (wanted !== value) { failures = 0; nextRetry = 0; }
       wanted = value;
+      if (!wanted) finishFirstCharts(false);
       retainActiveDays();
       notify();
       if (wanted && activated) refresh();
@@ -164,7 +199,7 @@ export function createLiveTransit({
       publish(value);
     },
     goNow() { return refresh(true); },
-    start(saved = null) {
+    start(saved = null, { firstChart = false } = {}) {
       if (saved?.live === false) {
         const target = createLocalDayTimeline(now(), timeZone());
         if (saved.date === target.date && saved.timeZone === target.timeZone && Number.isSafeInteger(saved.index) && saved.index >= 0) {
@@ -173,10 +208,13 @@ export function createLiveTransit({
         }
       }
       retainActiveDays();
-      running = true; schedule(); return refresh();
+      running = true; schedule();
+      const completion = refresh();
+      return firstChart ? waitForFirstChart(completion) : completion;
     },
     retry() { nextRetry = 0; return refresh(); },
     stop() {
+      finishFirstCharts(false);
       sequence++; activeLoad = null; loading = false; status = 'idle'; failures = 0; nextRetry = 0;
       running = false; days = null; retainActiveDays(); clearTimeout(timer); timer = null;
     },

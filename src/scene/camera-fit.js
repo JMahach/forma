@@ -14,5 +14,5 @@ export function computeCameraFit(frame, rect, insets, project) {
   // Fitting insets only position the drawing within that field.
   const first = project(rect.left, rect.top), last = project(rect.right, rect.bottom);
   const viewport = { x: first.x, y: first.y, width: last.x - first.x, height: last.y - first.y };
-  return { area, min, viewport };
+  return { area, min, viewport, screenScale: rect.width / viewport.width };
 }

@@ -366,10 +366,12 @@ for (const [width, height] of [[390, 844], [390, 664], [1228, 705], [844, 390]])
 
 test('the application supplies the studio canvas insets and keeps only the Home button', () => {
   const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+  const startup = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8');
   const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(app, /createCanvasInsetsReader|readCanvasInsets/, 'the application reuses the layout owner instead of measuring discarded insets');
-  assert.match(app, /fitInsets:\s*\(\)\s*=>\s*layout\.insets\(\)/, 'phone safe areas and desktop insets feed the same camera');
-  assert.match(app, /getHomeFrame:\s*\(\)\s*=>\s*mandalaMode\?\.homeFrame/, 'the mode supplies the responsive Home baseline');
+  assert.match(startup, /measureFit:\s*frame\s*=>\s*cameraView\.measureFit\(frame,\s*\(\)\s*=>\s*layout\.insets\(\)\)/, 'phone safe areas and desktop insets feed the same early camera');
+  assert.match(startup, /getHomeFrame:\s*\(\)\s*=>\s*layout\.frame\(\)/, 'all modes use the shared Studio Home baseline');
+  assert.match(app, /attachGestures\([^,]+,\s*\{\s*camera, cameraView,/, 'gestures take over the existing camera and projection');
   assert.match(app, /createCameraChangeHandler\(\{\s*heading:\s*\$\('chartHeader'\)/, 'the real camera controls fixed-heading visibility');
   assert.match(app, /createCameraChangeHandler\(\{[^}]*fitButton:\s*\$\('fitButton'\)/, 'the real camera controls Home visibility');
   assert.match(page, /<header\b[^>]*id="chartHeader"/, 'one header owns both name and date visibility');
@@ -410,18 +412,19 @@ test('camera chrome avoids repeated visibility writes without skipping dependent
 });
 
 
-for (const [width, height] of [[404, 872], [550, 590], [1440, 900]]) {
-  test(`chronicle changes its backing without reframing Home or a moved camera at ${width}×${height}`, t => {
+for (const [width, height] of [[404, 872], [550, 590], [1100, 900], [1440, 900]]) {
+  test(`chronicle shows dates above the backing without reframing Home or a moved camera at ${width}×${height}`, t => {
     const values = new Map();
     const studio = { dataset: {}, style: { setProperty: (key, value) => values.set(key, value) },
-      getBoundingClientRect: () => ({ width, height, top: 0, bottom: height }) };
-    const canvas = { parentElement: studio, dataset: {}, getBoundingClientRect: () => ({ width, height }) };
+      getBoundingClientRect: () => ({ left: 0, width, height, top: 0, bottom: height }) };
+    const canvas = { parentElement: studio, dataset: {}, getBoundingClientRect: () => ({ left: 0, width, height }) };
     const panel = { id: 'lifetimeControls', hidden: true, dataset: {}, style: { setProperty() {} } };
     const layout = createStudioLayout({ canvas, panels: [panel], viewport: null, media: { matches: width < 700 },
       readStyle: () => ({ scrollPaddingLeft: '4px', scrollPaddingTop: '112px', scrollPaddingBottom: '52px',
         getPropertyValue: () => '8px' }) });
     const h = harness(t, width, height, false, layout.insets(), true);
     const home = h.controls.getFittedView(), initialInsets = { ...layout.insets() }, columns = layout.showMandalaColumns;
+    const originalRail = [panel.style.left, panel.style.width, panel.style.top];
     for (const factor of [1, 2]) {
       h.controls.reset(); h.controls.zoom(factor); h.controls.pan(-100, 80);
       const before = h.controls.getView();
@@ -431,7 +434,8 @@ for (const [width, height] of [[404, 872], [550, 590], [1440, 900]]) {
         assert.deepEqual(h.controls.getFittedView(), home);
         assert.deepEqual(h.controls.getView(), before, 'both scale and translation remain exact');
         assert.equal(layout.showMandalaColumns, columns, 'dock cannot change mandala content visibility');
-        assert.equal(values.get('--timeline-dock-height'), open && width < 628 ? '96.8px' : '48.8px');
+        assert.equal(values.get('--timeline-dock-height'), open ? '96.8px' : '48.8px');
+        assert.deepEqual([panel.style.left, panel.style.width, panel.style.top], originalRail, 'live zoom, pan and changing timeline mode never displace or resize the full-window Home rail');
       }
     }
   });

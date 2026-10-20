@@ -93,25 +93,24 @@ test('the sidebar has no close cross and is inaccessible until the menu is opene
   assert.match(pageSource, /<button\b[^>]*id="openLibrary"[^>]*aria-controls="library"[^>]*aria-expanded="false"/);
 });
 
-test('the menu is reachable above the open right drawer backdrop but remains below its own left drawer', () => {
+test('the menu toggle remains above either open panel and its backdrop', () => {
   const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
   const zIndex = pattern => Number(styles.match(pattern)?.[1]);
-  const normalMenu = zIndex(/^\.topbar \{[^}]*z-index:\s*(\d+)/m);
-  const rightBackdrop = zIndex(/^\.summary-backdrop \{[^}]*z-index:\s*(\d+)/m);
-  const raisedMenu = zIndex(/^\.app-shell:has\(\.chart-summary\.open\) \.topbar \{[^}]*z-index:\s*(\d+)/m);
-  const leftDrawer = zIndex(/^\.library \{[^}]*z-index:\s*(\d+)/m);
-  assert.ok(normalMenu < rightBackdrop, 'normal menu keeps its original stacking level');
-  assert.ok(raisedMenu > rightBackdrop, 'the actual Menu click reaches its handler while About is open');
-  assert.ok(raisedMenu < leftDrawer, 'opening the left library covers its own Menu button as before');
+  const raisedRule = styles.match(/([^{}]+)\{\s*z-index:\s*86;\s*\}/g)?.find(rule => rule.includes('.app-shell:has(.library.open)'));
+  assert.ok(raisedRule?.includes('.app-shell:has(.chart-summary.open) .topbar'), 'either panel keeps the same menu toggle reachable');
+  const raisedMenu = Number(raisedRule.match(/z-index:\s*(\d+)/)[1]);
+  for (const selector of ['library', 'chart-summary', 'mobile-backdrop', 'summary-backdrop']) {
+    assert.ok(raisedMenu > zIndex(new RegExp(`^\\.${selector} \\{[^}]*z-index:\\s*(\\d+)`, 'm')), `menu remains above ${selector}`);
+  }
 });
 
-function menuHarness() {
+function menuHarness({ dialogOpen = false } = {}) {
   const elements = new Map(), handlers = new Map();
   let renders = 0, popupCloses = 0;
   const document = {
     activeElement: null,
     getElementById(id) { return element(id); },
-    querySelector() { return null; },
+    querySelector(selector) { return selector === 'dialog[open]' && dialogOpen ? {} : null; },
     querySelectorAll() { return []; },
     addEventListener(type, handler) { handlers.set(type, handler); },
   };
@@ -130,6 +129,7 @@ function menuHarness() {
         setAttribute(name, value) { attributes.set(name, String(value)); },
         getAttribute(name) { return attributes.get(name) ?? null; },
         classList: {
+          toggle(name, value) { if (value) classes.add(name); else classes.delete(name); },
           add(name) { classes.add(name); },
           remove(name) { classes.delete(name); },
           contains(name) { return classes.has(name); },
@@ -248,7 +248,7 @@ test('current moment is active independently of the saved list, including before
   }
 });
 
-test('the current-moment adapter immediately forwards the transit navigation command', () => {
+test('transit navigation selects and refreshes the chart without closing its navigation panel', () => {
   assert.match(bootstrapSource, /attachTransitNavigation\(\$\('nowButton'\)/, 'the application connects the public transit navigation adapter');
   const calls = [];
   let handler;
@@ -260,7 +260,7 @@ test('the current-moment adapter immediately forwards the transit navigation com
   });
   assert.equal(typeof handler, 'function');
   handler();
-  assert.deepEqual(calls, ['close', 'select:current-transit', 'refresh:true']);
+  assert.deepEqual(calls, ['select:current-transit', 'refresh:true']);
 });
 
 test('the fit control uses a decorative home icon and retains its accessible label and camera-reset action', () => {
@@ -280,4 +280,12 @@ test('the fit control uses a decorative home icon and retains its accessible lab
   });
   handlers.get('fitButton')();
   assert.equal(resets, 1, 'home icon still restores the fitted camera view');
+});
+
+
+test('Escape inside a modal dialog leaves the persistent navigation panel untouched', () => {
+  const h = menuHarness({ dialogOpen: true }); h.click('openLibrary');
+  h.element('chartDialog').focus(); h.key('Escape');
+  assert.equal(h.element('library').classList.contains('open'), true);
+  assert.equal(h.document.activeElement, h.element('chartDialog'));
 });

@@ -4,7 +4,7 @@ import { attachKnowledge } from '../src/views/knowledge.js';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.mjs';
 
 // The shared tree fixture parses the real markup and preserves node identity.
-// Only dialog events/focus are adapted; no knowledge rendering is reproduced.
+// Only page events/focus are adapted; no knowledge rendering is reproduced.
 function fixture() {
   const document = svgDocument(), create = document.createElementNS.bind(document);
   document.createElementNS = (namespace, name) => {
@@ -18,7 +18,8 @@ function fixture() {
     return node;
   };
   const element = name => document.createElementNS(SVG_NS, name);
-  const dialog = element('dialog'), index = element('nav'), article = element('article');
+  const dialog = element('section'), index = element('nav'), article = element('article');
+  dialog.hidden = true;
   const categories = ['gate', 'center', 'channel'].map(type => {
     const button = element('button'); button.dataset.knowledgeCategory = type; return button;
   });
@@ -26,8 +27,6 @@ function fixture() {
   dialog.querySelector = selector => selector === '#knowledgeIndex' ? index : selector === '#knowledgeArticle' ? article : null;
   const handlers = new Map();
   dialog.addEventListener = (name, callback) => handlers.set(name, callback);
-  dialog.showModal = () => { dialog.open = true; };
-  dialog.close = () => { dialog.open = false; handlers.get('close')?.(); };
   const controller = attachKnowledge(dialog, () => {});
   const click = target => { target.focus(); handlers.get('click')({ target }); };
   return { document, dialog, index, article, categories, controller, click };
@@ -60,7 +59,7 @@ test('category changes replace the index, while reopening a topic keeps its cate
     previous = h.index.firstElementChild;
   }
   const buttons = h.index.children;
-  h.dialog.close(); h.article.scrollTop = 180;
+  h.controller.hide(); h.article.scrollTop = 180;
   h.controller.show({ type: 'gate', id: 10 });
   assert.ok(h.index.children.every((button, i) => button === buttons[i]), 'reopening keeps the category index');
   assert.equal(h.index.querySelector('[aria-pressed="true"]').dataset.topicId, '10');

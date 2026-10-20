@@ -192,3 +192,41 @@ test('the empty-start meaning survives storage without losing its effective firs
   const restored = createViewStore({ getStorage: () => storage }).read();
   assert.equal(restored.lifetime.openStart, true); assert.equal(restored.lifetime.fromDate, '2020-10-04');
 });
+
+
+test('panel visibility shares the tab snapshot and ignores malformed or absent panel values', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  store.write({ ...snapshot, panels: { left: true, right: true, extra: 'discard' } });
+  assert.deepEqual(createViewStore({ getStorage: () => storage }).read().panels, { left: true, right: true });
+  store.write({ ...snapshot, panels: { left: 'yes', right: true } });
+  assert.equal(store.read().panels, undefined);
+  store.write(snapshot);
+  assert.equal(store.read().panels, undefined, 'legacy snapshots remain readable without inventing panel state');
+});
+
+test('camera maximum scale round-trips while malformed maxima cannot bypass zoom bounds', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  store.write({ ...snapshot, camera: { ...snapshot.camera, maxK: 8 } });
+  assert.deepEqual(store.read().camera, { x: -320, y: -410, k: 2, maxK: 8 });
+  for (const maxK of [1, 101, Infinity, '8']) {
+    store.write({ ...snapshot, camera: { ...snapshot.camera, maxK } });
+    assert.deepEqual(store.read().camera, snapshot.camera);
+  }
+});
+
+
+test('workspace screen shares the existing tab snapshot and validates legacy and malformed values', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  for (const workspace of ['chart', 'library', 'charts', 'account']) {
+    store.write({ ...snapshot, workspace });
+    assert.equal(createViewStore({ getStorage: () => storage }).read().workspace, workspace);
+  }
+  for (const workspace of [undefined, null, '', 'settings', { screen: 'charts' }, ['chart'], 1]) {
+    store.write({ ...snapshot, workspace });
+    assert.equal(store.read().workspace, undefined);
+    assert.deepEqual(store.read().camera, snapshot.camera, 'bad navigation does not discard a valid camera');
+  }
+  store.write(snapshot);
+  assert.deepEqual(store.read(), snapshot, 'legacy snapshots keep their existing shape');
+  assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY], 'navigation needs no separate storage entry');
+});

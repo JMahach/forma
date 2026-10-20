@@ -1,7 +1,9 @@
+import { resolveSelectedChartId } from './chart-session.js';
+
 // One restoration transaction connects existing state owners. Initialization
 // cannot overwrite the previous page; explicit moment commands supersede pending work.
 export function createViewSession({
-  store, chartStore, session, mandala, camera, transit, natalDay, planetFilter,
+  store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
   openReturnsTimeline = async () => null, acceptLifetimeMode = () => {},
@@ -49,7 +51,10 @@ export function createViewSession({
       ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) : pendingLifetime;
     return {
       version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId, mandala: mandala.enabled,
-      camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k },
+      ...(panels ? { panels: panels.snapshot } : {}),
+      ...(workspace ? { workspace: workspace.snapshot } : {}),
+      camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k,
+        ...(camera.maximumScale ? { maxK: camera.maximumScale() / home.k } : {}) },
       lifetime: lifetimeTarget || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openStart ? { openStart: true } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
       transit: pendingTransit || (live.timeline ? { live: live.live, date: live.timeline.date, timeZone: live.timeline.timeZone, index: live.index } : null),
       natalDay: pendingNatal || { opened: day.opened, exactOriginal: day.exactOriginal, index: day.index },
@@ -70,7 +75,7 @@ export function createViewSession({
   // Called by the existing UI actions that choose a chart, moment or range.
   // Pointer/focus/keyboard activity alone does not replace a saved target.
   function interrupt() {
-    if (restoring) { interrupted = true; generation++; restoring = false; }
+    if (restoring) { interrupted = true; generation++; restoring = false; panels?.finishRestore(); }
     pendingTransit = pendingLifetime = pendingNatal = pendingReturns = null;
     schedule();
   }
@@ -80,23 +85,22 @@ export function createViewSession({
 
   async function restore() {
     const request = ++generation, valid = () => request === generation;
+    restoring = true;
+    panels?.beginRestore();
     let selectedId;
     try {
       if (saved?.planets) planetFilter.restore(saved.planets);
       const id = saved?.selectedId;
-      session.select(id === 'current-transit' || chartStore.has(id) ? id : 'current-transit');
+      session.select(resolveSelectedChartId(chartStore, id));
       selectedId = session.selectedId;
       if (selectedId !== id) pendingNatal = pendingReturns = null;
       if (selectedId === 'current-transit') pendingReturns = null;
       if (selectedId !== id || !canRestoreLifetime()) pendingLifetime = null;
       if ((pendingReturns?.opened || pendingReturns?.eventId) && canRestoreLifetime()) pendingNatal = null;
+      panels?.restore(saved?.panels);
+      workspace?.restore(saved?.workspace);
       mandala.setEnabled(saved?.mandala === true, { animate: false });
-      camera.reset();
-      if (saved?.camera) {
-        const home = camera.getFittedView(), position = saved.camera;
-        camera.setView({ x: home.x + position.x * home.k, y: home.y + position.y * home.k,
-          k: Math.min(4.5, position.k * home.k) });
-      }
+      if (!cameraRestored) camera.restoreView(saved?.camera);
       if (selectedId !== 'current-transit' && typeof pendingLifetime?.personalLive === 'boolean') {
         const followNow = pendingLifetime.personalLive && !pendingReturns?.eventId;
         if (followNow) pendingTransit = null;
@@ -105,14 +109,20 @@ export function createViewSession({
       if (selectedId === 'current-transit' && pendingLifetime?.mode === 'lifetime') {
         acceptLifetimeMode({ opened: true, mode: 'lifetime' });
       }
-      await transit.start(pendingTransit);
+      const firstChart = await transit.start(pendingTransit, { firstChart: true });
+      const needsTransitMoment = selectedId === 'current-transit' ? pendingLifetime?.mode !== 'lifetime' : getPersonalLive() === true;
+      const firstMomentReady = !needsTransitMoment || firstChart !== false;
       // The day controller now owns its accepted pause, including retries.
       pendingTransit = null;
       if (!valid() || session.selectedId !== selectedId) return false;
       applyPending();
       let returnRestoration;
-      const restoreReturn = () => returnRestoration ??= getReturns().restore(pendingReturns,
-        { valid: () => valid() && session.selectedId === selectedId });
+      const restoreReturn = () => {
+        if (returnRestoration) return returnRestoration;
+        if (panels?.rightRequestDuringRestore != null && pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
+        return returnRestoration ??= getReturns().restore(pendingReturns,
+          { valid: () => valid() && session.selectedId === selectedId });
+      };
       // Apply filters before the rail can enable searches. A saved exact event
       // also owns the moment; unrelated event lists need not delay the rail.
       if (pendingReturns && getReturns()?.available) {
@@ -157,11 +167,18 @@ export function createViewSession({
         }
         if (restored && pendingReturns === target) pendingReturns = null;
       }
-      return valid() && !pendingReturns && !pendingTransit && !pendingLifetime && !pendingNatal;
+      return valid() && firstMomentReady && !pendingReturns && !pendingTransit && !pendingLifetime && !pendingNatal;
     } finally {
       if (valid()) {
         if (session.selectedId !== selectedId) pendingTransit = pendingLifetime = pendingNatal = pendingReturns = null;
         else if (!canRestoreLifetime()) pendingLifetime = null;
+        if (panels?.rightRequestDuringRestore != null) {
+          // The moment has settled. Close only its menu now, preserving the last
+          // explicit panel command and any exact target retained for a retry.
+          if (pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
+          getReturns()?.close();
+        }
+        panels?.finishRestore();
         restoring = false; flush();
       }
     }

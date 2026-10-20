@@ -1,8 +1,7 @@
 import { createLiveTransit } from '../state/live-transit.js';
 
-export function attachTransitNavigation(button, { closeLibrary, onSelect, refresh }) {
+export function attachTransitNavigation(button, { onSelect, refresh }) {
   button.addEventListener('click', () => {
-    closeLibrary();
     onSelect('current-transit');
     refresh(true);
   });

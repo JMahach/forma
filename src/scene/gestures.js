@@ -2,7 +2,7 @@ import { createCamera } from './camera.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null,
+export function attachGestures(svg, { camera: existingCamera = null, cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null,
   resolvePointerTarget = event => event.target.closest('[data-type]'),
   requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
@@ -64,10 +64,11 @@ export function attachGestures(svg, { cameraView, onSelect, onChange, onBackgrou
     if (pannable !== wasPannable) { svg.classList.toggle('is-pannable', pannable); wasPannable = pannable; }
     if (dragging !== wasDragging) { svg.classList.toggle('is-dragging', dragging); wasDragging = dragging; }
   }
-  camera = createCamera({ getFrame, getHomeFrame,
+  camera = existingCamera || createCamera({ getFrame, getHomeFrame,
     measureFit: frame => cameraView.measureFit(frame, fitInsets),
     onChange: publish,
   });
+  if (existingCamera) camera.setOnChange(publish);
   const center = pair => ({ x: (pair[0].x + pair[1].x) / 2, y: (pair[0].y + pair[1].y) / 2 });
   const distance = pair => Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
   surface.addEventListener('pointerdown', event => {

@@ -4,6 +4,9 @@ import { createReturnsController } from '../src/state/returns.js';
 import { DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.js';
 import { chartCaption } from '../src/views/chart-display.js';
 import { createViewSession } from '../src/state/view-session.js';
+import { createPanelState } from '../src/state/panels.js';
+import { createWorkspaceState } from '../src/state/workspace.js';
+import { attachChartSummary } from '../src/views/chart-summary-panel.js';
 import { createViewStore } from '../src/data/view-store.js';
 import { createChartStore } from '../src/data/chart-store.js';
 import { createChartSession } from '../src/state/chart-session.js';
@@ -42,8 +45,8 @@ const point = (index, source = metadata) => {
       designArcResidualDegrees: 0, longitudes: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] } };
 };
 function harness(storage = new Map(), { size = 1000, transitDay = async date => day(date), loadLifetime = null, canRestoreLifetime = null,
-    returnsClient = null, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
-    zone = 'UTC', normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async index => point(index) } } = {}) {
+    returnsClient = null, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
+    zone = 'UTC', cameraRestored = false, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async index => point(index) } } = {}) {
   const frames = [], writes = [], pending = new Map(), attributes = {}, styles = new Map();
   const storagePort = { getItem: key => storage.get(key) ?? null,
     setItem(key, value) { storage.set(key, value); writes.push([key, value]); } };
@@ -51,9 +54,9 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
   if (!storage.has('liniya.charts.v1')) storage.set('liniya.charts.v1', JSON.stringify([saved, { ...saved, id: 'second' }]));
   const chartStore = createChartStore({ getStorage: () => storagePort });
   const viewStore = createViewStore({ getStorage: () => storagePort });
-  let view, transit, natalDay, mandala, lifetime = null, returns, exploration;
-  const planets = createTransitPlanetFilter();
-  const changed = () => view?.schedule();
+  let view, transit, natalDay, mandala, lifetime = null, returns, exploration, summary = null;
+  const planets = createTransitPlanetFilter(), panels = createPanelState(), workspace = createWorkspaceState();
+  const changed = () => { summary?.setReturnsVisible(Boolean(returns?.opened)); view?.schedule(); };
   const session = createChartSession({ store: chartStore, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns, filterTransit: planets.filter,
     onSelect: () => exploration?.selected(), onChange: () => { changed(); if (session.hasCurrent) frames.push(session.current.utc); } });
@@ -90,7 +93,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
   const eventTarget = events(), interactionTarget = events(), cameraSurface = events();
   let counter = 0;
   const savedView = normalizeSavedView(viewStore.read());
-  view = createViewSession({ store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, transit, natalDay,
+  view = createViewSession({ panels, workspace, store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, cameraRestored, transit, natalDay,
     ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline,
     planetFilter: planets, getReturns: () => returns, getLifetime: () => lifetime, loadLifetime: loadLifetime || (async () => ensureLifetime()), eventTarget, interactionTarget,
     acceptLifetimeMode: exploration.acceptLifetimeMode,
@@ -102,8 +105,18 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
     try { return await restore(); }
     finally { exploration.finishRestore({ saved: savedView, pendingLifetime: view.pendingLifetime, pendingReturns: view.pendingReturns, interrupted: view.interrupted }); }
   };
+  if (panelView) {
+    const document = dateDom(); document.querySelector = () => null;
+    const panel = document.createElement('aside'), summaryScreen = document.createElement('section');
+    const returnsPanel = document.createElement('section'), content = document.createElement('div');
+    const search = document.createElement('input'), switcher = document.createElement('button');
+    panel.classList = { toggle() {} };
+    summaryScreen.append(search, content); panel.append(summaryScreen, returnsPanel);
+    summary = attachChartSummary({ panels, panel, summaryScreen, returnsPanel, content, search, switcher,
+      overview: document.createElement('div'), onOpen: () => returns.close(), onClose: () => returns.close() });
+  }
   const tick = () => { for (const [id, callback] of [...pending]) { pending.delete(id); callback(); } };
-  return { frames, view, session, exploration, returns, returnEvent, mandala, camera, cameraSurface, transit, natalDay, planets, storage, writes, attributes, styles, eventTarget, interactionTarget, ensureLifetime, setPersonalLive, tick };
+  return { panels, workspace, summary, frames, view, session, exploration, returns, returnEvent, mandala, camera, cameraSurface, transit, natalDay, planets, storage, writes, attributes, styles, eventTarget, interactionTarget, ensureLifetime, setPersonalLive, tick };
 }
 
 test('browser reload restores saved chart, mandala endpoint, natal minute and camera without modifying the library', async t => {
@@ -143,7 +156,7 @@ test('camera restoration rebases against the new screen Home and respects maximu
   first.camera.zoom(2); first.view.flush();
   const second = harness(first.storage, { size: 500 }); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.camera.getView().k / second.camera.getFittedView().k, 2);
-  const third = harness(first.storage, { size: 5000 }); t.after(() => third.transit.stop()); await third.view.restore();
+  const third = harness(first.storage, { size: 5000, normalizeSavedView(value) { delete value.camera.maxK; return value; } }); t.after(() => third.transit.stop()); await third.view.restore();
   assert.equal(third.camera.getView().k, 4.5);
 });
 
@@ -661,6 +674,19 @@ test('restored personal live mode uses the shared minute timer and the new curre
   assert.equal(JSON.parse(storage.get('liniya.view.v1')).transit.live, true, 'following Now supersedes an older paused day');
 });
 
+test('failed personal live moment completes restoration while an unrelated day packet is still pending', async t => {
+  const { storage } = await savePersonalLifetime(t);
+  const saved = JSON.parse(storage.get('liniya.view.v1'));
+  saved.lifetime.personalLive = true;
+  storage.set('liniya.view.v1', JSON.stringify(saved));
+  const second = harness(storage, { canRestoreLifetime: () => true, zone: 'Europe/Moscow', transitDay: date =>
+    date === '2026-10-04' ? Promise.reject(new Error('current minute unavailable')) : new Promise(() => {}) });
+  t.after(() => second.transit.stop());
+  assert.equal(await second.view.restore(), false, 'failure of the visible live moment releases the initial loading gate');
+  assert.equal(second.transit.state.loading, true, 'the unused neighboring packet is still pending');
+  assert.equal(second.session.hasCurrent, true, 'the saved natal chart remains available for recovery');
+});
+
 test('a paused personal lifetime reload never becomes live because its slider is near Now', async t => {
   const { storage } = await savePersonalLifetime(t);
   const saved = JSON.parse(storage.get('liniya.view.v1'));
@@ -1023,4 +1049,131 @@ test('reload preserves an empty start and its selected UTC moment', async t => {
   assert.equal(restored.state.toDate, '2020-01-03'); assert.equal(restored.state.minUtc, Date.parse('2020-01-01T00:00:00Z'));
   assert.equal(restored.state.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
   assert.equal(second.view.pendingLifetime, null);
+});
+
+
+test('panel state survives chart selection and reload and is restored before the camera is fitted', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  first.panels.restore({ left: true, right: true });
+  first.session.select('second'); first.view.flush();
+  const second = harness(first.storage); t.after(() => second.transit.stop());
+  const restoreView = second.camera.restoreView;
+  let seenAtFit;
+  second.camera.restoreView = (...args) => { seenAtFit = second.panels.snapshot; return restoreView(...args); };
+  await second.view.restore();
+  assert.deepEqual(second.panels.snapshot, { left: true, right: true });
+  assert.deepEqual(seenAtFit, { left: true, right: true });
+  assert.equal(second.session.selectedId, 'second');
+});
+
+test('reload preserves an elevated camera limit needed after a panel has narrowed the view', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  const home = first.camera.getFittedView();
+  first.camera.setView({ x: home.x, y: home.y, k: 6 }, { maxScale: 7 });
+  first.view.flush();
+  const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
+  assert.equal(second.camera.getView().k, 6);
+  assert.equal(second.camera.maximumScale(), 7);
+});
+
+
+for (const delayed of ['events', 'return']) for (const reopen of [false, true]) {
+  test(`a right-panel command during ${delayed} restoration preserves the exact return (reopen: ${reopen})`, async t => {
+    const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
+    const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0];
+    first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
+    let release;
+    const second = harness(first.storage, { panelView: true, returnsClient: {
+      events: input => {
+        const result = { events: input.body === 'saturn' ? [first.returnEvent] : [] };
+        return delayed === 'events' && input.body === 'saturn'
+          ? new Promise(done => { release = () => done(result); }) : Promise.resolve(result);
+      },
+      chart: input => {
+        const result = { event: first.returnEvent,
+          chart: { ...source, utc: input.eventUtc, personality: [2, 14], design: [3, 60] } };
+        return delayed === 'return' ? new Promise(done => { release = () => done(result); }) : Promise.resolve(result);
+      },
+    } });
+    t.after(() => second.transit.stop());
+    const restoring = second.view.restore(); await new Promise(done => setImmediate(done));
+    assert.equal(typeof release, 'function');
+    second.summary.close();
+    if (reopen) second.summary.open();
+    release();
+    assert.equal(await restoring, true);
+    assert.equal(second.view.interrupted, false);
+    assert.equal(second.returns.state.selectedEvent?.id, first.returnEvent.id);
+    assert.equal(second.session.current.utc, first.returnEvent.utc);
+    assert.equal(second.summary.screen, reopen ? 'summary' : 'closed');
+    assert.equal(second.returns.opened, false, 'the manual summary command supersedes only the saved returns-menu state');
+    const saved = JSON.parse(second.storage.get('liniya.view.v1'));
+    assert.equal(saved.panels.right, reopen); assert.equal(saved.returns.opened, false);
+    assert.equal(saved.returns.eventId, first.returnEvent.id);
+  });
+}
+
+
+test('reload restores the workspace before fitting the retained chart camera', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  first.session.select('second'); first.camera.zoom(2); first.camera.pan(35, 20);
+  first.panels.restore({ left: true, right: true }); first.workspace.setScreen('charts'); first.view.flush();
+  const pose = first.camera.getView(), second = harness(first.storage); t.after(() => second.transit.stop());
+  const restoreView = second.camera.restoreView; let seenAtFit;
+  second.camera.restoreView = (...args) => { seenAtFit = second.workspace.screen; return restoreView(...args); };
+  await second.view.restore();
+  assert.equal(seenAtFit, 'charts'); assert.equal(second.workspace.screen, 'charts');
+  assert.equal(second.session.selectedId, 'second');
+  for (const key of ['x', 'y', 'k']) assert.ok(Math.abs(second.camera.getView()[key] - pose[key]) < 1e-9, `retained camera ${key}`);
+  assert.deepEqual(second.panels.snapshot, { left: true, right: true });
+  assert.equal(JSON.parse(second.storage.get('liniya.view.v1')).workspace, 'charts');
+});
+
+test('changing workspace during a pending reload keeps the new screen and finishes the saved moment', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  first.transit.scrub(0); first.workspace.setScreen('library'); first.view.flush();
+  let release;
+  const second = harness(first.storage, { transitDay: date => new Promise(done => { release = () => done(day(date)); }) });
+  t.after(() => second.transit.stop()); const restoring = second.view.restore();
+  assert.equal(second.workspace.screen, 'library');
+  second.workspace.setScreen('account'); second.view.schedule();
+  release(); assert.equal(await restoring, true);
+  assert.equal(second.workspace.screen, 'account'); assert.equal(second.view.interrupted, false);
+  assert.equal(second.transit.current.utc, '2026-10-04T00:00:00Z');
+  const saved = JSON.parse(second.storage.get('liniya.view.v1'));
+  assert.equal(saved.workspace, 'account'); assert.equal(saved.transit.index, 0); assert.equal(saved.transit.live, false);
+});
+
+
+test('panel commands before app restore survive the same owner being restored again', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  first.panels.restore({ left: false, right: true }); first.view.flush();
+  const second = harness(first.storage); t.after(() => second.transit.stop());
+  second.panels.restore({ left: false, right: true });
+  second.panels.beginRestore();
+  second.panels.setLeft(true); second.panels.setRight(false);
+  const restoreView = second.camera.restoreView;
+  let seenAtFit;
+  second.camera.restoreView = (...args) => { seenAtFit = second.panels.snapshot; return restoreView(...args); };
+  assert.equal(await second.view.restore(), true);
+  assert.deepEqual(seenAtFit, { left: true, right: false });
+  assert.deepEqual(second.panels.snapshot, { left: true, right: false });
+  assert.deepEqual(JSON.parse(second.storage.get('liniya.view.v1')).panels, { left: true, right: false });
+  assert.equal(second.panels.restoring, false);
+  assert.equal(second.panels.rightRequestDuringRestore, null);
+});
+
+
+test('an already restored startup camera is retained after early panel interaction and full restoration', async t => {
+  const saved = { version: 1, selectedId: 'current-transit', panels: { left: false, right: true }, camera: { x: -50, y: -50, k: 1.5 } };
+  const h = harness(new Map([['liniya.view.v1', JSON.stringify(saved)]]), { cameraRestored: true });
+  t.after(() => h.transit.stop());
+  h.panels.restore(saved.panels); h.camera.restoreView(saved.camera);
+  h.panels.beginRestore(); h.panels.setLeft(true); h.panels.setRight(false);
+  // Startup already adapted this same camera to the newly chosen free area.
+  h.camera.zoom(1.2); h.camera.pan(-20, -30);
+  const prepared = h.camera.getView();
+  assert.equal(await h.view.restore(), true);
+  assert.deepEqual(h.panels.snapshot, { left: true, right: false });
+  assert.deepEqual(h.camera.getView(), prepared, 'restoration does not reapply the old saved transform after handoff');
 });

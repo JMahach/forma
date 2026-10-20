@@ -1,10 +1,28 @@
+import { createPanelState } from '../state/panels.js';
 import { primaryChart, chartTopology } from '../domain/chart-composition.js';
 import { escapeHtml as esc } from '../ui/html.js';
+import { PALETTE } from '../ui/chart-palette.js';
 import { buildChartSummary } from './chart-summary-data.js';
 
 const labels = { design: 'Дизайн', personality: 'Личность', all: 'Всего' };
-const normalize = value => String(value).toLocaleLowerCase('ru').replace(/ё/g, 'е').trim();
+const fold = value => String(value).toLocaleLowerCase('ru').replace(/ё/g, 'е');
+const normalize = value => fold(value).trim();
 const matches = (query, ...values) => !query || normalize(values.join(' ')).includes(query);
+
+// Match plain text before escaping it; generated markup and attributes are
+// never searched. Keep original spelling, including ё, inside each mark.
+function highlighted(value, query, display = value => value) {
+  const text = String(value ?? ''), escaped = value => esc(display(value));
+  if (!query) return escaped(text);
+  const folded = fold(text);
+  let html = '', start = 0, found;
+  while ((found = folded.indexOf(query, start)) !== -1) {
+    html += escaped(text.slice(start, found)) + `<mark class="search-match">${escaped(text.slice(found, found + query.length))}</mark>`;
+    start = found + query.length;
+  }
+  return html + escaped(text.slice(start));
+}
+
 
 function lineRows(model, query) {
   if (!model.hasLines) return matches(query, 'линии') ? '<p class="summary-note">Для подсчёта линий нужны планетарные активации. В этой карте они пока недоступны.</p>' : '';
@@ -16,22 +34,22 @@ function lineRows(model, query) {
   if (!rows.length) return '';
   return `${model.rowsLabel ? `<p class="summary-note">Линии: ${esc(model.rowsLabel)}</p>` : ''}<div class="summary-lines ${singleSource ? 'is-transit' : ''}" role="table" aria-label="Количество активаций по линиям">
     <div class="summary-line-head" role="row"><span role="columnheader">Линия</span>${sources.map(source => `<span role="columnheader" class="summary-${source}">${sourceLabel(source)}</span>`).join('')}</div>
-    ${rows.map(row => `<div class="summary-line-row" role="row"><span role="rowheader">${row.line}</span>${sources.map(source => {
+    ${rows.map(row => `<div class="summary-line-row" role="row"><span role="rowheader">${highlighted(row.line, query)}</span>${sources.map(source => {
       const count = source === 'all' ? row.total : row[source];
       return `<span role="cell"><button type="button" class="summary-count summary-${source}" data-summary-line="${row.line}" data-summary-source="${source}" aria-label="Линия ${row.line}, ${sourceLabel(source)}: ${count}" aria-pressed="false" ${count ? '' : 'disabled'}>${count}</button></span>`;
     }).join('')}</div>`).join('')}
     </div><p class="summary-note">Каждая активация считается отдельно, включая лунные узлы. Клик — выделить; Shift — добавить или убрать.</p>`;
 }
 
-const entityButton = (type, id, title, detail) => `<button type="button" class="summary-entity" data-summary-type="${type}" data-summary-id="${esc(id)}" aria-pressed="false"><span>${esc(title)}</span><span class="summary-entity-detail">${detail}</span></button>`;
+const entityButton = (type, id, title, detail) => `<button type="button" class="summary-entity" data-summary-type="${type}" data-summary-id="${esc(id)}" aria-pressed="false"><span>${title}</span><span class="summary-entity-detail">${detail}</span></button>`;
 
 // New sections supply only data presentation. Disclosure, search, scrolling,
 // selection and drawer behaviour remain shared panel behaviour.
 const SUMMARY_SECTIONS = [
   { id: 'lines', title: 'Линии', count: m => m.hasLines ? m.totals.activations : null, render: lineRows },
-  { id: 'centers', title: 'Центры', count: m => m.totals.centers, render: (m, q) => m.centers.filter(c => matches(q, 'центры', c.name)).map(c => entityButton('center', c.id, c.name, c.defined ? `${c.activeGates.length} ворот` : 'не определён')).join('') },
-  { id: 'channels', title: 'Каналы', count: m => m.totals.channels, render: (m, q) => m.channels.filter(c => matches(q, 'каналы', c.id, c.name)).map(c => entityButton('channel', c.id, c.id.replace('-', '–'), esc(c.name))).join('') || (!q ? '<p class="summary-note">Полных каналов нет.</p>' : '') },
-  { id: 'gates', title: 'Ворота', count: m => m.totals.gates, render: (m, q) => m.gates.filter(g => matches(q, 'ворота', g.id, g.name)).map(g => entityButton('gate', g.id, `${g.id} · ${g.name}`, `${g.design ? '<i class="summary-source-dot design" title="Дизайн"></i>' : ''}${g.personality ? '<i class="summary-source-dot personality" title="Личность"></i>' : ''}${g.activationCount > 1 ? `<span>×${g.activationCount}</span>` : ''}`)).join('') || (!q ? '<p class="summary-note">Активированных ворот нет.</p>' : '') },
+  { id: 'centers', title: 'Центры', count: m => m.totals.centers, render: (m, q) => m.centers.filter(c => matches(q, 'центры', c.name)).map(c => entityButton('center', c.id, `<span class="summary-center-swatch" aria-hidden="true" style="--center-color: ${esc(c.defined ? PALETTE[c.id] : PALETTE.paper)}"></span>${highlighted(c.name, q)}`, c.defined ? `${c.activeGates.length} ворот` : 'не определён')).join('') },
+  { id: 'channels', title: 'Каналы', count: m => m.totals.channels, render: (m, q) => m.channels.filter(c => matches(q, 'каналы', c.id, c.name)).map(c => entityButton('channel', c.id, highlighted(c.id, q, text => text.replace('-', '–')), highlighted(c.name, q))).join('') || (!q ? '<p class="summary-note">Полных каналов нет.</p>' : '') },
+  { id: 'gates', title: 'Ворота', count: m => m.totals.gates, render: (m, q) => m.gates.filter(g => matches(q, 'ворота', g.id, g.name)).map(g => entityButton('gate', g.id, highlighted(`${g.id} · ${g.name}`, q), `${g.design ? '<i class="summary-source-dot design" title="Дизайн"></i>' : ''}${g.personality ? '<i class="summary-source-dot personality" title="Личность"></i>' : ''}${g.activationCount > 1 ? `<span>×${g.activationCount}</span>` : ''}`)).join('') || (!q ? '<p class="summary-note">Активированных ворот нет.</p>' : '') },
 ];
 
 export function renderSummarySections(model, query = '', expanded = new Set(['lines'])) {
@@ -40,18 +58,17 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
     const body = section.render(model, q);
     if (!body) return '';
     const count = section.count(model);
-    return `<details class="summary-section" data-summary-section="${section.id}" ${q || expanded.has(section.id) ? 'open' : ''}><summary><span>${section.title}</span><span class="summary-section-count">${count ?? '—'}</span><span class="summary-chevron" aria-hidden="true">⌄</span></summary><div class="summary-section-body">${body}</div></details>`;
+    return `<details class="summary-section" data-summary-section="${section.id}" ${q || expanded.has(section.id) ? 'open' : ''}><summary><span>${highlighted(section.title, q)}</span><span class="summary-section-count">${count ?? '—'}</span><span class="summary-chevron" aria-hidden="true">⌄</span></summary><div class="summary-section-body">${body}</div></details>`;
   }).join('');
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {} }) {
+export function attachChartSummary({ panels = createPanelState(), panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {}, isAvailable = () => true }) {
   const document = panel.ownerDocument;
-  const window = document.defaultView;
   const summaryLabel = panel.getAttribute('aria-labelledby');
-  let summaryOpened = false, returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
+  let returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
   let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedScreen = null, currentChart = null;
-  const screen = () => returnsVisible ? 'returns' : summaryOpened ? 'summary' : 'closed';
+  const screen = () => isAvailable() && panels.right ? (returnsVisible ? 'returns' : 'summary') : 'closed';
   function layout() {
     // Camera callbacks read only this cheap projection, never cycle results.
     const next = screen();
@@ -83,8 +100,10 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
   }
   function open() {
     if (screen() === 'summary') return;
-    summaryOpened = true;
-    onOpen(); // The application closes returns through its existing controller.
+    returnsVisible = false;
+    panels.setRight(true);
+    // Closing the returns controller mid-restore would also cancel its moment.
+    if (!panels.restoring) onOpen();
     layout();
     if (screen() === 'summary') search.focus({ preventScroll: true });
   }
@@ -92,17 +111,18 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
     const active = screen();
     if (active === 'closed') return;
     if (focus || panel.contains(document.activeElement)) switcher.focus({ preventScroll: true });
-    summaryOpened = false;
-    onClose(); // Closes the returns owner too, even when only that screen is open.
+    returnsVisible = false;
+    panels.setRight(false);
+    if (!panels.restoring) onClose();
     layout();
   }
   const toggle = () => screen() === 'closed' ? open() : close();
   function setReturnsVisible(value) {
-    const visible = Boolean(value);
+    const visible = Boolean(value) && panels.rightRequestDuringRestore == null;
     if (returnsVisible === visible) return;
     // A view projection supplied by app.js, not another return-opening command.
     returnsVisible = visible;
-    if (visible) summaryOpened = false;
+    if (visible) panels.setRight(true, { automatic: true });
     layout();
   }
   function syncSelection(force = false) {
@@ -166,15 +186,13 @@ export function attachChartSummary({ panel, summaryScreen, returnsPanel, content
     } else if (button.dataset.summaryType) {
       onSelect({ type: button.dataset.summaryType, id: button.dataset.summaryId, additive: event.shiftKey });
     } else return;
-    // A narrow drawer covers most of the chart. Reveal an ordinary selection,
-    // while keeping Shift selections open so several items can be combined.
-    if (window.innerWidth <= 850 && !event.shiftKey) close();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && screen() !== 'closed' && !event.defaultPrevented && !document.querySelector('dialog[open]') && !document.querySelector('.library.open')) {
       event.preventDefault(); close({ focus: true });
     }
   });
+  panels.subscribe(layout);
   layout();
   return { update, layout, open, close, toggle, setReturnsVisible,
     get opened() { return screen() !== 'closed'; }, get screen() { return screen(); } };

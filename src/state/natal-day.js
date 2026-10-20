@@ -1,10 +1,7 @@
 import { createNatalDayClient } from '../data/natal-day-client.js';
 import { chartAtMinute, natalDayIndexAt } from '../domain/natal-day.js';
-import { extractChartData } from '../domain/chart-data.js';
-
-export const canExploreNatalDay = chart => Boolean(chart?.source === 'calculated'
-  && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')
-  && String(chart.cityId ?? chart.city?.id ?? '').length > 0 && Number.isFinite(Date.parse(chart.utc)));
+import { extractChartData, canExploreNatalDay } from '../domain/chart-data.js';
+export { canExploreNatalDay } from '../domain/chart-data.js';
 
 // The saved chart is the source of truth. A selected minute is a temporary view
 // and does not navigate, persist, clear graph selections or move the camera.

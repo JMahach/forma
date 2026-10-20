@@ -4,12 +4,15 @@ import { extractChartData } from '../domain/chart-data.js';
 const emptyMoment = Object.freeze({ source: 'transit', personality: [], design: [], utc: '' });
 const owners = new Set(['original', 'natal-day', 'transit', 'lifetime', 'return']);
 
+export const resolveSelectedChartId = (store, id) => id === 'current-transit' || typeof id === 'string' && store.has(id) ? id : 'current-transit';
+
 // The accepted result is a value, not a priority search through tool state.
 // A request can outlive its data job; only its owner may publish to this view.
-export function createChartSession({ store, getTransit = () => null, getNatalDay = () => null,
+export function createChartSession({ store, initialSelectedId = 'current-transit', getTransit = () => null, getNatalDay = () => null,
   getLifetime = () => null, getReturns = () => null, filterTransit = chart => chart,
   resetTransitFilter = () => {}, onSelect = () => {}, onChange = () => {} }) {
-  let selectedId = 'current-transit', selecting = false, owner = 'transit';
+  let selectedId = resolveSelectedChartId(store, initialSelectedId), selecting = false;
+  let owner = selectedId === 'current-transit' ? 'transit' : 'original';
   let record = store.get(selectedId) || null;
   let baseChart = record ? extractChartData(record) : emptyMoment;
   let accepted = createChartComposition(baseChart, { id: selectedId, primaryLabel: record?.name || 'Транзит' }), hasCurrent = store.has(selectedId);

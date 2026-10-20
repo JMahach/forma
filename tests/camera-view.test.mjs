@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCameraView } from '../src/scene/camera-view.js';
+import { createCamera } from '../src/scene/camera.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { STUDIO_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
 
 const close = (actual, expected, message = '') => assert.ok(Math.abs(actual - expected) < 1e-8,
   `${message}: ${actual} should equal ${expected}`);
@@ -164,4 +167,55 @@ test('CSSOM number serialization cannot turn identical camera poses into repeate
   h.writes.length = 0;
   h.cameraView.paint({ ...view });
   assert.deepEqual(h.writes, [], 'remember the last authored transform rather than comparing it with CSSOM rounded serialization');
+});
+
+
+test('the loading mirror receives the same projection before becoming visible, including saved zoom and resize', () => {
+  for (const fixture of fixtures) {
+    const h = harness(fixture), writes = [];
+    const mirror = { style: new Proxy({}, { set(target, property, value) {
+      if (property === 'visibility') assert.ok(target.transform?.startsWith('matrix('), 'paint precedes reveal');
+      writes.push([property, value]); target[property] = value; return true;
+    } }) };
+    const cameraView = createCameraView({ svg: h.svg, surface: h.surface, mirrors: [mirror] });
+    for (const view of [{ x: 0, y: 0, k: 1 }, { x: -763.5, y: -400.125, k: 3.2278 }]) {
+      cameraView.paint(view);
+      assert.equal(mirror.style.transform, h.svg.style.transform);
+      assert.equal(mirror.style.transformOrigin, '0 0');
+      assert.equal(mirror.style.transformBox, 'border-box');
+      assert.equal(mirror.style.visibility, 'visible');
+      writes.length = 0;
+      cameraView.paint({ ...view });
+      assert.deepEqual(writes, [], 'unchanged camera does not repeatedly write mirror styles');
+    }
+    h.resize(1031, 767);
+    cameraView.paint({ x: -763.5, y: -400.125, k: 3.2278 });
+    assert.equal(mirror.style.transform, h.svg.style.transform, 'both drawings follow the changed canvas projection');
+  }
+});
+
+test('gesture attachment takes over the early camera without resetting its saved pose or navigation ceiling', () => {
+  const h = harness(fixtures[1]), earlyPaints = [], applicationPaints = [], listeners = new Map();
+  h.surface.addEventListener = (name, handler) => listeners.set(name, handler);
+  h.svg.addEventListener = () => {};
+  h.svg.classList = { toggle() {} };
+  const camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: () => STUDIO_FRAME,
+    measureFit: frame => h.cameraView.measureFit(frame, { side: 20, top: 74, bottom: 60.8 }),
+    onChange(view) { earlyPaints.push(view); h.cameraView.paint(view); } });
+  camera.restoreView({ x: -170, y: -240, k: 2.4, maxK: 7 });
+  const before = camera.getView(), home = camera.getFittedView(), maximum = camera.maximumScale();
+  const earlyCount = earlyPaints.length;
+  const controls = attachGestures(h.svg, { camera, cameraView: h.cameraView,
+    getFrame() { assert.fail('handed-off camera retains its original geometry owners'); },
+    onSelect() {}, onChange: view => applicationPaints.push(view), requestPaint: null });
+  assert.equal(controls, camera);
+  assert.deepEqual(camera.getView(), before);
+  assert.deepEqual(camera.getFittedView(), home);
+  assert.equal(camera.maximumScale(), maximum);
+  assert.deepEqual(applicationPaints, [before], 'the new owner receives the current pose immediately');
+  camera.restoreView({ x: -170, y: -240, k: 2.4, maxK: 7 });
+  assert.deepEqual(camera.getView(), before, 'view-session restoration uses the exact early restore recipe');
+  listeners.get('wheel')({ clientX: 720, clientY: 450, deltaY: -50, preventDefault() {} });
+  assert.ok(camera.getView().k > before.k, 'interaction continues from the saved scale');
+  assert.equal(earlyPaints.length, earlyCount, 'the early paint callback has been handed off, not duplicated');
 });

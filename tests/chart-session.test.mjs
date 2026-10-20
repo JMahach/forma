@@ -580,3 +580,16 @@ test('staying in Transit preserves individual lifetime choices across day and li
   assert.deepEqual(planets.snapshot, chosen);
   assert.deepEqual(planets.filter(moment).activations.personality.map(row => row.planet), ['uranus', 'neptune', 'pluto']);
 });
+
+
+test('initial saved selection exists before subscriptions without issuing navigation commands', () => {
+  const chart = { id: 'saved', name: 'Анна', source: 'manual', personality: [1], design: [] };
+  const store = { get: id => id === chart.id ? chart : null, has: id => id === chart.id };
+  for (const [initialSelectedId, expected] of [['saved', 'saved'], ['missing', 'current-transit'], [undefined, 'current-transit']]) {
+    const session = createChartSession({ store, initialSelectedId,
+      onSelect: () => assert.fail('initial construction does not navigate'), onChange: () => assert.fail('subscribers are not attached yet') });
+    assert.equal(session.selectedId, expected); assert.equal(session.current.id, expected);
+    assert.equal(session.owner, expected === 'saved' ? 'original' : 'transit');
+    assert.equal(session.record, expected === 'saved' ? chart : null);
+  }
+});

@@ -2,10 +2,13 @@ import { computeCameraFit } from './camera-fit.js';
 
 // The fixed surface owns input coordinates and clipping; its SVG fills the box
 // without borders or padding. Moving the SVG never changes the camera's ruler.
-export function createCameraView({ svg, surface }) {
-  svg.style.transformOrigin = '0 0';
-  svg.style.transformBox = 'border-box';
-  let lastTransform = null;
+export function createCameraView({ svg, surface, mirrors = [] }) {
+  const drawings = [svg, ...mirrors];
+  for (const drawing of drawings) {
+    drawing.style.transformOrigin = '0 0';
+    drawing.style.transformBox = 'border-box';
+  }
+  let lastTransform = null, revealed = false;
 
   function projection() {
     const rect = surface.getBoundingClientRect();
@@ -39,8 +42,14 @@ export function createCameraView({ svg, surface }) {
       const transform = `matrix(${k}, 0, 0, ${k}, ${sx * x + (1 - k) * ox}, ${sy * y + (1 - k) * oy})`;
       // CSSOM rounds serialized matrix numbers; compare authored values.
       if (lastTransform !== transform) {
-        svg.style.transform = transform;
+        for (const drawing of drawings) drawing.style.transform = transform;
         lastTransform = transform;
+      }
+      if (!revealed) {
+        // All mirrors use the live SVG's viewBox and full stationary surface.
+        // Reveal only after the single camera has supplied their projection.
+        for (const drawing of mirrors) drawing.style.visibility = 'visible';
+        revealed = true;
       }
     },
   };

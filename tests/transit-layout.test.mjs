@@ -51,6 +51,23 @@ function parseRules(source, media = []) {
   }
   return parsed;
 }
+// A comma in :is(), :has() or an attribute belongs to that selector, not
+// to the outer list. Keep conditional workspace rules scoped to their parent.
+function splitSelectorList(source) {
+  const selectors = [];
+  let start = 0, depth = 0, quote = null;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === '\\') { index++; continue; }
+    if (quote) { if (character === quote) quote = null; continue; }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === '(' || character === '[') depth++;
+    else if (character === ')' || character === ']') depth--;
+    else if (character === ',' && depth === 0) { selectors.push(source.slice(start, index).trim()); start = index + 1; }
+  }
+  selectors.push(source.slice(start).trim());
+  return selectors;
+}
 const rules = parseRules(screenStyles);
 // Use the properties the real layout owner applies to the studio. Resolve only
 // those shared dimensions and simple pixel sums; percentages and other CSS
@@ -72,7 +89,7 @@ function declarationsAt(selector, width, height, { coarse = false } = {}) {
     const value = parts[2] === 'width' ? width : height, limit = Number(parts[3]);
     return parts[1] === 'min' ? value >= limit : value <= limit;
   }));
-  const declarations = Object.assign({}, ...rules.filter(rule => rule.selector.split(',').some(value => value.trim() === selector)
+  const declarations = Object.assign({}, ...rules.filter(rule => splitSelectorList(rule.selector).some(value => value.trim() === selector)
     && rule.media.every(matches)).map(rule => rule.declarations));
   return Object.fromEntries(Object.entries(declarations).map(([name, value]) => [name, resolveTimelineMetrics(value)]));
 }
@@ -88,9 +105,6 @@ test('consolidated form styles retain their small-screen overrides', () => {
   assert.equal(declarationsAt('.city-results', 1440, 900)['max-height'], '208px');
   for (const [width, height] of [[568, 320], [390, 844], [320, 568]]) {
     assert.equal(declarationsAt('.city-results', width, height)['max-height'], '190px');
-    const modes = declarationsAt('.calculation-mode button', width, height);
-    assert.equal(modes['padding-left'], '7px');
-    assert.equal(modes['padding-right'], '7px');
   }
   assert.equal(declarationsAt('.dialog-content', 390, 844).padding, '22px');
   assert.equal(declarationsAt('.dialog-content', 320, 568).padding, '18px');
@@ -124,7 +138,7 @@ test('the fourteen-unit resting gap disappears continuously at the inherited man
   const definitions = rules.filter(rule => '--activation-rest-gap' in rule.declarations);
   assert.equal(definitions.length, 2);
   const readGap = (selector, reveal) => {
-    const rule = definitions.find(candidate => candidate.selector.split(',').some(value => value.trim() === selector));
+    const rule = definitions.find(candidate => splitSelectorList(candidate.selector).some(value => value.trim() === selector));
     assert.ok(rule, `${selector} owns its explicit reveal fallback`);
     assert.deepEqual(rule.media, []);
     const formula = /^calc\((\d+)px \* \(1 - var\(--mandala-reveal, ([01])\)\)\)$/.exec(rule.declarations['--activation-rest-gap']);
@@ -200,7 +214,7 @@ test('the drawing has no CSS fade, blur or compositing mask at any breakpoint', 
   }
 });
 
-test('all timelines keep their native hit area above a permanent full-width footer', () => {
+test('all timelines keep their native hit area above the measured chart footer', () => {
   for (const [width, height] of [[320, 568], [393, 747], [844, 390], [1440, 900]]) {
     const controls = declarationsAt('.day-controls', width, height);
     assert.equal(controls.position, 'absolute', 'measured layout owns placement, independent of panel contents');
@@ -211,7 +225,10 @@ test('all timelines keep their native hit area above a permanent full-width foot
     assert.equal(controls.background, 'transparent', 'the hit area cannot hide a full-height strip of the chart');
     const backing = declarationsAt('.timeline-dock', width, height);
     assert.equal(backing.position, 'fixed', 'Safari can extend the viewport-attached background under its chrome');
-    assert.equal(backing.inset, 'var(--timeline-dock-top, calc(100% - 40.8px)) 0 0');
+    assert.equal(backing.top, 'var(--timeline-dock-top, calc(100% - 40.8px))');
+    assert.equal(backing.bottom, '0');
+    assert.equal(backing.left, 'var(--timeline-area-left, 0px)');
+    assert.equal(backing.width, 'var(--timeline-area-width, 100%)');
     assert.equal(backing.height, undefined, 'top and bottom stretch the backing through the obscured area');
     assert.equal(backing.background, 'var(--timeline-background)');
     assert.match(backing['border-top'], /^1px solid /);
@@ -451,10 +468,10 @@ test('mandala hides a caption only when its measured clearance is insufficient',
   }
 });
 
-test('the title stays centered across portrait, landscape and toolbar breakpoints', () => {
+test('the title stays centered in the free chart space across viewport breakpoints', () => {
   for (const [width, height] of [[1440, 900], [900, 800], [390, 844], [1200, 400], [568, 320], [844, 390], [1000, 500], [1001, 500]]) {
     const heading = declarationsAt('.studio-header', width, height);
-    assert.equal(heading.left, '50%', `${width}×${height} centers its title`);
+    assert.equal(heading.left, 'calc((100% + var(--studio-left-space, 0px) - var(--studio-right-space, 0px)) / 2)', `${width}×${height} centers its title in the free chart space`);
     assert.equal(heading.right, 'auto');
     assert.equal(heading.transform, 'translateX(-50%)');
     assert.equal(heading['text-align'], 'center');
@@ -465,7 +482,8 @@ test('the title stays centered across portrait, landscape and toolbar breakpoint
 test('Home is the first toolbar control, before Lifetime, Day and Mandala', () => {
   const tools = byId('fitButton').parent;
   assert.deepEqual(nodes.filter(node => node.parent === tools && node.tag === 'button')
-    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'natalDayToggle', 'mandalaSwitch', 'summarySwitch']);
+    .map(node => /\bid="([^"]+)"/.exec(node.attributes)?.[1]), ['fitButton', 'lifetimeToggle', 'natalDayToggle', 'mandalaSwitch']);
+  assert.equal(byId('summarySwitch').parent, tools.parent, 'the book remains in the measured top row, outside the floating chart tools');
   assert.doesNotMatch(byId('lifetimeToggle').attributes, /\bhidden(?:\s|$)/, 'Lifetime remains available while its data is being prepared');
   assert.match(byId('fitButton').attributes, /\bhidden(?:\s|$)/, 'the fitted initial chart starts without Home');
   assert.equal(byId('natalDayToggle').parent, byId('mandalaSwitch').parent);
@@ -492,7 +510,7 @@ test('the compact mandala icon belongs to the same named, keyboard-accessible sw
   assert.doesNotMatch(styles, /mandala-switch-(?:track|label)/, 'no unused track, label or reduced-motion rules remain');
 });
 
-test('every screen size uses the same 24px mandala illustration in a 44px button', () => {
+test('the base phone toolbar retains its 24px mandala illustration in a 44px button', () => {
   for (const [width, height] of [[320, 568], [359, 740], [360, 800], [360, 320], [361, 800], [390, 844], [699, 500], [700, 800], [1440, 900], [1920, 1080]]) {
     const button = declarationsAt('.mandala-switch', width, height);
     assert.equal(button.display, 'inline-flex');
@@ -511,7 +529,7 @@ test('every screen size uses the same 24px mandala illustration in a 44px button
 test('mandala checked styling changes its appearance without moving nearby chart tools', () => {
   const geometry = ['display', 'position', 'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
     'padding', 'padding-inline', 'margin', 'margin-inline', 'gap', 'flex', 'flex-basis', 'order', 'transform', 'border-width'];
-  const stateRules = rules.filter(rule => rule.selector.split(',').some(selector =>
+  const stateRules = rules.filter(rule => splitSelectorList(rule.selector).some(selector =>
     /^\.mandala-switch\[aria-checked=['"](?:true|false)['"]\](?::[\w-]+)?$/.test(selector.trim())));
   assert.ok(stateRules.length, 'the checked state has a visible treatment');
   for (const rule of stateRules) for (const property of geometry) {
@@ -526,14 +544,17 @@ test('mandala checked styling changes its appearance without moving nearby chart
 });
 
 test('clock and Mandala share the same inactive and active palettes at every layout size', () => {
-  const expected = { color: '#111217', background: '#f1f3f6', 'border-color': '#cdd2dc' };
+  const expected = { color: 'var(--mode-selected-ink)', background: 'var(--mode-selected)', 'border-color': 'var(--mode-selected-border)' };
+  for (const property of ['--mode-selected-ink', '--mode-selected', '--mode-selected-border']) {
+    assert.ok(declarationsAt(':root', 1440, 900)[property], `${property} has one shared palette owner`);
+  }
   for (const [width, height] of [[320, 568], [360, 800], [390, 844], [1440, 900]]) {
     const inactiveClock = declarationsAt('.chart-tools .icon-button', width, height);
     const inactiveMandala = declarationsAt('.mandala-switch', width, height);
     for (const property of ['color', 'background', 'border', 'border-radius']) {
       assert.equal(inactiveMandala[property], inactiveClock[property], `${width}px inactive Mandala matches the clock's ${property}`);
     }
-    const clock = declarationsAt(".chart-tools .icon-button[aria-expanded='true']", width, height);
+    const clock = declarationsAt("#natalDayToggle[aria-pressed='true']", width, height);
     const mandala = declarationsAt(".mandala-switch[aria-checked='true']", width, height);
     for (const [property, value] of Object.entries(expected)) {
       assert.equal(clock[property], value, `${width}px active clock defines ${property}`);
@@ -543,8 +564,8 @@ test('clock and Mandala share the same inactive and active palettes at every lay
 });
 
 test('hover and keyboard focus cannot make an inactive toolbar mode look active', () => {
-  const activeBackground = '#f1f3f6';
-  for (const rule of rules) for (const part of rule.selector.split(',')) {
+  const activeBackground = 'var(--mode-selected)';
+  for (const rule of rules) for (const part of splitSelectorList(rule.selector)) {
     const selector = part.trim();
     if (!/:(?:hover|focus(?:-visible|-within)?)\b/.test(selector)) continue;
     if (!/^(?:button(?=[:\s])|\.icon-button(?=[:\s])|\.chart-tools\b|\.mandala-switch\b)/.test(selector)) continue;
@@ -563,7 +584,7 @@ test('hover and keyboard focus cannot make an inactive toolbar mode look active'
     assert.equal(declarationsAt('.chart-tools .icon-button', width, height).background, 'var(--canvas-background)');
     assert.equal(declarationsAt('.mandala-switch', width, height).background, 'var(--canvas-background)');
     const focus = declarationsAt('.chart-tools button:focus-visible', width, height);
-    assert.equal(focus.outline, '1px dashed #566b89', 'keyboard focus has a distinct outline instead of a selected fill');
+    assert.equal(focus.outline, '1px dashed var(--control-focus)', 'keyboard focus has a distinct outline instead of a selected fill');
     assert.equal(focus['outline-offset'], '2px');
     assert.equal(focus.background, undefined);
     assert.equal(focus['background-color'], undefined);
@@ -580,7 +601,7 @@ test('caption fit can move a centered title below the tools without a landscape-
   }
   for (const [width, height] of [[320, 568], [568, 320], [844, 390], [1000, 500], [1001, 500], [1440, 900]]) {
     const heading = declarationsAt('.studio-header', width, height);
-    assert.equal(heading.left, '50%');
+    assert.equal(heading.left, 'calc((100% + var(--studio-left-space, 0px) - var(--studio-right-space, 0px)) / 2)');
     assert.equal(heading.transform, 'translateX(-50%)');
     assert.equal(heading['text-align'], 'center');
     assert.equal(heading.width, 'var(--caption-width, calc(100% - 32px))', 'the measured free width controls truncation');

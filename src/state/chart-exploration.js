@@ -222,7 +222,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     } else {
       const savedClosed = saved?.selectedId === session.selectedId && saved?.natalDay?.opened === false;
       if (!savedClosed && !getNatalDay().state.opened && session.current.kind !== 'return' && !getReturns().opened && !timelineOpening)
-        void getNatalDay().open();
+        return getNatalDay().open();
     }
     syncTransitWanted();
   }

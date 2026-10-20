@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachChartLoading } from '../src/views/chart-loading.js';
+import { attachChartLoading, holdLoadingContent } from '../src/views/chart-loading.js';
 
 function element() {
   const attributes = new Map(), listeners = new Map();
@@ -92,4 +92,35 @@ test('a usable chart stays accessible through partial-day loading or failure; lo
   assertChartAccessible(h, false);
   assert.equal(h.canvas.dataset.chartState, 'error');
   assert.equal(h.retry.hidden, false);
+});
+
+
+test('an accepted chart retains the same loading presentation until the whole initial screen can reveal', () => {
+  const h = harness();
+  h.update({ hasChart: true, holdLoading: true });
+  assertChartAccessible(h, false);
+  assert.equal(h.canvas.dataset.chartState, 'loading');
+  assert.equal(h.status.textContent, 'Загружаем карту…');
+  h.update({ hasChart: true, holdLoading: false });
+  assertChartAccessible(h, true);
+  assert.equal(h.canvas.dataset.chartState, 'ready');
+});
+
+
+test('loading blocks content while retaining panel navigation and releases only its own inert state', () => {
+  const nodes = new Map();
+  const get = name => { if (!nodes.has(name)) nodes.set(name, element()); return nodes.get(name); };
+  const document = { getElementById: get, querySelector: get };
+  get('returnsPanel').inert = true;
+  get('library').inert = true;
+  const release = holdLoadingContent(document);
+  for (const id of ['mainNavigation', 'savedChartsSection', 'summaryScreen', 'returnsPanel', 'accountPage', 'knowledgeDialog', 'allChartsDialog',
+    'transitControls', 'natalDayControls', 'lifetimeControls', '.sidebar-footer', '.chart-view-tools']) assert.equal(get(id).inert, true, id);
+  assert.equal(get('openLibrary').inert, false);
+  assert.equal(get('summarySwitch').inert, false);
+  release(); release();
+  assert.equal(get('mainNavigation').inert, false);
+  assert.equal(get('lifetimeControls').inert, false);
+  assert.equal(get('returnsPanel').inert, true, 'a prior content restriction remains owned by its feature');
+  assert.equal(get('library').inert, true, 'the closed panel keeps its own accessibility restriction');
 });

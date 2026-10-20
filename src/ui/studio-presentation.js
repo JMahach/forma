@@ -8,6 +8,7 @@ export function studioPresentation({ isTransit = false, personalAvailable = fals
     returnsVisible: personalTimelineVisible && returnsOpened,
     lifetimeAvailable: isTransit || personalAvailable,
     lifetimeHeadingVisible: !personalAvailable,
+    timelinePanel: dayOpened ? 'natal-day' : lifetime?.opened ? 'lifetime' : isTransit ? 'transit' : null,
     timelineKind: dayOpened ? 'natal-day' : lifetime?.opened && !personalAvailable ? 'chronicle' : 'day',
     toggleEnabled: personalAvailable ? returnsEnabled : transitEnabled,
     toggleLabel: loadFailed ? 'Обновить страницу и загрузить летопись' : personalAvailable ? 'Возвраты' : 'Летопись',

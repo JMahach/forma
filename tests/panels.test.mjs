@@ -1,0 +1,105 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPanelState } from '../src/state/panels.js';
+
+test('both panels open independently and only real changes notify consumers', () => {
+  const panels = createPanelState(), changes = [];
+  const stop = panels.subscribe(value => changes.push(value));
+  panels.setLeft(true); panels.setRight(true); panels.setRight(true);
+  assert.deepEqual(panels.snapshot, { left: true, right: true });
+  assert.deepEqual(changes, [{ left: true, right: false }, { left: true, right: true }]);
+  const snapshot = panels.snapshot; snapshot.left = false;
+  assert.equal(panels.left, true, 'callers cannot mutate the state without notifying its consumers');
+  stop(); panels.setLeft(false);
+  assert.equal(changes.length, 2);
+  assert.equal(panels.right, true);
+});
+
+test('restoring both sides is atomic and malformed values cannot open a panel', () => {
+  const panels = createPanelState(), changes = [];
+  panels.subscribe(value => changes.push(value));
+  panels.restore({ left: true, right: true });
+  panels.restore({ left: true, right: true });
+  assert.deepEqual(changes, [{ left: true, right: true }]);
+  panels.restore({ left: 'true', right: 1 });
+  assert.deepEqual(panels.snapshot, { left: false, right: false });
+  panels.restore(null);
+  assert.equal(changes.length, 2);
+});
+
+
+test('a manual right-panel request wins over restoration projections without extra layout notifications', () => {
+  const panels = createPanelState(), changes = [];
+  panels.subscribe(value => changes.push(value));
+  panels.beginRestore();
+  panels.restore({ left: true, right: true });
+  panels.setRight(true);
+  panels.setRight(false, { automatic: true });
+  assert.equal(panels.right, true);
+  assert.equal(panels.rightRequestDuringRestore, true);
+  panels.setRight(false);
+  panels.setRight(true, { automatic: true });
+  assert.equal(panels.right, false);
+  assert.equal(panels.rightRequestDuringRestore, false);
+  assert.equal(changes.length, 2, 'request bookkeeping does not resize or re-render unchanged panels');
+  panels.finishRestore();
+  panels.setRight(true, { automatic: true });
+  assert.equal(panels.right, true, 'new returns commands work normally after restoration');
+  assert.equal(panels.rightRequestDuringRestore, null);
+});
+
+
+for (const opened of [false, true]) {
+  test(`early panel commands survive another restore start and saved values (opened: ${opened})`, () => {
+    const panels = createPanelState(), changes = [];
+    panels.restore({ left: !opened, right: !opened });
+    panels.beginRestore();
+    panels.subscribe(value => changes.push(value));
+    panels.setLeft(opened); panels.setRight(opened);
+    panels.beginRestore();
+    panels.restore({ left: !opened, right: !opened });
+    panels.setRight(!opened, { automatic: true });
+    assert.deepEqual(panels.snapshot, { left: opened, right: opened });
+    assert.equal(panels.rightRequestDuringRestore, opened);
+    assert.equal(changes.length, 2, 'the later restore cannot undo commands or cause another layout change');
+  });
+}
+
+test('a left command protects only the left side while saved and automatic right changes remain available', () => {
+  const panels = createPanelState();
+  panels.beginRestore();
+  panels.setLeft(true);
+  panels.setRight(true, { automatic: true });
+  panels.beginRestore();
+  panels.restore({ left: false, right: false });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+  panels.setRight(true, { automatic: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: true });
+  assert.equal(panels.rightRequestDuringRestore, null);
+});
+
+test('a right command does not pin the left side and the latest explicit request wins', () => {
+  const panels = createPanelState();
+  panels.beginRestore();
+  panels.setRight(true); panels.setRight(false);
+  panels.restore({ left: true, right: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+  panels.setLeft(false); panels.setLeft(true);
+  panels.restore({ left: false, right: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+});
+
+test('finishing restoration releases both explicit requests for normal and later restores', () => {
+  const panels = createPanelState();
+  panels.beginRestore();
+  panels.setLeft(true); panels.setRight(true);
+  panels.finishRestore();
+  assert.equal(panels.restoring, false);
+  assert.equal(panels.rightRequestDuringRestore, null);
+  panels.restore({ left: false, right: false });
+  assert.deepEqual(panels.snapshot, { left: false, right: false });
+  panels.beginRestore();
+  panels.restore({ left: true, right: true });
+  panels.restore({ left: false, right: false });
+  assert.deepEqual(panels.snapshot, { left: false, right: false }, 'a later restore has no stale requests');
+});
