@@ -36,10 +36,15 @@ export function mandalaPlanetEntries(chart) {
   return ['design', 'personality'].flatMap(source => {
     const entries = chart.activations?.[source];
     if (!Array.isArray(entries)) return [];
+    const entriesByPlanet = new Map();
+    for (const entry of entries) {
+      const planet = entry?.planet;
+      // Keep duplicates ambiguous, including a third or invalid copy.
+      entriesByPlanet.set(planet, entriesByPlanet.has(planet) ? null : entry);
+    }
     return PLANETS.flatMap(([planet]) => {
-      const matches = entries.filter(entry => entry?.planet === planet);
-      if (matches.length !== 1) return [];
-      const entry = matches[0];
+      const entry = entriesByPlanet.get(planet);
+      if (!entry) return [];
       if (!Number.isFinite(entry.longitude) || entry.longitude < 0 || entry.longitude >= 360) return [];
       const position = gatePositionAtLongitude(entry.longitude);
       if (entry.gate !== position.gate || entry.line !== position.line) return [];

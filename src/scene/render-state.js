@@ -8,6 +8,11 @@ import { gatesForSelection } from '../selection/selection-targets.js';
 export function createRenderState(chart, selection, options) {
   const committedSelection = selection;
   const committedSelections = (options.selections || [selection]).filter(Boolean);
+  const committedIdsByType = new Map();
+  for (const { type, id } of committedSelections) {
+    if (!committedIdsByType.has(type)) committedIdsByType.set(type, new Set());
+    committedIdsByType.get(type).add(String(type === 'channel' ? getChannel(id)?.id : id));
+  }
   // Hover adds a temporary layer. Only the committed selection owns pressed
   // state; moving the pointer must never erase or broaden that selection.
   const visualSelections = [...committedSelections, options.previewSelection].filter(Boolean);
@@ -45,7 +50,7 @@ export function createRenderState(chart, selection, options) {
   const committedGates = new Set(committedSelections.flatMap(gatesForSelection));
   const previewGates = new Set(gatesForSelection(options.previewSelection));
   return {
-    committedSelection, committedSelections, visualSelections,
+    committedSelection, committedSelections, committedIdsByType, visualSelections,
     hasExplicitSelection: Boolean(options.previewSelection || options.selections),
     personality, design, definition, definedChannels, interactive, prefix,
     overlaySources: createOverlaySourceState(chart),
@@ -56,6 +61,6 @@ export function createRenderState(chart, selection, options) {
 
 // Preview contributes paint, but only committed targets own the pressed state.
 export function isSelectionPressed(state, type, id, fallback) {
-  return state.hasExplicitSelection ? state.committedSelections.some(value => type === value.type
-    && String(id) === String(type === 'channel' ? getChannel(value.id)?.id : value.id)) : fallback;
+  return state.hasExplicitSelection
+    ? Boolean(state.committedIdsByType.get(type)?.has(String(id))) : fallback;
 }

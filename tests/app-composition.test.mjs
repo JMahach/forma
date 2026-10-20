@@ -85,6 +85,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id),
     remove(id) { charts = store.charts = charts.filter(chart => chart.id !== id); } };
   let graph, gestures, camera, natalDay, returns, birthOptions, lifetime, lifetimeOptions, lifetimeStateOptions, transitOptions, finishModule, failModule, loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
+  let captionUpdates = 0;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const memory = {}, natalClient = {};
   const ports = {
@@ -116,7 +117,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
     createChartStore: () => store,
     createViewSession: () => ({ restore: async () => true, interrupt: () => { interruptions++; }, schedule: noop }),
-    chartCaption,
+    chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a, b) { title.textContent = a; subtitle.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
     attachLiveTransit: options => {
@@ -153,7 +154,7 @@ function harness({ studioSize = null, metaError = null, charts = [], returnEvent
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: selector => selector === '[data-chart-id]' ? button : null } });
     }, get shown() { return graph.getChart(); }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
-    get interruptions() { return interruptions; },
+    get interruptions() { return interruptions; }, get captionUpdates() { return captionUpdates; },
     filter: id => gestures.onSelect({ type: 'planet-filter', id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
     get lifetimeOptions() { return lifetimeOptions; },
@@ -562,14 +563,20 @@ test('pending personal life data retains todays natal age until the new moment i
   await h.select(chart.id);
   const opening = h.element('lifetimeToggle').click(); h.finishModule(); await opening; await tick();
   const target = Date.parse('2050-01-01T12:00:00Z');
+  const beforeLoading = h.captionUpdates;
   h.lifetimeOptions.beforeScrub(target);
   const pending = h.lifetime.scrub(target);
-  await tick(); h.clockTick();
+  await tick();
+  assert.equal(h.lifetime.state.status, 'loading', 'pending work still updates the timeline tools');
+  assert.equal(h.captionUpdates, beforeLoading, 'loading tools must not reformat the unchanged displayed chart');
+  h.clockTick();
   assert.equal(h.shown.kind, 'single');
   assert.match(h.element('chartSubtitle').textContent, /12:34.*2\u00a0года$/);
+  const beforeAccepted = h.captionUpdates;
   resolve(); await pending;
   assert.equal(h.shown.kind, 'transit');
   assert.match(h.element('chartSubtitle').textContent, /2050.*23\u00a0года$/);
+  assert.equal(h.captionUpdates, beforeAccepted + 1, 'each accepted chart formats its caption once');
   h.clockTick();
   assert.match(h.element('chartSubtitle').textContent, /2050.*23\u00a0года$/);
 });

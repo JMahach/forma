@@ -58,8 +58,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     onSelect: () => exploration?.selected(), onChange: updatePage });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
-    onTimelineReady: () => { updatePersonalTimeline(); refreshStudioLayout(); },
-    onModeChange: updatePersonalTimeline, onChange: () => { syncLifetimeTransit(); viewSession?.schedule(); } });
+    onTimelineReady: () => { updateTimelineTools(); refreshStudioLayout(); },
+    onModeChange: updateTimelineTools, onChange: () => { syncLifetimeTransit(); viewSession?.schedule(); } });
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
     lifetime?.state.opened && lifetime.state.mode === 'lifetime' || viewSession?.pendingLifetime?.mode === 'lifetime');
@@ -167,7 +167,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
     status: $('natalDayStatus'), retryButton: $('natalDayRetry'), hourMarks: $('natalDayHourMarks'),
     onMomentInput: () => viewSession?.interrupt(),
-    onRender: exploration.publishDay, onStateChange: () => { updatePersonalTimeline(); viewSession?.schedule(); },
+    onRender: exploration.publishDay, onStateChange: () => { updateTimelineTools(); viewSession?.schedule(); },
   });
   returnMarkers = attachReturnMarkers({ container: $('lifetimeTime').parentElement,
     onTargetsChange: () => lifetimeControls?.refreshTargets(),
@@ -176,7 +176,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     client: createCyclesClient({ memory: dayClient.memory, cacheVersion: document.body.dataset.cyclesVersion }),
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn,
     onStateChange() {
-      updatePersonalTimeline(); viewSession?.schedule();
+      updateTimelineTools(); viewSession?.schedule();
     },
   });
   $('natalDayToggle').addEventListener('click', () => {
@@ -260,7 +260,8 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
   }
 
   function updatePage() {
-    const layoutRendered = updatePersonalTimeline();
+    const layoutRendered = updateTimelineTools();
+    updateChartCaption();
     library.render();
     if (!layoutRendered) graph.render();
     updateLoading();
@@ -310,7 +311,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
       });
       // Loading only supplies the view. The controller still owns whether its
       // drawer is open, including another click or navigation during the import.
-      updatePersonalTimeline();
+      updateTimelineTools();
       return returnsView;
     }).catch(() => {
       if (returns.opened) { returns.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
@@ -319,7 +320,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
     return returnsViewLoading;
   }
 
-  function updatePersonalTimeline() {
+  function updateTimelineTools() {
     if (!returns) return;
     const state = returns.state, lifetimeState = lifetime?.state, metadata = lifetimeState?.metadata;
     const view = presentation();
@@ -349,7 +350,6 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
       fromUtc: window?.minUtc ?? NaN,
       toUtc: window?.maxUtc ?? NaN,
       visible: Boolean(valid) });
-    updateChartCaption();
     return refreshTimelineLayout(view);
   }
 
@@ -378,7 +378,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
             transitControls.setCoveredByLifetime(state.opened || session.selectedId !== 'current-transit');
             viewSession?.schedule();
             exploration.lifetimeChanged(state);
-            updatePersonalTimeline(); updateLoading();
+            updateTimelineTools(); updateLoading();
           },
         });
         controls = attachLifetimeControls({
@@ -415,7 +415,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView }) {
         lifetimeControls = controls;
         return lifetime;
       } catch {
-        lifetimeLoadFailed = true; updateLoading(); updatePersonalTimeline();
+        lifetimeLoadFailed = true; updateLoading(); updateTimelineTools();
         return null;
       } finally {
         lifetimeLoading = null;

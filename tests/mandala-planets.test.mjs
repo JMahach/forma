@@ -3,6 +3,67 @@ import assert from 'node:assert/strict';
 import { PLANET_IDS } from '../src/domain/planets.js';
 import { MANDALA_GEOMETRY, mandalaPoint } from '../src/scene/geometry/mandala-geometry.js';
 import { MANDALA_PLANET_LAYOUT, layoutMandalaPlanets } from '../src/scene/geometry/mandala-planets.js';
+import { mandalaPlanetEntries } from '../src/scene/mandala-paint-rules.js';
+
+test('planet entries retain source and planet order independently of activation row order', () => {
+  const chart = { source: 'calculated', activations: {
+    design: [
+      { planet: 'moon', longitude: 304, gate: 41, line: 3 },
+      { planet: 'earth', longitude: 303, gate: 41, line: 2 },
+      { planet: 'sun', longitude: 302, gate: 41, line: 1 },
+    ],
+    personality: [
+      { planet: 'moon', longitude: 304, gate: 41, line: 3 },
+      null,
+      { planet: 'unknown', longitude: 302, gate: 41, line: 1 },
+      { planet: 'sun', longitude: 302, gate: 41, line: 1 },
+    ],
+  } };
+  assert.deepEqual(mandalaPlanetEntries(chart), [
+    { source: 'design', planet: 'sun', longitude: 302 },
+    { source: 'design', planet: 'earth', longitude: 303 },
+    { source: 'design', planet: 'moon', longitude: 304 },
+    { source: 'personality', planet: 'sun', longitude: 302 },
+    { source: 'personality', planet: 'moon', longitude: 304 },
+  ]);
+});
+
+test('all copies of a duplicated planet are excluded even when only one copy is valid', () => {
+  const sun = { planet: 'sun', longitude: 302, gate: 41, line: 1 };
+  const earth = { planet: 'earth', longitude: 303, gate: 41, line: 2 };
+  for (const duplicates of [
+    [{ ...sun }],
+    [{ ...sun }, { ...sun }],
+    [{ ...sun, longitude: NaN }],
+    [{ ...sun, gate: 19 }],
+  ]) {
+    for (const design of [[sun, earth, ...duplicates], [...duplicates, earth, sun]]) {
+      const chart = { source: 'calculated', activations: { design, personality: [sun] } };
+      assert.deepEqual(mandalaPlanetEntries(chart), [
+        { source: 'design', planet: 'earth', longitude: 303 },
+        { source: 'personality', planet: 'sun', longitude: 302 },
+      ]);
+    }
+  }
+});
+
+test('planet entries re-evaluate edited rows and duplicate additions on the same chart', () => {
+  const sun = { planet: 'sun', longitude: 302, gate: 41, line: 1 };
+  const chart = { source: 'transit', activations: { personality: [sun] } };
+  assert.deepEqual(mandalaPlanetEntries(chart), [
+    { source: 'personality', planet: 'sun', longitude: 302 },
+  ]);
+  Object.assign(sun, { planet: 'moon', longitude: 303, line: 2 });
+  assert.deepEqual(mandalaPlanetEntries(chart), [
+    { source: 'personality', planet: 'moon', longitude: 303 },
+  ]);
+  chart.activations.personality.push({ ...sun });
+  assert.deepEqual(mandalaPlanetEntries(chart), []);
+  chart.activations.personality.pop();
+  assert.deepEqual(mandalaPlanetEntries(chart), [
+    { source: 'personality', planet: 'moon', longitude: 303 },
+  ]);
+});
 
 const normalize = angle => ((angle % 360) + 360) % 360;
 const angularDistance = (left, right) => Math.abs(normalize(left - right + 180) - 180);

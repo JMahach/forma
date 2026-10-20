@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
+import { createRenderState, isSelectionPressed } from '../src/scene/render-state.js';
 import { CENTERS, GATES, CHANNELS } from '../src/scene/geometry/chart-geometry.js';
 import { STEM_POINTS } from '../src/scene/geometry/integration-geometry.js';
 
@@ -44,6 +45,34 @@ const allPressed = markup => new Set(targets(markup)
   .filter(target => attribute(target.tag, 'aria-pressed') === 'true')
   .map(target => target.activation || `${target.type}:${target.id}`));
 const numericCopies = markup => targets(markup).filter(target => target.type === 'gate' && target.activation);
+
+test('pressed targets keep typed string identity and canonicalize committed channel IDs', () => {
+  const state = createRenderState(chartFixture(), null, {
+    selections: [gate('20'), gate('029'), center('throat'), channel('40-37')],
+    previewSelection: channel('60-3'),
+  });
+  for (const [type, id, expected] of [
+    ['gate', 20, true], ['gate', '20', true], ['gate', 29, false], ['gate', '029', true],
+    ['center', 'throat', true], ['gate', 'throat', false], ['center', '20', false],
+    ['channel', '37-40', true], ['channel', '40-37', false], ['channel', '3-60', false],
+    ['gate', 37, false], ['gate', 40, false],
+  ]) {
+    assert.equal(isSelectionPressed(state, type, id, true), expected, `${type}:${id}`);
+  }
+});
+
+test('pressed state uses the paint fallback only when there is no explicit selection option', () => {
+  const legacy = createRenderState(chartFixture(), gate(20), {});
+  assert.equal(isSelectionPressed(legacy, 'gate', 20, false), false);
+  assert.equal(isSelectionPressed(legacy, 'gate', 29, true), true);
+
+  const preview = createRenderState(chartFixture(), gate(20), { previewSelection: gate(29) });
+  assert.equal(isSelectionPressed(preview, 'gate', 20, false), true);
+  assert.equal(isSelectionPressed(preview, 'gate', 29, true), false);
+
+  const cleared = createRenderState(chartFixture(), gate(20), { selections: [] });
+  assert.equal(isSelectionPressed(cleared, 'gate', 20, true), false);
+});
 
 function visibleHighlights(markup) {
   const groups = targets(markup), graph = groups.filter(target => !target.activation);
