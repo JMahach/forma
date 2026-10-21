@@ -208,7 +208,7 @@ test('gesture attachment takes over the early camera without resetting its saved
   const controls = attachGestures(h.svg, { camera, cameraView: h.cameraView,
     getFrame() { assert.fail('handed-off camera retains its original geometry owners'); },
     onSelect() {}, onChange: view => applicationPaints.push(view), requestPaint: null });
-  assert.equal(controls, camera);
+  assert.deepEqual(controls.getView(), camera.getView());
   assert.deepEqual(camera.getView(), before);
   assert.deepEqual(camera.getFittedView(), home);
   assert.equal(camera.maximumScale(), maximum);

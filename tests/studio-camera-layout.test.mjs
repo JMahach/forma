@@ -371,7 +371,11 @@ test('the application supplies the studio canvas insets and keeps only the Home 
   assert.doesNotMatch(app, /createCanvasInsetsReader|readCanvasInsets/, 'the application reuses the layout owner instead of measuring discarded insets');
   assert.match(startup, /measureFit:\s*frame\s*=>\s*cameraView\.measureFit\(frame,\s*\(\)\s*=>\s*layout\.insets\(\)\)/, 'phone safe areas and desktop insets feed the same early camera');
   assert.match(startup, /getHomeFrame:\s*\(\)\s*=>\s*layout\.frame\(\)/, 'all modes use the shared Studio Home baseline');
-  assert.match(app, /attachGestures\([^,]+,\s*\{\s*camera, cameraView,/, 'gestures take over the existing camera and projection');
+  assert.match(startup, /attachGestures\(element\('bodygraph'\), \{ camera, cameraView,/, 'loading gestures use the same early camera and projection');
+  assert.match(startup, /app\.startApp\(\{[^\n]*camera, cameraView, gestures,/, 'startup hands its camera, projection and gesture owner to the app');
+  assert.match(app, /const gestureHandlers = \{\s*camera, cameraView,/, 'application callbacks retain the existing camera and projection');
+  assert.match(app, /const gestures = startupGestures \|\| attachGestures\(\$\('bodygraph'\), gestureHandlers\)/, 'handoff reuses the already attached gestures');
+  assert.match(app, /if \(startupGestures\) gestures\.setHandlers\(gestureHandlers\)/, 'handoff upgrades the shared gesture callbacks without a second owner');
   assert.match(app, /createCameraChangeHandler\(\{\s*heading:\s*\$\('chartHeader'\)/, 'the real camera controls fixed-heading visibility');
   assert.match(app, /createCameraChangeHandler\(\{[^}]*fitButton:\s*\$\('fitButton'\)/, 'the real camera controls Home visibility');
   assert.match(page, /<header\b[^>]*id="chartHeader"/, 'one header owns both name and date visibility');

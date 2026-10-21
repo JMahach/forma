@@ -63,10 +63,10 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panels = createPanelState(), panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {}, isAvailable = () => true, focusSearch = () => true }) {
+export function attachChartSummary({ panels = createPanelState(), initialReturnsVisible = false, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {}, isAvailable = () => true, focusSearch = () => true }) {
   const document = panel.ownerDocument;
   const summaryLabel = panel.getAttribute('aria-labelledby');
-  let returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
+  let returnsVisible = initialReturnsVisible, model = null, fingerprint = '', expanded = new Set(['lines']);
   let currentItems = [], currentFilter = null, selectionFingerprint = '', lastId = null, appliedScreen = null, currentChart = null;
   const screen = () => isAvailable() && panels.right ? (returnsVisible ? 'returns' : 'summary') : 'closed';
   function layout() {
@@ -80,7 +80,7 @@ export function attachChartSummary({ panels = createPanelState(), panel, summary
     // Retain the last screen and its placement throughout the closing slide.
     // The shell becomes inaccessible immediately, without erasing its contents.
     if (opened || previous === null) {
-      const shown = opened ? next : 'summary';
+      const shown = opened ? next : returnsVisible ? 'returns' : 'summary';
       panel.dataset.screen = shown;
       if (summaryScreen) summaryScreen.hidden = shown !== 'summary';
       if (returnsPanel) returnsPanel.hidden = shown !== 'returns';

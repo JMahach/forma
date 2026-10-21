@@ -27,7 +27,7 @@ import { renderBodygraph } from '../src/scene/bodygraph-svg.js';
 import { createCamera } from '../src/scene/camera.js';
 import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.js';
 import { attachTransitNavigation } from '../src/views/live-transit.js';
-import { holdLoadingContent } from '../src/views/chart-loading.js';
+import { holdLoadingContent, commitLoadingLayout } from '../src/views/chart-loading.js';
 import { studioPresentation } from '../src/ui/studio-presentation.js';
 
 // Execute the whole composition root, preserving declaration and attachment
@@ -78,7 +78,7 @@ function browser() {
   return { document, element };
 }
 
-function harness({ restore = async () => true, savedView = null, fonts, initialPresentation = null, previewLoading = false, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
+function harness({ search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') } = {}) {
   const { document, element } = browser();
   if (fonts !== undefined) document.fonts = { ready: fonts };
   const dimensions = studioSize && { ...studioSize };
@@ -99,11 +99,12 @@ function harness({ restore = async () => true, savedView = null, fonts, initialP
   const store = { charts, storageAvailable: true, get: id => charts.find(chart => chart.id === id), has: id => charts.some(chart => chart.id === id),
     remove(id) { charts = store.charts = charts.filter(chart => chart.id !== id); } };
   let graph, gestures, camera, natalDay, returns, birthOptions, lifetime, lifetimeOptions, lifetimeStateOptions, transitOptions, finishModule, failModule, loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
-  let captionUpdates = 0, workspace, panels, knowledgeOptions, knowledgeLoads = 0;
+  let performanceOptions;
+  let captionUpdates = 0, workspace, panels, knowledgeOptions, knowledgeLoads = 0, restoreInterrupted = false;
   const module = new Promise((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const memory = {}, natalClient = {};
   const ports = {
-    createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent,
+    createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent, commitLoadingLayout,
     attachAllCharts: options => {
       const view = attachAllCharts({ ...options, preview: (_canvas, _chart, { onReady }) => { onReady(true); return noop; } });
       return chartsReady ? { ...view, whenReady: chartsReady } : view;
@@ -137,7 +138,10 @@ function harness({ restore = async () => true, savedView = null, fonts, initialP
       return { choose: noop, chooseSummary: noop, changeChart: id => { chartSelections++; options.onChartChange(id); },
       clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
-    createViewSession: options => { assert.equal(options.cameraRestored, true); return { restore, interrupt: () => { interruptions++; }, schedule: noop }; },
+    createViewSession: options => { assert.equal(options.cameraRestored, true); return {
+      restore, get interrupted() { return restoreInterrupted; },
+      interrupt() { restoreInterrupted = true; interruptions++; }, schedule: noop,
+    }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a, b) { title.textContent = a; subtitle.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { opened: false }; },
@@ -149,7 +153,7 @@ function harness({ restore = async () => true, savedView = null, fonts, initialP
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: options => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: options => ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: noop,
+    attachChartSummary: options => ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: options => { performanceOptions = options; },
     attachChartLoading: () => ({ update: noop }), createCyclesClient: options => { assert.equal(options.memory, memory); return { events: async input => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
@@ -157,7 +161,7 @@ function harness({ restore = async () => true, savedView = null, fonts, initialP
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState',
     `${body.replace("import('./views/lifetime-controls.js')", 'loadLifetimeView()')
       .replace("import('./state/lifetime.js')", 'loadLifetimeState()')}\nreturn startApp;`)(
-    ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search: '' },
+    ...imports.map(name => ports[name]), document, class { constructor(callback) { resizeLayout = callback; } observe() {} }, { search },
     { location: { reload() { reloads++; } } }, () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
       stateLoads++;
       return { createLifetimeExplorer(options) {
@@ -179,8 +183,8 @@ function harness({ restore = async () => true, savedView = null, fonts, initialP
   camera.reset();
   const cameraView = { surface: element('canvasWrap'), paint: noop };
   const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document });
-  startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation, previewLoading });
-  return { element, layout, natalClient, camera, workspace, panels, timelineKinds,
+  startApp({ dayClient: { memory }, layout, toast: noop, viewStore: { write: noop }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
+  return { element, layout, natalClient, camera, workspace, panels, timelineKinds, performanceOptions,
     get knowledgeLoads() { return knowledgeLoads; }, showKnowledgeSelection: selection => knowledgeOptions.onSelect(selection), resize(width, height) { Object.assign(dimensions, { width, height }); resizeLayout(); }, select(id) {
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: selector => selector === '[data-chart-id]' ? button : null } });
@@ -748,10 +752,12 @@ for (const [button, screen] of [['openAccount', 'account'], ['openAllCharts', 'c
 }
 
 
-test('initial loading keeps panel navigation available while content and tools stay inert', () => {
+test('initial loading enables scene controls and normal panel motion while unreadied content stays inert', () => {
   const h = harness({ restore: () => new Promise(() => {}) });
   assert.equal(h.element('shell').dataset.pageState, 'loading');
-  assert.equal(h.element('shell').dataset.booting, 'true');
+  assert.equal(h.element('shell').dataset.booting, undefined, 'initial placement is committed before interactive loading begins');
+  for (const id of ['openLibrary', 'summarySwitch', 'mandalaSwitch', 'lifetimeToggle', 'fitButton'])
+    assert.equal(h.element(id).inert, false, `${id} remains available during real loading`);
   assert.equal(h.element('shell').inert, false);
   assert.equal(h.element('mainNavigation').inert, true);
   assert.equal(h.element('lifetimeControls').inert, true);
@@ -791,25 +797,87 @@ test('workspace readiness waits for its lazy content but never for the hidden ch
   await tick(); assert.equal(account.element('shell').dataset.pageState, 'ready');
 });
 
-test('a local preview mounts its panel toggles while retaining the loading presentation', async () => {
-  const moment = { id: 'current-transit', source: 'transit', personality: [1], design: [] };
-  const h = harness({ charts: [moment], previewLoading: true }); await tick();
+test('a timeline command during delayed restoration survives the late failed restore result', async () => {
+  let finishRestore;
+  const initialPresentation = studioPresentation({ isTransit: true });
+  const h = harness({ initialPresentation, restore: () => new Promise(done => { finishRestore = done; }) });
+  await tick();
   assert.equal(h.element('shell').dataset.pageState, 'loading');
-  assert.equal(h.element('shell').inert, false);
-  assert.equal(h.element('mainNavigation').inert, true);
+  assert.equal(h.element('lifetimeToggle').hidden, false);
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'false');
   await h.element('openLibrary').click(); assert.equal(h.panels.left, true);
   await h.element('openLibrary').click(); assert.equal(h.panels.left, false);
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.interruptions, 1, 'an explicit mode choice supersedes pending restoration');
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'true', 'opening intent is visible before lazy data arrives');
+  h.finishModule(); await tick();
+  assert.equal(h.lifetime.state.opened, true);
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-expanded'), 'true');
+  const kind = h.timelineKinds.at(-1);
+  finishRestore(false); await tick();
+  assert.equal(h.lifetime.state.opened, true, 'the old restore cannot close the chosen timeline');
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'true');
+  assert.equal(h.timelineKinds.at(-1), kind);
+  assert.notEqual(h.element('shell').dataset.pageState, 'error', 'failure of an obsolete restore is not the current screen error');
+});
+
+
+test('clicking a saved enabled chronicle before its controller arrives closes it without starting another load', async () => {
+  let finishRestore;
+  const moment = { id: 'current-transit', source: 'transit', personality: [1], design: [] };
+  const lifetime = { opened: true, mode: 'lifetime' };
+  const initialPresentation = studioPresentation({ isTransit: true, lifetime, transitEnabled: true });
+  const h = harness({ charts: [moment], savedView: { selectedId: moment.id, lifetime }, initialPresentation,
+    restore: () => new Promise(done => { finishRestore = done; }) });
+  await tick();
+  assert.equal(h.lifetime, undefined);
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'true');
+  await h.element('lifetimeToggle').click();
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'false', 'the first click closes the mode shown as enabled');
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(h.loads, 0, 'closing the saved mode must not open its lazy controller');
+  assert.equal(h.timelineKinds.at(-1), 'day');
+  finishRestore(true); await tick();
+  assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'false');
+  assert.equal(h.loads, 0, 'a late restoration cannot reopen the cancelled mode');
+});
+
+test('clicking a saved enabled natal day before restoration closes it and a late restore cannot reopen it', async () => {
+  let finishRestore;
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const initialPresentation = studioPresentation({ personalAvailable: true, dayOpened: true });
+  const h = harness({ charts: [chart], savedView: { selectedId: chart.id, natalDay: { opened: true } }, initialPresentation,
+    restore: () => new Promise(done => { finishRestore = done; }) });
+  await tick();
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.element('natalDayToggle').getAttribute('aria-pressed'), 'true');
+  await h.element('natalDayToggle').click();
+  assert.equal(h.natalDay.state.opened, false, 'the first click closes the day shown as enabled');
+  assert.equal(h.dayRequests, 0, 'closing does not start a new day request');
+  assert.equal(h.element('natalDayToggle').getAttribute('aria-pressed'), 'false');
+  assert.equal(h.element('natalDayToggle').getAttribute('aria-expanded'), 'false');
+  finishRestore(true); await tick();
+  assert.equal(h.natalDay.state.opened, false);
+  assert.equal(h.dayRequests, 0, 'the saved open day cannot supersede an explicit close');
+  assert.equal(h.element('natalDayToggle').getAttribute('aria-pressed'), 'false');
 });
 
 
 test('the saved timeline layout is retained through lazy restoration before accepting the actual panel', async () => {
   let finish;
-  const initialPresentation = studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'lifetime' } });
+  const initialPresentation = studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'lifetime' }, transitEnabled: true });
   const h = harness({ initialPresentation, restore: () => new Promise(done => { finish = done; }) });
   await tick();
   assert.equal(h.timelineKinds.at(-1), 'chronicle');
+  for (const state of ['aria-pressed', 'aria-expanded']) assert.equal(h.element('lifetimeToggle').getAttribute(state), 'true');
+  assert.equal(h.element('lifetimeToggle').hidden, false);
+  assert.equal(h.element('lifetimeControls').hidden, false);
+  assert.equal(h.element('transitControls').hidden, true);
   h.clockTick();
   assert.equal(h.timelineKinds.at(-1), 'chronicle', 'intermediate live-transit updates cannot remove the saved dates layout');
+  for (const state of ['aria-pressed', 'aria-expanded']) assert.equal(h.element('lifetimeToggle').getAttribute(state), 'true', 'saved selection remains visible while restoration is pending');
+  assert.equal(h.element('lifetimeControls').hidden, false);
+  assert.equal(h.element('transitControls').hidden, true);
   finish(false); await tick();
   assert.equal(h.timelineKinds.at(-1), 'day', 'completion accepts the actual state, including its failure recovery');
   assert.equal(h.element('shell').dataset.pageState, 'error');
@@ -914,4 +982,13 @@ test('restoring and projecting a phone workspace preserves its saved menu until 
   assert.equal(h.panels.left, true, 'showing a restored screen is not a user navigation command');
   await h.element('openAllCharts').click();
   assert.equal(h.panels.left, false);
+});
+
+
+test('legacy performance parameters cannot enable the FPS monitor at application startup', () => {
+  for (const search of ['', '?fps=1', '?perf=1', '?fps=1&perf=1&preview=loading']) {
+    const app = harness({ search });
+    assert.equal(Boolean(app.performanceOptions.initiallyEnabled), false, search);
+    assert.equal(app.performanceOptions.button, app.element('togglePerformance'), 'the existing button remains attached');
+  }
 });

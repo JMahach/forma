@@ -15,7 +15,7 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
   const { prepareLoadingPage } = await import(pathToFileURL(path.join(root, 'src/scene/loading-placeholder.js')).href);
   const result = await build({
     absWorkingDir: root,
-    entryPoints: { startup: 'src/startup.js', love: 'src/stories/vessel-of-love.js', styles: 'public/styles.css', 'love-style': 'public/love.css' },
+    entryPoints: { startup: 'src/entry.js', love: 'src/stories/vessel-of-love.js', styles: 'public/styles.css', 'love-style': 'public/love.css' },
     outdir, entryNames: 'assets/[name]-[hash]', chunkNames: 'assets/shared-[hash]',
     bundle: true, splitting: true, format: 'esm', platform: 'browser', target: ['safari15', 'chrome100'],
     minify: true, metafile: true, write: false, logLevel: 'silent',
@@ -40,7 +40,7 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
         // Startup intentionally opens the UI early. Other dynamic features
         // stay on demand: preloading them would defeat their loading boundary.
         if (dependency.kind === 'dynamic-import'
-          && result.metafile.outputs[dependency.path]?.entryPoint !== 'src/app.js') continue;
+          && !['src/startup.js', 'src/app.js'].includes(result.metafile.outputs[dependency.path]?.entryPoint)) continue;
         dependencies.add(dependency.path); visit(dependency.path);
       }
     };
@@ -49,15 +49,17 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
       .map(file => `<link rel="modulepreload" href="${outputUrl(file)}">`).join('\n  ');
   };
   for (const [page, script, style, styleEntry] of [
-    ['index.html', 'src/startup.js', '/styles.css', 'public/styles.css'],
+    ['index.html', 'src/entry.js', '/styles.css', 'public/styles.css'],
     ['love.html', 'src/stories/vessel-of-love.js', '/love.css', 'public/love.css'],
   ]) {
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
     // The local tab has a version label; the published site keeps its name.
     if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
+    // Stand-only design controls never become a release dependency.
+    html = html.replace(/  <script\b[^>]*\bdata-development\b[^>]*><\/script>\n/g, '');
     // Source preloads the UI graph alongside the small startup entry. In release
     // its generated chunk is included in the explicit preload list below.
-    html = html.replace(/  <link rel="modulepreload" href="\/src\/app\.js">\n/, '');
+    html = html.replace(/  <link rel="modulepreload" href="\/src\/(?:startup|app)\.js">\n/g, '');
     html = html.replace(`src="/${script}"`, `src="${entryUrl(script)}"`)
       .replace(`href="${style}"`, `href="${entryUrl(styleEntry)}"`)
       .replace(/href="\/favicon\.svg(?:\?[^"]*)?"/, `href="/${iconFile}"`)

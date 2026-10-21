@@ -41,7 +41,7 @@ apiTest('the page loads the complete frontend module graph through public source
   const entryPoints = [...page.body.matchAll(/<script\b([^>]*)>/g)]
     .filter(([, attributes]) => /\btype=["']module["']/.test(attributes))
     .map(([, attributes]) => attributes.match(/\bsrc=["']([^"']+)["']/)?.[1]);
-  assert.deepEqual(entryPoints, ['/src/startup.js']);
+  assert.deepEqual(entryPoints, ['/src/dev/control-colors.js', '/src/entry.js']);
   const story = await request('/love');
   assert.equal(story.status, 200);
   assert.match(story.headers.get('content-type'), /html/);

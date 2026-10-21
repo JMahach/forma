@@ -7,6 +7,7 @@
   <title>Форма 1</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=forma-lotus-1">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="modulepreload" href="/src/startup.js">
   <link rel="modulepreload" href="/src/app.js">
 </head>
 <body>
@@ -31,11 +32,15 @@
           <button class="new-chart-button" id="newChartButton"><span aria-hidden="true">＋</span> Новая карта</button>
           <div class="chart-list" id="chartList"></div>
         </section>
-        <div class="sidebar-footer"><button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button></div>
+        <div class="sidebar-footer">
+          <button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button>
+          <button type="button" class="sidebar-tool" id="toggleLoadingPreview" aria-pressed="false" hidden>Превью</button>
+        </div>
         </div>
       </aside>
       <main class="studio">
         <div class="chart-tools" aria-label="Вид схемы">
+          <div class="summary-title" aria-hidden="true"><span>О карте</span></div>
           <div class="chart-view-tools">
             <button type="button" class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема" hidden><svg width="21" height="21" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 9 7-6 7 6M5 7.3V17h10V7.3M8 17v-5h4v5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <button type="button" class="icon-button" id="lifetimeToggle" aria-label="Летопись" title="Летопись" aria-expanded="false" aria-pressed="false" aria-controls="lifetimeControls"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5.5" width="15" height="15" rx="2"/><path d="M8 3.5v4m8-4v4M4.5 10h15M8 15h8"/><circle cx="8" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="15" r="1" fill="currentColor" stroke="none"/></g></svg></button>
@@ -97,7 +102,6 @@
         <div class="chart-loading-message" id="chartLoadingMessage">
           <p id="chartLoadingStatus" role="status">Загружаем карту…</p>
           <button type="button" class="secondary-button" id="chartLoadingRetry" hidden>Повторить</button>
-          <noscript><p>Для показа карты включите JavaScript в браузере.</p></noscript>
         </div>
         <div class="timeline-dock" aria-hidden="true"></div>
         <div class="day-controls transit-controls" id="transitControls" role="group" aria-label="Транзит сегодня" hidden>
@@ -172,6 +176,9 @@
   <div class="activation-popover" id="activationPopover" role="tooltip" aria-label="Подробности активации" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/src/startup.js"></script>
+  <noscript><div class="chart-loading-message"><p>Для показа карты включите JavaScript в браузере.</p></div></noscript>
+
+  <script type="module" data-development src="/src/dev/control-colors.js"></script>
+  <script type="module" src="/src/entry.js"></script>
 </body>
 </html>

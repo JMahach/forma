@@ -457,8 +457,11 @@ test('ordinary graph and planet selections dismiss an open activation popup with
 });
 
 test('pointer and keyboard graph selections use the tested choose callback', () => {
-  const options = appSource.match(/attachGestures\(\$\('bodygraph'\),\s*\{([\s\S]*?)\n[ \t]*\}\);/)?.[1];
-  assert.ok(options, 'the application attaches gestures to the drawing');
+  const options = appSource.match(/const gestureHandlers = \{([\s\S]*?)\n  \};/)?.[1];
+  assert.ok(options, 'one handler set owns application graph selection');
+  assert.match(appSource, /startupGestures \|\| attachGestures\(\$\('bodygraph'\), gestureHandlers\)/, 'fresh gestures receive the shared callbacks');
+  assert.match(appSource, /if \(startupGestures\) gestures\.setHandlers\(gestureHandlers\)/, 'startup gestures receive the same callbacks at handoff');
+  assert.match(options, /if \(initialPage\.active \|\| !session\.hasCurrent\) return;/, 'the unready drawing cannot select data');
   assert.match(options, /if \(selection\.type !== 'planet-filter'\) \{ graph\.choose\(selection\); return; \}/);
-  assert.match(options, /\bonBackgroundTap:\s*graph\.clear\s*,/);
+  assert.match(options, /onBackgroundTap: \(\) => \{ if \(!initialPage\.active\) graph\.clear\(\); \}/);
 });

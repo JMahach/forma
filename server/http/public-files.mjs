@@ -14,6 +14,7 @@ export const PUBLIC_FILES = new Map([
   ['love', 'public/love.html'],
   ['love.css', 'public/love.css'],
   ...[
+    'src/dev/control-colors.js',
     'shared/lifetime-format.js',
     'shared/lifetime-exact-format.js',
     'shared/cycles-format.js',
@@ -39,7 +40,9 @@ export const PUBLIC_FILES = new Map([
     'src/domain/chart-composition.js',
     'src/domain/chart-data.js',
     'src/scene/overlay-activation-columns.js',
+    'src/entry.js',
     'src/startup.js',
+    'src/views/loading-preview.js',
     'src/views/chart-loading.js',
     'src/data/api-client.js',
     'src/data/chart-store.js',

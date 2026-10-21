@@ -23,7 +23,7 @@ import { attachNatalDayExplorer } from './views/natal-day-controls.js';
 import { attachChartSummary } from './views/chart-summary-panel.js';
 import { attachTelegramGestures } from './ui/telegram-gestures.js';
 import { attachPerformanceMonitor } from './views/performance-monitor.js';
-import { attachChartLoading, holdLoadingContent } from './views/chart-loading.js';
+import { attachChartLoading, holdLoadingContent, commitLoadingLayout } from './views/chart-loading.js';
 import { createReturnsController } from './state/returns.js';
 import { createCyclesClient } from './data/cycles-client.js';
 import { createNatalDayClient } from './data/natal-day-client.js';
@@ -34,7 +34,7 @@ import { returnsVisibleWindow } from './domain/returns-window.js';
 import { studioPresentation } from './ui/studio-presentation.js';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation = null, releaseLoadingContent = null, previewLoading = false }) {
+export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }) {
   const $ = id => document.getElementById(id);
   attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]);
   const studio = $('canvasWrap').parentElement, shell = document.querySelector('.app-shell');
@@ -43,6 +43,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   const initialPage = { active: true, attached: false, restored: false, restoreFailed: false,
     screenPending: false, screenFailed: false, screenRevision: 0 };
   const releaseInitialContent = releaseLoadingContent || holdLoadingContent(document);
+  shell.dataset.booting = 'true';
   shell.dataset.pageState = 'loading'; shell.inert = false; shell.setAttribute('aria-busy', 'true');
   let fontsSettled = false;
   const fontsReady = Promise.resolve(document.fonts?.ready).catch(() => {});
@@ -107,9 +108,10 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
   });
-  const gestures = attachGestures($('bodygraph'), {
+  const gestureHandlers = {
     camera, cameraView,
     onSelect(selection) {
+      if (initialPage.active || !session.hasCurrent) return;
       if (selection.type !== 'planet-filter') { graph.choose(selection); return; }
       if (session.selectedId !== 'current-transit') return;
       const [source, planet] = selection.id.startsWith('design:') ? selection.id.split(':') : ['personality', selection.id];
@@ -119,14 +121,16 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       if (owner === transitPlanets) session.refilter();
       viewSession?.schedule();
     },
-    resolvePointerTarget: event => pointerTarget($('bodygraph'), event, $('canvasWrap')),
+    resolvePointerTarget: event => initialPage.active || !session.hasCurrent ? null : pointerTarget($('bodygraph'), event, $('canvasWrap')),
     resolveSelection: (target, event) => mandalaSelectionFromTarget(event, target, hoverPreview?.currentSelection),
-    onBackgroundTap: graph.clear,
+    onBackgroundTap: () => { if (!initialPage.active) graph.clear(); },
     onChange(view, fitted, metadata) {
       cameraChanged(view, fitted, metadata);
       viewSession?.schedule();
     },
-  });
+  };
+  const gestures = startupGestures || attachGestures($('bodygraph'), gestureHandlers);
+  if (startupGestures) gestures.setHandlers(gestureHandlers);
   hoverPreview = attachHoverPreview($('bodygraph'), {
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
     coalesceMandala: true, onPreview: graph.preview,
@@ -140,7 +144,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     },
     isCurrent: () => workspace.screen === 'library',
     getSelection: () => graph.selectionState.primary, onError: toast });
-  chartSummary = attachChartSummary({ panels, isAvailable: () => workspace.screen === 'chart', focusSearch: () => !layout.phone,
+  chartSummary = attachChartSummary({ panels, initialReturnsVisible: initialPresentation?.returnsVisible === true, isAvailable: () => workspace.screen === 'chart', focusSearch: () => !layout.phone,
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
     search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration.openReturnsList(); },
@@ -207,10 +211,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       updateTimelineTools(); viewSession?.schedule();
     },
   });
-  $('natalDayToggle').addEventListener('click', () => {
-    viewSession?.interrupt();
-    void exploration.toggleDay();
-  });
+  $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration.toggleDay()));
   transit = attachLiveTransit({
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     onRender: exploration.publishTransit, onStateChange: state => {
@@ -230,12 +231,11 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   attachTransitNavigation($('nowButton'), {
     onSelect: selectChart, refresh: transit.refresh,
   });
-  attachCameraControls({ fitButton: $('fitButton') }, gestures);
+  if (!startupGestures) attachCameraControls({ fitButton: $('fitButton') }, gestures);
   attachPerformanceMonitor({
     document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
     ranges: [$('transitTime'), $('natalDayTime'), $('lifetimeTime')],
     motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('natalDayReference')],
-    initiallyEnabled: new URLSearchParams(location.search).get('fps') === '1',
   });
 
   function updateChartCaption() {
@@ -273,16 +273,17 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   }
 
   function presentation() {
+    if (initialPage.active && !initialPage.restored && initialPresentation) return initialPresentation;
     return studioPresentation({ isTransit: session.selectedId === 'current-transit',
       personalAvailable: Boolean(returns?.available), dayOpened: Boolean(natalDay?.state.opened),
-      lifetime: lifetime?.state, returnsOpened: Boolean(returns?.opened),
+      lifetime: exploration.pendingTimeline || lifetime?.state, returnsOpened: Boolean(returns?.opened),
       returnsEnabled: exploration.returnsEnabled, transitEnabled: exploration.transitEnabled,
       loadFailed: lifetimeLoadFailed });
   }
 
   function refreshTimelineLayout(view = presentation()) {
     if (!transitControls) return;
-    if (initialPage.active && !initialPage.restored && initialPresentation) view = initialPresentation;
+    if (initialPage.active) studio.dataset.initialTimeline = view.timelinePanel || 'none';
     const key = `${view.timelineKind}:${view.lifetimeHeadingVisible}`;
     if (key === timelineLayoutKey) return;
     timelineLayoutKey = key;
@@ -343,7 +344,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     }
   }
   function updateInitialPage() {
-    if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending || previewLoading) return;
+    if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending) return;
     let failed = initialPage.screenFailed;
     if (workspace.screen === 'chart') {
       if (!initialPage.restored) return;
@@ -362,8 +363,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     updateLoading();
     studio.dataset.panelsReady = 'true';
     // Commit final visibility and selected colours with transitions suppressed.
-    studio.getBoundingClientRect();
-    delete shell.dataset.booting;
+    commitLoadingLayout(document);
   }
   workspace.subscribe(applyWorkspace);
   applyWorkspace();
@@ -391,25 +391,30 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   const restoreView = savedLife ? { ...savedView, lifetime: { ...savedView.lifetime, ...savedLife,
     minimumUtc: savedChart.utc, mode: 'lifetime', openEnded: false } } : savedView;
   viewSession = createViewSession({
-    store: { read: () => restoreView, write: previewLoading ? () => false : viewStore.write }, chartStore: store, session,
+    store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
     mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getPersonalPreview: () => returns.available ? exploration.preview : undefined,
     getPersonalLive: () => returns.available ? exploration.live : undefined,
     restorePersonalPreview: exploration.restorePreview,
     restorePersonalLive: exploration.restoreLive,
     acceptLifetimeMode: exploration.acceptLifetimeMode,
-    getReturns: () => returns, getLifetime: () => lifetime, loadLifetime,
+    getReturns: () => returns, getLifetime: () => lifetime, getLifetimeIntent: () => exploration.pendingTimeline, loadLifetime,
     openReturnsTimeline: exploration.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns.available),
   });
   void (async () => {
-    try { initialPage.restoreFailed = await viewSession.restore() === false; }
+    try {
+      const restored = await viewSession.restore();
+      if (!viewSession.interrupted) initialPage.restoreFailed = restored === false;
+    }
     catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
+    if (viewSession.interrupted) return;
     try {
       const resumed = await exploration.finishRestore({ saved: restoreView, interrupted: viewSession.interrupted,
         pendingLifetime: viewSession.pendingLifetime, pendingReturns: viewSession.pendingReturns });
       initialPage.restoreFailed ||= resumed === false;
     } catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
-    initialPage.restored = true; updateTimelineTools(); updateLoading();
+    if (viewSession.interrupted) return;
+    initialPage.restored = true; initialPresentation = null; updateTimelineTools(); updateLoading();
   })();
   studio.dataset.panelsReady = 'true';
 
@@ -443,6 +448,13 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     if (!returns) return;
     const state = returns.state, lifetimeState = lifetime?.state, metadata = lifetimeState?.metadata;
     const view = presentation();
+    const dayOpen = view.timelinePanel === 'natal-day';
+    $('natalDayToggle').setAttribute('aria-expanded', String(dayOpen));
+    $('natalDayToggle').setAttribute('aria-pressed', String(dayOpen));
+    if (initialPage.active && initialPresentation) {
+      for (const [kind, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']])
+        $(id).hidden = kind !== view.timelinePanel;
+    }
     const heading = $('lifetimeControls').querySelector('.lifetime-heading');
     heading.hidden = !view.lifetimeHeadingVisible; heading.inert = !view.lifetimeHeadingVisible;
     $('lifetimeControls').dataset.personalLife = String(state.available);
@@ -451,7 +463,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     const chart = currentChart();
     const viewState = { ...state, visible: view.returnsVisible,
       birthSelected: !exploration.live && chart.primary === session.baseChart && !chart.secondary, live: exploration.live };
-    chartSummary.setReturnsVisible(Boolean(returnsView && view.returnsVisible));
+    chartSummary.setReturnsVisible(view.returnsVisible);
     if (returnsView) returnsView.update(viewState);
     else if (view.returnsVisible) void loadReturnsView();
     const lifetimeToggle = $('lifetimeToggle');
@@ -545,18 +557,36 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     })();
     return lifetimeLoading;
   }
+  function changeTimeline(kind, command) {
+    const pending = initialPresentation;
+    const loading = initialPage.active;
+    if (loading) { initialPage.restored = false; initialPage.restoreFailed = false; }
+    initialPresentation = null;
+    viewSession?.interrupt();
+    let result;
+    try {
+      const closePending = kind === 'day' ? pending?.timelinePanel === 'natal-day' : pending?.toggleEnabled;
+      result = closePending ? exploration.closeScales() : command();
+    }
+    finally {
+      if (loading) initialPage.restored = true;
+      updateTimelineTools(); updateLoading();
+    }
+    Promise.resolve(result).then(() => { updateTimelineTools(); updateLoading(); });
+  }
   $('lifetimeToggle').addEventListener('click', () => {
     if (session.selectedId !== 'current-transit' && !returns.available) return;
-    viewSession?.interrupt();
     activationPopover.close(); hoverPreview?.clear();
     if (lifetimeLoadFailed) { window.location.reload(); return; }
     if (session.selectedId === 'current-transit') {
-      void exploration.toggleTransit();
-    } else void exploration.toggleReturns();
+      changeTimeline('lifetime', () => exploration.toggleTransit());
+    } else changeTimeline('lifetime', () => exploration.toggleReturns());
   });
   for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
     field.addEventListener('input', () => { viewSession?.interrupt(); exploration.invalidateTimeline(); }, true);
   }
   initialPage.attached = true;
   updateInitialPage();
+  commitLoadingLayout(document);
+  return { flushView: () => viewSession.flush() };
 }

@@ -2,8 +2,8 @@ import { createCamera } from './camera.js';
 
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
-export function attachGestures(svg, { camera: existingCamera = null, cameraView, onSelect, onChange, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null,
-  resolvePointerTarget = event => event.target.closest('[data-type]'),
+export function attachGestures(svg, { camera: existingCamera = null, cameraView, onSelect = () => {}, onChange = () => {}, onBackgroundTap = () => {}, getFrame = () => null, getHomeFrame = null, fitInsets = null, resolveSelection = () => null,
+  resolvePointerTarget = event => event.target.closest?.('[data-type]') || null,
   requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
 }) {
@@ -93,10 +93,10 @@ export function attachGestures(svg, { camera: existingCamera = null, cameraView,
       if (!pointers.size) initialTarget.focus?.({ preventScroll: true });
     }
     if (event.target === surface) {
-      // The fixed field is not focusable. Suppress its default mouse focus so
-      // it cannot undo the SVG focus after a press on uncovered background.
+      // The loading surface owns keyboard zoom until the real SVG becomes
+      // interactive. Ready charts retain their existing selection focus.
       event.preventDefault();
-      svg.focus?.({ preventScroll: true });
+      (svg.inert ? surface : svg).focus?.({ preventScroll: true });
     }
     pointers.set(event.pointerId, current);
     if (pointers.size > 1) {
@@ -182,14 +182,35 @@ export function attachGestures(svg, { camera: existingCamera = null, cameraView,
     const anchor = point(event);
     updateGesture(() => camera.zoomAt(anchor, Math.exp(-clamp(event.deltaY, -200, 200) * 0.003)));
   }, { passive: false });
-  svg.addEventListener('keydown', event => {
+  function keydown(event) {
     const target = event.target.closest('[data-type]');
     if (target && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectTarget(target, Boolean(event.shiftKey), event); }
-    if (event.target === svg && ['+', '-', '0'].includes(event.key)) {
+    if ((event.target === svg || event.target === surface) && ['+', '-', '0'].includes(event.key)) {
       event.preventDefault();
       if (event.key === '0') camera.reset();
       else camera.zoom(event.key === '+' ? 1.25 : 0.8);
     }
+  }
+  svg.addEventListener('keydown', keydown);
+  if (surface !== svg) surface.addEventListener('keydown', event => {
+    if (event.target === surface) keydown(event);
   });
-  return camera;
+  // Startup and the ready chart share one input attachment. A new screen
+  // adopts the live pose, but never the tap or Safari gesture that began on
+  // the previous screen. Flush its last paint before replacing its callbacks.
+  function setHandlers({ onSelect: nextSelect = onSelect, onChange: nextChange = onChange,
+    onBackgroundTap: nextBackground = onBackgroundTap, resolvePointerTarget: nextTarget = resolvePointerTarget,
+    resolveSelection: nextSelection = resolveSelection } = {}) {
+    flushPaint();
+    const captured = [...pointers.keys()];
+    pointers.clear(); safariGesture = null;
+    initialTarget = initialSelection = initialClient = initialPoint = null;
+    moved = pinched = initialAdditive = false;
+    for (const id of captured) if (surface.hasPointerCapture(id)) surface.releasePointerCapture(id);
+    onSelect = nextSelect; onChange = nextChange; onBackgroundTap = nextBackground;
+    resolvePointerTarget = nextTarget; resolveSelection = nextSelection;
+    updateCursor();
+    onChange(camera.getView(), camera.getFittedView(), { minScale: camera.minimumScale() });
+  }
+  return { ...camera, setHandlers };
 }

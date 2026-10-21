@@ -2,7 +2,7 @@ import { createTransitDayClient } from './data/transit-day-client.js';
 import { createViewStore } from './data/view-store.js';
 import { createChartStore } from './data/chart-store.js';
 import { resolveSelectedChartId } from './state/chart-session.js';
-import { holdLoadingContent } from './views/chart-loading.js';
+import { holdLoadingContent, commitLoadingLayout } from './views/chart-loading.js';
 import { createChartLibraryView } from './views/library.js';
 import { createPanelState } from './state/panels.js';
 import { createWorkspaceState } from './state/workspace.js';
@@ -18,12 +18,20 @@ import { createCameraView } from './scene/camera-view.js';
 import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from './scene/geometry/activation-layout.js';
 import { attachPageGestures } from './ui/page-gestures.js';
 import { attachPhoneSheets } from './ui/phone-sheet.js';
+import { attachGestures } from './scene/gestures.js';
+import { attachCameraControls } from './views/camera-controls.js';
+import { attachLoadingPreview } from './views/loading-preview.js';
+import { lifeTimelineForChart } from './domain/cycles.js';
 
 attachPageGestures(document);
 
 const element = id => document.getElementById(id);
 const toast = createToast(element('toast'));
 const viewStore = createViewStore({ onStorageError: toast }), savedView = viewStore.read();
+let saveBeforeNavigate = () => {}, flushLoadingView = () => {};
+const previewLoading = attachLoadingPreview({ button: element('toggleLoadingPreview'), location,
+  beforeNavigate: () => saveBeforeNavigate() });
+let pendingView = savedView, loadingInteraction = false;
 // Read the tab once before prefetching. A saved lifetime, natal or exact return
 // owns its own data; only Day and an explicitly live personal view need today.
 const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-transit'
@@ -31,7 +39,7 @@ const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-trans
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
 const dayClient = createTransitDayClient({
   calculationVersion: document.body.dataset.calculationVersion,
-  initialDate: !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
+  initialDate: !previewLoading && !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
 });
 const store = createChartStore({ onStorageError: toast });
 // The first preview and the application share these state owners. Project the
@@ -48,7 +56,6 @@ function syncLoadingPanels() {
     element(id).setAttribute('aria-hidden', String(!opened));
     element(button).setAttribute('aria-expanded', String(opened));
   }
-  element('chartSummary').dataset.screen = 'summary';
   element('libraryBackdrop').hidden = !panels.left;
   element('summaryBackdrop').hidden = !rightOpen;
 }
@@ -64,35 +71,42 @@ if (panels.left) libraryView.show();
 // their actual values and data after import. The loading mask uses this same
 // panel until restoration has prepared the visible screen.
 const record = store.get(selectedId), isTransit = selectedId === 'current-transit';
-const personalAvailable = eligibleCycleChart(record), sameChart = selectedId === savedView?.selectedId;
-const savedLifetime = sameChart && (isTransit || personalAvailable) && savedView?.lifetime?.opened ? savedView.lifetime : null;
-const savedReturns = sameChart && personalAvailable && (savedView?.returns?.opened || savedView?.returns?.eventId);
-const initialLifetime = savedLifetime || (savedReturns ? { opened: true, mode: 'lifetime' } : null);
-const dayAvailable = canExploreNatalDay(record);
-const dayOpened = !initialLifetime && dayAvailable && sameChart
-  && (savedView?.natalDay?.opened === true || personalAvailable && savedView?.natalDay?.opened !== false);
-const initialPresentation = studioPresentation({ isTransit, personalAvailable, dayOpened, lifetime: initialLifetime,
-  returnsOpened: Boolean(savedReturns), returnsEnabled: Boolean(initialLifetime && personalAvailable),
-  transitEnabled: Boolean(initialLifetime && isTransit) });
-studio.dataset.initialTimeline = initialPresentation.timelinePanel || 'none';
-for (const [kind, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']])
-  element(id).hidden = kind !== initialPresentation.timelinePanel;
-const lifetimeHeading = element('lifetimeControls').querySelector('.lifetime-heading');
-lifetimeHeading.hidden = !initialPresentation.lifetimeHeadingVisible;
-lifetimeHeading.inert = !initialPresentation.lifetimeHeadingVisible;
-element('lifetimeControls').dataset.personalLife = String(personalAvailable);
-element('natalDayToggle').hidden = !dayAvailable;
-const timelineToggle = element('lifetimeToggle');
-timelineToggle.hidden = !initialPresentation.lifetimeAvailable;
-timelineToggle.title = initialPresentation.toggleLabel;
-timelineToggle.setAttribute('aria-label', initialPresentation.toggleLabel);
-timelineToggle.setAttribute('aria-pressed', String(initialPresentation.toggleEnabled));
-timelineToggle.setAttribute('aria-expanded', String(initialPresentation.toggleEnabled));
-const canvas = element('canvasWrap'), reveal = savedView?.mandala === true ? 1 : 0;
-canvas.classList.toggle('has-mandala', Boolean(reveal));
-canvas.style.setProperty('--mandala-reveal', String(reveal));
-canvas.style.setProperty('--activation-column-offset', `${ACTIVATION_COLUMN_REVEAL_DISTANCE * reveal}px`);
-element('mandalaSwitch').setAttribute('aria-checked', String(Boolean(reveal)));
+const personalAvailable = eligibleCycleChart(record), dayAvailable = canExploreNatalDay(record);
+const canvas = element('canvasWrap');
+function renderLoadingTools() {
+  const sameChart = selectedId === pendingView?.selectedId;
+  const savedLifetime = sameChart && (isTransit || personalAvailable) && pendingView?.lifetime?.opened ? pendingView.lifetime : null;
+  const savedReturns = sameChart && personalAvailable && (pendingView?.returns?.opened || pendingView?.returns?.eventId);
+  const initialLifetime = savedLifetime || (savedReturns ? { opened: true, mode: 'lifetime' } : null);
+  const dayOpened = !initialLifetime && dayAvailable && sameChart
+    && (pendingView?.natalDay?.opened === true || personalAvailable && pendingView?.natalDay?.opened !== false);
+  const view = studioPresentation({ isTransit, personalAvailable, dayOpened, lifetime: initialLifetime,
+    returnsOpened: Boolean(savedReturns && pendingView?.returns?.opened && pendingView?.panels?.right !== false), returnsEnabled: Boolean(initialLifetime && personalAvailable),
+    transitEnabled: Boolean(initialLifetime && isTransit) });
+  element('chartSummary').dataset.screen = view.returnsVisible ? 'returns' : 'summary';
+  studio.dataset.initialTimeline = view.timelinePanel || 'none';
+  for (const [kind, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']])
+    element(id).hidden = kind !== view.timelinePanel;
+  const heading = element('lifetimeControls').querySelector('.lifetime-heading');
+  heading.hidden = !view.lifetimeHeadingVisible; heading.inert = !view.lifetimeHeadingVisible;
+  element('lifetimeControls').dataset.personalLife = String(personalAvailable);
+  const dayToggle = element('natalDayToggle');
+  dayToggle.hidden = !dayAvailable;
+  dayToggle.setAttribute('aria-expanded', String(dayOpened));
+  dayToggle.setAttribute('aria-pressed', String(dayOpened));
+  const timelineToggle = element('lifetimeToggle');
+  timelineToggle.hidden = !view.lifetimeAvailable; timelineToggle.title = view.toggleLabel;
+  timelineToggle.setAttribute('aria-label', view.toggleLabel);
+  timelineToggle.setAttribute('aria-pressed', String(view.toggleEnabled));
+  timelineToggle.setAttribute('aria-expanded', String(view.toggleEnabled));
+  const reveal = pendingView?.mandala === true ? 1 : 0;
+  canvas.classList.toggle('has-mandala', Boolean(reveal));
+  canvas.style.setProperty('--mandala-reveal', String(reveal));
+  canvas.style.setProperty('--activation-column-offset', `${ACTIVATION_COLUMN_REVEAL_DISTANCE * reveal}px`);
+  element('mandalaSwitch').setAttribute('aria-checked', String(Boolean(reveal)));
+  return view;
+}
+let initialPresentation = renderLoadingTools();
 const layout = createStudioLayout({ footprint: STUDIO_FOOTPRINT, canvas: element('canvasWrap'), drawing: element('bodygraph'),
   timelineKind: initialPresentation.timelineKind,
   onPhoneLayout: phone => panels.setExclusive(phone),
@@ -122,6 +136,47 @@ const cameraChanged = createCameraChangeHandler({ heading: element('chartHeader'
 const camera = createCamera({ getHomeFrame: () => layout.frame(), getFrame: () => MANDALA_FRAME,
   measureFit: frame => cameraView.measureFit(frame, () => layout.insets()), onChange(view, fitted) { cameraView.paint(view); cameraChanged(view, fitted); } });
 camera.restoreView(savedView?.camera);
+const gestures = attachGestures(element('bodygraph'), { camera, cameraView, resolvePointerTarget: () => null,
+  onChange(view, fitted) { cameraChanged(view, fitted); flushLoadingView(); } });
+attachCameraControls({ fitButton: element('fitButton') }, gestures);
+let loadingActive = true;
+function loadingSnapshot() {
+  const view = camera.getView(), home = camera.getFittedView();
+  return { ...pendingView, version: 1, selectedId, workspace: workspace.snapshot, panels: panels.snapshot,
+    mandala: pendingView?.mandala === true,
+    camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k,
+      k: view.k / home.k, maxK: camera.maximumScale() / home.k } };
+}
+flushLoadingView = () => {
+  if (!loadingActive) return;
+  loadingInteraction = true;
+  viewStore.write?.(loadingSnapshot());
+};
+saveBeforeNavigate = flushLoadingView;
+const flushOnHide = () => { if (document.hidden) flushLoadingView(); };
+document.addEventListener('visibilitychange', flushOnHide);
+const page = document.defaultView;
+page?.addEventListener?.('pagehide', flushLoadingView);
+function changeLoadingTool(kind) {
+  const view = renderLoadingTools();
+  pendingView = { ...pendingView, version: 1, selectedId };
+  if (kind === 'mandala') pendingView.mandala = !pendingView.mandala;
+  else {
+    const day = pendingView.natalDay || { index: 0, exactOriginal: true };
+    const close = kind === 'day' ? view.timelinePanel === 'natal-day' : view.toggleEnabled;
+    pendingView.returns = null;
+    pendingView.natalDay = { ...day, opened: kind === 'day' && !close };
+    pendingView.lifetime = kind === 'lifetime' && !close
+      ? personalAvailable
+        ? { opened: true, mode: 'lifetime', ...lifeTimelineForChart(record), requestedUtc: Date.parse(record.utc), personalPreview: false }
+        : { opened: true, mode: 'day', fromDate: null, toDate: null }
+      : null;
+  }
+  initialPresentation = renderLoadingTools();
+  layout.setTimelineKind(initialPresentation.timelineKind);
+  layout.refresh(); camera.resize({ preserveScale: true });
+  flushLoadingView();
+}
 const loadingLayoutObserver = new ResizeObserver(() => { layout.refresh(); camera.resize(); });
 loadingLayoutObserver.observe(element('canvasWrap'));
 // Early buttons use the same panel state. They detach synchronously before
@@ -132,8 +187,12 @@ const stopLoadingPanelProjection = panels.subscribe(() => {
   syncLoadingPanels();
   if (panels.left) libraryView.show(); else libraryView.hide();
   layout.refresh(); camera.resize({ preserveScale: true });
+  flushLoadingView();
 });
 const loadingPanelCommands = [
+  ['mandalaSwitch', () => changeLoadingTool('mandala')],
+  ['lifetimeToggle', () => { if (initialPresentation.lifetimeAvailable) changeLoadingTool('lifetime'); }],
+  ['natalDayToggle', () => { if (dayAvailable) changeLoadingTool('day'); }],
   ['openLibrary', () => panels.setLeft(!panels.left)], ['libraryBackdrop', () => panels.setLeft(false)],
   ['summarySwitch', () => { if (workspace.screen === 'chart') panels.setRight(!panels.right); }],
   ['summaryBackdrop', () => panels.setRight(false)],
@@ -145,14 +204,20 @@ function handoffLoadingPanels() {
 }
 const releaseLoadingContent = holdLoadingContent(document);
 document.querySelector('.app-shell').inert = false;
-// Local visual inspection only; never stored in the tab or library.
-const previewLoading = ['localhost', '127.0.0.1'].includes(location.hostname)
-  && new URLSearchParams(location.search).get('preview') === 'loading';
-try {
+canvas.inert = false; canvas.setAttribute('tabindex', '0');
+element('bodygraph').inert = true;
+// Commit saved geometry before enabling ordinary user-driven transitions.
+commitLoadingLayout(document);
+if (!previewLoading) try {
   const app = await import('./app.js');
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
-  app.startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation, releaseLoadingContent, previewLoading });
+  const latestView = loadingInteraction ? loadingSnapshot() : savedView;
+  loadingActive = false;
+  document.removeEventListener('visibilitychange', flushOnHide);
+  page?.removeEventListener?.('pagehide', flushLoadingView);
+  const application = app.startApp({ dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  saveBeforeNavigate = () => application?.flushView();
 } catch {
   const shell = document.querySelector('.app-shell');
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
@@ -165,5 +230,5 @@ try {
   const retry = document.getElementById('chartLoadingRetry');
   retry.hidden = false;
   retry.addEventListener('click', () => location.reload());
-  studio.getBoundingClientRect(); delete shell.dataset.booting;
+  commitLoadingLayout(document);
 }

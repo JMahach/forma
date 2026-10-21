@@ -5,6 +5,7 @@ import { resolveSelectedChartId } from './chart-session.js';
 export function createViewSession({
   store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
+  getLifetimeIntent = () => null,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
   openReturnsTimeline = async () => null, acceptLifetimeMode = () => {},
   canRestoreLifetime = () => session.selectedId === 'current-transit',
@@ -12,10 +13,13 @@ export function createViewSession({
   schedule: defer = globalThis.setTimeout, cancel = globalThis.clearTimeout, delay = 160,
 }) {
   const saved = store.read();
-  let restoring = true, interrupted = false, generation = 0, pending = null;
+  let restoring = true, restoreInitialized = false, interrupted = false, generation = 0, pending = null;
   let pendingTransit = saved?.transit?.live === false ? saved.transit : null;
   let pendingLifetime = saved?.lifetime || null, startedLifetime = null;
   let pendingReturns = saved?.returns || null;
+  // The tab's saved shell owns visibility, including a close made in preview.
+  // Retain the exact event and filters; old snapshots without panels keep their menu intent.
+  if (saved?.panels?.right === false && pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
   let pendingNatal = saved?.natalDay?.opened ? saved.natalDay : null;
   function lifetimeUtc(target, lifetimeState) {
     if (Number.isFinite(target?.requestedUtc)) return target.requestedUtc;
@@ -39,8 +43,17 @@ export function createViewSession({
         && (lifetimeState.mode === 'day' || (pendingLifetime.openStart ? lifetimeState.openStart : lifetimeState.fromDate === pendingLifetime.fromDate)
           && (pendingLifetime.openEnded ? lifetimeState.openEnded : lifetimeState.toDate === pendingLifetime.toDate))) pendingLifetime = null;
   }
-  function snapshot() {
+  function presentationSnapshot() {
     const view = camera.getView(), home = camera.getFittedView();
+    return {
+      mandala: mandala.enabled,
+      ...(panels ? { panels: panels.snapshot } : {}),
+      ...(workspace ? { workspace: workspace.snapshot } : {}),
+      camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k,
+        ...(camera.maximumScale ? { maxK: camera.maximumScale() / home.k } : {}) },
+    };
+  }
+  function snapshot() {
     const personalPreview = getPersonalPreview();
     const personalLive = getPersonalLive();
     const cycles = getReturns()?.state;
@@ -50,12 +63,9 @@ export function createViewSession({
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)
       ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) : pendingLifetime;
     return {
-      version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId, mandala: mandala.enabled,
-      ...(panels ? { panels: panels.snapshot } : {}),
-      ...(workspace ? { workspace: workspace.snapshot } : {}),
-      camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k,
-        ...(camera.maximumScale ? { maxK: camera.maximumScale() / home.k } : {}) },
-      lifetime: lifetimeTarget || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openStart ? { openStart: true } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
+      version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId,
+      ...presentationSnapshot(),
+      lifetime: lifetimeTarget || getLifetimeIntent() || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc } : {}), ...(lifetimeState.openStart ? { openStart: true } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
       transit: pendingTransit || (live.timeline ? { live: live.live, date: live.timeline.date, timeZone: live.timeline.timeZone, index: live.index } : null),
       natalDay: pendingNatal || { opened: day.opened, exactOriginal: day.exactOriginal, index: day.index },
       planets: planetFilter.snapshot,
@@ -64,11 +74,17 @@ export function createViewSession({
   function flush() {
     if (pending !== null) cancel(pending);
     pending = null;
-    if (!restoring) { applyPending(); store.write(snapshot()); }
+    if (restoring) {
+      // The visible shell is usable while its chart waits. Preserve that
+      // interaction without replacing accepted moments with unfinished data.
+      if (restoreInitialized) store.write({ ...saved, version: 1, ...presentationSnapshot() });
+      return;
+    }
+    applyPending(); store.write(snapshot());
   }
   function schedule() {
-    if (restoring) return;
-    applyPending();
+    if (restoring && !restoreInitialized) return;
+    if (!restoring) applyPending();
     if (pending !== null) return;
     pending = defer(flush, delay);
   }
@@ -85,7 +101,7 @@ export function createViewSession({
 
   async function restore() {
     const request = ++generation, valid = () => request === generation;
-    restoring = true;
+    restoring = true; restoreInitialized = false;
     panels?.beginRestore();
     let selectedId;
     try {
@@ -109,6 +125,7 @@ export function createViewSession({
       if (selectedId === 'current-transit' && pendingLifetime?.mode === 'lifetime') {
         acceptLifetimeMode({ opened: true, mode: 'lifetime' });
       }
+      restoreInitialized = true;
       const firstChart = await transit.start(pendingTransit, { firstChart: true });
       const needsTransitMoment = selectedId === 'current-transit' ? pendingLifetime?.mode !== 'lifetime' : getPersonalLive() === true;
       const firstMomentReady = !needsTransitMoment || firstChart !== false;

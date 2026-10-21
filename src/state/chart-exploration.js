@@ -67,7 +67,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   async function toggleTransit() {
     if (session.selectedId !== 'current-transit') return false;
     if (timelineOpening || getLifetime()?.state.opened) return closeScales();
-    const request = {};
+    const request = { target: { opened: true, mode: 'day', fromDate: null, toDate: null } };
     timelineOpening = request; onModeChange();
     try {
       const lifetime = getLifetime() || await loadLifetime();
@@ -184,7 +184,10 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     const natal = session.record, span = lifeTimelineForChart(natal);
     if (!span) return false;
     returnsPreferred = true;
-    const request = {};
+    const shown = session.current;
+    const request = { target: { opened: true, mode: 'lifetime', ...span, minimumUtc: natal.utc,
+      requestedUtc: live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc : natal.utc),
+      personalPreview: preview(), personalLive: live() } };
     const valid = () => timelineOpening === request;
     timelineOpening = request;
     getNatalDay().close();
@@ -226,8 +229,11 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     }
     syncTransitWanted();
   }
-  return { select, selected, openDay, resetMoment, toggleTransit, toggleReturns, openReturnsList,
+  return { select, selected, openDay, closeScales, resetMoment, toggleTransit, toggleReturns, openReturnsList,
     toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
+    // The accepted opening exists before the lazy controller. Once its state
+    // opens, that controller owns the actual range and moment for persistence.
+    get pendingTimeline() { return timelineOpening?.target && !getLifetime()?.state.opened ? { ...timelineOpening.target } : null; },
     get returnsEnabled() { return returnsEnabled(); },
     get transitEnabled() { return session.selectedId === 'current-transit' && Boolean(timelineOpening || getLifetime()?.state.opened); },
     followNow, requestReturn, publishReturn, publishDay,

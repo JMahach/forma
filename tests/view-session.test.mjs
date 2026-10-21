@@ -61,7 +61,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
     getLifetime: () => lifetime, getReturns: () => returns, filterTransit: planets.filter,
     onSelect: () => exploration?.selected(), onChange: () => { changed(); if (session.hasCurrent) frames.push(session.current.utc); } });
   exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay,
-    getLifetime: () => lifetime, getReturns: () => returns, loadLifetime: async () => ensureLifetime(), onChange: changed });
+    getLifetime: () => lifetime, getReturns: () => returns, loadLifetime: loadLifetime || (async () => ensureLifetime()), onModeChange: changed, onChange: changed });
   const setPersonalLive = value => exploration.restoreLive(value);
   const returnEvent = { id: 'saturn:2055-10-01T12:00:00Z', utc: '2055-10-01T12:00:00Z', body: 'saturn', cycle: 1, pass: 1, cycleId: 'saturn:1', age: 29, direction: 'direct' };
   returns = createReturnsController({ client: returnsClient || {
@@ -99,6 +99,7 @@ function harness(storage = new Map(), { size = 1000, transitDay = async date => 
     acceptLifetimeMode: exploration.acceptLifetimeMode,
     getPersonalLive: () => exploration.live, restorePersonalLive: exploration.restoreLive,
     getPersonalPreview: () => exploration.preview, restorePersonalPreview: exploration.restorePreview,
+    getLifetimeIntent: () => exploration.pendingTimeline,
     schedule(callback) { const id = ++counter; pending.set(id, callback); return id; }, cancel: id => pending.delete(id) });
   const restore = view.restore;
   view.restore = async () => {
@@ -351,7 +352,7 @@ test('successful personal Lifetime restore acknowledges a UTC target clamped by 
 
 
 test('same-tab reload restores the exact personal return and transit navigation clears its ownership', async t => {
-  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
   const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0];
   first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   first.view.flush(); const beforeLibrary = first.storage.get('liniya.charts.v1');
@@ -511,7 +512,7 @@ test('legacy return IDs restore through event lookup while the original remains 
 
 
 async function saveColdReturns(t) {
-  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
   const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0];
   first.session.select(source.id); await first.natalDay.open();
   // Older snapshots can contain a drawer before its lazy rail was created.
@@ -1176,4 +1177,143 @@ test('an already restored startup camera is retained after early panel interacti
   assert.equal(await h.view.restore(), true);
   assert.deepEqual(h.panels.snapshot, { left: true, right: false });
   assert.deepEqual(h.camera.getView(), prepared, 'restoration does not reapply the old saved transform after handoff');
+});
+
+
+test('presentation persistence waits until synchronous restoration has applied the saved view', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  first.mandala.setEnabled(true, { animate: false }); first.camera.zoom(2); first.view.flush();
+  const encoded = first.storage.get('liniya.view.v1');
+  const second = harness(first.storage); t.after(() => second.transit.stop());
+  second.view.schedule(); second.tick(); second.eventTarget.dispatch('pagehide');
+  assert.equal(first.storage.get('liniya.view.v1'), encoded, 'default owners before restore cannot erase the saved pose');
+  assert.equal(second.writes.length, 0);
+  await second.view.restore();
+});
+
+for (const flushBy of ['timer', 'pagehide', 'visibilitychange']) test(`loading ${flushBy} persists only current presentation while preserving the pending exact range and filters`, async t => {
+  const { storage } = await savePersonalLifetime(t);
+  const saved = JSON.parse(storage.get('liniya.view.v1'));
+  saved.planets = { selectedPlanets: ['moon'], selectedDesignPlanets: ['sun'] };
+  saved.returns = { opened: false, bodies: ['saturn'], year: null, eventId: null };
+  storage.set('liniya.view.v1', JSON.stringify(saved));
+  const encoded = storage.get('liniya.view.v1');
+  let release;
+  const second = harness(storage, { canRestoreLifetime: () => true, lifetimeClient: {
+    getMeta: () => new Promise(resolve => { release = resolve; }), getPoint: async index => point(index),
+  } });
+  t.after(() => second.transit.stop());
+  const restoring = second.view.restore(); await nextTurn();
+  assert.equal(typeof release, 'function');
+  second.camera.zoom(1.4); second.camera.pan(20, 10);
+  second.mandala.setEnabled(true, { animate: false });
+  second.panels.setLeft(true); second.panels.setRight(true); second.workspace.setScreen('account');
+  second.view.schedule();
+  assert.equal(storage.get('liniya.view.v1'), encoded, 'many changes are coalesced before the pending flush');
+  if (flushBy === 'timer') second.tick();
+  else if (flushBy === 'pagehide') second.eventTarget.dispatch('pagehide');
+  else { second.interactionTarget.hidden = true; second.interactionTarget.dispatch('visibilitychange'); }
+  const pending = JSON.parse(storage.get('liniya.view.v1'));
+  assert.equal(pending.mandala, true);
+  assert.deepEqual(pending.panels, { left: true, right: true });
+  assert.equal(pending.workspace, 'account');
+  assert.ok(Math.abs(pending.camera.k - 1.4) < 1e-9);
+  assert.notEqual(pending.camera.x, saved.camera.x);
+  assert.notEqual(pending.camera.y, saved.camera.y);
+  for (const key of ['selectedId', 'lifetime', 'transit', 'natalDay', 'planets', 'returns'])
+    assert.deepEqual(pending[key], saved[key], `${key} keeps the accepted target, not a partially initialized owner`);
+  assert.equal(second.view.interrupted, false);
+  const pose = second.camera.getView();
+  release(metadata); assert.equal(await restoring, true);
+  assert.deepEqual(second.camera.getView(), pose);
+  assert.equal(second.mandala.enabled, true);
+  assert.equal(second.workspace.screen, 'account');
+  assert.equal(second.ensureLifetime().state.requestedUtc, saved.lifetime.requestedUtc);
+});
+
+
+for (const personal of [false, true]) for (const flushBy of ['flush', 'pagehide']) {
+  test(`pending ${personal ? 'personal' : 'transit'} timeline import retains its opening through ${flushBy}`, async t => {
+    let release;
+    const h = harness(new Map(), { loadLifetime: () => new Promise(resolve => { release = resolve; }) });
+    t.after(() => h.transit.stop());
+    await h.view.restore();
+    if (personal) h.session.select('saved-person');
+    const libraryBefore = h.storage.get('liniya.charts.v1');
+    h.view.interrupt();
+    const opening = personal ? h.exploration.toggleReturns() : h.exploration.toggleTransit();
+    h.camera.zoom(1.4);
+    if (flushBy === 'flush') h.view.flush();
+    else h.eventTarget.dispatch('pagehide');
+    const saved = JSON.parse(h.storage.get('liniya.view.v1'));
+    assert.equal(saved.lifetime?.opened, true, 'the selected tool survives even before its controller exists');
+    assert.equal(saved.lifetime.mode, personal ? 'lifetime' : 'day');
+    if (personal) {
+      assert.equal(saved.lifetime.fromDate, '2026-09-24');
+      assert.equal(saved.lifetime.requestedUtc, Date.parse('2026-09-24T12:34:00Z'));
+      assert.equal(saved.lifetime.personalPreview, false, 'opening at birth retains the exact original chart');
+    }
+    assert.ok(Math.abs(saved.camera.k - 1.4) < 1e-9);
+    assert.equal(h.storage.get('liniya.charts.v1'), libraryBefore, 'an opening changes only tab presentation');
+    h.exploration.closeScales();
+    h.eventTarget.dispatch('pagehide');
+    assert.equal(JSON.parse(h.storage.get('liniya.view.v1')).lifetime, null, 'closing before import cancels the saved opening');
+    release(null); assert.equal(await opening, false);
+    h.view.flush();
+    assert.equal(JSON.parse(h.storage.get('liniya.view.v1')).lifetime, null, 'late import completion cannot restore the canceled intent');
+  });
+}
+
+
+for (const command of ['none', 'open', 'open-close']) {
+  test(`saved closed right shell survives a stale opened Returns snapshot and late exact result (${command})`, async t => {
+    const first = harness(undefined, { panelView: true });
+    t.after(() => first.transit.stop()); await first.view.restore();
+    const source = JSON.parse(first.storage.get('liniya.charts.v1'))[0];
+    first.session.select(source.id); await first.returns.open();
+    await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
+    const snapshot = JSON.parse(first.storage.get('liniya.view.v1'));
+    snapshot.panels = { left: true, right: false };
+    assert.equal(snapshot.returns.opened, true, 'preview retained the old menu content but closed its shell');
+    first.storage.set('liniya.view.v1', JSON.stringify(snapshot));
+    const libraryBefore = first.storage.get('liniya.charts.v1');
+    let release;
+    const second = harness(first.storage, { panelView: true, returnsClient: {
+      events: async input => ({ events: input.body === 'saturn' ? [first.returnEvent] : [] }),
+      chart: input => new Promise(done => { release = () => done({ event: first.returnEvent,
+        chart: { ...source, utc: input.eventUtc, personality: [2, 14], design: [3, 60] } }); }),
+    } });
+    t.after(() => second.transit.stop());
+    const restoring = second.view.restore(); await nextTurn();
+    assert.equal(typeof release, 'function');
+    assert.equal(second.panels.right, false, 'restoring chart data cannot reopen the saved closed shell');
+    assert.equal(second.returns.opened, false, 'the menu is normalized without dropping its selected event');
+    if (command !== 'none') second.summary.open();
+    if (command === 'open-close') second.summary.close();
+    release(); assert.equal(await restoring, true);
+    assert.equal(second.summary.screen, command === 'open' ? 'summary' : 'closed');
+    assert.equal(second.returns.opened, false);
+    assert.equal(second.returns.state.selectedEvent.id, first.returnEvent.id);
+    assert.equal(second.session.current.utc, first.returnEvent.utc);
+    const saved = JSON.parse(second.storage.get('liniya.view.v1'));
+    assert.equal(saved.panels.right, command === 'open');
+    assert.equal(saved.returns.opened, false);
+    assert.equal(saved.returns.eventId, first.returnEvent.id);
+    assert.equal(second.storage.get('liniya.charts.v1'), libraryBefore);
+  });
+}
+
+test('legacy Returns snapshots without panel visibility still restore their open menu', async t => {
+  const first = harness(undefined, { panelView: true });
+  t.after(() => first.transit.stop()); await first.view.restore();
+  first.session.select('saved-person'); await first.returns.open();
+  await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
+  const snapshot = JSON.parse(first.storage.get('liniya.view.v1'));
+  delete snapshot.panels;
+  first.storage.set('liniya.view.v1', JSON.stringify(snapshot));
+  const second = harness(first.storage, { panelView: true });
+  t.after(() => second.transit.stop());
+  assert.equal(await second.view.restore(), true);
+  assert.equal(second.summary.screen, 'returns');
+  assert.equal(second.returns.state.selectedEvent.id, first.returnEvent.id);
 });

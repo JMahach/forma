@@ -180,7 +180,7 @@ test('search marks preserve selection and delegated clicks, and clearing search 
 
 // Exercise the imported public controller with its DOM contract. No source
 // rewriting, application bootstrap, storage or real saved charts are needed.
-function harness({ width = 1440, input = chart, withBackdrop = true, callbacks = true, panels = createPanelState(), focusSearch = () => true } = {}) {
+function harness({ initialReturnsVisible = false, width = 1440, input = chart, withBackdrop = true, callbacks = true, panels = createPanelState(), focusSearch = () => true } = {}) {
   const globals = { activeElement: null, dialogOpen: false, libraryOpen: false };
   let document;
   function node(tag = 'div', attributes = {}) {
@@ -259,7 +259,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   let openCalls = 0, closeCalls = 0, returnsCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panels, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton, focusSearch,
+    panels, initialReturnsVisible, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton, focusSearch,
     onReturns() { returnsCalls++; controller.setReturnsVisible(true); },
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
@@ -922,4 +922,20 @@ test('phone summary keeps the keyboard closed until the search field is chosen',
   assert.match(h.content.innerHTML, /data-summary-id="34"/);
   h.controller.close(); phone = false; h.controller.open();
   assert.equal(h.globals.activeElement, h.search, 'desktop keeps its existing search focus');
+});
+
+
+test('restored returns shell attaches directly without a temporary summary or another panel request', () => {
+  for (const right of [false, true]) {
+    const panels = createPanelState(); panels.restore({ left: true, right });
+    let changes = 0; panels.subscribe(() => changes++);
+    const h = harness({ panels, initialReturnsVisible: true });
+    assert.equal(h.panel.dataset.screen, 'returns');
+    assert.equal(h.controller.screen, right ? 'returns' : 'closed');
+    assert.equal(h.summaryScreen.hidden, true);
+    assert.equal(h.returnsPanel.hidden, false);
+    h.controller.setReturnsVisible(true);
+    assert.equal(changes, 0, 'attaching restored content cannot reopen the panel');
+    assert.deepEqual(panels.snapshot, { left: true, right });
+  }
 });

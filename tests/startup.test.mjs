@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { STUDIO_FOOTPRINT, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { attachGestures } from '../src/scene/gestures.js';
+import { attachCameraControls } from '../src/views/camera-controls.js';
+import { attachLoadingPreview } from '../src/views/loading-preview.js';
+import { lifeTimelineForChart } from '../src/domain/cycles.js';
 import { attachPhoneSheets } from '../src/ui/phone-sheet.js';
 import { attachPageGestures } from '../src/ui/page-gestures.js';
 import { createPanelState } from '../src/state/panels.js';
@@ -12,7 +16,7 @@ import * as chartSession from '../src/state/chart-session.js';
 import { libraryDom } from './helpers/library-dom.mjs';
 import * as cameraModule from '../src/scene/camera.js';
 import { createCameraView } from '../src/scene/camera-view.js';
-import { holdLoadingContent } from '../src/views/chart-loading.js';
+import { holdLoadingContent, commitLoadingLayout } from '../src/views/chart-loading.js';
 import { studioPresentation } from '../src/ui/studio-presentation.js';
 import { eligibleCycleChart } from '../src/domain/cycles.js';
 import { canExploreNatalDay } from '../src/state/natal-day.js';
@@ -25,9 +29,19 @@ import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activat
 const source = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace("import('./app.js')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'attachPhoneSheets', 'holdLoadingContent', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
-const runWithSheets = (attachSheets, ...args) => { if (args.length === 9) args.push({}); return evaluate(attachSheets, holdLoadingContent, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
-  () => ({ getPropertyValue: () => '296.8px' }), ...args); };
+  'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'attachPhoneSheets', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
+function tabStorage() {
+  const values = new Map();
+  return { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
+}
+const runWithSheets = (attachSheets, ...args) => {
+  const storage = args[10] ?? tabStorage();
+  args.length = 10;
+  args[9] = { ...args[9], href: args[9]?.href || 'http://localhost:3636/' };
+  const attachPreview = options => attachLoadingPreview({ ...options, getStorage: () => storage });
+  return evaluate(attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, attachSheets, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+    () => ({ getPropertyValue: () => '296.8px' }), ...args);
+};
 
 const run = (...args) => runWithSheets(attachPhoneSheets, ...args);
 
@@ -60,7 +74,8 @@ function startupDocument(overrides = {}) {
     return nodes.get(id);
   };
   const document = Object.assign(new EventTarget(), { defaultView: { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }, body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
-    createElement: library.document.createElement, getElementById: element, querySelector: selector => selector === '.app-shell' ? element('shell') : null });
+    createElement: library.document.createElement, getElementById: element, querySelector: selector => selector === '.app-shell' ? element('shell') : null,
+    querySelectorAll: selector => selector.split(',').map(s => ({ '.library': 'library', '.chart-summary': 'chartSummary', '.chart-view-tools': 'chartViewTools', '.canvas-wrap': 'canvasWrap' }[s.trim()])).filter(Boolean).map(element) });
   for (const id of ['bodygraph', 'chartLoadingArt']) Object.assign(element(id), {
     viewBox: { baseVal: { x: 0, y: 0, width: 640, height: 820 } },
     preserveAspectRatio: { baseVal: { align: 6, meetOrSlice: 1 } },
@@ -72,7 +87,7 @@ function startupDocument(overrides = {}) {
   return { document, element, rows: library.children };
 }
 
-const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, subscribeViewport() {} });
+const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, setTimelineKind() {}, subscribeViewport() {} });
 
 const emptyStore = () => ({ charts: [], has: () => false, get: () => undefined });
 
@@ -104,7 +119,7 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     assert.equal(options.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
-    const { panels, workspace, store, libraryView, camera, cameraView, previewLoading, initialPresentation, releaseLoadingContent, ...existingPorts } = received;
+    const { panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, ...existingPorts } = received;
     assert.deepEqual(existingPorts, { dayClient: client, layout, toast, viewStore, savedView });
   }
 });
@@ -147,8 +162,9 @@ test('saved panel space and visible shells are restored before the application i
   ]) {
     const { document, element } = startupDocument();
     const savedView = { selectedId: 'current-transit', panels: { left, right }, workspace: screen };
-    let layout, received, initial;
+    let layout, received, initial, bootingDuringPlacement;
     await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), options => {
+      bootingDuringPlacement = element('shell').dataset.booting;
       layout = createStudioLayout({ ...options, viewport: null, media: { matches: phone },
         readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
       return layout;
@@ -161,7 +177,8 @@ test('saved panel space and visible shells are restored before the application i
     assert.equal(initial.right, right && !(phone && left) && screen === 'chart', 'only the chart workspace projects the saved right panel');
     assert.equal(initial.screen, screen);
     assert.ok(Math.abs(initial.width - expectedWidth) < 1e-7, 'the loading preview already occupies the saved free area');
-    assert.equal(initial.booting, 'true', 'initial projection is applied with transitions disabled');
+    assert.equal(bootingDuringPlacement, 'true', 'initial projection is applied with transitions disabled');
+    assert.equal(initial.booting, undefined, 'after placement the loading menu can respond with normal motion');
     assert.deepEqual(received.panels.snapshot, { left, right: right && !(phone && left) }, 'the app inherits the same restored owner');
     assert.equal(received.workspace.screen, screen);
     layout.destroy();
@@ -235,15 +252,61 @@ test('saved camera and Mandala are projected onto the preview before application
 });
 
 
-test('only a local preview URL asks the mounted application to retain loading presentation', async () => {
-  for (const hostname of ['localhost', '127.0.0.1', 'example.com']) {
-    const { document } = startupDocument(); let received;
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
-      () => () => {}, () => ({ read: () => null }), emptyStore, async () => ({ startApp(ports) { received = ports; } }),
-      { hostname, search: '?preview=loading' });
-    assert.equal(received.previewLoading, hostname !== 'example.com');
+test('the Preview button holds the next startup without importing the application or fetching a day', async () => {
+  for (const hostname of ['localhost', '127.0.0.1', '192.168.1.124']) {
+    const storage = tabStorage(); let imports = 0, reloads = 0, options;
+    const location = { hostname, port: '3636', href: `http://${hostname}:3636/`, reload() { reloads++; } };
+    const boot = async document => run(attachPageGestures, document, class { observe() {} disconnect() {} }, value => { options = value; return {}; }, layoutStub,
+      () => () => {}, () => ({ read: () => null }), emptyStore, async () => { imports++; return { startApp() {} }; }, location, storage);
+    const first = startupDocument();
+    await boot(first.document);
+    assert.equal(imports, 1, 'an untouched tab loads the application');
+    first.element('toggleLoadingPreview').click();
+    assert.equal(reloads, 1, 'only the explicit button asks for a reload');
+    const { document, element } = startupDocument();
+    await boot(document);
+    assert.equal(imports, 1, 'button-enabled preview remains the real pre-import scene after reload');
+    assert.equal(options.initialDate, null, 'the held preview has no data consumer');
+    assert.equal(element('toggleLoadingPreview').getAttribute('aria-pressed'), 'true');
+    assert.equal(element('shell').dataset.booting, undefined, 'user interactions can animate after initial placement');
   }
 });
+
+test('legacy preview URLs still start the real application in a fresh tab', async () => {
+  const { document, element } = startupDocument(); let imported = false, options;
+  const search = '?preview=loading&fps=1&perf=1&controls=5&palette=gold';
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, value => { options = value; return {}; }, layoutStub,
+    () => () => {}, () => ({ read: () => null }), emptyStore, async () => { imported = true; return { startApp() {} }; },
+    { port: '3636', href: `http://localhost:3636/${search}`, search });
+  assert.equal(imported, true);
+  assert.ok(options.initialDate, 'an obsolete link cannot suppress normal day loading');
+  assert.equal(element('toggleLoadingPreview').getAttribute('aria-pressed'), 'false');
+});
+
+test('early loading controls update and persist the tab while application import is pending', async () => {
+  const saved = { version: 1, selectedId: 'current-transit', panels: { left: false, right: false }, mandala: false,
+    transit: { live: false, date: '2026-10-04', timeZone: 'UTC', index: 123 }, planets: { selectedPlanets: ['sun'], selectedDesignPlanets: [] } };
+  const { document, element } = startupDocument(); const writes = []; let received;
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
+    () => () => {}, () => ({ read: () => saved, write: value => { writes.push(value); return true; } }), emptyStore, async () => {
+      element('mandalaSwitch').click();
+      element('lifetimeToggle').click();
+      element('summarySwitch').click();
+      assert.equal(element('mandalaSwitch').getAttribute('aria-checked'), 'true');
+      assert.equal(element('lifetimeToggle').getAttribute('aria-pressed'), 'true');
+      assert.equal(element('studio').dataset.initialTimeline, 'lifetime');
+      assert.equal(writes.at(-1).panels.right, true);
+      assert.equal(writes.at(-1).mandala, true);
+      assert.equal(writes.at(-1).lifetime.opened, true);
+      assert.deepEqual(writes.at(-1).transit, saved.transit);
+      assert.deepEqual(writes.at(-1).planets, saved.planets);
+      return { startApp(ports) { received = ports; } };
+    });
+  assert.ok(received, 'startup handed off without hiding a failed assertion as an import error');
+  assert.equal(received.savedView.mandala, true);
+  assert.equal(received.savedView.lifetime.opened, true);
+});
+
 
 
 test('saved timeline geometry and tool visibility exist before the application import', async () => {
@@ -272,6 +335,8 @@ test('saved timeline geometry and tool visibility exist before the application i
             assert.equal(element(id).hidden, name !== panel);
           assert.equal(element('lifetimeHeading').hidden, !heading);
           assert.equal(element('natalDayToggle').hidden, saved.selectedId !== personal.id);
+          assert.equal(element('natalDayToggle').getAttribute('aria-expanded'), String(panel === 'natal-day'));
+          assert.equal(element('natalDayToggle').getAttribute('aria-pressed'), String(panel === 'natal-day'));
         } catch (error) { failure = error; }
         return { startApp(ports) { received = ports; } };
       });

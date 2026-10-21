@@ -71,6 +71,7 @@ test('real release build preserves sources and produces complete deterministic c
   }
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
+  assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors/, 'stand colour comparison stays out of the release');
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
   assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
@@ -138,6 +139,34 @@ test('real release build preserves sources and produces complete deterministic c
   for (const filename of contents.keys()) {
     if (filename.startsWith('assets/')) assert.ok(reached.has(filename), `${filename} is used by a release page`);
   }
+  const recoveryEntry = contents.get(entries.get('index.html'));
+  assert.doesNotMatch(recoveryEntry, /\bimport\s*(?:['"]|\{|\*)/, 'the release recovery entry has no fallible static dependencies');
+  // Execute the real minified boundary with its startup chunk deliberately
+  // absent. Static imports here would reject before recovery could run.
+  const recoveryFile = path.join(temporary, 'recovery.mjs');
+  await fs.writeFile(recoveryFile, recoveryEntry);
+  const recovered = { shell: { dataset: {}, hidden: false, setAttribute() {} },
+    chartLoadingMessage: {}, chartLoadingStatus: {}, chartLoadingRetry: { addEventListener(type, action) { this[type] = action; } } };
+  const recoveryBody = { append(node) { node.parentElement = this; } };
+  const previousDocument = globalThis.document, previousLocation = globalThis.location;
+  let recoveryReloads = 0;
+  globalThis.document = { querySelector: () => recovered.shell, body: recoveryBody, getElementById: id => recovered[id] };
+  globalThis.location = { reload() { recoveryReloads++; } };
+  try {
+    await import(pathToFileURL(recoveryFile).href);
+    assert.equal(recovered.shell.hidden, true);
+    assert.equal(recovered.chartLoadingMessage.parentElement, recoveryBody);
+    assert.equal(recovered.chartLoadingStatus.textContent, 'Не удалось загрузить приложение');
+    assert.equal(recovered.chartLoadingRetry.hidden, false);
+    assert.equal(recoveryReloads, 0);
+    recovered.chartLoadingRetry.click();
+    assert.equal(recoveryReloads, 1);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
+    if (previousLocation === undefined) delete globalThis.location; else globalThis.location = previousLocation;
+  }
+  const startupChunk = moduleReferences(recoveryEntry).map(reference => resolve(reference, entries.get('index.html')))[0];
+  assert.ok(contents.get('index.html').includes(`href="/${startupChunk}"`), 'the new boundary does not defer downloading startup');
   const iconFile = [...reached].find(filename => filename.endsWith('.svg'));
   assert.deepEqual(await fs.readFile(path.join(outdir, iconFile)), await fs.readFile(path.join(root, 'public/favicon.svg')));
 

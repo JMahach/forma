@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachChartLoading, holdLoadingContent } from '../src/views/chart-loading.js';
+import { attachChartLoading, holdLoadingContent, commitLoadingLayout } from '../src/views/chart-loading.js';
 
 function element() {
   const attributes = new Map(), listeners = new Map();
@@ -26,7 +26,8 @@ function harness() {
 }
 
 function assertChartAccessible(h, accessible) {
-  assert.equal(h.canvas.inert, !accessible);
+  assert.equal(h.canvas.inert, false, 'the loading surface remains available to camera gestures');
+  assert.equal(h.drawing.inert, !accessible, 'unready chart targets remain inaccessible');
   assert.equal(h.drawing.getAttribute('tabindex'), accessible ? '0' : '-1');
   assert.equal(h.drawing.getAttribute('aria-hidden'), String(!accessible));
   assert.equal(h.art.hasAttribute('hidden'), accessible);
@@ -115,12 +116,45 @@ test('loading blocks content while retaining panel navigation and releases only 
   get('library').inert = true;
   const release = holdLoadingContent(document);
   for (const id of ['mainNavigation', 'savedChartsSection', 'summaryScreen', 'returnsPanel', 'accountPage', 'knowledgeDialog', 'allChartsDialog',
-    'transitControls', 'natalDayControls', 'lifetimeControls', '.sidebar-footer', '.chart-view-tools']) assert.equal(get(id).inert, true, id);
+    'transitControls', 'natalDayControls', 'lifetimeControls', 'togglePerformance']) assert.equal(get(id).inert, true, id);
   assert.equal(get('openLibrary').inert, false);
   assert.equal(get('summarySwitch').inert, false);
+  assert.equal(get('.sidebar-footer').inert, false);
+  assert.equal(get('.chart-view-tools').inert, false);
+  assert.equal(get('toggleLoadingPreview').inert, false);
   release(); release();
   assert.equal(get('mainNavigation').inert, false);
   assert.equal(get('lifetimeControls').inert, false);
   assert.equal(get('returnsPanel').inert, true, 'a prior content restriction remains owned by its feature');
   assert.equal(get('library').inert, true, 'the closed panel keeps its own accessibility restriction');
+});
+
+
+test('initial layout measures both panels, tools and canvas before enabling their transitions', () => {
+  const sequence = [];
+  const shell = { dataset: new Proxy({ booting: 'true' }, {
+    deleteProperty(target, key) { sequence.push(`release:${key}`); return Reflect.deleteProperty(target, key); },
+  }) };
+  const selectors = ['.library', '.chart-summary', '.chart-view-tools', '.canvas-wrap'];
+  const nodes = new Map(selectors.map(selector => [selector, { getBoundingClientRect() {
+    assert.equal(shell.dataset.booting, 'true', 'every measurement happens with transitions disabled');
+    assert.equal(shell.dataset.shellReady, undefined, 'unprepared controls stay behind the first-paint gate');
+    sequence.push(selector); return { width: 296.8 };
+  } }]));
+  const document = { querySelector: selector => selector === '.app-shell' ? shell : null,
+    querySelectorAll: selector => selector.split(',').map(value => nodes.get(value.trim())).filter(Boolean) };
+  commitLoadingLayout(document);
+  assert.deepEqual(sequence, [...selectors, 'release:booting']);
+  assert.equal(shell.dataset.booting, undefined);
+  assert.equal(shell.dataset.shellReady, 'true', 'the complete measured shell is revealed together');
+  commitLoadingLayout(document);
+  assert.deepEqual(sequence, [...selectors, 'release:booting'], 'later reveals do not remeasure or stop interactive movement');
+});
+
+test('an interactive shell is never put back into boot mode by a layout commit', () => {
+  const shell = { dataset: { booting: 'false' } };
+  const document = { querySelector: () => shell,
+    querySelectorAll() { assert.fail('ordinary interactive layout does not need a boot commit'); } };
+  commitLoadingLayout(document);
+  assert.equal(shell.dataset.booting, 'false');
 });
