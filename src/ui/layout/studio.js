@@ -1,12 +1,15 @@
-export const DAY_CONTROL_HEIGHT = 48;
+import { TIMELINE_THUMB_SIZE } from './metrics.js';
+
+export const DAY_CONTROL_HEIGHT = TIMELINE_THUMB_SIZE + 4;
 export const DAY_CONTROL_TOP_CLEARANCE = 20;
 const GAP = 4;
 const RETURNS_SHEET_REFERENCE_WIDTH = 1126;
 // The backing is compact; the existing 44px range target remains unchanged.
-export const TIMELINE_BAR_HEIGHT = 40.8;
+export const TIMELINE_BAR_HEIGHT = 30.6;
 // Keep the complete focus/error frame and a quiet gap above the rail backing.
 export const TIMELINE_DATE_HEIGHT = 44;
-export const TIMELINE_WITH_DATES_HEIGHT = TIMELINE_BAR_HEIGHT + TIMELINE_DATE_HEIGHT + GAP;
+const TIMELINE_DATE_GAP = 6;
+export const TIMELINE_WITH_DATES_HEIGHT = TIMELINE_BAR_HEIGHT + TIMELINE_DATE_HEIGHT + TIMELINE_DATE_GAP;
 const TIMELINE_SIDE_CONTROL_WIDTH = 160;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
@@ -68,8 +71,11 @@ export function computeTimelineDock({ width, height, chartWidth, side = 4, safeB
   const inline = kind !== 'chronicle';
   const backingHeight = TIMELINE_BAR_HEIGHT + safeBottom;
   const dockHeight = inline ? backingHeight : TIMELINE_WITH_DATES_HEIGHT + safeBottom;
+  // Center the painted rail in its compact backing, while keeping the whole
+  // native slider on screen even when an embedding reports no safe inset.
+  const railCenter = Math.min(height - safeBottom - TIMELINE_BAR_HEIGHT / 2, height - TIMELINE_THUMB_SIZE / 2);
   return { kind, mode: inline ? 'inline' : 'stacked', height: dockHeight, backingHeight, gutter, controlWidth,
     dates: { x: area.x + gutter, y: height - safeBottom - TIMELINE_WITH_DATES_HEIGHT,
       width: Math.max(1, area.width - 2 * gutter), height: TIMELINE_DATE_HEIGHT },
-    rail: { x: railLeft, y: height - safeBottom - DAY_CONTROL_HEIGHT, width: railWidth, height: DAY_CONTROL_HEIGHT } };
+    rail: { x: railLeft, y: railCenter - (DAY_CONTROL_HEIGHT - TIMELINE_THUMB_SIZE / 2), width: railWidth, height: DAY_CONTROL_HEIGHT } };
 }

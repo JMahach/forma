@@ -1,6 +1,7 @@
 import test from 'node:test';
 import * as geometry from '../src/ui/layout/studio.js';
 import assert from 'node:assert/strict';
+import { TIMELINE_THUMB_SIZE } from '../src/ui/layout/metrics.js';
 import { DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT } from '../src/ui/layout/studio.js';
 import { computeCameraFit } from '../src/scene/camera-fit.js';
 import { createStudioLayout, computeStudioLayout, returnsPlacement } from './fixtures/studio-layout.mjs';
@@ -73,9 +74,9 @@ test('layout centers the natural calculation span in the measured free canvas', 
   const home = layout.refresh();
   assertReads();
   close(home.center.x, 250, 'the chart still fits its actual narrowed canvas');
-  close(initial.width, 407.68, 'the full-studio Home projects the 130-unit calculation span at scale 3.136');
+  close(initial.width, 414.31, 'the full-studio Home projects the 130-unit calculation span at scale 3.187');
   for (const panel of panels) {
-    close(parseFloat(panel.style.left), 166.16, 'moving the canvas also moves the rail into its free area');
+    close(parseFloat(panel.style.left), 162.845, 'moving the canvas also moves the rail into its free area');
     close(parseFloat(panel.style.width), initial.width, 'the natural rail length remains when the free area can fit it');
     close(parseFloat(panel.style.left) + parseFloat(panel.style.width) / 2, 370, 'asymmetric calculations still give a rail centered in the free area');
   }
@@ -484,7 +485,9 @@ test('Home clears the low backing while dates use available headroom and roomy p
     const layout = computeStudioLayout({ width, height, side: 4, top, bottom, footerHeight });
     const rail = railFor(layout, width, height, safeBottom);
     const envelopeBottom = layout.center.y + layout.mandalaRadius;
-    close(rail.y, height - safeBottom - DAY_CONTROL_HEIGHT, `${width}×${height}: the timeline does not move`);
+    const center = rail.y + DAY_CONTROL_HEIGHT - TIMELINE_THUMB_SIZE / 2;
+    assert.ok(center + TIMELINE_THUMB_SIZE / 2 <= height + 1e-7, 'the entire native range stays on screen');
+    if (safeBottom >= 8) close(center, height - safeBottom - TIMELINE_BAR_HEIGHT / 2, `${width}×${height}: rail stays centered in the backing content`);
     assert.ok(envelopeBottom <= height - bottom - 4, `${width}×${height}: full red and black planet envelope clears the backing`);
     assert.ok(layout.center.y - layout.mandalaRadius >= top - 1e-7, `${width}×${height}: the top cannot be clipped`);
     if (top + 2 * layout.mandalaRadius <= height - footerHeight - 4)
@@ -581,7 +584,7 @@ test('only visible chronicle dates require a second row; every mode shares one r
       assert.equal(dock.rail.y, 796);
       const stacked = kind === 'chronicle';
       assert.equal(dock.mode, stacked ? 'stacked' : 'inline');
-      assert.equal(dock.height, stacked ? 88.8 : 40.8);
+      assert.equal(dock.height, stacked ? 80.6 : 30.6);
       rails.push(dock.rail);
     }
     for (const rail of rails) assert.deepEqual(rail, rails[0]);
@@ -603,8 +606,8 @@ test('chronicle dates stay above the rail through the former inline threshold', 
 
 test('safe area extends the shared dock without changing its content height', () => {
   assert.equal(typeof geometry.computeTimelineDock, 'function');
-  const normal=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:0});
-  const safe=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:34});
+  const normal=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:8});
+  const safe=geometry.computeTimelineDock({width:390,height:844,chartWidth:382,safeBottom:42});
   assert.equal(safe.height, normal.height+34);
   assert.equal(safe.mode, normal.mode);
   assert.equal(safe.rail.y, normal.rail.y-34);
@@ -620,7 +623,7 @@ test('studio reads real DOMRect dimensions, whose properties are not enumerable'
   const canvas={dataset:{},parentElement:studio,getBoundingClientRect:()=>rect};
   const panel={dataset:{},style:{setProperty(){}}};
   createStudioLayout({canvas,panels:[panel],media:{matches:false},readStyle:()=>({scrollPaddingTop:'74px',scrollPaddingBottom:'52px',scrollPaddingLeft:'4px',getPropertyValue:()=> '0px'})});
-  assert.equal(values.get('--timeline-dock-height'),'40.8px');
+  assert.equal(values.get('--timeline-dock-height'),'30.6px');
   assert.ok(Number.isFinite(Number.parseFloat(panel.style.left)));
   assert.equal(panel.style.top,'679px');
 });
@@ -635,10 +638,10 @@ test('returns uses the user supplied narrow-window reference before the map beco
 
 
 test('a tall 924px window clips wide calculation edges to the available space and moves dates above', () => {
-  const home = computeStudioLayout({ width: 924, height: 889, top: 74, bottom: 40.8, footerHeight: 40.8 });
+  const home = computeStudioLayout({ width: 924, height: 889, top: 74, bottom: 30.6, footerHeight: 30.6 });
   const dock = geometry.computeTimelineDock({ width: 924, height: 889, chartWidth: home.columns.right - home.columns.left, kind: 'chronicle' });
   assert.equal(dock.mode, 'stacked');
-  assert.equal(dock.height, 88.8);
+  assert.equal(dock.height, 80.6);
   close(dock.rail.x, 24, 'wide calculations reach the left date edge');
   close(dock.rail.width, 876, 'only insufficient workspace caps the calculation span');
 });
@@ -704,23 +707,23 @@ test('the whole chronicle dock follows the visible bottom without reframing the 
   const lift = () => parseFloat(h.values.get('--timeline-viewport-lift'));
   const dockTop = () => parseFloat(h.values.get('--timeline-dock-top'));
   assert.equal(lift(), 0);
-  assert.equal(dockTop(), 803.2);
+  assert.equal(dockTop(), 813.4);
   h.focus(h.fromDate); h.viewport.height = 500;
   h.viewport.dispatchEvent(new Event('resize'));
   assert.equal(lift(), 344, 'keyboard moves every dock control by the same amount');
-  assert.equal(dockTop(), 459.2, 'the backing leaves the covered map visible between dates above the keyboard');
-  assert.equal(h.values.get('--timeline-dock-height'), '88.8px', 'keyboard does not collapse date content');
+  assert.equal(dockTop(), 469.4, 'the backing leaves the covered map visible between dates above the keyboard');
+  assert.equal(h.values.get('--timeline-dock-height'), '80.6px', 'keyboard does not collapse date content');
   h.viewport.offsetTop = 70;
   h.viewport.dispatchEvent(new Event('scroll'));
   assert.equal(lift(), 274, 'Safari autopan is counted once');
-  assert.equal(dockTop(), 529.2);
+  assert.equal(dockTop(), 539.4);
   assert.equal(h.layout.insets(), before.insets, 'camera fit keeps its original insets object');
   assert.equal(h.panel.style.top, before.top, 'base rail geometry does not change');
   assert.equal(h.canvasReads(), before.reads, 'viewport events do not measure or refresh the scene');
   h.viewport.height = 844; h.viewport.offsetTop = 0;
   h.viewport.dispatchEvent(new Event('resize'));
   assert.equal(lift(), 0, 'closing the keyboard restores the exact baseline');
-  assert.equal(dockTop(), 803.2);
+  assert.equal(dockTop(), 813.4);
 });
 
 test('visible dock positioning includes the studio offset and follows full layout changes', () => {
@@ -728,12 +731,12 @@ test('visible dock positioning includes the studio offset and follows full layou
   h.focus(h.fromDate); h.viewport.height = 450; h.viewport.offsetTop = 80;
   h.viewport.dispatchEvent(new Event('scroll'));
   assert.equal(parseFloat(h.values.get('--timeline-viewport-lift')), 294);
-  assert.equal(parseFloat(h.values.get('--timeline-dock-top')), 489.2);
+  assert.equal(parseFloat(h.values.get('--timeline-dock-top')), 499.4);
   h.rect.width = 844; h.rect.height = 390; h.rect.top = 0; h.rect.bottom = 390;
   h.viewport.height = 390; h.viewport.offsetTop = 0;
   h.layout.refresh();
   assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
-  assert.equal(h.values.get('--timeline-dock-top'), '349.2px', 'wide chronicle returns to the single row');
+  assert.equal(h.values.get('--timeline-dock-top'), '359.4px', 'wide chronicle returns to the single row');
 });
 
 test('missing or invalid visual viewport metrics leave the normal dock in place', () => {
@@ -743,36 +746,36 @@ test('missing or invalid visual viewport metrics leave the normal dock in place'
     Object.assign(new EventTarget(), { height: 900, offsetTop: 0 })]) {
     const h = viewportLayoutHarness({ viewport });
     assert.equal(h.values.get('--timeline-viewport-lift'), '0px');
-    assert.equal(h.values.get('--timeline-dock-top'), '803.2px');
+    assert.equal(h.values.get('--timeline-dock-top'), '813.4px');
   }
 });
 
 
 test('compact controls keep a small edge clearance even when an embedded browser reports no safe inset', () => {
-  const mobile = viewportLayoutHarness({ edgeSpace: 8 });
-  assert.equal(mobile.panel.style.top, '788px', 'rail and its labels rise above the bottom browser overlap');
-  assert.equal(mobile.values.get('--timeline-dock-height'), '96.8px', 'the continuous backing includes the clearance');
-  const homeIndicator = viewportLayoutHarness({ edgeSpace: 8, safeBottom: 34 });
-  assert.equal(homeIndicator.panel.style.top, '762px', 'a larger native safe area is not padded twice');
-  assert.equal(homeIndicator.values.get('--timeline-dock-height'), '122.8px');
+  const mobile = viewportLayoutHarness({ edgeSpace: 6 });
+  assert.equal(mobile.panel.style.top, '796px', 'rail and its labels rise above the bottom browser overlap');
+  assert.equal(mobile.values.get('--timeline-dock-height'), '86.6px', 'the continuous backing includes the clearance');
+  const homeIndicator = viewportLayoutHarness({ edgeSpace: 6, safeBottom: 34 });
+  assert.equal(homeIndicator.panel.style.top, '768.7px', 'a larger native safe area is not padded twice');
+  assert.equal(homeIndicator.values.get('--timeline-dock-height'), '114.6px');
   const desktop = viewportLayoutHarness({ edgeSpace: 0 });
   assert.equal(desktop.panel.style.top, '796px', 'desktop has no extra edge allowance');
   mobile.focus(mobile.fromDate); mobile.viewport.height = 500;
   mobile.viewport.dispatchEvent(new Event('resize'));
   assert.equal(mobile.values.get('--timeline-viewport-lift'), '344px');
-  assert.equal(mobile.values.get('--timeline-dock-top'), '451.2px', 'keyboard and edge clearance compose once');
+  assert.equal(mobile.values.get('--timeline-dock-top'), '463.4px', 'keyboard and edge clearance compose once');
 });
 
 
 test('Done lowers the dock before delayed Safari viewport metrics catch up', () => {
-  const h = viewportLayoutHarness({ edgeSpace: 8 });
+  const h = viewportLayoutHarness({ edgeSpace: 6 });
   const before = { insets: h.layout.insets(), top: h.panel.style.top, reads: h.canvasReads() };
   h.focus(h.fromDate); h.viewport.height = 500;
   h.viewport.dispatchEvent(new Event('resize'));
   assert.equal(h.values.get('--timeline-viewport-lift'), '344px');
   h.focus(null); h.frame();
   assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'Done must not wait for resize');
-  assert.equal(h.values.get('--timeline-dock-top'), '795.2px', 'no keyboard-sized grey gap');
+  assert.equal(h.values.get('--timeline-dock-top'), '807.4px', 'no keyboard-sized grey gap');
   for (const event of ['scroll', 'resize']) {
     h.viewport.dispatchEvent(new Event(event));
     assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'late metrics cannot lift a closed editor');
@@ -785,7 +788,7 @@ test('Done lowers the dock before delayed Safari viewport metrics catch up', () 
   assert.equal(h.values.get('--timeline-viewport-lift'), '0px', 'intermediate closing frame stays dismissed');
   h.viewport.height = 844; h.viewport.offsetTop = 0;
   h.viewport.dispatchEvent(new Event('resize'));
-  assert.equal(h.values.get('--timeline-dock-top'), '795.2px');
+  assert.equal(h.values.get('--timeline-dock-top'), '807.4px');
   assert.equal(h.layout.insets(), before.insets);
   assert.equal(h.panel.style.top, before.top);
   assert.equal(h.canvasReads(), before.reads, 'focus and keyboard never reframe the camera');
@@ -901,16 +904,16 @@ test('hidden period fields determine date placement without changing the shared 
 });
 
 test('Home stays centered when possible and rises only enough for the two-row footer', () => {
-  for (const [height, shift] of [[844, 0], [626.8, 0], [618, -4.4], [594.8, -16], [568, -2.6]]) {
-    const h = viewportLayoutHarness({ height, edgeSpace: 8, viewport: null });
+  for (const [height, shift] of [[844, 0], [618.6, 0], [610, -4.3], [584.6, -17], [568, -8.7]]) {
+    const h = viewportLayoutHarness({ height, edgeSpace: 6, viewport: null });
     const home = h.layout.refresh();
     close(home.insets.offsetY, shift, `${height}: smallest necessary upward shift`);
-    const base = computeStudioLayout({ width: 390, height, top: 112, bottom: 48.8, footerHeight: 48.8 });
+    const base = computeStudioLayout({ width: 390, height, top: 112, bottom: 36.6, footerHeight: 36.6 });
     close(home.scale, base.scale, 'reserving the potential second row never shrinks the map');
     assert.ok(home.center.y - home.mandalaRadius >= 112 - 1e-7, 'the complete envelope clears the heading');
-    close(parseFloat(h.values.get('--timeline-dock-top')), height - 48.8, 'the backing always stays below the date row');
-    assert.equal(h.values.get('--timeline-dock-height'), '96.8px', 'date content retains two rows');
-    assert.equal(h.panel.style.top, `${height - 56}px`, 'rail stays in place');
+    close(parseFloat(h.values.get('--timeline-dock-top')), height - 36.6, 'the backing always stays below the date row');
+    assert.equal(h.values.get('--timeline-dock-height'), '86.6px', 'date content retains two rows');
+    assert.equal(h.panel.style.top, `${height - 48}px`, 'the complete native target reaches the screen edge');
     const before = { ...home };
     h.panel.hidden = true;
     assert.deepEqual(h.layout.refresh(), before, 'closing chronicle never changes Home');
@@ -920,13 +923,13 @@ test('Home stays centered when possible and rises only enough for the two-row fo
 });
 
 test('Home and rail remain continuous across the former date wrapping threshold', () => {
-  const wide = viewportLayoutHarness({ width: 2000, height: 700, edgeSpace: 8, viewport: null }).layout.refresh();
+  const wide = viewportLayoutHarness({ width: 2000, height: 700, edgeSpace: 6, viewport: null }).layout.refresh();
   const threshold = wide.columns.right - wide.columns.left + 2 * (24 + 160 + 24);
   const sizes = [-.001, .001].map(delta => {
-    const h = viewportLayoutHarness({ width: threshold + delta, height: 700, edgeSpace: 8, viewport: null });
+    const h = viewportLayoutHarness({ width: threshold + delta, height: 700, edgeSpace: 6, viewport: null });
     return { home: h.layout.refresh(), height: h.values.get('--timeline-dock-height'), rail: [parseFloat(h.panel.style.left), parseFloat(h.panel.style.width)] };
   });
-  assert.equal(sizes[0].height, '96.8px'); assert.equal(sizes[1].height, '96.8px');
+  assert.equal(sizes[0].height, '86.6px'); assert.equal(sizes[1].height, '86.6px');
   close(sizes[1].rail[0] - sizes[0].rail[0], .001, 'rail follows the changed center without a wrapping jump');
   close(sizes[1].rail[1], sizes[0].rail[1], 'date wrapping keeps the same calculation span');
   close(sizes[1].home.center.y, sizes[0].home.center.y, 'wrap cannot move the scene');
@@ -938,7 +941,7 @@ test('every mode keeps one low backing regardless of available space or the canv
     const h = viewportLayoutHarness({ width, height, safeBottom, top: 20, canvasTop: 32, viewport: null });
     for (const opened of [false, true]) {
       h.panel.hidden = !opened; h.layout.refresh();
-      close(height + 20 - parseFloat(h.values.get('--timeline-dock-top')), 40.8 + safeBottom, 'one shared backing height');
+      close(height + 20 - parseFloat(h.values.get('--timeline-dock-top')), 30.6 + safeBottom, 'one shared backing height');
     }
   }
 });
@@ -949,8 +952,10 @@ test('stacked dates fit their whole focus and error frame above the rail backing
     const top = parseFloat(h.values.get('--timeline-heading-top'));
     const fieldBottom = top + 42; // 40px field, centered in the existing 44px heading.
     const backingTop = parseFloat(h.values.get('--timeline-dock-top'));
-    assert.ok(fieldBottom + 6 <= backingTop + 1e-7, 'focus frame and inline error have a quiet six-pixel gap');
-    assert.equal(h.panel.style.top, `${930 - safeBottom - 48}px`, 'the rail does not move');
+    close(backingTop - fieldBottom, 8, 'the date row gap plus centered field margin protects focus and errors');
+    const before = h.panel.style.top;
+    h.layout.setTimelineKind('day'); h.layout.refresh();
+    assert.equal(h.panel.style.top, before, 'closing date fields never moves the rail');
   }
 });
 
@@ -958,7 +963,7 @@ test('calendar viewport subscribers observe the same completed keyboard layout a
   const h = viewportLayoutHarness();
   const snapshots = [];
   const stop = h.layout.subscribeViewport(() => snapshots.push({ viewport: h.layout.readViewport(),
-    dockBottom: parseFloat(h.values.get('--timeline-dock-top')) + 40.8 }));
+    dockBottom: parseFloat(h.values.get('--timeline-dock-top')) + 30.6 }));
   assert.deepEqual(h.layout.readViewport(), { left: 0, top: 0, width: 390, height: 844 });
   h.focus(h.fromDate); h.viewport.height = 500; h.viewport.offsetTop = 40;
   h.viewport.dispatchEvent(new Event('resize'));
@@ -1040,4 +1045,41 @@ test('every timeline remains inside the free chart area without changing its nat
       assert.ok(dock.dates.y + dock.dates.height + 4 <= 900 - dock.backingHeight);
     }
   }
+});
+
+
+test('the compact backing is one quarter shorter while dates and native controls retain their sizes', () => {
+  const dock = geometry.computeTimelineDock({ width: 390, height: 844, chartWidth: 382, kind: 'chronicle', safeBottom: 6 });
+  close(dock.backingHeight, 48.8 * .75, 'ordinary desktop and phone backing shrinks by exactly 25%');
+  assert.equal(dock.dates.height, 44, 'date fields keep their complete frame');
+  assert.equal(dock.rail.height, 48, 'the interaction panel does not shrink with its painted backing');
+  close(844 - dock.backingHeight - dock.dates.y - dock.dates.height, 6, 'dates retain a separate six-pixel gap');
+  const nativeTop = dock.rail.y + DAY_CONTROL_HEIGHT - TIMELINE_THUMB_SIZE;
+  close(nativeTop + TIMELINE_THUMB_SIZE, 844, 'the complete native slider remains on screen');
+});
+
+test('compact rail content and effective touch targets fit above the viewport edge and below dates', () => {
+  for (const height of [390, 568, 844]) for (const safeBottom of [6, 8, 34]) {
+    const dock = geometry.computeTimelineDock({ width: 390, height, chartWidth: 382, kind: 'chronicle', safeBottom });
+    const center = dock.rail.y + DAY_CONTROL_HEIGHT - TIMELINE_THUMB_SIZE / 2;
+    const backingTop = height - dock.backingHeight;
+    assert.ok(center - 14 >= backingTop - 1e-7, 'upper event symbols fit inside the painted strip');
+    assert.ok(center + 14 <= height - safeBottom + 1e-7, 'lower labels clear the native safe area');
+    const fieldBottom = dock.dates.y + (dock.dates.height + 40) / 2;
+    for (const targetHeight of [44, 56]) {
+      const exposedTop = Math.max(center - targetHeight / 2, fieldBottom);
+      const exposedBottom = Math.min(center + targetHeight / 2, height);
+      assert.ok(exposedBottom - exposedTop >= 44 - 1e-7, `${safeBottom}px safe area: dates and screen clipping preserve a 44px target`);
+    }
+  }
+});
+
+test('a zero safe inset clamps the complete native slider while real safe areas keep the rail centered', () => {
+  const centers = [0, 6, 34].map(safeBottom => {
+    const dock = geometry.computeTimelineDock({ width: 1200, height: 900, chartWidth: 600, safeBottom });
+    return dock.rail.y + DAY_CONTROL_HEIGHT - TIMELINE_THUMB_SIZE / 2;
+  });
+  assert.equal(centers[0], 878, 'zero-inset embedding cannot crop the native slider');
+  assert.equal(centers[1], 878, 'ordinary edge clearance shares the complete hit target');
+  close(centers[2], 850.7, 'a full native safe area leaves the rail centered in the content strip');
 });

@@ -25,9 +25,7 @@ function thumbImage(frame) {
     C${between(28, right)} ${between(22, lower)} ${between(27, lower)} 26.25 ${between(21.5, 22)} 26.25
     C${between(16, upper)} 26.25 ${between(16, left)} ${between(22, lower)} ${between(11, left)} 22Z`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
-    <defs><linearGradient id="a" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#aaaaaa"/><stop offset="1" stop-color="#777777"/></linearGradient></defs>
-    <path d="${path}" fill="url(#a)"/>
-    <path d="M19.5 20.5Q22 19.5 24 20.5" stroke="#ffffff" stroke-opacity=".32" stroke-width=".8" stroke-linecap="round" fill="none"/>
+    <path d="${path}" fill="#858278"/>
   </svg>`;
   return thumbImages[frame] = `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, ' '))}")`;
 }

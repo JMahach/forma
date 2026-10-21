@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dateDom } from './helpers/date-dom.mjs';
+import { CYCLE_BODIES } from '../src/domain/cycles.js';
 import { attachTimelineRange } from '../src/views/timeline-range.js';
 
 import { groupReturnMarkers as group, attachReturnMarkers as attach } from '../src/views/returns-markers.js';
 const event = (id, body, utc, pass = 1) => ({ id, body, utc, pass, cycle: 1, cycleId: `${body}:1`, direction: pass === 2 ? 'retrograde' : 'direct', age: 999 });
 const fromUtc = '2026-01-01T00:00:00Z', toUtc = '2026-01-11T00:00:00Z';
 const natal = { id: 'natal', utc: '2000-01-05T00:00:00Z', timezone: 'UTC' };
+// The small DOM fixture stores local text only; real textContent includes descendants.
+const textOf = node => node.children.length ? node.children.map(textOf).join('') : node.textContent;
 
 test('markers use actual chronological UTC positions, include both endpoints and leave input order intact', () => {
   const events = [event('last', 'uranus', toUtc), event('first', 'saturn', fromUtc), event('node', 'north_node', '2026-01-03T00:00:00Z'), event('chiron', 'chiron', '2026-01-08T00:00:00Z')];
@@ -145,7 +148,7 @@ test('single compact node selects its exact event, labels actual date and comple
   assert.equal(h.container.children[0], h.slider); assert.equal(h.container.children.filter(node => node.tagName === 'input').length, 1);
   assert.equal(button.style.left, '0%'); assert.equal(button.getAttribute('aria-pressed'), 'true');
   assert.match(button.getAttribute('aria-label'), /Сатурна/); assert.match(button.title, /2026/); assert.match(button.title, /25 лет/); assert.doesNotMatch(button.title, /999/);
-  assert.equal(button.children.map(child => child.textContent).join(''), '♄1'); assert.equal(button.children[0].className, 'returns-marker-dot');
+  assert.equal(textOf(button), '♄1'); assert.equal(button.children[0].className, 'returns-marker-dot');
   button.dispatch('click'); assert.equal(h.chosen[0], value);
   h.update({ events: [value], selectedEvent: value }); assert.equal(h.buttons()[0], button, 'clock-only updates keep the node and its focus');
 });
@@ -156,7 +159,7 @@ test('nearby first passages retain their exact positions without promoting an is
   const grouped = group(values, { fromUtc, toUtc, width: 280 });
   assert.equal(grouped[0].position, .2); assert.deepEqual(grouped.map(item => item.events.map(value => value.id)), [['first'], ['last']]);
   const h = harness(); h.update({ events: values }); const button = h.buttons()[0];
-  assert.equal(button.style.left, '20%'); assert.equal(button.children.map(child => child.textContent).join(''), '☊1');
+  assert.equal(button.style.left, '20%'); assert.equal(textOf(button), '☊1');
   assert.match(button.title, /лунных узлов/); assert.doesNotMatch(button.title, /Сатурна|Хирона/);
   button.dispatch('click'); assert.equal(h.chosen.length, 1); assert.equal(h.chosen[0], first);
   assert.equal(h.layer.all(node => node.getAttribute('role') === 'dialog').length, 0);
@@ -176,11 +179,11 @@ test('first-event selection with missing natal data never invents an age', () =>
 });
 
 test('each life event node visibly identifies its planet using a compact hidden-from-ARIA glyph', () => {
-  for (const [body, glyph] of [['saturn', '♄'], ['north_node', '☊'], ['uranus_opposition', '♅½'], ['uranus', '♅'], ['chiron', '⚷']]) {
+  for (const { id: body, symbol: glyph } of CYCLE_BODIES) {
     const h = harness(); h.update({ events: [event(body, body, fromUtc)] }); const button = h.buttons()[0];
     const symbol = button.children.find(child => child.className === 'returns-marker-symbol');
-    assert.ok(symbol, `visible identifier for ${body}`); assert.equal(symbol.textContent, glyph + (body === 'uranus_opposition' ? '' : '1')); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
-    assert.equal(button.style.left, '0%'); assert.equal(button.children.map(child => child.textContent).join(''), glyph + (body === 'uranus_opposition' ? '' : '1'));
+    assert.ok(symbol, `visible identifier for ${body}`); assert.equal(textOf(symbol), glyph + (body === 'uranus_opposition' ? '' : '1')); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
+    assert.equal(button.style.left, '0%'); assert.equal(textOf(button), glyph + (body === 'uranus_opposition' ? '' : '1'));
     assert.equal(button.children.filter(child => child.className === 'returns-marker-dot').length, 1);
   }
 });
@@ -190,7 +193,7 @@ test('the first passage represents its own cycle without swallowing other planet
     event('uranus', 'uranus', '2026-01-03T00:00:04Z'), event('chiron', 'chiron', '2026-01-03T00:00:05Z')];
   const h = harness(); h.update({ events: values }); assert.equal(h.buttons().length, 5);
   const symbol = h.buttons()[0].children.find(child => child.className === 'returns-marker-symbol');
-  assert.ok(symbol); assert.equal(symbol.textContent, '♄1'); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
+  assert.ok(symbol); assert.equal(textOf(symbol), '♄1'); assert.equal(symbol.getAttribute('aria-hidden'), 'true');
   h.buttons()[0].dispatch('click');
   assert.equal(h.chosen[0], values[0]);
   assert.deepEqual(group(values, { fromUtc, toUtc, width: 280 }).flatMap(item => item.events.map(value => value.id)), values.map(value => value.id));
@@ -225,7 +228,7 @@ test('visible marker and accessible label identify Saturn cycle 2, while nearby 
   assert.equal(h.buttons().length, 2);
   const button = h.buttons().find(item => item.dataset.returnMarker === values[1].id);
   assert.ok(button); assert.match(button.title, /Возврат Сатурна 2/); assert.match(button.getAttribute('aria-label'), /Возврат Сатурна 2/);
-  assert.equal(button.children.find(child => child.className === 'returns-marker-symbol').textContent, '♄2');
+  assert.equal(textOf(button.children.find(child => child.className === 'returns-marker-symbol')), '♄2');
   assert.notEqual(button.dataset.labelLane, h.buttons()[0].dataset.labelLane);
   button.dispatch('click'); assert.equal(h.chosen[0], values[1]);
 });
@@ -416,4 +419,31 @@ test('removing a contacted target cancels its pending tap without selecting or r
   h.slider.dispatch('pointerup', { ...pointer, buttons: 0 });
   assert.deepEqual(h.chosen, []);
   assert.equal(h.slider.title, '');
+});
+
+
+test('planet glyph and cycle ordinal have separate styling without changing the event or its accessible label', () => {
+  for (const [body, expectedGlyph] of [['saturn', '♄'], ['uranus_opposition', '♅½']]) {
+    for (const cycle of [1, 2, 37, 0, -1, 1.5, undefined]) {
+      const h = harness(), value = { ...event('marker', body, fromUtc), cycle };
+      h.update({ events: [value] });
+      const button = h.buttons()[0], symbol = button.children.find(child => child.className === 'returns-marker-symbol');
+      const glyph = symbol.children.find(child => child.className === 'returns-marker-glyph');
+      const ordinal = symbol.children.find(child => child.className === 'returns-marker-ordinal');
+      assert.ok(glyph, 'the planet keeps its own visual span');
+      assert.ok(ordinal, 'the ordinal can have a separate size');
+      const expectedOrdinal = body !== 'uranus_opposition' && Number.isInteger(cycle) && cycle > 0 ? String(cycle) : '';
+      assert.equal(glyph.textContent, expectedGlyph);
+      assert.equal(ordinal.textContent, expectedOrdinal);
+      assert.equal(ordinal.hidden, !expectedOrdinal, 'missing ordinals leave no visible spacing');
+      assert.equal(symbol.getAttribute('aria-hidden'), 'true');
+      assert.equal(button.getAttribute('aria-label'), button.title);
+      const accessible = button.getAttribute('aria-label');
+      h.update({ events: [value], displayedUtc: fromUtc });
+      assert.equal(h.buttons()[0], button);
+      assert.equal(button.getAttribute('aria-label'), accessible, 'clock updates retain the exact accessible label');
+      button.dispatch('click');
+      assert.equal(h.chosen[0], value, 'the same exact event remains selectable');
+    }
+  }
 });

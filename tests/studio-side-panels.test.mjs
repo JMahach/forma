@@ -94,21 +94,21 @@ test('sibling panels end at the solid rail backing through floating dates, safe 
     media: { matches: true }, readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px',
       getPropertyValue: name => name === '--timeline-safe-bottom' ? `${safeBottom}px` : '0px' }) });
   const bottom = () => parseFloat(shared.get('--timeline-panels-bottom'));
-  close(bottom(), 40.8, 'both sibling panels share the solid bar edge');
+  close(bottom(), 30.6, 'both sibling panels share the solid bar edge');
   assert.ok(parseFloat(properties.get('--timeline-dock-height')) > bottom(), 'floating date row is excluded from the panel bottom');
   let seenByPopup;
   layout.subscribeViewport(() => { seenByPopup = bottom(); });
   viewport.height = 600;
   layout.refresh();
-  close(bottom(), 340.8, 'keyboard lifts the panels with the solid bar');
-  close(seenByPopup, 340.8, 'shared geometry is published before popup subscribers');
+  close(bottom(), 330.6, 'keyboard lifts the panels with the solid bar');
+  close(seenByPopup, 330.6, 'shared geometry is published before popup subscribers');
   safeBottom = 34;
   layout.refresh();
-  close(bottom(), 374.8, 'safe area belongs to the solid backing');
+  close(bottom(), 364.6, 'safe area belongs to the solid backing');
   viewport.height = 900;
   layout.setTimelineKind('day');
   layout.refresh();
-  close(bottom(), 74.8, 'closing keyboard and dates keeps only the solid backing');
+  close(bottom(), 64.6, 'closing keyboard and dates keeps only the solid backing');
   layout.destroy();
 });
 
@@ -154,16 +154,16 @@ test('phone presentation publishes one mode and keeps the sheet above chronicle 
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
   assert.deepEqual(modes, [true]);
   const sheetBottom = () => parseFloat(shared.get('--phone-sheet-bottom'));
-  close(sheetBottom(), 92.8, 'phone sheet clears the full date row and its focus gap');
+  close(sheetBottom(), 84.6, 'phone sheet clears the full date row and its focus gap');
   viewport.height = 550;
   layout.refresh();
   close(parseFloat(shared.get('--phone-viewport-lift')), 294, 'a sheet without a timeline also clears the keyboard');
-  close(sheetBottom(), 386.8, 'keyboard moves the entire sheet above the same visible controls');
+  close(sheetBottom(), 378.6, 'keyboard moves the entire sheet above the same visible controls');
   assert.deepEqual(modes, [true], 'layout measurements do not repeat mode changes');
   layout.setTimelineKind('day'); layout.refresh();
-  close(sheetBottom(), 338.8, 'day has no floating dates to reserve');
+  close(sheetBottom(), 328.6, 'day has no floating dates to reserve');
   media.matches = false; layout.refresh();
   assert.deepEqual(modes, [true, false], 'desktop independence is restored at the same device boundary');
-  close(parseFloat(shared.get('--timeline-panels-bottom')), 334.8, 'desktop panel edge remains the original backing edge');
+  close(parseFloat(shared.get('--timeline-panels-bottom')), 324.6, 'desktop panel edge remains the original backing edge');
   layout.destroy();
 });

@@ -110,14 +110,16 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
         const button = node('button', 'returns-marker'); button.type = 'button';
         const dot = node('span', 'returns-marker-dot'); dot.setAttribute('aria-hidden', 'true');
         const symbol = node('span', 'returns-marker-symbol'); symbol.setAttribute('aria-hidden', 'true');
+        const glyph = node('span', 'returns-marker-glyph'), ordinal = node('span', 'returns-marker-ordinal');
+        symbol.append(glyph, ordinal);
         button.append(dot, symbol);
-        target = { button, dot, symbol, hover: active => hover(active ? button : null),
+        target = { button, dot, symbol, glyph, ordinal, hover: active => hover(active ? button : null),
           press: active => { if (active) button.dataset.pressed = 'true'; else delete button.dataset.pressed; } };
         button.addEventListener('click', action => { if (!action.detail) onSelect(target.event); });
         records.set(event.id, target);
       }
       target.event = event; target.utc = Date.parse(event.utc);
-      const { button, symbol } = target;
+      const { button, glyph, ordinal } = target;
       button.style.left = `${group.position * 100}%`;
       button.dataset.returnMarker = event.id;
       button.dataset.cycleBody = event.body;
@@ -126,8 +128,10 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
       button.style.setProperty('--return-label-offset', `${group.labelOffset}px`);
       const text = label(event);
       button.title = text; button.setAttribute('aria-label', text);
-      const ordinal = event.body !== 'uranus_opposition' && Number.isInteger(event.cycle) && event.cycle > 0 ? event.cycle : '';
-      symbol.textContent = `${SYMBOLS[event.body]}${ordinal}`;
+      const ordinalValue = event.body !== 'uranus_opposition' && Number.isInteger(event.cycle) && event.cycle > 0 ? String(event.cycle) : '';
+      glyph.textContent = SYMBOLS[event.body];
+      ordinal.textContent = ordinalValue;
+      ordinal.hidden = !ordinalValue;
       if (layer.children[index] !== button) layer.insertBefore(button, layer.children[index] || null);
       return target;
     });

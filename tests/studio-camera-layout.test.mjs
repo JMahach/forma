@@ -120,14 +120,14 @@ test('the layout owns measured insets and refreshes them once when canvas spacin
   const initial = layout.insets();
   assert.equal(initial.side, 20);
   assert.equal(initial.top, 100);
-  assert.equal(initial.bottom, 60.8);
+  assert.equal(initial.bottom, 50.6);
   assert.equal(layout.insets(), initial, 'camera measurements reuse the current measured layout');
   assert.deepEqual([rectReads, styleReads], [1, 1], 'reading resolved insets does not force another DOM measurement');
   style = { scrollPaddingLeft: '18.5px', scrollPaddingTop: '120px' }; safeBottom = 34;
   layout.refresh();
   assert.equal(layout.insets().side, 18.5);
   assert.equal(layout.insets().top, 120);
-  assert.equal(layout.insets().bottom, 94.8);
+  assert.equal(layout.insets().bottom, 84.6);
   assert.deepEqual([rectReads, styleReads], [2, 2]);
 });
 
@@ -425,7 +425,7 @@ for (const [width, height] of [[404, 872], [550, 590], [1100, 900], [1440, 900]]
     const panel = { id: 'lifetimeControls', hidden: true, dataset: {}, style: { setProperty() {} } };
     const layout = createStudioLayout({ canvas, panels: [panel], viewport: null, media: { matches: width < 700 },
       readStyle: () => ({ scrollPaddingLeft: '4px', scrollPaddingTop: '112px', scrollPaddingBottom: '52px',
-        getPropertyValue: () => '8px' }) });
+        getPropertyValue: () => '6px' }) });
     const h = harness(t, width, height, false, layout.insets(), true);
     const home = h.controls.getFittedView(), initialInsets = { ...layout.insets() }, columns = layout.showMandalaColumns;
     const originalRail = [panel.style.left, panel.style.width, panel.style.top];
@@ -438,7 +438,7 @@ for (const [width, height] of [[404, 872], [550, 590], [1100, 900], [1440, 900]]
         assert.deepEqual(h.controls.getFittedView(), home);
         assert.deepEqual(h.controls.getView(), before, 'both scale and translation remain exact');
         assert.equal(layout.showMandalaColumns, columns, 'dock cannot change mandala content visibility');
-        assert.equal(values.get('--timeline-dock-height'), open ? '96.8px' : '48.8px');
+        assert.equal(values.get('--timeline-dock-height'), open ? '86.6px' : '36.6px');
         assert.deepEqual([panel.style.left, panel.style.width, panel.style.top], originalRail, 'live zoom, pan and changing timeline mode never displace or resize the full-window Home rail');
       }
     }

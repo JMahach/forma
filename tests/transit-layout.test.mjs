@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { attachTimelineRange } from '../src/views/timeline-range.js';
 import { applyTimelineMetrics } from '../src/ui/layout/metrics.js';
+import { DAY_CONTROL_HEIGHT } from '../src/ui/layout/studio.js';
 import { dateDom } from './helpers/date-dom.mjs';
 
 const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -225,7 +226,7 @@ test('all timelines keep their native hit area above the measured chart footer',
     assert.equal(controls.background, 'transparent', 'the hit area cannot hide a full-height strip of the chart');
     const backing = declarationsAt('.timeline-dock', width, height);
     assert.equal(backing.position, 'fixed', 'Safari can extend the viewport-attached background under its chrome');
-    assert.equal(backing.top, 'var(--timeline-dock-top, calc(100% - 40.8px))');
+    assert.equal(backing.top, 'var(--timeline-dock-top, calc(100% - 30.6px))');
     assert.equal(backing.bottom, '0');
     assert.equal(backing.left, 'var(--timeline-area-left, 0px)');
     assert.equal(backing.width, 'var(--timeline-area-width, 100%)');
@@ -238,7 +239,7 @@ test('all timelines keep their native hit area above the measured chart footer',
     assert.equal(declarationsAt('body', width, height)['overscroll-behavior'], 'none');
     assert.equal(declarationsAt(".day-controls input[type='range']", width, height).position, 'relative', 'the native control paints above the backing');
     for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
-      assert.equal(declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height).height, '2px');
+      assert.equal(declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height).height, '1px');
     }
   }
 });
@@ -300,6 +301,50 @@ test('coarse pointers gain a 56px invisible range target without moving the rail
       assert.match(byId(id).parent.attributes, /\bclass="day-range"/);
       assert.match(byId(id).parent.parent.attributes, /\bday-controls\b/);
     }
+  }
+});
+
+test('compact timeline labels fit within fourteen pixels of the rail without reducing native hit targets', () => {
+  const px = value => {
+    assert.match(value, /^-?[\d.]+px$/, 'the label metric has an explicit pixel size');
+    return Number.parseFloat(value);
+  };
+  const centeredOffset = value => {
+    const match = /^calc\(50% \+ ([\d.]+)px\)$/.exec(value);
+    assert.ok(match, 'the caption follows the center of its mark');
+    return Number(match[1]);
+  };
+  const fits = (top, height, name) => {
+    assert.ok(top >= -14 && top + height <= 14, `${name} box [${top}, ${top + height}] stays inside the painted rail band`);
+  };
+  for (const [width, height, coarse] of [[320, 568, true], [390, 844, true], [844, 390, true], [1009, 747, false], [1440, 900, false]]) {
+    const at = selector => declarationsAt(selector, width, height, { coarse });
+    const range = at('.day-range');
+    const center = px(range['margin-top']) + px(range.height) / 2;
+    const native = at(".day-controls input[type='range']");
+    assert.equal(native.height, coarse ? '56px' : '44px', 'a compact painted band retains the full invisible target');
+    const mark = at('.day-hour-mark'), major = { ...mark, ...at('.day-hour-mark.is-major') };
+    const hourLineHeight = px(at('.day-hour-marks')['line-height']);
+    assert.equal(mark.top, '50%');
+    assert.equal(mark.transform, 'translate(-50%, -50%)');
+    // Only major hour marks carry non-empty labels. Their parent box is
+    // centered on the rail; the label inherits the hour layer's line-height.
+    fits(-px(major.height) / 2 + px(at('.day-hour-mark > span').top), hourLineHeight, 'hour label');
+    const calendar = at('.calendar-time-mark');
+    assert.equal(calendar.top, '50%');
+    assert.equal(calendar.transform, 'translate(-50%, -50%)');
+    fits(centeredOffset(at('.calendar-time-mark > span').top), hourLineHeight, 'calendar label');
+    const life = at('.lifetime-scale');
+    const lifeHeight = px(life['line-height']);
+    fits(DAY_CONTROL_HEIGHT - px(life.bottom) - lifeHeight - center, lifeHeight, 'birth and age label');
+    const symbol = at('.returns-marker-symbol');
+    const symbolHeight = px(symbol.height);
+    assert.ok(px(symbol['font-size']) * Number(symbol['line-height']) <= symbolHeight,
+      'the symbol line fits its compact box');
+    fits(-centeredOffset(symbol.bottom) - symbolHeight, symbolHeight, 'upper return symbol');
+    const below = at(".returns-marker[data-label-lane='below'] .returns-marker-symbol");
+    assert.equal(below.bottom, 'auto');
+    fits(centeredOffset(below.top), symbolHeight, 'lower return symbol');
   }
 });
 
@@ -387,7 +432,11 @@ test('compact range nodes retain a transparent 44px native hit area around crisp
         assert.ok(bounds.minX > 0 && bounds.maxX < 44 && bounds.minY > 0 && bounds.maxY < 44, 'transparent space surrounds the visible artwork');
         assert.ok(bounds.maxX - bounds.minX <= 32 && bounds.maxY - bounds.minY <= 26, 'the visible node occupies a compact part of its larger native hit target');
       }
-      if (pseudo.includes('webkit')) assert.equal(thumb['margin-top'], '-21px');
+      if (pseudo.includes('webkit')) {
+        const track = declarationsAt(".day-controls input[type='range']::-webkit-slider-runnable-track", width, height);
+        assert.equal(Number.parseFloat(thumb['margin-top']), Number.parseFloat(track.height) / 2 - Number.parseFloat(thumb.height) / 2,
+          'the native thumb remains centered on the thinner painted track');
+      }
     }
   }
 });
@@ -428,7 +477,7 @@ test('integrated reference buttons and track endpoints share the native thumb tr
     assert.equal(marker.transform, 'translate(-50%, -50%)');
     for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
       assert.equal(declarationsAt(`.day-controls input[type='range']${pseudo}`, width, height).background,
-        'linear-gradient(to right, transparent 22px, #c8c8c8 22px, #c8c8c8 calc(100% - 22px), transparent calc(100% - 22px))');
+        'linear-gradient(to right, transparent 22px, #bcb9b1 22px, #bcb9b1 calc(100% - 22px), transparent calc(100% - 22px))');
     }
   }
 });
