@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartHeadingLayout } from '../src/ui/layout/chart-heading.js';
 
-function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts } = {}) {
+function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts, withPanelCaption = false } = {}) {
   const observed = new Map();
   let resized, disconnected = false;
   const node = (left, top, width, height) => {
@@ -43,10 +43,12 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
     observe(element, options) { observed.set(element, options); }
     disconnect() { disconnected = true; }
   }
-  const layout = createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas,
+  const panelCaption = withPanelCaption ? { root: node(0, 0, 296.8, 96),
+    title: node(0, 0, 240, 30), date: node(0, 0, 180, 15), clock: node(0, 0, 40, 15), context: node(0, 0, 240, 18), details: node(0, 0, 240, 30), surface: node(0, 0, width, 817) } : undefined;
+  const layout = createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption,
     getMandalaTop: () => mandalaTop,
     readStyle: element => element.computed, ResizeObserver: Observer });
-  return { layout, header, content, title, subtitle, leftControls, rightControls, canvas, setButtons, observed,
+  return { layout, header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption, setButtons, observed,
     setMandalaTop(value) { mandalaTop = value; },
     changePadding(left, right) {
       Object.assign(content.computed, { paddingLeft: left, paddingRight: right });
@@ -280,4 +282,75 @@ test('invisible navigation does not reserve space and observers can be disposed'
   assert.equal(h.layout.refresh().placement, 'top');
   h.layout.destroy();
   assert.equal(h.disconnected, true);
+});
+
+
+test('the panel caption mirrors the canonical title and every moment part without changing the original caption', () => {
+  const h = harness({ withPanelCaption: true });
+  const subtitle = '1 января 2000 г. · 12:00 · UTC+3 · Москва · 26 лет';
+  h.layout.updateText('Мария · Возврат Сатурна 1', subtitle, { title: 'Мария', date: '1 января 2000 г.', clock: '12:00', context: 'Возврат Сатурна 1', details: 'UTC+3 · Москва · 26 лет' });
+  assert.equal(h.title.textContent, 'Мария · Возврат Сатурна 1');
+  assert.equal(h.subtitle.textContent, subtitle);
+  assert.equal(h.panelCaption.title.textContent, 'Мария');
+  assert.equal(h.panelCaption.title.title, 'Мария', 'the full name remains available when CSS truncates the visible heading');
+  assert.equal(h.panelCaption.date.textContent, '1 января 2000 г.');
+  assert.equal(h.panelCaption.clock.textContent, '12:00');
+  assert.equal(h.panelCaption.context.textContent, 'Возврат Сатурна 1');
+  assert.equal(h.panelCaption.context.hidden, false);
+  assert.equal(h.panelCaption.details.textContent, 'UTC+3 · Москва · 26 лет');
+  h.layout.updateText('Без времени', '1 января 2000 г.', { title: 'Без времени', date: '1 января 2000 г.' });
+  assert.equal(h.panelCaption.date.textContent, '1 января 2000 г.');
+  assert.equal(h.panelCaption.details.textContent, '', 'previous moment details cannot remain on another chart');
+  assert.equal(h.panelCaption.context.textContent, '', 'a return label cannot remain on another chart');
+  assert.equal(h.panelCaption.context.hidden, true);
+  assert.equal(h.panelCaption.clock.textContent, '', 'a previous clock cannot remain on a chart without time');
+  h.layout.updateText(null, undefined);
+  for (const element of [h.title, h.subtitle, h.panelCaption.title, h.panelCaption.date, h.panelCaption.clock, h.panelCaption.context, h.panelCaption.details])
+    assert.equal(element.textContent, '', 'clearing the canonical caption also clears its mirror');
+});
+
+test('unchanged mirrored captions perform no text writes, height writes or measurements', () => {
+  const h = harness({ withPanelCaption: true });
+  let writes = 0, reads = 0, heightWrites = 0, titleWrites = 0;
+  let fullTitle = '';
+  Object.defineProperty(h.panelCaption.title, 'title', { get: () => fullTitle, set: value => { fullTitle = value; titleWrites++; } });
+  for (const element of [h.title, h.subtitle, h.panelCaption.title, h.panelCaption.date, h.panelCaption.clock, h.panelCaption.context, h.panelCaption.details]) {
+    let text = '';
+    Object.defineProperty(element, 'textContent', { get: () => text, set: value => { text = value; writes++; } });
+  }
+  const measure = h.panelCaption.root.getBoundingClientRect.bind(h.panelCaption.root);
+  h.panelCaption.root.getBoundingClientRect = () => { reads++; return measure(); };
+  const setHeight = h.panelCaption.surface.style.setProperty;
+  h.panelCaption.surface.style.setProperty = (name, value) => { heightWrites++; setHeight(name, value); };
+  h.layout.updateText('Транзит', '21 октября · 12:00 · UTC', { title: 'Транзит', date: '21 октября', clock: '12:00', context: '', details: 'UTC' });
+  assert.equal(writes, 6);
+  const measured = reads;
+  assert.ok(measured > 0);
+  for (let index = 0; index < 120; index++) h.layout.updateText('Транзит', '21 октября · 12:00 · UTC', { title: 'Транзит', date: '21 октября', clock: '12:00', context: '', details: 'UTC' });
+  assert.equal(writes, 6);
+  assert.equal(reads, measured);
+  assert.equal(heightWrites, 0, 'unchanged panel height is not rewritten');
+  assert.equal(titleWrites, 1, 'unchanged full-name tooltip is not rewritten');
+  h.layout.updateText('Транзит', '21 октября · 12:01 · UTC', { title: 'Транзит', date: '21 октября', clock: '12:01', context: '', details: 'UTC' });
+  assert.equal(writes, 8, 'only the original subtitle and mirrored clock change');
+  assert.equal(titleWrites, 1, 'a new moment does not rewrite the full-name tooltip');
+  assert.equal(heightWrites, 0);
+});
+
+test('the panel height follows its own observer while zoom hides the central caption', () => {
+  const h = harness({ withPanelCaption: true });
+  assert.ok(h.observed.has(h.panelCaption.root), 'panel wrapping must be observed independently');
+  assert.equal(h.panelCaption.surface.style.getPropertyValue('--summary-caption-height'), '96px');
+  h.header.hidden = true;
+  h.panelCaption.root.computed.visibility = 'hidden';
+  h.panelCaption.root.rect.height = 124;
+  h.canvas.getBoundingClientRect = () => { throw new Error('zoomed central caption must keep its existing early return'); };
+  h.resize();
+  assert.equal(h.panelCaption.surface.style.getPropertyValue('--summary-caption-height'), '124px');
+  h.layout.updateText('Длинное имя', '21 октября · 12:01 · UTC', { title: 'Длинное имя', date: '21 октября', clock: '12:01', details: 'UTC' });
+  assert.equal(h.panelCaption.title.textContent, 'Длинное имя');
+  h.panelCaption.root.rect.width = 0;
+  h.panelCaption.root.rect.height = 0;
+  h.resize();
+  assert.equal(h.panelCaption.surface.style.getPropertyValue('--summary-caption-height'), '124px', 'a hidden desktop panel cannot overwrite its last measured height with zero');
 });

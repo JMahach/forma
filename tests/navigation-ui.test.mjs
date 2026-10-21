@@ -22,7 +22,7 @@ test('transit is consistently named without renaming saved personal charts', () 
   assert.match(button, /<span>Транзит<\/span>/);
   assert.match(button, /title="Транзит"/);
   assert.doesNotMatch(pageSource + appSource, /Текущий момент/);
-  assert.match(bootstrapSource, /headingLayout\.updateText\(caption\.title, caption\.subtitle\)/, 'the caption owner receives the selected-chart caption policy');
+  assert.match(bootstrapSource, /headingLayout\.updateText\(caption\.title, caption\.subtitle, caption\.panel\)/, 'the caption owner receives the selected-chart caption and its structured panel view');
   for (const [c, expected] of [
     [{ id: 'current-transit', name: 'Текущий момент', source: 'transit' }, 'Транзит'],
     [{ id: 'current-transit', name: 'Legacy moment' }, 'Транзит'],

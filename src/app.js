@@ -52,6 +52,9 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   const headingLayout = createChartHeadingLayout({
     header: $('chartHeader'), title: $('chartTitle'), subtitle: $('chartSubtitle'), canvas: $('canvasWrap'),
     content: $('chartHeader').querySelector('.chart-heading'),
+    panelCaption: { root: $('summaryChartCaption'), title: $('summaryChartTitle'),
+      date: $('summaryChartDate'), clock: $('summaryChartClock'), context: $('summaryChartContext'),
+      details: $('summaryChartDetails'), surface: studio },
     leftControls: document.querySelector('.topbar-leading'), rightControls: document.querySelector('.chart-tools'),
     getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
   });
@@ -246,7 +249,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       { useUtc: session.shownSource === 'lifetime',
         showAge: Boolean(returns?.available),
         ageUtc: new Date().toISOString() });
-    headingLayout.updateText(caption.title, caption.subtitle);
+    headingLayout.updateText(caption.title, caption.subtitle, caption.panel);
   }
 
   function refreshStudioLayout({ preserveScale = panelResizePending } = {}) {

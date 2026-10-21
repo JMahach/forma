@@ -320,6 +320,8 @@ test('saved timeline geometry and tool visibility exist before the application i
     [{ selectedId: personal.id }, 'natal-day', 'natal-day', false],
     [{ selectedId: personal.id, natalDay: { opened: false } }, 'none', 'day', false],
     [{ selectedId: personal.id, returns: { opened: true } }, 'lifetime', 'day', false],
+    [{ selectedId: personal.id, returns: { opened: true, eventId: 'saturn:1:1' } }, 'lifetime', 'day', false],
+    [{ selectedId: personal.id, lifetime: { opened: true, mode: 'lifetime', personalPreview: true } }, 'lifetime', 'day', false],
     [{ selectedId: 'manual' }, 'none', 'day', true],
     [{ selectedId: 'missing', lifetime: { opened: true, mode: 'lifetime' } }, 'transit', 'day', true],
   ]) {
@@ -334,6 +336,8 @@ test('saved timeline geometry and tool visibility exist before the application i
           for (const [name, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']])
             assert.equal(element(id).hidden, name !== panel);
           assert.equal(element('lifetimeHeading').hidden, !heading);
+          assert.equal(element('summaryChartContext').hidden, !(saved.selectedId === personal.id
+            && (saved.returns?.eventId || saved.lifetime?.personalPreview)), 'loading reserves the saved personal moment context');
           assert.equal(element('natalDayToggle').hidden, saved.selectedId !== personal.id);
           assert.equal(element('natalDayToggle').getAttribute('aria-expanded'), String(panel === 'natal-day'));
           assert.equal(element('natalDayToggle').getAttribute('aria-pressed'), String(panel === 'natal-day'));

@@ -5,6 +5,8 @@ import { extractChartData } from '../src/domain/chart-data.js';
 import { chartSubtitle, chartCaption, savedBirthTime } from '../src/views/chart-display.js';
 
 // Pass distinct library/transport payloads through the real runtime boundary.
+// The legacy two strings remain unchanged while panel is an additive view.
+const plainCaption = (...args) => { const { title, subtitle } = chartCaption(...args); return { title, subtitle }; };
 const single = payload => createChartComposition(extractChartData(payload), { id: payload.id, primaryLabel: payload.name || '' });
 const overlayFixture = (record, payload, options) => createChartComposition(extractChartData(record), { ...options,
   secondary: extractChartData(payload), id: `${record.id}:preview`, primaryLabel: record.name });
@@ -13,7 +15,7 @@ test('personal previews keep the name but show the accepted moment, its birth-zo
   const owner = Object.freeze({ id: 'anna', source: 'calculated', name: 'Анна', utc: '1998-08-18T14:00:00Z',
     birthDate: '1998-08-18', birthTime: '18:00', timezone: 'Europe/Moscow' });
   const preview = { id: 'lifetime-preview', source: 'transit', utc: '2026-10-08T09:25:00Z' };
-  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Анна · Транзит', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
+  assert.deepEqual(plainCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Анна · Транзит', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
   const overlay = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:1:1', body: 'saturn', cycle: 1, utc: preview.utc } });
   assert.equal(chartCaption(overlay, owner).subtitle, '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет');
   assert.equal(owner.birthTime, '18:00');
@@ -168,7 +170,7 @@ test('120 selected minutes reuse two formatters, including after changing the de
 test('personal life preview retains its selected chart caption while transit keeps its own identity', () => {
   const owner = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '12:00' };
   const preview = { id: 'lifetime-preview', source: 'transit', name: 'Транзит', utc: '2050-01-01T00:00:00Z' };
-  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
+  assert.deepEqual(plainCaption(overlayFixture(owner, preview, { kind: 'transit' }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
   assert.equal(chartCaption(single(preview), null).title, 'Транзит');
   const event = overlayFixture(owner, preview, { kind: 'return', event: { id: 'saturn:2:1', body: 'saturn', cycle: 2, utc: preview.utc } });
   assert.equal(chartCaption(event, owner).title, 'Марат · Возврат Сатурна 2');
@@ -180,7 +182,7 @@ test('a personal transit overlay names both context and moment while preserving 
   const natal = { id: 'marat', source: 'calculated', name: 'Марат', birthDate: '1998-08-18', birthTime: '18:00' };
   const moment = { source: 'transit', utc: '2050-01-01T00:10:00Z', personality: [20], design: [] };
   const chart = overlayFixture(natal, moment, { kind: 'transit' });
-  assert.deepEqual(chartCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
+  assert.deepEqual(plainCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
 });
 
 
@@ -188,7 +190,7 @@ test('accepted local fields belong to calculation data while name and place stay
   const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated', birthDate: '1998-08-18', birthTime: '18:00', birthPlace: 'Мурманск' });
   const data = Object.freeze({ source: 'calculated', personality: [], design: [], localDate: '1998-08-19', localTime: '00:01', utc: '1998-08-18T20:01:00Z', utcOffset: 'UTC+04:00' });
   const shown = createChartComposition(data, { id: record.id, primaryLabel: record.name });
-  assert.deepEqual(chartCaption(shown, record), { title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' });
+  assert.deepEqual(plainCaption(shown, record), { title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' });
 });
 
 test('saved seconds and the second fold survive a minute-only input display', () => {
@@ -196,4 +198,53 @@ test('saved seconds and the second fold survive a minute-only input display', ()
     utc: '2024-11-03T06:30:29Z', utcOffset: 'UTC-05:00', timezone: 'America/New_York', fold: 1 });
   assert.equal(savedBirthTime(record), '01:30:29');
   assert.equal(chartCaption(single(record), record).subtitle, '3 ноября 2024 г. · 01:30:29 · UTC-5');
+});
+
+
+test('structured return captions keep a dotted personal name separate from the event and exact moment', () => {
+  const owner = Object.freeze({ id: 'anna', source: 'calculated', name: 'Анна · Север',
+    utc: '1998-08-18T14:00:00Z', timezone: 'Asia/Kathmandu' });
+  const event = Object.freeze({ id: 'saturn:1:1', body: 'saturn', cycle: 1, utc: '2026-10-08T09:25:37.123Z' });
+  const shown = overlayFixture(owner, { source: 'transit', utc: event.utc }, { kind: 'return', event });
+  const caption = chartCaption(shown, owner);
+  assert.deepEqual(caption.panel, { title: 'Анна · Север', context: 'Возврат Сатурна 1',
+    date: '8 октября 2026 г.', clock: '15:10:37', details: 'UTC+5:45 · 28\u00a0лет' });
+  assert.equal(caption.title, 'Анна · Север · Возврат Сатурна 1');
+  assert.equal(caption.subtitle, '8 октября 2026 г. · 15:10:37 · UTC+5:45 · 28\u00a0лет');
+});
+
+test('structured natal captions retain historical offset seconds and an unsplit birthplace', () => {
+  const record = Object.freeze({ id: 'old', name: 'Карта · 1890', source: 'calculated',
+    birthDate: '1890-01-01', birthTime: '02:30:17', utc: '1890-01-01T00:00:00Z',
+    utcOffset: 'UTC+02:30:17', birthPlace: 'Петербург · Россия' });
+  const caption = chartCaption(single(record), record);
+  assert.deepEqual(caption.panel, { title: 'Карта · 1890', context: '', date: '1 января 1890 г.',
+    clock: '02:30:17', details: 'UTC+2:30:17 · Петербург · Россия' });
+  assert.equal(caption.subtitle, '1 января 1890 г. · 02:30:17 · UTC+2:30:17 · Петербург · Россия');
+});
+
+test('structured personal transit context does not become part of the personal name', () => {
+  const owner = Object.freeze({ id: 'anna', source: 'calculated', name: 'Анна · Север',
+    utc: '1998-08-18T14:00:00Z', timezone: 'Europe/Moscow' });
+  const shown = overlayFixture(owner, { source: 'transit', utc: '2026-10-08T09:25:00Z' }, { kind: 'transit' });
+  assert.deepEqual(chartCaption(shown, owner).panel, { title: 'Анна · Север', context: 'Транзит',
+    date: '8 октября 2026 г.', clock: '12:25', details: 'UTC+3 · 28\u00a0лет' });
+});
+
+test('structured exact returns distinguish repeated local seconds by their accepted UTC offset', () => {
+  const owner = { id: 'anna', name: 'Анна', source: 'calculated', utc: '1998-08-18T14:00:00Z', timezone: 'America/New_York' };
+  for (const [utc, zone] of [['2024-11-03T05:30:29Z', 'UTC-4'], ['2024-11-03T06:30:29Z', 'UTC-5']]) {
+    const event = { id: 'sun:1:1', body: 'sun', cycle: 1, utc };
+    const shown = overlayFixture(owner, { source: 'transit', utc }, { kind: 'return', event });
+    assert.deepEqual(chartCaption(shown, owner).panel, { title: 'Анна', context: 'Соляр 1',
+      date: '3 ноября 2024 г.', clock: '01:30:29', details: `${zone} · 26\u00a0лет` });
+  }
+});
+
+test('structured global transit preserves its minute precision and never fabricates missing moment parts', () => {
+  const moment = { id: 'current-transit', source: 'transit', utc: '2026-10-05T12:01:59Z' };
+  assert.deepEqual(chartCaption(single(moment), null, { useUtc: true }).panel,
+    { title: 'Транзит', context: '', date: '5 октября 2026 г.', clock: '12:01', details: 'UTC' });
+  assert.deepEqual(chartCaption(single({ ...moment, utc: '' })).panel,
+    { title: 'Транзит', context: '', date: '', clock: '', details: '' });
 });

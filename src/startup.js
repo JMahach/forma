@@ -84,6 +84,10 @@ function renderLoadingTools() {
     returnsOpened: Boolean(savedReturns && pendingView?.returns?.opened && pendingView?.panels?.right !== false), returnsEnabled: Boolean(initialLifetime && personalAvailable),
     transitEnabled: Boolean(initialLifetime && isTransit) });
   element('chartSummary').dataset.screen = view.returnsVisible ? 'returns' : 'summary';
+  // The saved moment already tells us whether the identity has a context row.
+  // Reserve it in the skeleton before calculation restores the actual wording.
+  element('summaryChartContext').hidden = !(sameChart && personalAvailable
+    && (pendingView?.returns?.eventId || pendingView?.lifetime?.personalPreview));
   studio.dataset.initialTimeline = view.timelinePanel || 'none';
   for (const [kind, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']])
     element(id).hidden = kind !== view.timelinePanel;

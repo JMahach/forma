@@ -1,6 +1,6 @@
-// Floating caption only: the drawing's composition and camera do not depend on
-// this placement. Navigation takes precedence when the full text cannot fit.
-export function createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas,
+// Caption placement and its panel mirror share the accepted chart text.
+// Neither changes the drawing's composition or camera.
+export function createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption = null,
   gap = 8, edgePadding = 16, belowGap = 7,
   getMandalaTop = () => Infinity, mandalaGap = 8,
   readStyle = element => getComputedStyle(element), ResizeObserver = globalThis.ResizeObserver }) {
@@ -12,11 +12,15 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 ? rect : null;
   };
-  const setStyle = (name, value) => {
+  const setStyle = (name, value, element = header) => {
     const next = `${value}px`;
-    if (header.style.getPropertyValue(name) !== next) header.style.setProperty(name, next);
+    if (element.style.getPropertyValue(name) !== next) element.style.setProperty(name, next);
   };
   function refresh() {
+    // The panel caption keeps its own measured height when zoom hides the
+    // central caption. Visibility-hidden text still has usable geometry.
+    const panelRect = visibleRect(panelCaption?.root, true);
+    if (panelRect && panelCaption.surface) setStyle('--summary-caption-height', panelRect.height, panelCaption.surface);
     // display:none during zoom has no measurable text. A caption hidden only
     // by visibility still has geometry: measure it so resizing can restore
     // either its top placement or enough space above the mandala.
@@ -51,14 +55,25 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
   }
   // Padding may change while the fit-content text keeps the same dimensions.
   observer?.observe(content, { box: 'border-box' });
+  if (panelCaption?.root) observer?.observe(panelCaption.root, { box: 'border-box' });
   const fonts = header.ownerDocument?.fonts;
   fonts?.addEventListener('loadingdone', refresh);
-  function updateText(titleText, subtitleText) {
+  function updateText(titleText, subtitleText, panelText = {}) {
     let changed = false;
-    for (const [element, value] of [[title, titleText], [subtitle, subtitleText]]) {
+    if (panelCaption?.context && panelCaption.context.hidden !== !panelText.context) {
+      panelCaption.context.hidden = !panelText.context;
+      changed = true;
+    }
+    for (const [element, value] of [[title, titleText], [subtitle, subtitleText],
+      [panelCaption?.title, panelText.title], [panelCaption?.date, panelText.date],
+      [panelCaption?.clock, panelText.clock], [panelCaption?.context, panelText.context], [panelCaption?.details, panelText.details]]) {
       if (!element) continue;
       const text = value == null ? '' : String(value);
-      if (element.textContent !== text) { element.textContent = text; changed = true; }
+      if (element.textContent !== text) {
+        element.textContent = text;
+        if (element === panelCaption?.title || element === panelCaption?.details) element.title = text;
+        changed = true;
+      }
     }
     return changed ? refresh() : current;
   }
