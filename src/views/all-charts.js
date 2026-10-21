@@ -120,9 +120,8 @@ export function attachAllCharts({ button, dialog, list, store,
     return new Promise(resolve => { readiness.add({ entries, resolve }); settleReadiness(); });
   }
   function show() {
-    if (!dialog.hidden) return;
     if (onOpen) onOpen();
-    else setVisible(true);
+    else if (dialog.hidden) setVisible(true);
   }
   function close() { setVisible(false); }
   button.addEventListener('click', show);

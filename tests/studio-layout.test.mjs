@@ -54,7 +54,7 @@ function layoutHarness(phone = true, width = 390, height = 844) {
 test('layout centers the natural calculation span in the measured free canvas', () => {
   const events = [];
   let offset = 40, canvasWidth = 1000;
-  const writes = () => new Proxy({ setProperty(name, value) { this[name] = value; } }, { set(target, key, value) { events.push('write'); target[key] = value; return true; } });
+  const writes = () => new Proxy({ setProperty(name, value) { this[name] = value; } }, { set(target, key, value) { events.push(key === 'layout' ? 'mode' : 'write'); target[key] = value; return true; } });
   const studio = { dataset: {}, style: { setProperty() {} }, getBoundingClientRect: () => ({ left: 75, width: 1200, height: 800 }) };
   const canvas = { dataset: writes(), parentElement: studio, getBoundingClientRect() { events.push('canvas'); return { left: 75 + offset, width: canvasWidth, height: 800 }; },
     get offsetLeft() { assert.fail('the timeline does not depend on the canvas offset'); } };
@@ -64,6 +64,7 @@ test('layout centers the natural calculation span in the measured free canvas', 
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '12px', getPropertyValue: () => '0px' }) });
   const assertReads = () => {
     assert.equal(events.filter(event => event === 'canvas').length, 1);
+    assert.ok(events.indexOf('mode') < events.indexOf('canvas'), 'device CSS is selected before measuring the resulting canvas');
     assert.ok(events.indexOf('canvas') < events.indexOf('write'), 'canvas geometry is read before writing panel styles');
   };
   assertReads();

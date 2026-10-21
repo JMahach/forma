@@ -108,7 +108,6 @@ small { font-size: 11px; }
 .topbar-leading { position: relative; display: flex; gap: 5px; align-items: center; pointer-events: none; }
 .topbar button { pointer-events: auto; }
 .topbar .icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--panel-border); border-radius: 9px; color: var(--panel-ink); background: var(--canvas-background); }
-.topbar .icon-button:hover { color: var(--panel-ink); background: var(--panel-hover); border-color: var(--panel-border); }
 .topbar, .chart-tools { --mode-accent: #b58a60; --mode-selected: color-mix(in srgb, var(--mode-accent) 22%, transparent); --mode-selected-ink: #68472f; --mode-selected-border: color-mix(in srgb, var(--mode-accent) 55%, var(--panel-surface)); }
 .chart-tools { position: fixed; z-index: 85; top: max(14px, env(safe-area-inset-top)); right: 16px; display: flex; align-items: center; gap: 8px; }
 .chart-view-tools { display: contents; }
@@ -489,11 +488,13 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools > button > svg {
   width: 18px; height: 18px;
 }
-.studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools > button:not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
+/* All floating controls share the same quiet border feedback. Touch cannot
+   leave a hover fill behind; colour continues to mean an enabled mode. */
+:is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
   border-color: var(--floating-control-border);
 }
-@media (hover: hover) {
-  .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools > button:not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']):hover {
+@media (hover: hover) and (pointer: fine) {
+  :is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']):hover {
     border-color: var(--floating-control-border-hover);
   }
 }
@@ -533,15 +534,15 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 [data-mandala-columns='hidden'] .activation-column { transform: none !important; opacity: calc(1 - var(--mandala-reveal, 0)); }
 [data-layout='phone'] .line-fixing { translate: -8px 0; }
 
-.studio[data-panels-layout='overlay']:has(.chart-summary.open) .studio-header, .app-shell:has(.library.open) .studio[data-panels-layout='overlay'] .studio-header { visibility: hidden; }
+.studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open) .studio-header, .app-shell:has(.library.open) .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']) .studio-header { visibility: hidden; }
 /* A drawer covering the chart leaves no usable lane for both date fields. */
-.studio[data-panels-layout='overlay']:has(.chart-summary.open) .lifetime-heading,
-.app-shell:has(.library.open) .studio[data-panels-layout='overlay'] .lifetime-heading { visibility: hidden; }
+.studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open) .lifetime-heading,
+.app-shell:has(.library.open) .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']) .lifetime-heading { visibility: hidden; }
 @media (prefers-reduced-motion: no-preference) {
   /* Restore dates only after the covering drawer has finished leaving. */
-  .studio[data-panels-layout='overlay'] .lifetime-heading { transition: visibility 0s linear .24s; }
-  .studio[data-panels-layout='overlay']:has(.chart-summary.open) .lifetime-heading,
-  .app-shell:has(.library.open) .studio[data-panels-layout='overlay'] .lifetime-heading { transition-delay: 0s; }
+  .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']) .lifetime-heading { transition: visibility 0s linear .24s; }
+  .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open) .lifetime-heading,
+  .app-shell:has(.library.open) .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']) .lifetime-heading { transition-delay: 0s; }
 }
 
 @media (max-width: 699px) {
@@ -606,8 +607,8 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .summary-screen { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .chart-summary[data-screen='returns'] { padding: 0; background: var(--panel-surface); }
 /* Covering drawers stop above the rail; side panels keep their full height. */
-.app-shell:has(.studio[data-panels-layout='overlay'] .day-controls:not([hidden])) .library,
-.studio[data-panels-layout='overlay']:has(.day-controls:not([hidden])) .chart-summary { bottom: var(--timeline-panels-bottom, 40.8px); }
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='overlay'] .day-controls:not([hidden])) .library,
+.studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.day-controls:not([hidden])) .chart-summary { bottom: var(--timeline-panels-bottom, 40.8px); }
 .returns-panel-controls { flex: none; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #dce0d5; }
 .returns-control-bar { display: flex; align-items: center; gap: 4px; }
 .returns-filter-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 10px; border-radius: 8px; color: #555555; background: transparent; font-size: 13px; white-space: nowrap; }
@@ -779,7 +780,7 @@ body:has(.studio[data-panels-layout='side']) .summary-backdrop { display: none; 
 .workspace-page { position: absolute; inset: 0 0 0 var(--studio-left-space, 0px); z-index: 25; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding-top: max(68px, calc(env(safe-area-inset-top) + 54px)); overflow: hidden; background: var(--canvas-background); color: var(--panel-ink); }
 .studio[data-workspace-screen]:not([data-workspace-screen='chart']) > :is(.canvas-wrap, .chart-tools, .studio-header, .chart-loading-message, .day-controls, .timeline-dock, .chart-summary, .performance-panel) { visibility: hidden; pointer-events: none; }
 body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .summary-backdrop { display: none; }
-.app-shell:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .library { bottom: 0; }
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .library { bottom: 0; }
 .knowledge-page .knowledge-categories button[aria-pressed='true'] { background: var(--panel-selected); color: var(--panel-selected-ink); }
 .knowledge-page .knowledge-index button[aria-pressed='true'] { background: var(--knowledge-tint); border-color: var(--knowledge-border); color: var(--knowledge-ink-hover); }
 @media (max-width: 699px) {
@@ -790,6 +791,72 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
   .workspace-page .knowledge-article { padding: 16px 12px; }
 }
 
+/* A single mobile sheet behaviour; desktop keeps its existing flex children. */
+.phone-sheet-handle { display: none; }
+.phone-sheet-content { display: contents; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) {
+  --phone-sheet-offset: var(--phone-viewport-lift, 0px);
+  position: fixed; top: auto; left: 0; right: 0; bottom: var(--phone-sheet-offset);
+  scroll-padding-top: max(64px, calc(env(safe-area-inset-top) + 64px));
+  width: auto; height: var(--phone-sheet-height, min(52dvh, calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)))));
+  max-height: calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)));
+  padding: 0; border: 0; border-top: 1px solid var(--panel-border); border-radius: 16px 16px 0 0;
+  background: var(--panel-surface); box-shadow: 0 -4px 20px #3028240a;
+  transform: translateY(calc(100% + var(--phone-sheet-offset) + 24px));
+  overflow: hidden; overscroll-behavior: contain;
+  transition: transform .28s cubic-bezier(.22,.8,.25,1), height .24s cubic-bezier(.22,.8,.25,1), visibility 0s linear .28s;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden])) :is(.library, .chart-summary) {
+  --phone-sheet-offset: var(--phone-sheet-bottom, 44.8px);
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary).open { transform: translateY(0); transition-delay: 0s; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary)[data-sheet-dragging='true'] { transition: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle {
+  display: grid; place-items: center; flex: none; width: 100%; height: 44px; min-height: 44px;
+  border-radius: 16px 16px 0 0; padding: 0; background: transparent; touch-action: none; cursor: ns-resize;
+}
+.phone-sheet-handle > span { width: 32px; height: 3px; border-radius: 2px; background: #b3aca2; }
+.phone-sheet-handle:focus-visible { outline: 2px solid var(--control-focus); outline-offset: -4px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-content {
+  display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; touch-action: pan-y;
+  padding: 0 max(20px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+/* Switching contents never draws an outgoing sheet beneath the new one. */
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open) .library:not(.open),
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .chart-summary:not(.open) { visibility: hidden; transition: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary)::before { display: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .site-brand { visibility: hidden; opacity: 0; }
+body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backdrop) { display: none; }
+/* Compact navigation is an index; the saved collection gets the space. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .main-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .menu-item { min-height: 44px; padding: 8px 10px; gap: 9px; border-radius: 6px; font-size: 14px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .menu-item svg { width: 18px; height: 18px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; margin-top: 16px; padding-top: 8px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading { margin: 0; padding-left: 10px; min-width: 0; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading .eyebrow { font-size: 11px; font-weight: 500; letter-spacing: .04em; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library-count { min-width: 0; height: auto; margin-left: 3px; padding: 0; background: transparent; font-size: 11px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button { position: relative; width: auto; min-height: 44px; margin: 0; padding: 0 10px; border: 0; font-size: 12px; gap: 5px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button::before { content: ''; position: absolute; inset: 6px 0; border: 1px solid var(--panel-border); border-radius: 6px; pointer-events: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .chart-list { grid-column: 1 / -1; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-row { margin-bottom: 3px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-card { padding-left: 10px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-caption { font-size: 12px; line-height: 16px; }
+
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-list { flex: none; overflow: visible; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-footer { margin-top: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-screen { flex: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-content { flex: none; overflow: visible; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading h2 { flex: none; font-size: 20px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-overview { margin-top: 0; text-align: right; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-search { margin: 8px 5px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-search input { min-height: 44px; font-size: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .returns-panel { padding: 0; flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) { transition: none; }
+}
+
 /* Restore saved chrome in place before normal panel interactions begin. */
 .app-shell[data-booting='true'] :is(.library, .chart-summary, .site-brand, .canvas-wrap, .studio-header, .chart-view-tools) { transition: none; }
 
@@ -798,7 +865,7 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 /* Initial loading masks the real layout; one page state reveals it together. */
 .app-shell[data-page-state='loading'] { --loading-ink: #ddd7ce; }
 .app-shell[data-page-state='loading'] :is(#bodygraph, .studio-header, .workspace-page, .performance-panel),
-.app-shell[data-page-state='loading'] #chartSummary > * { opacity: 0; pointer-events: none; }
+.app-shell[data-page-state='loading'] #chartSummary > .phone-sheet-content { opacity: 0; pointer-events: none; }
 .app-shell[data-page-state='loading'] .library :is(.menu-item, .chart-card, .chart-row) { background: transparent; border-color: transparent; }
 .app-shell[data-page-state='loading'] .library :is(.menu-item > span, .chart-name, .chart-caption, .eyebrow, .sidebar-tool, .new-chart-button),
 .app-shell[data-page-state='loading'] .site-brand > span { position: relative; color: transparent; }

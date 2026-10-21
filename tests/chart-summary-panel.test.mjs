@@ -180,7 +180,7 @@ test('search marks preserve selection and delegated clicks, and clearing search 
 
 // Exercise the imported public controller with its DOM contract. No source
 // rewriting, application bootstrap, storage or real saved charts are needed.
-function harness({ width = 1440, input = chart, withBackdrop = true, callbacks = true, panels = createPanelState() } = {}) {
+function harness({ width = 1440, input = chart, withBackdrop = true, callbacks = true, panels = createPanelState(), focusSearch = () => true } = {}) {
   const globals = { activeElement: null, dialogOpen: false, libraryOpen: false };
   let document;
   function node(tag = 'div', attributes = {}) {
@@ -259,7 +259,7 @@ function harness({ width = 1440, input = chart, withBackdrop = true, callbacks =
   let openCalls = 0, closeCalls = 0, returnsCalls = 0;
   const lineCalls = [], lineOptions = [], selectionCalls = [];
   const config = {
-    panels, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton,
+    panels, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton, focusSearch,
     onReturns() { returnsCalls++; controller.setReturnsVisible(true); },
     onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
     onSelect(value) { selectionCalls.push(plain(value)); },
@@ -907,4 +907,19 @@ test('library and summary use one independent panel state and DOM synchronizatio
   assert.equal(library.opened, true);
   ids.get('openLibrary').dispatch('click');
   assert.deepEqual(h.panels.snapshot, { left: false, right: false });
+});
+
+
+test('phone summary keeps the keyboard closed until the search field is chosen', () => {
+  let phone = true;
+  const h = harness({ focusSearch: () => !phone });
+  h.switcher.focus(); h.controller.open();
+  assert.equal(h.globals.activeElement, h.switcher);
+  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.controller.open();
+  assert.equal(h.globals.activeElement, h.switcher, 'returning from hidden controls does not focus an input');
+  h.search.focus(); h.searchFor('34');
+  assert.match(h.content.innerHTML, /data-summary-id="34"/);
+  h.controller.close(); phone = false; h.controller.open();
+  assert.equal(h.globals.activeElement, h.search, 'desktop keeps its existing search focus');
 });

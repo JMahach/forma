@@ -63,7 +63,7 @@ export function renderSummarySections(model, query = '', expanded = new Set(['li
   return sections || '<p class="summary-note summary-empty">Ничего не найдено. Попробуйте номер ворот или название раздела.</p>';
 }
 
-export function attachChartSummary({ panels = createPanelState(), panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {}, isAvailable = () => true }) {
+export function attachChartSummary({ panels = createPanelState(), panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton = null, onReturns = () => {}, onSelect, onLines, onOpen = () => {}, onClose = () => {}, isAvailable = () => true, focusSearch = () => true }) {
   const document = panel.ownerDocument;
   const summaryLabel = panel.getAttribute('aria-labelledby');
   let returnsVisible = false, model = null, fingerprint = '', expanded = new Set(['lines']);
@@ -95,7 +95,7 @@ export function attachChartSummary({ panels = createPanelState(), panel, summary
     if (backdrop) backdrop.hidden = !opened;
     if (next === 'summary') {
       updateVisible();
-      if (returnsPanel?.contains(document.activeElement)) search.focus({ preventScroll: true });
+      if (returnsPanel?.contains(document.activeElement)) (focusSearch() ? search : switcher).focus({ preventScroll: true });
     }
   }
   function open() {
@@ -105,7 +105,7 @@ export function attachChartSummary({ panels = createPanelState(), panel, summary
     // Closing the returns controller mid-restore would also cancel its moment.
     if (!panels.restoring) onOpen();
     layout();
-    if (screen() === 'summary') search.focus({ preventScroll: true });
+    if (screen() === 'summary' && focusSearch()) search.focus({ preventScroll: true });
   }
   function close({ focus = false } = {}) {
     const active = screen();

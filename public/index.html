@@ -18,6 +18,8 @@
     </header>
     <div class="workspace">
       <aside class="library" id="library" aria-label="Главное меню" inert>
+        <button type="button" class="phone-sheet-handle" id="librarySheetHandle" aria-labelledby="openLibrary" aria-expanded="false"><span aria-hidden="true"></span></button>
+        <div class="phone-sheet-content">
         <nav class="main-navigation" id="mainNavigation" aria-label="Разделы">
           <button class="menu-item" id="nowButton" aria-pressed="true" title="Транзит"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5V10l3 1.8" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Транзит</span></button>
           <button type="button" class="menu-item" id="openAccount" aria-controls="accountPage" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="6" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M4 17v-1a6 6 0 0 1 12 0v1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Аккаунт</span></button>
@@ -30,6 +32,7 @@
           <div class="chart-list" id="chartList"></div>
         </section>
         <div class="sidebar-footer"><button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button></div>
+        </div>
       </aside>
       <main class="studio">
         <div class="chart-tools" aria-label="Вид схемы">
@@ -54,6 +57,8 @@
           <div class="chart-heading"><div class="chart-title-row"><h1 id="chartTitle"></h1></div><p class="subtitle" id="chartSubtitle"></p></div>
         </header>
         <aside class="chart-summary" id="chartSummary" aria-labelledby="chartSummaryTitle" aria-hidden="true" inert>
+          <button type="button" class="phone-sheet-handle" id="summarySheetHandle" aria-labelledby="summarySwitch" aria-expanded="false"><span aria-hidden="true"></span></button>
+          <div class="phone-sheet-content">
           <div class="summary-screen" id="summaryScreen">
           <header class="summary-heading"><h2 id="chartSummaryTitle">О карте</h2><div class="summary-overview" id="summaryOverview"></div></header>
           <label class="summary-search"><span class="visually-hidden">Поиск по сводке</span><input id="summarySearch" type="search" placeholder="Найти в карте" autocomplete="off"></label>
@@ -79,6 +84,7 @@
           <button type="button" class="returns-retry" id="returnsRetry" hidden>Повторить расчёт</button>
           <p class="visually-hidden" id="returnsNote"></p>
         </aside>
+          </div>
         </aside>
         <aside class="performance-panel" id="performancePanel" aria-label="Счётчик FPS" hidden>
     <div class="performance-reading"><strong><span data-performance="fps">—</span> <small>FPS</small></strong><button type="button" data-performance-close aria-label="Скрыть счётчик FPS">×</button></div>

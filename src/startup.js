@@ -17,6 +17,7 @@ import { createCamera } from './scene/camera.js';
 import { createCameraView } from './scene/camera-view.js';
 import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from './scene/geometry/activation-layout.js';
 import { attachPageGestures } from './ui/page-gestures.js';
+import { attachPhoneSheets } from './ui/phone-sheet.js';
 
 attachPageGestures(document);
 
@@ -94,11 +95,25 @@ canvas.style.setProperty('--activation-column-offset', `${ACTIVATION_COLUMN_REVE
 element('mandalaSwitch').setAttribute('aria-checked', String(Boolean(reveal)));
 const layout = createStudioLayout({ footprint: STUDIO_FOOTPRINT, canvas: element('canvasWrap'), drawing: element('bodygraph'),
   timelineKind: initialPresentation.timelineKind,
+  onPhoneLayout: phone => panels.setExclusive(phone),
   panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')],
   sidePanels: () => ({ ...panels.snapshot, right: workspace.screen === 'chart' && panels.right,
     leftWidth: element('library').getBoundingClientRect().width,
     rightWidth: parseFloat(getComputedStyle(studio).getPropertyValue('--returns-panel-width')),
   }) });
+syncLoadingPanels();
+// This controller stays attached across startup/app handoff. Both phases use
+// the same handles and visibility owner, with no duplicate gesture handlers.
+// Dismiss through the current button command: after handoff it also closes
+// return exploration and restores focus, rather than only hiding its shell.
+const phoneSheets = attachPhoneSheets({
+  sheets: [
+    { panel: element('library'), handle: element('librarySheetHandle'), onClose: () => { if (panels.left) element('openLibrary').click(); } },
+    { panel: element('chartSummary'), handle: element('summarySheetHandle'), onClose: () => { if (panels.right) element('summarySwitch').click(); } },
+  ],
+  isPhone: () => layout.phone, readViewport: layout.readViewport,
+});
+layout.subscribeViewport(phoneSheets.refresh);
 // One projection paints the ready chart and its loading illustration. The
 // application takes this camera over without changing the saved view.
 const cameraView = createCameraView({ svg: element('bodygraph'), surface: canvas, mirrors: [element('chartLoadingArt')] });

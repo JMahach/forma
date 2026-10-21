@@ -205,3 +205,16 @@ test('resize and release settle a pending viewport snapshot without accepting la
     h.view.close();
   }
 });
+
+
+test('choosing an already visible cards page still sends the explicit navigation command', () => {
+  let requests = 0;
+  const h = harness({ onOpen: () => { requests++; } });
+  h.view.setVisible(true);
+  const rows = [...h.children];
+  h.button.dispatch('click');
+  assert.equal(requests, 1);
+  assert.deepEqual(h.children, rows, 'choosing the active page does not recreate its list');
+  h.view.setVisible(true);
+  assert.equal(requests, 1, 'the visibility projection is still not a navigation command');
+});

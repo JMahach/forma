@@ -103,3 +103,118 @@ test('finishing restoration releases both explicit requests for normal and later
   panels.restore({ left: false, right: false });
   assert.deepEqual(panels.snapshot, { left: false, right: false }, 'a later restore has no stale requests');
 });
+
+
+test('exclusive panels switch sides atomically while desktop mode remains independent', () => {
+  const panels = createPanelState(), changes = [];
+  panels.setExclusive(true);
+  panels.subscribe(value => changes.push(value));
+  panels.setLeft(true);
+  panels.setRight(true);
+  panels.setLeft(true);
+  panels.setLeft(false);
+  assert.deepEqual(changes, [
+    { left: true, right: false },
+    { left: false, right: true },
+    { left: true, right: false },
+    { left: false, right: false },
+  ]);
+  panels.setExclusive(false);
+  panels.setLeft(true); panels.setRight(true);
+  assert.deepEqual(panels.snapshot, { left: true, right: true });
+});
+
+test('entering exclusive mode chooses the last explicit opening and does not resurrect a hidden panel on exit', () => {
+  const panels = createPanelState(), changes = [];
+  panels.setLeft(true); panels.setRight(true);
+  panels.subscribe(value => changes.push(value));
+  panels.setExclusive(true);
+  panels.setExclusive(true);
+  assert.deepEqual(panels.snapshot, { left: false, right: true });
+  panels.setExclusive(false);
+  assert.deepEqual(changes, [{ left: false, right: true }]);
+  panels.setLeft(true);
+  panels.setExclusive(true);
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+});
+
+test('restoring two saved panels in exclusive mode uses the left panel when neither was explicitly chosen', () => {
+  const panels = createPanelState(), changes = [];
+  panels.setExclusive(true);
+  panels.subscribe(value => changes.push(value));
+  panels.restore({ left: true, right: true });
+  panels.restore({ left: true, right: true });
+  assert.deepEqual(changes, [{ left: true, right: false }]);
+  panels.restore({ left: false, right: true });
+  assert.deepEqual(panels.snapshot, { left: false, right: true });
+  panels.restore(null);
+  assert.deepEqual(panels.snapshot, { left: false, right: false });
+});
+
+for (const side of ['left', 'right']) {
+  test(`early exclusive ${side} opening and closing cannot revive the other saved panel`, () => {
+    const panels = createPanelState(), changes = [];
+    const set = value => side === 'left' ? panels.setLeft(value) : panels.setRight(value);
+    panels.setExclusive(true);
+    panels.beginRestore();
+    panels.restore({ left: side !== 'left', right: side !== 'right' });
+    panels.subscribe(value => changes.push(value));
+    set(true);
+    panels.beginRestore();
+    panels.restore({ left: true, right: true });
+    panels.setRight(true, { automatic: true });
+    assert.deepEqual(panels.snapshot, { left: side === 'left', right: side === 'right' });
+    assert.equal(changes.length, 1, 'only the explicit switch changes the visible panel');
+    set(false);
+    panels.restore({ left: true, right: true });
+    panels.setRight(true, { automatic: true });
+    assert.deepEqual(panels.snapshot, { left: false, right: false });
+    assert.equal(changes.length, 2, 'closing the chosen sheet keeps both sheets closed through restoration');
+    panels.finishRestore();
+    panels.setRight(true, { automatic: true });
+    assert.deepEqual(panels.snapshot, { left: false, right: true });
+  });
+}
+
+test('a later explicit selection replaces the first exclusive selection during restoration', () => {
+  const panels = createPanelState();
+  panels.setExclusive(true);
+  panels.beginRestore();
+  panels.setLeft(true); panels.setRight(true);
+  panels.restore({ left: true, right: false });
+  assert.deepEqual(panels.snapshot, { left: false, right: true });
+  panels.setLeft(true);
+  panels.restore({ left: false, right: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+  assert.equal(panels.rightRequestDuringRestore, false, 'return restoration sees the explicit choice to close the right sheet');
+});
+
+
+test('switching to exclusive mode during restoration keeps an earlier explicit choice after it closes', () => {
+  const panels = createPanelState();
+  panels.beginRestore();
+  panels.restore({ left: true, right: true });
+  panels.setLeft(true);
+  panels.setExclusive(true);
+  panels.setRight(true, { automatic: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+  panels.setLeft(false);
+  panels.restore({ left: true, right: true });
+  assert.deepEqual(panels.snapshot, { left: false, right: false });
+});
+
+
+test('late automatic return projection cannot replace a chosen phone menu', () => {
+  const panels = createPanelState();
+  panels.setExclusive(true);
+  panels.setRight(true);
+  panels.setLeft(true);
+  panels.setRight(true, { automatic: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: false });
+  panels.setRight(true);
+  assert.deepEqual(panels.snapshot, { left: false, right: true }, 'an explicit right opening still switches the sheet');
+  panels.setExclusive(false);
+  panels.setLeft(true);
+  panels.setRight(true, { automatic: true });
+  assert.deepEqual(panels.snapshot, { left: true, right: true }, 'desktop panels stay independent');
+});

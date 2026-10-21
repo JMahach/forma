@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { STUDIO_FOOTPRINT, MANDALA_FRAME } from '../src/scene/geometry/frames.js';
+import { attachPhoneSheets } from '../src/ui/phone-sheet.js';
 import { attachPageGestures } from '../src/ui/page-gestures.js';
 import { createPanelState } from '../src/state/panels.js';
 import { createWorkspaceState } from '../src/state/workspace.js';
@@ -24,9 +25,11 @@ import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activat
 const source = readFileSync(new URL('../src/startup.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace("import('./app.js')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'holdLoadingContent', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
-const run = (...args) => { if (args.length === 9) args.push({}); return evaluate(holdLoadingContent, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  'attachPhoneSheets', 'holdLoadingContent', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
+const runWithSheets = (attachSheets, ...args) => { if (args.length === 9) args.push({}); return evaluate(attachSheets, holdLoadingContent, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
   () => ({ getPropertyValue: () => '296.8px' }), ...args); };
+
+const run = (...args) => runWithSheets(attachPhoneSheets, ...args);
 
 function startupDocument(overrides = {}) {
   const library = libraryDom();
@@ -35,7 +38,7 @@ function startupDocument(overrides = {}) {
   const element = id => {
     if (!nodes.has(id)) {
       const classes = new Set(), attributes = new Map(), listeners = new Map();
-      const defaults = { id, dataset: {}, style: { setProperty(name, value) { this[name] = value; } },
+      const defaults = { id, ownerDocument: document, dataset: {}, style: { setProperty(name, value) { this[name] = value; }, removeProperty(name) { delete this[name]; } },
         hidden: false, inert: false,
         addEventListener(type, listener) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(listener); },
         removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
@@ -56,7 +59,7 @@ function startupDocument(overrides = {}) {
     }
     return nodes.get(id);
   };
-  const document = Object.assign(new EventTarget(), { body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
+  const document = Object.assign(new EventTarget(), { defaultView: { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }, body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
     createElement: library.document.createElement, getElementById: element, querySelector: selector => selector === '.app-shell' ? element('shell') : null });
   for (const id of ['bodygraph', 'chartLoadingArt']) Object.assign(element(id), {
     viewBox: { baseVal: { x: 0, y: 0, width: 640, height: 820 } },
@@ -69,7 +72,7 @@ function startupDocument(overrides = {}) {
   return { document, element, rows: library.children };
 }
 
-const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {} });
+const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, subscribeViewport() {} });
 
 const emptyStore = () => ({ charts: [], has: () => false, get: () => undefined });
 
@@ -136,16 +139,17 @@ for (const failure of ['import', 'initialization']) {
 
 
 test('saved panel space and visible shells are restored before the application import finishes', async () => {
-  for (const [left, right, screen, expectedWidth] of [
+  for (const [left, right, screen, expectedWidth, phone = false] of [
     [false, false, 'chart', 1400], [true, false, 'chart', 1103.2],
     [false, true, 'chart', 1103.2], [true, true, 'chart', 806.4],
     [true, true, 'charts', 1103.2],
+    [true, true, 'chart', 1400, true], [false, true, 'chart', 1400, true],
   ]) {
     const { document, element } = startupDocument();
     const savedView = { selectedId: 'current-transit', panels: { left, right }, workspace: screen };
     let layout, received, initial;
     await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), options => {
-      layout = createStudioLayout({ ...options, viewport: null, media: { matches: false },
+      layout = createStudioLayout({ ...options, viewport: null, media: { matches: phone },
         readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
       return layout;
     }, () => () => {}, () => ({ read: () => savedView }), emptyStore, async () => {
@@ -154,11 +158,11 @@ test('saved panel space and visible shells are restored before the application i
       return { startApp(value) { received = value; } };
     });
     assert.equal(initial.left, left, 'the navigation is present while app.js is still loading');
-    assert.equal(initial.right, right && screen === 'chart', 'only the chart workspace projects the saved right panel');
+    assert.equal(initial.right, right && !(phone && left) && screen === 'chart', 'only the chart workspace projects the saved right panel');
     assert.equal(initial.screen, screen);
     assert.ok(Math.abs(initial.width - expectedWidth) < 1e-7, 'the loading preview already occupies the saved free area');
     assert.equal(initial.booting, 'true', 'initial projection is applied with transitions disabled');
-    assert.deepEqual(received.panels.snapshot, { left, right }, 'the app inherits the same restored owner');
+    assert.deepEqual(received.panels.snapshot, { left, right: right && !(phone && left) }, 'the app inherits the same restored owner');
     assert.equal(received.workspace.screen, screen);
     layout.destroy();
   }
@@ -310,4 +314,35 @@ test('panel buttons work before app import and hand the same choices and camera 
   assert.equal(element('mainNavigation').inert, false);
   assert.equal(element('chartSummary').inert, true);
   layout.destroy();
+});
+
+
+test('sheet dismissal uses the active close command before and after application handoff', async () => {
+  const { document, element } = startupDocument();
+  let sheetOptions, closedReturns = 0, earlyOpened, earlyClosed, finalPanel;
+  await runWithSheets(options => {
+    sheetOptions = options;
+    return attachPhoneSheets(options);
+  }, attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
+  () => () => {}, () => ({ read: () => null }), emptyStore, async () => {
+    element('summarySwitch').click();
+    earlyOpened = element('summarySwitch').getAttribute('aria-expanded');
+    sheetOptions.sheets[1].onClose();
+    earlyClosed = element('summarySwitch').getAttribute('aria-expanded');
+    return { startApp({ panels }) {
+      panels.setRight(true);
+      element('summarySwitch').addEventListener('click', () => {
+        closedReturns++;
+        panels.setRight(false);
+      });
+      sheetOptions.sheets[1].onClose();
+      sheetOptions.sheets[1].onClose();
+      finalPanel = panels.right;
+    } };
+  });
+  assert.notEqual(element('shell').dataset.pageState, 'error');
+  assert.equal(earlyOpened, 'true');
+  assert.equal(earlyClosed, 'false', 'the early command works while app downloads');
+  assert.equal(closedReturns, 1, 'the ready command closes return exploration once; stale dismissal cannot reopen it');
+  assert.equal(finalPanel, false);
 });

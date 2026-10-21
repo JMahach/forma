@@ -32,9 +32,9 @@ function timelineControlWidth(panel) {
 }
 
 export function createStudioLayout({ canvas, panels, footprint, studio = canvas.parentElement, drawing = null, readStyle = element => getComputedStyle(element),
-  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport, timelineKind = 'day', sidePanels = () => null }) {
+  media = globalThis.matchMedia(PHONE_LAYOUT_QUERY), viewport = globalThis.visualViewport, timelineKind = 'day', sidePanels = () => null, onPhoneLayout = () => {} }) {
   const phone = () => media.matches;
-  let current, dock, sideInsets;
+  let current, dock, sideInsets, appliedPhone;
   const viewportSubscribers = new Set();
   function applyViewport(visible) {
     const full = studio.getBoundingClientRect();
@@ -42,13 +42,22 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
     const lift = Math.max(0, Math.min(full.height, bottom - visible.top - visible.height));
     studio.style?.setProperty('--timeline-viewport-lift', `${lift}px`);
     studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - dock.backingHeight}px`);
+    studio.parentElement?.style?.setProperty('--phone-viewport-lift', `${lift}px`);
     studio.parentElement?.style?.setProperty('--timeline-panels-bottom', `${Math.max(0, lift + dock.backingHeight)}px`);
+    // The mobile sheet clears the floating dates too; desktop keeps its rail edge.
+    studio.parentElement?.style?.setProperty('--phone-sheet-bottom', `${Math.max(0, lift + dock.height + 4)}px`);
     // Popup anchors are measured only after the dock has accepted its position.
     for (const notify of [...viewportSubscribers]) notify();
   }
   const environment = createViewport({ surface: studio, viewport, onChange: applyViewport });
   applyTimelineMetrics(studio);
   function refresh() {
+    const isPhone = phone();
+    canvas.dataset.layout = isPhone ? 'phone' : 'desktop';
+    if (appliedPhone !== isPhone) {
+      appliedPhone = isPhone;
+      onPhoneLayout(isPhone);
+    }
     const style = readStyle(canvas);
     const full = studio.getBoundingClientRect();
     const safeInset = parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0;
@@ -87,7 +96,6 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
     studio.style?.setProperty('--timeline-gutter', `${dock.gutter}px`);
     studio.style?.setProperty('--timeline-content-left', `${area.x + dock.gutter}px`);
     studio.style?.setProperty('--timeline-content-width', `${Math.max(1, area.width - 2 * dock.gutter)}px`);
-    canvas.dataset.layout = phone() ? 'phone' : 'desktop';
     canvas.dataset.mandalaColumns = current.showMandalaColumns ? 'visible' : 'hidden';
     const panel = dock.rail;
     const left = `${panel.x}px`;

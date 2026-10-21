@@ -132,11 +132,15 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     coalesceMandala: true, onPreview: graph.preview,
   });
   const knowledge = attachKnowledgeEntry({ button: $('openKnowledge'), dialog: $('knowledgeDialog'),
-    onSelect: selection => { workspace.setScreen('chart'); graph.choose(selection); },
-    onOpen: () => { if (workspace.screen === 'library') void knowledge.show(); else workspace.setScreen('library'); },
+    onSelect: selection => { navigateWorkspace('chart'); graph.choose(selection); },
+    onOpen: () => {
+      const alreadyShown = workspace.screen === 'library';
+      navigateWorkspace('library');
+      if (alreadyShown) void knowledge.show();
+    },
     isCurrent: () => workspace.screen === 'library',
     getSelection: () => graph.selectionState.primary, onError: toast });
-  chartSummary = attachChartSummary({ panels, isAvailable: () => workspace.screen === 'chart',
+  chartSummary = attachChartSummary({ panels, isAvailable: () => workspace.screen === 'chart', focusSearch: () => !layout.phone,
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
     search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration.openReturnsList(); },
@@ -153,9 +157,15 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     motion: mandalaMotion, layout, onStateChange: () => viewSession?.schedule(),
     beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
   });
+  // Explicit navigation reveals its destination on a phone. State projection
+  // and restoration do not use this command, so a restored menu stays open.
+  function navigateWorkspace(screen) {
+    if (layout.phone) library?.close();
+    workspace.setScreen(screen);
+  }
   // Opening a chart uses Home; updating the current chart keeps its camera.
   function selectChart(id) {
-    workspace.setScreen('chart');
+    navigateWorkspace('chart');
     graph.changeChart(id);
     gestures.reset();
   }
@@ -166,9 +176,9 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   });
   const allCharts = attachAllCharts({ button: $('openAllCharts'), dialog: $('allChartsDialog'),
     list: $('allChartsList'), store, session,
-    onOpen: () => { workspace.setScreen('charts'); },
+    onOpen: () => { navigateWorkspace('charts'); },
   });
-  $('openAccount').addEventListener('click', () => { workspace.setScreen('account'); });
+  $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
   const birthForm = attachBirthForm({
     document, store, session, toast,
     onSave: (id, { metadataOnly = false } = {}) => {

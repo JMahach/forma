@@ -141,3 +141,29 @@ test('the entire timeline follows each measured frame while unequal side panels 
     close(parseFloat(values.get('--timeline-dates-width')), measured.width - 48, 'dates follow each intermediate canvas width');
   }
 });
+
+test('phone presentation publishes one mode and keeps the sheet above chronicle dates through keyboard changes', () => {
+  const values = new Map(), shared = new Map(), modes = [];
+  const full = { top: 0, bottom: 844, width: 390, height: 844 };
+  const viewport = { height: 844, offsetTop: 0 }, media = { matches: true };
+  const studio = { dataset: {}, parentElement: { style: { setProperty: (key, value) => shared.set(key, value) } },
+    style: { setProperty: (key, value) => values.set(key, value) }, getBoundingClientRect: () => full };
+  const canvas = { dataset: {}, parentElement: studio, getBoundingClientRect: () => full };
+  const layout = createStudioLayout({ canvas, panels: [], viewport, media, timelineKind: 'chronicle',
+    onPhoneLayout: phone => modes.push(phone),
+    readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
+  assert.deepEqual(modes, [true]);
+  const sheetBottom = () => parseFloat(shared.get('--phone-sheet-bottom'));
+  close(sheetBottom(), 92.8, 'phone sheet clears the full date row and its focus gap');
+  viewport.height = 550;
+  layout.refresh();
+  close(parseFloat(shared.get('--phone-viewport-lift')), 294, 'a sheet without a timeline also clears the keyboard');
+  close(sheetBottom(), 386.8, 'keyboard moves the entire sheet above the same visible controls');
+  assert.deepEqual(modes, [true], 'layout measurements do not repeat mode changes');
+  layout.setTimelineKind('day'); layout.refresh();
+  close(sheetBottom(), 338.8, 'day has no floating dates to reserve');
+  media.matches = false; layout.refresh();
+  assert.deepEqual(modes, [true, false], 'desktop independence is restored at the same device boundary');
+  close(parseFloat(shared.get('--timeline-panels-bottom')), 334.8, 'desktop panel edge remains the original backing edge');
+  layout.destroy();
+});

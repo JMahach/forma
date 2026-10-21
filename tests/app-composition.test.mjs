@@ -857,3 +857,61 @@ test('real pending loading accepts menu changes and releases its content restric
   assert.equal(h.element('lifetimeControls').inert, false);
   assert.equal(h.element('library').inert, true, 'reveal does not unlock the closed panel');
 });
+
+
+for (const [width, phone] of [[390, true], [1200, false]]) {
+  test(`explicit workspace navigation reveals the selected page and closes only the phone menu (width: ${width})`, async () => {
+    const h = harness({ studioSize: { width, height: 844 } });
+    await tick();
+    for (const [button, screen, page] of [
+      ['openAllCharts', 'charts', 'allChartsDialog'],
+      ['openAccount', 'account', 'accountPage'],
+      ['openKnowledge', 'library', 'knowledgeDialog'],
+    ]) {
+      h.panels.setLeft(true);
+      await h.element(button).click(); await tick();
+      assert.equal(h.workspace.screen, screen);
+      assert.equal(h.element(page).hidden, false);
+      assert.equal(h.panels.left, !phone);
+      assert.equal(h.element('library').inert, phone);
+      assert.equal(h.element('openLibrary').getAttribute('aria-expanded'), String(!phone));
+      h.panels.setLeft(true);
+      await h.element(button).click(); await tick();
+      assert.equal(h.panels.left, !phone, 'choosing the already active screen still completes navigation');
+    }
+  });
+
+  test(`explicit saved-chart and Transit selection close only the phone menu (width: ${width})`, async () => {
+    const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+    const h = harness({ charts: [chart], studioSize: { width, height: 844 } });
+    await tick();
+    for (const repeat of [false, true]) {
+      h.panels.setLeft(true);
+      if (!repeat) await h.element('openAccount').click();
+      h.panels.setLeft(true);
+      h.select(chart.id); await tick();
+      assert.equal(h.workspace.screen, 'chart');
+      assert.equal(h.shown.id, chart.id);
+      assert.equal(h.panels.left, !phone, 'selecting a chart also completes navigation when it was already selected');
+    }
+    h.panels.setLeft(true);
+    await h.element('nowButton').click();
+    assert.equal(h.workspace.screen, 'chart');
+    assert.equal(h.shown.id, 'current-transit');
+    assert.equal(h.panels.left, !phone);
+  });
+}
+
+test('restoring and projecting a phone workspace preserves its saved menu until explicit navigation', async () => {
+  const h = harness({ studioSize: { width: 390, height: 844 },
+    savedView: { workspace: 'account', panels: { left: true, right: false } } });
+  await tick();
+  assert.equal(h.workspace.screen, 'account');
+  assert.equal(h.panels.left, true);
+  assert.equal(h.element('library').inert, false);
+  h.workspace.restore('charts'); await tick();
+  assert.equal(h.workspace.screen, 'charts');
+  assert.equal(h.panels.left, true, 'showing a restored screen is not a user navigation command');
+  await h.element('openAllCharts').click();
+  assert.equal(h.panels.left, false);
+});

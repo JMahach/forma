@@ -125,6 +125,7 @@ export const PUBLIC_FILES = new Map([
     'src/ui/html.js',
     'src/ui/studio-presentation.js',
     'src/ui/page-gestures.js',
+    'src/ui/phone-sheet.js',
     'src/ui/telegram-gestures.js',
     'src/ui/toast.js',
     'src/views/activation-details.js',
