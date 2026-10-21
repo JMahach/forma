@@ -480,8 +480,8 @@ test('native input and touch drag update the thumb edge without a parent render'
 test('the thumb narrows symmetrically within one visible tip of either endpoint and opens on the way back', () => {
   const h = harness({ withMarker: false });
   h.range.max = '200'; h.range.step = 'any';
-  for (const [value, rounding] of [[100, 0], [11, 0], [5.5, .5], [0, 1], [5.5, .5], [11, 0],
-    [189, 0], [194.5, .5], [200, 1], [194.5, .5], [189, 0]] as const) {
+  for (const [value, rounding] of [[100, 0], [8, 0], [4, .5], [0, 1], [4, .5], [8, 0],
+    [192, 0], [196, .5], [200, 1], [196, .5], [192, 0]]) {
     h.range.value = String(value); h.update();
     assert.equal(Number(h.range.style['--timeline-thumb-rounding']), rounding, `at ${value}`);
     assert.equal(h.range.value, String(value), 'only the visible shape changes');
@@ -489,7 +489,7 @@ test('the thumb narrows symmetrically within one visible tip of either endpoint 
   assert.deepEqual(h.scrubs, []);
 });
 
-test('thumb geometry reaches a centered circle at either end and retains its original lens in the middle', () => {
+test('the smaller oval stays smooth and centered throughout its transition to a six-pixel endpoint circle', () => {
   const h = harness({ withMarker: false });
   function contour(value: number) {
     h.range.value = String(value); h.update();
@@ -500,20 +500,41 @@ test('thumb geometry reaches a centered circle at either end and retains its ori
   }
   const lens = contour(500), left = contour(0), right = contour(1000);
   assert.deepEqual(right, left, 'both endpoints use the same circular contour');
-  assert.deepEqual(lens.slice(0, 2), [11, 22]);
-  assert.deepEqual(lens.slice(12, 14), [33, 22]);
-  assert.deepEqual(left.slice(0, 2), [17.75, 22]);
-  assert.deepEqual(left.slice(6, 8), [22, 17.75]);
-  assert.deepEqual(left.slice(12, 14), [26.25, 22]);
-  assert.deepEqual(left.slice(18, 20), [22, 26.25]);
+  assert.deepEqual(lens.slice(0, 2), [14, 22]);
+  assert.deepEqual(lens.slice(6, 8), [22, 19]);
+  assert.deepEqual(lens.slice(12, 14), [30, 22]);
+  assert.deepEqual(lens.slice(18, 20), [22, 25]);
+  assert.deepEqual(left.slice(0, 2), [19, 22]);
+  assert.deepEqual(left.slice(6, 8), [22, 19]);
+  assert.deepEqual(left.slice(12, 14), [25, 22]);
+  assert.deepEqual(left.slice(18, 20), [22, 25]);
+  let previousWidth = 16;
+  for (let frame = 0; frame <= 64; frame++) {
+    // A 200px rail spans 1000 units; the final 8px occupy 40 units.
+    const points = contour(40 * (1 - frame / 64));
+    const width = points[12] - points[0];
+    assert.ok(width <= previousWidth && width >= 6, 'the shape narrows without a jump or overshoot');
+    assert.equal(points[12] + points[0], 44, 'shrinking keeps the visible center on the selected moment');
+    assert.equal(points[19] - points[7], 6, 'rounding never thickens the shape');
+    for (let segment = 0; segment < 4; segment++) {
+      const join = 6 + segment * 6, next = 2 + ((segment + 1) % 4) * 6;
+      const incoming = [points[join] - points[join - 2], points[join + 1] - points[join - 1]];
+      const outgoing = [points[next] - points[join], points[next + 1] - points[join + 1]];
+      assert.ok(Math.abs(incoming[0] * outgoing[1] - incoming[1] * outgoing[0]) < .001,
+        'adjacent curves have the same tangent, including the left and right ends');
+      assert.ok(incoming[0] * outgoing[0] + incoming[1] * outgoing[1] > 0,
+        'the contour never reverses direction into a pointed cusp');
+    }
+    previousWidth = width;
+  }
 });
 
 test('rounding follows physical rail width after resize without measuring every selected moment', () => {
   const h = harness({ withMarker: false });
-  h.range.value = '27.5'; h.update(); // 5.5px from the start on a 200px rail.
+  h.range.value = '20'; h.update(); // 4px from the start on a 200px rail.
   assert.equal(Number(h.range.style['--timeline-thumb-rounding']), .5);
   h.range.getBoundingClientRect = () => { throw new Error('resizing and scrubbing use cached rail width'); };
-  h.range.resize(444); // Same time is now 11px from the start.
+  h.range.resize(444); // Same time is now 8px from the start.
   assert.equal(Number(h.range.style['--timeline-thumb-rounding']), 0);
   h.range.resize(244);
   assert.equal(Number(h.range.style['--timeline-thumb-rounding']), .5);
