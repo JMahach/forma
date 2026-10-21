@@ -10,7 +10,7 @@ else:
     from errors import ChartError
 
 # Read only the three integer declarations, never evaluate JavaScript.
-_source = (Path(__file__).resolve().parents[2] / 'shared/date-limits.js').read_text()
+_source = (Path(__file__).resolve().parents[2] / 'shared/date-limits.ts').read_text()
 def _integer(name):
     match = re.search(r'^export const ' + re.escape(name) + r' = (\d+);$', _source, re.MULTILINE)
     if not match:

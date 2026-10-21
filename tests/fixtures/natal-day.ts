@@ -1,0 +1,32 @@
+import type { NatalDay, NatalDaySegment } from '../../shared/day-packets/natal-format.ts';
+import type { SavedChart } from '../../shared/chart-types.ts';
+import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
+import { chartAtMinute } from '../../src/domain/natal-day.ts';
+
+export function natalDayFixture({ date = '2026-09-24', timezone = 'UTC', samples = 1440, segments }: { date?: string; timezone?: string; samples?: number; segments?: NatalDaySegment[] } = {}): NatalDay {
+  const spans = segments || [{ index: 0, startUtc: `${date}T00:00:00Z`, utcOffset: 'UTC+00:00', offsetSeconds: 0, fold: 0 }];
+  return {
+    version: NATAL_DAY_VERSION, date, timezone, samples, startUtc: spans[0].startUtc, stepSeconds: 60, segments: spans,
+    engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
+    columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: samples }, (_, index) =>
+      column < 22 ? (column * 15 + index / 10000) % 360 : column === 22 ? Date.parse(spans[0].startUtc) / 1000 - 88 * 86400 + index * 60 : 1e-12)),
+  };
+}
+
+export function personalChartFixture(): SavedChart;
+export function personalChartFixture<T extends Record<string, unknown>>(overrides: T): Omit<SavedChart, keyof T> & T;
+export function personalChartFixture<T extends Record<string, unknown> = {}>(overrides: T = {} as T): Omit<SavedChart, keyof T> & T {
+  return {
+    id: 'saved-person', name: 'Saved person', source: 'calculated' as const, birthDate: '2026-09-24',
+    birthPlace: '', note: '', birthTime: '12:34:45', utc: '2026-09-24T12:34:45Z', utcOffset: 'UTC+00:00', timezone: 'UTC', cityId: 'test-city',
+    personality: [1, 41], design: [8, 31], createdAt: '2026-09-25T01:00:00Z', updatedAt: '2026-09-25T01:00:00Z',
+    ...overrides,
+  };
+}
+
+// A saved record owns identity and birth input; a projected minute owns only
+// chart data. Tests needing a full library record assemble it explicitly here.
+export function libraryRecordAtMinute(day: NatalDay, index: number, record = personalChartFixture()) {
+  const { localDate, localTime, ...data } = chartAtMinute(day, index);
+  return { ...record, ...data, birthDate: localDate, birthTime: localTime };
+}

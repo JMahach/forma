@@ -31,7 +31,7 @@ MIN_DATE, MAX_DATE = SUPPORTED_START.date(), SUPPORTED_END_EXCLUSIVE.date()
 CHUNK_DAYS = 7
 
 
-def shared_literal(name, file='shared/lifetime-format.js'):
+def shared_literal(name, file='shared/lifetime-format.ts'):
     """Read only literal declarations, without evaluating JavaScript or Node."""
     source = (ROOT / file).read_text()
     match = re.search(r'export const ' + re.escape(name) + r' = (.+);', source)
@@ -60,7 +60,7 @@ def calculation_fingerprint():
 
 
 def lifetime_format():
-    planets = shared_literal('MOMENT_PLANETS', 'shared/day-packets/moment-columns.js')
+    planets = shared_literal('MOMENT_PLANETS', 'shared/day-packets/moment-columns.ts')
     step = shared_literal('LIFETIME_STEP_SECONDS')
     if not isinstance(planets, list) or not planets or len(set(planets)) != len(planets):
         raise ValueError('Invalid shared planet order')

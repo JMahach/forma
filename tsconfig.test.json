@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/**/*.ts",
+    "shared/**/*.ts",
+    "server/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "compilerOptions": {
+    "paths": {
+      "/src/*": [
+        "./src/*"
+      ],
+      "/fixtures/*": [
+        "./tests/fixtures/*"
+      ],
+      "/helpers/*": [
+        "./tests/helpers/*"
+      ]
+    }
+  }
+}

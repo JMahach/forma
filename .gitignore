@@ -7,7 +7,7 @@ private-charts/
 .venv
 __pycache__/
 .pytest_cache/
-.cache/transit/
+.cache/
 dist/
 
 # Keep agent instructions, working reports and workflows outside the repository.
@@ -21,7 +21,3 @@ AGENTS.md
 # Generated lifetime files and their completion metadata.
 *.f64le
 *.f64le.*.tmp
-.cache/lifetime/
-
-# Generated shared trajectory index for exact return searches.
-.cache/returns/

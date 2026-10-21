@@ -412,13 +412,22 @@ class InvalidIndex(ValueError):
 def provenance():
     digest = hashlib.sha256()
     names = ['server/python/return_index.py', 'server/python/astronomy.py', 'server/python/civil_time.py',
-             'server/python/date_limits.py', 'server/python/errors.py', 'shared/date-limits.js', 'requirements.txt']
+             'server/python/date_limits.py', 'server/python/errors.py', 'shared/date-limits.ts', 'requirements.txt']
     names += [str(file.relative_to(astro.ROOT)) for file in sorted((astro.ROOT/'data'/'ephe').glob('*')) if file.is_file()]
     digest.update(f'{astro.swe.version}\0{astro.FLAGS}\0{SCHEMA}\0'.encode())
     for name in names:
         data = (astro.ROOT/name).read_bytes()
         digest.update(f'{name}\0{len(data)}\0'.encode()); digest.update(data)
     return digest.hexdigest()
+
+
+# The TypeScript migration changes source paths only. Preserve the index bytes;
+# accept its prior provenance only for the exact reviewed current calculator.
+_TYPESCRIPT_REVISION = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
+
+
+def provenance_matches(generated, current):
+    return generated == current or (generated == _TYPESCRIPT_REVISION['from'] and current == _TYPESCRIPT_REVISION['to'])
 
 
 class _ArrayView:
@@ -470,7 +479,7 @@ def load_index(path=DEFAULT_FILE, expected_provenance=None, full=False):
             raise InvalidIndex('Index header checksum mismatch')
         header = json.loads(encoded)
         base = PREFIX.size+size
-        if header['schema'] != SCHEMA or header['provenance'] != (expected_provenance or provenance()):
+        if header['schema'] != SCHEMA or not provenance_matches(header['provenance'], expected_provenance or provenance()):
             raise InvalidIndex('Index calculation version changed')
         if header['payloadBytes'] != len(data)-base or not header['start'] < header['end']:
             raise InvalidIndex('Invalid index coverage/size')

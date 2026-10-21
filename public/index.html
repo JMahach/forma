@@ -7,8 +7,8 @@
   <title>Форма 1</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=forma-lotus-1">
   <link rel="stylesheet" href="/styles.css">
-  <link rel="modulepreload" href="/src/startup.js">
-  <link rel="modulepreload" href="/src/app.js">
+  <link rel="modulepreload" href="/src/startup.ts">
+  <link rel="modulepreload" href="/src/app.ts">
 </head>
 <body>
   <div class="app-shell" data-booting="true" data-page-state="loading" aria-busy="true" inert>
@@ -40,7 +40,7 @@
       </aside>
       <main class="studio">
         <div class="chart-tools" aria-label="Вид схемы">
-          <div class="summary-title" aria-hidden="true"><span>О карте</span></div>
+          <div class="summary-title" id="summaryChartCaption"><span class="summary-chart-title" id="summaryChartTitle" role="heading" aria-level="1"></span><div class="summary-chart-moment"><span id="summaryChartDate"></span><span id="summaryChartDetails"></span></div></div>
           <div class="chart-view-tools">
             <button type="button" class="icon-button" id="fitButton" aria-label="Показать всю схему" title="Вся схема" hidden><svg width="21" height="21" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 9 7-6 7 6M5 7.3V17h10V7.3M8 17v-5h4v5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             <button type="button" class="icon-button" id="lifetimeToggle" aria-label="Летопись" title="Летопись" aria-expanded="false" aria-pressed="false" aria-controls="lifetimeControls"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5.5" width="15" height="15" rx="2"/><path d="M8 3.5v4m8-4v4M4.5 10h15M8 15h8"/><circle cx="8" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="15" r="1" fill="currentColor" stroke="none"/></g></svg></button>
@@ -142,23 +142,19 @@
     <div class="dialog-content">
       <div class="dialog-header"><h2 id="dialogTitle">Новая карта</h2><button class="icon-button" id="closeDialog" aria-label="Закрыть">×</button></div>
       <form id="chartForm" novalidate>
-        <div class="field"><label for="chartName">Имя карты</label><input id="chartName" name="name" required maxlength="80" autocomplete="off" placeholder="Например, Анна"></div>
+        <div class="field"><label for="chartName">Имя карты</label><input id="chartName" name="name" required autocomplete="off" placeholder="Например, Анна" aria-describedby="chartNameError"><p class="field-error" id="chartNameError" role="alert"></p></div>
         <div class="form-grid">
-          <div class="field"><label for="birthDate">Дата рождения</label><input id="birthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="off" placeholder="ДД.ММ.ГГГГ" aria-describedby="dateHint"></div>
-          <div class="field"><label for="birthTime">Местное время рождения</label><input id="birthTime" name="birthTime" type="text" inputmode="numeric" autocomplete="off" placeholder="ЧЧ:ММ" aria-describedby="dateHint"></div>
+          <div class="field"><label for="birthDate">Дата рождения</label><input id="birthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="off" placeholder="ДД.ММ.ГГГГ" aria-describedby="birthDateError"><p class="field-error" id="birthDateError" role="alert"></p></div>
+          <div class="field"><label for="birthTime">Время рождения</label><input id="birthTime" name="birthTime" type="text" inputmode="numeric" autocomplete="off" placeholder="ЧЧ:ММ" aria-describedby="birthTimeError"><p class="field-error" id="birthTimeError" role="alert"></p></div>
         </div>
-        <p class="field-hint" id="dateHint">Можно вводить только цифры — точки и двоеточие появятся сами.</p>
         <div class="field city-field" id="cityField">
           <label for="birthPlace">Город рождения</label>
-          <div class="city-input-wrap"><input id="birthPlace" name="birthPlace" maxlength="120" placeholder="Начните вводить город" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cityResults" aria-describedby="cityStatus"><ul class="city-results" id="cityResults" role="listbox" aria-label="Найденные города" hidden></ul></div>
+          <div class="city-input-wrap"><input id="birthPlace" name="birthPlace" maxlength="120" placeholder="Начните вводить город" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cityResults" aria-describedby="cityStatus birthPlaceError"><ul class="city-results" id="cityResults" role="listbox" aria-label="Найденные города" hidden></ul></div>
+          <p class="field-error" id="birthPlaceError" role="alert"></p>
           <p class="city-status" id="cityStatus" role="status">Выберите город из списка — часовой пояс определится автоматически.</p>
         </div>
-        <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage"><option value="">Выберите вариант</option></select></div>
-        <div id="manualFields" hidden>
-          <div class="form-grid"><div class="field"><label for="personalityGates">Личность · чёрные ворота</label><input id="personalityGates" name="personality" inputmode="text" placeholder="37, 22, 12" aria-describedby="gateHint"></div><div class="field"><label for="designGates">Дизайн · красные ворота</label><input id="designGates" name="design" inputmode="text" placeholder="40, 36, 35" aria-describedby="gateHint"></div></div>
-          <p class="field-hint" id="gateHint">Номера от 1 до 64 через запятую. Это ручной ввод, без расчёта по дате.</p>
-        </div>
-        <details class="form-extras"><summary>Добавить заметку</summary><div class="field"><label class="visually-hidden" for="chartNote">Заметка</label><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div></details>
+        <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage foldChoiceError"><option value="">Выберите вариант</option></select><p class="field-error" id="foldChoiceError" role="alert"></p></div>
+        <div class="field note-field"><label for="chartNote">Заметка</label><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div>
         <p class="form-error" id="formError" role="alert"></p>
         <div class="dialog-actions"><button class="secondary-button" type="button" id="cancelDialog">Отмена</button><button class="primary-button" id="saveChartButton" type="submit">Рассчитать и сохранить</button></div>
       </form>
@@ -178,7 +174,8 @@
 
   <noscript><div class="chart-loading-message"><p>Для показа карты включите JavaScript в браузере.</p></div></noscript>
 
-  <script type="module" data-development src="/src/dev/control-colors.js"></script>
-  <script type="module" src="/src/entry.js"></script>
+  <script type="module" data-development src="/src/dev/control-colors.ts"></script>
+  <script type="module" data-development src="/src/dev/account-preview.ts"></script>
+  <script type="module" src="/src/entry.ts"></script>
 </body>
 </html>
