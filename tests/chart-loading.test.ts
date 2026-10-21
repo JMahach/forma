@@ -116,7 +116,7 @@ test('loading blocks content while retaining panel navigation and releases only 
   get('library').inert = true;
   const release = holdLoadingContent(document as unknown as Document);
   for (const id of ['mainNavigation', 'savedChartsSection', 'summaryScreen', 'returnsPanel', 'accountPage', 'knowledgeDialog', 'allChartsDialog',
-    'transitControls', 'natalDayControls', 'lifetimeControls', 'togglePerformance'] as const) assert.equal(get(id).inert, true, id);
+    'transitControls', 'natalDayControls', 'lifetimeControls', 'togglePerformance', 'toggleControlColors', 'controlColorPreviews'] as const) assert.equal(get(id).inert, true, id);
   assert.equal(get('openLibrary').inert, false);
   assert.equal(get('summarySwitch').inert, false);
   assert.equal(get('.sidebar-footer').inert, false);
@@ -125,6 +125,8 @@ test('loading blocks content while retaining panel navigation and releases only 
   release(); release();
   assert.equal(get('mainNavigation').inert, false);
   assert.equal(get('lifetimeControls').inert, false);
+  assert.equal(get('toggleControlColors').inert, false);
+  assert.equal(get('controlColorPreviews').inert, false);
   assert.equal(get('returnsPanel').inert, true, 'a prior content restriction remains owned by its feature');
   assert.equal(get('library').inert, true, 'the closed panel keeps its own accessibility restriction');
 });

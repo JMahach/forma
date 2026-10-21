@@ -27,6 +27,7 @@ export const PUBLIC_FILES = new Map<string, string>([
   ['love.css', 'public/love.css'],
   ...[
     'src/dev/control-colors.ts',
+    'src/dev/account-preview.ts',
     'shared/lifetime-format.ts',
     'shared/lifetime-exact-format.ts',
     'shared/cycles-format.ts',

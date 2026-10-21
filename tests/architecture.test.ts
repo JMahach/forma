@@ -44,9 +44,11 @@ test('production imports resolve and contain no dependency cycles', () => {
 test('all browser modules are reachable from real page entries and explicitly public', () => {
   const entries = ['public/index.html', 'public/love.html'].flatMap(file =>
     [...source(file).matchAll(/<script\b[^>]*src="\/(src\/[^"?]+)[^"]*"/g)].map(([, entry]) => entry));
-  assert.deepEqual(entries.sort(), ['src/dev/control-colors.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
+  assert.deepEqual(entries.sort(), ['src/dev/account-preview.ts', 'src/dev/control-colors.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
   assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/control-colors\.ts"/,
     'the temporary colour preview is an explicitly development-only page entry');
+  assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/account-preview\.ts"/,
+    'the account mockup is an explicitly development-only page entry');
   const reachable = new Set();
   function visit(file: unknown) {
     if (reachable.has(file)) return;

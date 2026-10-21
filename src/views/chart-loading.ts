@@ -36,7 +36,7 @@ export function attachChartLoading({ canvas, drawing, art, message, status, retr
 export function holdLoadingContent(document: Document) {
   const contents = [
     ...['mainNavigation', 'savedChartsSection', 'summaryScreen', 'returnsPanel', 'accountPage', 'knowledgeDialog', 'allChartsDialog',
-      'transitControls', 'natalDayControls', 'lifetimeControls', 'togglePerformance'].map(id => document.getElementById(id)),
+      'transitControls', 'natalDayControls', 'lifetimeControls', 'togglePerformance', 'toggleControlColors', 'controlColorPreviews'].map(id => document.getElementById(id)),
   ].filter((element): element is HTMLElement => !!element && !element.inert);
   for (const element of contents) element.inert = true;
   return () => { for (const element of contents.splice(0)) element.inert = false; };

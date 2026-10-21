@@ -669,10 +669,10 @@ test('numeric date formatting inserts separators progressively and accepts ISO d
   }
 });
 
-test('numeric time formatting inserts the colon and accepts single-digit hours with minutes', () => {
+test('numeric time formatting inserts the colon without adding leading zeros', () => {
   for (const [input, expected] of [
     ['', ''], ['1', '1'], ['12', '12'], ['123', '12:3'], ['1234', '12:34'],
-    ['0905', '09:05'], ['9:05', '09:05'], ['23:59', '23:59'], ['123456', '12:34'],
+    ['0905', '09:05'], ['9:05', '9:05'], ['23:59', '23:59'], ['123456', '12:34'],
     [null, '']
   ] as const) {
     assert.equal(formatTimeInput(input), expected);
@@ -692,10 +692,10 @@ test('numeric dates normalize to ISO with Gregorian leap-year validation', () =>
 });
 
 test('numeric times normalize and reject incomplete or impossible times', () => {
-  for (const [input, expected] of [['0000', '00:00'], ['2359', '23:59'], ['0905', '09:05'], ['9:05', '09:05'], ['12:34', '12:34']] as const) {
+  for (const [input, expected] of [['0000', '00:00'], ['2359', '23:59'], ['0905', '09:05'], ['12:34', '12:34']] as const) {
     assert.equal(normalizeTime(input), expected);
   }
-  for (const input of ['', '9', '093', '2400', '2360', '9960'] as const) {
+  for (const input of ['', '9', '9:05', '093', '2400', '2360', '9960'] as const) {
     assert.throws(() => normalizeTime(input), Error, input);
   }
 });

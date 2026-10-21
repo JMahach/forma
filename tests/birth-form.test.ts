@@ -183,7 +183,7 @@ test('changing mode or opening another form invalidates an in-flight city respon
   h.element('chartName').value = 'Новая карта';
   h.element('birthDate').value = '01.01.2000'; h.element('birthTime').value = '12:00';
   await h.submit();
-  assert.match(h.element('formError').textContent, /Выберите город/);
+  assert.match(h.element('birthPlaceError').textContent, /Выберите город/);
   assert.equal(h.requests.length, 2, 'a stale city does not authorize a birth calculation');
 });
 
@@ -306,14 +306,13 @@ test('new manual cards get distinct UUIDs while a later edit preserves their ide
   assert.equal(h.requests.length, 0);
 });
 
-test('manual editing retains identity and creation time while normalizing fields and gates without a request', async t => {
+test('legacy manual editing retains its gates and identity after removing gate inputs', async t => {
   const original = Object.freeze(manualChart());
   const h = formHarness(t, { charts: Object.freeze([original]) });
   h.form.open(true, original.id);
   assert.equal(h.element('birthDate').value, '02.01.2000');
-  assert.equal(h.element('manualFields').hidden, false);
   h.element('chartName').value = '  новое имя  ';
-  h.element('birthDate').value = '29022000'; h.element('birthTime').value = '7:05';
+  h.element('birthDate').value = '29022000'; h.element('birthTime').value = '07:05';
   h.element('birthPlace').value = '  Казань  '; h.element('chartNote').value = '  Новая заметка  ';
   h.element('personalityGates').value = '34, 20; 34'; h.element('designGates').value = '57 10';
   await h.submit();
@@ -323,11 +322,29 @@ test('manual editing retains identity and creation time while normalizing fields
   assert.equal(saved.name, 'Новое имя'); assert.equal(saved.source, 'manual');
   assert.equal(saved.birthDate, '2000-02-29'); assert.equal(saved.birthTime, '07:05');
   assert.equal(saved.birthPlace, 'Казань'); assert.equal(saved.note, 'Новая заметка');
-  assert.deepEqual(saved.personality, [20, 34]); assert.deepEqual(saved.design, [10, 57]);
+  assert.deepEqual(saved.personality, original.personality); assert.deepEqual(saved.design, original.design);
   assert.equal(original.name, 'Исходная карта');
   assert.deepEqual(h.calls.saved, [original.id]);
   assert.equal(h.form.opened, false);
   assert.deepEqual(h.calls.toasts, []);
+});
+
+test('editing a saved manual card advances its timestamp while preserving its saved data', async t => {
+  const original = { ...manualChart(), updatedAt: '2020-01-01T00:00:00.000Z', calculation: { legacyVersion: 1, extra: 'kept' } };
+  const { chartStore, storage } = persistentStore([original]);
+  const h = formHarness(t, { chartStore, selectedId: original.id });
+  h.form.open(true, original.id);
+  h.element('chartName').value = 'Новое имя';
+  await h.submit();
+  const saved = readCharts(storage)[0];
+  assert.equal(saved.name, 'Новое имя');
+  assert.ok(Date.parse(saved.updatedAt) > Date.parse(original.updatedAt));
+  assert.equal(saved.id, original.id);
+  assert.equal(saved.createdAt, original.createdAt);
+  assert.deepEqual(saved.personality, original.personality);
+  assert.deepEqual(saved.design, original.design);
+  assert.deepEqual(Reflect.get(saved, 'calculation'), original.calculation);
+  assert.equal(h.requests.length, 0);
 });
 
 test('failed browser persistence keeps the edited chart only in memory and explicitly warns instead of claiming success', async t => {
@@ -374,7 +391,7 @@ test('ambiguous local time exposes only valid DST choices and retries with the e
   assert.equal(h.element('chartForm').getAttribute('aria-busy'), 'false');
   await h.submit();
   assert.equal(h.requests.length, 1, 'no retry is sent until a fold is chosen');
-  assert.match(h.element('formError').textContent, /Выберите один/);
+  assert.match(h.element('foldChoiceError').textContent, /Выберите один/);
   h.element('foldChoice').value = '1';
   const retrying = h.submit(), retry = h.requests.at(-1);
   assert.equal(JSON.parse(retry!.options.body as string).fold, 1);
@@ -462,7 +479,7 @@ test('new natal calculations reject dates outside the hundred-year creation wind
     const submitting = h.submit(); await settle();
     assert.equal(h.requests.length, 0, 'invalid natal dates never start a calculation');
     await submitting;
-    assert.match(h.element('formError').textContent, /1801.*2299/);
+    assert.match(h.element('birthDateError').textContent, /1801.*2299/);
     assert.equal(h.document.activeElement, h.element('birthDate'));
   }
 });
@@ -478,4 +495,53 @@ test('creation limits retain both boundary dates and metadata edits of older sav
     assert.equal(request?.url, '/api/calculate');
     request!.resolve!({ chart: { personality: [], design: [] } }); await submitting;
   }
+});
+
+
+test('compact form reports validation beside each field without starting a request', async t => {
+  const h = formHarness(t);
+  h.form.open();
+  await h.submit();
+  assert.match(h.element('chartNameError').textContent, /имя/);
+  assert.match(h.element('birthDateError').textContent, /дату/);
+  assert.match(h.element('birthTimeError').textContent, /время/);
+  assert.match(h.element('birthPlaceError').textContent, /город/);
+  assert.equal(h.element('chartName').getAttribute('aria-invalid'), 'true');
+  assert.equal(h.element('formError').textContent, '');
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.document.activeElement, h.element('chartName'));
+  h.element('chartName').value = 'Анна';
+  await h.element('chartName').emit('input');
+  assert.equal(h.element('chartNameError').textContent, '');
+  assert.match(h.element('birthDateError').textContent, /дату/);
+});
+
+test('the name limit is thirty and opening an old card never truncates its name', async t => {
+  const original = { ...manualChart(), name: 'Я'.repeat(31) };
+  const h = formHarness(t, { charts: [original] });
+  h.form.open(true, original.id);
+  assert.equal(h.element('chartName').value, original.name);
+  await h.submit();
+  assert.equal(h.element('chartNameError').textContent, 'Не больше 30 символов');
+  assert.equal(h.calls.persisted.length, 0);
+  h.element('chartName').value = 'Я'.repeat(30);
+  await h.submit();
+  assert.equal(h.calls.persisted.length, 1);
+  assert.equal(h.calls.persisted[0][0].name.length, 30);
+});
+
+
+test('city transport failure uses the agreed copy and clears on the next query', async t => {
+  const h = formHarness(t); h.form.open();
+  const first = await h.search('Москва');
+  first!.reject(Object.assign(new Error('transport details'), { code: 'connection_failed' }));
+  await settle();
+  assert.equal(h.element('cityStatus').textContent, 'Нет соединения. Не можем найти город');
+  assert.equal(h.element('cityStatus').classList.contains('is-error'), true);
+  assert.equal(h.element('cityResults').hidden, true);
+  const next = await h.search('Казань');
+  assert.equal(h.element('cityStatus').textContent, 'Ищем город…');
+  assert.equal(h.element('cityStatus').classList.contains('is-error'), false);
+  next!.resolve({ cities: [] }); await settle();
+  assert.equal(h.element('cityStatus').textContent, 'Город не найден. Попробуйте другое написание.');
 });

@@ -11,7 +11,7 @@ interface BirthFormOptions {
 export type BirthForm = ReturnType<typeof attachBirthForm>;
 
 import { natalDateAllowed, NATAL_DATE_MESSAGE } from '../../shared/date-limits.ts';
-import { createChartId, normalizeChartName, parseGates } from '../data/storage.ts';
+import { createChartId, normalizeChartName } from '../data/storage.ts';
 import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, normalizeTime } from './date-input.ts';
 import { canManageLibraryRecord } from './chart-display.ts';
 import { escapeHtml as esc } from '../ui/html.ts';
@@ -31,7 +31,21 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   bindNumericInput($<HTMLInputElement>('birthDate'), formatDateInput);
   bindNumericInput($<HTMLInputElement>('birthTime'), formatTimeInput);
 
+  const fieldIds = ['chartName', 'birthDate', 'birthTime', 'birthPlace', 'foldChoice'] as const;
+  type FieldId = typeof fieldIds[number];
+  function fieldError(id: FieldId, message = '') {
+    $(id + 'Error').textContent = message;
+    if (message) $(id).setAttribute('aria-invalid', 'true');
+    else $(id).removeAttribute('aria-invalid');
+  }
+  function clearErrors() {
+    fieldIds.forEach(id => fieldError(id));
+    $('formError').textContent = '';
+  }
+  for (const id of fieldIds) $(id).addEventListener(id === 'foldChoice' ? 'change' : 'input', () => fieldError(id));
+
   function resetFold() {
+    fieldError('foldChoice');
     $('foldField').hidden = true; $('foldMessage').textContent = '';
     $<HTMLSelectElement>('foldChoice').innerHTML = '<option value="">Выберите вариант</option>';
   }
@@ -47,6 +61,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     });
   }
   function selectCity(city: City) {
+    fieldError('birthPlace');
     selectedCity = city; $<HTMLInputElement>('birthPlace').value = cityLabel(city);
     $('cityStatus').textContent = `Часовой пояс: ${city.timezone}`;
     $('cityStatus').classList.remove('is-error'); closeCityResults(); resetFold();
@@ -68,12 +83,13 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     } catch (caught) {
       const error = caught as ApiError;
       if (controller.signal.aborted || error.name === 'AbortError' || sequence !== citySequence) return;
-      closeCityResults(); $('cityStatus').textContent = error.message; $('cityStatus').classList.add('is-error');
+      closeCityResults();
+      $('cityStatus').textContent = error.code === 'connection_failed' ? 'Нет соединения. Не можем найти город' : error.message;
+      $('cityStatus').classList.add('is-error');
     }
   }
   function setCalculationMode(mode: 'calculated' | 'manual') {
     calculationMode = mode; resetFold(); closeCityResults();
-    $('manualFields').hidden = mode !== 'manual';
     if (mode === 'calculated') {
       $<HTMLInputElement>('birthPlace').setAttribute('role', 'combobox'); $<HTMLInputElement>('birthPlace').setAttribute('aria-autocomplete', 'list'); $<HTMLInputElement>('birthPlace').setAttribute('aria-expanded', 'false');
     } else {
@@ -84,7 +100,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       const active = button.dataset.calculationMode === mode; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
     });
     $('saveChartButton').textContent = mode === 'calculated' ? 'Рассчитать и сохранить' : 'Сохранить карту';
-    $('formError').textContent = '';
+    clearErrors();
   }
   function setFormBusy(busy: boolean) {
     formBusy = busy; $<HTMLFormElement>('chartForm').setAttribute('aria-busy', String(busy));
@@ -104,13 +120,11 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     if (edit) {
       for (const name of ['name', 'birthPlace', 'note'] as const) ($<HTMLFormElement>('chartForm').elements as HTMLFormControlsCollection & Record<'name' | 'birthPlace' | 'note', HTMLInputElement | HTMLTextAreaElement>)[name].value = c![name] || '';
       $<HTMLInputElement>('birthDate').value = formatDateInput(c!.birthDate || ''); $<HTMLInputElement>('birthTime').value = formatTimeInput(c!.birthTime || '');
-      $<HTMLInputElement>('personalityGates').value = c!.personality.join(', '); $<HTMLInputElement>('designGates').value = c!.design.join(', ');
       if (c!.city?.id != null || c!.cityId != null) {
         selectedCity = c!.city || { id: c!.cityId!, name: c!.birthPlace, timezone: c!.timezone };
         $<HTMLInputElement>('birthPlace').value = cityLabel(selectedCity!);
       }
     }
-    $<HTMLFormElement>('chartForm').querySelector<HTMLDetailsElement>('.form-extras')!.open = Boolean(edit && c!.note);
     setCalculationMode(edit && c!.source !== 'calculated' ? 'manual' : 'calculated');
     beforeOpen();
     $<HTMLDialogElement>('chartDialog').showModal();
@@ -119,32 +133,41 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm);
   $<HTMLDialogElement>('chartDialog').addEventListener('cancel', () => { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); });
   $<HTMLFormElement>('chartForm').addEventListener('submit', async e => {
-    e.preventDefault(); if (formBusy) return; $('formError').textContent = '';
+    e.preventDefault(); if (formBusy) return; clearErrors();
     const controller = new AbortController(); calculationController = controller;
     try {
       const form = getFormData(e.target as HTMLFormElement), now = new Date().toISOString();
       const name = normalizeChartName(form.get('name'));
-      if (!name) { $('chartName').focus(); throw new Error('Добавьте имя карты.'); }
-      if (name.length > 80) throw new Error('Имя карты должно быть не длиннее 80 символов.');
+      let firstInvalid: FieldId | null = null;
+      const invalid = (id: FieldId, message: string) => { fieldError(id, message); firstInvalid ||= id; };
+      const readField = (id: FieldId, value: string, normalize: (value: string) => string) => {
+        try { return normalize(value); }
+        catch (caught) { const error = caught as Error; invalid(id, error.message); return ''; }
+      };
+      if (!name) invalid('chartName', 'Добавьте имя карты.');
+      else if (name.length > 30) invalid('chartName', 'Не больше 30 символов');
       const dateValue = String(form.get('birthDate') || '').trim(), timeValue = String(form.get('birthTime') || '').trim();
-      const birthDate = dateValue || calculationMode === 'calculated' ? normalizeDate(dateValue) : '';
-      const birthTime = timeValue || calculationMode === 'calculated' ? normalizeTime(timeValue) : '';
+      const birthDate = dateValue || calculationMode === 'calculated' ? readField('birthDate', dateValue, normalizeDate) : '';
+      const birthTime = timeValue || calculationMode === 'calculated' ? readField('birthTime', timeValue, normalizeTime) : '';
       const previous = store.charts.find(item => item.id === editingId);
+      if (calculationMode === 'calculated') {
+        if (!selectedCity) invalid('birthPlace', 'Выберите город рождения из найденного списка.');
+        if (!$('foldField').hidden && $<HTMLSelectElement>('foldChoice').value === '') invalid('foldChoice', 'Выберите один из двух вариантов местного времени.');
+      }
+      if (firstInvalid) { $(firstInvalid).focus(); return; }
       let result: FormCalculation, metadataOnly = false;
       if (calculationMode === 'calculated') {
-        if (!selectedCity) { $<HTMLInputElement>('birthPlace').focus(); throw new Error('Выберите город рождения из найденного списка.'); }
-        if (!$('foldField').hidden && $<HTMLSelectElement>('foldChoice').value === '') { $<HTMLSelectElement>('foldChoice').focus(); throw new Error('Выберите один из двух вариантов местного времени.'); }
         // Names and notes describe the saved calculation. Compare the fields
         // this form actually edits; an untouched minute display must retain
         // stored seconds, the DST fold and every calculation metadata field.
         const unchanged = previous?.source === 'calculated' && Number.isFinite(Date.parse(previous.utc!))
           && birthDate === previous.birthDate && birthTime === formatTimeInput(previous.birthTime)
-          && String(selectedCity.id) === String(previous.cityId ?? previous.city?.id)
+          && String(selectedCity!.id) === String(previous.cityId ?? previous.city?.id)
           && $('foldField').hidden;
         if (unchanged) { result = previous; metadataOnly = true; }
         else {
-          if (!natalDateAllowed(birthDate)) { $<HTMLInputElement>('birthDate').focus(); throw new Error(NATAL_DATE_MESSAGE); }
-          const payload: CalculationRequest = { name, date: birthDate, time: birthTime, cityId: String(selectedCity.id), cityName: selectedCity.name, mode: 'natal' };
+          if (!natalDateAllowed(birthDate)) { fieldError('birthDate', NATAL_DATE_MESSAGE); $('birthDate').focus(); return; }
+          const payload: CalculationRequest = { name, date: birthDate, time: birthTime, cityId: String(selectedCity!.id), cityName: selectedCity!.name, mode: 'natal' };
           if (!$('foldField').hidden) payload.fold = Number($<HTMLSelectElement>('foldChoice').value);
           setFormBusy(true);
           const data = await requestJSON<{ chart?: FormCalculation }>('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
@@ -152,10 +175,10 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
           // the request happened to finish before transport cancellation arrived.
           if (controller.signal.aborted || calculationController !== controller) return;
           if (!data.chart || !Array.isArray(data.chart.personality) || !Array.isArray(data.chart.design)) throw new Error('Сервер вернул неполный расчёт. Карта не сохранена.');
-          result = { ...data.chart, source: 'calculated', cityId: String(selectedCity.id), city: { ...selectedCity } };
+          result = { ...data.chart, source: 'calculated', cityId: String(selectedCity!.id), city: { ...selectedCity } };
         }
-      } else result = { name, birthDate, birthTime, birthPlace: String(form.get('birthPlace') || '').trim(), personality: parseGates(form.get('personality')), design: parseGates(form.get('design')), source: 'manual' };
-      const c = { ...result, id: editingId || createChartId(), name, note: String(form.get('note') || '').trim(), createdAt: previous?.createdAt || now, updatedAt: metadataOnly ? now : result.updatedAt || now };
+      } else result = { ...previous, name, birthDate, birthTime, birthPlace: String(form.get('birthPlace') || '').trim(), personality: previous?.personality || [], design: previous?.design || [], source: 'manual' };
+      const c = { ...result, id: editingId || createChartId(), name, note: String(form.get('note') || '').trim(), createdAt: previous?.createdAt || now, updatedAt: metadataOnly || calculationMode === 'manual' ? now : result.updatedAt || now };
       const next = editingId ? store.charts.map(item => item.id === editingId ? c : item) : [...store.charts, c];
       if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
       const persisted = store.persist(next);
@@ -169,9 +192,14 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       if (error.code === 'ambiguous_time' && Array.isArray(error.choices)) {
         $('foldField').hidden = false; $('foldMessage').textContent = error.message;
         $<HTMLSelectElement>('foldChoice').innerHTML = '<option value="">Выберите вариант</option>' + error.choices.filter(choice => choice.fold === 0 || choice.fold === 1).map(choice => `<option value="${choice.fold}">${esc(choice.label)}</option>`).join('');
-        $('formError').textContent = 'Из-за перевода часов это время встречается дважды. Уточните вариант и повторите расчёт.';
+        fieldError('foldChoice', 'Из-за перевода часов это время встречается дважды. Уточните вариант и повторите расчёт.');
+        $('foldMessage').textContent = '';
         setFormBusy(false); $<HTMLSelectElement>('foldChoice').focus();
-      } else $('formError').textContent = error.message;
+      } else {
+        const field = ({ name_required: 'chartName', invalid_date: 'birthDate', unsupported_date: 'birthDate', nonexistent_time: 'birthTime' } as Partial<Record<string, FieldId>>)[error.code!];
+        if (field) { setFormBusy(false); fieldError(field, error.message); $(field).focus(); }
+        else $('formError').textContent = error.message;
+      }
     } finally { if (calculationController === controller) setFormBusy(false); }
   });
   document.querySelectorAll<HTMLElement>('[data-calculation-mode]').forEach(button => button.addEventListener('click', () => {

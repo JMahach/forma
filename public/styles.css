@@ -18,9 +18,15 @@
   --mode-selected-ink: #98252a;
   --mode-selected-border: color-mix(in srgb, var(--mode-accent) 45%, var(--panel-surface));
   --control-focus: #896b36;
-  --knowledge-accent: #79a367;
-  --knowledge-ink: #426338;
-  --knowledge-ink-hover: #304b29;
+  --sage-accent: #50634a;
+  --sage-hover: hsl(105.6 14.450867% 28%);
+  --sage-tint: #e5eadd;
+  --sage-border: #b7c2ac;
+  --account-accent: #41423f;
+  --account-hover: #333431;
+  --knowledge-accent: var(--sage-accent);
+  --knowledge-ink: var(--sage-accent);
+  --knowledge-ink-hover: var(--sage-hover);
   --knowledge-tint: color-mix(in srgb, var(--knowledge-accent) 18%, var(--panel-surface));
   --knowledge-border: color-mix(in srgb, var(--knowledge-accent) 52%, var(--panel-surface));
   --panel-header-surface: color-mix(in srgb, #b58a60 45%, var(--panel-surface));
@@ -83,7 +89,12 @@ small { font-size: 11px; }
 #bodygraph:focus { outline: none; }
 #bodygraph.is-pannable.is-dragging { cursor: grabbing; }
 #bodygraph text { pointer-events: none; user-select: none; -webkit-user-select: none; }
-.app-shell { display: block; position: relative; min-height: 0; height: 100dvh; overflow: hidden; background: var(--canvas-background); }
+.app-shell {
+  --section-control-accent: #b58a60; --section-control-fill: #efe5da;
+  --section-control-ink: #68472f; --section-control-border: #c9ab8c;
+  --section-control-idle: #735039; --section-control-edge: #d4c1ae;
+  display: block; position: relative; min-height: 0; height: 100dvh; overflow: hidden; background: var(--canvas-background);
+}
 /* Initial HTML has no saved panel state or device layout. Do not paint its
    provisional controls before startup has committed the complete shell. */
 .app-shell:not([data-shell-ready='true']) { opacity: 0; pointer-events: none; }
@@ -116,7 +127,23 @@ small { font-size: 11px; }
 .topbar-leading { position: relative; display: flex; gap: 5px; align-items: center; pointer-events: none; }
 .topbar button { pointer-events: auto; }
 .topbar .icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--panel-border); border-radius: 9px; color: var(--panel-ink); background: var(--canvas-background); }
-.topbar, .chart-tools { --mode-accent: #b58a60; --mode-selected: color-mix(in srgb, var(--mode-accent) 22%, transparent); --mode-selected-ink: #68472f; --mode-selected-border: color-mix(in srgb, var(--mode-accent) 55%, var(--panel-surface)); }
+/* Section colours apply with the restored workspace, including the first loading frame. */
+.app-shell:has(.studio[data-workspace-screen='library']) {
+  --section-control-accent: var(--sage-accent); --section-control-fill: hsl(105.6 14.450867% 86%);
+  --section-control-ink: #202020; --section-control-border: hsl(105.6 14.450867% 70%);
+  --section-control-idle: var(--sage-accent); --section-control-edge: var(--sage-border);
+}
+.app-shell:has(.studio[data-workspace-screen='account']) {
+  --section-control-accent: #000; --section-control-fill: #ccc;
+  --section-control-ink: #000; --section-control-border: #999;
+  --section-control-idle: #000; --section-control-edge: #bfbfbf;
+}
+.topbar, .chart-tools {
+  --mode-accent: var(--section-control-accent); --mode-selected: var(--section-control-fill);
+  --mode-selected-ink: var(--section-control-ink); --mode-selected-border: var(--section-control-border);
+  --control-idle: var(--section-control-idle); --control-focus: var(--section-control-idle);
+  --floating-control-border: var(--section-control-edge); --floating-control-border-hover: var(--section-control-idle);
+}
 .chart-tools { position: fixed; z-index: 85; top: max(14px, env(safe-area-inset-top)); right: 16px; display: flex; align-items: center; gap: 8px; }
 .chart-view-tools { display: contents; }
 .summary-title { display: none; }
@@ -144,8 +171,10 @@ small { font-size: 11px; }
 .studio-header .subtitle:empty { display: none; }
 
 /* Diagnostics belong to the same free workspace as the chart. */
-.sidebar-tool { padding: 2px 0; min-height: 24px; font-size: 11px; line-height: 16px; color: #59616d; text-align: left; }
-.sidebar-tool[aria-pressed='true'] { color: #202934; font-weight: 600; }
+.sidebar-tool { padding: 2px 0; min-height: 24px; font-size: 11px; font-weight: 500; line-height: 16px; color: #59616d; text-align: left; }
+.sidebar-tool[aria-pressed='true'] { color: #202934; }
+/* Loading keeps the service row geometry; only the swatches disappear. */
+.app-shell[data-page-state='loading'] #controlColorPreviews { visibility: hidden; }
 .performance-panel { position: fixed; z-index: 60; top: max(68px, calc(env(safe-area-inset-top) + 54px)); left: calc(var(--studio-left-space, 0px) + max(12px, env(safe-area-inset-left))); width: 184px; max-width: calc(100vw - var(--studio-left-space, 0px) - var(--studio-right-space, 0px) - 24px); max-height: calc(100dvh - 154px); overflow: auto; overscroll-behavior: contain; contain: layout paint; padding: 8px 10px; border: 1px solid #dce1e7; border-radius: 8px; background: #fff; color: #303744; font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .studio:has(.canvas-wrap[data-layout='desktop']) > .performance-panel { top: max(14px, env(safe-area-inset-top)); left: max(76px, calc(var(--studio-left-space, 0px) + 12px)); }
 .performance-reading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; }
@@ -226,9 +255,9 @@ small { font-size: 11px; }
 .main-navigation { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
 .menu-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 8px; text-align: left; font-size: 1rem; line-height: 1.4; color: var(--panel-ink); }
 .menu-item svg { flex-shrink: 0; color: var(--panel-muted); }
-.menu-item:hover { background: var(--panel-hover); }
+
 #openKnowledge:not([aria-pressed='true']), #openKnowledge:not([aria-pressed='true']) svg { color: var(--knowledge-ink); }
-#openKnowledge:not([aria-pressed='true']):hover { background: var(--knowledge-tint); color: var(--knowledge-ink-hover); }
+
 .menu-item[aria-pressed='true'], .menu-item[aria-expanded='true'], #openKnowledge[aria-pressed='true'] { background: var(--panel-selected); color: var(--panel-selected-ink); font-weight: 550; }
 .menu-item[aria-pressed='true'] svg, .menu-item[aria-expanded='true'] svg, #openKnowledge[aria-pressed='true'] svg { color: inherit; }
 .saved-charts { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--panel-border); }
@@ -272,6 +301,24 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .dialog-actions .primary-button, .dialog-actions .secondary-button { font-size: .9375rem; min-height: 50px; padding: 12px 18px; }
 .dialog-actions .danger-button { background: #a34545; border-color: #a34545; color: #fff; }
 
+/* Each section keeps its own accent in the menu and its page. */
+.library #openKnowledge, .knowledge-page {
+  --panel-selected: var(--sage-accent);
+  --panel-selected-hover: var(--sage-hover);
+  --control-focus: var(--sage-accent);
+}
+.library #openAccount {
+  --panel-selected: var(--account-accent);
+  --panel-selected-hover: var(--account-hover);
+  --control-focus: var(--account-accent);
+}
+#openAccount:not([aria-pressed='true']), #openAccount:not([aria-pressed='true']) svg { color: var(--account-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .library .menu-item:not([aria-pressed='true']):hover { background: color-mix(in srgb, var(--panel-selected) 14%, var(--panel-surface)); color: var(--panel-selected); }
+  .library .menu-item:not([aria-pressed='true']):hover svg { color: inherit; }
+  .library .menu-item[aria-pressed='true']:hover { background: var(--panel-selected-hover); }
+}
+
 /* Knowledge library. */
 .knowledge-page { color: var(--panel-ink); }
 .knowledge-page :is(button, a):focus-visible { outline-color: var(--knowledge-ink); }
@@ -281,12 +328,13 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .knowledge-header .icon-button { width: 44px; height: 44px; font-size: 1.5rem; }
 .knowledge-categories { display: flex; gap: 6px; padding: 0 24px 18px; border-bottom: 1px solid var(--panel-border); flex-shrink: 0; }
 .knowledge-categories button { min-height: 44px; padding: 9px 16px; border-radius: 8px; font-size: .9375rem; color: var(--panel-muted); }
-.knowledge-categories button[aria-pressed='true'] { background: #20242b; color: #fff; }
+.knowledge-categories button[aria-pressed='true'] { background: var(--knowledge-accent); color: #fffefd; }
 .knowledge-body { display: grid; grid-template-columns: 232px minmax(0, 1fr); flex: 1; min-height: 0; }
 .knowledge-index { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; gap: 6px; overflow: auto; padding: 20px 16px; border-right: 1px solid var(--panel-border); overscroll-behavior: contain; scrollbar-width: thin; }
 .knowledge-index button { min-height: 44px; border: 1px solid transparent; border-radius: 7px; font-size: .9375rem; font-variant-numeric: tabular-nums; color: var(--knowledge-ink); background: var(--panel-surface); }
-.knowledge-index button:hover { background: var(--knowledge-tint); color: #20242b; }
-.knowledge-index button[aria-pressed='true'] { border-color: var(--knowledge-border); background: var(--knowledge-tint); color: #20242b; }
+.knowledge-index button:hover { background: var(--knowledge-tint); color: var(--knowledge-ink-hover); }
+.knowledge-index button[aria-pressed='true'] { border-color: var(--knowledge-accent); background: var(--knowledge-accent); color: #fffefd; }
+.knowledge-index button[aria-pressed='true'] small { color: inherit; }
 .knowledge-index[data-category='center'], .knowledge-index[data-category='channel'] { grid-template-columns: 1fr; }
 .knowledge-index[data-category='center'] button, .knowledge-index[data-category='channel'] button { text-align: left; padding: 10px 12px; }
 .knowledge-index small { display: block; font-size: .8125rem; margin-top: 3px; color: var(--panel-muted); }
@@ -496,7 +544,6 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
    Only the controls catch input across the transparent gap over the panel. */
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-tools { pointer-events: none; }
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools {
-  --mode-selected: color-mix(in srgb, var(--mode-accent) 22%, var(--canvas-background));
   position: relative; display: flex; align-items: center; gap: 4px;
   margin-right: max(14px, calc(var(--studio-right-space, 0px) - 48px));
   pointer-events: auto;
@@ -512,6 +559,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 /* All floating controls share the same quiet border feedback. Touch cannot
    leave a hover fill behind; colour continues to mean an enabled mode. */
 :is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
+  color: var(--control-idle);
   border-color: var(--floating-control-border);
 }
 @media (hover: hover) and (pointer: fine) {
@@ -844,7 +892,7 @@ body:has(.studio[data-panels-layout='side']) .summary-backdrop { display: none; 
 body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .summary-backdrop { display: none; }
 .app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .library { bottom: 0; }
 .knowledge-page .knowledge-categories button[aria-pressed='true'] { background: var(--panel-selected); color: var(--panel-selected-ink); }
-.knowledge-page .knowledge-index button[aria-pressed='true'] { background: var(--knowledge-tint); border-color: var(--knowledge-border); color: var(--knowledge-ink-hover); }
+.knowledge-page .knowledge-index button[aria-pressed='true'] { background: var(--knowledge-accent); border-color: var(--knowledge-accent); color: #fffefd; }
 @media (max-width: 699px) {
   .workspace-page .knowledge-body { grid-template-columns: minmax(90px, 30%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .workspace-page .knowledge-index { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px 6px; gap: 3px; }
@@ -898,8 +946,13 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading { margin: 0; padding-left: 10px; min-width: 0; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading .eyebrow { font-size: 11px; font-weight: 500; letter-spacing: .04em; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library-count { min-width: 0; height: auto; margin-left: 3px; padding: 0; background: transparent; font-size: 11px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button { position: relative; width: auto; min-height: 44px; margin: 0; padding: 0 10px; border: 0; font-size: 12px; gap: 5px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button { position: relative; width: auto; min-height: 44px; margin: 0; padding: 0 10px; border: 0; background: transparent; font-size: 12px; gap: 5px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button::before { content: ''; position: absolute; inset: 6px 0; border: 1px solid var(--panel-border); border-radius: 6px; pointer-events: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:focus-visible { outline: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:focus-visible::before { outline: 1px dashed var(--control-focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:hover::before { border-color: var(--floating-control-border-hover); }
+}
 .app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .chart-list { grid-column: 1 / -1; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-row { margin-bottom: 3px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-card { padding-left: 10px; }
@@ -931,9 +984,9 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .app-shell[data-page-state='loading'] :is(#bodygraph, .studio-header, .workspace-page, .performance-panel),
 .app-shell[data-page-state='loading'] #chartSummary :is(.summary-screen, .returns-panel) { opacity: 0; pointer-events: none; }
 .app-shell[data-page-state='loading'] .library :is(.menu-item, .chart-card, .chart-row) { background: transparent; border-color: transparent; }
-.app-shell[data-page-state='loading'] .library :is(.menu-item > span, .chart-name, .chart-caption, .eyebrow, .sidebar-tool:not(#toggleLoadingPreview):not(#toggleControlColors), .new-chart-button),
+.app-shell[data-page-state='loading'] .library :is(.menu-item > span, .chart-name, .chart-caption, .eyebrow, .sidebar-tool:not(#toggleLoadingPreview), .new-chart-button),
 .app-shell[data-page-state='loading'] :is(.site-brand, .summary-title) > span { position: relative; color: transparent; }
-.app-shell[data-page-state='loading'] .library :where(.menu-item > span, .chart-name, .chart-caption, .eyebrow, .sidebar-tool:not(#toggleLoadingPreview):not(#toggleControlColors), .new-chart-button)::after,
+.app-shell[data-page-state='loading'] .library :where(.menu-item > span, .chart-name, .chart-caption, .eyebrow, .sidebar-tool:not(#toggleLoadingPreview), .new-chart-button)::after,
 .app-shell[data-page-state='loading'] :is(.site-brand, .summary-title) > span::after {
   content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
   width: 100%; height: 7px; border-radius: 2px; background: var(--loading-ink); pointer-events: none;
@@ -945,7 +998,7 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .app-shell[data-page-state='loading'] :is(.library-count, .chart-actions, .brand-period) { opacity: 0; }
 .app-shell[data-page-state='loading'] :is(.library .menu-item svg, .site-brand > svg) { opacity: .16; }
 .app-shell[data-page-state='loading'] .library .eyebrow::after { width: 66px; height: 5px; opacity: .6; }
-.app-shell[data-page-state='loading'] .library .sidebar-tool:not(#toggleLoadingPreview):not(#toggleControlColors)::after { height: 5px; opacity: .6; }
+.app-shell[data-page-state='loading'] .library .sidebar-tool:not(#toggleLoadingPreview)::after { height: 5px; opacity: .6; }
 .app-shell[data-page-state='loading'] :is(.site-brand, .summary-title) > span::after { height: 10px; }
 /* Ready and loading use the same control chrome; holdLoadingContent blocks only unready actions. */
 .app-shell[data-page-state='loading'] .studio .day-controls { visibility: visible; }
@@ -975,3 +1028,37 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .app-shell[data-page-state='loading'] .summary-chart-moment > span { position: relative; color: transparent; }
 .app-shell[data-page-state='loading'] .summary-chart-moment > span::after { content: ''; position: absolute; left: 0; top: 6px; width: 132px; max-width: 100%; height: 5px; border-radius: 2px; background: #d4d1c9; opacity: .55; }
 .app-shell[data-page-state='loading'] #summaryChartDetails::after { width: 186px; }
+
+/* Shared creation/edit form. Error text belongs to the affected control. */
+.field-error { margin: 0; color: #a3272d; font-size: .8125rem; line-height: 1.35; }
+.field-error:empty { display: none; }
+#chartDialog { width: min(500px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); border-color: var(--panel-border); background: var(--canvas-background); color: var(--panel-ink); overscroll-behavior: contain; }
+#chartDialog .dialog-content { padding: 20px; }
+#chartDialog .dialog-header { align-items: center; gap: 12px; margin-bottom: 16px; }
+#chartDialog h2 { font-size: 1.5rem; line-height: 1.25; }
+#chartDialog .field { gap: 5px; margin-bottom: 12px; }
+#chartDialog .form-grid { grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: start; }
+#chartDialog .form-grid .field label { min-height: 0; }
+#chartDialog label { color: var(--panel-ink); font-size: .8125rem; line-height: 1.35; }
+#chartDialog input, #chartDialog select, #chartDialog textarea { min-height: 44px; padding: 10px 12px; border: 1px solid var(--panel-border); border-radius: 6px; background: #fff; color: var(--panel-ink); font-size: 16px; line-height: 1.35; }
+#chartDialog input:focus, #chartDialog select:focus, #chartDialog textarea:focus { border-color: var(--control-focus); outline: 2px solid color-mix(in srgb, var(--control-focus) 20%, transparent); outline-offset: 1px; }
+#chartDialog [aria-invalid="true"], #chartDialog [aria-invalid="true"]:focus { border-color: #b92d33; }
+#chartDialog [aria-invalid="true"]:focus { outline-color: color-mix(in srgb, #b92d33 20%, transparent); }
+#chartDialog .field-hint, #chartDialog .city-status { margin: 0 0 12px; color: var(--panel-muted); font-size: .75rem; line-height: 1.35; }
+#chartDialog .city-status { margin: 0; }
+#chartDialog .city-status.is-error { color: #a3272d; }
+#chartDialog .field-error:not(:empty) + .city-status { display: none; }
+#chartDialog textarea { height: 64px; min-height: 64px; resize: none; }
+#chartDialog .note-field { margin-bottom: 0; }
+#chartDialog .dialog-actions { gap: 8px; padding-top: 16px; }
+#chartDialog .dialog-actions button { min-height: 44px; padding: 10px 14px; border-radius: 6px; font-size: .875rem; line-height: 1.35; }
+#chartDialog .primary-button { background: var(--panel-selected); color: var(--panel-selected-ink); border-color: var(--panel-selected); }
+#chartDialog .primary-button:hover { background: var(--panel-selected-hover); border-color: var(--panel-selected-hover); }
+#chartDialog .secondary-button { background: transparent; color: var(--panel-ink); border-color: var(--panel-border); }
+#chartDialog .form-error:empty { display: none; }
+#chartDialog .form-error:not(:empty) { font-size: .8125rem; line-height: 1.35; }
+@media (max-width: 380px) {
+  #chartDialog .dialog-content { padding: 16px; }
+  #chartDialog .form-grid { gap: 0 8px; }
+  #chartDialog .dialog-actions button { padding-inline: 10px; }
+}

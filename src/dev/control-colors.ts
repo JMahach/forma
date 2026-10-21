@@ -1,16 +1,16 @@
-// Temporary stand-only colour comparison. Only the chosen swatch is tab-local UI state.
+// Temporary stand-only colour comparison. The chosen swatch and row expansion are tab-local UI state.
 import { PALETTE } from '../ui/chart-palette.ts';
 
 const STORAGE_KEY = 'forma.control-colors.v1';
 if (location.port === '3636') {
   const palettes = {
     green: [
-      // Light Ajna, warm sage, moss, exact Ajna, deeper Ajna.
-      { accent: PALETTE.ajna, fill: '#e1eadc', ink: '#3f5b34', border: '#9eb58f', idle: '#49673d', edge: '#bdcdb5' },
-      { accent: '#84956b', fill: '#e6eade', ink: '#4d5e40', border: '#a9b59c', idle: '#526247', edge: '#c4cbbb' },
-      { accent: '#658651', fill: '#dce6d5', ink: '#3a532d', border: '#8ca078', idle: '#405c33', edge: '#b6c5ac' },
-      { accent: PALETTE.ajna, fill: PALETTE.ajna, ink: '#20301a', border: '#648b53', idle: '#426338', edge: '#a8bf9a' },
-      { accent: '#537448', fill: '#537448', ink: '#fffefd', border: '#48653f', idle: '#3f5b34', edge: '#a0b396' },
+      // One approved sage hue/saturation. Only lightness changes; 4/5 is exactly #50634a.
+      { accent: 'var(--sage-accent)', fill: 'hsl(105.6 14.450867% 86%)', ink: '#202020', border: 'hsl(105.6 14.450867% 70%)', idle: 'var(--sage-accent)', edge: 'var(--sage-border)' },
+      { accent: 'var(--sage-accent)', fill: 'hsl(105.6 14.450867% 70%)', ink: '#202020', border: 'hsl(105.6 14.450867% 52%)', idle: 'var(--sage-accent)', edge: 'var(--sage-border)' },
+      { accent: 'var(--sage-accent)', fill: 'hsl(105.6 14.450867% 52%)', ink: '#202020', border: 'var(--sage-accent)', idle: 'var(--sage-accent)', edge: 'var(--sage-border)' },
+      { accent: 'var(--sage-accent)', fill: 'var(--sage-accent)', ink: '#fffefd', border: 'var(--sage-accent)', idle: 'var(--sage-accent)', edge: 'var(--sage-border)' },
+      { accent: 'var(--sage-accent)', fill: 'hsl(105.6 14.450867% 24%)', ink: '#fffefd', border: 'hsl(105.6 14.450867% 24%)', idle: 'var(--sage-accent)', edge: 'var(--sage-border)' },
     ],
     brown: [
       { accent: PALETTE.throat, fill: '#efe5da', ink: '#68472f', border: '#c9ab8c', idle: '#735039', edge: '#d4c1ae' },
@@ -40,20 +40,26 @@ if (location.port === '3636') {
     gold: 'Золотые: следующий оттенок', graphite: 'Графитовые: следующий оттенок',
   };
   type PaletteFamily = keyof typeof palettes;
+  type PaletteSelection = { family: PaletteFamily; index: number; screen?: string | null; expanded?: boolean };
   const families = Object.keys(palettes) as PaletteFamily[];
-  let selection: { family: PaletteFamily; index: number } | null = null;
+  let selection: PaletteSelection | null = null, expanded: boolean | null = null;
   try {
-    const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY)!) as { family: PaletteFamily; index: number };
+    const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY)!) as PaletteSelection;
     if (families.includes(saved?.family) && Number.isInteger(saved.index)
         && saved.index >= 0 && saved.index < palettes[saved.family].length) selection = saved;
+    if ((selection || saved?.family === null) && typeof saved?.expanded === 'boolean') expanded = saved.expanded;
   } catch {}
   let family = selection?.family || null;
-  const indexes = Object.fromEntries(families.map(name => [name, 0]));
+  let screen: string | null = null;
+  const sectionPalettes = { chart: 'brown', charts: 'brown', library: 'green', account: 'graphite' } as const satisfies Record<string, PaletteFamily>;
+  const studio = document.querySelector<HTMLElement>('.studio');
+  const indexes = Object.fromEntries(families.map(name => [name, 0])) as Record<PaletteFamily, number>;
   if (family) indexes[family] = selection!.index;
   const root = document.documentElement;
+  const currentSection = `:root[data-control-colors]:is(${Object.keys(sectionPalettes).map(name => `[data-control-screen='${name}']:has(.studio[data-workspace-screen='${name}'])`).join(', ')})`;
   const style = document.createElement('style');
   style.textContent = `
-    :root[data-control-colors] :is(.topbar, .chart-tools, .studio .chart-view-tools) {
+    ${currentSection} :is(.topbar, .chart-tools, .studio .chart-view-tools) {
       --mode-accent: var(--preview-accent);
       --mode-selected: var(--preview-fill);
       --mode-selected-ink: var(--preview-ink);
@@ -62,7 +68,7 @@ if (location.port === '3636') {
       --floating-control-border-hover: var(--preview-idle);
       --control-focus: var(--preview-idle);
     }
-    :root[data-control-colors] :is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
+    ${currentSection} :is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
       color: var(--preview-idle);
     }
     .control-color-previews {
@@ -88,7 +94,7 @@ if (location.port === '3636') {
   const group = document.createElement('div');
   group.className = 'control-color-previews';
   group.id = 'controlColorPreviews';
-  group.hidden = !family;
+  group.hidden = !(expanded ?? Boolean(family));
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.id = 'toggleControlColors';
@@ -101,6 +107,7 @@ if (location.port === '3636') {
     group.hidden = !group.hidden;
     toggle.setAttribute('aria-expanded', String(!group.hidden));
     toggle.setAttribute('aria-pressed', String(!group.hidden));
+    remember();
   });
   const controls = families.map(name => {
     const button = document.createElement('button');
@@ -118,7 +125,7 @@ if (location.port === '3636') {
       if (family === name) indexes[name] = (indexes[name] + 1) % palettes[name].length;
       family = name;
       paint();
-      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ family, index: indexes[family] })); } catch {}
+      remember();
     });
     return { name, button, counter };
   });
@@ -126,9 +133,14 @@ if (location.port === '3636') {
   footer.prepend(group);
   footer.append(toggle);
 
+  function remember() {
+    try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ family, index: family ? indexes[family] : null, expanded: !group.hidden, screen })); } catch {}
+  }
+
   function paint() {
     if (family) {
       root.dataset.controlColors = String(indexes[family] + 1);
+      root.dataset.controlScreen = screen || '';
       for (const [role, value] of Object.entries(palettes[family][indexes[family]])) root.style.setProperty(`--preview-${role}`, value);
     }
     for (const { name, button, counter } of controls) {
@@ -138,5 +150,21 @@ if (location.port === '3636') {
       counter.textContent = `${indexes[name] + 1}/${palettes[name].length}`;
     }
   }
+  function syncWorkspacePalette() {
+    const nextScreen = studio?.dataset.workspaceScreen as keyof typeof sectionPalettes;
+    if (!Object.hasOwn(sectionPalettes, nextScreen) || nextScreen === screen) return;
+    // A reload retains a trial only for the same section. Navigation starts its agreed first shade.
+    const restored = screen === null && selection?.screen === nextScreen;
+    family = restored ? selection!.family : sectionPalettes[nextScreen];
+    indexes[family] = restored ? selection!.index : 0;
+    screen = nextScreen;
+    selection = null;
+    paint();
+    remember();
+  }
   paint();
+  if (studio) {
+    new MutationObserver(syncWorkspacePalette).observe(studio, { attributes: true, attributeFilter: ['data-workspace-screen'] });
+    syncWorkspacePalette();
+  }
 }

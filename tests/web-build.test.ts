@@ -72,7 +72,7 @@ test('real release build preserves sources and produces complete deterministic c
   }
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
-  assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors/, 'stand colour comparison stays out of the release');
+  assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors|account-preview/, 'stand studies stay out of the release');
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
   assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');

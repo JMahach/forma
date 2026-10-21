@@ -1,10 +1,32 @@
 const digits = (value: unknown, limit: number) => String(value ?? '').replace(/\D/g, '').slice(0, limit);
 
+// Separators finish a component without adding digits the user did not enter.
+// Unseparated digits keep the familiar DDMMYYYY / HHMM entry path.
+function formatParts(value: unknown, lengths: readonly number[], separator: string) {
+  const source = String(value ?? '').replace(/^\D+/, '');
+  const parts = source.split(/\D+/);
+  if (parts.length > 1 && parts[0].length <= lengths[0]) {
+    const completed = parts.slice(0, -1);
+    if (completed.every((part, index) => index >= lengths.length || part.length <= lengths[index])) {
+      const result = completed.slice(0, lengths.length).map((part, index) => part.slice(0, lengths[index]));
+      let remaining = parts.at(-1)!;
+      for (let index = completed.length; index < lengths.length; index += 1) {
+        if (!remaining && index > completed.length) break;
+        result.push(remaining.slice(0, lengths[index]));
+        remaining = remaining.slice(lengths[index]);
+      }
+      return result.join(separator);
+    }
+  }
+  const text = digits(source, lengths.reduce((sum, length) => sum + length, 0));
+  let offset = 0;
+  return lengths.map(length => { const part = text.slice(offset, offset + length); offset += length; return part; }).filter(Boolean).join(separator);
+}
+
 export function formatDateInput(value: unknown) {
-  const source = String(value ?? '').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(source)) return source.split('-').reverse().join('.');
-  const d = digits(source, 8);
-  return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('.');
+  const source = String(value ?? '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(source.trim())) return source.trim().split('-').reverse().join('.');
+  return formatParts(source, [2, 2, 4], '.');
 }
 
 // Native caret placement jumps to the start/end above/below an input's text.
@@ -39,10 +61,7 @@ export function datePartAt(input: HTMLInputElement, clientX: number | undefined)
 }
 
 export function formatTimeInput(value: unknown) {
-  const source = String(value ?? '').trim();
-  if (/^\d:\d{2}$/.test(source)) return `0${source}`;
-  const d = digits(source, 4);
-  return [d.slice(0, 2), d.slice(2, 4)].filter(Boolean).join(':');
+  return formatParts(value, [2, 2], ":");
 }
 
 export function normalizeDate(value: unknown) {
@@ -86,7 +105,13 @@ export function bindNumericInput(input: HTMLInputElement, format: (value: string
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   input.addEventListener('input', () => {
-    const precedingDigits = digits(input.value.slice(0, input.selectionStart!), 8).length;
-    update(input.value, precedingDigits);
+    const raw = input.value, caret = input.selectionStart!;
+    const prefix = raw.slice(0, caret);
+    const precedingDigits = digits(format(prefix), 8).length;
+    update(raw, precedingDigits);
+    if (caret === raw.length) input.setSelectionRange(input.value.length, input.value.length);
+    else if (/\D$/.test(prefix) && /\D/.test(input.value[input.selectionStart!] || '')) {
+      input.setSelectionRange(input.selectionStart! + 1, input.selectionStart! + 1);
+    }
   });
 }

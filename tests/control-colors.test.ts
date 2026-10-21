@@ -20,14 +20,17 @@ function element() {
     addEventListener: (type, handler) => listeners.set(type, handler), click() { listeners.get('click')?.(); },
   };
 }
-function harness(href = 'http://localhost:3636/', storage = memory()) {
-  const root = element(), footer = element(), head = element();
+function harness(href = 'http://localhost:3636/', storage = memory(), initialScreen: string | null = null) {
+  const root = element(), footer = element(), head = element(), studio = element();
+  if (initialScreen) studio.dataset.workspaceScreen = initialScreen;
+  let notifyWorkspace = () => {};
+  class Observer { constructor(callback: () => void) { notifyWorkspace = callback; } observe(target: ReturnType<typeof element>, options: { attributeFilter: string[] }) { assert.equal(target, studio); assert.deepEqual(options.attributeFilter, ['data-workspace-screen']); } }
   const location = { href, port: new URL(href).port };
   const document = { documentElement: root, head, createElement: element,
-    querySelector(selector: unknown) { assert.equal(selector, '.sidebar-footer'); return footer; } };
-  new Function('PALETTE', 'location', 'document', 'sessionStorage', 'history', code)(PALETTE, location, document, storage,
-    { replaceState() { assert.fail('palette buttons must never change the URL'); } });
-  return { root, footer, head, location, storage, group: footer.children[0], toggle: footer.children[1] };
+    querySelector(selector: unknown) { if (selector === '.studio') return studio; assert.equal(selector, '.sidebar-footer'); return footer; } };
+  new Function('PALETTE', 'location', 'document', 'sessionStorage', 'history', 'MutationObserver', code)(PALETTE, location, document, storage,
+    { replaceState() { assert.fail('palette buttons must never change the URL'); } }, Observer);
+  return { root, footer, head, location, storage, navigate(screen: string) { studio.dataset.workspaceScreen = screen; notifyWorkspace(); }, group: footer.children[0], toggle: footer.children[1] };
 }
 
 test('legacy palette URLs leave the row closed and the original button colours unchanged', () => {
@@ -67,7 +70,7 @@ test('a button-selected shade survives preview reloads through tab storage and i
   const h = harness();
   h.toggle.click(); const gold = h.group.children[2];
   gold.click(); gold.click(); gold.click();
-  assert.deepEqual(JSON.parse(h.storage.getItem(KEY)), { family: 'gold', index: 2 });
+  assert.deepEqual(JSON.parse(h.storage.getItem(KEY)), { family: 'gold', index: 2, expanded: true, screen: null });
   const restored = harness('http://localhost:3636/?controls=5&palette=graphite', h.storage);
   assert.equal(restored.group.hidden, false);
   assert.equal(restored.group.children[2].getAttribute('aria-pressed'), 'true');
@@ -97,4 +100,52 @@ test('palettes are absent outside the stand', () => {
   const h = harness('https://forma.example/?controls=5&palette=graphite');
   assert.equal(h.footer.children.length, 0);
   assert.equal(h.head.children.length, 0);
+});
+
+
+test('palette expansion survives reloads independently of whether a shade was chosen', () => {
+  for (const chooseShade of [false, true]) {
+    const h = harness();
+    h.toggle.click();
+    if (chooseShade) h.group.children[1].click();
+    const opened = harness(undefined, h.storage);
+    assert.equal(opened.group.hidden, false);
+    assert.equal(opened.toggle.getAttribute('aria-expanded'), 'true');
+    opened.toggle.click();
+    const closed = harness(undefined, h.storage);
+    assert.equal(closed.group.hidden, true);
+    assert.equal(closed.toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(closed.root.style['--preview-fill'], opened.root.style['--preview-fill']);
+  }
+});
+
+
+test('workspace navigation selects its first palette and keeps the visible indication in sync', () => {
+  const h = harness();
+  h.toggle.click();
+  for (const [screen, index, fill] of [
+    ['account', 3, '#cccccc'], ['library', 0, 'hsl(105.6 14.450867% 86%)'],
+    ['chart', 1, '#efe5da'], ['charts', 1, '#efe5da'], ['account', 3, '#cccccc'],
+  ] as const) {
+    h.navigate(screen);
+    assert.equal(h.group.hidden, false, 'navigation keeps the palette panel open');
+    assert.equal(h.root.style['--preview-fill'], fill);
+    for (const [i, button] of h.group.children.entries()) assert.equal(button.getAttribute('aria-pressed'), String(i === index));
+    assert.equal(h.group.children[index].children[0].textContent, '1/5');
+    h.group.children[index].click();
+    assert.equal(h.group.children[index].children[0].textContent, '2/5');
+    h.navigate(screen);
+    assert.equal(h.group.children[index].children[0].textContent, '2/5', 'repainting the current section does not reset a trial');
+  }
+});
+
+test('reload retains a shade for its section while another section uses its own default', () => {
+  const h = harness(undefined, memory(), 'library');
+  h.group.children[0].click(); h.group.children[0].click();
+  const restored = harness(undefined, h.storage, 'library');
+  assert.equal(restored.group.children[0].children[0].textContent, '3/5');
+  assert.equal(restored.group.children[0].getAttribute('aria-pressed'), 'true');
+  const other = harness(undefined, h.storage, 'account');
+  assert.equal(other.group.children[3].children[0].textContent, '1/5');
+  assert.equal(other.group.children[3].getAttribute('aria-pressed'), 'true');
 });

@@ -17,7 +17,7 @@ test('JSON client keeps aborts distinguishable while explaining unavailable tran
   const fetch = t.mock.method(globalThis, 'fetch', async () => { throw aborted; });
   await assert.rejects(requestJSON('/api/cities'), error => error === aborted);
   fetch.mock.mockImplementation(async () => { throw new TypeError('Failed to fetch'); });
-  await assert.rejects(requestJSON('/api/cities'), /Локальный сервер недоступен/);
+  await assert.rejects(requestJSON('/api/cities'), error => error instanceof Error && 'code' in error && error.code === 'connection_failed');
 });
 
 test('JSON client preserves cancellation after headers while reading the response body', async t => {
@@ -51,4 +51,12 @@ test('JSON client preserves structured DST error choices for the birth form', as
 test('JSON client reports an unreadable server response without exposing parser details', async t => {
   t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected HTML'); } }));
   await assert.rejects(requestJSON('/api/calculate'), /Сервер расчёта не ответил/);
+});
+
+
+test('JSON client distinguishes a broken response stream from invalid JSON', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => { throw new TypeError('stream failed'); } }));
+  await assert.rejects(requestJSON('/api/cities'), error => error instanceof Error && 'code' in error && error.code === 'connection_failed');
+  fetch.mock.mockImplementation(async () => ({ ok: true, json: async () => { throw new SyntaxError('invalid JSON'); } }));
+  await assert.rejects(requestJSON('/api/cities'), error => error instanceof Error && 'code' in error && error.code !== 'connection_failed');
 });
