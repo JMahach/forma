@@ -9,21 +9,24 @@ export function isReferenceMoment(displayedUtc, referenceUtc) {
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
-// The visible 22 × 8.5px lens shrinks into a centered 8.5px circle over its
-// final 11px of travel. All timelines share at most 65 small SVG images.
-const THUMB_TIP_REACH = 11, THUMB_ROUNDING_STEPS = 64;
+// The visible 16 × 6px oval shrinks into a centered 6px circle over its
+// final 8px of travel. All timelines share at most 65 small SVG images.
+const THUMB_TIP_REACH = 8, THUMB_ROUNDING_STEPS = 64;
 const thumbImages = [];
 function thumbImage(frame) {
   if (thumbImages[frame]) return thumbImages[frame];
   const progress = frame / THUMB_ROUNDING_STEPS;
-  const between = (lens, circle) => Number((lens + (circle - lens) * progress).toFixed(3));
-  const radius = 4.25, arc = radius * 4 * (Math.SQRT2 - 1) / 3;
-  const left = 22 - radius, right = 22 + radius, upper = 22 - arc, lower = 22 + arc;
-  const path = `M${between(11, left)} 22
-    C${between(16, left)} ${between(22, upper)} ${between(16.5, upper)} 17.75 ${between(22.5, 22)} 17.75
-    C${between(28, lower)} 17.75 ${between(27.5, right)} ${between(22, upper)} ${between(33, right)} 22
-    C${between(28, right)} ${between(22, lower)} ${between(27, lower)} 26.25 ${between(21.5, 22)} 26.25
-    C${between(16, upper)} 26.25 ${between(16, left)} ${between(22, lower)} ${between(11, left)} 22Z`;
+  const radiusX = 8 + (3 - 8) * progress, radiusY = 3;
+  const arc = 4 * (Math.SQRT2 - 1) / 3;
+  const number = value => Number(value.toFixed(3));
+  const left = 22 - radiusX, right = 22 + radiusX;
+  const upperX = number(22 - radiusX * arc), lowerX = number(22 + radiusX * arc);
+  const upperY = number(22 - radiusY * arc), lowerY = number(22 + radiusY * arc);
+  const path = `M${left} 22
+    C${left} ${upperY} ${upperX} 19 22 19
+    C${lowerX} 19 ${right} ${upperY} ${right} 22
+    C${right} ${lowerY} ${lowerX} 25 22 25
+    C${upperX} 25 ${left} ${lowerY} ${left} 22Z`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
     <path d="${path}" fill="#858278"/>
   </svg>`;
