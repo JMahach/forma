@@ -1,0 +1,88 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { CityCatalog } from '../services/cities.ts';
+import type { Calculator } from '../services/calculate.ts';
+interface RequestHandlerOptions {
+  root: string;
+  cities: CityCatalog;
+  calculate: (...args: Parameters<Calculator>) => ReturnType<Calculator>;
+  transitDays?: Parameters<typeof createTransitDayHandler>[0];
+  natalDays?: Parameters<typeof createNatalDayHandler>[0];
+  cycles?: Parameters<typeof createCyclesHandler>[0];
+  lifetime?: Parameters<typeof createLifetimeHandler>[0];
+  now?: () => Date;
+  publicFiles?: ReturnType<typeof createPublicFileHandler>;
+}
+
+import { requestSignal } from './request-signal.ts';
+import { createTransitDayHandler } from './transit-days.ts';
+import { createNatalDayHandler } from './natal-days.ts';
+import { createPublicFileHandler } from './public-files.ts';
+import { createCyclesHandler } from './cycles.ts';
+import { createLifetimeHandler } from './lifetime.ts';
+
+const MAX_REQUEST_BYTES = 20000;
+function json(res: ServerResponse, status: number, data: unknown) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+  res.end(JSON.stringify(data));
+}
+
+// Transport validation lives here; the catalogue owns city identity and the
+// calculator owns process execution. Importing this module starts no server.
+export function createRequestHandler({ root, cities, calculate, transitDays, natalDays, lifetime, cycles, now, publicFiles = createPublicFileHandler({ root }) }: RequestHandlerOptions) {
+  const transitDay = transitDays && createTransitDayHandler(transitDays, { now });
+  const natalDay = natalDays && createNatalDayHandler(natalDays);
+  const cycleHandler = cycles && createCyclesHandler(cycles);
+  const lifetimePoint = createLifetimeHandler(lifetime);
+  return async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+    try {
+      const url = new URL(req.url!, 'http://localhost');
+      // No cross-origin access to the API; no birth details in logs.
+      if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) {
+        json(res, 403, { error: 'origin', message: 'Откройте сайт с адреса локального сервера.' }); return;
+      }
+      if (url.pathname === '/api/cycles/events' || url.pathname === '/api/cycles/chart') {
+        if (!cycleHandler) { json(res, 503, { error: 'cycles_unavailable', message: 'Расчёт циклов недоступен.' }); return; }
+        await cycleHandler(req, res, url); return;
+      }
+      if (url.pathname === '/api/lifetime' || url.pathname === '/api/lifetime/meta' || url.pathname === '/api/lifetime/moment') {
+        await lifetimePoint(req, res, url); return;
+      }
+      if (url.pathname === '/api/transit/day') {
+        if (!transitDays) { json(res, 503, { error: 'transit_unavailable', message: 'Дневной транзит недоступен.' }); return; }
+        await transitDay!(req, res, url); return;
+      }
+      if (url.pathname === '/api/chart/day') {
+        if (!natalDays) { json(res, 503, { error: 'natal_day_unavailable', message: 'День рождения недоступен.' }); return; }
+        await natalDay!(req, res, cities); return;
+      }
+      if (url.pathname === '/api/cities' && req.method === 'GET') {
+        json(res, 200, { cities: cities.search(url.searchParams.get('q') || '') }); return;
+      }
+      if (url.pathname === '/api/calculate' && req.method === 'POST') {
+        if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] || '')) { json(res, 415, { error: 'content_type', message: 'Нужны данные JSON.' }); return; }
+        const chunks = []; let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > MAX_REQUEST_BYTES) { json(res, 413, { error: 'too_large', message: 'Слишком большой запрос.' }); return; }
+          chunks.push(chunk);
+        }
+        let input;
+        try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { json(res, 400, { error: 'invalid_json', message: 'Не удалось прочитать данные.' }); return; }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) { json(res, 400, { error: 'invalid_request', message: 'Некорректные данные.' }); return; }
+        if (input.mode !== 'transit') {
+          const city = cities.find(input.cityId, input.cityName);
+          if (!city) { json(res, 422, { error: 'city_required', message: 'Выберите город из списка подсказок.' }); return; }
+          input.city = city;
+        }
+        const consumer = requestSignal(req, res);
+        try {
+          const result = await calculate(input, { signal: consumer.signal });
+          if (consumer.signal.aborted) return;
+          const status = !result.error ? 200 : ['engine_unavailable', 'busy'].includes(result.error) ? 503 : 422;
+          json(res, status, result); return;
+        } finally { consumer.close(); }
+      }
+      await publicFiles(req, res, url.pathname);
+    } catch { if (!res.headersSent) json(res, 400, { error: 'invalid_request', message: 'Не удалось обработать запрос.' }); else res.end(); }
+  };
+}

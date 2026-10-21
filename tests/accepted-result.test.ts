@@ -1,0 +1,93 @@
+import type { ChartInput } from '../src/domain/chart-composition.ts';
+import { personalChartFixture } from './fixtures/natal-day.ts';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createChartSession } from '../src/state/chart-session.ts';
+
+function harness() {
+  const natal = personalChartFixture({ id: 'natal', name: 'Марат', source: 'calculated' as const, utc: '1998-08-18T15:00:00Z', personality: [63], design: [41] });
+  let lifetime: ChartInput | null = null;
+  const session = createChartSession({ store: { get: id => id === natal.id ? natal : null, has: id => id === natal.id },
+    getLifetime: () => ({ get current() { return lifetime; }, close() {} }) });
+  session.select(natal.id);
+  return { session, natal, set lifetime(value: ChartInput | null) { lifetime = value; } };
+}
+const moment = (utc: string) => ({ source: 'transit' as const, utc, personality: [4], design: [] });
+
+test('controller data and repaint notifications cannot replace the accepted result without publication', () => {
+  const h = harness(), accepted = h.session.current;
+  h.lifetime = moment('2050-01-01T12:10:00Z');
+  h.session.refresh();
+  assert.equal(h.session.current, accepted);
+  assert.equal(h.session.record, h.natal);
+  assert.equal(h.session.current.primary, h.session.baseChart);
+});
+
+test('pending exact return retains the accepted subject and UTC until its verified event arrives atomically', () => {
+  const { session, natal } = harness();
+  const lifetime = session.expect('lifetime');
+  const first = moment('2050-01-01T12:10:00Z');
+  session.publish(lifetime, first);
+  const accepted = session.current, request = session.expect('return');
+  assert.equal(session.shownSource, 'lifetime');
+  assert.equal(session.current, accepted);
+  assert.equal(session.record, natal);
+  assert.equal(accepted.primary, session.baseChart);
+  assert.equal(accepted.utc, first.utc);
+  const exact = moment('2050-01-01T12:14:59.123456Z');
+  const verified = { id: 'saturn:2050-01-01T12:14:59.123456Z', body: 'saturn', utc: exact.utc };
+  session.publish(request, exact, verified);
+  assert.equal(session.shownSource, 'return');
+  assert.equal(session.current.event, verified);
+  assert.equal(session.current.secondary, exact);
+  assert.equal(session.current.utc, verified.utc);
+});
+
+test('a canceled owner cannot publish after another mode or another selection has claimed the view', () => {
+  const { session, natal } = harness();
+  const old = session.expect('lifetime');
+  session.expect('natal-day');
+  assert.equal(session.publish(old, moment('2050-01-01T12:10:00Z')), false);
+  assert.equal(session.record, natal);
+  assert.equal(session.current.primary, session.baseChart);
+  const oldBase = session.baseChart;
+  const oldDay = session.expect('natal-day');
+  session.select('current-transit');
+  const selected = session.current;
+  assert.equal(session.record, null);
+  assert.equal(session.publish(oldDay, { ...oldBase, utc: '1998-08-18T16:00:00Z' }), false);
+  assert.equal(session.current, selected);
+});
+
+test('one lifetime owner accepts intermediate ready progress and keeps references on repeated publications', () => {
+  const { session, natal } = harness(), owner = session.expect('lifetime');
+  const first = moment('2050-01-01T12:10:00Z'), next = moment('2050-01-01T12:20:00Z');
+  assert.equal(session.publish(owner, first), true);
+  const accepted = session.current;
+  session.publish(owner, first);
+  assert.equal(session.current, accepted);
+  assert.equal(session.publish(owner, next), true);
+  assert.equal(session.record, natal);
+  assert.equal(session.current.primary, session.baseChart);
+  assert.equal(session.current.secondary, next);
+});
+
+
+test('changing the accepted source notifies captions while retaining an unchanged composition', () => {
+  const chart = moment('2026-10-09T12:01:00Z');
+  const changes: { composition: ReturnType<typeof createChartSession>['current']; source: ReturnType<typeof createChartSession>['shownSource'] }[] = [];
+  let session: ReturnType<typeof createChartSession>;
+  session = createChartSession({ store: { get: () => null, has: () => false },
+    onChange: () => changes.push({ composition: session.current, source: session.shownSource }) });
+  session.publish('transit', chart);
+  const accepted = session.current;
+  changes.length = 0;
+  session.expect('lifetime'); session.publish('lifetime', chart);
+  assert.equal(session.current, accepted, 'the same numeric result retains its composition');
+  assert.deepEqual(changes, [{ composition: accepted, source: 'lifetime' as const }], 'the UTC caption context still changes');
+  session.publish('lifetime', chart);
+  assert.equal(changes.length, 1, 'repeated publication from the same source is a no-op');
+  session.expect('transit'); session.publish('transit', chart);
+  assert.deepEqual(changes.map(change => change.source), ['lifetime', 'transit']);
+  assert.equal(session.current, accepted);
+});

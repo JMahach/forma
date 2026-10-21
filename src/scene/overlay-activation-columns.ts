@@ -1,0 +1,191 @@
+import type { Activation } from '../../shared/chart-types.ts';
+import type { ChartView, ChartComposition } from '../domain/chart-composition.ts';
+import type { OverlaySource } from '../domain/chart-overlay.ts';
+import type { RenderState, RenderOptions, RenderedScene } from './render-state.ts';
+import type { ColumnSelectionOptions } from './activation-columns.ts';
+import type { PlanetTarget } from './activation-targets.ts';
+type OverlayValue = OverlaySource & ReturnType<typeof overlayActivationColumnLayout>['values'][number] & {
+  color: string; id: string; planet: string; gate: number; line: number;
+  selected: boolean; pressed: boolean; label: string;
+};
+interface OverlayRow {
+  planet: string; symbol: string; name: string; x: number; y: number;
+  values: OverlayValue[]; planetTarget?: PlanetTarget;
+}
+interface ColumnRecord {
+  node: SVGElement; heading: Element; headingViewport: Element | null; headingTitle: Element;
+  rule: Element | null; sourceHeadings: Element | null; captions: Element[]; layout: string | undefined;
+  rows: Map<string, { node: SVGElement; planetTarget: ReturnType<typeof capturePlanetTarget> }>;
+}
+
+import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget } from './activation-targets.ts';
+import { OVERLAY_SOURCES, overlayOriginLabel } from '../domain/chart-overlay.ts';
+import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
+import { isChartOverlay } from '../domain/chart-composition.ts';
+import { PLANETS } from '../domain/planets.ts';
+import { activationRowY, overlayActivationColumnLayout } from './geometry/activation-layout.ts';
+import { setAttribute, setAttributes, svgNodes } from './svg-patches.ts';
+import { escapeHtml as esc } from '../ui/html.ts';
+
+const valid = (entry: Activation | undefined): entry is Activation => !!entry && Number.isInteger(entry.gate) && entry.gate >= 1 && entry.gate <= 64
+  && Number.isInteger(entry.line) && entry.line >= 1 && entry.line <= 6;
+const sourceAt = (origin: 'natal' | 'cycle', source: 'design' | 'personality') => OVERLAY_SOURCES.find(item => item.origin === origin && item.source === source);
+
+// Content, source selection and paint share one model in both rendering paths.
+function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySet<number> = new Set(), pressed: ReadonlySet<number> = selected, { activationFilter = null, previewGates = new Set(), showMandala = false, selections = [], pressedSelections = [] }: ColumnSelectionOptions = {}) {
+  if (!isChartOverlay(chart)) return [];
+  const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
+  const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
+  return ([['natal', chart.primary, 'left'], ['cycle', chart.secondary, 'right']] as const).map(([origin, owner, columnSide]) => {
+    const label = overlayOriginLabel(chart, origin);
+    const records = Object.fromEntries((['design', 'personality'] as const).map(source => {
+      const entries = new Map<string, Activation>();
+      for (const entry of owner?.source === 'manual' ? [] : owner?.activations?.[source] || []) if (!entries.has(entry?.planet)) entries.set(entry?.planet, entry);
+      return [source, entries];
+    }));
+    const sources = (['design', 'personality'] as const).filter(source => [...records[source].values()].some(valid));
+    const single = sources.length === 1;
+    const geometry = overlayActivationColumnLayout(columnSide, { single, showMandala, label });
+    const rows: OverlayRow[] = PLANETS.map(([planet, symbol, name], rowIndex) => ({ planet, symbol, name, x: geometry.x, y: activationRowY(rowIndex),
+      values: sources.flatMap((source, sourceIndex) => {
+        const entry = records[source].get(planet);
+        if (!valid(entry)) return [];
+        const provenance = sourceAt(origin, source)!;
+        // The overlay summary describes birth facts. Its line groups select
+        // natal rows only; ordinary gate selection and hover still span both maps.
+        const matchesFilter = !activationFilter || unfilteredGates.has(entry.gate)
+          || origin === 'natal' && filteredGroups.some(group => entry.line === group.line
+            && (group.source === 'all' || group.source === source)
+            && (!group.gates || group.gates.includes(entry.gate)));
+        return [{ ...provenance, ...geometry.values[sourceIndex], color: OVERLAY_PALETTE[origin], id: `${provenance.id}-${planet}`, planet, gate: entry.gate, line: entry.line,
+          selected: selected.has(entry.gate) && matchesFilter || previewGates.has(entry.gate),
+          pressed: pressed.has(entry.gate) && matchesFilter,
+          label: `${label}, ${source === 'design' ? 'Дизайн' : 'Личность'}, ${name}: ворота ${entry.gate}, линия ${entry.line}` }];
+      }),
+    }));
+    for (const row of rows) row.planetTarget = describePlanetTarget({ id: `${origin}-${row.planet}`,
+      symbol: row.symbol, label: `${label}, ${row.name}`, geometry: geometry.planet, color: OVERLAY_PALETTE[origin],
+      selections, pressedSelections, available: row.values.length > 0 });
+    return { ...geometry, origin, columnSide, label, rows };
+  });
+}
+
+function valueMarkup(value: OverlayValue) {
+  return `<g class="bg-activation cycle-activation-value" data-type="gate" data-id="${value.gate}" data-activation="${value.id}" data-cycle-source="${value.origin}-${value.source}" data-selected="${value.selected}" tabindex="0" role="button" aria-label="${esc(value.label)}" aria-pressed="${value.pressed}" fill="${value.color}" transform="translate(${value.x} 0)">
+    <rect x="${value.rectX}" y="${value.hitY}" width="${value.hitWidth}" height="${value.hitHeight}" rx="${value.hitRadius}" fill="${value.selected ? '#eaf0f8' : 'transparent'}"/>
+    <text x="${value.textX}" y="0" dominant-baseline="central" font-size="${value.fontSize}" font-weight="500" pointer-events="none">${value.gate}<tspan font-weight="400" opacity=".7">.${value.line}</tspan></text>
+  </g>`;
+}
+
+export function renderOverlayActivationColumns(chart: ChartView, selected: ReadonlySet<number>, pressed: ReadonlySet<number>, options: ColumnSelectionOptions) {
+  return columnsMarkup(describeOverlayActivationColumns(chart, selected, pressed, options));
+}
+
+function columnsMarkup(columns: ReturnType<typeof describeOverlayActivationColumns>) {
+  if (!columns.length) return '';
+  return `<g class="activation-columns cycle-activation-columns">${columns.map(column => `<g class="activation-column" data-column-side="${column.columnSide}" data-cycle-origin="${column.origin}" data-cycle-layout="${column.layout}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
+    <g class="activation-block-content" transform="${column.transform}">
+      <svg class="activation-heading-viewport" x="${column.headingX}" y="${column.headingTop}" width="${column.headingViewportWidth}" height="${column.headingHeight}" viewBox="${column.headingX} ${column.headingTop} ${column.headingViewportWidth} ${column.headingHeight}" overflow="hidden" aria-label="${esc(column.label)}"><title>${esc(column.label)}</title><text class="activation-heading" x="${column.headingX}" y="${column.headingY}" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.headingSize}" font-weight="500">${esc(column.label)}</text></svg>
+      <path class="activation-header-rule" d="M ${column.headingX} ${column.ruleY} h ${column.headingWidth}" stroke="#8e897e" stroke-opacity=".25" stroke-width="1" fill="none"/>
+      <g class="cycle-source-headings"${column.single ? ' display="none"' : ''}>
+        <text x="${column.captionX[0]}" y="${column.captionY}" text-anchor="middle" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.captionSize}">Дизайн</text>
+        <text x="${column.captionX[1]}" y="${column.captionY}" text-anchor="middle" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.captionSize}">Личность</text>
+      </g>
+      ${column.rows.map(row => `<g class="cycle-activation-row" data-cycle-planet="${row.planet}" transform="translate(${row.x} ${row.y})">${renderPlanetTarget(row.planetTarget!)}${row.values.map(valueMarkup).join('')}</g>`).join('')}
+    </g>
+  </g>`).join('')}</g>`;
+}
+
+// Exact longitude still updates the wheel and popover, but cannot change the
+// rows. Snapshot column inputs so mutable caller arrays remain observable.
+function columnInput(chart: Extract<ChartComposition, { kind: 'transit' | 'return' }>, state: RenderState, options: RenderOptions) {
+  return JSON.stringify([chart.kind, overlayOriginLabel(chart, 'natal'), Boolean(options.showMandala),
+    ...[chart.primary, chart.secondary].map(owner => (['design', 'personality'] as const).map(source =>
+      (owner?.source === 'manual' ? [] : owner?.activations?.[source] || []).map(entry => [entry?.planet, entry?.gate, entry?.line]))),
+    [...state.relatedGates], [...state.committedGates], [...state.previewGates],
+    state.visualSelections.map(value => [value.type, value.id]),
+    state.committedSelections.map(value => [value.type, value.id]), options.activationFilter]);
+}
+
+export function createOverlayActivationPainter(drawing: Element, rendered: RenderedScene | null = null) {
+  let group = drawing.querySelector('.cycle-activation-columns');
+  let values = new Map<string, ReturnType<typeof captureValue>>(), columns = new Map<string, ColumnRecord>();
+  let previousInput: string | null = null;
+  const captureValue = (node: SVGElement) => ({ node, rect: node.querySelector('rect'),
+    text: node.querySelector('text')!, line: node.querySelector('tspan')!, previous: null as string | null });
+  function capture() {
+    values = new Map([...group!.querySelectorAll<SVGElement>('.cycle-activation-value')].map(node => [node.dataset.activation!, captureValue(node)]));
+    columns = new Map([...group!.querySelectorAll<SVGElement>('[data-cycle-origin]')].map(node => [node.dataset.cycleOrigin!, {
+      node, heading: node.querySelector('.activation-heading')!, headingViewport: node.querySelector('.activation-heading-viewport'),
+      headingTitle: node.querySelector('.activation-heading-viewport title')!, rule: node.querySelector('.activation-header-rule'),
+      sourceHeadings: node.querySelector('.cycle-source-headings'), captions: [...node.querySelectorAll('.cycle-source-headings text')], layout: node.dataset.cycleLayout,
+      rows: new Map([...node.querySelectorAll<SVGElement>('[data-cycle-planet]')].map(row => [row.dataset.cyclePlanet!, { node: row, planetTarget: capturePlanetTarget(row.querySelector<SVGElement>('.bg-planet')!) }])),
+    }]));
+  }
+  function clear() { group?.remove(); group = null; values.clear(); columns.clear(); previousInput = null; }
+  if (group) {
+    capture();
+    if (isChartOverlay(rendered?.chart) && rendered!.options?.showActivations) {
+      previousInput = columnInput(rendered!.chart as Extract<ChartComposition, { kind: 'transit' | 'return' }>, rendered!.state, rendered!.options);
+    }
+  }
+  return {
+    update(chart: ChartView, state: RenderState, visible: boolean | undefined, options: RenderOptions = {}) {
+      if (!isChartOverlay(chart) || !visible) { clear(); return; }
+      const input = columnInput(chart, state, options);
+      if (input === previousInput) return;
+      const selectionOptions = { activationFilter: options.activationFilter, previewGates: state.previewGates, showMandala: options.showMandala,
+        selections: state.visualSelections, pressedSelections: state.committedSelections };
+      const models = describeOverlayActivationColumns(chart, state.relatedGates, state.committedGates, selectionOptions);
+      if (!group) {
+        group = svgNodes(drawing, columnsMarkup(models)).find(node => node.nodeType === 1)! as SVGElement;
+        drawing.insertBefore(group, drawing.firstChild); capture(); previousInput = input; return;
+      }
+      const nextIds = new Set();
+      for (const column of models) {
+        const record = columns.get(column.origin)!;
+        if (record.heading.textContent !== column.label) record.heading.textContent = column.label;
+        if (record.headingTitle.textContent !== column.label) record.headingTitle.textContent = column.label;
+        setAttributes(record.headingViewport, { x: column.headingX, width: column.headingViewportWidth,
+          viewBox: `${column.headingX} ${column.headingTop} ${column.headingViewportWidth} ${column.headingHeight}`, 'aria-label': column.label });
+        setAttribute(record.rule, 'd', `M ${column.headingX} ${column.ruleY} h ${column.headingWidth}`);
+        if (record.layout !== column.layout) {
+          setAttribute(record.node, 'data-cycle-layout', column.layout);
+          setAttribute(record.heading, 'x', column.headingX);
+          setAttribute(record.sourceHeadings, 'display', column.single ? 'none' : null);
+          record.captions.forEach((caption, index) => setAttributes(caption, { x: column.captionX[index], 'font-size': column.captionSize }));
+          for (const row of column.rows) {
+            const target = record.rows.get(row.planet)!;
+            setAttribute(target.node, 'transform', `translate(${row.x} ${row.y})`);
+          }
+          record.layout = column.layout;
+        }
+        for (const row of column.rows) updatePlanetTarget(record.rows.get(row.planet)!.planetTarget, row.planetTarget!);
+      }
+      for (const column of models) for (const row of column.rows) for (const value of row.values) {
+        nextIds.add(value.id);
+        let record = values.get(value.id);
+        if (!record) {
+          const rowNode = columns.get(column.origin)!.rows.get(row.planet)!.node;
+          const node = svgNodes(rowNode, valueMarkup(value)).find(node => node.nodeType === 1)! as SVGElement;
+          const before = value.source === 'design' ? values.get(`${column.origin}-personality-${row.planet}`)?.node || null : null;
+          rowNode.insertBefore(node, before);
+          record = captureValue(node); values.set(value.id, record);
+        }
+        const key = JSON.stringify([value.gate, value.line, value.selected, value.pressed, value.label, column.layout]);
+        if (key === record.previous) continue;
+        record.previous = key;
+        setAttributes(record.node, { 'data-id': value.gate, 'data-selected': value.selected,
+          'aria-label': value.label, 'aria-pressed': value.pressed, transform: `translate(${value.x} 0)` });
+        setAttribute(record.rect, 'fill', value.selected ? '#eaf0f8' : 'transparent');
+        setAttributes(record.rect, { x: value.rectX, width: value.hitWidth, y: value.hitY, height: value.hitHeight, rx: value.hitRadius });
+        setAttributes(record.text, { x: value.textX, 'font-size': value.fontSize });
+        if (record.text.firstChild!.nodeValue !== String(value.gate)) record.text.firstChild!.nodeValue = String(value.gate);
+        if (record.line.textContent !== `.${value.line}`) record.line.textContent = `.${value.line}`;
+      }
+      for (const [id, record] of values) if (!nextIds.has(id)) { record.node.remove(); values.delete(id); }
+      previousInput = input;
+    },
+    clear,
+  };
+}

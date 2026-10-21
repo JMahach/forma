@@ -15,7 +15,7 @@ Environment=TRANSIT_CACHE_DIR=/var/cache/forma/transit
 # Once ready, the next browser request opens it; no service restart is needed.
 CacheDirectory=forma
 CacheDirectoryMode=0700
-ExecStart=/opt/forma/node/bin/node server/server.mjs --release
+ExecStart=/opt/forma/node/bin/node server/server.ts --release
 Restart=on-failure
 RestartSec=5
 MemoryMax=400M

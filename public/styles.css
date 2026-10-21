@@ -31,7 +31,7 @@
   --returns-side-space: var(--returns-panel-width);
   --timeline-background: var(--panel-surface);
   --timeline-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --timeline-edge-space: 8px;
+  --timeline-edge-space: 6px;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ink: #141519;
   --line: #e8eaee;
@@ -107,7 +107,7 @@ small { font-size: 11px; }
 /* The desktop reference places the status just above the rail, between the
    date fields. Narrow layouts keep the existing space above those fields. */
 @media (min-width: 1100px) {
-  .studio:has(.canvas-wrap[data-layout='desktop']) .chart-loading-message { top: calc(var(--timeline-dock-top, calc(100% - 48.8px)) - 40px); }
+  .studio:has(.canvas-wrap[data-layout='desktop']) .chart-loading-message { top: calc(var(--timeline-dock-top, calc(100% - 36.6px)) - 40px); }
 }
 .studio:has(.canvas-wrap:not([data-chart-state='ready'])) .day-controls { visibility: hidden; }
 
@@ -147,6 +147,7 @@ small { font-size: 11px; }
 .sidebar-tool { padding: 2px 0; min-height: 24px; font-size: 11px; line-height: 16px; color: #59616d; text-align: left; }
 .sidebar-tool[aria-pressed='true'] { color: #202934; font-weight: 600; }
 .performance-panel { position: fixed; z-index: 60; top: max(68px, calc(env(safe-area-inset-top) + 54px)); left: calc(var(--studio-left-space, 0px) + max(12px, env(safe-area-inset-left))); width: 184px; max-width: calc(100vw - var(--studio-left-space, 0px) - var(--studio-right-space, 0px) - 24px); max-height: calc(100dvh - 154px); overflow: auto; overscroll-behavior: contain; contain: layout paint; padding: 8px 10px; border: 1px solid #dce1e7; border-radius: 8px; background: #fff; color: #303744; font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.studio:has(.canvas-wrap[data-layout='desktop']) > .performance-panel { top: max(14px, env(safe-area-inset-top)); left: max(76px, calc(var(--studio-left-space, 0px) + 12px)); }
 .performance-reading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; }
 .performance-reading > strong { flex: none; font-size: 22px; line-height: 1.3; }
 .performance-reading small { font-size: 10px; font-weight: 500; }
@@ -195,6 +196,17 @@ small { font-size: 11px; }
 .sidebar-footer p { margin: 8px 0 0; font-size: 11px; line-height: 1.5; color: #647080; }
 .delete-chart-name { font-size: 1.125rem; line-height: 1.5; overflow-wrap: anywhere; margin-bottom: 12px; }
 .sidebar-footer { margin-top: auto; padding: 8px 7px 0; border-top: 1px solid var(--panel-border); display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; flex-shrink: 0; }
+/* Side-by-side menus share the chart's lower divider. Palette comparisons
+   reserve their own space above it without lifting the service-button row. */
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='side']) .library { padding-bottom: 0; }
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='side']) .sidebar-footer {
+  position: relative; height: var(--timeline-panels-bottom, 36.6px); min-height: 24px;
+  padding: 0 7px; flex-wrap: nowrap; align-items: center;
+}
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='side']) .sidebar-footer > .control-color-previews {
+  position: absolute; left: 7px; right: 7px; bottom: 100%; margin: 0 0 8px;
+}
+.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='side']) .library:has(.control-color-previews:not([hidden])) .saved-charts { padding-bottom: 44px; }
 .chart-row { position: relative; margin-bottom: 7px; border-radius: 8px; }
 .chart-row[data-active='true'] { background: var(--panel-selected); }
 .library .chart-row { --library-row-height: 52px; }
@@ -376,7 +388,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .summary-source-dot.design { background: #b34b4d; }
 .summary-source-dot.personality { background: #454545; }
 
-/* Minute-day timeline. */
+/* A fine measuring line: quiet ticks, readable labels, distinct event nodes. */
 .day-controls { touch-action: none; overscroll-behavior: none; translate: 0 calc(0px - var(--timeline-viewport-lift, 0px)); position: absolute; z-index: 90; width: min(360px, calc(100% - 24px)); margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: #777777; font-size: 11px; }
 .transit-controls-heading { position: absolute; z-index: 2; left: calc(var(--timeline-content-left) + var(--timeline-content-width) - var(--rail-left) - 60px); top: 2px; display: flex; align-items: center; justify-content: flex-end; width: 60px; height: 44px; pointer-events: none; }
 .transit-controls-heading > button { display: block; width: 60px; height: 44px; padding: 0 4px; color: #555555; background: transparent; font-size: 12px; pointer-events: auto; }
@@ -384,9 +396,9 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .day-controls input[type='range']:focus { outline: none; box-shadow: none; }
 .day-controls input[type='range'][data-event-hovered='true']:not(:disabled), .day-controls input[type='range'][data-event-pressed='true']:not(:disabled) { cursor: pointer; }
 .day-controls input[type='range']:not(:disabled):active:not([data-event-pressed='true']) { cursor: grabbing; }
-.day-controls input[type='range']::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent var(--timeline-rail-inset), #c8c8c8 var(--timeline-rail-inset), #c8c8c8 calc(100% - var(--timeline-rail-inset)), transparent calc(100% - var(--timeline-rail-inset))); }
-.day-controls input[type='range']::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: var(--timeline-thumb-size); height: var(--timeline-thumb-size); margin-top: calc(1px - var(--timeline-rail-inset)); border: 0; background: var(--timeline-thumb) center / var(--timeline-thumb-size) var(--timeline-thumb-size) no-repeat; box-shadow: none; transition: background-size .16s ease; }
-.day-controls input[type='range']::-moz-range-track { height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent var(--timeline-rail-inset), #c8c8c8 var(--timeline-rail-inset), #c8c8c8 calc(100% - var(--timeline-rail-inset)), transparent calc(100% - var(--timeline-rail-inset))); }
+.day-controls input[type='range']::-webkit-slider-runnable-track { height: 1px; border-radius: 1px; background: linear-gradient(to right, transparent var(--timeline-rail-inset), #bcb9b1 var(--timeline-rail-inset), #bcb9b1 calc(100% - var(--timeline-rail-inset)), transparent calc(100% - var(--timeline-rail-inset))); }
+.day-controls input[type='range']::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: var(--timeline-thumb-size); height: var(--timeline-thumb-size); margin-top: calc(.5px - var(--timeline-rail-inset)); border: 0; background: var(--timeline-thumb) center / var(--timeline-thumb-size) var(--timeline-thumb-size) no-repeat; box-shadow: none; transition: background-size .16s ease; }
+.day-controls input[type='range']::-moz-range-track { height: 1px; border-radius: 1px; background: linear-gradient(to right, transparent var(--timeline-rail-inset), #bcb9b1 var(--timeline-rail-inset), #bcb9b1 calc(100% - var(--timeline-rail-inset)), transparent calc(100% - var(--timeline-rail-inset))); }
 .day-controls input[type='range']::-moz-range-thumb { width: var(--timeline-thumb-size); height: var(--timeline-thumb-size); border: 0; background: var(--timeline-thumb) center / var(--timeline-thumb-size) var(--timeline-thumb-size) no-repeat; box-shadow: none; transition: background-size .16s ease; }
 .day-controls input[type='range']:focus-visible::-webkit-slider-thumb { filter: drop-shadow(0 0 2px #55555580); }
 .day-controls input[type='range']:focus-visible::-moz-range-thumb { filter: drop-shadow(0 0 2px #55555580); }
@@ -394,22 +406,22 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 /* Extend the invisible thumb target beyond the visible rail. */
 .day-range { position: relative; height: var(--timeline-thumb-size); margin-top: 4px; margin-inline: calc(0px - var(--timeline-rail-inset)); }
 /* Hour marks share the native track endpoints and never intercept a gesture. */
-.day-hour-marks { position: absolute; inset: 0 var(--timeline-rail-inset); pointer-events: none; color: #777777; font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; }
-.day-hour-mark { position: absolute; left: var(--hour-position); top: 50%; height: 6px; width: 1px; transform: translate(-50%, -50%); background: #bdbdbd; }
-.day-hour-mark.is-major { height: 10px; background: #999999; }
-.day-hour-mark > span { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.day-hour-marks { position: absolute; inset: 0 var(--timeline-rail-inset); pointer-events: none; color: #6f6c64; font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; }
+.day-hour-mark { position: absolute; left: var(--hour-position); top: 50%; height: 3px; width: 1px; transform: translate(-50%, -50%); background: #bdbdbd; }
+.day-hour-mark.is-major { height: 7px; background: #aaa69d; }
+.day-hour-mark > span { position: absolute; top: 5.5px; left: 50%; transform: translateX(-50%); white-space: nowrap; }
 .day-hour-mark:first-child > span { transform: none; }
 .day-hour-mark:last-child > span { transform: translateX(-100%); }
-.calendar-time-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 6px; transform: translate(-50%, -50%); background: #bdbdbd; }
-.calendar-time-mark.is-edge { height: 10px; background: #999999; }
-.calendar-time-mark > span { position: absolute; top: calc(50% + 7px); left: 50%; transform: translateX(-50%); color: #999999; white-space: nowrap; }
+.calendar-time-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 3px; transform: translate(-50%, -50%); background: #bdbdbd; }
+.calendar-time-mark.is-edge { height: 7px; background: #aaa69d; }
+.calendar-time-mark > span { position: absolute; top: calc(50% + 2px); left: 50%; transform: translateX(-50%); color: #6f6c64; white-space: nowrap; }
 .calendar-time-mark[data-edge='start'] > span { transform: none; }
 .calendar-time-mark[data-edge='end'] > span { transform: translateX(-100%); }
-.life-year-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 4px; transform: translate(-50%, -50%); background: #c7c7c7; }
-.life-year-mark.is-major { height: 7px; background: #adadad; }
+.life-year-mark { position: absolute; left: var(--hour-position); top: 50%; width: 1px; height: 2px; transform: translate(-50%, -50%); background: #c9c6bd; }
+.life-year-mark.is-major { height: 5px; background: #aaa69d; }
 .day-reference-rail { position: absolute; inset: 0 var(--timeline-rail-inset); pointer-events: none; }
 .day-reference { position: absolute; top: 50%; width: 18px; height: 18px; padding: 0; transform: translate(-50%, -50%); border: 0; border-radius: 50%; background: transparent; pointer-events: none; }
-.day-reference::before { content: ''; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; transform: translate(-50%, -50%); border: 1px solid #777777; border-radius: 50%; background: var(--canvas-background); }
+.day-reference::before { content: ''; position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; transform: translate(-50%, -50%); border: 1px solid #77746b; border-radius: 50%; background: var(--canvas-background); }
 .day-reference[aria-pressed='true']::before { border-color: #555555; }
 .day-reference[data-hovered='true']::after, .day-reference[data-pressed='true']::after, .day-reference[aria-pressed='true']::after { content: ''; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; transform: translate(-50%, -50%); border-radius: 50%; background: #17191e; }
 .day-reference:focus-visible { outline-offset: 3px; }
@@ -461,7 +473,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .date-picker-row button { width: 100%; height: auto; min-height: 32px; }
 .date-picker[data-view='periods'] .date-picker-row button { font-size: 10px; }
 .date-picker [role='columnheader'] { padding: 5px 0; color: #9a958a; text-align: center; font-size: 10px; }
-.lifetime-scale { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; justify-content: space-between; color: #999999; font-size: 10px; line-height: 12px; pointer-events: none; }
+.lifetime-scale { position: absolute; left: 0; right: 0; bottom: 8px; display: flex; justify-content: space-between; color: #6f6c64; font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .lifetime-status:empty { display: none; }
 .lifetime-controls[data-status='error'] .day-range { visibility: visible; }
 
@@ -523,28 +535,47 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
   content: ''; position: absolute; left: 54px; top: 10px;
   width: 1px; height: 24px; background: var(--panel-border); pointer-events: none;
 }
-/* The summary title fades in place, outside its sliding panel like the brand.
-   Its origin matches the existing heading: panel border + 18px + 5px inset. */
+/* The open summary owns the chart's identity. It stays fixed beside the
+   menu button; the same caption remains over the chart when this panel closes. */
+.studio:has(.canvas-wrap[data-layout='desktop']) {
+  --summary-caption-top: max(20px, calc(env(safe-area-inset-top) + 6px));
+  --summary-header-bottom: calc(max(14px, env(safe-area-inset-top)) + 56px);
+}
 .studio:has(.canvas-wrap[data-layout='desktop']) .summary-title {
-  display: block; position: fixed;
-  top: calc(max(78px, calc(env(safe-area-inset-top) + 64px)) - 58px);
+  display: flex; flex-direction: column; gap: 34.5px; position: fixed;
+  top: var(--summary-caption-top);
   left: calc(100% - var(--summary-width) + 24px);
-  width: max-content; height: 31.5px; line-height: 31.5px;
-  color: var(--panel-ink); font-family: var(--sans); font-size: 26px; font-weight: 600; letter-spacing: -.025em;
+  width: calc(var(--summary-width) - 48px); min-height: 101px;
+  color: var(--panel-ink); font-family: var(--sans); text-align: left;
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity .14s ease-out, visibility .14s;
 }
+.summary-chart-title {
+  display: block; width: calc(100% - 56px); min-height: 31.5px; pointer-events: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 26px; font-weight: 600; line-height: 31.5px; letter-spacing: -.025em;
+}
+.summary-chart-moment { display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; }
+#summaryChartDate { min-height: 18px; color: #70665d; font-size: 13px; line-height: 18px; }
+#summaryChartDetails { min-height: 16px; color: #817970; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 .studio:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open[data-screen='summary']) .summary-title {
   opacity: 1; visibility: visible;
 }
+.studio:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open[data-screen='summary']) > .studio-header {
+  visibility: hidden;
+}
+.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary[data-screen='summary']::before {
+  height: var(--summary-header-bottom);
+}
+.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary[data-screen='summary'] {
+  padding-top: calc(var(--summary-caption-top) + var(--summary-caption-height, 101px) + 16px);
+}
+.studio:has(.canvas-wrap[data-layout='desktop']) .summary-heading h2 {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.studio:has(.canvas-wrap[data-layout='desktop']) .summary-overview { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) {
   .studio:has(.canvas-wrap[data-layout='desktop']) .summary-title { transition: none; }
-}
-/* Preserve the original heading's space and accessible name inside the panel. */
-.studio:has(.canvas-wrap[data-layout='desktop']) .summary-heading h2 {
-  position: relative; top: -58px; height: 31.5px; line-height: 31.5px;
-  font-family: var(--sans); font-size: 26px; font-weight: 600; letter-spacing: -.025em;
-  opacity: 0;
 }
 .studio:has(.canvas-wrap[data-layout='desktop']) .summary-switch::before {
   content: ''; position: absolute; right: calc(100% + 10px); top: 50%; transform: translateY(-50%);
@@ -635,7 +666,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .chart-summary[data-screen='returns'] { padding: 0; background: var(--panel-surface); }
 /* Covering drawers stop above the rail; side panels keep their full height. */
 .app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='overlay'] .day-controls:not([hidden])) .library,
-.studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.day-controls:not([hidden])) .chart-summary { bottom: var(--timeline-panels-bottom, 40.8px); }
+.studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.day-controls:not([hidden])) .chart-summary { bottom: var(--timeline-panels-bottom, 30.6px); }
 .returns-panel-controls { flex: none; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #dce0d5; }
 .returns-control-bar { display: flex; align-items: center; gap: 4px; }
 .returns-filter-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 10px; border-radius: 8px; color: #555555; background: transparent; font-size: 13px; white-space: nowrap; }
@@ -696,7 +727,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .returns-status:empty { display: none; }
 .returns-retry { min-height: 44px; color: #65775b; font-size: 12px; background: transparent; }
 .returns-panel button:focus-visible { outline: 1px solid #89947b; outline-offset: 2px; }
-.studio[data-returns-layout='sheet'] .chart-summary[data-screen='returns'] { left: 0; right: 0; top: max(114px, calc(env(safe-area-inset-top) + 108px)); bottom: var(--timeline-panels-bottom, 40.8px); width: auto; border: 1px solid #d3d8ca; border-bottom: 0; border-radius: 20px 20px 0 0; transform: translateY(calc(100% + 24px)); }
+.studio[data-returns-layout='sheet'] .chart-summary[data-screen='returns'] { left: 0; right: 0; top: max(114px, calc(env(safe-area-inset-top) + 108px)); bottom: var(--timeline-panels-bottom, 30.6px); width: auto; border: 1px solid #d3d8ca; border-bottom: 0; border-radius: 20px 20px 0 0; transform: translateY(calc(100% + 24px)); }
 .studio[data-returns-layout='sheet'] .chart-summary.open[data-screen='returns'] { transform: none; }
 .studio[data-returns-layout='sheet'] .returns-panel { padding: 6px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
 
@@ -708,8 +739,9 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 }
 @media print { .returns-panel, .timeline-dock { display: none !important; } }
 
-/* One low rail backing; stacked dates remain on the canvas above it. */
-.timeline-dock { position: fixed; z-index: 89; top: var(--timeline-dock-top, calc(100% - 40.8px)); bottom: 0; left: var(--timeline-area-left, 0px); width: var(--timeline-area-width, 100%); border-top: 1px solid var(--panel-border); background: var(--timeline-background); touch-action: none; }
+/* The rail backing and ordinary edge clearance are 25% slimmer. Touch
+   targets keep their size; stacked dates stay on the white canvas above. */
+.timeline-dock { position: fixed; z-index: 89; top: var(--timeline-dock-top, calc(100% - 30.6px)); bottom: 0; left: var(--timeline-area-left, 0px); width: var(--timeline-area-width, 100%); border-top: 1px solid var(--panel-border); background: var(--timeline-background); touch-action: none; }
 .studio:not(:has(.day-controls:not([hidden]))) .timeline-dock { display: none; }
 .lifetime-controls:not([data-personal-life='true']) .lifetime-scale > [data-lifetime-date] { visibility: hidden; }
 /* Preserve the normal panel geometry while the lifetime file is prepared. */
@@ -723,14 +755,16 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 /* Small event nodes share the line; the selected moment has its own droplet. */
 .returns-markers { position: absolute; inset: 0 var(--timeline-rail-inset); z-index: 2; pointer-events: none; }
 .returns-marker { position: absolute; top: 50%; width: 28px; height: 28px; padding: 0; transform: translate(-50%, -50%); border: 0; background: transparent; pointer-events: none; }
-.returns-marker-dot { position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; border-radius: 50%; transform: translate(-50%, -50%); background: var(--return-color, #778c68); box-shadow: 0 0 0 2px var(--canvas-background); pointer-events: none; }
+.returns-marker-dot { position: absolute; top: 50%; left: 50%; width: 4px; height: 4px; border-radius: 50%; transform: translate(-50%, -50%); background: var(--return-color, #778c68); box-shadow: 0 0 0 1.5px var(--timeline-background); pointer-events: none; }
 .returns-marker[data-hovered='true'] .returns-marker-dot, .returns-marker:focus-visible .returns-marker-dot { background: var(--return-color, #555555); box-shadow: 0 0 0 2px var(--canvas-background), 0 0 0 3px #999999; }
 .returns-marker[aria-pressed='true'] .returns-marker-dot { box-shadow: 0 0 0 2px var(--canvas-background), 0 0 0 3px var(--return-color, #555555); }
 .returns-marker[data-hovered='true'] .returns-marker-dot::after, .returns-marker[data-pressed='true'] .returns-marker-dot::after, .returns-marker[aria-pressed='true'] .returns-marker-dot::after { content: ''; position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; transform: translate(-50%, -50%); border-radius: 50%; background: #17191e; }
 
 .day-controls input[type='range']:active:not([data-event-pressed='true'])::-webkit-slider-thumb { background-size: calc(var(--timeline-thumb-size) + 6px - 6px * var(--timeline-thumb-rounding, 0)) calc(var(--timeline-thumb-size) - 4px + 4px * var(--timeline-thumb-rounding, 0)); }
 .day-controls input[type='range']:active:not([data-event-pressed='true'])::-moz-range-thumb { background-size: calc(var(--timeline-thumb-size) + 6px - 6px * var(--timeline-thumb-rounding, 0)) calc(var(--timeline-thumb-size) - 4px + 4px * var(--timeline-thumb-rounding, 0)); }
-.returns-marker-symbol { position: absolute; bottom: calc(50% + 2px); left: 50%; transform: translateX(calc(-50% + var(--return-label-offset, 0px))); display: flex; align-items: center; justify-content: center; min-width: 20px; height: 16px; color: #606060; font-size: 13px; line-height: 1; font-family: Georgia, 'Times New Roman', serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.returns-marker-symbol { position: absolute; bottom: calc(50% + 2px); left: 50%; transform: translateX(calc(-50% + var(--return-label-offset, 0px))); display: flex; align-items: center; justify-content: center; gap: 1px; min-width: 20px; height: 12px; color: #55574f; font-size: 12px; line-height: 1; font-family: Georgia, 'Times New Roman', serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.returns-marker-glyph { line-height: 12px; }
+.returns-marker-ordinal { align-self: flex-end; padding-bottom: 1px; color: #6f6c64; font: 8px/9px var(--sans); font-variant-numeric: tabular-nums; }
 .returns-marker[data-label-lane='below'] .returns-marker-symbol { top: calc(50% + 2px); bottom: auto; }
 
 
@@ -835,7 +869,7 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
   transition: transform .28s cubic-bezier(.22,.8,.25,1), height .24s cubic-bezier(.22,.8,.25,1), visibility 0s linear .28s;
 }
 .app-shell:has(.canvas-wrap[data-layout='phone']):has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden])) :is(.library, .chart-summary) {
-  --phone-sheet-offset: var(--phone-sheet-bottom, 44.8px);
+  --phone-sheet-offset: var(--phone-sheet-bottom, 40.6px);
 }
 .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary).open { transform: translateY(0); transition-delay: 0s; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary)[data-sheet-dragging='true'] { transition: none; }
@@ -936,3 +970,8 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .app-shell[data-page-state='loading'] .studio[data-initial-timeline='lifetime'] #lifetimeControls { display: block !important; }
 .app-shell[data-page-state='loading'] .studio:is([data-initial-timeline='transit'], [data-initial-timeline='natal-day'], [data-initial-timeline='lifetime']) .timeline-dock { display: block; }
 .app-shell[data-page-state='loading'] .studio[data-initial-timeline='none'] .timeline-dock { display: none; }
+
+/* The identity skeleton uses the ready header's two lines and measured frame. */
+.app-shell[data-page-state='loading'] .summary-chart-moment > span { position: relative; color: transparent; }
+.app-shell[data-page-state='loading'] .summary-chart-moment > span::after { content: ''; position: absolute; left: 0; top: 6px; width: 132px; max-width: 100%; height: 5px; border-radius: 2px; background: #d4d1c9; opacity: .55; }
+.app-shell[data-page-state='loading'] #summaryChartDetails::after { width: 186px; }

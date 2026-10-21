@@ -132,7 +132,7 @@ class LifetimeFileTests(unittest.TestCase):
                     before = changed
                 optional.unlink()
                 self.assertEqual(lifetime.calculation_fingerprint(), original)
-                for name in ('shared/day-packets/moment-columns.js', 'server/python/date_limits.py', 'shared/date-limits.js'):
+                for name in ('shared/day-packets/moment-columns.ts', 'server/python/date_limits.py', 'shared/date-limits.ts'):
                     with self.subTest(name=name):
                         contract = root / name
                         payload = contract.read_bytes()

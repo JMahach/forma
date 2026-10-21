@@ -95,6 +95,15 @@ class FileTests(unittest.TestCase):
     def build(self):
         return engine.prepare_index(self.path, start=self.start, end=self.end, bodies=('north_node',))
 
+    def test_typescript_attestation_accepts_only_the_reviewed_pair(self):
+        import json
+        revision = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
+        self.assertEqual(engine.provenance(), revision['to'])
+        self.assertTrue(engine.provenance_matches(revision['from'], revision['to']))
+        self.assertTrue(engine.provenance_matches(revision['to'], revision['to']))
+        self.assertFalse(engine.provenance_matches(revision['from'], 'f'*64))
+        self.assertFalse(engine.provenance_matches('b'*64, revision['to']))
+
     def test_atomic_build_idempotent_load_and_read_only_arrays(self):
         self.build()
         before = self.path.stat().st_mtime_ns

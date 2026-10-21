@@ -1,0 +1,50 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { LifetimeService } from '../services/lifetime.ts';
+import { requestSignal } from './request-signal.ts';
+import { LifetimeError } from '../services/lifetime.ts';
+import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.ts';
+
+const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+function json(res: ServerResponse, status: number, value: unknown) {
+  const body = JSON.stringify(value);
+  res.writeHead(status, { ...headers,
+    'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(body) });
+  res.end(body);
+}
+
+export function createLifetimeHandler(service?: Pick<LifetimeService, 'getMetadata' | 'getUtcMoment' | 'getMoment'>) {
+  return async function handle(req: IncomingMessage, res: ServerResponse, suppliedUrl?: URL) {
+    if (req.method !== 'GET') { res.writeHead(405, { ...headers, Allow: 'GET' }); res.end(); return; }
+    const consumer = requestSignal(req, res);
+    try {
+      if (!service) throw new LifetimeError('lifetime_unavailable', 'Данные летописи недоступны.');
+      const url = suppliedUrl || new URL(req.url!, 'http://localhost');
+      if (url.pathname === '/api/lifetime/meta') {
+        if (url.searchParams.size) throw new LifetimeError('invalid_request', 'Некорректный запрос шкалы.', 400);
+        const meta = await service.getMetadata();
+        if (!consumer.signal.aborted) json(res, 200, meta); return;
+      }
+      const exact = url.pathname === '/api/lifetime/moment';
+      if (!exact && url.pathname !== '/api/lifetime') throw new LifetimeError('not_found', 'Страница не найдена.', 404);
+      const values = url.searchParams.getAll(exact ? 'utc' : 'index');
+      const versions = url.searchParams.getAll('v');
+      if (values.length !== 1 || versions.length > 1 || url.searchParams.size !== 1 + versions.length
+          || !exact && !/^(?:0|[1-9]\d{0,15})$/.test(values[0])) {
+        throw new LifetimeError(exact ? 'invalid_utc' : 'invalid_index', 'Выберите момент в пределах шкалы.', 400);
+      }
+      const metadata = await service.getMetadata();
+      if (versions.length && (!/^[a-f0-9]{64}$/.test(versions[0]) || versions[0] !== metadata?.cacheVersion)) {
+        throw new LifetimeError('unsupported_version', 'Данные шкалы обновились. Обновите страницу.', 400);
+      }
+      const value = exact ? { version: LIFETIME_EXACT_VERSION, ...await service.getUtcMoment(values[0], { signal: consumer.signal }) }
+        : await service.getMoment(Number(values[0]), { signal: consumer.signal });
+      if (consumer.signal.aborted) return;
+      json(res, 200, value);
+    } catch (error) {
+      if (consumer.signal.aborted) return;
+      const known = error instanceof LifetimeError;
+      json(res, known ? error.status : 503, { error: known ? error.code : 'lifetime_unavailable',
+        message: known ? error.message : 'Данные летописи недоступны.' });
+    } finally { consumer.close(); }
+  };
+}

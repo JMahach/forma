@@ -1,0 +1,264 @@
+import type { CycleEvent } from '../../shared/cycles-format.ts';
+import type { ChartInput } from '../domain/chart-composition.ts';
+import type { SavedView, SavedLifetimeView, SavedReturnView } from '../data/view-store.ts';
+import type { ChartSession } from './chart-session.ts';
+import type { LiveTransit } from './live-transit.ts';
+import type { NatalDayExplorer } from './natal-day.ts';
+import type { LifetimeExplorer, LifetimeState, LifetimeTarget, MomentState } from './lifetime.ts';
+import type { ReturnsController } from './returns.ts';
+export type ChartExploration = ReturnType<typeof createChartExploration>;
+interface ExplorationOptions {
+  session: ChartSession;
+  getTransit: () => LiveTransit | null;
+  getNatalDay: () => NatalDayExplorer;
+  getLifetime: () => LifetimeExplorer | null;
+  getReturns: () => ReturnsController | null;
+  loadLifetime: () => Promise<LifetimeExplorer | null>;
+  onTimelineReady?: () => void;
+  onModeChange?: () => void;
+  onChange?: () => void;
+}
+
+import { lifeTimelineForChart } from '../domain/cycles.ts';
+
+// One owner for chart navigation and moment commands. Tools retain their
+// ranges, jobs and local cancellation; the session accepts their visible result.
+export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
+  loadLifetime, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
+  let timelineOpening: { target: LifetimeTarget } | null = null, restoreBirthBoundary: Partial<SavedLifetimeView> | false = false, returnsPreferred = false;
+  const personal = () => Boolean(getReturns()?.available);
+  const returnsEnabled = () => personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened);
+  const live = () => personal() && session.owner === 'transit';
+  // Lifetime requests must resume even before their first result. A pending or
+  // failed Return instead keeps the previously accepted preview.
+  const preview = () => personal() && ['lifetime', 'transit'].includes(session.owner === 'return' ? session.shownSource : session.owner);
+  function syncTransitWanted() {
+    const transit = getTransit();
+    if (!transit) return;
+    const wanted = session.owner === 'transit';
+    if (transit.state.wanted !== wanted) transit.setWanted(wanted);
+  }
+  function invalidateTimeline() { timelineOpening = null; restoreBirthBoundary = false; }
+  function selected() {
+    if (session.selectedId === 'current-transit') returnsPreferred = false;
+    invalidateTimeline();
+  }
+  function select(id: string) {
+    // Keep the chosen tool through unsupported charts, without opening it there
+    // or carrying another person's moment/range. Transit clears that preference.
+    returnsPreferred = id !== 'current-transit' && (returnsPreferred || returnsEnabled());
+    invalidateTimeline();
+    session.select(id);
+    if (returnsPreferred && personal()) {
+      session.showOriginal();
+      return openTimeline();
+    }
+    return getNatalDay().state.available ? getNatalDay().open() : false;
+  }
+  function openDay() {
+    returnsPreferred = false;
+    invalidateTimeline();
+    session.showOriginal('natal-day'); syncTransitWanted();
+    getReturns()?.exit(); getLifetime()?.close();
+    getNatalDay().reset();
+    return getNatalDay().open();
+  }
+  function closeScales() {
+    returnsPreferred = false;
+    invalidateTimeline();
+    if (session.selectedId === 'current-transit') session.expect('transit');
+    else session.showOriginal();
+    syncTransitWanted();
+    getReturns()?.exit(); getLifetime()?.close();
+    getNatalDay().close();
+    session.refresh(); onModeChange();
+    return false;
+  }
+  function resetMoment() {
+    invalidateTimeline();
+    session.showOriginal(getNatalDay().state.opened ? 'natal-day' : 'original');
+    syncTransitWanted();
+    getReturns()?.reset(); getNatalDay().reset();
+    const lifetime = getLifetime(), lifetimeState = lifetime?.state;
+    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' && lifetimeState.metadata) lifetime!.alignMoment(session.baseChart);
+    // Birth may already have the same UTC as the preview; still repaint its
+    // exact saved chart when child controllers have nothing left to reset.
+    session.refresh();
+  }
+  async function toggleTransit() {
+    if (session.selectedId !== 'current-transit') return false;
+    if (timelineOpening || getLifetime()?.state.opened) return closeScales();
+    const request: { target: LifetimeTarget } = { target: { opened: true, mode: 'day', fromDate: null, toDate: null } };
+    timelineOpening = request; onModeChange();
+    try {
+      const lifetime = getLifetime() || await loadLifetime();
+      if (timelineOpening !== request || !lifetime) return false;
+      await lifetime.open();
+      return timelineOpening === request && Boolean(lifetime!.state.opened);
+    } finally {
+      if (timelineOpening === request) { timelineOpening = null; onModeChange(); }
+    }
+  }
+  async function toggleReturns() {
+    if (!personal()) return false;
+    if (returnsEnabled()) return closeScales();
+    session.showOriginal();
+    return openTimeline();
+  }
+  async function openReturnsList() {
+    if (!personal()) return false;
+    const natal = session.record, returns = getReturns();
+    // Record intent before loading the timeline, so closing or changing charts
+    // during that load cannot reopen the list when it eventually completes.
+    const opening = returns!.open();
+    if (!returnsEnabled()) {
+      session.showOriginal();
+      if (!await openTimeline()) {
+        if (session.record === natal && !returnsEnabled()) returns!.close();
+        return false;
+      }
+    }
+    return opening;
+  }
+  function followNow() {
+    if (!personal()) return false;
+    invalidateTimeline();
+    session.expect('transit');
+    getReturns()!.reset();
+    void getTransit()!.goNow();
+    syncTransitWanted();
+    publishTransit();
+    onChange();
+    return true;
+  }
+  function requestReturn() {
+    restoreBirthBoundary = false; session.expect('return'); syncTransitWanted();
+    // Keep the saved rail UTC on the accepted chart as soon as this command
+    // supersedes an lifetimeState request, rather than waiting for its stale reply.
+    getLifetime()?.alignMoment(momentState()!.current);
+  }
+  function publishReturn(moment: ChartInput | null, event: CycleEvent | null) {
+    if (moment && session.publish('return', moment, event)) getLifetime()?.alignMoment(moment);
+  }
+  function publishDay() { session.publish('natal-day', getNatalDay()?.state.current); }
+  function publishTransit() {
+    session.publish('transit', getTransit()?.current);
+    if (live() && getTransit()?.current) getLifetime()?.alignMoment(getTransit()!.current);
+  }
+  function publishLifetime() {
+    const lifetime = getLifetime();
+    if (lifetime?.state.mode === 'day') publishTransit();
+    else session.publish('lifetime', lifetime?.current);
+  }
+  function beforeScrub(value: number) {
+    if (!personal()) return;
+    invalidateTimeline();
+    const lifetime = getLifetime();
+    if (lifetime!.state.mode === 'lifetime' && value <= lifetime!.state.minUtc!) {
+      resetMoment(); getReturns()!.close(); return false;
+    }
+    session.expect('lifetime'); syncTransitWanted();
+    getReturns()!.reset(); getReturns()!.close();
+  }
+  // Called by accepted open/close/range commands, and before restoring a saved
+  // global range. Ordinary loading/clock/filter notifications never navigate.
+  function acceptLifetimeMode(state: Pick<LifetimeState, 'opened' | 'mode'>) {
+    if (session.selectedId === 'current-transit') {
+      const kind = state.opened && state.mode === 'lifetime' ? 'lifetime' : 'transit';
+      session.expect(kind);
+      if (kind === 'transit') publishTransit();
+    }
+    syncTransitWanted();
+  }
+  function lifetimeChanged(state: LifetimeState) {
+    // Old saved views did not distinguish exact birth from a sampled preview.
+    // The accepted range supplies that boundary after metadata is available.
+    if (session.selectedId !== 'current-transit' && restoreBirthBoundary
+        && state.opened && state.mode === 'lifetime' && state.metadata && state.minUtc !== null) {
+      const target = restoreBirthBoundary, birth = Date.parse(session.record!.utc!);
+      restoreBirthBoundary = false;
+      const atBirth = Number.isSafeInteger(target.index)
+        ? target.index === Math.round((birth - Date.parse(state.metadata.startUtc)) / (state.metadata.stepSeconds * 1000))
+        : (target.requestedUtc ?? state.requestedUtc) === birth;
+      if (state.minUtc === birth && atBirth) session.showOriginal();
+    }
+  }
+  function restorePreview(value: boolean | undefined, target: Partial<SavedLifetimeView> = {}) {
+    if (session.owner === 'return' || live()) return;
+    restoreBirthBoundary = value === undefined ? target : false;
+    if (value !== false) session.expect('lifetime');
+    else session.showOriginal();
+  }
+  function restoreLive(value: boolean) { if (value) followNow(); }
+  function momentState(): MomentState | null | undefined {
+    if (session.owner === 'return') {
+      const accepted = session.current;
+      return { current: accepted.secondary || accepted.primary, status: 'ready', live: false };
+    }
+    if (live()) return getTransit()?.state;
+    if (personal() && session.owner === 'original')
+      return { current: session.baseChart, status: 'ready', live: false };
+    return null;
+  }
+  async function openTimeline() {
+    if (!personal()) return false;
+    const natal = session.record, span = lifeTimelineForChart(natal);
+    if (!span) return false;
+    returnsPreferred = true;
+    const shown = session.current;
+    const request: { target: LifetimeTarget } = { target: { opened: true, mode: 'lifetime', ...span, minimumUtc: natal!.utc!,
+      requestedUtc: live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc! : natal!.utc!),
+      personalPreview: preview(), personalLive: live() } };
+    const valid = () => timelineOpening === request;
+    timelineOpening = request;
+    getNatalDay().close();
+    getReturns()!.enableMarkers(true);
+    onModeChange();
+    try {
+      const controller = getLifetime() || await loadLifetime();
+      if (!controller || !valid()) return false;
+      const shown = session.current;
+      const start = live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc! : natal!.utc!);
+      const restored = await controller.restore({ opened: true, mode: 'lifetime', ...span, minimumUtc: natal!.utc!, requestedUtc: start });
+      if (!valid() || !restored) return false;
+      onTimelineReady(); return true;
+    } catch { return false; }
+    finally {
+      if (valid()) { timelineOpening = null; onModeChange(); }
+    }
+  }
+  function finishRestore({ saved, pendingLifetime, pendingReturns, interrupted }: { saved: Partial<SavedView> | null; pendingLifetime: SavedLifetimeView | null; pendingReturns: SavedReturnView | null; interrupted: boolean }) {
+    if (interrupted || !personal()) return;
+    const lifetimeState = getLifetime()?.state;
+    returnsPreferred = Boolean(lifetimeState?.opened && lifetimeState.mode === 'lifetime'
+      || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime');
+    if (returnsPreferred) {
+      const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns()!.selectedEvent);
+      if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.baseChart); }
+      else if (session.owner !== 'return' && !live()) {
+        const atBirth = lifetimeState?.metadata && lifetimeState.requestedUtc === lifetimeState.minUtc
+          && lifetimeState.minUtc === Date.parse(session.record!.utc!);
+        if (!atBirth && saved?.lifetime?.personalPreview !== false) {
+          session.expect('lifetime'); publishLifetime();
+        }
+      }
+      getReturns()!.enableMarkers(true); session.refresh();
+    } else {
+      const savedClosed = saved?.selectedId === session.selectedId && saved?.natalDay?.opened === false;
+      if (!savedClosed && !getNatalDay().state.opened && session.current.kind !== 'return' && !getReturns()!.opened && !timelineOpening)
+        return getNatalDay().open();
+    }
+    syncTransitWanted();
+  }
+  return { select, selected, openDay, closeScales, resetMoment, toggleTransit, toggleReturns, openReturnsList,
+    toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
+    // The accepted opening exists before the lazy controller. Once its state
+    // opens, that controller owns the actual range and moment for persistence.
+    get pendingTimeline() { return timelineOpening?.target && !getLifetime()?.state.opened ? { ...timelineOpening.target } : null; },
+    get returnsEnabled() { return returnsEnabled(); },
+    get transitEnabled() { return session.selectedId === 'current-transit' && Boolean(timelineOpening || getLifetime()?.state.opened); },
+    followNow, requestReturn, publishReturn, publishDay,
+    publishTransit, publishLifetime, beforeScrub, acceptLifetimeMode, lifetimeChanged, restorePreview, restoreLive,
+    momentState, openTimeline, finishRestore, invalidateTimeline,
+    get live() { return live(); }, get preview() { return preview(); } };
+}
