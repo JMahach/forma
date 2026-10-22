@@ -858,51 +858,24 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
   .workspace-page .knowledge-article { padding: 16px 12px; }
 }
 
-/* A single mobile sheet behaviour; desktop keeps its existing flex children. */
-.phone-sheet-handle { display: none; }
-.phone-sheet-content { display: contents; }
+/* Phone drawers share the left navigation's width, height and motion. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) {
+  position: fixed; top: 0; bottom: 0; width: min(var(--side-panel-width), 86vw); height: auto; max-height: none;
+  border-radius: 0; overflow: hidden; overscroll-behavior: contain;
+  transition: transform .26s cubic-bezier(.22,.8,.25,1), visibility 0s linear .26s;
+}
 .app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary {
-  --summary-edge: 28px;
-  --summary-moment-height: 68px;
-  --phone-sheet-offset: var(--phone-viewport-lift, 0px);
-  position: fixed; top: auto; left: 0; right: 0; bottom: var(--phone-sheet-offset);
-  scroll-padding-top: max(64px, calc(env(safe-area-inset-top) + 64px));
-  width: auto; height: var(--phone-sheet-height, min(52dvh, calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)))));
-  max-height: calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)));
-  padding: 0; border: 0; border-radius: 30px 30px 0 0;
-  background: var(--panel-surface); box-shadow: inset 0 1px var(--panel-border), 0 -4px 20px #3028240a;
-  transform: translateY(calc(100% + var(--phone-sheet-offset) + 24px));
-  overflow: visible; overscroll-behavior: contain;
-  transition: transform .28s cubic-bezier(.22,.8,.25,1), height .28s cubic-bezier(.22,1,.36,1), visibility 0s linear .28s;
+  --summary-edge: 16px; --summary-moment-height: 68px;
+  left: auto; right: 0; z-index: 92; padding: 0 16px max(16px, env(safe-area-inset-bottom));
+  overflow-y: auto; scrollbar-width: thin;
+  border: 0; border-left: 1px solid var(--panel-border); background: var(--panel-surface);
+  box-shadow: -6px 0 22px #30282414; transform: translateX(100%);
 }
-.app-shell:has(.canvas-wrap[data-layout='phone']):has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden])) .chart-summary {
-  --phone-sheet-offset: var(--phone-sheet-bottom, 36.6px);
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary.open { transform: translateY(0); transition-delay: 0s; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-dragging='true'] { transition: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle {
-  display: grid; place-items: center; flex: none; width: 100%; height: 44px; min-height: 44px; margin-top: -12px;
-  border-radius: 16px 16px 0 0; padding: 0; background: transparent; touch-action: none; cursor: ns-resize;
-}
-.phone-sheet-handle > span { width: 32px; height: 3px; border-radius: 2px; background: #b3aca2; }
-.phone-sheet-handle:focus-visible { outline: none; }
-.phone-sheet-handle:focus-visible > span { outline: 1px dashed var(--control-focus); outline-offset: 4px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-content {
-  display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; overscroll-behavior: contain;
-  scrollbar-width: thin; touch-action: pan-y;
-  padding: 0 max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary.open { transform: translateX(0); transition-delay: 0s; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary::before { display: none; }
-/* The touch clearance stays opaque without intercepting the slider above it. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary::after {
-  content: ''; position: absolute; top: 100%; left: 0; right: 0;
-  height: var(--phone-sheet-clearance-gap, 0px); background: var(--panel-surface); pointer-events: none;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']):not(:has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden]))) .chart-summary::after { display: none; }
-body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backdrop) { display: none; }
-/* Navigation keeps the desktop composition on phones as well. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-screen { flex: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .returns-panel { padding: 0; flex: 1; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .returns-panel { padding: 0; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .returns-header { height: var(--side-section-heading-height); }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .returns-screen-heading { padding-right: var(--side-menu-control-size); }
 @media (prefers-reduced-motion: reduce) {
   .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) { transition: none; }
 }
@@ -1015,45 +988,36 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
 .summary-title:has(.summary-comparison:not([hidden])) .summary-chart-moment > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .summary-title::after, .summary-title:has(.summary-comparison:not([hidden])) .summary-moment-primary::after { content: ''; position: absolute; bottom: 0; left: calc(-1 * var(--summary-edge, 23px)); right: calc(-1 * var(--summary-edge, 23px)); height: 1px; background: var(--panel-border); }
 .summary-junction { position: absolute; z-index: 1; top: -11px; left: 0; right: 0; display: flex; align-items: center; justify-content: center; height: 22px; }
-.studio:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open[data-screen='summary']:not([data-sheet-size='collapsed'])) > .studio-header { opacity: 0; pointer-events: none; }
+.studio:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open[data-screen='summary']) > .studio-header { opacity: 0; pointer-events: none; }
 .app-shell[data-page-state='loading'] #chartSummary .summary-screen { opacity: 1; }
 .app-shell[data-page-state='loading'] .summary-screen > :not(.summary-heading) { opacity: 0; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .timeline-dock { border-top: 1px solid var(--panel-muted); }
 
-/* The small grip is backed by the full touch target. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary .phone-sheet-content { transition: visibility 0s; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-size='collapsed']:not([data-sheet-dragging='true']) .phone-sheet-content { visibility: hidden; transition-delay: .28s; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle > span { transition: width .16s ease-out, background .16s ease-out; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle:active > span,
-.app-shell:has(.canvas-wrap[data-layout='phone']) [data-sheet-dragging='true'] > .phone-sheet-handle > span { width: 40px; background: var(--panel-muted); }
 .app-shell[data-page-state='loading'] .summary-moment-heading > :is(.summary-chart-title, .summary-comparison-title) { position: relative; color: transparent; }
 .app-shell[data-page-state='loading'] .summary-moment-heading > :is(.summary-chart-title, .summary-comparison-title)::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 7px; transform: translateY(-50%); border-radius: 2px; background: var(--loading-ink); }
 
-/* Phone: navigation comes from the left; chart information comes from below. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-switch { display: none; }
+/* The two large round controls stay at the outer edges of the drawers. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-switch { position: relative; pointer-events: auto; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .topbar { top: var(--side-section-control-top); left: 16px; right: auto; width: var(--side-menu-control-size); z-index: 93; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-tools { left: auto; right: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-tools {
+  top: var(--side-section-control-top); left: auto; right: 16px; height: var(--side-menu-control-size); z-index: 93; pointer-events: none;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-view-tools { display: flex; gap: var(--chart-control-gap); pointer-events: auto; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library {
-  position: fixed; inset: 0 auto 0 0; width: min(var(--side-panel-width), 86vw); height: auto; max-height: none;
-  border: 0; border-right: 1px solid var(--panel-border); border-radius: 0; padding: calc(var(--side-section-heading-height) + 16px) 16px max(16px, env(safe-area-inset-bottom)); background: var(--panel-surface);
-  transform: translateX(-100%); overflow: hidden; z-index: 92; box-shadow: 6px 0 22px #30282414;
-  transition: transform .26s cubic-bezier(.22,.8,.25,1), visibility 0s linear .26s;
+  left: 0; right: auto; border: 0; border-right: 1px solid var(--panel-border);
+  padding: calc(var(--side-section-heading-height) + 16px) 16px max(16px, env(safe-area-inset-bottom));
+  background: var(--panel-surface); transform: translateX(-100%); z-index: 92; box-shadow: 6px 0 22px #30282414;
 }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library.open { transform: translateX(0); transition-delay: 0s; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library > .phone-sheet-handle { display: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library > .phone-sheet-content { padding: 0; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library .saved-charts { min-height: 180px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-size='collapsed']:not([data-sheet-dragging='true']) { overflow: visible; }
-@media (prefers-reduced-motion: reduce) {
-  .app-shell:has(.canvas-wrap[data-layout='phone']) .library { transition: none; }
-}
-
 .app-shell:has(.canvas-wrap[data-layout='phone']) .library::before { background: transparent; }
 .app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .chart-tools,
-.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .performance-panel { visibility: hidden; pointer-events: none; }
-
-/* Navigation floats above the still-visible information sheet. */
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .performance-panel,
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open) .topbar,
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open) .chart-view-tools,
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open) .performance-panel { visibility: hidden; pointer-events: none; }
 body:has(.canvas-wrap[data-layout='phone']) .mobile-backdrop:not([hidden]) { display: block; left: min(var(--side-panel-width), 86vw); background: transparent; z-index: 91; }
+body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { display: block; right: min(var(--side-panel-width), 86vw); z-index: 91; }
 
 /* Two compact actions share the identity row; feedback floats beneath it. */
 .app-shell .summary-title:not(:has(.summary-comparison:not([hidden]))) .summary-chart-moment { flex-wrap: nowrap; white-space: nowrap; }
@@ -1065,7 +1029,6 @@ body:has(.canvas-wrap[data-layout='phone']) .mobile-backdrop:not([hidden]) { dis
 .app-shell:has(.canvas-wrap[data-layout='phone']) .summary-chart-moment { margin-top: 2px; }
 .app-shell .summary-heading > .summary-action { width: 100%; margin: 0; border: 0; min-height: 32px; font-size: 12px; }
 .app-shell[data-page-state='loading'] .summary-heading > .summary-action { opacity: 0; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) { .app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary .phone-sheet-content { transition-delay: 0s; } }
 .summary-comparison-reset { position: absolute; top: -11px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; background: transparent; color: var(--panel-muted); cursor: pointer; }
 .summary-comparison-reset svg { width: 16px; height: 16px; padding: 0 7px; box-sizing: content-box; color: inherit; background: var(--panel-surface); }
 .summary-comparison-reset:focus-visible { outline: none; }
@@ -1144,33 +1107,6 @@ body:has(.canvas-wrap[data-layout='phone']) .mobile-backdrop:not([hidden]) { dis
 @media (pointer: coarse) {
   .app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-send { width: 44px; height: 44px; min-height: 44px; }
 }
-
-/* Accepted phone sheet: one left edge, shared content and actions with desktop. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary > .phone-sheet-handle > span {
-  width: 36px; height: 4px; border-radius: 4px; background: var(--panel-muted);
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary > .phone-sheet-content {
-  padding-inline: max(28px, env(safe-area-inset-left)) max(28px, env(safe-area-inset-right));
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading > h2 {
-  height: 35px; margin: 0; padding: 0 0 11px; border: 0;
-  background: transparent;
-  font: 600 18px/24px var(--sans); letter-spacing: -.3px;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) {
-  width: 100%; max-width: 100%; left: auto; transform: none;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-moment-primary {
-  padding: 7px 0 16px;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-moment-heading {
-  min-height: 36px; gap: 2px;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment {
-  margin-top: 2px; gap: 2px 16px;
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment::before { margin-left: -16px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) :is(#summaryChartDetails, #summaryChartUtc) { line-height: 16px; }
 
 /* The add action shares the quiet link treatment; its slot survives hiding. */
 .app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-add {

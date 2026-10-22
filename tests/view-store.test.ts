@@ -232,16 +232,13 @@ test('workspace screen shares the existing tab snapshot and validates legacy and
 });
 
 
-test('phone sheet height shares the tab snapshot and accepts only settled modes', () => {
+test('retired phone sheet heights are ignored without losing the saved view', () => {
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
-  for (const phoneSheetMode of ['collapsed', 'medium', 'expanded'] as const) {
-    store.write({ ...snapshot, phoneSheetMode });
-    assert.equal(createViewStore({ getStorage: () => storage }).read()!.phoneSheetMode, phoneSheetMode);
+  for (const phoneSheetMode of ['collapsed', 'medium', 'expanded', null]) {
+    storage.setItem(VIEW_STORAGE_KEY, JSON.stringify({ ...snapshot, phoneSheetMode }));
+    assert.deepEqual(store.read(), snapshot);
+    store.write({ ...store.read()!, panels: { left: false, right: true } });
+    assert.equal('phoneSheetMode' in JSON.parse(storage.getItem(VIEW_STORAGE_KEY)!), false);
   }
-  for (const phoneSheetMode of [undefined, null, 'open', 532, { height: 532 }] as const) {
-    store.write({ ...snapshot, phoneSheetMode });
-    assert.equal(store.read()!.phoneSheetMode, undefined);
-    assert.equal(store.read()!.selectedId, snapshot.selectedId, 'bad sheet state does not discard the saved chart');
-  }
-  assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY], 'sheet height uses the existing tab record');
+  assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY]);
 });

@@ -5,7 +5,6 @@ interface PlanetTargetInput {
   id: string;
   symbol: string;
   label: string;
-  title?: string;
   color?: string;
   enabled?: boolean;
   available?: boolean;
@@ -47,16 +46,15 @@ const attributes = (values: Record<string, AttributeValue>) => Object.entries(va
   .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
 
 export function renderPlanetTarget(model: PlanetTarget) {
-  return `<g${attributes(targetAttributes(model))}>${model.title ? `<title>${esc(model.title)}</title>` : ''}
+  return `<g${attributes(targetAttributes(model))}>
     <rect${attributes(rectAttributes(model))}/><text${attributes(glyphAttributes(model))}>${esc(model.symbol)}</text></g>`;
 }
 export function capturePlanetTarget(node: SVGElement) {
-  return { node, rect: node.querySelector('rect')!, glyph: node.querySelector('text')!, title: node.querySelector('title') };
+  return { node, rect: node.querySelector('rect')!, glyph: node.querySelector('text')! };
 }
 export function updatePlanetTarget(record: ReturnType<typeof capturePlanetTarget>, model: PlanetTarget) {
   setAttributes(record.node, targetAttributes(model));
   setAttributes(record.rect, rectAttributes(model));
   setAttributes(record.glyph, glyphAttributes(model));
   if (record.glyph.textContent !== model.symbol) record.glyph.textContent = model.symbol;
-  if (record.title && record.title.textContent !== model.title) record.title.textContent = model.title!;
 }

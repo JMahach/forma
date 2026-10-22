@@ -247,7 +247,7 @@ test('controls distinguish repeated local minutes by offset and select the origi
   assert.equal(h.explorer.current, baseChart);
 
   assert.equal(h.retryButton.hidden, true);
-  assert.equal(h.retryButton.title, 'Повторить загрузку дня рождения');
+  assert.equal(h.retryButton.title, '');
   assert.equal(h.marker.style.left, reference);
   h.range.value = '149'; h.range.dispatch('input');
   h.marker.dispatch('click');
@@ -469,5 +469,5 @@ test('personal scrubbing keeps real graph pins, camera transform and saved stora
 test('birth reference tooltip describes the saved chart time', async () => {
   const h = uiHarness(async () => natalDayFixture());
   h.explorer.select(personalChartFixture()); await h.explorer.open();
-  assert.equal(h.marker.title, 'Сохраненное время карты');
+  assert.equal(h.marker.title, 'Время рождения');
 });

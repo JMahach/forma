@@ -1118,7 +1118,7 @@ async function openedReturnsHarness(width: number, navigationOpen = false) {
   return { h, chart, event, exact };
 }
 
-for (const [width, phone, placement, navigationOpen] of [[390, true, 'sheet', false], [760, false, 'sheet', true], [1400, false, 'side', false]] as const) {
+for (const [width, phone, placement, navigationOpen] of [[390, true, 'side', false], [760, false, 'sheet', true], [1400, false, 'side', false]] as const) {
   test(`returns list choices retain the open ${phone ? 'phone' : 'desktop'} ${placement} at width ${width}`, async () => {
     const { h, chart, event, exact } = await openedReturnsHarness(width, navigationOpen);
     assert.equal(h.layout.phone, phone);

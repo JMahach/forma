@@ -50,7 +50,6 @@ function captureColumn(node: SVGElement) {
 function updatePlanetFilter(control: Element, checked: boolean | 'mixed', name: string) {
   setAttribute(control, 'aria-checked', checked);
   setAttribute(control, 'aria-label', name);
-  text(control.querySelector('title')!, name);
   setAttributes(control.querySelector('.activation-planet-filter-mark'), { d: planetFilterMark(checked), opacity: checked === false ? 0 : 1 });
 }
 

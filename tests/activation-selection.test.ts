@@ -2,7 +2,7 @@ import type { SelectionTarget } from '../src/selection/selection-targets.ts';
 import type { ChartView } from '../src/domain/chart-composition.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderActivationColumns } from '../src/scene/activation-columns.ts';
+import { renderActivationColumns, renderPlanetFilterControl } from '../src/scene/activation-columns.ts';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
 
 const chart = {
@@ -70,4 +70,18 @@ test('direct activation rendering keeps committed and preview inputs immutable',
   assert.deepEqual([...selectedGates], [8]);
   assert.deepEqual([...previewGates], [29]);
   assert.equal(JSON.stringify(chart), before);
+});
+
+test('planet controls keep accessible names without rejected hover captions', () => {
+  const markup = render([]);
+  const planets = [...markup.matchAll(/<g[^>]*data-type="planet"[^>]*>[\s\S]*?<\/g>/g)];
+  assert.ok(planets.length > 0);
+  for (const [planet] of planets) {
+    assert.match(planet, /aria-label="[^"]+"/);
+    assert.doesNotMatch(planet, /<title>/);
+  }
+  const group = renderPlanetFilterControl('design:all', 'Дизайн, все планеты', false);
+  assert.match(group, /aria-label="Дизайн, все планеты"/);
+  assert.match(group, /role="checkbox"/);
+  assert.doesNotMatch(group, /<title>/);
 });

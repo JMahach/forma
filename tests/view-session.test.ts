@@ -13,7 +13,6 @@ interface HarnessOptions {
   loadLifetime?: ViewOptions['loadLifetime'] | null; canRestoreLifetime?: ViewOptions['canRestoreLifetime'] | null;
   returnsClient?: TestReturnsOptions['client'] | null; panelView?: boolean; openReturnsTimeline?: ViewOptions['openReturnsTimeline'];
   getNow?: () => number; zone?: string; cameraRestored?: boolean;
-  getPhoneSheetMode?: ViewOptions['getPhoneSheetMode'];
   normalizeSavedView?: (saved: ReturnType<ReturnType<typeof createViewStore>['read']>) => Partial<SavedView> | null;
   lifetimeClient?: TestLifetimeOptions['client'];
 }
@@ -71,7 +70,7 @@ const point = (index: number, source = metadata) => {
 };
 function harness(storage = new Map<string, string>(), { size = 1000, transitDay = async (date: string) => day(date), loadLifetime = null, canRestoreLifetime = null,
     returnsClient = null, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
-    zone = 'UTC', cameraRestored = false, getPhoneSheetMode, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
+    zone = 'UTC', cameraRestored = false, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
   const frames: (string|undefined)[] = [], writes: [string, string][] = [], pending = new Map<number, () => void>(), attributes: Record<string, string> = {}, styles = new Map<string, string>();
   const storagePort = { getItem: (key: string) => storage.get(key) ?? null,
     setItem(key: string, value: string) { storage.set(key, value); writes.push([key, value]); } };
@@ -118,7 +117,7 @@ function harness(storage = new Map<string, string>(), { size = 1000, transitDay 
   const eventTarget = events(), interactionTarget = events(), cameraSurface = events();
   let counter = 0;
   const savedView = normalizeSavedView(viewStore.read());
-  view = createViewSession({ panels, workspace, getPhoneSheetMode, store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, cameraRestored, transit, natalDay,
+  view = createViewSession({ panels, workspace, store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, cameraRestored, transit, natalDay,
     ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline,
     planetFilter: planets, getReturns: () => returns, getLifetime: () => lifetime, loadLifetime: loadLifetime || (async () => ensureLifetime()), eventTarget: eventTarget as unknown as EventTarget, interactionTarget: interactionTarget as unknown as EventTarget & { hidden: boolean },
     acceptLifetimeMode: exploration.acceptLifetimeMode,
@@ -1341,21 +1340,4 @@ test('legacy Returns snapshots without panel visibility still restore their open
   assert.equal(await second.view.restore(), true);
   assert.equal(second.summary!.screen, 'returns');
   assert.equal(second.returns.state.selectedEvent!.id, first.returnEvent.id);
-});
-
-
-test('sheet height changes retain the same snapshot of camera, panels, moment and exploration', async t => {
-  let mode: SavedView['phoneSheetMode'] = 'medium';
-  const h = harness(undefined, { getPhoneSheetMode: () => mode });
-  t.after(() => h.transit.stop());
-  await h.view.restore();
-  h.panels.setLeft(true); h.panels.setRight(true);
-  h.mandala.setEnabled(true, { animate: false }); h.camera.zoom(2); h.transit.scrub(400);
-  h.view.flush();
-  const before = JSON.parse(h.storage.get('liniya.view.v1')!);
-  for (const next of ['expanded', 'collapsed', 'medium'] as const) {
-    mode = next; h.view.flush();
-    assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!), { ...before, phoneSheetMode: next },
-      'only the sheet mode changes; accepted moments and other presentation remain intact');
-  }
 });

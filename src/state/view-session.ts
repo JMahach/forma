@@ -20,7 +20,6 @@ interface ViewSessionOptions {
   cameraRestored?: boolean;
   panels?: PanelState;
   workspace?: WorkspaceState;
-  getPhoneSheetMode?: () => SavedView['phoneSheetMode'];
   transit: LiveTransit;
   natalDay: NatalDayExplorer;
   planetFilter: TransitPlanetFilter;
@@ -47,7 +46,7 @@ import { resolveSelectedChartId } from './chart-session.ts';
 // One restoration transaction connects existing state owners. Initialization
 // cannot overwrite the previous page; explicit moment commands supersede pending work.
 export function createViewSession({
-  store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, getPhoneSheetMode = () => undefined, transit, natalDay, planetFilter,
+  store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
   getLifetimeIntent = () => null,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
@@ -89,9 +88,7 @@ export function createViewSession({
   }
   function presentationSnapshot() {
     const view = camera.getView(), home = camera.getFittedView();
-    const phoneSheetMode = getPhoneSheetMode() ?? saved?.phoneSheetMode;
     return {
-      ...(phoneSheetMode ? { phoneSheetMode } : {}),
       mandala: mandala.enabled,
       ...(panels ? { panels: panels.snapshot } : {}),
       ...(workspace ? { workspace: workspace.snapshot } : {}),

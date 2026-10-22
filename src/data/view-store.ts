@@ -1,5 +1,4 @@
 import type { SavedCameraPosition } from '../scene/camera.ts';
-import type { SheetMode } from '../ui/phone-sheet.ts';
 export interface SavedReturnView { opened: boolean; year: number | null; bodies: string[]; eventId: string | null }
 export interface SavedLifetimeView {
   opened: true;
@@ -20,7 +19,6 @@ export interface SavedView {
   mandala: boolean;
   workspace?: 'chart' | 'library' | 'charts' | 'account';
   panels?: { left: boolean; right: boolean };
-  phoneSheetMode?: SheetMode;
   camera: SavedCameraPosition | null;
   lifetime: SavedLifetimeView | null;
   transit: { live: boolean; date: string; timeZone: string; index: number } | null;
@@ -75,7 +73,6 @@ function normalize(input: unknown): SavedView | null {
     ...(returnView ? { returns: returnView } : {}),
     selectedId: typeof value.selectedId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.selectedId) ? value.selectedId : 'current-transit',
     mandala: value.mandala === true,
-    ...(['collapsed', 'medium', 'expanded'].includes(value.phoneSheetMode!) ? { phoneSheetMode: value.phoneSheetMode } : {}),
     ...(['chart', 'library', 'charts', 'account'].includes(value.workspace!) ? { workspace: value.workspace } : {}),
     ...(object(panels) && typeof panels.left === 'boolean' && typeof panels.right === 'boolean'
       ? { panels: { left: panels.left, right: panels.right } } : {}),

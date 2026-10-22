@@ -140,7 +140,6 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/ui/html.ts',
     'src/ui/studio-presentation.ts',
     'src/ui/page-gestures.ts',
-    'src/ui/phone-sheet.ts',
     'src/ui/telegram-gestures.ts',
     'src/ui/toast.ts',
     'src/views/activation-details.ts',

@@ -28,7 +28,6 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     retryButton.hidden = state.status !== 'error';
     retryButton.disabled = state.status === 'loading';
     setText(retryButton, 'Повторить');
-    retryButton.title = 'Повторить загрузку дня рождения';
     setText(status, state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '');
     const chart = state.current;
     const date = chart?.localDate ? formatDateInput(chart.localDate) : '';
@@ -38,7 +37,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     // Saved UTC identifies the original fold, independently of the preview.
     dayRange.updateReference({ value: state.referenceIndex,
       visible: state.opened && state.status === 'ready' && Boolean(state.day),
-      label: 'Вернуться к сохранённому времени рождения', title: 'Сохраненное время карты', active: isReferenceMoment(state.current?.utc, state.original?.utc) });
+      label: 'Вернуться к сохранённому времени рождения', title: 'Время рождения', active: isReferenceMoment(state.current?.utc, state.original?.utc) });
     const offset = chart?.utcOffset || '';
     const clock = state.exactOriginal ? savedBirthTime(state.original) : chart?.localTime || '';
     const zone = chart?.timezone || state.day?.timezone || '';

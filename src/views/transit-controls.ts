@@ -29,7 +29,6 @@ export function attachTransitControls({ panel, range, status, retryButton, hourM
     retryButton.hidden = state.status !== 'error';
     retryButton.disabled = state.status === 'loading';
     setText(retryButton, 'Повторить');
-    retryButton.title = 'Повторить загрузку текущего дня';
     setText(status, state.status === 'loading' ? 'Загружаем день…' : state.status === 'error' ? 'День не загрузился' : '');
     timelineMarks.day(state.timeline, state.timeline?.minutes, (day, index) => formatTimelineMinute(day, index).time);
     if (state.timeline) {

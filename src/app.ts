@@ -19,7 +19,6 @@ interface AppOptions {
   store: ChartStore; libraryView: ChartLibraryView; camera: Camera;
   cameraView: ReturnType<typeof createCameraView>; gestures?: Gestures | null;
   initialPresentation?: StudioPresentation | null; releaseLoadingContent?: (() => void) | null;
-  getPhoneSheetMode?: () => SavedView['phoneSheetMode'];
 }
 
 import { attachKnowledgeEntry } from './views/knowledge-entry.ts';
@@ -58,7 +57,7 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null, getPhoneSheetMode }: AppOptions) {
+export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
   const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
   attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]);
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
@@ -430,7 +429,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     minimumUtc: savedChart!.utc!, mode: 'lifetime' as const, openEnded: false } } : savedView;
   viewSession = createViewSession({
     store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
-    mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, getPhoneSheetMode, transit, natalDay: natalDay, planetFilter: transitPlanets,
+    mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getPersonalPreview: () => returns!.available ? exploration!.preview : undefined,
     getPersonalLive: () => returns!.available ? exploration!.live : undefined,
     restorePersonalPreview: exploration!.restorePreview,

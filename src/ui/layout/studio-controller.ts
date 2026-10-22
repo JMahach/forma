@@ -10,7 +10,7 @@ interface StudioLayoutOptions {
 
 import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, computeSidePanelLayout, computeTimelineDock } from './studio.ts';
 import { createViewport } from './viewport.ts';
-import { applyTimelineMetrics, TIMELINE_THUMB_SIZE } from './metrics.ts';
+import { applyTimelineMetrics } from './metrics.ts';
 
 // Phone chrome is presentation, not a branch in camera or chart geometry.
 export const PHONE_LAYOUT_QUERY = '(max-width: 699px), (pointer: coarse) and (max-width: 1099px) and (max-height: 500px)';
@@ -46,21 +46,13 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
   const phone = () => media.matches;
   let current: ReturnType<typeof computeStudioLayout>, dock: ReturnType<typeof computeTimelineDock>, sideInsets: ReturnType<typeof computeSidePanelLayout>, appliedPhone: boolean | undefined;
   const viewportSubscribers = new Set<() => void>();
-  let timelineHitOutset = 0;
   function applyViewport(visible: ViewportBounds) {
     const full = studio.getBoundingClientRect();
     const bottom = full.bottom ?? (full.top || 0) + full.height;
     const lift = Math.max(0, Math.min(full.height, bottom - visible.top - visible.height));
     studio.style?.setProperty('--timeline-viewport-lift', `${lift}px`);
     studio.style?.setProperty('--timeline-dock-top', `${bottom - lift - dock.backingHeight}px`);
-    studio.parentElement?.style?.setProperty('--phone-viewport-lift', `${lift}px`);
     studio.parentElement?.style?.setProperty('--timeline-panels-bottom', `${Math.max(0, lift + dock.backingHeight)}px`);
-    // A thin backing does not contain the slider's full touch target. The sheet
-    // clears both that target and the floating dates; desktop keeps its rail edge.
-    const sliderTop = dock.rail.y + dock.rail.height - TIMELINE_THUMB_SIZE - timelineHitOutset;
-    const sheetClearance = Math.max(dock.height, full.height - Math.min(dock.rail.y, sliderTop));
-    studio.parentElement?.style?.setProperty('--phone-sheet-bottom', `${Math.max(0, lift + sheetClearance)}px`);
-    studio.parentElement?.style?.setProperty('--phone-sheet-clearance-gap', `${Math.max(0, sheetClearance - dock.height)}px`);
     // Popup anchors are measured only after the dock has accepted its position.
     for (const notify of [...viewportSubscribers]) notify();
   }
@@ -74,7 +66,6 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
       onPhoneLayout(isPhone);
     }
     const style = readStyle(canvas);
-    timelineHitOutset = Math.max(0, parseFloat(style.getPropertyValue('--timeline-hit-outset')) || 0);
     const full = studio.getBoundingClientRect();
     const safeInset = parseFloat(style.getPropertyValue('--timeline-safe-bottom')) || 0;
     const safeBottom = Math.max(safeInset, parseFloat(style.getPropertyValue('--timeline-edge-space')) || 0);
@@ -90,7 +81,7 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
     studio.style?.setProperty('--studio-left-space', `${sideInsets.left}px`);
     studio.style?.setProperty('--studio-right-space', `${sideInsets.right}px`);
     if (studio.dataset.panelsLayout !== sideInsets.mode) studio.dataset.panelsLayout = sideInsets.mode;
-    const placement = sideInsets.mode === 'side' ? 'side' : 'sheet';
+    const placement = isPhone || sideInsets.mode === 'side' ? 'side' : 'sheet';
     if (studio.dataset.returnsLayout !== placement) studio.dataset.returnsLayout = placement;
     // Placement changes the canvas width. Measure after its CSS is applied.
     const rect = canvas.getBoundingClientRect();

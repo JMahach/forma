@@ -7,7 +7,6 @@ import { attachGestures } from '../src/scene/gestures.ts';
 import { attachCameraControls } from '../src/views/camera-controls.ts';
 import { attachLoadingPreview } from '../src/views/loading-preview.ts';
 import { lifeTimelineForChart } from '../src/domain/cycles.ts';
-import { attachPhoneSheets } from '../src/ui/phone-sheet.ts';
 import { createViewStore } from '../src/data/view-store.ts';
 import { attachPageGestures } from '../src/ui/page-gestures.ts';
 import { createPanelState } from '../src/state/panels.ts';
@@ -33,21 +32,20 @@ type StartupPorts = Parameters<typeof import('../src/app.ts').startApp>[0];
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'attachPhoneSheets', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
+  'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
 function tabStorage() {
   const values = new Map();
   return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, String(value)), removeItem: (key: string) => values.delete(key) };
 }
-const runWithSheets = (attachSheets, ...args) => {
+const run = (...args) => {
   const storage = args[10] ?? tabStorage();
   args.length = 10;
   args[9] = { ...args[9], href: args[9]?.href || 'http://localhost:3636/' };
   const attachPreview = (options: { button: HTMLButtonElement; location: Pick<Location,"href"|"reload">; getStorage?: () => Storage; beforeNavigate?: () => void; }) => attachLoadingPreview({ ...options, getStorage: () => storage });
-  return evaluate(attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, attachSheets, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), ...args);
 };
 
-const run = (...args) => runWithSheets(attachPhoneSheets, ...args);
 
 function startupDocument(overrides = {}) {
   const library = libraryDom();
@@ -108,12 +106,6 @@ function startupDocument(overrides = {}) {
     viewBox: { baseVal: { x: 0, y: 0, width: 640, height: 820 } },
     preserveAspectRatio: { baseVal: { align: 6, meetOrSlice: 1 } },
   });
-  for (const [panelId, handleId, contentId] of [['library', 'librarySheetHandle', 'librarySheetContent'], ['chartSummary', 'summarySheetHandle', 'summarySheetContent']] as const) {
-    const panel = element(panelId), content = element(contentId);
-    content.parentElement = panel;
-    element(handleId).parentElement = panel;
-    panel.querySelector = (selector: string) => selector === '.phone-sheet-content' ? content : null;
-  }
   element('summaryChartCaption').parentElement = element('summaryHeading');
   element('lifetimeControls').querySelector = (selector: string) => selector === '.lifetime-heading' ? element('lifetimeHeading') : null;
   element('canvasWrap').parentElement = element('studio');
@@ -154,7 +146,7 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     assert.equal(options!.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options!.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
-    const { panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, getPhoneSheetMode, ...existingPorts } = received;
+    const { panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, ...existingPorts } = received;
     assert.deepEqual(existingPorts, { dayClient: client, layout, toast, viewStore, savedView });
   }
 });
@@ -211,13 +203,13 @@ test('saved panel space and visible shells are restored before the application i
     });
     assert.equal(initial!.left, left, 'the navigation is present while app.ts is still loading');
     assert.equal(initial!.studioInert, Boolean(phone && left), 'only the phone navigation blocks interaction with the chart area behind it');
-    assert.equal(initial!.right, right && screen === 'chart', 'only the chart workspace projects the saved right panel');
+    assert.equal(initial!.right, right && screen === 'chart' && !(phone && left), 'only the chart workspace projects the saved right panel');
     assert.equal(initial!.screen, screen);
     assert.equal(initial!.captionHost, element('summaryHeading'), 'the loading caption already occupies its ready-layout host');
     assert.ok(Math.abs(initial!.width - expectedWidth) < 1e-7, 'the loading preview already occupies the saved free area');
     assert.equal(bootingDuringPlacement, 'true', 'initial projection is applied with transitions disabled');
     assert.equal(initial!.booting, undefined, 'after placement the loading menu can respond with normal motion');
-    assert.deepEqual(received!.panels.snapshot, { left, right }, 'the app inherits the same restored owner');
+    assert.deepEqual(received!.panels.snapshot, { left, right: right && !(phone && left) }, 'the app inherits the same restored owner');
     assert.equal(received!.workspace.screen, screen);
     layout!.destroy();
   }
@@ -420,298 +412,86 @@ test('panel buttons work before app import and hand the same choices and camera 
 });
 
 
-// EventTarget has no DOM ancestry: dispatch document capture first, then the
-// element's real command only when capture did not consume the click.
-function captureClick(document: EventTarget, target: { click: () => void }, detail = 1) {
-  const event = Object.assign(new Event('click', { cancelable: true }), { detail });
-  Object.defineProperty(event, 'target', { value: target });
-  document.dispatchEvent(event);
-  if (!event.defaultPrevented) target.click();
-  return event;
-}
-function swipeSheetHandle(handle: { send: (type: string, extra?: Record<string, unknown>) => { defaultPrevented: boolean } }, direction: -1 | 1) {
-  handle.send('pointerdown', { clientY: 300, timeStamp: 0 });
-  handle.send('pointermove', { clientY: 300 + direction * 60, timeStamp: 50 });
-  handle.send('pointerup', { clientY: 300 + direction * 60, timeStamp: 60 });
-  assert.equal(handle.send('click').defaultPrevented, true, 'the swipe compatibility click cannot change the settled size');
-}
-function phoneStartupLayout() {
+function phoneStartupLayout(options: Parameters<typeof createStudioLayout>[0]) {
+  options.onPhoneLayout?.(true);
   return { ...layoutStub(), phone: true, readViewport: () => ({ top: 0, height: 900 }) };
 }
 
-test('sheet collapse preserves the returns screen before and after application handoff', async () => {
+test('phone drawers restore open, closed and legacy two-panel states without automatically reopening', async () => {
+  for (const [savedPanels, expected] of [
+    [{ left: false, right: false }, { left: false, right: false }],
+    [{ left: true, right: false }, { left: true, right: false }],
+    [{ left: false, right: true }, { left: false, right: true }],
+    [{ left: true, right: true }, { left: true, right: false }],
+  ]) {
+    const { document, element } = startupDocument();
+    const handoff: { ports?: StartupPorts } = {};
+    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+      () => () => {}, () => ({ read: () => ({ selectedId: 'current-transit', panels: savedPanels }) }), emptyStore,
+      async () => ({ startApp(ports: StartupPorts) {
+        handoff.ports = ports;
+        ports.panels.beginRestore(); ports.panels.restore(ports.savedView?.panels); ports.panels.finishRestore();
+      } }));
+    await Promise.resolve();
+    const received = handoff.ports;
+    assert.ok(received);
+    assert.deepEqual(received.panels.snapshot, expected);
+    assert.equal(element('library').classList.contains('open'), expected.left);
+    assert.equal(element('chartSummary').classList.contains('open'), expected.right);
+    assert.equal(element('chartSummary').inert, !expected.right);
+  }
+});
+
+test('phone commands switch sides atomically and newer loading actions survive handoff and another reload', async () => {
+  for (const [action, expected] of [
+    ['openLibrary', { left: true, right: false }],
+    ['summarySwitch', { left: false, right: false }],
+    ['summaryBackdrop', { left: false, right: false }],
+  ] as const) {
+    const storage = tabStorage(), viewStore = createViewStore({ getStorage: () => storage });
+    viewStore.write({ version: 1, selectedId: 'current-transit', panels: { left: false, right: true },
+      mandala: true, transit: { live: false, date: '2026-10-04', timeZone: 'UTC', index: 400 } });
+    const first = startupDocument(); const handoff: { ports?: StartupPorts } = {};
+    await run(attachPageGestures, first.document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+      () => () => {}, () => viewStore, emptyStore, async () => {
+        first.element(action).click();
+        return { startApp(ports: StartupPorts) {
+          handoff.ports = ports;
+          ports.panels.beginRestore(); ports.panels.restore(ports.savedView?.panels); ports.panels.finishRestore();
+        } };
+      });
+    const received = handoff.ports;
+    assert.ok(received);
+    assert.deepEqual(received.panels.snapshot, expected, 'a late restore cannot replace the new command');
+    assert.deepEqual(viewStore.read()!.panels, expected);
+    const second = startupDocument(); const next: { ports?: StartupPorts } = {};
+    await run(attachPageGestures, second.document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+      () => () => {}, () => createViewStore({ getStorage: () => storage }), emptyStore,
+      async () => ({ startApp(ports: StartupPorts) { next.ports = ports; ports.panels.finishRestore(); } }));
+    const reloaded = next.ports;
+    assert.ok(reloaded);
+    assert.ok(reloaded.savedView);
+    assert.deepEqual(reloaded.panels.snapshot, expected);
+    assert.equal(reloaded.savedView.mandala, true);
+    assert.deepEqual(reloaded.savedView.transit, { live: false, date: '2026-10-04', timeZone: 'UTC', index: 400 });
+  }
+});
+
+test('switching phone drawers preserves the selected Returns screen and moment', async () => {
   const { document, element } = startupDocument();
   const personal = libraryRecordAtMinute(natalDayFixture(), 754);
   const saved = { selectedId: personal.id, panels: { left: false, right: true }, returns: { opened: true, eventId: 'selected-return' } };
   const store = { charts: [personal], has: (id: string) => id === personal.id, get: (id: string) => id === personal.id ? personal : undefined };
-  let received, failure, closedReturns = 0;
+  const handoff: { ports?: StartupPorts } = {};
   await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
     () => () => {}, () => ({ read: () => saved }), () => store, async () => {
-      try {
-        assert.equal(element('chartSummary').dataset.screen, 'returns');
-        element('summarySheetHandle').click();
-        swipeSheetHandle(element('summarySheetHandle'), 1);
-        assert.equal(element('chartSummary').dataset.sheetSize, 'collapsed');
-        assert.equal(element('chartSummary').classList.contains('open'), true);
-        assert.equal(element('summarySwitch').getAttribute('aria-expanded'), 'true');
-        assert.equal(element('summarySheetContent').inert, true);
-        assert.equal(element('chartSummary').dataset.screen, 'returns');
-        swipeSheetHandle(element('summarySheetHandle'), -1);
-        assert.equal(element('chartSummary').dataset.sheetSize, 'medium');
-      } catch (error) { failure = error; }
-      return { startApp(ports) {
-        received = ports;
-        ports.releaseLoadingContent();
-        ports.panels.finishRestore();
-        element('summarySwitch').addEventListener('click', () => { closedReturns++; ports.panels.setRight(false); });
-      } };
+      element('openLibrary').click();
+      element('summarySwitch').click();
+      return { startApp(ports: StartupPorts) { handoff.ports = ports; ports.panels.finishRestore(); } };
     });
-  assert.ifError(failure);
-  assert.ok(received, 'the real sheet controller reaches application handoff');
-  document.activeElement = element('summarySheetContent');
-  swipeSheetHandle(element('summarySheetHandle'), 1);
-  assert.equal(element('chartSummary').dataset.sheetSize, 'collapsed');
+  const received = handoff.ports;
+    assert.ok(received);
+  assert.deepEqual(received.panels.snapshot, { left: false, right: true });
   assert.equal(element('chartSummary').dataset.screen, 'returns');
-  assert.equal(element('summarySheetContent').inert, true);
-  assert.equal(document.activeElement, element('summarySheetHandle'), 'focus leaves folded content but stays in the same sheet');
-  assert.equal(received.panels.right, true);
-  assert.equal(closedReturns, 0, 'changing height never issues the ready close command');
-  assert.deepEqual(received.savedView.returns, saved.returns);
-});
-
-test('outside taps preserve every sheet size and its explicit command only reveals without closing', async () => {
-  for (const size of ['collapsed', 'medium', 'expanded'] as const) {
-    const { document, element } = startupDocument();
-    const saved = { selectedId: 'current-transit', panels: { left: false, right: true } };
-    let received, commandCalls = 0;
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => ({ read: () => saved }), emptyStore, async () => ({ startApp(ports) {
-        received = ports;
-        ports.releaseLoadingContent(); ports.panels.finishRestore();
-        element('summarySwitch').addEventListener('click', () => { commandCalls++; });
-      } }));
-    assert.ok(received);
-    if (size !== 'collapsed') element('summarySheetHandle').click();
-    if (size === 'expanded') swipeSheetHandle(element('summarySheetHandle'), -1);
-    const height = element('chartSummary').style['--phone-sheet-height'];
-    captureClick(document, element('summarySheetContent'));
-    for (let index = 0; index < 3; index++) captureClick(document, element('canvasWrap'));
-    assert.equal(element('chartSummary').dataset.sheetSize, size);
-    assert.equal(element('chartSummary').style['--phone-sheet-height'], height);
-    assert.equal(element('summarySheetContent').inert, size === 'collapsed');
-    assert.equal(received.panels.right, true);
-    for (let index = 0; index < 3; index++) {
-      const reveal = captureClick(document, element('summarySwitch'));
-      assert.equal(reveal.defaultPrevented, true, 'capture consumes the command before the closing handler');
-      assert.equal(element('chartSummary').dataset.sheetSize, size === 'collapsed' ? 'medium' : size);
-      assert.equal(element('summarySheetContent').inert, false);
-      assert.equal(received.panels.right, true);
-      assert.equal(commandCalls, 0);
-    }
-  }
-});
-
-test('a chart pan and a subsequent outside tap both preserve the sheet height', async () => {
-  const { document, element } = startupDocument();
-  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-    () => () => {}, () => ({ read: () => ({ panels: { left: false, right: true } }) }), emptyStore,
-    async () => ({ startApp() {} }));
-  element('summarySheetHandle').click();
-  const pointer = (type: string, x: number) => document.dispatchEvent(Object.assign(new Event(type), { isPrimary: true, clientX: x, clientY: 100 }));
-  pointer('pointerdown', 100); pointer('pointermove', 130);
-  captureClick(document, element('canvasWrap'));
-  assert.equal(element('chartSummary').dataset.sheetSize, 'medium', 'the compatibility click after a pan is ignored');
-  pointer('pointerdown', 130);
-  captureClick(document, element('canvasWrap'));
-  assert.equal(element('chartSummary').dataset.sheetSize, 'medium');
-});
-
-test('an empty phone chart starts with the folded summary, while Account starts without a sheet', async () => {
-  for (const screen of ['chart', 'account'] as const) {
-    const { document, element } = startupDocument();
-    let received, initial;
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => ({ read: () => ({ workspace: screen, panels: { left: false, right: false } }) }), emptyStore, async () => {
-        await Promise.resolve();
-        initial = { left: element('library').classList.contains('open'), right: element('chartSummary').classList.contains('open'),
-          size: element('chartSummary').dataset.sheetSize, contentInert: element('summarySheetContent').inert };
-        return { startApp(ports) { received = ports; ports.panels.finishRestore(); } };
-      });
-    assert.ok(received);
-    assert.equal(initial.left, false);
-    assert.equal(initial.right, screen === 'chart');
-    assert.equal(initial.size, screen === 'chart' ? 'collapsed' : undefined);
-    if (screen === 'chart') assert.equal(initial.contentInert, true);
-    assert.deepEqual(received.panels.snapshot, { left: false, right: screen === 'chart' });
-  }
-});
-
-test('phone sheet reload restores its settled height and preserves newer loading gestures', async () => {
-  for (const [savedMode, action, expected] of [
-    ['collapsed', 'none', 'collapsed'], ['medium', 'none', 'medium'], ['expanded', 'none', 'expanded'],
-    ['collapsed', 'reveal', 'medium'], ['medium', 'expand', 'expanded'], ['expanded', 'collapse', 'collapsed'],
-  ] as const) {
-    const { document, element } = startupDocument(), storage = tabStorage();
-    const viewStore = createViewStore({ getStorage: () => storage });
-    viewStore.write({ version: 1, selectedId: 'current-transit', panels: { left: false, right: true }, phoneSheetMode: savedMode });
-    let initialSize;
-    const handoff: { ports?: StartupPorts } = {};
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => viewStore, emptyStore, async () => {
-        initialSize = element('chartSummary').dataset.sheetSize;
-        if (action === 'reveal' || action === 'expand') element('summarySheetHandle').click();
-        if (action === 'collapse') element('summarySheetHandle').send('keydown', { key: 'Escape' });
-        return { startApp(ports: StartupPorts) {
-          handoff.ports = ports;
-          ports.panels.beginRestore(); ports.panels.restore(ports.savedView?.panels); ports.panels.finishRestore();
-          ports.releaseLoadingContent?.();
-        } };
-      });
-    assert.ok(handoff.ports);
-    const received = handoff.ports;
-    assert.equal(initialSize, savedMode, 'the saved height is painted before application loading finishes');
-    assert.equal(element('chartSummary').dataset.sheetSize, expected, 'late restoration cannot replace a newer gesture');
-    assert.equal(element('summarySheetContent').inert, expected === 'collapsed');
-    assert.equal(createViewStore({ getStorage: () => storage }).read()!.phoneSheetMode, expected,
-      'settled loading gestures update the same tab snapshot for another reload');
-    assert.equal(received.getPhoneSheetMode?.(), expected, 'the application reads the retained controller');
-    assert.equal(received.panels.right, true, 'folding does not close the chart or Returns owner');
-  }
-});
-
-test('closing chart navigation before switching to Account never schedules a hidden summary', async () => {
-  const { document } = startupDocument();
-  let received;
-  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-    () => () => {}, () => ({ read: () => ({ panels: { left: true, right: false } }) }), emptyStore,
-    async () => ({ startApp(ports) { received = ports; ports.panels.finishRestore(); } }));
-  assert.ok(received);
-  const changes: { left: boolean; right: boolean }[] = [];
-  received.panels.subscribe(value => changes.push(value));
-  received.panels.setLeft(false);
-  received.workspace.setScreen('account');
-  await Promise.resolve();
-  assert.equal(received.workspace.screen, 'account');
-  assert.deepEqual(received.panels.snapshot, { left: false, right: false });
-  assert.deepEqual(changes, [{ left: false, right: false }], 'the deferred chart default does not reopen a panel on Account');
-});
-
-
-test('revealing the folded summary opens returns only for the active personal returns mode', async () => {
-  for (const [label, pressed, screen, expected] of [
-    ['Возвраты', 'true', 'summary', 1], ['Возвраты', 'false', 'summary', 0],
-    ['Летопись', 'true', 'summary', 0], ['Возвраты', 'true', 'returns', 0],
-  ] as const) {
-    const { document, element } = startupDocument();
-    let requested = 0;
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => ({ read: () => ({ panels: { left: false, right: true } }) }), emptyStore,
-      async () => ({ startApp(ports) { ports.releaseLoadingContent(); } }));
-    element('lifetimeToggle').setAttribute('aria-label', label);
-    element('lifetimeToggle').setAttribute('aria-pressed', pressed);
-    element('chartSummary').dataset.screen = screen;
-    element('summaryReturns').addEventListener('click', () => { requested++; element('chartSummary').dataset.screen = 'returns'; });
-    swipeSheetHandle(element('summarySheetHandle'), 1);
-    assert.equal(element('chartSummary').dataset.sheetSize, 'collapsed');
-    assert.equal(requested, 0, 'folding never starts or closes an exploration');
-    swipeSheetHandle(element('summarySheetHandle'), -1);
-    assert.equal(element('chartSummary').dataset.sheetSize, 'medium');
-    assert.equal(requested, expected, `${label}, ${pressed}, ${screen}`);
-    assert.equal(element('chartSummary').dataset.screen, expected ? 'returns' : screen);
-  }
-});
-
-
-test('phone navigation covers the independent returns sheet without changing its height or exploration', async () => {
-  for (const mode of ['medium', 'collapsed'] as const) {
-    const { document, element } = startupDocument();
-    const personal = libraryRecordAtMinute(natalDayFixture(), 754);
-    const saved = { selectedId: personal.id, panels: { left: false, right: true }, returns: { opened: true, eventId: 'selected-return' } };
-    const store = { charts: [personal], has: (id: string) => id === personal.id, get: (id: string) => id === personal.id ? personal : undefined };
-    let sheets: ReturnType<typeof attachPhoneSheets>, failure, received;
-    await runWithSheets(options => { sheets = attachPhoneSheets(options); return sheets; },
-      attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => ({ read: () => saved }), () => store, async () => {
-        try {
-          if (mode === 'medium') element('summarySheetHandle').click();
-          const height = element('chartSummary').style['--phone-sheet-height'];
-          assert.equal(element('chartSummary').dataset.screen, 'returns');
-          const opened = captureClick(document, element('openLibrary'));
-          assert.equal(opened.defaultPrevented, false, 'the navigation button reaches its own toggle command');
-          assert.equal(element('library').classList.contains('open'), true);
-          assert.equal(element('chartSummary').classList.contains('open'), true, 'opening navigation does not replace the lower sheet');
-          assert.equal(element('studio').inert, true, 'the visible area behind navigation cannot receive interaction');
-          captureClick(document, element('librarySheetContent'));
-          captureClick(document, element('canvasWrap'));
-          assert.equal(element('chartSummary').dataset.sheetSize, mode, 'navigation and background clicks do not fold the covered sheet');
-          assert.equal(element('chartSummary').style['--phone-sheet-height'], height);
-          assert.equal(element('chartSummary').dataset.screen, 'returns');
-          captureClick(document, element('openLibrary'));
-          assert.equal(element('library').classList.contains('open'), false);
-          assert.equal(element('studio').inert, false);
-          assert.equal(element('chartSummary').classList.contains('open'), true);
-          assert.equal(element('chartSummary').dataset.sheetSize, mode);
-          assert.equal(element('chartSummary').style['--phone-sheet-height'], height);
-          assert.equal(element('chartSummary').dataset.screen, 'returns');
-        } catch (error) { failure = error; }
-        return { startApp(ports) { received = ports; } };
-      });
-    assert.ifError(failure);
-    assert.ok(received);
-    assert.deepEqual(received.panels.snapshot, { left: false, right: true });
-    assert.deepEqual(received.savedView.returns, saved.returns);
-  }
-});
-
-
-test('outside taps preserve the current height of a revealed phone sheet', async () => {
-  const { document, element } = startupDocument();
-  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-    () => () => {}, () => ({ read: () => ({ panels: { left: false, right: true } }) }), emptyStore,
-    async () => ({ startApp() {} }));
-  element('summarySheetHandle').click();
-  const height = element('chartSummary').style['--phone-sheet-height'];
-  for (let index = 0; index < 3; index++) captureClick(document, element('canvasWrap'));
-  assert.equal(element('chartSummary').dataset.sheetSize, 'medium');
-  assert.equal(element('chartSummary').style['--phone-sheet-height'], height);
-  assert.equal(element('chartSummary').classList.contains('open'), true);
-});
-
-
-test('actual startup reload round-trips each sheet height through the same tab record', async () => {
-  for (const mode of ['collapsed', 'medium', 'expanded'] as const) {
-    const storage = tabStorage();
-    const viewStore = createViewStore({ getStorage: () => storage });
-    viewStore.write({ version: 1, selectedId: 'current-transit', panels: { left: false, right: true },
-      phoneSheetMode: 'medium', mandala: true, transit: { live: false, date: '2026-10-04', timeZone: 'UTC', index: 400 } });
-    const first = startupDocument();
-    await run(attachPageGestures, first.document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => viewStore, emptyStore, async () => {
-        assert.equal(first.element('chartSummary').dataset.sheetSize, 'medium');
-        if (mode === 'collapsed') first.element('summarySheetHandle').send('keydown', { key: 'Escape' });
-        if (mode === 'expanded') first.element('summarySheetHandle').send('keydown', { key: 'ArrowUp' });
-        first.document.hidden = true;
-        first.document.dispatchEvent(new Event('visibilitychange'));
-        return { startApp(ports: StartupPorts) { ports.releaseLoadingContent?.(); } };
-      });
-    assert.notEqual(first.element('shell').dataset.pageState, 'error', 'initialization and loading assertions must complete');
-    assert.equal(viewStore.read()!.phoneSheetMode, mode);
-    const second = startupDocument();
-    let beforeReady, afterReady;
-    await run(attachPageGestures, second.document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
-      () => () => {}, () => createViewStore({ getStorage: () => storage }), emptyStore, async () => {
-        beforeReady = second.element('chartSummary').dataset.sheetSize;
-        return { startApp(ports: StartupPorts) {
-          ports.panels.beginRestore(); ports.panels.restore(ports.savedView?.panels); ports.panels.finishRestore();
-          ports.releaseLoadingContent?.(); afterReady = second.element('chartSummary').dataset.sheetSize;
-        } };
-      });
-    assert.notEqual(second.element('shell').dataset.pageState, 'error', 'reload initialization must complete');
-    assert.equal(beforeReady, mode, 'a fresh startup restores the stored height before app readiness');
-    assert.equal(afterReady, mode, 'handoff preserves the restored height');
-    const saved = createViewStore({ getStorage: () => storage }).read()!;
-    assert.equal(saved.mandala, true);
-    assert.deepEqual(saved.transit, { live: false, date: '2026-10-04', timeZone: 'UTC', index: 400 });
-    assert.deepEqual(saved.panels, { left: false, right: true });
-  }
+  assert.deepEqual(received.savedView?.returns, saved.returns);
 });

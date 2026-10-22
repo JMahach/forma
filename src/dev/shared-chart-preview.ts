@@ -137,6 +137,19 @@ if (typeof location !== 'undefined' && location.port === '3636') {
       const clockIcon = '<circle cx="10" cy="10" r="6.5"/><path d="M10 6v4l2.5 1.5"/>';
       const errorIcon = '<circle cx="10" cy="10" r="6.5"/><path d="M10 6v4.5M10 13.2v.1"/>';
       const study = createSharedChartStudy(render);
+      // Both action messages stay within the panel that clips their contents.
+      function placeNotice(notice: HTMLElement) {
+        notice.style.transform = '';
+        const panel = notice.closest('.chart-summary')?.getBoundingClientRect();
+        const left = Math.max(8, (panel?.left ?? 0) + 8);
+        const right = Math.min(document.documentElement.clientWidth - 8, (panel?.right ?? document.documentElement.clientWidth) - 8);
+        const rect = notice.getBoundingClientRect();
+        const shift = Math.max(left - rect.left, Math.min(0, right - rect.right));
+        if (shift) notice.style.transform = `translateX(${shift}px)`;
+      }
+      window.addEventListener('resize', () => requestAnimationFrame(() => {
+        document.querySelectorAll<HTMLElement>('.shared-chart-message').forEach(placeNotice);
+      }));
       // The agreed stand rehearsal changes only feedback, not the clipboard.
       let shareTimer: ReturnType<typeof setTimeout> | undefined;
       function closeShare() {
@@ -152,12 +165,7 @@ if (typeof location !== 'undefined' && location.port === '3636') {
           notice.dataset.floating = 'true'; notice.setAttribute('role', 'status');
           notice.innerHTML = '<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4 10 4 4 8-8" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Ссылка скопирована</span>';
           button.append(notice);
-          // A link beside a short name can sit near the phone's left edge.
-          // Keep the existing anchored notice inside the viewport.
-          const rect = notice.getBoundingClientRect();
-          const viewportWidth = document.documentElement.clientWidth;
-          const shift = Math.max(8 - rect.left, Math.min(0, viewportWidth - 8 - rect.right));
-          if (shift) notice.style.transform = `translateX(${shift}px)`;
+          placeNotice(notice);
           shareTimer = setTimeout(closeShare, 2000);
         });
       });
@@ -213,6 +221,7 @@ if (typeof location !== 'undefined' && location.port === '3636') {
             message.append(close);
           }
           group.append(message);
+          placeNotice(message);
         }
       }
       options.addEventListener('click', event => {

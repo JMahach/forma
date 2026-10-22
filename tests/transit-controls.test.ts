@@ -310,7 +310,7 @@ test('loading and error retain minute labels, expose retry, then clear status on
   assert.equal(h.status.textContent, 'День не загрузился');
   assert.equal(h.range.disabled, true);
   assert.equal(h.retryButton.disabled, false);
-  assert.equal(h.retryButton.title, 'Повторить загрузку текущего дня');
+  assert.equal(h.retryButton.title, '');
   assert.equal(h.retryButton.textContent, 'Повторить');
 
   h.retryButton.dispatch('click');

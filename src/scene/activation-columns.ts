@@ -63,7 +63,6 @@ export const planetFilterMark = (checked: boolean | 'mixed') => checked === 'mix
 // The checkbox has its own 28-unit target, with a clear gap before the glyph.
 export function renderPlanetFilterControl(id: string, name: string, checked: boolean | 'mixed', transform = '') {
   return `<g class="activation-planet-filter" data-type="planet-filter" data-id="${id}" role="checkbox" aria-label="${name}" aria-checked="${checked}" tabindex="0"${transform ? ` transform="${transform}"` : ''}>
-      <title>${name}</title>
       <rect class="activation-planet-filter-hit" x="${filterHitLeft}" y="-20" width="${filterHitWidth}" height="40" fill="transparent"/>
       <rect class="activation-planet-filter-frame" x="${filterX - filterSize / 2}" y="${-filterSize / 2}" width="${filterSize}" height="${filterSize}" rx="3.5" fill="#fffdf8" stroke="#b9b4a6" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>
       <path class="activation-planet-filter-mark" d="${planetFilterMark(checked)}" opacity="${checked === false ? 0 : 1}" fill="none" stroke="#fffef9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
@@ -125,7 +124,7 @@ export function describeActivationColumns(chart: ChartView, selectedGates: Reado
       const fixingLabel = FIXING_LABELS[fixing as keyof typeof FIXING_LABELS];
       const id = `${source}-${planet}`;
       const planetAria = `${label}, ${name}`;
-      const planetTarget = describePlanetTarget({ id, symbol, label: planetAria, title: `${name} · ${label}`,
+      const planetTarget = describePlanetTarget({ id, symbol, label: planetAria,
         geometry: activationPlanetLayout(), selections, pressedSelections, enabled: planetEnabled });
       return { id, source, planet, symbol, name, x, y: activationRowY(index), label,
         gate: entry.gate, line: entry.line, selected, pressed, fixing, fixingLabel, planetTarget, hasPlanetControl, planetEnabled, filterId: `${filterPrefix}${planet}`,
