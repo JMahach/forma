@@ -4,7 +4,7 @@ import type { StudioLayout } from '../ui/layout/studio-controller.ts';
 export type ReturnsPanelState = Partial<ReturnsState> & { visible?: boolean; birthSelected?: boolean; live?: boolean };
 interface ReturnsPanelOptions {
   document: Document; viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'>; getLayout?: () => string | undefined;
-  onClose: () => void; onBack: () => void; onYear: (year: number | null) => void; onBodies: (bodies: string[]) => void;
+  onBack: () => void; onYear: (year: number | null) => void; onBodies: (bodies: string[]) => void;
   onSelect: (id: string) => void; onBirth?: () => void; onNow?: () => void; onRetry: () => void; onLayout?: () => void;
 }
 interface EventRow { node: HTMLButtonElement; action?: HTMLElement | null; status?: HTMLElement | null }
@@ -16,6 +16,7 @@ import { escapeHtml as esc } from '../ui/html.ts';
 import { attachDatePicker } from './date-picker.ts';
 import { ageText, completedAge } from '../domain/personal-age.ts';
 import { returnMomentDetails } from './returns-clock.ts';
+import { PALETTE } from '../ui/chart-palette.ts';
 // A clipped year can begin with pass 2 or 3; it must not invent a first touch.
 function firstReturnEvents(events: readonly CycleEvent[]) {
   const first = new Map<string, { event: CycleEvent; at: number }>();
@@ -56,9 +57,10 @@ function renderPreparedReturnEvents(state: ReturnsPanelState, events: ReturnType
   return `<div class="returns-timeline">${birthRow}${rows}${marked ? '' : marker()}</div>`;
 }
 
-export function attachReturnsPanel({ document, viewportLayout, getLayout = () => 'sheet', onClose, onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }: ReturnsPanelOptions) {
+export function attachReturnsPanel({ document, viewportLayout, getLayout = () => 'sheet', onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }: ReturnsPanelOptions) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   const panel = $('returnsPanel');
+  panel.style.setProperty('--return-selection', PALETTE.halo);
   let visible = false;
   const content = $('returnsContent'), status = $('returnsStatus'), year = $<HTMLInputElement>('returnsYear'), body = $('returnsBody');
   const yearButton = $<HTMLButtonElement>('returnsYearCalendar');
@@ -181,7 +183,6 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
   document.addEventListener('focusin', event => {
     if (!bodyMenu.hidden && !bodyMenu.contains(event.target as Node | null) && !bodyButton.contains(event.target as Node | null)) closeBodies();
   });
-  $('returnsClose').addEventListener('click', onClose);
   $('returnsBack').addEventListener('click', onBack);
   $('returnsRetry').addEventListener('click', onRetry);
   year.addEventListener('change', () => chooseYear(year.value));

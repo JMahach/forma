@@ -12,7 +12,7 @@ import { mandalaPoint, MANDALA_GEOMETRY } from '../src/scene/geometry/mandala-ge
 import { GATE_ORDER as MANDALA_GATE_ORDER, GATE_LONGITUDE_START as MANDALA_LONGITUDE_START, GATE_WIDTH as MANDALA_GATE_WIDTH } from '../src/domain/gate-wheel.ts';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
 import { attachHoverPreview } from '../src/selection/hover-preview.ts';
-import { createSummarySelectionState } from '../src/selection/summary-selection-state.ts';
+import { createSelectionState } from '../src/selection/selection-state.ts';
 
 const normalize = (value: number) => ((value % 360) + 360) % 360;
 const attributes = (tag: string) => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]));
@@ -315,7 +315,7 @@ test('invalid cross data cannot render a speculative overlay or crash the render
 });
 
 test('cross gate highlighting adds to pinned Shift selections without committing the preview', () => {
-  const chart = { personality: [20, 34, 46, 25], design: [10, 15] }, state = createSummarySelectionState();
+  const chart = { personality: [20, 34, 46, 25], design: [10, 15] }, state = createSelectionState();
   state.choose({ type: 'gate' as const, id: '20' });
   state.choose({ type: 'gate' as const, id: '34', additive: true });
   const baselineState = JSON.stringify(state.items), crossPreview = preview(180);

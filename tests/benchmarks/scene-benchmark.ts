@@ -146,8 +146,6 @@ function* parityCases(): Generator<SceneCase> {
     ['pinned and preview crosses', { pinnedCrosses: [cross], selections: [crossSelection], previewSelection: { type: 'mandala-cross' as const, cross: second } }],
     ['cross preview release', { pinnedCrosses: [cross], selections: [crossSelection] }],
     ['cross clear', {}],
-    ['line-filter', { activationFilter: { line: 2, source: 'design' as const }, selections: [gate(43)] }],
-    ['group-filter', { activationFilter: { groups: [{ line: 1, source: 'personality' as const, gates: [41, 43] }], unfilteredGates: [55] } }],
     ['filter clear', {}],
   ] as [string, BenchOptions][]) yield { label, chart: fixingChart(0), selection: options.selections?.[0], options: { ...baseOptions, ...options }, identity: true };
   yield { label: 'external fast preview A → B → A', chart: syntheticChart(701), options: { ...baseOptions, previewSelection: { type: 'mandala-cross' as const, cross } },

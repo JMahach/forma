@@ -1,9 +1,10 @@
-import type { Activation } from '../shared/chart-types.ts';
-import type { ChartInput } from '../src/domain/chart-composition.ts';
-import type { ChartView } from '../src/domain/chart-composition.ts';
-import type { SummaryFilter, SelectionAction, ActivationSelectionFilter, SelectionIdentity } from '../src/selection/selection-targets.ts';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
+import { createPanelState } from '../src/state/panels.ts';
+import { attachChartLibrary } from '../src/views/library.ts';
+
 type SummaryOptions = Parameters<typeof attachChartSummary>[0];
-type SummaryChart = ChartInput & { id: string; activations: { design: Activation[]; personality: Activation[] } };
 interface SummaryEvent {
   target: SummaryNode; defaultPrevented: boolean; shiftKey: boolean; preventDefault(): void;
   [key: string]: unknown;
@@ -22,192 +23,11 @@ interface SummaryNode {
   getElementById?(id: string): SummaryNode | undefined; getBoundingClientRect?(): { top: number; bottom: number };
 }
 interface HarnessOptions {
-  initialReturnsVisible?: boolean; width?: number; input?: ChartView; withBackdrop?: boolean; callbacks?: boolean;
-  panels?: ReturnType<typeof createPanelState>; focusSearch?: () => boolean;
+  initialReturnsVisible?: boolean; width?: number; withBackdrop?: boolean; callbacks?: boolean;
+  panels?: ReturnType<typeof createPanelState>;
 }
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { overlayFixture } from './helpers/chart-composition.ts';
-import { createChartComposition } from '../src/domain/chart-composition.ts';
-import { buildChartSummary } from '../src/views/chart-summary-data.ts';
-import { attachChartSummary, renderSummarySections } from '../src/views/chart-summary-panel.ts';
-import { createGraphController } from '../src/scene/updates.ts';
-import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
-import { PLANET_IDS } from '../src/domain/planets.ts';
-import { createPanelState } from '../src/state/panels.ts';
-import { attachChartLibrary } from '../src/views/library.ts';
-import { PALETTE } from '../src/scene/bodygraph-paint.ts';
 
-const chart = {
-  id: 'test-chart', source: 'calculated' as const, design: [20, 34], personality: [29, 46, 20],
-  activations: {
-    design: [{ planet: 'sun', gate: 34, line: 2 }, { planet: 'earth', gate: 34, line: 2 }, { planet: 'moon', gate: 20, line: 3 }],
-    personality: [{ planet: 'sun', gate: 29, line: 1 }, { planet: 'earth', gate: 46, line: 2 }, { planet: 'moon', gate: 20, line: 2 }],
-  },
-} as unknown as SummaryChart;
-const sectionNames = (html: string) => [...html.matchAll(/data-summary-section="([^"]+)"/g)].map(match => match[1]);
-const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-
-test('four summary sections render saved counts, unique gates and disclosure state', () => {
-  const html = renderSummarySections(buildChartSummary(chart));
-  assert.deepEqual(sectionNames(html), ['lines', 'centers', 'channels', 'gates']);
-  assert.match(html, /data-summary-section="lines" open/);
-  assert.doesNotMatch(html, /data-summary-section="centers" open/);
-  assert.match(html, /aria-label="Линия 2, Дизайн: 2"/);
-  assert.match(html, /aria-label="Линия 2, Личность: 2"/);
-  assert.match(html, /aria-label="Линия 2, Всего: 4"/);
-  assert.match(html, /data-summary-line="6"[^>]+disabled/);
-  assert.equal([...html.matchAll(/data-summary-type="gate" data-summary-id="34"/g)].length, 1);
-  assert.match(html, /Каждая активация считается отдельно, включая лунные узлы/);
-});
-
-test('transit renders one column without natal design or total columns', () => {
-  const model = buildChartSummary({ ...chart, source: 'transit' as const, design: [], activations: { design: [], personality: chart.activations.personality } });
-  const html = renderSummarySections(model);
-  assert.match(html, /class="summary-lines is-transit"/);
-  assert.match(html, /aria-label="Линия 2, Транзит: 2"/);
-  assert.doesNotMatch(html, /data-summary-source="(?:design|all)"/);
-  assert.equal([...html.matchAll(/data-summary-source="personality"/g)].length, 6);
-});
-
-for (const scenario of [
-  { name: 'Day P-only', expanded: false, design: false, personality: true },
-  { name: 'Day P+D', expanded: false, design: true, personality: true },
-  { name: 'Lifetime P-only', expanded: true, design: false, personality: true },
-  { name: 'Lifetime P+D', expanded: true, design: true, personality: true },
-  { name: 'Lifetime D-only', expanded: true, design: true, personality: false },
-] as const) test(`transit line summary follows accepted sources: ${scenario.name}`, () => {
-  const activations = {
-    personality: PLANET_IDS.map((planet, index) => ({ planet, gate: 1 + index % 3, line: 1 + index % 6 })),
-    design: PLANET_IDS.map((planet, index) => ({ planet, gate: 20 + index % 4, line: 1 + (index + 2) % 6 })),
-  } as unknown as SummaryChart['activations'];
-  const moment = { id: 'current-transit', source: 'transit' as const, activations,
-    personality: [1, 2, 3], design: [20, 21, 22, 23] };
-  const filter = createTransitPlanetFilter();
-  filter.setExpanded(scenario.expanded);
-  filter.setAllPlanets(scenario.design, 'design');
-  if (!scenario.personality) filter.setAllPlanets(false, 'personality');
-  const accepted = createChartComposition(filter.filter(moment)!);
-  const h = harness({ input: accepted });
-  h.controller.open();
-  const html = h.content.innerHTML.match(/data-summary-section="lines"[\s\S]*?<\/details>/)![0];
-  const buttons = [...html.matchAll(/<button[^>]*data-summary-line="(\d)"[^>]*data-summary-source="(\w+)"[^>]*>(\d+)<\/button>/g)];
-  const sources = (['design', 'personality'] as const).filter(source => scenario[source]);
-  const columns = sources.length === 2 ? [...sources, 'all'] : sources;
-  const total = sources.length * PLANET_IDS.length;
-  assert.equal(Number(html.match(/summary-section-count">(\d+)</)![1]), total);
-  assert.deepEqual([...new Set(buttons.map(button => button[2]))], columns);
-  assert.equal(buttons.filter(button => button[2] !== 'all').reduce((sum, button) => sum + Number(button[3]), 0), total);
-  assert.equal(html.includes('summary-lines is-transit'), sources.length === 1, 'single and dual sources use their existing table layouts');
-  if (scenario.design) assert.match(html, /role="columnheader" class="summary-design">Дизайн</);
-  for (const [, lineText, source, countText] of buttons) {
-    const line = Number(lineText);
-    const rows = (source === 'all' ? sources.flatMap(side => activations[side]) : activations[source as 'design' | 'personality']).filter((row: { line: number; }) => row.line === line);
-    assert.equal(Number(countText), rows.length);
-    const button = h.lineButton(line, source);
-    assert.equal(button!.disabled, rows.length === 0);
-    if (!rows.length) continue;
-    h.click(button);
-    assert.deepEqual(h.lineCalls.at(-1), {
-      gates: [...new Set(rows.map(row => row.gate))].sort((a, b) => a - b), filter: { line, source },
-    });
-    h.controller.update(accepted, { filter: { line, source: source as SummaryFilter['source'] } });
-    assert.equal(button!.getAttribute('aria-pressed'), 'true');
-  }
-});
-
-test('manual charts display the missing-line explanation and no count buttons', () => {
-  const html = renderSummarySections(buildChartSummary({ source: 'manual' as const, design: [34], personality: [20] }));
-  assert.deepEqual(sectionNames(html), ['lines', 'centers', 'channels', 'gates']);
-  assert.match(html, /Для подсчёта линий нужны планетарные активации/);
-  assert.doesNotMatch(html, /data-summary-line=/);
-  assert.match(html, /summary-section-count">—</);
-  assert.match(renderSummarySections(buildChartSummary({source: 'manual' as const}), 'неизвестное'), /Ничего не найдено/);
-});
-
-test('search normalizes case, spaces and ё while opening matching sections', () => {
-  const model = buildChartSummary(chart);
-  const html = renderSummarySections(model, '  СЕЛЕЗЕНОЧНЫЙ  ', new Set());
-  assert.deepEqual(sectionNames(html), ['centers']);
-  assert.match(html, /data-summary-section="centers" open/);
-  assert.match(html, /data-summary-id="spleen"/);
-  assert.doesNotMatch(html, /data-summary-id="head"/);
-  assert.deepEqual(sectionNames(renderSummarySections(model, 'линии')), ['lines']);
-  assert.match(renderSummarySections(model, 'несуществующее'), /Ничего не найдено/);
-});
-
-test('entity text and attribute values are escaped, query is never reflected as markup', () => {
-  const model = buildChartSummary(chart);
-  const attack = '"><img src=x onerror="oops">&\'';
-  model.centers[0].name = attack;
-  model.centers[0].id = attack;
-  model.channels[0].name = attack;
-  model.gates[0].name = attack;
-  const html = renderSummarySections(model);
-  assert.doesNotMatch(html, /<img|onerror="oops"/);
-  assert.match(html, /&quot;&gt;&lt;img src=x onerror=&quot;oops&quot;&gt;&amp;&#39;/);
-  assert.doesNotMatch(renderSummarySections(model, '<svg onload="oops">'), /<svg|onload=/);
-});
-
-test('search highlights visible headings, names and line numbers with the existing case and ё matching', () => {
-  const model = buildChartSummary(chart);
-  for (const [query, marked] of [
-    ['лиНИи', 'Линии'], ['центры', 'Центры'], ['каналы', 'Каналы'], ['ворота', 'Ворота'],
-    ['  СЕЛЕЗЕНОЧНЫЙ  ', 'Селезёночный'], ['воплоЩЕнный', 'Воплощённый'],
-    ['хари', 'Хари'], ['20-34', '20–34'], ['2', '2'],
-  ] as const) {
-    const html = renderSummarySections(model, query);
-    assert.ok(html.includes(`<mark class="search-match">${marked}</mark>`), `${query} marks its visible original spelling`);
-    assert.doesNotMatch(html, /(?:data-summary-[\w-]+|aria-label)="[^"]*<mark/, 'markup never reaches attributes');
-  }
-  const line = renderSummarySections(model, '2');
-  assert.match(line, /role="rowheader"><mark class="search-match">2<\/mark><\/span>/);
-  assert.match(line, /data-summary-line="2" data-summary-source="design" aria-label="Линия 2, Дизайн: 2"/);
-});
-
-test('highlighting escapes the matched fragment and surrounding text before adding markup', () => {
-  const model = buildChartSummary(chart), attack = '\"><img src=x onerror="oops">&\'';
-  model.centers[0].id = attack; model.centers[0].name = `  Ёж ${attack} ёж`;
-  model.channels[0].name = attack; model.gates[0].name = attack;
-  const html = renderSummarySections(model, attack);
-  assert.doesNotMatch(html, /<img|onerror="oops"/);
-  assert.match(html, /<mark class="search-match">&quot;&gt;&lt;img src=x onerror=&quot;oops&quot;&gt;&amp;&#39;<\/mark>/);
-  assert.match(html, /data-summary-id="&quot;&gt;&lt;img src=x onerror=&quot;oops&quot;&gt;&amp;&#39;"/);
-  const repeated = renderSummarySections(model, 'еж');
-  assert.match(repeated, /  <mark class="search-match">Ёж<\/mark> /);
-  assert.match(repeated, / <mark class="search-match">ёж<\/mark>/);
-  assert.equal((repeated.match(/<mark /g) || []).length, 2);
-  assert.doesNotMatch(renderSummarySections(model, '  '), /<mark /, 'empty search never creates empty marks');
-});
-
-test('center swatches share the actual chart palette and keep undefined centers paper colored', async () => {
-  const shared = await import('../src/ui/chart-palette.ts');
-  assert.equal(shared.PALETTE, PALETTE, 'the painter keeps a compatible reference to the one palette owner');
-  const model = buildChartSummary(chart), html = renderSummarySections(model);
-  for (const center of model.centers) {
-    const button = html.match(new RegExp(`<button[^>]+data-summary-type="center" data-summary-id="${center.id}"[^>]*>(.*?)</button>`))![1];
-    assert.ok(button.includes(`<span class="summary-center-swatch" aria-hidden="true" style="--center-color: ${center.defined ? PALETTE[center.id as keyof typeof PALETTE] : PALETTE.paper}"></span>${center.name}`));
-  }
-});
-
-test('search marks preserve selection and delegated clicks, and clearing search removes marks', () => {
-  const h = harness(); h.controller.open();
-  h.controller.update(chart, { items: [{ type: 'gate' as const, id: 34 }], filter: { line: 2, source: 'all' as const } });
-  h.searchFor('34');
-  assert.match(h.content.innerHTML, /<mark class="search-match">34<\/mark>/);
-  const button = h.entityButton('gate', 34), mark = h.node('mark'); mark.parentElement = button!;
-  assert.equal(button!.getAttribute('aria-pressed'), 'true');
-  h.click(mark);
-  assert.deepEqual(h.selectionCalls, [{ type: 'gate' as const, id: '34', additive: false }]);
-  h.searchFor('');
-  assert.doesNotMatch(h.content.innerHTML, /<mark /);
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.lineButton(2)!.getAttribute('aria-pressed'), 'true');
-});
-
-// Exercise the imported public controller with its DOM contract. No source
-// rewriting, application bootstrap, storage or real saved charts are needed.
-function harness({ initialReturnsVisible = false, width = 1440, input = chart, withBackdrop = true, callbacks = true, panels = createPanelState(), focusSearch = () => true }: HarnessOptions = {}) {
+function harness({ initialReturnsVisible = false, width = 1440, withBackdrop = true, callbacks = true, panels = createPanelState() }: HarnessOptions = {}) {
   const globals = { activeElement: null as SummaryNode | null, dialogOpen: false, libraryOpen: false };
   let document: SummaryNode;
   function node(tag = 'div', attributes: Record<string, string> = {}): SummaryNode {
@@ -246,14 +66,7 @@ function harness({ initialReturnsVisible = false, width = 1440, input = chart, w
       set innerHTML(html) {
         this.markupWrites++;
         markup = html;
-        this.children = [...html.matchAll(/<(button|details)\b([^>]*)>/g)].map(match => {
-          const child = node(match[1]);
-          child.parentElement = this;
-          for (const [, name, value] of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) child.setAttribute(name, value);
-          child.disabled = /\bdisabled\b/.test(match[2]);
-          child.open = /\bopen\b/.test(match[2]);
-          return child;
-        });
+
       },
     };
     for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
@@ -262,7 +75,6 @@ function harness({ initialReturnsVisible = false, width = 1440, input = chart, w
   const studio = node(), panel = node('aside', { 'aria-labelledby': 'chartSummaryTitle' });
   const summaryScreen = node(), returnsPanel = node('section', { 'aria-labelledby': 'returnsTitle' });
   const returnsBack = node('button'), returnsButton = node('button');
-  const content = node(), overview = node(), search = node('input');
   const switcher = node('button', { 'aria-controls': 'chartSummary', 'aria-expanded': 'false' });
   const backdrop = withBackdrop ? node() : null;
   const canvas = node('svg');
@@ -273,9 +85,9 @@ function harness({ initialReturnsVisible = false, width = 1440, input = chart, w
   canvas.querySelector = () => { throw new Error('The drawer must not measure or inspect the chart'); };
   panel.parentElement = studio;
   summaryScreen.parentElement = returnsPanel.parentElement = panel;
-  search.parentElement = content.parentElement = overview.parentElement = returnsButton.parentElement = summaryScreen;
+  returnsButton.parentElement = summaryScreen;
   returnsBack.parentElement = returnsPanel;
-  summaryScreen.children = [overview, search, returnsButton, content];
+  summaryScreen.children = [returnsButton];
   returnsPanel.children = [returnsBack]; returnsPanel.hidden = true;
   panel.children = [summaryScreen, returnsPanel];
   document = node();
@@ -284,29 +96,18 @@ function harness({ initialReturnsVisible = false, width = 1440, input = chart, w
   const window = node(); window.innerWidth = width;
   document.defaultView = window;
   let openCalls = 0, closeCalls = 0, returnsCalls = 0;
-  const lineCalls: { gates: readonly number[]; filter: SummaryFilter }[] = [], lineOptions: { additive: boolean }[] = [], selectionCalls: SelectionAction[] = [];
-  const config: Omit<SummaryOptions, 'panel' | 'summaryScreen' | 'returnsPanel' | 'content' | 'overview' | 'search' | 'switcher' | 'backdrop' | 'returnsButton'> & Record<'panel' | 'summaryScreen' | 'returnsPanel' | 'content' | 'overview' | 'search' | 'switcher', SummaryNode> & { backdrop: SummaryNode | null; returnsButton: SummaryNode } = {
-    panels, initialReturnsVisible, panel, summaryScreen, returnsPanel, content, overview, search, switcher, backdrop, returnsButton, focusSearch,
+  const config = {
+    panels, initialReturnsVisible, panel, summaryScreen, returnsPanel, switcher, backdrop, returnsButton,
     onReturns() { returnsCalls++; controller.setReturnsVisible(true); },
-    onLines(gates, filter, options) { lineCalls.push(plain({ gates, filter })); lineOptions.push(plain(options)); },
-    onSelect(value) { selectionCalls.push(plain(value)); },
-  };
+  } as unknown as SummaryOptions;
   if (callbacks) {
     config.onOpen = () => { openCalls++; globals.libraryOpen = false; controller.setReturnsVisible(false); };
     config.onClose = () => { closeCalls++; controller.setReturnsVisible(false); };
   }
   const controller = attachChartSummary(config as unknown as SummaryOptions);
-  controller.update(input);
-  const click = (target: SummaryNode | undefined, options: Partial<SummaryEvent> = {}) => content.dispatch('click', { target, ...options });
-  const mode = (value: string) => value === 'summary' ? controller.open() : controller.close();
-  const lineButton = (line: number, source = 'all') => content.querySelectorAll('[data-summary-line]').find(button => button.dataset.summaryLine === String(line) && button.dataset.summarySource === source);
-  const entityButton = (type: string, id: string | number) => content.querySelectorAll('[data-summary-type]').find(button => button.dataset.summaryType === type && button.dataset.summaryId === String(id));
-  const searchFor = (value: string) => { search.value = value; search.dispatch('input'); };
-  const disclosure = (id: string, open: boolean) => { const section = content.querySelectorAll('[data-summary-section]').find(section => section.dataset.summarySection === id); assert.ok(section); section.open = open; content.dispatch('toggle', { target: section }); };
   return {
     controller, panels, node, globals, document, window, panel, summaryScreen, returnsPanel, returnsBack, returnsButton,
-    content, overview, search, switcher, canvas, camera, studio, backdrop,
-    lineCalls, lineOptions, selectionCalls, click, mode, lineButton, entityButton, searchFor, disclosure,
+    switcher, canvas, camera, studio, backdrop,
     resize(value: number) { window.innerWidth = value; window.dispatch('resize'); controller.layout(); },
     get openCalls() { return openCalls; },
     get closeCalls() { return closeCalls; },
@@ -314,56 +115,7 @@ function harness({ initialReturnsVisible = false, width = 1440, input = chart, w
   };
 }
 
-test('line count clicks dispatch unique gates and repeat clicks remain an app decision', () => {
-  const h = harness();
-  h.mode('summary');
-  h.click(h.lineButton(2));
-  h.click(h.lineButton(2));
-  assert.deepEqual(h.lineCalls, [
-    { gates: [20, 34, 46], filter: { line: 2, source: 'all' as const } },
-    { gates: [20, 34, 46], filter: { line: 2, source: 'all' as const } },
-  ]);
-  assert.equal(h.controller.opened, true, 'wide-screen drawer stays open after selection');
-  assert.equal(h.lineButton(2)!.getAttribute('aria-pressed'), 'false', 'controller does not invent pinned selection state');
-  h.controller.update(chart, { filter: { line: 2, source: 'all' as const } });
-  assert.equal(h.lineButton(2)!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.lineButton(2, 'design')!.getAttribute('aria-pressed'), 'false');
-  h.controller.update(chart);
-  assert.equal(h.lineButton(2)!.getAttribute('aria-pressed'), 'false');
-});
-
-test('source-specific counts and entity clicks delegate exact selection intent', () => {
-  const h = harness();
-  h.controller.open();
-  h.click(h.lineButton(2, 'design'));
-  h.click(h.lineButton(2, 'personality'));
-  assert.deepEqual(h.lineCalls.map(call => call.gates), [[34], [20, 46]]);
-  h.click(h.entityButton('gate', 34), { shiftKey: true });
-  h.click(h.entityButton('center', 'sacral'));
-  assert.deepEqual(h.selectionCalls, [
-    { type: 'gate' as const, id: '34', additive: true },
-    { type: 'center' as const, id: 'sacral', additive: false },
-  ]);
-  h.controller.update(chart, { items: [{ type: 'gate' as const, id: 34 }] });
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.entityButton('center', 'sacral')!.getAttribute('aria-pressed'), 'false');
-  h.click(h.lineButton(6));
-  assert.equal(h.lineCalls.length, 2, 'disabled empty counts do not dispatch');
-});
-
-test('Shift counts carry additive intent and several selected line groups stay pressed', () => {
-  const h = harness();
-  h.controller.open();
-  h.click(h.lineButton(2, 'design'));
-  h.click(h.lineButton(3, 'design'), { shiftKey: true });
-  assert.deepEqual(h.lineOptions, [{ additive: false }, { additive: true }]);
-  h.controller.update(chart, { filter: { groups: [{ line: 2, source: 'design' as const }, { line: 3, source: 'design' as const }], unfilteredGates: [] } as unknown as ActivationSelectionFilter });
-  assert.equal(h.lineButton(2, 'design')!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.lineButton(3, 'design')!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.lineButton(2, 'personality')!.getAttribute('aria-pressed'), 'false');
-});
-
-test('single button toggles the accessible overlay and focuses search without scrolling', () => {
+test('single button toggles the accessible overlay and focuses Returns without scrolling', () => {
   const h = harness();
   assert.equal(h.controller.opened, false);
   assert.equal(h.panel.inert, true);
@@ -379,8 +131,8 @@ test('single button toggles the accessible overlay and focuses search without sc
   assert.equal(h.panel.getAttribute('aria-hidden'), 'false');
   assert.equal(h.backdrop!.hidden, false);
   assert.equal(h.switcher.getAttribute('aria-expanded'), 'true');
-  assert.equal(h.globals.activeElement, h.search);
-  assert.deepEqual(h.search.focusOptions, { preventScroll: true });
+  assert.equal(h.globals.activeElement, h.returnsButton);
+  assert.deepEqual(h.returnsButton.focusOptions, { preventScroll: true });
   assert.equal(h.globals.libraryOpen, false, 'opening invokes coordination with the other drawer');
   assert.equal(h.openCalls, 1);
   h.controller.open();
@@ -416,38 +168,10 @@ test('opening, resizing and closing never measure, hide, disable or transform th
   }
 });
 
-test('manual charts open without inspecting diagram bounds', () => {
-  const h = harness({ width: 390, input: { id: 'manual', source: 'manual' as const, design: [34], personality: [20] } });
-  h.controller.open();
-  assert.equal(h.controller.opened, true);
-  assert.equal(h.canvas.inert, false);
-  assert.match(h.content.innerHTML, /Для подсчёта линий нужны планетарные активации/);
-});
-
-test('selection preserves the right panel at every screen width', () => {
-  for (const width of [390, 850] as const) {
-    const h = harness({ width });
-    h.controller.open();
-    h.click(h.lineButton(2), { shiftKey: true });
-    h.click(h.entityButton('gate', 34), { shiftKey: true });
-    assert.equal(h.controller.opened, true);
-    h.click(h.lineButton(2));
-    assert.equal(h.controller.opened, true);
-    assert.equal(h.globals.activeElement, h.search);
-    h.controller.open();
-    h.click(h.entityButton('center', 'sacral'));
-    assert.equal(h.controller.opened, true);
-  }
-  const h = harness({ width: 851 });
-  h.controller.open();
-  h.click(h.entityButton('gate', 34));
-  assert.equal(h.controller.opened, true);
-});
-
 test('backdrop closes and restores focus from anywhere inside the panel', () => {
   const h = harness();
   h.controller.open();
-  h.entityButton('gate', 34)!.focus();
+  h.returnsButton.focus();
   h.backdrop!.dispatch('click');
   assert.equal(h.controller.opened, false);
   assert.equal(h.globals.activeElement, h.switcher);
@@ -460,7 +184,7 @@ test('programmatic close preserves outside focus unless explicitly asked to rest
   h.controller.close();
   assert.equal(h.globals.activeElement, h.canvas);
   h.controller.toggle();
-  assert.equal(h.globals.activeElement, h.search);
+  assert.equal(h.globals.activeElement, h.returnsButton);
   h.canvas.focus();
   h.controller.close({ focus: true });
   assert.equal(h.globals.activeElement, h.switcher);
@@ -476,7 +200,7 @@ test('optional backdrop and lifecycle callbacks are not required', () => {
 
 test('Escape closes summary unless a dialog, drawer or earlier handler owns the event', () => {
   const h = harness({ width: 390 });
-  h.mode('summary');
+  h.controller.open();
   h.document.dispatch('keydown', { key: 'Enter' });
   assert.equal(h.controller.opened, true);
   for (const blocker of ['dialogOpen', 'libraryOpen'] as const) {
@@ -501,52 +225,6 @@ test('single native button does not consume obsolete segmented-control arrow sho
     assert.equal(h.switcher.dispatch('keydown', { key }).defaultPrevented, false);
     assert.equal(h.controller.opened, false);
   }
-});
-
-test('expanded sections persist through chart updates and search does not overwrite them', () => {
-  const h = harness();
-  h.controller.open();
-  h.disclosure('lines', false);
-  h.disclosure('gates', true);
-  h.searchFor('центры');
-  h.disclosure('centers', false);
-  h.searchFor('');
-  let expanded = h.content.querySelectorAll('[data-summary-section]').filter(section => section.open).map(section => section.dataset.summarySection);
-  assert.deepEqual(expanded, ['gates']);
-  const next = { ...chart, id: 'next-chart', design: [34], activations: { ...chart.activations, design: chart.activations.design.slice(0, 2) } };
-  h.controller.update(next);
-  expanded = h.content.querySelectorAll('[data-summary-section]').filter(section => section.open).map(section => section.dataset.summarySection);
-  assert.deepEqual(expanded, ['gates']);
-});
-
-test('search and scroll reset between charts but not for selection-only updates', () => {
-  const h = harness();
-  h.controller.open();
-  h.searchFor('ворота');
-  h.content.scrollTop = 83;
-  h.controller.update(chart, { items: [{ type: 'gate' as const, id: 34 }] });
-  assert.equal(h.search.value, 'ворота');
-  assert.equal(h.content.scrollTop, 83);
-  assert.deepEqual(sectionNames(h.content.innerHTML), ['gates']);
-  h.controller.update({ ...chart, id: 'other-chart' });
-  assert.equal(h.search.value, '');
-  assert.equal(h.content.scrollTop, 0);
-  assert.deepEqual(sectionNames(h.content.innerHTML), ['lines', 'centers', 'channels', 'gates']);
-  assert.match(h.overview.innerHTML, /Профиль <strong>1\/2<\/strong>/);
-});
-
-test('transit refresh with only coordinates changed preserves disclosure and search', () => {
-  const transit = { ...chart, id: 'transit', source: 'transit' as const, design: [], activations: { design: [], personality: chart.activations.personality } };
-  const h = harness({ input: transit });
-  h.controller.open();
-  assert.match(h.overview.innerHTML, /Транзит/);
-  assert.doesNotMatch(h.overview.innerHTML, /Профиль/);
-  h.disclosure('gates', true);
-  h.searchFor('линии');
-  const html = h.content.innerHTML;
-  h.controller.update({ ...transit, activations: { design: [], personality: transit.activations.personality.map(row => ({ ...row, longitude: 123 })) } });
-  assert.equal(h.search.value, 'линии');
-  assert.equal(h.content.innerHTML, html);
 });
 
 function observeLayoutWrites(h: ReturnType<typeof harness>) {
@@ -585,164 +263,6 @@ test('camera layout repeats perform no DOM writes, including after resize and cl
   assert.equal(h.globals.activeElement, h.switcher);
 });
 
-test('selection updates write only changed aria state and preserve focused buttons', () => {
-  const h = harness(), writes: { button: SummaryNode; name: string; value: unknown }[] = [];
-  h.controller.open();
-  const buttons = [...h.content.querySelectorAll('[data-summary-line]'), ...h.content.querySelectorAll('[data-summary-type]')];
-  for (const button of buttons) {
-    const original = button.setAttribute;
-    button.setAttribute = function (name, value) { writes.push({ button, name, value }); original.call(this, name, value); };
-  }
-  const selected = { items: [{ type: 'gate' as const, id: 34 }], filter: { line: 2, source: 'design' as const } };
-  h.entityButton('gate', 34)!.focus();
-  for (let i = 0; i < 1000; i++) h.controller.update(chart);
-  assert.equal(writes.length, 0, 'unchanged unselected buttons are not rewritten');
-  h.controller.update(chart, selected);
-  assert.deepEqual(writes.map(write => write.button), [h.lineButton(2, 'design'), h.entityButton('gate', 34)]);
-  writes.length = 0;
-  for (let i = 0; i < 1000; i++) h.controller.update(chart, selected);
-  assert.equal(writes.length, 0, 'unchanged selected buttons are not rewritten');
-  assert.equal(h.globals.activeElement, h.entityButton('gate', 34));
-  h.controller.update(chart);
-  assert.equal(writes.length, 2, 'clearing selection updates both previously selected buttons');
-  assert.ok(writes.every(write => write.name === 'aria-pressed' && write.value === 'false'));
-});
-
-test('reopening applies changed chart data while preserving same-chart search and scroll', () => {
-  const h = harness();
-  h.controller.open(); h.searchFor('линии'); h.content.scrollTop = 83; h.controller.close();
-  const next = { ...chart, activations: { ...chart.activations,
-    design: chart.activations.design.map(row => row.planet === 'sun' ? { ...row, line: 4 } : row),
-  } };
-  h.controller.update(next, { filter: { line: 4, source: 'design' as const } });
-  assert.equal(h.controller.opened, false);
-  assert.equal(h.panel.hidden, false);
-  assert.equal(h.panel.inert, true);
-  assert.equal(h.search.value, 'линии');
-  assert.equal(h.content.scrollTop, 83);
-  assert.equal(h.lineButton(4, 'design')!.disabled, true, 'closing keeps the previous markup');
-  assert.equal(h.globals.activeElement, h.switcher);
-  h.controller.open();
-  assert.equal(h.lineButton(4, 'design')!.disabled, false);
-  assert.equal(h.lineButton(4, 'design')!.getAttribute('aria-pressed'), 'true');
-  assert.match(h.overview.innerHTML, /Профиль <strong>1\/4<\/strong>/);
-  assert.equal(h.globals.activeElement, h.search);
-  assert.equal(h.lineButton(4, 'design')!.getAttribute('aria-pressed'), 'true');
-});
-
-
-test('closed summary defers chart inspection and markup until opened, then uses the latest chart', () => {
-  const h = harness();
-  let reads = 0;
-  for (let line = 1; line <= 6; line++) {
-    const next = { ...chart, id: 'last-chart' };
-    Object.defineProperty(next, 'activations', { get() {
-      reads++;
-      return { ...chart.activations, personality: [{ planet: 'sun', gate: 29, line }] };
-    } });
-    h.controller.update(next, { items: [{ type: 'gate' as const, id: 34 }] });
-  }
-  assert.equal(reads, 0, 'a closed drawer must not inspect activation data');
-  assert.equal(h.content.markupWrites, 0);
-  assert.equal(h.overview.markupWrites, 0);
-  h.controller.open();
-  assert.equal(h.content.markupWrites, 1);
-  assert.equal(h.overview.markupWrites, 1);
-  assert.match(h.overview.innerHTML, /Профиль <strong>6\/2<\/strong>/);
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-});
-
-test('closed updates preserve old markup for the closing animation and render the latest view on reopen', () => {
-  const h = harness();
-  h.controller.open();
-  h.disclosure('gates', true);
-  h.searchFor('ворота');
-  h.content.scrollTop = 75;
-  h.controller.close();
-  const html = h.content.innerHTML, writes = h.content.markupWrites;
-  h.controller.update({ ...chart, id: 'other-chart', personality: [29] });
-  h.controller.update({ ...chart, id: 'other-chart', personality: [46] });
-  assert.equal(h.content.innerHTML, html);
-  assert.equal(h.content.markupWrites, writes);
-  h.controller.open();
-  assert.equal(h.content.markupWrites, writes + 1);
-  assert.equal(h.search.value, '');
-  assert.equal(h.content.scrollTop, 0);
-  assert.equal(h.entityButton('gate', 29), undefined);
-  assert.ok(h.entityButton('gate', 46));
-  assert.ok(h.content.querySelectorAll('[data-summary-section]').find(x => x.dataset.summarySection === 'gates')!.open);
-});
-
-test('reopening the same chart keeps search and scroll while applying selection received when closed', () => {
-  const h = harness();
-  h.controller.open();
-  h.searchFor('ворота');
-  h.content.scrollTop = 91;
-  h.controller.close();
-  const writes = h.content.markupWrites;
-  h.controller.update(chart, { items: [{ type: 'gate' as const, id: 34 }] });
-  h.controller.open();
-  assert.equal(h.content.markupWrites, writes);
-  assert.equal(h.search.value, 'ворота');
-  assert.equal(h.content.scrollTop, 91);
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-});
-
-test('the panel owns summary facts and unchanged selection avoids DOM queries during scene hover', () => {
-  const current = plain(chart), h = harness({ input: current });
-  let activationReads = 0, queries = 0;
-  const activations = current.activations;
-  Object.defineProperty(current, 'activations', { get() { activationReads++; return activations; } });
-  const query = h.content.querySelectorAll.bind(h.content);
-  h.content.querySelectorAll = selector => { queries++; return query(selector); };
-  const selection: { items: SelectionIdentity[]; primary: SelectionIdentity | null; activationFilter: ActivationSelectionFilter | null } = { items: [], primary: null, activationFilter: null };
-  const graph = createGraphController({ getChart: () => current, selectionState: selection as unknown as Parameters<typeof createGraphController>[0]['selectionState'],
-    viewport: {} as Element, scene: { update() {}, clear() {} }, getSummary: () => h.controller,
-    activationPopover: { refresh() {}, close() {} } as unknown as Parameters<typeof createGraphController>[0]['activationPopover'] });
-  for (let hover = 0; hover < 50; hover++) graph.render();
-  assert.equal(activationReads, 0, 'the scene must not inspect facts for a closed summary');
-  assert.equal(queries, 0); assert.equal(h.content.markupWrites, 0);
-  h.controller.open(); queries = 0;
-  const writes = h.content.markupWrites, focused = h.entityButton('gate', 34); focused!.focus(); queries = 0; activationReads = 0;
-  for (let hover = 0; hover < 50; hover++) graph.render();
-  assert.equal(activationReads, 100, 'only the panel checks the two activation sources on each visible update');
-  assert.equal(queries, 0, 'unchanged visible selection needs no repeated DOM scan');
-  assert.equal(h.content.markupWrites, writes); assert.equal(h.globals.activeElement, focused);
-  selection.items.push({ type: 'gate' as const, id: 34 });
-  graph.render(); assert.equal(queries, 2); assert.equal(focused!.getAttribute('aria-pressed'), 'true');
-  selection.items = selection.items.map(item => ({ ...item }));
-  graph.render(); assert.equal(queries, 2, 'equal copied selection values do not trigger another DOM scan');
-  selection.activationFilter = { line: 2, source: 'design' as const };
-  graph.render(); assert.equal(h.lineButton(2, 'design')!.getAttribute('aria-pressed'), 'true');
-  selection.activationFilter!.line = 3;
-  graph.render(); assert.equal(h.lineButton(2, 'design')!.getAttribute('aria-pressed'), 'false');
-  assert.equal(h.lineButton(3, 'design')!.getAttribute('aria-pressed'), 'true');
-  activations.design[0].line = 4;
-  graph.render(); assert.equal(h.content.markupWrites, writes + 1, 'mutable chart facts still rebuild the model');
-  assert.match(h.overview.innerHTML, /Профиль <strong>1\/4<\/strong>/);
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-});
-
-
-test('compositions keep summary lazy and name the real natal lines beside the union topology', () => {
-  let reads = 0;
-  const natal = { ...chart, name: 'Анна <svg>' };
-  Object.defineProperty(natal, 'activations', { get() { reads++; return chart.activations; } });
-  const moment = { id: 'moment', source: 'transit' as const, personality: [63, 4], design: [],
-    activations: { personality: [{ planet: 'sun', gate: 63, line: 6 }], design: [] } } as unknown as SummaryChart;
-  const h = harness({ input: createChartComposition(natal) });
-  h.controller.update(overlayFixture(natal, moment, { kind: 'transit' as const }));
-  assert.equal(reads, 0);
-  assert.equal(h.content.markupWrites, 0);
-  h.controller.open();
-  assert.match(h.overview.innerHTML, /Топология наложения/);
-  assert.match(h.content.innerHTML, /Линии: Анна &lt;svg&gt;/);
-  assert.doesNotMatch(h.content.innerHTML, /<svg>|Транзит/);
-  assert.equal(h.lineButton(2, 'design')!.disabled, false);
-  assert.equal(h.lineButton(6, 'personality')!.disabled, true);
-  assert.ok(h.entityButton('gate', 63));
-});
-
 test('returns alone opens the shared shell without opening or rendering the summary', () => {
   const h = harness();
   h.switcher.focus();
@@ -760,32 +280,8 @@ test('returns alone opens the shared shell without opening or rendering the summ
   assert.equal(h.backdrop!.hidden, false);
   assert.equal(h.switcher.getAttribute('aria-expanded'), 'true');
   assert.equal(h.globals.activeElement, h.switcher, 'the returns view chooses its own initial focus');
-  assert.equal(h.content.markupWrites, 0);
   assert.equal(h.openCalls, 0);
   assert.equal(h.closeCalls, 0);
-});
-
-test('Back to summary preserves search, disclosure, scroll and the existing DOM', () => {
-  const h = harness();
-  h.controller.open(); h.disclosure('gates', true); h.searchFor('ворота');
-  h.content.scrollTop = 91;
-  const gate = h.entityButton('gate', 34), writes = h.content.markupWrites;
-  h.controller.close(); h.controller.setReturnsVisible(true);
-  h.returnsBack.focus();
-  h.controller.open();
-  assert.equal(h.controller.screen, 'summary');
-  assert.equal(h.controller.opened, true);
-  assert.equal(h.panel.dataset.screen, 'summary');
-  assert.equal(h.panel.getAttribute('aria-labelledby'), 'chartSummaryTitle');
-  assert.equal(h.summaryScreen.hidden, false);
-  assert.equal(h.returnsPanel.hidden, true);
-  assert.equal(h.search.value, 'ворота');
-  assert.equal(h.content.scrollTop, 91);
-  assert.equal(h.content.markupWrites, writes);
-  assert.equal(h.entityButton('gate', 34), gate);
-  assert.equal(h.globals.activeElement, h.search);
-  h.searchFor('');
-  assert.ok(h.content.querySelectorAll('[data-summary-section]').find(x => x.dataset.summarySection === 'gates')!.open);
 });
 
 test('closing a returns-only shell closes its owner once and keeps content for the exit animation', () => {
@@ -837,62 +333,17 @@ test('returns projection and camera layout repeats preserve focus and avoid shel
   assert.equal(h.closeCalls, 0);
 });
 
-test('the hidden summary defers chart inspection behind returns and applies the latest chart on Back', () => {
-  const h = harness();
-  h.controller.open();
-  h.controller.setReturnsVisible(true);
-  let reads = 0;
-  const next = { ...chart, id: 'next-chart' };
-  Object.defineProperty(next, 'activations', { get() { reads++; return chart.activations; } });
-  const writes = h.content.markupWrites;
-  h.controller.update(next, { items: [{ type: 'gate' as const, id: 34 }] });
-  assert.equal(reads, 0);
-  assert.equal(h.content.markupWrites, writes);
-  h.controller.open();
-  assert.equal(h.controller.screen, 'summary');
-  assert.ok(reads > 0);
-  assert.equal(h.entityButton('gate', 34)!.getAttribute('aria-pressed'), 'true');
-  assert.equal(h.openCalls, 2, 'Back invokes coordination even if summary was requested before returns');
-});
-
 test('leaving returns keeps the right panel open and restores summary focus without a close command', () => {
   const h = harness();
   h.controller.setReturnsVisible(true); h.returnsBack.focus();
   h.controller.setReturnsVisible(false);
   assert.equal(h.controller.screen, 'summary');
   assert.equal(h.panel.inert, false);
-  assert.equal(h.globals.activeElement, h.search);
+  assert.equal(h.globals.activeElement, h.returnsButton);
   assert.equal(h.closeCalls, 0);
   h.controller.setReturnsVisible(true); h.canvas.focus();
   h.controller.setReturnsVisible(false);
   assert.equal(h.globals.activeElement, h.canvas, 'external navigation retains its own focus');
-});
-
-for (const width of [390, 1440] as const) test(`return entry at ${width}px switches the shared screen without closing the menu or selecting chart facts`, () => {
-  const h = harness({ width });
-  h.controller.open(); h.searchFor('линии'); h.content.scrollTop = 80;
-  h.returnsButton.dispatch('click');
-  assert.equal(h.returnsCalls, 1);
-  assert.equal(h.controller.screen, 'returns');
-  assert.equal(h.controller.opened, true);
-  assert.equal(h.closeCalls, 0);
-  assert.deepEqual(h.selectionCalls, []);
-  h.controller.open();
-  assert.equal(h.controller.screen, 'summary');
-  assert.equal(h.search.value, 'линии');
-  assert.equal(h.content.scrollTop, 80);
-});
-
-test('choosing a return retains the summary panel and its previous search', () => {
-  const h = harness({ width: 390 });
-  h.controller.open(); h.searchFor('линии');
-  h.returnsButton.dispatch('click'); h.returnsBack.focus();
-  h.controller.setReturnsVisible(false);
-  assert.equal(h.controller.screen, 'summary');
-  assert.equal(h.panel.inert, false);
-  assert.equal(h.globals.activeElement, h.search);
-  h.controller.open();
-  assert.equal(h.search.value, 'линии');
 });
 
 test('restoring panel state opens summary without taking focus or closing the left panel', () => {
@@ -938,21 +389,6 @@ test('library and summary use one independent panel state and DOM synchronizatio
 });
 
 
-test('phone summary keeps the keyboard closed until the search field is chosen', () => {
-  let phone = true;
-  const h = harness({ focusSearch: () => !phone });
-  h.switcher.focus(); h.controller.open();
-  assert.equal(h.globals.activeElement, h.switcher);
-  h.controller.setReturnsVisible(true); h.returnsBack.focus();
-  h.controller.open();
-  assert.equal(h.globals.activeElement, h.switcher, 'returning from hidden controls does not focus an input');
-  h.search.focus(); h.searchFor('34');
-  assert.match(h.content.innerHTML, /data-summary-id="34"/);
-  h.controller.close(); phone = false; h.controller.open();
-  assert.equal(h.globals.activeElement, h.search, 'desktop keeps its existing search focus');
-});
-
-
 test('restored returns shell attaches directly without a temporary summary or another panel request', () => {
   for (const right of [false, true] as const) {
     const panels = createPanelState(); panels.restore({ left: true, right });
@@ -966,4 +402,45 @@ test('restored returns shell attaches directly without a temporary summary or an
     assert.equal(changes, 0, 'attaching restored content cannot reopen the panel');
     assert.deepEqual(panels.snapshot, { left: true, right });
   }
+});
+
+test('Back restores the ordinary panel and focuses its Returns entry', () => {
+  const h = harness();
+  h.controller.open();
+  h.returnsButton.dispatch('click');
+  h.returnsBack.focus();
+  h.controller.open();
+  assert.equal(h.controller.screen, 'summary');
+  assert.equal(h.panel.dataset.screen, 'summary');
+  assert.equal(h.panel.getAttribute('aria-labelledby'), 'chartSummaryTitle');
+  assert.equal(h.summaryScreen.hidden, false);
+  assert.equal(h.returnsPanel.hidden, true);
+  assert.equal(h.globals.activeElement, h.returnsButton);
+  assert.equal(h.openCalls, 2);
+  assert.equal(h.closeCalls, 0);
+});
+
+for (const width of [390, 1440] as const) test(`Returns entry at ${width}px changes the shared screen without closing its shell`, () => {
+  const h = harness({ width });
+  h.controller.open();
+  h.returnsButton.dispatch('click');
+  assert.equal(h.returnsCalls, 1);
+  assert.equal(h.controller.screen, 'returns');
+  assert.equal(h.controller.opened, true);
+  assert.equal(h.closeCalls, 0);
+  h.controller.open();
+  assert.equal(h.controller.screen, 'summary');
+  assert.equal(h.globals.activeElement, h.returnsButton);
+});
+
+for (const property of ['hidden', 'disabled'] as const) test(`a ${property} Returns entry never receives focus or dispatches an action`, () => {
+  const h = harness();
+  h.returnsButton[property] = true;
+  h.controller.open();
+  assert.equal(h.globals.activeElement, h.switcher);
+  h.returnsButton.dispatch('click');
+  assert.equal(h.returnsCalls, 0);
+  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.controller.setReturnsVisible(false);
+  assert.equal(h.globals.activeElement, h.switcher);
 });

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartHeadingLayout } from '../src/ui/layout/chart-heading.ts';
+import { readFileSync } from 'node:fs';
 
-function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts, withPanelCaption = false } = {}) {
+function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts, withPanelCaption = false, withComparison = false, withClocks = false, withUtc = false } = {}) {
   const observed = new Map();
   let resized, disconnected = false;
   const node = (left: number, top: number, width: number, height: number) => {
@@ -43,8 +44,10 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
     observe(element, options) { observed.set(element, options); }
     disconnect() { disconnected = true; }
   }
-  const panelCaption = withPanelCaption ? { root: node(0, 0, 296.8, 96),
-    title: node(0, 0, 240, 30), date: node(0, 0, 240, 18), details: node(0, 0, 240, 30), surface: node(0, 0, width, 817) } : undefined;
+  const comparison = withComparison ? { root: Object.assign(node(0, 0, 296.8, 96), { hidden: true }),
+    title: node(0, 0, 240, 30), date: node(0, 0, 240, 18), details: node(0, 0, 240, 30), clock: withClocks ? node(0, 0, 52, 20) : undefined } : undefined;
+  const panelCaption = withPanelCaption ? { root: node(0, 0, 296.8, 96), comparison, utc: withUtc ? node(0, 0, 60, 16) : undefined,
+    title: node(0, 0, 240, 30), date: node(0, 0, 240, 18), details: node(0, 0, 240, 30), clock: withClocks ? node(0, 0, 52, 20) : undefined, surface: node(0, 0, width, 817) } : undefined;
   const layout = createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption,
     getMandalaTop: () => mandalaTop,
     readStyle: element => element.computed, ResizeObserver: Observer });
@@ -347,4 +350,140 @@ test('the panel height follows its own observer while zoom hides the central cap
   h.panelCaption!.root.rect.height = 0;
   h.resize();
   assert.equal(h.panelCaption!.surface.style.getPropertyValue('--summary-caption-height'), '124px', 'a hidden desktop panel cannot overwrite its last measured height with zero');
+});
+
+
+test('a pair projects each source into its own panel row without replacing the combined central caption', () => {
+  const h = harness({ withPanelCaption: true, withComparison: true });
+  const panel = h.panelCaption!, comparison = panel.comparison!;
+  const title = 'Анна · Возврат Сатурна 1';
+  const subtitle = '8 октября 2026 г. · 12:25:37 · UTC+3 · 28 лет';
+  h.layout.updateText(title, subtitle, [
+    { title: 'Анна', subtitle: '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск' },
+    { title: 'Возврат Сатурна 1', subtitle },
+  ]);
+  assert.equal(h.title.textContent, title);
+  assert.equal(h.subtitle.textContent, subtitle);
+  assert.equal(panel.title.textContent, 'Анна');
+  assert.equal(panel.date.textContent, '18 августа 1998 г.');
+  assert.equal(panel.details.textContent, '18:00 · UTC+4 · Мурманск');
+  assert.equal(comparison.root.hidden, false);
+  assert.equal(comparison.title.textContent, 'Возврат Сатурна 1');
+  assert.equal(comparison.title.title, 'Возврат Сатурна 1');
+  assert.equal(comparison.date.textContent, '8 октября 2026 г.');
+  assert.equal(comparison.details.textContent, '12:25:37 · UTC+3 · 28 лет');
+});
+
+test('returning from a pair to one moment hides and clears every comparison field', () => {
+  const h = harness({ withPanelCaption: true, withComparison: true });
+  const panel = h.panelCaption!, comparison = panel.comparison!;
+  h.layout.updateText('Анна · Транзит', '8 октября · 12:25 · UTC+3', [
+    { title: 'Анна', subtitle: '18 августа · 18:00 · UTC+4' },
+    { title: 'Транзит', subtitle: '8 октября · 12:25 · UTC+3' },
+  ]);
+  h.layout.updateText('Транзит', '9 октября · 12:30 · UTC', [
+    { title: 'Транзит', subtitle: '9 октября · 12:30 · UTC' },
+  ]);
+  assert.equal(comparison.root.hidden, true);
+  for (const element of [comparison.title, comparison.date, comparison.details]) assert.equal(element.textContent, '');
+  assert.equal(comparison.title.title, '', 'the former event name cannot survive as a tooltip');
+  assert.equal(panel.title.textContent, 'Транзит');
+  assert.equal(panel.date.textContent, '9 октября');
+  assert.equal(panel.details.textContent, '12:30 · UTC');
+  assert.equal(h.title.textContent, 'Транзит');
+  assert.equal(h.subtitle.textContent, '9 октября · 12:30 · UTC');
+});
+
+test('unchanged pair values avoid repeated text, tooltip, visibility writes and measurements', () => {
+  const h = harness({ withPanelCaption: true, withComparison: true });
+  const panel = h.panelCaption!, comparison = panel.comparison!;
+  const counts = { text: 0, tooltip: 0, hidden: 0, measure: 0 };
+  for (const element of [h.title, h.subtitle, panel.title, panel.date, panel.details,
+    comparison.title, comparison.date, comparison.details]) {
+    let text = '';
+    Object.defineProperty(element, 'textContent', { get: () => text, set: value => { text = value; counts.text++; } });
+  }
+  for (const element of [panel.title, comparison.title]) {
+    let title = '';
+    Object.defineProperty(element, 'title', { get: () => title, set: value => { title = value; counts.tooltip++; } });
+  }
+  let hidden = true;
+  Object.defineProperty(comparison.root, 'hidden', { get: () => hidden, set: value => { hidden = value; counts.hidden++; } });
+  const measure = panel.root.getBoundingClientRect.bind(panel.root);
+  panel.root.getBoundingClientRect = () => { counts.measure++; return measure(); };
+  const pair = [
+    { title: 'Анна', subtitle: '18 августа · 18:00 · UTC+4' },
+    { title: 'Транзит', subtitle: '8 октября · 12:25 · UTC+3' },
+  ];
+  h.layout.updateText('Анна · Транзит', '8 октября · 12:25 · UTC+3', pair);
+  assert.equal(counts.text, 8);
+  assert.equal(counts.tooltip, 2);
+  assert.equal(counts.hidden, 1);
+  assert.ok(counts.measure > 0);
+  const first = { ...counts };
+  for (let index = 0; index < 120; index++) {
+    h.layout.updateText('Анна · Транзит', '8 октября · 12:25 · UTC+3', pair.map(moment => ({ ...moment })));
+  }
+  assert.deepEqual(counts, first, 'equal values need no projection even when the caller supplies new objects');
+});
+
+test('the shared summary heading owns the only caption and its comparison action in the initial page', () => {
+  const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const heading = page.match(/<header class="summary-heading">([\s\S]*?)<\/header>/)?.[1];
+  assert.ok(heading, 'the same panel heading is present before viewport initialization');
+  for (const id of ['summaryChartCaption', 'summaryChartTitle', 'summaryComparison', 'summaryBreakComparison']) {
+    assert.match(heading, new RegExp(`id="${id}"`));
+    assert.equal([...page.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1, `${id} has a single owner on every screen width`);
+  }
+  const comparisonStart = heading.indexOf('id="summaryComparison"');
+  const action = heading.indexOf('id="summaryBreakComparison"');
+  const secondTitle = heading.indexOf('id="summaryComparisonTitle"');
+  assert.ok(comparisonStart < action && action < secondTitle, 'the comparison action belongs to the hidden second-moment block');
+  assert.match(heading.slice(comparisonStart, action), /hidden>/);
+});
+
+
+test('clock fields keep the same meaning across single, paired and cleared headings', () => {
+  const h = harness({ withPanelCaption: true, withComparison: true, withClocks: true });
+  const primary = { title: 'Анна', subtitle: '1 января 2000 г. · 12:00 · UTC+3 · Москва' };
+  h.layout.updateText(primary.title, primary.subtitle, [primary]);
+  assert.equal(h.panelCaption!.clock!.textContent, '12:00 · UTC+3');
+  assert.equal(h.panelCaption!.details.textContent, 'Москва', 'clock is never buried in the secondary text');
+  const comparison = { title: 'Возврат Сатурна 1', subtitle: '21 июля 2028 г. · 12:13:49 · UTC+3 · 28 лет' };
+  h.layout.updateText(primary.title, primary.subtitle, [primary, comparison]);
+  assert.equal(h.panelCaption!.clock!.textContent, '12:00 · UTC+3');
+  assert.equal(h.panelCaption!.comparison!.clock!.textContent, '12:13:49 · UTC+3');
+  h.layout.updateText(primary.title, primary.subtitle, [primary]);
+  assert.equal(h.panelCaption!.clock!.textContent, '12:00 · UTC+3');
+  assert.equal(h.panelCaption!.comparison!.clock!.textContent, '');
+  h.layout.updateText('Без времени', '1 января 2000 г. · Москва');
+  assert.equal(h.panelCaption!.clock!.textContent, '');
+  assert.equal(h.panelCaption!.details.textContent, 'Москва', 'a place cannot be mistaken for a clock');
+});
+
+
+test('heading emphasis retains zero, fractional and historical UTC offsets', () => {
+  const h = harness({ withPanelCaption: true, withClocks: true });
+  for (const zone of ['UTC', 'UTC-3:30', 'UTC+5:45', 'UTC+3:30:12', 'UTC−0:25:21']) {
+    h.layout.updateText('Анна', `1 января 1900 г. · 12:00 · ${zone} · Москва`);
+    assert.equal(h.panelCaption!.clock!.textContent, `12:00 · ${zone}`);
+    assert.equal(h.panelCaption!.details.textContent, 'Москва');
+  }
+});
+
+test('single-card UTC separates without losing precision and pair transition restores the old clock', () => {
+  const h = harness({ withPanelCaption: true, withComparison: true, withClocks: true, withUtc: true });
+  const primary = { title: 'Анна', subtitle: '1 января 2000 г. · 04:20:31 · UTC+3:25:45 · Москва · 26 лет' };
+  h.layout.updateText(primary.title, primary.subtitle, [primary]);
+  assert.equal(h.panelCaption!.clock!.textContent, '04:20:31');
+  assert.equal(h.panelCaption!.utc!.textContent, 'UTC+3:25:45');
+  assert.equal(h.panelCaption!.date.textContent, '1 января 2000');
+  assert.equal(h.panelCaption!.details.textContent, 'Москва · 26 лет');
+  h.layout.updateText('Пара', primary.subtitle, [primary, { title: 'Транзит', subtitle: '22 октября 2026 г. · 12:00 · UTC' }]);
+  assert.equal(h.panelCaption!.clock!.textContent, '04:20:31 · UTC+3:25:45');
+  assert.equal(h.panelCaption!.utc!.textContent, '');
+  assert.equal(h.panelCaption!.date.textContent, '1 января 2000 г.');
+  h.layout.updateText('Без времени', '1 января 2000 г. · Москва');
+  assert.equal(h.panelCaption!.clock!.textContent, '');
+  assert.equal(h.panelCaption!.utc!.textContent, '');
 });

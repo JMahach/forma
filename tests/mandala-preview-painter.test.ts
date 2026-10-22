@@ -158,12 +158,11 @@ function graphHarness() {
   const scene = createSceneRenderer(viewport);
   viewport.snapshot = () => significantDOM(viewport);
   const state = { chart: { id: 'test', personality: [20, 34], design: [10, 57] }, current: preview(305.65), enabled: true, hasChart: true };
-  const calls = { render: 0, summary: 0, layout: 0, popover: 0 };
+  const calls = { render: 0, popover: 0 };
   const controller = createGraphController({
     viewport, getChart: () => state.chart, hasChart: () => state.hasChart,
     getHoverPreview: () => ({ currentSelection: state.current, clear() { state.current = null; } }),
     getMandala: () => ({ enabled: state.enabled }),
-    getSummary: () => ({ update() { calls.summary++; }, layout() { calls.layout++; } }),
     activationPopover: { close() {}, refresh() { calls.popover++; }, show() {} },
     scene: { update(...args) { calls.render++; scene.update(...args); }, clear: scene.clear },
   });
@@ -177,7 +176,7 @@ test('controller fast preview updates only cross marks without redrawing the cha
   const ring = viewport.querySelector('.mandala-gate');
   state.current = preview(305.75);
   controller.preview();
-  assert.deepEqual(calls, { render: 1, summary: 1, layout: 0, popover: 1 });
+  assert.deepEqual(calls, { render: 1, popover: 1 });
   assert.equal(controller.selectionState.items, snapshot);
   assert.equal(viewport.querySelector('.mandala-gate'), ring);
   const expected = svgDocument().createElementNS(SVG_NS, 'svg');
@@ -198,7 +197,6 @@ test('controller falls back after gate change, chart replacement, selection chan
     const harness = graphHarness();
     mutate(harness);
     harness.controller.preview();
-    assert.equal(harness.calls.summary, 2, 'full renders forward current inputs; the panel owns fact and selection comparisons');
     assert.equal(harness.calls.render, harness.state.hasChart ? 2 : 1);
   }
 });

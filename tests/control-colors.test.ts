@@ -1,151 +1,167 @@
 import { readModuleSource } from './helpers/module-source.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { PALETTE } from '../src/ui/chart-palette.ts';
+import { createStandConnection } from '../src/dev/control-colors.ts';
+import type { StandConnection } from '../src/dev/control-colors.ts';
 
-const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^import .*;\n/gm, '');
+const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^export /gm, '');
 const KEY = 'forma.control-colors.v1';
 function memory() {
-  const values = new Map();
+  const values = new Map<string, string>();
   return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) };
 }
-function element() {
-  const attrs = new Map(), listeners = new Map();
-  return {
-    children: [], dataset: {} as DOMStringMap, hidden: false,
-    style: { setProperty(this: Record<string, unknown>, name: string, value: string) { this[name] = value; } } as unknown as CSSStyleDeclaration,
-    setAttribute: (name, value) => attrs.set(name, String(value)), getAttribute: name => attrs.get(name),
-    append(...children) { this.children.push(...children); }, prepend(child) { this.children.unshift(child); },
-    addEventListener: (type, handler) => listeners.set(type, handler), click() { listeners.get('click')?.(); },
-  };
+class TestElement {
+  children: TestElement[] = [];
+  parentElement: TestElement | null = null;
+  dataset: DOMStringMap = {};
+  hidden = false;
+  className = ''; id = ''; type = ''; textContent = '';
+  attributes = new Map<string, string>();
+  listeners = new Map<string, (event: { target: TestElement }) => void>();
+  style = { values: new Map<string, string>(), setProperty(name: string, value: string) { this.values.set(name, value); } };
+  setAttribute(name: string, value: string) { this.attributes.set(name, String(value)); }
+  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+  append(...children: TestElement[]) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
+  prepend(child: TestElement) { child.parentElement = this; this.children.unshift(child); }
+  addEventListener(type: string, handler: (event: { target: TestElement }) => void) { this.listeners.set(type, handler); }
+  click() { for (let node: TestElement | null = this; node; node = node.parentElement) node.listeners.get('click')?.({ target: this }); }
+  closest(selector: string): TestElement | null {
+    assert.equal(selector, 'button[data-connection]');
+    return this.dataset.connection ? this : this.parentElement?.closest(selector) ?? null;
+  }
+  set innerHTML(value: string) {
+    this.children = [];
+    for (const match of value.matchAll(/<button\b[^>]*data-connection="([^"]+)"[^>]*>([^<]+)<\/button>/g)) {
+      const button = new TestElement();
+      button.dataset.connection = match[1]; button.textContent = match[2]; this.append(button);
+    }
+  }
+  querySelectorAll(selector: string) {
+    assert.equal(selector, 'button');
+    return this.children.filter(child => child.dataset.connection);
+  }
 }
-function harness(href = 'http://localhost:3636/', storage = memory(), initialScreen: string | null = null) {
-  const root = element(), footer = element(), head = element(), studio = element();
-  if (initialScreen) studio.dataset.workspaceScreen = initialScreen;
-  let notifyWorkspace = () => {};
-  class Observer { constructor(callback: () => void) { notifyWorkspace = callback; } observe(target: ReturnType<typeof element>, options: { attributeFilter: string[] }) { assert.equal(target, studio); assert.deepEqual(options.attributeFilter, ['data-workspace-screen']); } }
+function harness(href = 'http://localhost:3636/', storage = memory()) {
+  const root = new TestElement(), footer = new TestElement(), head = new TestElement();
   const location = { href, port: new URL(href).port };
-  const document = { documentElement: root, head, createElement: element,
-    querySelector(selector: unknown) { if (selector === '.studio') return studio; assert.equal(selector, '.sidebar-footer'); return footer; } };
-  new Function('PALETTE', 'location', 'document', 'sessionStorage', 'history', 'MutationObserver', code)(PALETTE, location, document, storage,
-    { replaceState() { assert.fail('palette buttons must never change the URL'); } }, Observer);
-  return { root, footer, head, location, storage, navigate(screen: string) { studio.dataset.workspaceScreen = screen; notifyWorkspace(); }, group: footer.children[0], toggle: footer.children[1] };
+  const document = { documentElement: root, head, createElement: () => new TestElement(),
+    querySelector(selector: string) { assert.equal(selector, '.sidebar-footer'); return footer; } };
+  const connection = new Function('location', 'document', 'sessionStorage', `${code}\nreturn standConnection;`)(location, document, storage) as ReturnType<typeof createStandConnection>;
+  const group = footer.children[0], toggle = footer.children[1], options = group?.children[0];
+  return { root, footer, head, location, storage, connection, group, toggle, options, buttons: options?.children };
 }
 
-test('legacy palette URLs leave the row closed and the original button colours unchanged', () => {
+function assertSelected(h: ReturnType<typeof harness>, mode: StandConnection) {
+  assert.equal(h.connection.current, mode);
+  assert.equal(h.root.dataset.standConnection, mode);
+  for (const button of h.buttons) assert.equal(button.getAttribute('aria-pressed'), String(button.dataset.connection === mode));
+}
+
+test('connection owner sends its current state immediately, ignores repeats and releases subscribers', () => {
+  const connection = createStandConnection(), first: StandConnection[] = [], second: StandConnection[] = [];
+  const unsubscribe = connection.subscribe(mode => first.push(mode));
+  connection.set('offline'); connection.set('offline');
+  connection.subscribe(mode => second.push(mode));
+  connection.set('server'); unsubscribe(); connection.set('online');
+  assert.deepEqual(first, ['online', 'offline', 'server']);
+  assert.deepEqual(second, ['offline', 'server', 'online']);
+  assert.equal(connection.current, 'online');
+});
+
+test('legacy palette URLs leave the row closed without restoring retired colour trials', () => {
   const href = 'http://localhost:3636/?controls=5&control=5&palette=graphite&preview=loading&fps=1&perf=1';
   const h = harness(href);
   assert.equal(h.group.hidden, true);
   assert.equal(h.toggle.getAttribute('aria-expanded'), 'false');
   assert.equal(h.root.dataset.controlColors, undefined);
-  assert.equal(h.storage.getItem(KEY), null);
-  assert.equal(h.group.children.length, 4);
-  for (const button of h.group.children) assert.equal(button.getAttribute('aria-pressed'), 'false');
+  assert.equal(h.root.style.values.size, 0);
+  assert.deepEqual(h.buttons.map(button => [button.dataset.connection, button.textContent]), [
+    ['online', 'Всё ок'], ['offline', 'Нет сети'], ['server', 'Сервер не отвечает'],
+  ]);
+  assert.equal(h.options.getAttribute('role'), 'group');
+  assert.equal(h.options.getAttribute('aria-label'), 'Соединение');
+  assertSelected(h, 'online');
   assert.equal(h.location.href, href);
 });
 
-test('buttons open the row and select all twenty shades without changing the address', () => {
-  const h = harness('http://localhost:3636/#map'), fills = new Set();
+test('buttons select all three connection modes without changing the address or retaining the mode', () => {
+  const h = harness('http://localhost:3636/#map');
   h.toggle.click(); assert.equal(h.group.hidden, false);
-  assert.equal(h.root.dataset.controlColors, undefined, 'opening the row does not choose a shade');
-  for (const button of h.group.children) {
-    for (let index = 1; index <= 5; index++) {
-      button.click();
-      assert.equal(button.children[0].textContent, `${index}/5`);
-      assert.equal(button.getAttribute('aria-pressed'), 'true');
-      fills.add(h.root.style['--preview-fill']);
-    }
-    button.click(); assert.equal(button.children[0].textContent, '1/5');
+  for (const mode of ['offline', 'server', 'online'] as const) {
+    h.buttons.find(button => button.dataset.connection === mode)!.click();
+    assertSelected(h, mode);
+    assert.deepEqual(JSON.parse(h.storage.getItem(KEY)!), { expanded: true });
   }
-  assert.equal(fills.size, 20);
   assert.equal(h.location.href, 'http://localhost:3636/#map');
-  const selected = h.root.style['--preview-fill'];
-  h.toggle.click();
+  h.connection.set('server'); h.toggle.click();
   assert.equal(h.group.hidden, true);
-  assert.equal(h.root.style['--preview-fill'], selected, 'collapsing the row preserves its selection');
+  assertSelected(h, 'server');
 });
 
-test('a button-selected shade survives preview reloads through tab storage and ignores legacy URL preferences', () => {
-  const h = harness();
-  h.toggle.click(); const gold = h.group.children[2];
-  gold.click(); gold.click(); gold.click();
-  assert.deepEqual(JSON.parse(h.storage.getItem(KEY)), { family: 'gold', index: 2, expanded: true, screen: null });
-  const restored = harness('http://localhost:3636/?controls=5&palette=graphite', h.storage);
+test('the same connection owner updates the visible buttons for commands from another preview', () => {
+  const h = harness(), received: StandConnection[] = [];
+  h.connection.subscribe(mode => received.push(mode));
+  h.connection.set('offline'); assertSelected(h, 'offline');
+  h.buttons.find(button => button.dataset.connection === 'server')!.click();
+  assert.deepEqual(received, ['online', 'offline', 'server']);
+  assertSelected(h, 'server');
+});
+
+test('reload keeps only legacy expansion and resets connection to online', () => {
+  const storage = memory();
+  storage.setItem(KEY, JSON.stringify({ family: 'gold', index: 2, expanded: true, screen: 'library' }));
+  const h = harness(undefined, storage);
+  assert.equal(h.group.hidden, false);
+  assert.equal(h.root.dataset.controlColors, undefined);
+  assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: true });
+  h.connection.set('offline');
+  const restored = harness(undefined, storage);
   assert.equal(restored.group.hidden, false);
-  assert.equal(restored.group.children[2].getAttribute('aria-pressed'), 'true');
-  assert.equal(restored.group.children[2].children[0].textContent, '3/5');
-  assert.equal(restored.root.style['--preview-fill'], h.root.style['--preview-fill']);
-  assert.equal(harness().root.dataset.controlColors, undefined, 'an independent tab starts with the regular style');
+  assertSelected(restored, 'online');
+  assertSelected(h, 'offline');
 });
 
-test('unavailable tab storage still permits palette choices within the current page', () => {
+test('unavailable tab storage still permits opening and changing the connection mode', () => {
   const storage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
   const h = harness(undefined, storage);
-  h.toggle.click();
-  assert.doesNotThrow(() => h.group.children[0].click());
-  assert.equal(h.root.dataset.controlColors, '1');
+  assert.doesNotThrow(() => { h.toggle.click(); h.buttons[1].click(); });
+  assert.equal(h.group.hidden, false);
+  assertSelected(h, 'offline');
 });
 
-test('damaged remembered selections do not replace the default style', () => {
-  for (const value of ['not json', '{"family":"gold","index":10}', '{"family":"unknown","index":0}'] as const) {
+test('damaged remembered selections leave a closed row with the regular online state', () => {
+  for (const value of ['not json', '{"family":"gold","index":10}', '{"family":"unknown","index":0}']) {
     const storage = memory(); storage.setItem(KEY, value);
     const h = harness(undefined, storage);
     assert.equal(h.root.dataset.controlColors, undefined);
     assert.equal(h.group.hidden, true);
+    assertSelected(h, 'online');
+    assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: false });
   }
 });
 
-test('palettes are absent outside the stand', () => {
-  const h = harness('https://forma.example/?controls=5&palette=graphite');
-  assert.equal(h.footer.children.length, 0);
-  assert.equal(h.head.children.length, 0);
+test('connection controls and styles are absent outside the stand', () => {
+  for (const href of ['https://forma.example/?controls=5&palette=graphite', 'http://localhost:3637/']) {
+    const h = harness(href);
+    assert.equal(h.footer.children.length, 0);
+    assert.equal(h.head.children.length, 0);
+    assert.equal(h.root.dataset.standConnection, undefined);
+    assert.equal(h.storage.getItem(KEY), null);
+  }
 });
 
-
-test('palette expansion survives reloads independently of whether a shade was chosen', () => {
-  for (const chooseShade of [false, true]) {
-    const h = harness();
-    h.toggle.click();
-    if (chooseShade) h.group.children[1].click();
+test('row expansion survives reloads independently of the connection mode', () => {
+  for (const mode of ['online', 'offline', 'server'] as const) {
+    const h = harness(); h.toggle.click(); h.connection.set(mode);
     const opened = harness(undefined, h.storage);
     assert.equal(opened.group.hidden, false);
     assert.equal(opened.toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(opened.toggle.getAttribute('aria-pressed'), 'true');
+    assertSelected(opened, 'online');
     opened.toggle.click();
     const closed = harness(undefined, h.storage);
     assert.equal(closed.group.hidden, true);
     assert.equal(closed.toggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(closed.root.style['--preview-fill'], opened.root.style['--preview-fill']);
+    assert.equal(closed.toggle.getAttribute('aria-pressed'), 'false');
   }
-});
-
-
-test('workspace navigation selects its first palette and keeps the visible indication in sync', () => {
-  const h = harness();
-  h.toggle.click();
-  for (const [screen, index, fill] of [
-    ['account', 3, '#cccccc'], ['library', 0, 'hsl(105.6 14.450867% 86%)'],
-    ['chart', 1, '#efe5da'], ['charts', 1, '#efe5da'], ['account', 3, '#cccccc'],
-  ] as const) {
-    h.navigate(screen);
-    assert.equal(h.group.hidden, false, 'navigation keeps the palette panel open');
-    assert.equal(h.root.style['--preview-fill'], fill);
-    for (const [i, button] of h.group.children.entries()) assert.equal(button.getAttribute('aria-pressed'), String(i === index));
-    assert.equal(h.group.children[index].children[0].textContent, '1/5');
-    h.group.children[index].click();
-    assert.equal(h.group.children[index].children[0].textContent, '2/5');
-    h.navigate(screen);
-    assert.equal(h.group.children[index].children[0].textContent, '2/5', 'repainting the current section does not reset a trial');
-  }
-});
-
-test('reload retains a shade for its section while another section uses its own default', () => {
-  const h = harness(undefined, memory(), 'library');
-  h.group.children[0].click(); h.group.children[0].click();
-  const restored = harness(undefined, h.storage, 'library');
-  assert.equal(restored.group.children[0].children[0].textContent, '3/5');
-  assert.equal(restored.group.children[0].getAttribute('aria-pressed'), 'true');
-  const other = harness(undefined, h.storage, 'account');
-  assert.equal(other.group.children[3].children[0].textContent, '1/5');
-  assert.equal(other.group.children[3].getAttribute('aria-pressed'), 'true');
 });

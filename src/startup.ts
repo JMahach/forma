@@ -111,7 +111,6 @@ function renderLoadingTools() {
 let initialPresentation = renderLoadingTools();
 const layout = createStudioLayout({ footprint: STUDIO_FOOTPRINT, canvas: element('canvasWrap'), drawing: element('bodygraph'),
   timelineKind: initialPresentation.timelineKind,
-  onPhoneLayout: phone => panels.setExclusive(phone),
   panels: [element('transitControls'), element('natalDayControls'), element('lifetimeControls')],
   sidePanels: () => ({ ...panels.snapshot, right: workspace.screen === 'chart' && panels.right,
     leftWidth: element('library').getBoundingClientRect().width,
@@ -120,16 +119,64 @@ const layout = createStudioLayout({ footprint: STUDIO_FOOTPRINT, canvas: element
 syncLoadingPanels();
 // This controller stays attached across startup/app handoff. Both phases use
 // the same handles and visibility owner, with no duplicate gesture handlers.
-// Dismiss through the current button command: after handoff it also closes
-// return exploration and restores focus, rather than only hiding its shell.
+// Height changes never issue a chart/returns closing command.
+const sheetElements = [element('chartSummary')];
 const phoneSheets = attachPhoneSheets({
-  sheets: [
-    { panel: element('library'), handle: element('librarySheetHandle'), onClose: () => { if (panels.left) element('openLibrary').click(); } },
-    { panel: element('chartSummary'), handle: element('summarySheetHandle'), onClose: () => { if (panels.right) element('summarySwitch').click(); } },
-  ],
+  sheets: sheetElements.map(panel => ({ panel,
+    handle: element<HTMLButtonElement>(panel.id === 'library' ? 'librarySheetHandle' : 'summarySheetHandle'),
+    content: panel.querySelector<HTMLElement>('.phone-sheet-content') || undefined,
+    initialMode: savedView?.phoneSheetMode ?? 'collapsed',
+    onModeChange: () => saveBeforeNavigate(),
+    onClose: () => {},
+    onReveal: () => {
+      const returns = element('lifetimeToggle');
+      if (returns.getAttribute('aria-label') === 'Возвраты' && returns.getAttribute('aria-pressed') === 'true'
+        && panel.dataset.screen !== 'returns') element('summaryReturns').click();
+    },
+  })),
   isPhone: () => layout.phone, readViewport: layout.readViewport,
 });
-layout.subscribeViewport(phoneSheets.refresh);
+let sheetRefreshPending = false;
+function refreshPhoneSheets() {
+  studio.inert = Boolean(layout.phone && panels.left);
+  phoneSheets.refresh();
+  if (sheetRefreshPending) return;
+  sheetRefreshPending = true;
+  // Navigation may close its old menu before changing workspace. Settle once
+  // both owners have finished, so Account never opens a hidden chart sheet.
+  queueMicrotask(() => {
+    sheetRefreshPending = false;
+    if (layout.phone && workspace.screen === 'chart' && !panels.left && !panels.right) {
+      panels.setRight(true, { automatic: true });
+    }
+    phoneSheets.refresh();
+  });
+}
+layout.subscribeViewport(refreshPhoneSheets);
+panels.subscribe(refreshPhoneSheets);
+workspace.subscribe(refreshPhoneSheets);
+refreshPhoneSheets();
+// Only the grip gesture folds the phone sheet. Background taps keep its place.
+document.addEventListener('click', event => {
+  if (!layout.phone || document.querySelector('dialog[open]')) return;
+  const target = event.target as Element;
+  if (!target?.closest || panels.left || target.closest('#openLibrary')) return;
+  const command = target.closest('#summarySwitch');
+  if (command) {
+    const panel = element('chartSummary');
+    if (panel.classList.contains('open')) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      phoneSheets.reveal(panel);
+    } else phoneSheets.reveal(panel);
+    return;
+  }
+  if (target.closest('#lifetimeToggle, #summaryReturns')) {
+    queueMicrotask(() => {
+      if (element('chartSummary').classList.contains('open')) phoneSheets.reveal(element('chartSummary'));
+    });
+    return;
+  }
+}, true);
 // One projection paints the ready chart and its loading illustration. The
 // application takes this camera over without changing the saved view.
 const cameraView = createCameraView({ svg: element('bodygraph'), surface: canvas, mirrors: [element('chartLoadingArt')] });
@@ -145,6 +192,7 @@ let loadingActive = true;
 function loadingSnapshot(): Partial<SavedView> {
   const view = camera.getView(), home = camera.getFittedView();
   return { ...pendingView, version: 1, selectedId, workspace: workspace.snapshot, panels: panels.snapshot,
+    phoneSheetMode: phoneSheets.getMode(element('chartSummary')),
     mandala: pendingView?.mandala === true,
     camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k,
       k: view.k / home.k, maxK: camera.maximumScale() / home.k } };
@@ -218,7 +266,7 @@ if (!previewLoading) try {
   loadingActive = false;
   document.removeEventListener('visibilitychange', flushOnHide);
   page?.removeEventListener?.('pagehide', flushLoadingView);
-  const application = app.startApp({ dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  const application = app.startApp({ dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent, getPhoneSheetMode: () => phoneSheets.getMode(element('chartSummary')) });
   saveBeforeNavigate = () => application?.flushView();
 } catch {
   const shell = document.querySelector<HTMLElement>('.app-shell')!;

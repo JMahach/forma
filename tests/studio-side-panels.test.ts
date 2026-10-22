@@ -154,16 +154,43 @@ test('phone presentation publishes one mode and keeps the sheet above chronicle 
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
   assert.deepEqual(modes, [true]);
   const sheetBottom = () => parseFloat(shared.get('--phone-sheet-bottom'));
-  close(sheetBottom(), 84.6, 'phone sheet clears the full date row and its focus gap');
+  close(sheetBottom(), 80.6, 'phone sheet meets the edge of the full date row');
   viewport.height = 550;
   layout.refresh();
   close(parseFloat(shared.get('--phone-viewport-lift')), 294, 'a sheet without a timeline also clears the keyboard');
-  close(sheetBottom(), 378.6, 'keyboard moves the entire sheet above the same visible controls');
+  close(sheetBottom(), 374.6, 'keyboard moves the entire sheet above the same visible controls');
   assert.deepEqual(modes, [true], 'layout measurements do not repeat mode changes');
   layout.setTimelineKind('day'); layout.refresh();
-  close(sheetBottom(), 328.6, 'day has no floating dates to reserve');
+  close(sheetBottom(), 342, 'day sheet clears both the slider and its control container');
   media.matches = false; layout.refresh();
   assert.deepEqual(modes, [true, false], 'desktop independence is restored at the same device boundary');
   close(parseFloat(shared.get('--timeline-panels-bottom')), 324.6, 'desktop panel edge remains the original backing edge');
   layout.destroy();
+});
+
+
+test('a phone sheet never overlaps the full slider touch region, including above a compact day rail', () => {
+  for (const safeBottom of [0, 6, 34]) for (const outset of [0, 6]) {
+    const shared = new Map<string, string>();
+    const full = { top: 0, bottom: 844, width: 390, height: 844 };
+    const viewport = { height: 844, offsetTop: 0 };
+    const studio = { dataset: {} as DOMStringMap,
+      parentElement: { style: { setProperty: (key: string, value: string) => shared.set(key, value) } },
+      style: { setProperty() {} }, getBoundingClientRect: () => full };
+    const canvas = { dataset: {} as DOMStringMap, parentElement: studio, getBoundingClientRect: () => full };
+    const rail = { style: { setProperty() {} } as unknown as CSSStyleDeclaration };
+    const layout = createStudioLayout({ canvas, panels: [rail], viewport, media: { matches: true },
+      readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: name =>
+        name === '--timeline-safe-bottom' ? String(safeBottom) : name === '--timeline-hit-outset' ? String(outset) : '0' }) });
+    const sliderTop = () => parseFloat(rail.style.top) + 4 - outset;
+    for (const kind of ['day', 'chronicle', 'day'] as const) {
+      layout.setTimelineKind(kind); layout.refresh();
+      const sheetEdge = full.height - parseFloat(shared.get('--phone-sheet-bottom')!);
+      assert.ok(sheetEdge <= Math.min(parseFloat(rail.style.top), sliderTop()) + 1e-8, `${kind}, inset ${safeBottom}, outset ${outset}: sheet must stop above slider`);
+      if (kind === 'chronicle') assert.ok(sheetEdge <= full.height - 80.6 - safeBottom + 1e-8, 'dates also remain accessible');
+    }
+    viewport.height = 550; layout.refresh();
+    assert.ok(full.height - parseFloat(shared.get('--phone-sheet-bottom')!) <= Math.min(parseFloat(rail.style.top), sliderTop()) - 294 + 1e-8, 'keyboard lifts both touch surfaces together');
+    layout.destroy();
+  }
 });

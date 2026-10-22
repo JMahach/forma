@@ -32,10 +32,8 @@ const valid = (entry: Activation | undefined): entry is Activation => !!entry &&
 const sourceAt = (origin: 'natal' | 'cycle', source: 'design' | 'personality') => OVERLAY_SOURCES.find(item => item.origin === origin && item.source === source);
 
 // Content, source selection and paint share one model in both rendering paths.
-function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySet<number> = new Set(), pressed: ReadonlySet<number> = selected, { activationFilter = null, previewGates = new Set(), showMandala = false, selections = [], pressedSelections = [] }: ColumnSelectionOptions = {}) {
+function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySet<number> = new Set(), pressed: ReadonlySet<number> = selected, { previewGates = new Set(), showMandala = false, selections = [], pressedSelections = [] }: ColumnSelectionOptions = {}) {
   if (!isChartOverlay(chart)) return [];
-  const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
-  const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
   return ([['natal', chart.primary, 'left'], ['cycle', chart.secondary, 'right']] as const).map(([origin, owner, columnSide]) => {
     const label = overlayOriginLabel(chart, origin);
     const records = Object.fromEntries((['design', 'personality'] as const).map(source => {
@@ -51,15 +49,9 @@ function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySe
         const entry = records[source].get(planet);
         if (!valid(entry)) return [];
         const provenance = sourceAt(origin, source)!;
-        // The overlay summary describes birth facts. Its line groups select
-        // natal rows only; ordinary gate selection and hover still span both maps.
-        const matchesFilter = !activationFilter || unfilteredGates.has(entry.gate)
-          || origin === 'natal' && filteredGroups.some(group => entry.line === group.line
-            && (group.source === 'all' || group.source === source)
-            && (!group.gates || group.gates.includes(entry.gate)));
         return [{ ...provenance, ...geometry.values[sourceIndex], color: OVERLAY_PALETTE[origin], id: `${provenance.id}-${planet}`, planet, gate: entry.gate, line: entry.line,
-          selected: selected.has(entry.gate) && matchesFilter || previewGates.has(entry.gate),
-          pressed: pressed.has(entry.gate) && matchesFilter,
+          selected: selected.has(entry.gate) || previewGates.has(entry.gate),
+          pressed: pressed.has(entry.gate),
           label: `${label}, ${source === 'design' ? 'Дизайн' : 'Личность'}, ${name}: ворота ${entry.gate}, линия ${entry.line}` }];
       }),
     }));
@@ -104,7 +96,7 @@ function columnInput(chart: Extract<ChartComposition, { kind: 'transit' | 'retur
       (owner?.source === 'manual' ? [] : owner?.activations?.[source] || []).map(entry => [entry?.planet, entry?.gate, entry?.line]))),
     [...state.relatedGates], [...state.committedGates], [...state.previewGates],
     state.visualSelections.map(value => [value.type, value.id]),
-    state.committedSelections.map(value => [value.type, value.id]), options.activationFilter]);
+    state.committedSelections.map(value => [value.type, value.id])]);
 }
 
 export function createOverlayActivationPainter(drawing: Element, rendered: RenderedScene | null = null) {
@@ -134,7 +126,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
       if (!isChartOverlay(chart) || !visible) { clear(); return; }
       const input = columnInput(chart, state, options);
       if (input === previousInput) return;
-      const selectionOptions = { activationFilter: options.activationFilter, previewGates: state.previewGates, showMandala: options.showMandala,
+      const selectionOptions = { previewGates: state.previewGates, showMandala: options.showMandala,
         selections: state.visualSelections, pressedSelections: state.committedSelections };
       const models = describeOverlayActivationColumns(chart, state.relatedGates, state.committedGates, selectionOptions);
       if (!group) {

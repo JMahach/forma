@@ -78,16 +78,17 @@ test('overlay painter retains exact source targets, observes changed return valu
   assert.ok(root.querySelector('[data-activation="personality-sun"]'));
 });
 
-test('natal line filters select only exact natal rows while hover spans matching return gates', () => {
-  const root = fixture(overlayFixture(natal, cycle, RETURN_OVERLAY)), painter = createActivationPainter(root);
-  painter.update(overlayFixture(natal, cycle, RETURN_OVERLAY), state, { ...options, activationFilter: { source: 'personality' as const, line: 1, gates: [41] } });
-  assert.equal(root.querySelector('[data-activation="natal-personality-sun"]')!.getAttribute('aria-pressed'), 'true');
-  const other = root.querySelector('[data-activation="cycle-personality-sun"]');
-  assert.equal(other!.getAttribute('aria-pressed'), 'false');
-  painter.update(overlayFixture(natal, cycle, RETURN_OVERLAY), { ...state, previewGates: new Set([41]) }, { ...options, activationFilter: { source: 'personality' as const, line: 1, gates: [41] } });
-  assert.equal(other!.dataset.selected, 'true');
+test('ordinary gate selection highlights matching natal and return rows and hover does not press extra rows', () => {
+  const chart = overlayFixture(natal, cycle, RETURN_OVERLAY), root = fixture(chart), painter = createActivationPainter(root);
+  painter.update(chart, state, options);
+  for (const id of ['natal-personality-sun', 'cycle-personality-sun']) {
+    assert.equal(root.querySelector(`[data-activation="${id}"]`)!.getAttribute('aria-pressed'), 'true');
+  }
+  painter.update(chart, { ...state, previewGates: new Set([49]) }, options);
+  const other = root.querySelector('[data-activation="cycle-design-sun"]')!;
+  assert.equal(other.dataset.selected, 'true');
+  assert.equal(other.getAttribute('aria-pressed'), 'false');
 });
-
 
 test('an adopted overlay retains surviving targets when exact source values disappear and arrive', () => {
   const chart = overlayFixture(natal, cycle, RETURN_OVERLAY), root = fixture(chart), painter = createActivationPainter(root);

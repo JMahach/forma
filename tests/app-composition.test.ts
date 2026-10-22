@@ -33,8 +33,9 @@ import type { TimelineKind } from '../src/ui/layout/studio.ts';
 import type { Camera } from '../src/scene/camera.ts';
 import type { ChartView, ChartComposition, ChartInput } from '../src/domain/chart-composition.ts';
 import type { attachLifetimeControls } from '../src/views/lifetime-controls.ts';
+import type { attachReturnsPanel, ReturnsPanelState } from '../src/views/returns-panel.ts';
 interface HarnessOptions {
-  search?: string; restore?: () => Promise<boolean>; savedView?: TestStub<SavedView> | null;
+  realSummary?: boolean; search?: string; restore?: () => Promise<boolean>; savedView?: TestStub<SavedView> | null;
   fonts?: Promise<unknown>; initialPresentation?: ReturnType<typeof studioPresentation> | null;
   studioSize?: { width: number; height: number } | null; metaError?: unknown;
   charts?: readonly TestChart[]; loadKnowledge?: (() => Promise<unknown>) | null;
@@ -96,6 +97,7 @@ import { createLifetimeExplorer } from '../src/state/lifetime.ts';
 import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from '../src/domain/cycles.ts';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.ts';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.ts';
+import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
 import { chartCaption } from '../src/views/chart-display.ts';
 import { ageText, completedAge } from '../src/domain/personal-age.ts';
 import { returnsVisibleWindow } from '../src/domain/returns-window.ts';
@@ -160,7 +162,7 @@ function browser() {
   return { document, element };
 }
 
-function harness({ search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({ realSummary = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   if (fonts !== undefined) document.fonts = { ready: fonts };
   const dimensions = studioSize && { ...studioSize };
@@ -186,6 +188,8 @@ function harness({ search = '', restore = async () => true, savedView = null, fo
   let natalDay!: ReturnType<typeof createNatalDayExplorer>, returns!: ReturnType<typeof createReturnsController>;
   let birthOptions!: PortOptions<'attachBirthForm'>, lifetime!: ReturnType<typeof createLifetimeExplorer>;
   let lifetimeOptions!: Parameters<typeof attachLifetimeControls>[0];
+  let returnsViewOptions!: Parameters<typeof attachReturnsPanel>[0], returnsViewState: ReturnsPanelState | undefined;
+  let transitNowRequests = 0;
   let lifetimeStateOptions!: NonNullable<Parameters<typeof createLifetimeExplorer>[0]>;
   let transitOptions!: PortOptions<'attachLiveTransit'>;
   let finishModule!: (value: unknown) => void, failModule!: (error: unknown) => void;
@@ -227,7 +231,7 @@ function harness({ search = '', restore = async () => true, savedView = null, fo
         update(chart, selection, settings) { renders++; element('viewport').innerHTML = renderBodygraph(chart, selection, settings); },
         clear() { element('viewport').innerHTML = ''; },
       } });
-      return { choose: noop, chooseSummary: noop, changeChart: (id: string) => { chartSelections++; options.onChartChange!(id); },
+      return { choose: noop, changeChart: (id: string) => { chartSelections++; options.onChartChange!(id); },
       clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
     attachCameraControls: noop, createCameraChangeHandler: () => noop,
     createViewSession: (options) => { assert.equal(options.cameraRestored, true); return {
@@ -240,19 +244,21 @@ function harness({ search = '', restore = async () => true, savedView = null, fo
     attachLiveTransit: (options) => {
       transitOptions = options;
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, setWanted: noop };
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, setWanted: noop,
+        goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value: boolean) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: options => ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: options => { performanceOptions = options; },
+    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: options => { performanceOptions = options; },
     attachChartLoading: () => ({ update: noop }), createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
   for (const name of imports) assert.equal(typeof ports[name as keyof AppPorts], 'function', `provide the explicit browser port ${name}`);
-  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState',
+  const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState', 'loadReturnsViewModule',
     `${body.replace("import('./views/lifetime-controls.ts')", 'loadLifetimeView()')
-      .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')}\nreturn startApp;`)(
+      .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')
+      .replace("import('./views/returns-panel.ts')", 'loadReturnsViewModule()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name as keyof AppPorts]), document, class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} }, { search },
     { location: { reload() { reloads++; } } }, () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
       stateLoads++;
@@ -265,10 +271,15 @@ function harness({ search = '', restore = async () => true, savedView = null, fo
         } as NonNullable<Parameters<typeof createLifetimeExplorer>[0]>['client'] }));
         return lifetime;
       } };
-    });
+    }, async () => ({ attachReturnsPanel(options: Parameters<typeof attachReturnsPanel>[0]) {
+      returnsViewOptions = options;
+      return { sheet: () => options.getLayout?.() === 'sheet', update(state: ReturnsPanelState) { returnsViewState = state; } };
+    } }));
   element('shell').dataset.booting = 'true';
   panels = createPanelState(); workspace = createWorkspaceState();
   panels.restore(savedView?.panels); workspace.restore(savedView?.workspace);
+  // Startup hands app.ts a layout that already knows both panel measurements.
+  if (realSummary && dimensions) layout.setSidePanels(() => ({ ...panels.snapshot, leftWidth: 320, rightWidth: 320 }));
   camera = createCamera({ getFrame: () => MANDALA_FRAME, getHomeFrame: () => dimensions ? layout.frame() : STUDIO_FRAME,
     measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 },
       viewport: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }), onChange: noop });
@@ -285,6 +296,8 @@ function harness({ search = '', restore = async () => true, savedView = null, fo
     filter: (id: string) => gestures.onSelect!({ type: 'planet-filter' as const, id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
     get lifetimeOptions() { return lifetimeOptions; },
+    get returnsViewOptions() { return returnsViewOptions; }, get returnsViewState() { return returnsViewState; },
+    get transitNowRequests() { return transitNowRequests; },
     get lifetimeStateOptions() { return lifetimeStateOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
     clockTick() { transitOptions.onStateChange!({ wanted: false } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
@@ -1083,4 +1096,75 @@ test('legacy performance parameters cannot enable the FPS monitor at application
     assert.equal(Boolean(app.performanceOptions!.initiallyEnabled), false, search);
     assert.equal(app.performanceOptions!.button, app.element('togglePerformance'), 'the existing button remains attached');
   }
+});
+
+
+async function openedReturnsHarness(width: number, navigationOpen = false) {
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
+  const exact = { ...chart, id: 'exact-return', utc: event.utc };
+  const transit = { ...chart, id: 'current-transit', source: 'transit' as const, utc: '2028-01-01T12:00:00Z' };
+  const h = harness({ realSummary: true, studioSize: { width, height: 844 }, charts: [chart, transit],
+    returnEvents: [event], getReturn: async () => ({ event, chart: exact }) });
+  await tick(); h.select(chart.id); await tick();
+  await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  await h.element('summaryReturns').click(); await tick();
+  if (navigationOpen) h.panels.setLeft(true);
+  assert.ok(h.returnsViewOptions, 'the lazy returns view receives the actual app callbacks');
+  assert.equal(h.returns.opened, true);
+  assert.equal(h.returnsViewState?.visible, true);
+  assert.equal(h.panels.right, true);
+  assert.equal(h.element('chartSummary').dataset.screen, 'returns');
+  return { h, chart, event, exact };
+}
+
+for (const [width, phone, placement, navigationOpen] of [[390, true, 'sheet', false], [760, false, 'sheet', true], [1400, false, 'side', false]] as const) {
+  test(`returns list choices retain the open ${phone ? 'phone' : 'desktop'} ${placement} at width ${width}`, async () => {
+    const { h, chart, event, exact } = await openedReturnsHarness(width, navigationOpen);
+    assert.equal(h.layout.phone, phone);
+    assert.equal(h.layout.returnsLayout, placement);
+    const assertOpened = () => {
+      assert.equal(h.returns.opened, true);
+      assert.equal(h.returnsViewState?.visible, true);
+      assert.equal(h.panels.right, true);
+      assert.equal(h.element('chartSummary').classList.contains('open'), true);
+      assert.equal(h.element('chartSummary').dataset.screen, 'returns');
+      assert.equal(h.lifetime.state.opened, true);
+    };
+    await h.returnsViewOptions.onSelect(event.id);
+    assert.equal(h.returns.state.selectedEvent?.id, event.id);
+    assert.deepEqual(h.shown.secondary, extractChartData(exact));
+    assertOpened();
+    h.returnsViewOptions.onBirth!();
+    assert.deepEqual(h.shown.primary, extractChartData(chart));
+    assert.equal(h.shown.secondary, null);
+    assert.equal(h.returns.state.selectedEvent, null);
+    assertOpened();
+    h.returnsViewOptions.onNow!();
+    assert.equal(h.transitNowRequests, 1, 'the app dispatches the existing follow-now action');
+    assert.equal(h.returnsViewState?.live, true);
+    assertOpened();
+  });
+}
+
+for (const width of [390, 1400]) test(`breaking a comparison retains returns filters and the open panel at width ${width}`, async () => {
+  const { h, chart, event } = await openedReturnsHarness(width);
+  await h.returns.setYear(2050); await h.returns.setBodies(['saturn']);
+  await h.returnsViewOptions.onSelect(event.id);
+  const panels = h.panels.snapshot, interruptions = h.interruptions;
+  const camera = h.camera.getView();
+  await h.element('summaryBreakComparison').click();
+  assert.deepEqual(h.shown.primary, extractChartData(chart));
+  assert.equal(h.shown.secondary, null);
+  assert.equal(h.returns.state.selectedEvent, null);
+  assert.equal(h.returns.state.year, 2050, 'breaking the pair preserves the list period');
+  assert.deepEqual(h.returns.state.bodies, ['saturn']);
+  assert.equal(h.returns.opened, true);
+  assert.equal(h.lifetime.state.opened, true);
+  assert.deepEqual(h.panels.snapshot, panels);
+  assert.equal(h.element('chartSummary').dataset.screen, 'returns');
+  assert.equal(h.element('chartSummary').classList.contains('open'), true);
+  assert.equal(h.returnsViewState?.visible, true);
+  assert.equal(h.interruptions, interruptions + 1, 'the explicit action supersedes pending restoration');
+  assert.deepEqual(h.camera.getView(), camera);
 });

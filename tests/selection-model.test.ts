@@ -1,19 +1,12 @@
-import type { ProfilerPost } from './helpers/profiler-types.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Session } from 'node:inspector';
-import { promisify } from 'node:util';
 import { createSelectionModel } from '../src/selection/selection-model.ts';
-import { createSummarySelectionState } from '../src/selection/summary-selection-state.ts';
-import { crossAtLongitude, type CrossSource, type CrossType } from '../src/domain/mandala-cross.ts';
+import { createSelectionState } from '../src/selection/selection-state.ts';
+import { crossAtLongitude, type CrossSource } from '../src/domain/mandala-cross.ts';
 import { GATES, getChannel } from '../src/scene/geometry/chart-geometry.ts';
-import type { ChartView } from '../src/domain/chart-composition.ts';
-import type { SelectionAction,SummaryFilter,SelectionTarget,SelectionIdentity,ActivationFilter } from '../src/selection/selection-targets.ts';
+import type { SelectionAction, SelectionTarget } from '../src/selection/selection-targets.ts';
 
-type SelectionState = ReturnType<typeof createSummarySelectionState>;
-type MutableChart = Omit<import('../src/domain/chart-composition.ts').ChartInput, 'activations'> & {
-  activations: { design: import('../shared/chart-types.ts').Activation[]; personality: import('../shared/chart-types.ts').Activation[] }
-};
+type SelectionState = ReturnType<typeof createSelectionState>;
 const gate = (id: number, additive = false, activation?: string): SelectionAction => ({ type: 'gate' as const, id: String(id), additive, ...(activation ? { activation } : {}) });
 const cross = (longitude: number, additive = false, source: CrossSource = 'personality') => ({ type: 'mandala-cross' as const, cross: crossAtLongitude(longitude, { source }), additive });
 const owned = (item: SelectionTarget): (string | number)[] => item.type === 'gate' ? [item.id]
@@ -22,24 +15,16 @@ const owned = (item: SelectionTarget): (string | number)[] => item.type === 'gat
       : item.type === 'integration' ? [10, 20, 34, 57] : [];
 const selected = (state: Pick<SelectionState, 'items'>) => [...new Set(state.items.flatMap(owned))].sort((a, b) => (a as number) - (b as number));
 const assertGates = (state: Pick<SelectionState, 'items'>, gates: Iterable<number>, message?: string) => assert.deepEqual(selected(state), [...new Set(gates)].sort((a, b) => a - b), message);
-const stateView = (state: SelectionState) => ({ items: state.items, primary: state.primary, activation: state.activation, activationFilter: state.activationFilter });
-const lineFilter: SummaryFilter = { line: 2, source: 'design' as const };
-const chart = (gates = [46, 29, 8]) => ({
-  source: 'calculated' as 'calculated' | 'manual' | 'transit', personality: [20], design: gates,
-  activations: { design: gates.map((gate, i) => ({ planet: ['sun', 'earth', 'moon'][i], gate, line: 2 })), personality: [] },
-} as unknown as MutableChart);
-
-test('without crosses the wrapper keeps ordinary selection, metadata and line-group behavior identical', () => {
-  const actual = createSelectionModel(), expected = createSummarySelectionState();
-  type Method = 'choose' | 'chooseSummary' | 'refresh' | 'clear';
+const stateView = (state: SelectionState) => ({ items: state.items, primary: state.primary, activation: state.activation });
+test('without crosses the wrapper keeps ordinary selection and metadata behavior identical', () => {
+  const actual = createSelectionModel(), expected = createSelectionState();
+  type Method = 'choose' | 'clear';
   type Action = { [K in Method]: [K, ...Parameters<SelectionState[K]>] }[Method];
   const actions: Action[] = [
     ['choose', gate(20, false, 'personality-sun')], ['choose', gate(34, true)],
     ['choose', gate(34, true)], ['choose', { type: 'center' as const, id: 'throat' }],
     ['choose', gate(20, true)], ['choose', { type: 'channel' as const, id: '1-8', additive: true }],
-    ['chooseSummary', [46, 29, 8], lineFilter, { additive: true }],
-    ['choose', gate(46, true)], ['refresh', chart([46, 29, 10])],
-    ['chooseSummary', [46, 29, 10], lineFilter, { additive: true }],
+    ['choose', gate(46, true)],
     ['choose', gate(15, false, 'design-sun')], ['choose', gate(15, false, 'design-sun')],
     ['clear'],
   ];
@@ -79,16 +64,14 @@ test('same category and ordered quartet toggle off despite small cursor drift; a
   assertGates(state, crossAtLongitude(305.8).gates);
 });
 
-test('a new nonadditive cross replaces ordinary gates, line groups and old axes', () => {
+test('a new nonadditive cross replaces ordinary gates and old axes', () => {
   const state = createSelectionModel();
-  state.chooseSummary([46, 29], lineFilter);
   state.choose(gate(20, true));
   state.choose(cross(180, true));
   state.choose(cross(302));
   assertGates(state, [41, 31, 28, 27]);
   assert.equal(state.crosses.length, 1);
   assert.equal(state.crosses[0].longitude, 302);
-  assert.equal(state.activationFilter, null);
 });
 
 test('Shift cross addition/removal has independent ownership from a separately pinned overlapping gate', () => {
@@ -145,18 +128,15 @@ test('Shift subtraction affects every overlapping cross; readding the gate resto
   assertGates(state, [46], 'explicit re-add owns the gate independently of the crosses');
 });
 
-test('Shift subtraction removes gate ownership from cross, explicit base gate, and line group together', () => {
+test('Shift subtraction removes gate ownership from cross and explicit base gate together', () => {
   const state = createSelectionModel();
   state.choose(gate(46));
-  state.chooseSummary([46, 29], lineFilter, { additive: true });
+  state.choose(gate(29, true));
   state.choose(cross(180, true));
   state.choose(gate(46, true));
   assertGates(state, [29, 25, 15, 10]);
-  assert.deepEqual(state.activationFilter!.groups[0].gates, [29]);
-  assert.equal(state.activationFilter!.unfilteredGates.includes(46), false);
-  state.refresh(chart([46, 29]));
   assertGates(state, [29, 25, 15, 10]);
-  assert.equal(state.crosses.length, 0, 'refresh never resurrects an explicitly excluded gate');
+  assert.equal(state.crosses.length, 0, 'partial cross has no complete axes');
 });
 
 test('Shift subtraction expands an overlapping center but preserves all its other gates', () => {
@@ -169,15 +149,13 @@ test('Shift subtraction expands an overlapping center but preserves all its othe
   assert.equal(state.crosses.length, 0);
 });
 
-test('Shift subtraction splits channel ownership without losing its other half when an overlapping line group is removed', () => {
+test('Shift subtraction splits channel ownership without losing its other half when the cross is removed', () => {
   const state = createSelectionModel();
-  state.chooseSummary([29], lineFilter);
   state.choose({ type: 'channel' as const, id: '29-46', additive: true });
   state.choose(cross(180, true));
   state.choose(gate(46, true));
   assertGates(state, [29, 25, 15, 10]);
   assert.equal(state.items.some(item => item.type === 'channel'), false);
-  state.chooseSummary([29], lineFilter, { additive: true });
   assertGates(state, [29, 25, 15, 10]);
   state.choose(cross(180.1, true));
   assertGates(state, [29]);
@@ -196,32 +174,6 @@ test('Shift subtraction splits integration ownership and never leaves the remove
   assertGates(state, [20, 34, 57]);
 });
 
-test('line groups remain exact while full cross gates extend the unfiltered activation selection', () => {
-  const state = createSelectionModel();
-  state.chooseSummary([46, 29], lineFilter);
-  state.choose(gate(20, true));
-  state.choose(cross(180, true));
-  assert.deepEqual(state.activationFilter!.groups, [{ ...lineFilter, gates: [46, 29] }]);
-  assert.deepEqual(new Set(state.activationFilter!.unfilteredGates), new Set([20, 46, 25, 15, 10]));
-  assert.ok(Object.isFrozen(state.activationFilter));
-  assert.ok(Object.isFrozen(state.activationFilter!.unfilteredGates));
-  state.choose(cross(180.1, true));
-  assert.deepEqual(state.activationFilter!.unfilteredGates, [20]);
-  assertGates(state, [46, 29, 20]);
-});
-
-test('additive summary selections preserve pinned crosses, and nonadditive summary selections replace them', () => {
-  const state = createSelectionModel();
-  state.choose(cross(180));
-  state.chooseSummary([8, 29], lineFilter, { additive: true });
-  assertGates(state, [46, 25, 15, 10, 8, 29]);
-  assert.equal(state.crosses.length, 1);
-  state.chooseSummary([8, 29], lineFilter);
-  assertGates(state, [8, 29]);
-  assert.equal(state.crosses.length, 0);
-  assert.deepEqual(state.activationFilter!.unfilteredGates, []);
-});
-
 test('normal gate selection replaces all cross state instead of toggling a hidden single base gate', () => {
   const state = createSelectionModel();
   state.choose(gate(20));
@@ -233,22 +185,7 @@ test('normal gate selection replaces all cross state instead of toggling a hidde
   assertGates(state, []);
 });
 
-test('summary refresh updates only line gates while pinned cross positions and no-op identities stay stable', () => {
-  const state = createSelectionModel();
-  state.chooseSummary([46, 29], lineFilter);
-  state.choose(cross(180.123, true));
-  const originalCross = state.crosses[0];
-  state.refresh(chart([8, 29]));
-  assertGates(state, [8, 29, 46, 25, 15, 10]);
-  assert.equal(state.crosses[0], originalCross);
-  const items = state.items, crosses = state.crosses, filter = state.activationFilter;
-  state.refresh(chart([8, 29]));
-  assert.equal(state.items, items);
-  assert.equal(state.crosses, crosses);
-  assert.equal(state.activationFilter, filter);
-});
-
-test('malformed cross or summary input never clears valid selection and derived values are recomputed', () => {
+test('malformed cross input never clears valid selection and derived values are recomputed', () => {
   const state = createSelectionModel();
   state.choose(cross(180));
   const items = state.items;
@@ -256,23 +193,18 @@ test('malformed cross or summary input never clears valid selection and derived 
     state.choose({ type: 'mandala-cross' as const, cross: bad } as unknown as Parameters<typeof state.choose>[0]);
     assert.equal(state.items, items);
   }
-  state.chooseSummary([20], { line: 7, source: 'design' as const });
-  assert.equal(state.items, items);
-  state.chooseSummary(null as unknown as number[], lineFilter);
-  assert.equal(state.items, items);
   state.choose({ type: 'mandala-cross' as const, cross: { longitude: 302, source: 'personality' as const, gates: [1], type: 'wrong' as const, positions: [] } } as unknown as Parameters<typeof state.choose>[0]);
   assertGates(state, [41, 31, 28, 27]);
   assert.equal(state.crosses[0].type, 'right-angle');
 });
 
-test('clear discards cross axes, partial exclusions, expanded gates, line filters and activation metadata', () => {
+test('clear discards cross axes, partial exclusions, expanded gates and activation metadata', () => {
   const state = createSelectionModel();
   state.choose({ type: 'channel' as const, id: '29-46' });
-  state.chooseSummary([8], lineFilter, { additive: true });
   state.choose(cross(180, true));
   state.choose(gate(46, true));
   state.clear();
-  assert.deepEqual(stateView(state), { items: [], primary: null, activation: null, activationFilter: null });
+  assert.deepEqual(stateView(state), { items: [], primary: null, activation: null });
   assert.deepEqual<unknown>(state.crosses, []);
   state.choose(gate(20, false, 'personality-sun'));
   assert.equal(state.activation, 'personality-sun');
@@ -289,56 +221,4 @@ test('activation identity survives multi-item cross selection and ordinary repla
   state.choose(gate(20, false, 'personality-mars'));
   assert.equal(state.activation, 'personality-mars');
   assertGates(state, [20]);
-});
-
-
-test('refreshing selected lines reads only requested gates without full line counts or topology', async () => {
-  const state = createSelectionModel(), current = chart();
-  state.chooseSummary([46, 29, 8], lineFilter);
-  const session = new Session(); session.connect();
-  const post = promisify(session.post.bind(session)) as unknown as ProfilerPost;
-  try {
-    await post('Profiler.enable');
-    await post('Profiler.startPreciseCoverage', { callCount: true, detailed: false });
-    for (let i = 0; i < 10; i++) state.refresh(current as unknown as ChartView);
-    const { result } = await post('Profiler.takePreciseCoverage');
-    const calls = (name: string) => result.flatMap(script => script.functions).filter((fn: { functionName: string; }) => fn.functionName === name).reduce((count, fn) => count + fn.ranges[0].count, 0);
-    assert.equal(calls('buildChartFacts'), 0);
-    assert.equal(calls('getDefinition'), 0);
-    assert.equal(calls('lineFacts'), 0);
-    assert.equal(calls('buildChartLines'), 0);
-    assert.equal(calls('sortedUnique'), 10, 'one sorted gate set per requested line and source');
-    assertGates(state, [46, 29, 8]);
-    current.activations.design[0].line = 1;
-    state.refresh(current as unknown as ChartView);
-    assertGates(state, [29, 8]);
-  } finally { await post('Profiler.stopPreciseCoverage'); session.disconnect(); }
-});
-
-test('refresh preserves excluded overlapping line gates and appends new gates after retained action order', () => {
-  const state = createSelectionModel();
-  const current = { source: 'calculated' as 'calculated' | 'manual' | 'transit', design: [8, 29], personality: [8, 46], activations: {
-    design: [{ gate: 8, line: 2 }, { gate: 29, line: 2 }],
-    personality: [{ gate: 8, line: 3 }, { gate: 46, line: 3 }],
-  } };
-  state.chooseSummary([8, 29], { line: 2, source: 'design' as const });
-  state.chooseSummary([8, 46], { line: 3, source: 'personality' as const }, { additive: true });
-  state.choose(gate(8, true));
-  assert.deepEqual(state.items.map(item => item.id), [29, 46]);
-  const items = state.items, filter = state.activationFilter;
-  state.refresh(current as unknown as ChartView);
-  assert.equal(state.items, items); assert.equal(state.activationFilter, filter);
-  current.design.push(3, 63);
-  current.activations.design.push({ gate: 63, line: 2 }, { gate: 3, line: 2 }, { gate: 3, line: 2 });
-  state.refresh(current as unknown as ChartView);
-  assert.deepEqual(state.items.map(item => item.id), [29, 46, 3, 63]);
-  assert.deepEqual(state.activationFilter!.groups, [
-    { line: 2, source: 'design' as const, gates: [3, 29, 63] },
-    { line: 3, source: 'personality' as const, gates: [46] },
-  ]);
-  current.activations.design[1].line = 4;
-  state.refresh(current as unknown as ChartView);
-  assert.deepEqual(state.items.map(item => item.id), [46, 3, 63]);
-  current.source = 'manual'; state.refresh(current as unknown as ChartView);
-  assert.deepEqual(state.items, []);
 });

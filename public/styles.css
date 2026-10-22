@@ -1,6 +1,16 @@
 /* Foundation. */
 :root {
   --side-panel-width: 296.8px;
+  --panel-heading-height: calc(max(14px, env(safe-area-inset-top)) + 61px);
+  --timeline-hit-outset: 0px;
+  --chart-control-size: 32px;
+  --side-menu-control-size: 48px;
+  --side-menu-icon-size: 23px;
+  --side-section-heading-height: calc(max(16px, env(safe-area-inset-top)) + 64px);
+  --side-section-control-top: calc(var(--side-section-heading-height) / 2 - var(--side-menu-control-size) / 2);
+  --chart-control-top: max(16px, env(safe-area-inset-top));
+  --chart-control-gap: 4px;
+  --chart-control-icon-size: 18px;
   --panel-surface: #f4f1eb;
   --panel-ink: #302824;
   --panel-muted: #70665d;
@@ -90,8 +100,8 @@ small { font-size: 11px; }
 #bodygraph.is-pannable.is-dragging { cursor: grabbing; }
 #bodygraph text { pointer-events: none; user-select: none; -webkit-user-select: none; }
 .app-shell {
-  --section-control-accent: #b58a60; --section-control-fill: #efe5da;
-  --section-control-ink: #68472f; --section-control-border: #c9ab8c;
+  --section-control-accent: var(--panel-selected); --section-control-fill: color-mix(in srgb, var(--panel-selected) 12%, var(--panel-surface));
+  --section-control-ink: #98252a; --section-control-border: color-mix(in srgb, var(--panel-selected) 45%, var(--panel-surface));
   --section-control-idle: #735039; --section-control-edge: #d4c1ae;
   display: block; position: relative; min-height: 0; height: 100dvh; overflow: hidden; background: var(--canvas-background);
 }
@@ -123,7 +133,7 @@ small { font-size: 11px; }
 .studio:has(.canvas-wrap:not([data-chart-state='ready'])) .day-controls { visibility: hidden; }
 
 /* Floating navigation and chart heading. */
-.topbar { align-items: center; justify-content: flex-start; position: absolute; top: max(14px, env(safe-area-inset-top)); left: 16px; right: 16px; z-index: 30; display: flex; height: 44px; min-height: 0; padding: 0; border: 0; background: transparent; pointer-events: none; }
+.topbar { align-items: center; justify-content: flex-start; position: absolute; top: var(--chart-control-top); left: 16px; right: 16px; z-index: 30; display: flex; height: var(--chart-control-size); min-height: 0; padding: 0; border: 0; background: transparent; pointer-events: none; }
 .topbar-leading { position: relative; display: flex; gap: 5px; align-items: center; pointer-events: none; }
 .topbar button { pointer-events: auto; }
 .topbar .icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--panel-border); border-radius: 9px; color: var(--panel-ink); background: var(--canvas-background); }
@@ -138,20 +148,17 @@ small { font-size: 11px; }
   --section-control-ink: #000; --section-control-border: #999;
   --section-control-idle: #000; --section-control-edge: #bfbfbf;
 }
-.topbar, .chart-tools {
+.topbar, .chart-tools, .summary-chart-actions {
   --mode-accent: var(--section-control-accent); --mode-selected: var(--section-control-fill);
   --mode-selected-ink: var(--section-control-ink); --mode-selected-border: var(--section-control-border);
   --control-idle: var(--section-control-idle); --control-focus: var(--section-control-idle);
   --floating-control-border: var(--section-control-edge); --floating-control-border-hover: var(--section-control-idle);
 }
-.chart-tools { position: fixed; z-index: 85; top: max(14px, env(safe-area-inset-top)); right: 16px; display: flex; align-items: center; gap: 8px; }
+.chart-tools { position: fixed; z-index: 85; top: var(--chart-control-top); right: 16px; display: flex; align-items: center; height: var(--chart-control-size); gap: var(--chart-control-gap); }
 .chart-view-tools { display: contents; }
 .summary-title { display: none; }
 .chart-tools .icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--panel-border); border-radius: 9px; color: var(--panel-ink); background: var(--canvas-background); }
 .chart-tools .icon-button svg { width: 21px; height: 21px; }
-/* A filled tool means enabled, never merely hovered or focused. */
-.chart-tools .icon-button[aria-expanded='true'] { color: var(--mode-selected-ink); background: var(--mode-selected); border-color: var(--mode-selected-border); }
-#lifetimeToggle[aria-pressed='true'], #natalDayToggle[aria-pressed='true'], .mandala-switch[aria-checked='true'] { color: var(--mode-selected-ink); background: var(--mode-selected); border-color: var(--mode-selected-border); }
 .chart-tools button:focus-visible { outline: 1px dashed var(--control-focus); outline-offset: 2px; }
 /* The menu follows the same enabled state as the chart tools. */
 .topbar #openLibrary[aria-expanded='true'] {
@@ -191,7 +198,7 @@ small { font-size: 11px; }
 .chart-summary[data-screen='summary']::before,
 .studio[data-returns-layout='side'] .chart-summary[data-screen='returns']::before {
   content: ''; position: absolute; z-index: -1; top: 0; left: 0; right: 0;
-  height: calc(max(14px, env(safe-area-inset-top)) + 56px);
+  height: var(--panel-heading-height);
   background: var(--panel-header-surface); border-bottom: 1px solid var(--panel-border);
   box-sizing: content-box; pointer-events: none;
 }
@@ -205,7 +212,7 @@ small { font-size: 11px; }
 .library.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
 .mobile-backdrop { display: none; position: fixed; inset: 0; z-index: 70; left: var(--drawer-width); background: transparent; }
 .mobile-backdrop:not([hidden]) { display: block; }
-.library { position: fixed; top: 0; bottom: 0; left: 0; z-index: 80; display: flex; flex-direction: column; width: var(--drawer-width); min-width: 0; min-height: 0; padding: calc(max(14px, env(safe-area-inset-top)) + 72px) 16px 16px; overflow: hidden; background: var(--panel-surface); color: var(--panel-ink); border: 0; border-right: 1px solid var(--panel-border); box-shadow: none; transform: translateX(calc(-100% - 24px)); visibility: hidden; pointer-events: none; transition: transform .24s cubic-bezier(.22, 1, .36, 1), visibility .24s; }
+.library { position: fixed; top: 0; bottom: 0; left: 0; z-index: 80; display: flex; flex-direction: column; width: var(--drawer-width); min-width: 0; min-height: 0; padding: calc(var(--panel-heading-height) + 16px) 16px 16px; overflow: hidden; background: var(--panel-surface); color: var(--panel-ink); border: 0; border-right: 1px solid var(--panel-border); box-shadow: none; transform: translateX(calc(-100% - 24px)); visibility: hidden; pointer-events: none; transition: transform .24s cubic-bezier(.22, 1, .36, 1), visibility .24s; }
 .sidebar-heading { display: flex; align-items: center; gap: 8px; color: var(--panel-muted); }
 .sidebar-heading .eyebrow { font-weight: 600; letter-spacing: 0; text-transform: none; color: inherit; }
 .library-count { display: inline-flex; justify-content: center; align-items: center; min-width: 19px; height: 18px; padding: 0 5px; border-radius: 5px; margin-left: 4px; background: var(--panel-hover); color: var(--panel-muted); }
@@ -394,47 +401,15 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .chart-actions summary::-webkit-details-marker { display: none; }
 .chart-actions summary:hover, .chart-actions[open] summary { background: #e6e9ef; color: #20242b; }
 .chart-actions summary:focus-visible { outline: 2px solid var(--control-focus); outline-offset: 1px; }
-.chart-summary { position: fixed; z-index: 80; top: 0; right: 0; bottom: 0; width: var(--summary-width); display: flex; flex-direction: column; min-height: 0; padding: max(78px, calc(env(safe-area-inset-top) + 64px)) 18px max(24px, env(safe-area-inset-bottom)); background: var(--panel-surface); border-left: 1px solid var(--panel-border); box-shadow: none; color: var(--panel-ink); font-size: 13px; line-height: 1.5; transform: translateX(calc(100% + 24px)); visibility: hidden; pointer-events: none; transition: transform .24s cubic-bezier(.22, 1, .36, 1), visibility .24s; }
+.chart-summary { --summary-edge: 16px; position: fixed; z-index: 80; top: 0; right: 0; bottom: 0; width: var(--summary-width); display: flex; flex-direction: column; min-height: 0; padding: max(78px, calc(env(safe-area-inset-top) + 64px)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--panel-surface); border-left: 1px solid var(--panel-border); box-shadow: none; color: var(--panel-ink); font-size: 13px; line-height: 1.5; transform: translateX(calc(100% + 24px)); visibility: hidden; pointer-events: none; transition: transform .24s cubic-bezier(.22, 1, .36, 1), visibility .24s; }
 .chart-summary.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
 .summary-backdrop { position: fixed; z-index: 70; inset: 0 var(--summary-width) 0 0; background: transparent; }
-.summary-heading { flex: none; padding: 0 5px; }
-.summary-heading h2 { font-size: 21px; font-weight: 500; letter-spacing: -.035em; }
-.summary-overview { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; color: var(--panel-muted); font-size: 12px; }
-.summary-overview strong { color: var(--panel-ink); font-weight: 500; }
-.summary-search { flex: none; margin: 19px 5px 10px; }
-.summary-search input { width: 100%; min-height: 40px; padding: 6px 0; border: 0; border-bottom: 1px solid #45454519; border-radius: 0; background: transparent; color: var(--panel-ink); font-size: 13px; }
-.summary-search input::placeholder { color: var(--panel-muted); }
-.summary-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #45454526 transparent; padding: 0 5px 12px; }
-.summary-section { border-bottom: 1px solid #45454512; }
-.summary-action { flex: none; margin: 0 5px; padding: 0; border-bottom: 1px solid #45454512; border-radius: 0; text-align: left; }
-.summary-action, .summary-section > summary { display: flex; align-items: center; gap: 12px; min-height: 49px; cursor: pointer; list-style: none; user-select: none; font-size: 14px; }
-.summary-section > summary::-webkit-details-marker { display: none; }
-.summary-action:focus-visible, .summary-section > summary:focus-visible { outline: 2px solid #686868; outline-offset: -2px; border-radius: 4px; }
-.summary-section-count { margin-left: auto; color: var(--panel-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.summary-chevron { color: var(--panel-muted); transform: rotate(-90deg); transition: transform .18s; font-size: 15px; }
-.summary-section[open] > summary .summary-chevron { transform: rotate(0); }
-.summary-section-body { padding: 0 0 12px; }
-.summary-line-head, .summary-line-row { display: grid; grid-template-columns: 35px repeat(3, 1fr); gap: 4px; align-items: center; text-align: center; }
-.summary-line-head { min-height: 31px; color: var(--panel-muted); font-size: 10px; }
-.summary-line-row { min-height: 41px; font-variant-numeric: tabular-nums; }
-.summary-line-row > span:first-child { color: var(--panel-muted); font-size: 12px; }
-.summary-lines.is-transit .summary-line-head, .summary-lines.is-transit .summary-line-row { grid-template-columns: 1fr 1fr; }
-.summary-count { width: 100%; min-height: 39px; border-radius: 6px; font-size: 14px; }
-.summary-design { color: #b34b4d; }
-.summary-personality { color: var(--panel-ink); }
-.summary-all { color: var(--panel-muted); }
-.summary-action:hover, .summary-count:hover:not(:disabled), .summary-entity:hover { background: #45454506; }
-.summary-count[aria-pressed='true'], .summary-entity[aria-pressed='true'] { background: var(--panel-hover); color: var(--panel-ink); }
-.summary-note { margin: 10px 0 2px; color: var(--panel-muted); font-size: 11px; line-height: 1.65; }
-.summary-empty { padding-top: 10px; }
-.summary-entity { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; min-height: 42px; padding: 8px 6px; text-align: left; border-radius: 5px; font-size: 12px; }
-.summary-entity-detail { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; color: var(--panel-muted); text-align: right; font-size: 11px; }
-.summary-entity > span:first-child { min-width: 0; }
-.summary-center-swatch { display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px; border: 1px solid color-mix(in srgb, var(--center-color) 65%, var(--panel-ink)); border-radius: 3px; background: var(--center-color); }
-.search-match { padding: 0 .08em; border-radius: 2px; background: var(--search-match); color: var(--search-match-ink); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-.summary-source-dot { display: inline-block; flex: none; width: 4px; height: 4px; border-radius: 50%; }
-.summary-source-dot.design { background: #b34b4d; }
-.summary-source-dot.personality { background: #454545; }
+.summary-heading { display: block; position: relative; flex: none; padding: 0; }
+.summary-heading > h2 { display: flex; align-items: center; height: var(--side-section-heading-height); margin: 0 calc(-1 * var(--summary-edge)); padding: 0 calc(var(--summary-edge) + var(--side-menu-control-size) + 16px) 0 var(--summary-edge); border-bottom: 1px solid var(--panel-border); color: var(--panel-ink); font: 600 20px/26px var(--sans); letter-spacing: -.0175em; white-space: nowrap; }
+
+.summary-action { flex: none; margin: 0 5px; padding: 0; border-bottom: 1px solid #45454512; border-radius: 0; text-align: left; display: flex; align-items: center; gap: 12px; min-height: 49px; cursor: pointer; user-select: none; font-size: 14px; }
+.summary-action:focus-visible { outline: 2px solid #686868; outline-offset: -2px; border-radius: 4px; }
+.summary-action:hover { background: #45454506; }
 
 /* A fine measuring line: quiet ticks, readable labels, distinct event nodes. */
 .day-controls { touch-action: none; overscroll-behavior: none; translate: 0 calc(0px - var(--timeline-viewport-lift, 0px)); position: absolute; z-index: 90; width: min(360px, calc(100% - 24px)); margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: #777777; font-size: 11px; }
@@ -529,9 +504,9 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 
 @media (pointer: coarse) {
   /* Keep editable text at native readable size so Safari need not zoom on focus. */
-  .summary-search input { font-size: 16px; }
   /* Six extra pixels on each side of the same rail center; headings stay above. */
-  .day-controls input[type='range'] { top: -6px; height: calc(var(--timeline-thumb-size) + 12px); }
+  .app-shell { --timeline-hit-outset: 6px; }
+  .day-controls input[type='range'] { top: calc(0px - var(--timeline-hit-outset)); height: calc(var(--timeline-thumb-size) + 2 * var(--timeline-hit-outset)); }
   .lifetime-heading { gap: 3px; }
   .lifetime-date-control { gap: 2px; }
   .lifetime-date-control > label { font-size: 10px; }
@@ -542,28 +517,48 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 
 /* Desktop: one measured top row keeps the caption clear of chart tools.
    Only the controls catch input across the transparent gap over the panel. */
-.studio:has(.canvas-wrap[data-layout='desktop']) .chart-tools { pointer-events: none; }
+.studio:has(.canvas-wrap[data-layout='desktop']) .chart-tools { top: calc(var(--side-section-heading-height) / 2 - var(--chart-control-size) / 2); pointer-events: none; }
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools {
-  position: relative; display: flex; align-items: center; gap: 4px;
-  margin-right: max(14px, calc(var(--studio-right-space, 0px) - 48px));
+  position: relative; display: flex; align-items: center; gap: var(--chart-control-gap);
+  margin-right: max(14px, calc(var(--studio-right-space, 0px) - var(--side-menu-control-size) - var(--chart-control-gap)));
   pointer-events: auto;
   transition: margin-right .24s cubic-bezier(.22, 1, .36, 1);
 }
 .studio:has(.canvas-wrap[data-layout='desktop']) .summary-switch { position: relative; pointer-events: auto; }
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools > button {
-  width: 32px; height: 32px; min-height: 32px; border-radius: var(--floating-control-radius);
+  width: var(--chart-control-size); height: var(--chart-control-size); min-height: var(--chart-control-size); border-radius: var(--floating-control-radius);
 }
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-view-tools > button > svg {
-  width: 18px; height: 18px;
+  width: var(--chart-control-icon-size); height: var(--chart-control-icon-size);
 }
+/* Navigation keeps its prominence within the same control family. */
+:is(#openLibrary, #summarySwitch) {
+  --chart-control-size: var(--side-menu-control-size);
+  --chart-control-icon-size: var(--side-menu-icon-size);
+}
+/* One control family serves navigation, workspace tools and chart actions. */
+:is(.topbar, .chart-tools, .summary-chart-actions) :is(.icon-button, .mandala-switch, .shared-chart-add, .shared-chart-send) {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: var(--chart-control-size); height: var(--chart-control-size); min-height: var(--chart-control-size);
+  margin: 0; padding: 0; border: 1px solid var(--floating-control-border); border-radius: var(--floating-control-radius);
+  color: var(--control-idle); background: var(--canvas-background); box-shadow: none;
+  cursor: pointer; pointer-events: auto; touch-action: manipulation;
+}
+:is(.topbar, .chart-tools, .summary-chart-actions) :is(.icon-button, .mandala-switch, .shared-chart-add, .shared-chart-send) > svg {
+  width: var(--chart-control-icon-size); height: var(--chart-control-icon-size);
+}
+:is(.topbar, .chart-tools, .summary-chart-actions) button:focus-visible { outline: 1px dashed var(--control-focus); outline-offset: 2px; }
+/* A filled tool means enabled, never merely hovered or focused. */
+.chart-tools .icon-button[aria-expanded='true'] { color: var(--mode-selected-ink); background: var(--mode-selected); border-color: var(--mode-selected-border); }
+#lifetimeToggle[aria-pressed='true'], #natalDayToggle[aria-pressed='true'], .mandala-switch[aria-checked='true'] { color: var(--mode-selected-ink); background: var(--mode-selected); border-color: var(--mode-selected-border); }
 /* All floating controls share the same quiet border feedback. Touch cannot
    leave a hover fill behind; colour continues to mean an enabled mode. */
-:is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
+:is(.topbar, .chart-tools, .summary-chart-actions) :is(.icon-button, .mandala-switch, .shared-chart-add, .shared-chart-send):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']) {
   color: var(--control-idle);
   border-color: var(--floating-control-border);
 }
 @media (hover: hover) and (pointer: fine) {
-  :is(.topbar, .chart-tools) :is(.icon-button, .mandala-switch):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']):hover {
+  :is(.topbar, .chart-tools, .summary-chart-actions) :is(.icon-button, .mandala-switch, .shared-chart-add, .shared-chart-send):not([aria-pressed='true']):not([aria-checked='true']):not([aria-expanded='true']):hover {
     border-color: var(--floating-control-border-hover);
   }
 }
@@ -576,28 +571,11 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary::before {
   background: transparent;
 }
-.app-shell:has(.canvas-wrap[data-layout='desktop']) .site-brand {
-  left: 66px; font-size: 26px; font-weight: 600; letter-spacing: -.025em;
+.app-shell .site-brand {
+  top: 0; left: calc(var(--side-menu-control-size) + 16px); min-height: var(--side-menu-control-size);
+  font: 600 20px/26px var(--sans); letter-spacing: -.0175em;
 }
-.app-shell:has(.canvas-wrap[data-layout='desktop']):has(.library.open) .topbar-leading::after {
-  content: ''; position: absolute; left: 54px; top: 10px;
-  width: 1px; height: 24px; background: var(--panel-border); pointer-events: none;
-}
-/* The open summary owns the chart's identity. It stays fixed beside the
-   menu button; the same caption remains over the chart when this panel closes. */
-.studio:has(.canvas-wrap[data-layout='desktop']) {
-  --summary-caption-top: max(20px, calc(env(safe-area-inset-top) + 6px));
-  --summary-header-bottom: calc(max(14px, env(safe-area-inset-top)) + 56px);
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .summary-title {
-  display: flex; flex-direction: column; gap: 34.5px; position: fixed;
-  top: var(--summary-caption-top);
-  left: calc(100% - var(--summary-width) + 24px);
-  width: calc(var(--summary-width) - 48px); min-height: 101px;
-  color: var(--panel-ink); font-family: var(--sans); text-align: left;
-  opacity: 0; visibility: hidden; pointer-events: none;
-  transition: opacity .14s ease-out, visibility .14s;
-}
+
 .summary-chart-title {
   display: block; width: calc(100% - 56px); min-height: 31.5px; pointer-events: auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -606,29 +584,8 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .summary-chart-moment { display: flex; flex-direction: column; gap: 1px; font-variant-numeric: tabular-nums; }
 #summaryChartDate { min-height: 18px; color: #70665d; font-size: 13px; line-height: 18px; }
 #summaryChartDetails { min-height: 16px; color: #817970; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
-.studio:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open[data-screen='summary']) .summary-title {
-  opacity: 1; visibility: visible;
-}
-.studio:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open[data-screen='summary']) > .studio-header {
-  visibility: hidden;
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary[data-screen='summary']::before {
-  height: var(--summary-header-bottom);
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary[data-screen='summary'] {
-  padding-top: calc(var(--summary-caption-top) + var(--summary-caption-height, 101px) + 16px);
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .summary-heading h2 {
-  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .summary-overview { margin-top: 0; }
-@media (prefers-reduced-motion: reduce) {
-  .studio:has(.canvas-wrap[data-layout='desktop']) .summary-title { transition: none; }
-}
-.studio:has(.canvas-wrap[data-layout='desktop']) .summary-switch::before {
-  content: ''; position: absolute; right: calc(100% + 10px); top: 50%; transform: translateY(-50%);
-  width: 1px; height: 24px; background: var(--panel-border); pointer-events: none;
-}
+.studio:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open[data-screen='summary']) > .studio-header { visibility: hidden; }
+
 
 /* Feedback and accessibility helpers. */
 .toast { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); max-width: calc(100vw - 32px); color: #83705f; font-size: 12px; line-height: 1.5; text-align: center; opacity: 0; pointer-events: none; z-index: 150; }
@@ -654,21 +611,18 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 @media (max-width: 699px) {
   .toast { bottom: max(24px, env(safe-area-inset-bottom)); text-align: center; width: max-content; }
   .city-results { max-height: 190px; }
-  .topbar { top: max(10px, env(safe-area-inset-top)); left: 10px; right: 10px; }
+  .topbar { top: var(--chart-control-top); left: 16px; right: 16px; }
   .dialog-content { padding: 22px; }
   .dialog-header h2 { font-size: 1.625rem; }
   .form-grid { gap: 0 12px; }
   .form-grid .field label { min-height: 42px; }
-  .site-brand { top: calc(max(14px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-top))); left: 58px; font-size: 26px; }
   .knowledge-header { padding: 12px 18px 6px; }
   .knowledge-categories { padding: 0 14px 12px; gap: 2px; }
   .knowledge-body { grid-template-columns: 1fr; grid-template-rows: 150px minmax(0, 1fr); }
   .knowledge-index { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid #e9ebef; }
   .knowledge-index[data-category='center'], .knowledge-index[data-category='channel'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .knowledge-article { padding: 24px 20px; }
-  .chart-tools { top: max(10px, env(safe-area-inset-top)); right: 10px; gap: 6px; }
-  .summary-line-head { font-size: 11px; }
-  .summary-count, .summary-entity { min-height: 44px; }
+  .chart-tools { right: 16px; gap: var(--chart-control-gap); }
 }
 
 @media (max-width: 370px) {
@@ -679,7 +633,6 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 
 @media (max-height: 500px) {
   .chart-summary { overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-  .summary-content { flex: none; overflow: visible; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -707,22 +660,26 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 /* Returns share compact filters above a full-height event list. */
 .returns-panel { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: max(78px, calc(env(safe-area-inset-top) + 64px)) 16px 0; color: #4c4c4c; }
 .returns-screen-heading { display: flex; align-items: center; gap: 8px; flex: none; }
-.returns-screen-heading h2 { margin: 0; font-size: 15px; font-weight: 500; }
-.returns-back { width: 44px; height: 44px; display: grid; place-items: center; background: transparent; color: #666666; border-radius: 8px; }
-.returns-back:hover { background: var(--panel-hover); }
+.returns-screen-heading h2 { margin: 0; color: var(--panel-ink); font: 600 17px/23px var(--sans); letter-spacing: -.02em; }
+.returns-back { position: relative; flex: none; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; background: transparent; color: var(--panel-muted); border-radius: 0; }
+.returns-back::before { content: ''; position: absolute; inset: 0; border: 1px solid var(--panel-border); border-radius: var(--floating-control-radius); pointer-events: none; }
+.returns-back::after { content: ''; position: absolute; inset: -8px; }
+.returns-back svg { width: 16px; height: 16px; }
+@media (hover: hover) and (pointer: fine) { .returns-back:hover::before { border-color: var(--control-idle); box-shadow: inset 0 0 0 1px var(--control-idle); } }
+.returns-back:active::before { border-color: var(--control-idle); }
 .summary-screen { min-height: 0; display: flex; flex: 1; flex-direction: column; }
 .chart-summary[data-screen='returns'] { padding: 0; background: var(--panel-surface); }
 /* Covering drawers stop above the rail; side panels keep their full height. */
 .app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='overlay'] .day-controls:not([hidden])) .library,
 .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.day-controls:not([hidden])) .chart-summary { bottom: var(--timeline-panels-bottom, 30.6px); }
-.returns-panel-controls { flex: none; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #dce0d5; }
+.returns-header { flex: none; display: grid; grid-template-rows: 28px 28px; align-content: center; height: var(--panel-heading-height); padding: 0; margin-bottom: 8px; border-bottom: 1px solid var(--panel-border); }
+.returns-panel-controls { flex: none; margin-left: 29px; }
 .returns-control-bar { display: flex; align-items: center; gap: 4px; }
-.returns-filter-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 0 10px; border-radius: 8px; color: #555555; background: transparent; font-size: 13px; white-space: nowrap; }
+.returns-filter-toggle { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 28px; padding: 0 7px; border-radius: 6px; color: var(--panel-muted); background: transparent; font-size: 11px; white-space: nowrap; }
 .returns-filter-toggle:hover { background: var(--panel-hover); color: var(--panel-ink); }
 .returns-filter-toggle[aria-expanded='true'] { background: var(--panel-hover); color: var(--panel-ink); }
+.returns-filter-toggle::before { content: ''; position: absolute; inset: -8px 0; }
 .returns-filter-toggle svg { flex: none; }
-.returns-close { flex: none; margin-left: auto; width: 40px; height: 40px; border-radius: 8px; color: #5e6858; background: transparent; font-size: 23px; }
-.returns-close:hover { background: var(--panel-hover); }
 .returns-filter-popover { width: min(360px, calc(100vw - 20px)); padding: 8px; border: 1px solid #d5d5d5; border-radius: 12px; background: var(--canvas-background); box-shadow: 0 8px 28px #00000014; color: #505050; font-size: 13px; }
 .returns-body-menu { position: absolute; z-index: 2; top: 98px; left: 10px; width: min(360px, calc(100% - 20px)); display: flex; flex-direction: column; max-height: calc(100% - 106px); }
 .returns-filter-popover .returns-menu-heading { display: flex; align-items: center; justify-content: space-between; flex: none; min-height: 40px; margin-bottom: 4px; padding-left: 8px; color: #505050; font-size: 13px; font-weight: 500; }
@@ -758,15 +715,15 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .returns-filter-popover[data-view='periods'] .date-picker-row button { font-size: 13px; }
 .returns-filter-popover button[data-selected='true'] { background: #e8e8e8; box-shadow: inset 0 0 0 1px #888888; color: #383838; font-weight: 600; }
 .returns-content { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 2px; }
-.returns-event { width: 100%; text-align: left; color: inherit; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 72px; padding: 10px 2px; border-bottom: 1px solid #e7e6de; }
-.returns-event-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.returns-event-copy strong { font-size: 14px; font-weight: 500; line-height: 1.4; }
-.returns-event-copy time { color: #737c6c; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.returns-event { width: 100%; text-align: left; color: inherit; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; padding: 6px 2px; border-bottom: 1px solid #e7e6de; }
+.returns-event-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.returns-event-copy strong { font-size: 13px; font-weight: 500; line-height: 18px; }
+.returns-event-copy time { color: var(--panel-muted); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
 .returns-event-action { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 3px; }
-.returns-event-action > span { color: #737c6c; font-size: 12px; white-space: nowrap; }
+.returns-event-action > span { color: var(--panel-muted); font-size: 11px; white-space: nowrap; }
 .returns-event-action small { color: #65775b; font-size: 11px; white-space: nowrap; }
-.returns-event:hover, .returns-event:focus-visible { background: var(--panel-hover); }
-.returns-event.is-selected { background: var(--mode-selected); color: var(--mode-selected-ink); }
+.returns-event:hover, .returns-event:focus-visible { background: color-mix(in srgb, var(--return-selection) 50%, var(--panel-surface)); }
+.returns-event.is-selected { background: color-mix(in srgb, var(--return-selection) 50%, var(--panel-surface)); color: var(--panel-ink); }
 .returns-event.is-selected :is(time, .returns-event-action > span, .returns-event-action small) { color: inherit; }
 .returns-event.is-selected small { font-weight: 500; }
 .returns-error, .returns-status { font-size: 11px; line-height: 1.5; color: #938c81; }
@@ -904,69 +861,47 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 /* A single mobile sheet behaviour; desktop keeps its existing flex children. */
 .phone-sheet-handle { display: none; }
 .phone-sheet-content { display: contents; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) {
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary {
+  --summary-edge: 28px;
+  --summary-moment-height: 68px;
   --phone-sheet-offset: var(--phone-viewport-lift, 0px);
   position: fixed; top: auto; left: 0; right: 0; bottom: var(--phone-sheet-offset);
   scroll-padding-top: max(64px, calc(env(safe-area-inset-top) + 64px));
   width: auto; height: var(--phone-sheet-height, min(52dvh, calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)))));
   max-height: calc(100dvh - var(--phone-sheet-offset) - max(64px, calc(env(safe-area-inset-top) + 64px)));
-  padding: 0; border: 0; border-top: 1px solid var(--panel-border); border-radius: 16px 16px 0 0;
-  background: var(--panel-surface); box-shadow: 0 -4px 20px #3028240a;
+  padding: 0; border: 0; border-radius: 30px 30px 0 0;
+  background: var(--panel-surface); box-shadow: inset 0 1px var(--panel-border), 0 -4px 20px #3028240a;
   transform: translateY(calc(100% + var(--phone-sheet-offset) + 24px));
-  overflow: hidden; overscroll-behavior: contain;
-  transition: transform .28s cubic-bezier(.22,.8,.25,1), height .24s cubic-bezier(.22,.8,.25,1), visibility 0s linear .28s;
+  overflow: visible; overscroll-behavior: contain;
+  transition: transform .28s cubic-bezier(.22,.8,.25,1), height .28s cubic-bezier(.22,1,.36,1), visibility 0s linear .28s;
 }
-.app-shell:has(.canvas-wrap[data-layout='phone']):has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden])) :is(.library, .chart-summary) {
-  --phone-sheet-offset: var(--phone-sheet-bottom, 40.6px);
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden])) .chart-summary {
+  --phone-sheet-offset: var(--phone-sheet-bottom, 36.6px);
 }
-.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary).open { transform: translateY(0); transition-delay: 0s; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary)[data-sheet-dragging='true'] { transition: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary.open { transform: translateY(0); transition-delay: 0s; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-dragging='true'] { transition: none; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle {
-  display: grid; place-items: center; flex: none; width: 100%; height: 44px; min-height: 44px;
+  display: grid; place-items: center; flex: none; width: 100%; height: 44px; min-height: 44px; margin-top: -12px;
   border-radius: 16px 16px 0 0; padding: 0; background: transparent; touch-action: none; cursor: ns-resize;
 }
 .phone-sheet-handle > span { width: 32px; height: 3px; border-radius: 2px; background: #b3aca2; }
-.phone-sheet-handle:focus-visible { outline: 2px solid var(--control-focus); outline-offset: -4px; }
+.phone-sheet-handle:focus-visible { outline: none; }
+.phone-sheet-handle:focus-visible > span { outline: 1px dashed var(--control-focus); outline-offset: 4px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-content {
   display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; overscroll-behavior: contain;
   scrollbar-width: thin; touch-action: pan-y;
-  padding: 0 max(20px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  padding: 0 max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
-/* Switching contents never draws an outgoing sheet beneath the new one. */
-.app-shell:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open) .library:not(.open),
-.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .chart-summary:not(.open) { visibility: hidden; transition: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary)::before { display: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .site-brand { visibility: hidden; opacity: 0; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary::before { display: none; }
+/* The touch clearance stays opaque without intercepting the slider above it. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary::after {
+  content: ''; position: absolute; top: 100%; left: 0; right: 0;
+  height: var(--phone-sheet-clearance-gap, 0px); background: var(--panel-surface); pointer-events: none;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']):not(:has(.studio[data-workspace-screen='chart'] .day-controls:not([hidden]))) .chart-summary::after { display: none; }
 body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backdrop) { display: none; }
-/* Compact navigation is an index; the saved collection gets the space. */
-.app-shell:has(.canvas-wrap[data-layout='phone']) .main-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .menu-item { min-height: 44px; padding: 8px 10px; gap: 9px; border-radius: 6px; font-size: 14px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .menu-item svg { width: 18px; height: 18px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; margin-top: 16px; padding-top: 8px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading { margin: 0; padding-left: 10px; min-width: 0; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-heading .eyebrow { font-size: 11px; font-weight: 500; letter-spacing: .04em; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library-count { min-width: 0; height: auto; margin-left: 3px; padding: 0; background: transparent; font-size: 11px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button { position: relative; width: auto; min-height: 44px; margin: 0; padding: 0 10px; border: 0; background: transparent; font-size: 12px; gap: 5px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button::before { content: ''; position: absolute; inset: 6px 0; border: 1px solid var(--panel-border); border-radius: 6px; pointer-events: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:focus-visible { outline: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:focus-visible::before { outline: 1px dashed var(--control-focus); outline-offset: 2px; }
-@media (hover: hover) and (pointer: fine) {
-  .app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .new-chart-button:hover::before { border-color: var(--floating-control-border-hover); }
-}
-.app-shell:has(.canvas-wrap[data-layout='phone']) .saved-charts .chart-list { grid-column: 1 / -1; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-row { margin-bottom: 3px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-card { padding-left: 10px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .library .chart-caption { font-size: 12px; line-height: 16px; }
-
-.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-list { flex: none; overflow: visible; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .sidebar-footer { margin-top: 16px; }
+/* Navigation keeps the desktop composition on phones as well. */
 .app-shell:has(.canvas-wrap[data-layout='phone']) .summary-screen { flex: none; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-content { flex: none; overflow: visible; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading h2 { flex: none; font-size: 20px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-overview { margin-top: 0; text-align: right; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-search { margin: 8px 5px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-search input { min-height: 44px; font-size: 16px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .returns-panel { padding: 0; flex: 1; }
 @media (prefers-reduced-motion: reduce) {
   .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) { transition: none; }
@@ -1062,3 +997,187 @@ body:has(.canvas-wrap[data-layout='phone']) :is(.mobile-backdrop, .summary-backd
   #chartDialog .form-grid { gap: 0 8px; }
   #chartDialog .dialog-actions button { padding-inline: 10px; }
 }
+
+/* Both moments and the Returns controls use the same compact heading rhythm. */
+.summary-comparison { position: relative; }
+.summary-comparison[hidden] { display: none !important; }
+.app-shell .summary-title { position: relative; display: flex; flex-direction: column; gap: 0; width: 100%; min-width: 0; color: var(--panel-ink); font-family: var(--sans); text-align: left; }
+.summary-moment { position: relative; min-width: 0; min-height: var(--summary-moment-height, var(--panel-heading-height)); padding: var(--chart-control-top) 0 6px; }
+.summary-moment-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; height: var(--chart-control-size); }
+.app-shell :is(.summary-chart-title, .summary-comparison-title) { flex: 1; display: block; width: auto; min-width: 0; min-height: 23px; margin: 0; padding: 0; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--panel-ink); font: 600 18px/24px var(--sans); letter-spacing: -.02em; }
+.summary-moment-clock { display: block; flex: none; color: var(--panel-ink); font: 600 14px/16px var(--sans); font-variant-numeric: tabular-nums; }
+.summary-chart-moment > span:empty { display: none; }
+.app-shell .summary-chart-moment { position: relative; display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-top: 4px; padding: 0; min-width: 0; }
+.app-shell :is(#summaryChartDate, #summaryChartDetails, #summaryComparisonDate, #summaryComparisonDetails) { min-height: 16px; color: var(--panel-muted); font-size: 11px; line-height: 16px; }
+.summary-title:has(.summary-comparison:not([hidden])) .summary-moment { height: var(--summary-moment-height, var(--panel-heading-height)); }
+.summary-title:has(.summary-comparison:not([hidden])) .summary-chart-moment { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
+.summary-title:has(.summary-comparison:not([hidden])) .summary-chart-moment > span:first-child { flex: none; }
+.summary-title:has(.summary-comparison:not([hidden])) .summary-chart-moment > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.summary-title::after, .summary-title:has(.summary-comparison:not([hidden])) .summary-moment-primary::after { content: ''; position: absolute; bottom: 0; left: calc(-1 * var(--summary-edge, 23px)); right: calc(-1 * var(--summary-edge, 23px)); height: 1px; background: var(--panel-border); }
+.summary-junction { position: absolute; z-index: 1; top: -11px; left: 0; right: 0; display: flex; align-items: center; justify-content: center; height: 22px; }
+.studio:has(.canvas-wrap[data-layout='phone']):has(.chart-summary.open[data-screen='summary']:not([data-sheet-size='collapsed'])) > .studio-header { opacity: 0; pointer-events: none; }
+.app-shell[data-page-state='loading'] #chartSummary .summary-screen { opacity: 1; }
+.app-shell[data-page-state='loading'] .summary-screen > :not(.summary-heading) { opacity: 0; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .timeline-dock { border-top: 1px solid var(--panel-muted); }
+
+/* The small grip is backed by the full touch target. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary .phone-sheet-content { transition: visibility 0s; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-size='collapsed']:not([data-sheet-dragging='true']) .phone-sheet-content { visibility: hidden; transition-delay: .28s; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle > span { transition: width .16s ease-out, background .16s ease-out; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .phone-sheet-handle:active > span,
+.app-shell:has(.canvas-wrap[data-layout='phone']) [data-sheet-dragging='true'] > .phone-sheet-handle > span { width: 40px; background: var(--panel-muted); }
+.app-shell[data-page-state='loading'] .summary-moment-heading > :is(.summary-chart-title, .summary-comparison-title) { position: relative; color: transparent; }
+.app-shell[data-page-state='loading'] .summary-moment-heading > :is(.summary-chart-title, .summary-comparison-title)::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 7px; transform: translateY(-50%); border-radius: 2px; background: var(--loading-ink); }
+
+/* Phone: navigation comes from the left; chart information comes from below. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-switch { display: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .topbar { top: var(--side-section-control-top); left: 16px; right: auto; width: var(--side-menu-control-size); z-index: 93; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-tools { left: auto; right: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library {
+  position: fixed; inset: 0 auto 0 0; width: min(var(--side-panel-width), 86vw); height: auto; max-height: none;
+  border: 0; border-right: 1px solid var(--panel-border); border-radius: 0; padding: calc(var(--side-section-heading-height) + 16px) 16px max(16px, env(safe-area-inset-bottom)); background: var(--panel-surface);
+  transform: translateX(-100%); overflow: hidden; z-index: 92; box-shadow: 6px 0 22px #30282414;
+  transition: transform .26s cubic-bezier(.22,.8,.25,1), visibility 0s linear .26s;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library.open { transform: translateX(0); transition-delay: 0s; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library > .phone-sheet-handle { display: none; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library > .phone-sheet-content { padding: 0; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library .saved-charts { min-height: 180px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary[data-sheet-size='collapsed']:not([data-sheet-dragging='true']) { overflow: visible; }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:has(.canvas-wrap[data-layout='phone']) .library { transition: none; }
+}
+
+.app-shell:has(.canvas-wrap[data-layout='phone']) .library::before { background: transparent; }
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .chart-tools,
+.app-shell:has(.canvas-wrap[data-layout='phone']):has(.library.open) .performance-panel { visibility: hidden; pointer-events: none; }
+
+/* Navigation floats above the still-visible information sheet. */
+body:has(.canvas-wrap[data-layout='phone']) .mobile-backdrop:not([hidden]) { display: block; left: min(var(--side-panel-width), 86vw); background: transparent; z-index: 91; }
+
+/* Two compact actions share the identity row; feedback floats beneath it. */
+.app-shell .summary-title:not(:has(.summary-comparison:not([hidden]))) .summary-chart-moment { flex-wrap: nowrap; white-space: nowrap; }
+.app-shell :is(#summaryChartDate, #summaryComparisonDate) { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-shell .summary-title:not(:has(.summary-comparison:not([hidden]))) #summaryChartDetails { overflow: hidden; text-overflow: ellipsis; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) { --chart-control-size: 44px; --chart-control-icon-size: 21px; --chart-control-gap: 6px; }
+/* Phone actions use the same 44px controls as the workspace. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-moment { padding: 3px 0 2px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-chart-moment { margin-top: 2px; }
+.app-shell .summary-heading > .summary-action { width: 100%; margin: 0; border: 0; min-height: 32px; font-size: 12px; }
+.app-shell[data-page-state='loading'] .summary-heading > .summary-action { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary .phone-sheet-content { transition-delay: 0s; } }
+.summary-comparison-reset { position: absolute; top: -11px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; background: transparent; color: var(--panel-muted); cursor: pointer; }
+.summary-comparison-reset svg { width: 16px; height: 16px; padding: 0 7px; box-sizing: content-box; color: inherit; background: var(--panel-surface); }
+.summary-comparison-reset:focus-visible { outline: none; }
+.summary-comparison-reset:focus-visible svg { outline: 1px dashed var(--control-focus); outline-offset: 3px; }
+@media (hover: hover) and (pointer: fine) { .summary-comparison-reset:hover { color: var(--panel-ink); } }
+.summary-comparison-reset:active { color: var(--panel-ink); }
+/* The section heading owns the book row; the unchanged moments follow below. */
+.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary { padding-top: 0; }
+.studio:has(.canvas-wrap[data-layout='desktop']) .chart-summary::before { display: none; }
+/* Caption and floating book share the same 16px panel edge. */
+.studio:has(.canvas-wrap[data-layout='desktop']) .summary-moment-heading { padding-right: 0; }
+.studio:has(.canvas-wrap[data-layout='desktop']) .returns-panel { padding-top: 0; }
+.studio:has(.canvas-wrap[data-layout='desktop']) .returns-screen-heading { padding-right: 48px; }
+
+/* Approved paired section headers: round navigation, shared title rhythm. */
+.app-shell .topbar { top: var(--side-section-control-top); height: var(--side-menu-control-size); }
+.app-shell .library { padding-top: calc(var(--side-section-heading-height) + 16px); }
+.app-shell .library::before { height: var(--side-section-heading-height); }
+.app-shell :is(#openLibrary, #summarySwitch) {
+  border-radius: 50%;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.app-shell :is(#openLibrary, #summarySwitch)[aria-expanded='false'] { background: transparent; }
+.app-shell :is(#openLibrary, #summarySwitch):active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell :is(#openLibrary, #summarySwitch) { transition: none; }
+  .app-shell :is(#openLibrary, #summarySwitch):active { transform: none; }
+}
+
+/* Accepted single-person card. Pair layout and section headers stay separate. */
+.app-shell .summary-title:has(.summary-comparison[hidden]) {
+  width: 280px; max-width: calc(100% + 32px); left: 50%; transform: translateX(-50%);
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .summary-moment-primary {
+  min-height: 0; height: auto; padding: 10px 16px;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .summary-moment-heading {
+  height: auto; min-height: 24px; justify-content: flex-start; gap: 4px; padding: 0;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .summary-chart-title {
+  flex: 0 1 auto; min-height: 24px; font: 600 17px/24px var(--sans); letter-spacing: -.25px;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(min-content, .6fr);
+  grid-template-rows: auto auto; align-items: start; gap: 1px 12px;
+  margin-top: 4px; overflow: visible; white-space: normal;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) #summaryChartDate {
+  grid-area: 1 / 1; color: var(--panel-ink); font: 500 15px/23px var(--sans);
+  min-width: 0; white-space: normal; overflow: visible; font-variant-numeric: tabular-nums;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) #summaryChartDetails {
+  grid-area: 2 / 1; min-height: 0; font: 400 11px/15.4px var(--sans);
+  overflow: visible; white-space: normal; overflow-wrap: anywhere;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) #summaryChartClock {
+  grid-area: 1 / 2; text-align: right; font: 600 21px/23px var(--sans); letter-spacing: -.3px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) #summaryChartUtc {
+  grid-area: 2 / 2; text-align: right; color: var(--panel-muted); font: 400 11px/15.4px var(--sans);
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment::before {
+  content: ''; grid-area: 1 / 2 / 3 / 3; align-self: stretch; margin-left: -12px;
+  width: 1px; background: var(--panel-border); pointer-events: none;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden])::after { left: 0; right: 0; }
+.app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-send {
+  width: 24px; height: 24px; min-height: 24px; border: 0; border-radius: 5px; background: transparent;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-send > svg { width: 14px; height: 14px; }
+@media (hover: hover) and (pointer: fine) {
+  .app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-send:hover { background: var(--panel-hover); }
+}
+@media (pointer: coarse) {
+  .app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-send { width: 44px; height: 44px; min-height: 44px; }
+}
+
+/* Accepted phone sheet: one left edge, shared content and actions with desktop. */
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary > .phone-sheet-handle > span {
+  width: 36px; height: 4px; border-radius: 4px; background: var(--panel-muted);
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .chart-summary > .phone-sheet-content {
+  padding-inline: max(28px, env(safe-area-inset-left)) max(28px, env(safe-area-inset-right));
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-heading > h2 {
+  height: 35px; margin: 0; padding: 0 0 11px; border: 0;
+  background: transparent;
+  font: 600 18px/24px var(--sans); letter-spacing: -.3px;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) {
+  width: 100%; max-width: 100%; left: auto; transform: none;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-moment-primary {
+  padding: 7px 0 16px;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-moment-heading {
+  min-height: 36px; gap: 2px;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment {
+  margin-top: 2px; gap: 2px 16px;
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) .summary-chart-moment::before { margin-left: -16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .summary-title:has(.summary-comparison[hidden]) :is(#summaryChartDetails, #summaryChartUtc) { line-height: 16px; }
+
+/* The add action shares the quiet link treatment; its slot survives hiding. */
+.app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-add {
+  border: 0; border-radius: 5px; background: transparent;
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-add > svg { width: 18px; height: 18px; }
+@media (hover: hover) and (pointer: fine) {
+  .app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-add:hover { background: var(--panel-hover); }
+}
+.app-shell .summary-title:has(.summary-comparison[hidden]) .shared-chart-add:active { background: var(--panel-hover); }

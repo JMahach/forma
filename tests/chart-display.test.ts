@@ -14,7 +14,7 @@ test('personal previews keep the name but show the accepted moment, its birth-zo
   const owner = Object.freeze({ id: 'anna', source: 'calculated' as const, name: 'Анна', utc: '1998-08-18T14:00:00Z',
     birthDate: '1998-08-18', birthTime: '18:00', timezone: 'Europe/Moscow' });
   const preview = { id: 'lifetime-preview', source: 'transit' as const, utc: '2026-10-08T09:25:00Z' };
-  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' as const }), owner), { title: 'Анна · Транзит', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
+  assert.partialDeepStrictEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' as const }), owner), { title: 'Анна · Транзит', subtitle: '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет' });
   const overlay = overlayFixture(owner, preview, { kind: 'return' as const, event: { id: 'saturn:1:1', body: 'saturn', cycle: 1, utc: preview.utc } });
   assert.equal(chartCaption(overlay, owner).subtitle, '8 октября 2026 г. · 12:25 · UTC+3 · 28\u00a0лет');
   assert.equal(owner.birthTime, '18:00');
@@ -169,7 +169,7 @@ test('120 selected minutes reuse two formatters, including after changing the de
 test('personal life preview retains its selected chart caption while transit keeps its own identity', () => {
   const owner = { id: 'marat', source: 'calculated' as const, name: 'Марат', birthDate: '1998-08-18', birthTime: '12:00' };
   const preview = { id: 'lifetime-preview', source: 'transit' as const, name: 'Транзит', utc: '2050-01-01T00:00:00Z' };
-  assert.deepEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' as const }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
+  assert.partialDeepStrictEqual(chartCaption(overlayFixture(owner, preview, { kind: 'transit' as const }), owner), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:00 · UTC' });
   assert.equal(chartCaption(single(preview), null).title, 'Транзит');
   const event = overlayFixture(owner, preview, { kind: 'return' as const, event: { id: 'saturn:2:1', body: 'saturn', cycle: 2, utc: preview.utc } });
   assert.equal(chartCaption(event, owner).title, 'Марат · Возврат Сатурна 2');
@@ -181,7 +181,7 @@ test('a personal transit overlay names both context and moment while preserving 
   const natal = { id: 'marat', source: 'calculated' as const, name: 'Марат', birthDate: '1998-08-18', birthTime: '18:00' };
   const moment = { source: 'transit' as const, utc: '2050-01-01T00:10:00Z', personality: [20], design: [] };
   const chart = overlayFixture(natal, moment, { kind: 'transit' as const });
-  assert.deepEqual(chartCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
+  assert.partialDeepStrictEqual(chartCaption(chart, natal), { title: 'Марат · Транзит', subtitle: '1 января 2050 г. · 00:10 · UTC' });
 });
 
 
@@ -189,7 +189,7 @@ test('accepted local fields belong to calculation data while name and place stay
   const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated' as const, birthDate: '1998-08-18', birthTime: '18:00', birthPlace: 'Мурманск' });
   const data = Object.freeze({ source: 'calculated' as const, personality: [], design: [], localDate: '1998-08-19', localTime: '00:01', utc: '1998-08-18T20:01:00Z', utcOffset: 'UTC+04:00' });
   const shown = createChartComposition(data, { id: record.id, primaryLabel: record.name });
-  assert.deepEqual(chartCaption(shown, record), { title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' });
+  assert.partialDeepStrictEqual(chartCaption(shown, record), { title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' });
 });
 
 test('saved seconds and the second fold survive a minute-only input display', () => {
@@ -197,4 +197,63 @@ test('saved seconds and the second fold survive a minute-only input display', ()
     utc: '2024-11-03T06:30:29Z', utcOffset: 'UTC-05:00', timezone: 'America/New_York', fold: 1 });
   assert.equal(savedBirthTime(record), '01:30:29');
   assert.equal(chartCaption(single(record), record).subtitle, '3 ноября 2024 г. · 01:30:29 · UTC-5');
+});
+
+
+test('one shown moment exposes the same accepted caption without borrowing stale record dates', () => {
+  const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated' as const,
+    birthDate: '1998-08-18', birthTime: '18:00', birthPlace: 'Мурманск' });
+  const shown = createChartComposition(Object.freeze({ source: 'calculated' as const,
+    localDate: '1998-08-19', localTime: '00:01', utc: '1998-08-18T20:01:00Z', utcOffset: 'UTC+04:00' }),
+    { id: record.id, primaryLabel: record.name });
+  assert.deepEqual(chartCaption(shown, record), {
+    title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск',
+    moments: [{ title: 'Анна', subtitle: '19 августа 1998 г. · 00:01 · UTC+4 · Мурманск' }],
+  });
+  const transit = single({ id: 'current-transit', source: 'transit' as const, utc: '2026-10-08T09:25:37Z' });
+  assert.deepEqual(chartCaption(transit, null, { useUtc: true }).moments,
+    [{ title: 'Транзит', subtitle: '8 октября 2026 г. · 09:25 · UTC' }]);
+});
+
+test('return moment rows separate accepted birth facts from the exact event while retaining the combined caption', () => {
+  const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated' as const,
+    utc: '1998-08-18T14:00:00Z', birthDate: '1998-08-18', birthTime: '18:00',
+    utcOffset: 'UTC+04:00', timezone: 'Europe/Moscow', birthPlace: 'Мурманск' });
+  const event = Object.freeze({ id: 'saturn:1:1', body: 'saturn', cycle: 1, utc: '2026-10-08T09:25:37Z' });
+  const shown = overlayFixture(record, Object.freeze({ source: 'transit' as const, utc: event.utc }),
+    { kind: 'return', event });
+  const caption = chartCaption(shown, record, { ageUtc: '2050-01-01T00:00:00Z', showAge: true });
+  assert.equal(caption.title, 'Анна · Возврат Сатурна 1');
+  assert.equal(caption.subtitle, '8 октября 2026 г. · 12:25:37 · UTC+3 · 28\u00a0лет');
+  assert.equal(caption.moments.length, 2);
+  assert.equal(caption.moments[0].title, 'Анна');
+  assert.equal(caption.moments[0].subtitle, '18 августа 1998 г. · 18:00 · UTC+4 · Мурманск');
+  assert.deepEqual(caption.moments[1],
+    { title: 'Возврат Сатурна 1', subtitle: '8 октября 2026 г. · 12:25:37 · UTC+3 · 28\u00a0лет' });
+});
+
+test('transit overlay rows preserve source identity and distinguish repeated event minutes', () => {
+  const record = Object.freeze({ id: 'anna', name: 'Анна', source: 'calculated' as const,
+    utc: '1998-08-18T14:00:00Z', birthDate: '1998-08-18', birthTime: '10:00',
+    utcOffset: 'UTC-04:00', timezone: 'America/New_York' });
+  for (const [utc, zone] of [['2026-11-01T05:30:00Z', 'UTC-4'], ['2026-11-01T06:30:00Z', 'UTC-5']] as const) {
+    const shown = overlayFixture(record, { source: 'transit' as const, utc }, { kind: 'transit' });
+    const caption = chartCaption(shown, record);
+    assert.equal(caption.moments.length, 2);
+    assert.equal(caption.moments[0].title, 'Анна');
+    assert.equal(caption.moments[0].subtitle, '18 августа 1998 г. · 10:00 · UTC-4');
+    assert.deepEqual(caption.moments[1], { title: 'Транзит', subtitle: '1 ноября 2026 г. · 01:30 · ' + zone + ' · 28\u00a0лет' });
+  }
+});
+
+test('overlay row names use the existing fallback and missing moment data never invents a date', () => {
+  const shown = createChartComposition({ localDate: '1998-08-18', localTime: '18:00' },
+    { kind: 'transit', secondary: { source: 'transit', utc: 'invalid' }, primaryLabel: '' });
+  assert.deepEqual(chartCaption(shown).moments, [
+    { title: 'Личная карта', subtitle: '18 августа 1998 г. · 18:00' },
+    { title: 'Транзит', subtitle: '' },
+  ]);
+  const named = createChartComposition(shown.primary, { kind: 'transit', secondary: shown.secondary,
+    primaryLabel: 'Исходное имя' });
+  assert.equal(chartCaption(named).moments[0].title, 'Исходное имя');
 });

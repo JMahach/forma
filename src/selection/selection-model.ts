@@ -1,8 +1,7 @@
-import type { ChartView } from '../domain/chart-composition.ts';
 import type { MandalaCross } from '../domain/mandala-cross.ts';
-import type { SelectionTarget, SelectionAction, SelectionSnapshot, SummaryFilter, ActivationFilter } from './selection-targets.ts';
+import type { SelectionTarget, SelectionAction, SelectionSnapshot } from './selection-targets.ts';
 export type SelectionModel = ReturnType<typeof createSelectionModel>;
-import { createSummarySelectionState } from './summary-selection-state.ts';
+import { createSelectionState } from './selection-state.ts';
 import { crossAtLongitude } from '../domain/mandala-cross.ts';
 import { selectionKey as key, gatesForSelection as ownedGates } from './selection-targets.ts';
 
@@ -23,20 +22,20 @@ function snapshotCross(value: CrossInput | undefined) {
 }
 
 /**
- * Crosses own their four gates independently of ordinary and summary selection.
+ * Crosses own their four gates independently of ordinary selection.
  * Their exact axes are snapshots, never silently moved by a new hover. All
  * consumers still receive ordinary gate items; only the wheel uses `crosses`.
  * Removing a gate excludes it from every owning group. A complete visible
  * quartet can restore its pinned axes if that gate is explicitly added again.
  */
 export function createSelectionModel() {
-  const base = createSummarySelectionState();
+  const base = createSelectionState();
   let groups: { cross: MandalaCross; excluded: Set<number> }[] = [];
-  let combined: (SelectionSnapshot & { activationFilter: ActivationFilter | null }) | null = null;
+  let combined: SelectionSnapshot | null = null;
   let crosses = EMPTY_CROSSES;
   // A channel/integration cut by Shift becomes ordinary independent gates.
-  // Keep their ownership separate from line groups so removing a line group
-  // later cannot erase another remaining half of that channel.
+  // Keep their ownership separate from crosses so removing a cross
+  // cannot erase another remaining half of that channel.
   const expandedGates = new Map<number, SelectionTarget>();
 
   function rebuild() {
@@ -56,15 +55,11 @@ export function createSelectionModel() {
     items.push(...candidates.values());
     const visibleGates = new Set(items.flatMap(ownedGates));
     crosses = Object.freeze(groups.filter(group => group.cross.gates.every(id => visibleGates.has(id))).map(group => group.cross));
-    const last = items.at(-1), filter = base.activationFilter;
-    const activationFilter = filter ? Object.freeze({
-      groups: filter.groups,
-      unfilteredGates: Object.freeze([...new Set([...filter.unfilteredGates, ...expandedGates.keys(), ...crossGates])]),
-    }) : null;
+    const last = items.at(-1);
     combined = Object.freeze({
       items: Object.freeze(items),
       primary: last ? Object.freeze({ type: last.type, id: last.id }) : null,
-      activation: last?.activation || null, activationFilter,
+      activation: last?.activation || null,
     });
   }
 
@@ -98,7 +93,7 @@ export function createSelectionModel() {
       if (ownedByCross || ownedByExpanded || ownedByBase) {
         for (const group of groups) if (group.cross.gates.includes(id)) group.excluded.add(id);
         expandedGates.delete(id);
-        // Base's established gate/center/line-group subtraction is preserved.
+        // Base's established gate/center subtraction is preserved.
         // Expand only composite types which that controller cannot split.
         const composites = base.items.filter(item => ['channel', 'integration'].includes(item.type) && ownedGates(item).includes(id));
         for (const item of composites) {
@@ -114,27 +109,12 @@ export function createSelectionModel() {
     rebuild();
   }
 
-  function chooseSummary(gates: readonly number[], filter: SummaryFilter, { additive = false } = {}) {
-    if (!Array.isArray(gates) || !Number.isInteger(filter?.line) || filter.line < 1 || filter.line > 6
-      || !['design', 'personality', 'all'].includes(filter.source)) return;
-    if (!additive && (groups.length || expandedGates.size)) { base.clear(); clearCrosses(); }
-    base.chooseSummary(gates, filter, { additive });
-    rebuild();
-  }
-
-  function refresh(chart: ChartView) {
-    const previousItems = base.items, previousFilter = base.activationFilter;
-    base.refresh(chart);
-    if (previousItems !== base.items || previousFilter !== base.activationFilter) rebuild();
-  }
-
   return {
-    choose, chooseSummary, refresh,
+    choose,
     clear() { base.clear(); clearCrosses(); },
     get items() { return combined?.items || base.items; },
     get primary() { return combined ? combined.primary : base.primary; },
     get activation() { return combined ? combined.activation : base.activation; },
-    get activationFilter() { return combined ? combined.activationFilter : base.activationFilter; },
     get crosses() { return crosses; },
   };
 }

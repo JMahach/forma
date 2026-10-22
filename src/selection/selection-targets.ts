@@ -9,17 +9,9 @@ export interface SelectionSnapshot {
   primary: SelectionIdentity | null;
   activation: string | null;
 }
-export interface SummaryFilter { line: number; source: 'design' | 'personality' | 'all'; gates?: readonly number[] }
-export type ActivationSelectionFilter = ActivationFilter | (SummaryFilter & { groups?: never; unfilteredGates?: never });
-export interface ActivationFilter {
-  groups: readonly (SummaryFilter & { gates: readonly number[] })[];
-  unfilteredGates: readonly number[];
-}
-
 import { GATES, getChannel } from '../domain/topology.ts';
 
-// Shared identity and topology for ordinary selections, line groups and
-// mandala crosses. These helpers do not own or change selection state.
+// Shared identity and topology for ordinary selections and mandala crosses. These helpers do not own or change selection state.
 export const selectionKey = (item: SelectionIdentity) => `${item.type}:${item.id}`;
 
 export function gatesForSelection(item: SelectionTarget | null | undefined) {

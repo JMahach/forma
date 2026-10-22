@@ -1,12 +1,11 @@
 import type { ChartInput, ChartView } from '../domain/chart-composition.ts';
-import type { SelectionTarget, ActivationSelectionFilter } from '../selection/selection-targets.ts';
+import type { SelectionTarget } from '../selection/selection-targets.ts';
 import type { ColumnSide } from './geometry/activation-layout.ts';
 export interface ColumnSelectionOptions {
   pressedGates?: ReadonlySet<number>;
   pressedSelection?: SelectionTarget | null;
   selections?: readonly SelectionTarget[];
   pressedSelections?: readonly SelectionTarget[];
-  activationFilter?: ActivationSelectionFilter | null;
   previewGates?: ReadonlySet<number>;
   showMandala?: boolean;
 }
@@ -99,14 +98,12 @@ export function alignPersonalityHeading(root: Element) {
 
 // Planetary values come exclusively from the saved calculation, never from
 // the gate arrays of a manually entered chart.
-export function describeActivationColumns(chart: ChartView, selectedGates: ReadonlySet<number> = new Set(), selection: SelectionTarget | null = null, { pressedGates = selectedGates, pressedSelection = selection, selections = [selection].filter((item): item is SelectionTarget => !!item), pressedSelections = [pressedSelection].filter((item): item is SelectionTarget => !!item), activationFilter = null, previewGates = new Set() }: ColumnSelectionOptions = {}) {
+export function describeActivationColumns(chart: ChartView, selectedGates: ReadonlySet<number> = new Set(), selection: SelectionTarget | null = null, { pressedGates = selectedGates, pressedSelection = selection, selections = [selection].filter((item): item is SelectionTarget => !!item), pressedSelections = [pressedSelection].filter((item): item is SelectionTarget => !!item), previewGates = new Set() }: ColumnSelectionOptions = {}) {
   chart = primaryChart(chart);
   if (chart.source === 'manual') return [];
   if (!chart.activations && !chart.planetFilter?.activations && !chart.planetFilter?.designActivations) return [];
   const fixings = lineFixingsFor(chart);
   const planetFilter = chart.planetFilter;
-  const filteredGroups = activationFilter?.groups || (activationFilter ? [activationFilter] : []);
-  const unfilteredGates = new Set(activationFilter?.unfilteredGates || []);
   const columns = ([['design', 'left'], ['personality', 'right']] as const).map(([source, columnSide]) => {
     const hasPlanetFilter = Boolean(planetFilter);
     const hasPlanetControl = hasPlanetFilter && planetFilter!.perPlanetControls === true;
@@ -121,15 +118,9 @@ export function describeActivationColumns(chart: ChartView, selectedGates: Reado
     const rows = PLANETS.map(([planet, symbol, name], index) => {
       const entry = entries.find(item => item.planet === planet);
       if (!entry || !Number.isInteger(entry.gate) || entry.gate < 1 || entry.gate > 64 || !Number.isInteger(entry.line) || entry.line < 1 || entry.line > 6) return null;
-      // A summary line selects exact activation rows; graph selections still
-      // operate on unique gates. Hover adds its usual gate copies temporarily.
-      const matchesFilter = !activationFilter || unfilteredGates.has(entry.gate)
-        || filteredGroups.some(group => entry.line === group.line
-          && (group.source === 'all' || group.source === source)
-          && (!group.gates || group.gates.includes(entry.gate)));
       const planetEnabled = !hasPlanetFilter || selectedPlanets.has(planet);
-      const selected = selectedGates.has(entry.gate) && matchesFilter || previewGates.has(entry.gate);
-      const pressed = pressedGates.has(entry.gate) && matchesFilter;
+      const selected = selectedGates.has(entry.gate) || previewGates.has(entry.gate);
+      const pressed = pressedGates.has(entry.gate);
       const fixing = planetEnabled ? fixings.get(`${source}-${planet}`)?.state : undefined;
       const fixingLabel = FIXING_LABELS[fixing as keyof typeof FIXING_LABELS];
       const id = `${source}-${planet}`;

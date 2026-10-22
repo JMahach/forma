@@ -28,7 +28,7 @@ function columnInput(chart: ChartView, state: RenderState, options: RenderOption
       activationValues(filter.activations), activationValues(filter.designActivations)] : null,
     [...state.relatedGates], [...state.committedGates], [...state.previewGates],
     state.visualSelections.map(value => [value.type, value.id]),
-    state.committedSelections.map(value => [value.type, value.id]), options.activationFilter]);
+    state.committedSelections.map(value => [value.type, value.id])]);
 }
 
 function captureRow(row: SVGElement) {
@@ -116,7 +116,7 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
       const models = options.showActivations ? describeActivationColumns(chart, state.relatedGates, state.committedSelection, {
         pressedGates: state.committedGates, pressedSelection: state.committedSelection,
         selections: state.visualSelections, pressedSelections: state.committedSelections,
-        activationFilter: options.activationFilter, previewGates: state.previewGates,
+        previewGates: state.previewGates,
       }) : [];
       const sources = new Set(models.map(column => column.source));
       for (const [source, column] of columns) if (!sources.has(source as 'design' | 'personality')) { column.node.remove(); columns.delete(source); }

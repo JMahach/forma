@@ -169,7 +169,7 @@ test('cached first touches keep the exact present boundary and notice appended o
 });
 
 function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: boolean; getLayout?: () => string } = {}) {
-  const document = dateDom() as unknown as PanelDocument, ids = ['chartSummary', 'summaryScreen', 'summaryOverview', 'summarySearch', 'chartSummaryContent', 'summarySwitch', 'summaryBackdrop', 'returnsBack', 'returnsPanel', 'returnsContent', 'returnsStatus', 'returnsYear', 'returnsYearCalendar', 'returnsBody', 'returnsClose', 'returnsRetry', 'returnsYearField', 'returnsBodyField', 'returnsNote', 'returnsBodiesToggle', 'returnsBodiesLabel', 'returnsYearLabel', 'returnsBodyMenu', 'returnsBodiesClose', 'returnsBodiesClear', 'returnsBodiesDefault'];
+  const document = dateDom() as unknown as PanelDocument, ids = ['chartSummary', 'summaryScreen', 'summaryReturns', 'summarySwitch', 'summaryBackdrop', 'returnsBack', 'returnsPanel', 'returnsContent', 'returnsStatus', 'returnsYear', 'returnsYearCalendar', 'returnsBody', 'returnsRetry', 'returnsYearField', 'returnsBodyField', 'returnsNote', 'returnsBodiesToggle', 'returnsBodiesLabel', 'returnsYearLabel', 'returnsBodyMenu', 'returnsBodiesClose', 'returnsBodiesClear', 'returnsBodiesDefault'];
   const nodes = Object.fromEntries(ids.map(id => [id, Object.assign(document.createElement(id === 'chartSummary' ? 'aside' : 'div'), { nodeType: 1 })]));
   if (rows) {
     const rowDocument = svgDocument() as unknown as { createElementNS(namespace: string, tag: string): PanelNode; createElement(tag: string): PanelNode };
@@ -190,8 +190,8 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: bool
   nodes.returnsPanel.getBoundingClientRect = () => ({ left: 0, right: 320, top: 100, bottom: 760, width: 320, height: 660 } as DOMRect);
   nodes.summarySwitch.getBoundingClientRect = () => ({ left: 260, right: 304, top: 16, bottom: 60, width: 44, height: 44 } as DOMRect);
   nodes.returnsBodyMenu.append(nodes.returnsBody, nodes.returnsBodiesClose, nodes.returnsBodiesClear, nodes.returnsBodiesDefault);
-  nodes.summaryScreen.append(nodes.summaryOverview, nodes.summarySearch, nodes.chartSummaryContent);
-  nodes.returnsPanel.append(nodes.returnsBack, nodes.returnsClose, nodes.returnsYearCalendar, nodes.returnsBodiesToggle, nodes.returnsBodyMenu);
+  nodes.summaryScreen.append(nodes.summaryReturns);
+  nodes.returnsPanel.append(nodes.returnsBack, nodes.returnsYearCalendar, nodes.returnsBodiesToggle, nodes.returnsBodyMenu);
   nodes.returnsPanel.children.push(nodes.returnsContent);
   if (rows) nodes.returnsContent.parentNode = nodes.returnsPanel;
   else nodes.returnsContent.parentElement = nodes.returnsPanel;
@@ -221,11 +221,11 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: bool
     view.update({ ...current, visible: facts.returnsVisible } as ReturnsPanelState);
   };
   const summary = attachChartSummary({ panel: nodes.chartSummary, summaryScreen: nodes.summaryScreen,
-    returnsPanel: nodes.returnsPanel, content: nodes.chartSummaryContent,
-    overview: nodes.summaryOverview, search: nodes.summarySearch, switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
+    returnsPanel: nodes.returnsPanel, returnsButton: nodes.summaryReturns,
+    switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
     onOpen: () => update({ opened: false }), onClose: () => update({ opened: false }),
   } as unknown as Parameters<typeof attachChartSummary>[0]);
-  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), getLayout, onClose: () => summary.close({ focus: true }), onBack: () => { backs.push('summary'); summary.open(); },
+  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), getLayout, onBack: () => { backs.push('summary'); summary.open(); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
     onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ });
   function escape(target = document.activeElement || nodes.returnsPanel) {
@@ -381,7 +381,7 @@ test('a restored return drawer closes and restores the same selected exact event
   assert.equal(h.nodes.returnsPanel.hidden, true);
   h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.nodes.summaryBackdrop.hidden, false);
-  h.nodes.returnsClose.dispatch('click');
+  h.nodes.summarySwitch.dispatch('click');
   assert.equal(h.summary.opened, false);
   assert.equal(h.nodes.chartSummary.inert, true, 'the shared shell disables the retained exit-animation content');
   assert.equal(h.nodes.returnsPanel.hidden, false);
@@ -598,7 +598,7 @@ test('back opens the ordinary summary and filter Escape stays inside the returns
   assert.equal(h.summary.screen,'summary');
   assert.equal(h.nodes.summaryScreen.hidden,false);
   assert.equal(h.nodes.returnsPanel.hidden,true);
-  assert.equal(h.document.activeElement,h.nodes.summarySearch);
+  assert.equal(h.document.activeElement,h.nodes.summaryReturns);
   h.update({ opened: true });
   assert.equal(h.summary.screen,'returns');
   assert.equal(h.nodes.returnsYearLabel.textContent,'2028');

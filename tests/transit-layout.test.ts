@@ -77,8 +77,9 @@ const rules = parseRules(screenStyles);
 // policies remain authored expressions in this small stylesheet harness.
 const timelineMetrics: Record<string, string> = {};
 applyTimelineMetrics({ style: { setProperty(name: string, value: string) { timelineMetrics[name] = value; } } } as unknown as HTMLElement);
-const resolveTimelineMetrics = (value: string) => value
-  .replace(/var\((--timeline-(?:thumb-size|rail-inset))\)/g, (_, name) => timelineMetrics[name])
+const resolveTimelineMetrics = (value: string, inherited: Record<string, string>) => value
+  .replace(/var\((--timeline-(?:thumb-size|rail-inset|hit-outset))\)/g, (_, name) => timelineMetrics[name] ?? inherited[name])
+  .replace(/2 \* (-?[\d.]+)px/g, (_, size) => `${2 * Number(size)}px`)
   .replace(/calc\((-?[\d.]+)px ([+-]) (-?[\d.]+)px\)/g,
     (_, left, operator, right) => `${Number(left) + (operator === '+' ? 1 : -1) * Number(right)}px`);
 function declarationsAt(selector: string, width: number, height: number, { coarse = false } = {}) {
@@ -94,7 +95,8 @@ function declarationsAt(selector: string, width: number, height: number, { coars
   }));
   const declarations: Record<string, string> = Object.assign({}, ...rules.filter(rule => splitSelectorList(rule.selector).some(value => value.trim() === selector)
     && rule.media.every(matches)).map(rule => rule.declarations));
-  return Object.fromEntries(Object.entries(declarations).map(([name, value]) => [name, resolveTimelineMetrics(value)]));
+  const inherited = Object.assign({}, ...rules.filter(rule => [':root', '.app-shell'].includes(rule.selector) && rule.media.every(matches)).map(rule => rule.declarations));
+  return Object.fromEntries(Object.entries(declarations).map(([name, value]) => [name, resolveTimelineMetrics(value, inherited)]));
 }
 
 test('component defaults have one home and no removed zoom-toolbar styles remain', () => {
@@ -590,7 +592,7 @@ test('mandala checked styling changes its appearance without moving nearby chart
     const toolbar = declarationsAt('.chart-tools', width, height);
     assert.equal(toolbar.position, 'fixed');
     assert.equal(toolbar.display, 'flex');
-    assert.equal(toolbar.right, width <= 699 ? '10px' : '16px', 'right anchoring keeps clock and Mandala stable when Home appears on their left');
+    assert.equal(toolbar.right, '16px', 'right anchoring keeps clock and Mandala stable when Home appears on their left');
   }
 });
 
@@ -672,7 +674,9 @@ test('all chart controls fit beside Menu at the narrowest phone size', () => {
     const mandala = declarationsAt('.mandala-switch', width, height);
     assert.equal(icon.width, '44px');
     assert.equal(icon.height, '44px');
-    const toolbarWidth = 4 * Number.parseFloat(icon.width) + Number.parseFloat(mandala.width) + 4 * Number.parseFloat(toolbar.gap);
+    // The phone has Home, Lifetime, Day and Mandala; its book is hidden.
+    const phoneShell = declarationsAt(".app-shell:has(.canvas-wrap[data-layout='phone'])", width, height);
+    const toolbarWidth = 3 * Number.parseFloat(icon.width) + Number.parseFloat(mandala.width) + 3 * Number.parseFloat(phoneShell['--chart-control-gap']);
     const menu = declarationsAt('.topbar', width, height);
     const menuButton = declarationsAt('.topbar .icon-button', width, height);
     const menuRight = Number.parseFloat(menu.left) + Number.parseFloat(menuButton.width);

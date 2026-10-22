@@ -5,7 +5,6 @@ import { LOTUS_SILHOUETTE_PATH, LOTUS_BACKDROP_BOUNDS } from '../src/scene/geome
 
 const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const favicon = readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8');
-const logo = page.match(/<div class="site-brand"[^>]*>(<svg[\s\S]*?<\/svg>)/)?.[1];
 const paths = (svg: string) => [...svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/g)];
 
 test('the local browser tab uses the requested Forma 1 label and a versioned SVG favicon', () => {
@@ -19,9 +18,8 @@ test('the local browser tab uses the requested Forma 1 label and a versioned SVG
   assert.match(server, /publicFiles\(req, res, url\.pathname\)/, 'cache version never becomes part of the public filename');
 });
 
-test('favicon and menu mark use the actual silhouette with a solid clay fill and darker rim', () => {
-  assert.ok(logo);
-  for (const svg of [favicon, logo] as const) {
+test('favicon uses the actual silhouette with a solid clay fill and darker rim', () => {
+  for (const svg of [favicon]) {
     const drawing = paths(svg);
     assert.equal(drawing.length, 1, 'one continuous outline, no obsolete diamond or inner mesh');
     assert.equal(drawing[0][1], LOTUS_SILHOUETTE_PATH);
@@ -34,9 +32,7 @@ test('favicon and menu mark use the actual silhouette with a solid clay fill and
     const stroke = svg.match(/stroke="#([a-f0-9]{6})"/)![1];
     for (const offset of [0, 2, 4] as const) assert.ok(parseInt(stroke.slice(offset, offset + 2), 16) < parseInt(fill.slice(offset, offset + 2), 16), 'every rim color channel is darker than the clay fill');
   }
-  assert.match(logo, /width="36" height="45"/, 'the brand keeps its established layout footprint');
-  assert.match(logo, /aria-hidden="true" focusable="false"/);
-  assert.match(page, /<div class="site-brand" aria-label="Форма">/);
+  assert.match(page, /<div class="site-brand" aria-label="Форма"><span>Форма<\/span><\/div>/, 'the accepted menu heading uses the plain product name');
 });
 
 test('the tiny favicon has an even, unclipped stroke at sixteen and thirty-two pixels', () => {

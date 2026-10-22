@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
-import { createSummarySelectionState } from '../src/selection/summary-selection-state.ts';
+import { createSelectionState } from '../src/selection/selection-state.ts';
 import { DRAWING_TRANSFORM } from '../src/scene/geometry/drawing-presentation.ts';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.ts';
 import { GATES } from '../src/scene/geometry/chart-geometry.ts';
@@ -81,7 +81,7 @@ test('Shift cross addition and removal retain shared gates and only the remainin
 });
 
 test('wheel reuses gate and Shift state while preview never changes the pinned selection', () => {
-  const state = createSummarySelectionState();
+  const state = createSelectionState();
   state.choose(gate(20));
   state.choose({ ...gate(34), additive: true });
   const before = JSON.stringify(state.items);
@@ -99,7 +99,7 @@ test('wheel reuses gate and Shift state while preview never changes the pinned s
 });
 
 test('whole-center selection lights exactly the same gates on the wheel', () => {
-  const state = createSummarySelectionState();
+  const state = createSelectionState();
   state.choose({ type: 'center' as const, id: 'throat' });
   const svg = renderBodygraph(chart, state.primary, { showMandala: true, selections: state.items });
   for (const { id, center } of GATES) {

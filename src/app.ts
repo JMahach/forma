@@ -19,6 +19,7 @@ interface AppOptions {
   store: ChartStore; libraryView: ChartLibraryView; camera: Camera;
   cameraView: ReturnType<typeof createCameraView>; gestures?: Gestures | null;
   initialPresentation?: StudioPresentation | null; releaseLoadingContent?: (() => void) | null;
+  getPhoneSheetMode?: () => SavedView['phoneSheetMode'];
 }
 
 import { attachKnowledgeEntry } from './views/knowledge-entry.ts';
@@ -57,7 +58,7 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+export function startApp({ dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null, getPhoneSheetMode }: AppOptions) {
   const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
   attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]);
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
@@ -75,8 +76,10 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   const headingLayout = createChartHeadingLayout({
     header: $('chartHeader'), title: $('chartTitle'), subtitle: $('chartSubtitle'), canvas: $('canvasWrap'),
     content: $('chartHeader').querySelector<HTMLElement>('.chart-heading')!,
-    panelCaption: { root: $('summaryChartCaption'), title: $('summaryChartTitle'),
-      date: $('summaryChartDate'), details: $('summaryChartDetails'), surface: studio },
+    panelCaption: { root: $('summaryChartCaption'), title: $('summaryChartTitle'), clock: $('summaryChartClock'), utc: $('summaryChartUtc'),
+      date: $('summaryChartDate'), details: $('summaryChartDetails'), surface: studio,
+      comparison: { root: $('summaryComparison'), title: $('summaryComparisonTitle'), clock: $('summaryComparisonClock'),
+        date: $('summaryComparisonDate'), details: $('summaryComparisonDetails') } },
     leftControls: document.querySelector<HTMLElement>('.topbar-leading')!, rightControls: document.querySelector<HTMLElement>('.chart-tools')!,
     getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
   });
@@ -133,7 +136,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     viewport: $('viewport'),
     getActiveElement: () => document.activeElement, activationPopover,
     getShowActivations: () => !(mandalaMode?.enabled && !layout.showMandalaColumns),
-    getHoverPreview: () => hoverPreview, getSummary: () => chartSummary, getMandala: () => mandalaMode,
+    getHoverPreview: () => hoverPreview, getMandala: () => mandalaMode,
     onChartChange(id) {
       viewSession?.interrupt();
       void exploration!.select(id);
@@ -179,11 +182,10 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     },
     isCurrent: () => workspace.screen === 'library',
     getSelection: () => graph.selectionState.primary, onError: toast });
-  chartSummary = attachChartSummary({ panels, initialReturnsVisible: initialPresentation?.returnsVisible === true, isAvailable: () => workspace.screen === 'chart', focusSearch: () => !layout.phone,
-    panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'), content: $('chartSummaryContent'), overview: $('summaryOverview'),
-    search: $('summarySearch'), switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
+  chartSummary = attachChartSummary({ panels, initialReturnsVisible: initialPresentation?.returnsVisible === true, isAvailable: () => workspace.screen === 'chart',
+    panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'),
+    switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration!.openReturnsList(); },
-    onSelect: graph.choose, onLines: graph.chooseSummary,
     onOpen: () => { returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
     onClose: () => returns?.close(),
   });
@@ -246,6 +248,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       updateTimelineTools(); viewSession?.schedule();
     },
   });
+  $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); });
   $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()));
   transit = attachLiveTransit({
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
@@ -281,7 +284,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       { useUtc: session.shownSource === 'lifetime',
         showAge: Boolean(returns?.available),
         ageUtc: new Date().toISOString() });
-    headingLayout.updateText(caption.title, caption.subtitle);
+    headingLayout.updateText(caption.title, caption.subtitle, caption.moments);
   }
 
   function refreshStudioLayout({ preserveScale = panelResizePending } = {}) {
@@ -427,7 +430,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     minimumUtc: savedChart!.utc!, mode: 'lifetime' as const, openEnded: false } } : savedView;
   viewSession = createViewSession({
     store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
-    mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
+    mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, getPhoneSheetMode, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getPersonalPreview: () => returns!.available ? exploration!.preview : undefined,
     getPersonalLive: () => returns!.available ? exploration!.live : undefined,
     restorePersonalPreview: exploration!.restorePreview,
@@ -458,12 +461,12 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     if (returnsViewLoading) return returnsViewLoading;
     returnsViewLoading = import('./views/returns-panel.ts').then(({ attachReturnsPanel }) => {
       returnsView = attachReturnsPanel({ getLayout: () => layout.returnsLayout, viewportLayout: layout,
-        document, onClose: () => chartSummary!.close({ focus: true }), onBack: () => chartSummary!.open(),
+        document, onBack: () => chartSummary!.open(),
         onYear: value => returns!.setYear(value),
         onBodies: value => returns!.setBodies(value),
-        onSelect: async value => { viewSession?.interrupt(); const selected = await returns!.selectEvent(value); if (selected && returnsView!.sheet()) returns!.close(); },
-        onBirth: () => { viewSession?.interrupt(); returns!.setYear(null); exploration!.resetMoment(); if (returnsView!.sheet()) returns!.close(); },
-        onNow: () => { viewSession?.interrupt(); returns!.setYear(null); if (exploration!.followNow() && returnsView!.sheet()) returns!.close(); },
+        onSelect: async value => { viewSession?.interrupt(); await returns!.selectEvent(value); },
+        onBirth: () => { viewSession?.interrupt(); returns!.setYear(null); exploration!.resetMoment(); },
+        onNow: () => { viewSession?.interrupt(); returns!.setYear(null); exploration!.followNow(); },
         onRetry: () => returns!.retry(),
         onLayout: refreshStudioLayout,
       });

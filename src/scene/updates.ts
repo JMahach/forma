@@ -1,6 +1,5 @@
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionModel } from '../selection/selection-model.ts';
-import type { SummaryFilter, ActivationFilter, SelectionTarget } from '../selection/selection-targets.ts';
 import type { attachHoverPreview } from '../selection/hover-preview.ts';
 import type { SceneRenderer } from './renderer.ts';
 import type { MandalaMode } from './modes/mandala.ts';
@@ -14,7 +13,6 @@ interface GraphControllerOptions {
   activationPopover: { close: () => void; refresh: (chart: ChartView) => void; show: (chart: ChartView, id: string) => void; currentId: string | null };
   getShowActivations?: () => boolean;
   getHoverPreview?: () => Pick<ReturnType<typeof attachHoverPreview>, 'clear' | 'currentSelection'> | null;
-  getSummary?: () => { update: (chart: ChartView, selection: { items: readonly SelectionTarget[]; filter: ActivationFilter | null }) => void } | null;
   getMandala?: () => Pick<MandalaMode, 'enabled' | 'visible'> | null;
   scene?: { update: (...args: Parameters<SceneRenderer['update']>) => void; clear: () => void };
   onChartChange?: (id: string) => void;
@@ -31,21 +29,18 @@ export function createGraphController({
   selectionState = createSelectionModel(), getChart, hasChart = () => true,
   viewport, getActiveElement = () => null, activationPopover,
   getShowActivations = () => true,
-  getHoverPreview = () => null, getSummary = () => null, getMandala = () => null,
+  getHoverPreview = () => null, getMandala = () => null,
   scene = createSceneRenderer(viewport),
   onChartChange = () => {},
 }: GraphControllerOptions) {
   let popoverChart: ChartView | null = null;
   const previewPainter = createMandalaPreviewPainter(viewport);
-  let rendered: { chart: ChartView; items: SelectionModel['items']; primary: SelectionModel['primary']; filter: SelectionModel['activationFilter']; crosses: SelectionModel['crosses']; mandala: boolean } | null = null;
+  let rendered: { chart: ChartView; items: SelectionModel['items']; primary: SelectionModel['primary']; crosses: SelectionModel['crosses']; mandala: boolean } | null = null;
 
   function render() {
     rendered = null;
     previewPainter.clear();
     const chart = getChart();
-    selectionState.refresh?.(chart);
-    const activationFilter = selectionState.activationFilter || null;
-    getSummary()?.update(chart, { items: selectionState.items, filter: activationFilter });
     if (!hasChart()) { scene.clear(); activationPopover.close(); return; }
     const focused = getActiveElement()?.closest?.<HTMLElement | SVGElement>('#viewport [data-type]');
     const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation, mandala: focused.classList.contains('mandala-gate') } : null;
@@ -54,26 +49,26 @@ export function createGraphController({
       showActivations: getShowActivations(), showBackdrop: true, showMandala: getMandala()?.enabled,
       showMandalaLayer: getMandala()?.visible,
       pinnedCrosses: selectionState.crosses, selections: selectionState.items,
-      previewSelection: getHoverPreview()?.currentSelection, activationFilter,
+      previewSelection: getHoverPreview()?.currentSelection,
     };
     scene.update(chart, selectionState.primary, renderOptions);
     if (focusTarget && getActiveElement() !== focused) viewport.querySelector<HTMLElement | SVGElement>(focusTarget.activation ? `[data-activation="${focusTarget.activation}"]` : `${focusTarget.mandala ? '.mandala-gate' : '.bodygraph-drawing .bg-interactive'}[data-type="${focusTarget.type}"][data-id="${focusTarget.id}"]`)?.focus({ preventScroll: true });
     if (chart !== popoverChart) { activationPopover.refresh(chart); popoverChart = chart; }
     rendered = {
       chart, items: selectionState.items, primary: selectionState.primary,
-      filter: selectionState.activationFilter, crosses: selectionState.crosses,
+      crosses: selectionState.crosses,
       mandala: Boolean(getMandala()?.enabled),
     };
     if (rendered.mandala) previewPainter.capture(getHoverPreview()?.currentSelection?.cross, selectionState.crosses);
   }
 
   // Hover within the same quartet does not change the chart, committed
-  // selection, summary or activation popover. Only its exact-angle marks move.
+  // selection or activation popover. Only its exact-angle marks move.
   function preview() {
     const current = getHoverPreview()?.currentSelection;
     if (rendered?.mandala && getMandala()?.enabled && hasChart()
       && rendered.chart === getChart() && rendered.items === selectionState.items
-      && rendered.primary === selectionState.primary && rendered.filter === selectionState.activationFilter
+      && rendered.primary === selectionState.primary
       && rendered.crosses === selectionState.crosses && current?.type === 'mandala-cross'
       && previewPainter.update(current.cross, selectionState.crosses)) {
       return;
@@ -107,13 +102,6 @@ export function createGraphController({
     render();
   }
 
-  function chooseSummary(gates: readonly number[], filter: SummaryFilter, options: { additive?: boolean } = {}) {
-    activationPopover.close();
-    getHoverPreview()?.clear({ notify: false });
-    selectionState.chooseSummary(gates, filter, options);
-    render();
-  }
-
   function reset() {
     rendered = null;
     popoverChart = null;
@@ -124,7 +112,7 @@ export function createGraphController({
   }
 
   return {
-    selectionState, render, preview, choose, chooseSummary, reset,
+    selectionState, render, preview, choose, reset,
     clear() { reset(); render(); },
     changeChart(id: string) { reset(); onChartChange(id); },
   };

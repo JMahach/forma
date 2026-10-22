@@ -23,7 +23,7 @@ function markup(chart, state, opt) {
   return opt.showActivations ? renderActivationColumns(chart, state.relatedGates, state.committedSelection, {
     pressedGates: state.committedGates, pressedSelection: state.committedSelection,
     selections: state.visualSelections, pressedSelections: state.committedSelections,
-    activationFilter: opt.activationFilter, previewGates: state.previewGates,
+    previewGates: state.previewGates,
   }) : '';
 }
 function fixture(chart = chartAt(), selection = null, opt = options) {
@@ -48,13 +48,12 @@ test('all planetary and numeric targets survive a hundred exact minute changes w
   for (const parse of h.document.parses) assert.doesNotMatch(parse.markup, /activation-row|activation-column|bg-activation/, 'only a newly appearing decorative fixing may be parsed');
 });
 
-test('gate, planet, preview and filtered line selections update paint and ARIA without replacing targets', () => {
+test('gate, planet and preview selections update paint and ARIA without replacing targets', () => {
   const chart = chartAt(), h = fixture(chart), painter = createActivationPainter(h.root), initial = targets(h.root);
-  const gate = chart.activations.design[0].gate, line = chart.activations.design[0].line;
+  const gate = chart.activations.design[0].gate;
   const cases = [
     [{ type: 'gate' as const, id: gate }, {}],
     [{ type: 'planet' as const, id: 'personality-sun' }, {}],
-    [{ type: 'gate' as const, id: gate }, { activationFilter: { groups: [{ source: 'design' as const, line, gates: [gate] }], unfilteredGates: [] } }],
     [{ type: 'gate' as const, id: gate }, { previewSelection: { type: 'center' as const, id: 'root' } }],
     [null, {}],
   ];
@@ -324,7 +323,7 @@ test('new exact longitude snapshots skip column preparation while retaining both
   assert.deepEqual(h.root.querySelectorAll('.activation-planet-filter'), controls);
 });
 
-test('column memo observes mutated filtered contributors, full rows, both planet sets, mode, hover and line filters', () => {
+test('column memo observes mutated filtered contributors, full rows, both planet sets, mode and hover', () => {
   const all = PLANETS.map(([planet]) => planet), chart = dualFilteredChart(chartAt(), all, ['sun']);
   const h = fixture(chart), painter = createActivationPainter(h.root), opt = { ...options, selections: [] };
   const check = (label: string|Error|undefined) => {
@@ -344,9 +343,6 @@ test('column memo observes mutated filtered contributors, full rows, both planet
   opt.selections.push({ type: 'planet' as const, id: 'design-moon' }); check('planet selection');
   opt.previewSelection = { type: 'gate' as const, id: 61 }; check('independent hovered gate');
   opt.selections.push({ type: 'gate' as const, id: 61 }); check('committed gate');
-  opt.activationFilter = { groups: [{ source: 'design' as const, line: 1, gates: [61] }], unfilteredGates: [] }; check('line filter');
-  opt.activationFilter.groups[0].line = 6; check('line filter mutated');
-  opt.activationFilter.unfilteredGates.push(61); check('unfiltered gate mutated');
   chart.source = 'calculated'; check('heading source changes');
   chart.planetFilter.designActivations.reverse(); check('full source order changes');
   opt.showActivations = false; update(painter, chart, null, opt); assertEquivalent(h.root, chart, null, opt);

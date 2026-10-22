@@ -1,4 +1,6 @@
-export interface PanelCaption { root: HTMLElement | null; title: HTMLElement | null; date: HTMLElement | null; details: HTMLElement | null; surface: HTMLElement | null }
+interface CaptionMoment { title: string; subtitle: string }
+interface CaptionFields { clock?: HTMLElement | null; title: HTMLElement | null; date: HTMLElement | null; details: HTMLElement | null }
+export interface PanelCaption { utc?: HTMLElement | null; clock?: HTMLElement | null; comparison?: CaptionFields & { root: HTMLElement | null }; root: HTMLElement | null; title: HTMLElement | null; date: HTMLElement | null; details: HTMLElement | null; surface: HTMLElement | null }
 export type ChartHeadingLayout = ReturnType<typeof createChartHeadingLayout>;
 interface HeadingLayoutOptions {
   header: HTMLElement; content: HTMLElement; title: HTMLElement; subtitle: HTMLElement | null;
@@ -67,16 +69,44 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
   if (panelCaption?.root) observer?.observe(panelCaption.root, { box: 'border-box' });
   const fonts = header.ownerDocument?.fonts;
   fonts?.addEventListener('loadingdone', refresh);
-  function updateText(titleText: string | null | undefined, subtitleText: string | null | undefined) {
+  function updateText(titleText: string | null | undefined, subtitleText: string | null | undefined, moments?: readonly CaptionMoment[]) {
     let changed = false;
-    const [date, ...details] = (subtitleText == null ? '' : String(subtitleText)).split(' · ');
+    const primary = moments?.[0] || { title: titleText || '', subtitle: subtitleText || '' };
+    const secondary = moments?.[1];
+    const comparison = panelCaption?.comparison;
+    if (comparison?.root && comparison.root.hidden === Boolean(secondary)) {
+      comparison.root.hidden = !secondary; changed = true;
+    }
+    // Time and UTC keep one place and emphasis for a single moment and a pair.
+    const fields = (caption: CaptionMoment | undefined, hasClock: boolean) => {
+      const [date = '', ...parts] = (caption?.subtitle || '').split(' · ');
+      const timing: string[] = [], details: string[] = [];
+      for (const part of parts) {
+        if (hasClock && (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(part) || /^UTC(?:[+−-]\d{1,2}(?::\d{2}){0,2})?$/.test(part))) timing.push(part);
+        else details.push(part);
+      }
+      return { date, clock: timing.join(' · '), details: details.join(' · ') };
+    };
+    const first = fields(primary, Boolean(panelCaption?.clock));
+    const second = fields(secondary, Boolean(comparison?.clock));
+    // The selected single-card layout separates time and UTC; paired moments
+    // retain their existing combined clock until their design is selected.
+    const separateUtc = Boolean(panelCaption?.utc && !secondary);
+    const clockParts = first.clock.split(' · ');
+    const primaryClock = separateUtc ? clockParts.filter(part => !part.startsWith('UTC')).join(' · ') : first.clock;
+    const primaryUtc = separateUtc ? clockParts.filter(part => part.startsWith('UTC')).join(' · ') : '';
+    const primaryDate = separateUtc ? first.date.replace(/ г\.$/, '') : first.date;
     for (const [element, value] of [[title, titleText], [subtitle, subtitleText],
-      [panelCaption?.title, titleText], [panelCaption?.date, date], [panelCaption?.details, details.join(' · ')]] as const) {
+      [panelCaption?.title, primary.title], [panelCaption?.date, primaryDate], [panelCaption?.details, first.details],
+      [panelCaption?.clock, primaryClock], [panelCaption?.utc, primaryUtc],
+      [comparison?.title, secondary?.title || ''], [comparison?.date, second.date], [comparison?.details, second.details],
+      [comparison?.clock, second.clock]] as const) {
       if (!element) continue;
       const text = value == null ? '' : String(value);
       if (element.textContent !== text) {
         element.textContent = text;
-        if (element === panelCaption?.title) element.title = text;
+        if (element === panelCaption?.title || element === comparison?.title
+          || element === panelCaption?.details || element === comparison?.details) element.title = text;
         changed = true;
       }
     }

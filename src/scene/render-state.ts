@@ -1,6 +1,6 @@
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { MandalaCross } from '../domain/mandala-cross.ts';
-import type { SelectionTarget, SelectionType, ActivationSelectionFilter } from '../selection/selection-targets.ts';
+import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
 export interface RenderOptions {
   profile?: 'studio' | 'thumbnail';
   interactive?: boolean;
@@ -14,7 +14,6 @@ export interface RenderOptions {
   selections?: readonly SelectionTarget[];
   previewSelection?: SelectionTarget | null;
   pinnedCrosses?: readonly MandalaCross[];
-  activationFilter?: ActivationSelectionFilter | null;
 }
 export type RenderState = ReturnType<typeof createRenderState>;
 export interface RenderedScene { chart: ChartView; state: RenderState; options: RenderOptions }

@@ -24,9 +24,7 @@ import { escapeHtml as escape } from '../ui/html.ts';
  * chart: a composition or physical chart. Topology and activation owners stay separate.
  * selection: null | {type: 'gate' | 'center' | 'channel' | 'integration', id}.
  * options: { profile?: 'studio' | 'thumbnail', interactive?: boolean, idPrefix?: string, showLabels?: boolean, dimInactive?: boolean,
- *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection,
- *   activationFilter?: { line: number, source: 'design' | 'personality' | 'all' }
- *     | { groups: Array<{ line: number, source: 'design' | 'personality' | 'all', gates?: number[] }>, unfilteredGates: number[] } }.
+ *   showActivations?: boolean, selections?: Array<typeof selection>, previewSelection?: typeof selection }.
  * Preview paint is added to the pinned selection without changing pressed state.
  * The parent owns gestures, event delegation, and persisted view transforms.
  * The studio profile gives the complete drawing one permanent presentation
@@ -166,7 +164,7 @@ ${thumbnail ? '' : `  <style>
     }
   </style>`}
   ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}"${options.profile === 'studio' ? ` transform="${DRAWING_TRANSFORM}"` : ''} style="--activation-column-expanded-offset:${ACTIVATION_COLUMN_REVEAL_DISTANCE}px" ${interactive ? '' : 'pointer-events="none"'}>
-    ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, activationFilter: options.activationFilter, previewGates, showMandala: options.showMandala }) + variables : ''}
+    ${options.showActivations ? renderActivationColumns(chart, relatedGates, committedSelection, { pressedGates: committedGates, pressedSelection: committedSelection, selections: visualSelections, pressedSelections: committedSelections, previewGates, showMandala: options.showMandala }) + variables : ''}
     ${options.showMandala ? renderChartBackdrop(prefix, { mandala: true }) : options.showBackdrop ? renderChartBackdrop(prefix) : ''}<g class="bodygraph-channels">${channels}${integrationHighlights}${integration}</g>
     <g class="bodygraph-centers">${centers}</g>
     ${thumbnail ? '' : `<g class="bodygraph-gates">${gates}</g>`}

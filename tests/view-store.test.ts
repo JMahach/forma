@@ -230,3 +230,18 @@ test('workspace screen shares the existing tab snapshot and validates legacy and
   assert.deepEqual(store.read(), snapshot, 'legacy snapshots keep their existing shape');
   assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY], 'navigation needs no separate storage entry');
 });
+
+
+test('phone sheet height shares the tab snapshot and accepts only settled modes', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  for (const phoneSheetMode of ['collapsed', 'medium', 'expanded'] as const) {
+    store.write({ ...snapshot, phoneSheetMode });
+    assert.equal(createViewStore({ getStorage: () => storage }).read()!.phoneSheetMode, phoneSheetMode);
+  }
+  for (const phoneSheetMode of [undefined, null, 'open', 532, { height: 532 }] as const) {
+    store.write({ ...snapshot, phoneSheetMode });
+    assert.equal(store.read()!.phoneSheetMode, undefined);
+    assert.equal(store.read()!.selectedId, snapshot.selectedId, 'bad sheet state does not discard the saved chart');
+  }
+  assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY], 'sheet height uses the existing tab record');
+});

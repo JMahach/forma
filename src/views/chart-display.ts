@@ -66,16 +66,20 @@ function localTime(chart: ChartInput | null | undefined, recordedTime: string | 
 export function savedBirthTime(record: Partial<ChartRecord> | null | undefined) {
   return localTime(record, record?.birthTime);
 }
-export const chartSubtitle = (composition: ChartComposition, record: Partial<ChartRecord> | null = null, { useUtc }: ChartCaptionOptions = {}) => {
-  const chart = composition.primary;
-  if (isChartOverlay(composition)) return momentLabel(composition.utc, record?.timezone || chart.timezone || 'UTC', composition.kind === 'return');
-  if (isTransit(composition)) return momentLabel(chart.utc, useUtc ? 'UTC' : null);
+function birthSubtitle(chart: ChartInput, record: Partial<ChartRecord> | null) {
   const localDate = chart.localDate && new Date(`${chart.localDate}T00:00:00Z`);
   const date = localDate && Number.isFinite(localDate.getTime()) ? formats('UTC').date.format(localDate) : '';
   const offset = storedOffsetSeconds(chart);
   const zone = offset !== null ? offsetLabel(offset) : chart.utcOffset || (chart.timezone && Number.isFinite(Date.parse(chart.utc!))
     ? momentLabel(chart.utc, chart.timezone).split(' · ').at(-1) : chart.timezone);
   return [date, localTime(chart, chart.localTime), zone, record?.birthPlace].filter(Boolean).join(' · ');
+}
+
+export const chartSubtitle = (composition: ChartComposition, record: Partial<ChartRecord> | null = null, { useUtc }: ChartCaptionOptions = {}) => {
+  const chart = composition.primary;
+  if (isChartOverlay(composition)) return momentLabel(composition.utc, record?.timezone || chart.timezone || 'UTC', composition.kind === 'return');
+  if (isTransit(composition)) return momentLabel(chart.utc, useUtc ? 'UTC' : null);
+  return birthSubtitle(chart, record);
 };
 
 // A personal timeline is a preview owned by the selected natal chart. Its
@@ -87,5 +91,12 @@ export function chartCaption(composition: ChartComposition, record: Partial<Char
   // preview or overlay always keeps the age of its displayed moment.
   const ageUtc = personalMoment ? composition.utc : options?.ageUtc ?? composition.utc;
   const age = personalMoment || options?.showAge && !isTransit(composition) ? completedAge(ageUtc, record) : null;
-  return { title: chartTitle(composition, record), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
+  const caption = { title: chartTitle(composition, record), subtitle: [subtitle, subtitle && age !== null ? ageText(age).replace(' ', '\u00a0') : ''].filter(Boolean).join(' · ') };
+  // The panel keeps the two composition inputs distinct. The source birth
+  // has no event age; only the second moment retains the accepted event age.
+  const moments = personalMoment ? [
+    { title: (record?.name ?? composition.primaryLabel)?.trim() || 'Личная карта', subtitle: birthSubtitle(composition.primary, record) },
+    { title: composition.kind === 'return' ? cycleEventLabel(composition.event) : 'Транзит', subtitle: caption.subtitle },
+  ] : [caption];
+  return { ...caption, moments };
 }
