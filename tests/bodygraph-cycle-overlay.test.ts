@@ -57,7 +57,7 @@ test('four source facts use two adjoining black-red lanes and a fifty-fifty gate
   assert.deepEqual(paths.map(path => path.getAttribute('stroke-width')), ['3.3', '3.036', '3.3', '3.036']);
   assert.deepEqual(paths.map((path) => path.getAttribute('d')!.split(' ')[0]),
     ['M342.45,106.00', 'M339.42,106.00', 'M342.45,131.00', 'M339.42,131.00']);
-  const arm = coloredPaths(root.querySelector('.bg-integration-arm[data-arm="20"]'));
+  const arm = root.querySelectorAll('[data-integration-layer="20"] path').reverse();
   assert.deepEqual(arm.map((path) => [path.getAttribute('stroke'), path.getAttribute('stroke-width'), path.getAttribute('d')!.split(' ')[0]]),
     [[CYCLE, '3.3', 'M284.24,303.43'], [NATAL, '3.036', 'M283.74,300.44']]);
   assert.equal(Number(channel!.querySelector('.bg-channel-outline')!.getAttribute('stroke-width')), CHANNEL_WIDTH.outline);
@@ -85,11 +85,11 @@ test('mixed channel halves and integration branches keep their own origin withou
     assert.equal(gate(root, id)!.querySelector('.bg-gate-disc')!.getAttribute('fill'), color);
   }
   for (const [id, color] of [[20, NATAL], [34, CYCLE]] as const) {
-    const arm = root.querySelector(`.bg-integration-arm[data-arm="${id}"]`);
-    assert.deepEqual(coloredPaths(arm).map(path => path.getAttribute('stroke')), [color]);
+    const arm = root.querySelectorAll(`[data-integration-layer="${id}"] path`);
+    assert.deepEqual(arm.map(path => path.getAttribute('stroke')), [color]);
   }
   const integration = root.querySelector('[data-type="integration"]');
-  assert.deepEqual(integration!.children.filter((node) => node.tagName === 'path' && [NATAL, CYCLE].includes(node.getAttribute('stroke')!)).map(node => node.getAttribute('stroke')), [NATAL, CYCLE], 'opposite stem halves retain their contributing origins');
+  assert.deepEqual(integration!.querySelectorAll('[data-integration-layer] path').map(node => node.getAttribute('stroke')), [NATAL, CYCLE], 'continuous arm/half-stem paths retain their contributing origins');
 });
 
 test('all defined centers keep the original solid boundary while ownership stays in their description', () => {

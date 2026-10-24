@@ -75,16 +75,15 @@ function inspect(markup: string) {
   return { nodes, channels, layer, halos, physical };
 }
 
-// Derived from the prior physical baseline by multiplying only stroke widths
-// and dual-lane offsets by 1.32. The dual baseline also includes the requested
-// black seam closure, checked independently in channel-width and seam tests.
-// Every path and paint-order token is still covered.
+// Approved continuous integration baseline: red below black below dual,
+// and black above red within the dual pass. All physical paths remain frozen
+// across hover and selection; lane widths and joins have independent checks.
 const physicalBaselines = {
   inactive: 'e15a45c4e5ed90cded75ee1dbde0b5850759338a6aa14815f3568763f8eb4575',
-  black: '49463a2bac593396162bad40b7e9d13eabbc6511748c4b4e510b8bdc0f36d1d5',
-  red: '445b1978857ddd33252ccd656442999f25dceebd7b4dd98965e5fe0bc81fdcc0',
-  dual: 'd6bd6efca30592a3839412e7c68d1ae087689558384b3f16c94ca8ca0772e7f7',
-  mixed: '5841b8767a0a3b6c4be97285808dde78e70cf96a10d12a5e4e9c8da602417e7a',
+  black: '969e1e910db6c0d03710d5200951335793e306f09fe9d5ada0d7e40959080327',
+  red: '2bd530dfd5b16b7015922202cdb800d192dcb67a4884058d0bf2f0c7b07b1f56',
+  dual: '3cf2c226b665d48beb23593db1eebbd6a9f7f3b13cc8a140020dd5c77ab3fe9f',
+  mixed: 'c75d1b2e094bcb91413025e9aca9d9de7813c7ab92fed43c7c709e17a894b567',
 };
 
 for (const mode of modes) {
@@ -124,7 +123,7 @@ for (const mode of modes) {
       assert.ok(layer.end <= physicalIntegration!.start, 'the complete halo layer stays below the physical integration bundle');
       assert.ok(crossing!.end < physicalIntegration!.start, 'ordinary channels retain their order before the physical integration bundle');
       const hash = createHash('sha256').update(JSON.stringify(physical.map(node => node.token))).digest('hex');
-      assert.equal(hash, physicalBaselines[state], `${state}: physical geometry, colors and paint order retain their baseline with exactly 32% wider strokes and offsets`);
+      assert.equal(hash, physicalBaselines[state], `${state}: physical geometry, colors and approved layering do not change on hover or selection`);
     }
   });
 }

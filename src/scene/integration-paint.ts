@@ -1,18 +1,23 @@
-import type { RenderState } from '../scene/render-state.ts';
-import { INTEGRATION_ARMS, splitAtHalfLength, pointString, offsetPoints } from '../scene/geometry/drawing-geometry.ts';
-import { STEM_POINTS } from '../scene/geometry/integration-geometry.ts';
-import { paintGateActivation, CHANNEL_WIDTH, activationLaneColor } from '../scene/bodygraph-paint.ts';
+import type { RenderState } from './render-state.ts';
+import { INTEGRATION_ARMS, splitAtHalfLength, pointString, offsetPoints } from './geometry/drawing-geometry.ts';
+import { STEM_POINTS } from './geometry/integration-geometry.ts';
+import { paintGateActivation, CHANNEL_WIDTH, activationLaneColor } from './bodygraph-paint.ts';
 
-// Experimental policy for /integration only. Production paint stays with its owner.
+// Shared color owner for static SVG, thumbnails and persistent scene updates.
 // Each arm flows into its half-stem in ONE path. There is no butt-cut at the fork.
 // Draw low priority first: red, black, dual. Empty arms never cover active paint.
 export function integrationLayers(state: RenderState) {
   const halves = splitAtHalfLength(STEM_POINTS);
-  const active = (gate: number) => state.personality.has(gate) || state.design.has(gate);
+  const priority = (gate: number) => {
+    const mask = state.overlaySources?.masks.get(gate) || 0;
+    return state.overlaySources ? (mask & 12 ? 2 : 0) + (mask & 3 ? 1 : 0)
+      : (state.personality.has(gate) ? 2 : 0) + (state.design.has(gate) ? 1 : 0);
+  };
+  const active = (gate: number) => priority(gate) > 0;
   const crosses = [20, 10].some(active) && [34, 57].some(active);
   return INTEGRATION_ARMS.filter(({ gate }) => active(gate)).map(arm => {
     const top = arm.gate === 20 || arm.gate === 10;
-    const rank = (state.personality.has(arm.gate) ? 2 : 0) + (state.design.has(arm.gate) ? 1 : 0);
+    const rank = priority(arm.gate);
     const points = top ? arm.points.map(p => [...p]) : [...arm.points].reverse().map(p => [...p]);
     if (crosses) {
       if (top) points.push(...halves[0].slice(1));
@@ -23,7 +28,7 @@ export function integrationLayers(state: RenderState) {
     const end = top ? points.length - 1 : 0;
     const neighbor = top ? end - 1 : 1;
     const a = points[end], b = points[neighbor], length = Math.hypot(a[0] - b[0], a[1] - b[1]);
-    points[end] = a.map((v, i) => v + (v - b[i]) / length * .035);
+    if (INTEGRATION_ARMS.filter(arm => active(arm.gate)).length > 1) points[end] = a.map((v, i) => v + (v - b[i]) / length * .035);
     return { gate: arm.gate, rank, points };
   }).sort((a, b) => a.rank - b.rank);
 }

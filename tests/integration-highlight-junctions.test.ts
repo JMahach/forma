@@ -1,3 +1,4 @@
+import { integrationArmMarkup } from './helpers/integration-markup.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -397,7 +398,7 @@ test('outer 20 and 57 terminal clipping matches the exact rendered source endpoi
   };
   for (const gate of [20, 57] as const) for (const source of ['personality', 'design'] as const) {
     const markup = renderBodygraph({ [source]: [gate] }, { type: 'gate' as const, id: gate }, { idPrefix: `terminal-${gate}` });
-    const arm = markup.match(new RegExp(`<g class="bg-integration-arm" data-arm="${gate}"[^>]*>([\\s\\S]*?)<\\/g>`))![1];
+    const arm = integrationArmMarkup(markup, gate);
     const sourcePath = arm.match(/<path\b[^>]*stroke="(?:#202020|#c32d35)"[^>]*\/>/)![0];
     const points = [...attribute(sourcePath, 'd')!.matchAll(/[ML](-?[\d.]+),(-?[\d.]+)/g)].map(([, x, y]) => [Number(x), Number(y)]);
     const [end, before] = gate === 20 ? [points.at(-1), points.at(-2)] : [points[0], points[1]];

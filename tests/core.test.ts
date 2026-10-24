@@ -1,3 +1,4 @@
+import { integrationArmMarkup } from './helpers/integration-markup.ts';
 import type { SavedChart, Activation } from '../shared/chart-types.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -521,7 +522,7 @@ test('integration selection outlines sit above ordinary channels and below their
     const maskId = selection.type === 'integration' ? 'integration-outline' : 'integration-selection-outline';
     assert.ok(halo![0].includes(`mask="url(#bodygraph-${maskId})"`), 'the lower outline retains its exterior ownership mask');
     for (const gate of [20, 10, 34, 57] as const) {
-      const arm = integration.match(new RegExp(`<g class="bg-integration-arm" data-arm="${gate}"[^>]*>([\\s\\S]*?)<\\/g>`))![1];
+      const arm = integrationArmMarkup(integration, gate);
       assert.match(arm, /stroke="#202020"/);
       assert.match(arm, /stroke="#c32d35"/);
     }

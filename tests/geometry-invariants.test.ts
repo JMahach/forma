@@ -1,3 +1,4 @@
+import { integrationArmMarkup } from './helpers/integration-markup.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.ts';
@@ -311,7 +312,7 @@ test('red and black halves belong to the correct endpoint and dual activations s
 test('integration is drawn once with exactly four arms and six logical connections', () => {
   const markup = renderBodygraph({ personality: INTEGRATION_GATES, design: INTEGRATION_GATES });
   assert.equal((markup.match(/data-junction="integration"/g) || []).length, 1);
-  const arms = [...markup.matchAll(/<g class="bg-integration-arm" data-arm="(\d+)"[^>]*>([\s\S]*?)<\/g>/g)];
+  const arms = INTEGRATION_GATES.map(id => [null, String(id), integrationArmMarkup(markup, id)]);
   assert.deepEqual(arms.map(match => Number(match[1])).sort((a, b) => a - b), INTEGRATION_GATES);
   const channels = groups(markup, 'channel').filter(item => item.attributes.includes('data-integration="true"'));
   assert.equal(channels.length, 6);
@@ -379,24 +380,18 @@ test('integration arms do not cross each other away from the shared stem junctio
   }
 });
 
-test('black and red integration lanes keep their side across the curved stem joins', () => {
+test('integration source paths stay continuous through their forks and meet at the stem midpoint', () => {
   const markup = renderBodygraph({ personality: INTEGRATION_GATES, design: INTEGRATION_GATES });
-  const region = markup.slice(markup.indexOf('data-junction="integration"'), markup.indexOf('<g class="bodygraph-centers">'));
-  const paths = [...region.matchAll(/<path\b([^>]*)\/>/g)].map(([, attributes]) => attributes)
-    .filter(attributes => attributes.includes('stroke="#202020"') || attributes.includes('stroke="#c32d35"'))
-    .map(attributes => polylinePoints(attributes.match(/\bd="([^"]+)"/)![1]));
-  assert.equal(paths.length, 12, 'four dual-color arms and two dual-color stem halves');
-  for (const [index, arm] of INTEGRATION_ARMS.entries()) {
-    const branchEnd = arm.reversePaint ? 0 : -1;
-    const stemIndex = arm.reversePaint ? 10 : 8;
-    const stemEnd = arm.reversePaint ? -1 : 0;
-    for (const color of [0, 1] as const) {
-      const gap = distance(paths[index * 2 + color].at(branchEnd), paths[stemIndex + color].at(stemEnd));
-      assert.ok(gap <= 0.12, `arm ${arm.gate} keeps ${color ? 'red' : 'black'} on the same side, seam=${gap}`);
-    }
+  for (const color of ['#202020', '#c32d35']) {
+    const terminal = INTEGRATION_ARMS.map(arm => {
+      const paths = strokePaths(integrationArmMarkup(markup, arm.gate), color);
+      assert.equal(paths.length, 1);
+      const points = polylinePoints(paths[0].path);
+      assert.ok(points.length > 49, 'one source path includes its arm and half-stem');
+      return points.at(arm.reversePaint ? 0 : -1);
+    });
+    for (const point of terminal) assert.ok(distance(point, terminal[0]) < .1, 'all same-color lanes meet without a disconnected piece');
   }
-  for (const color of [0, 1] as const) assert.ok(distance(paths[8 + color].at(-1), paths[10 + color][0]) <= 0.02,
-    'the two colored stem halves meet without a pinch or swap');
 });
 
 test('branch 34 crosses 26–44 only once at a clear angle without following it', () => {
@@ -474,7 +469,7 @@ test('integration channel focus routes preserve both gate arms and their shared 
 test('an integration activation never colors a different gate arm', () => {
   for (const activeGate of INTEGRATION_GATES) for (const source of ['personality', 'design'] as const) {
     const markup = renderBodygraph({ [source]: [activeGate] });
-    const arms = [...markup.matchAll(/<g class="bg-integration-arm" data-arm="(\d+)"[^>]*>([\s\S]*?)<\/g>/g)];
+  const arms = INTEGRATION_GATES.map(id => [null, String(id), integrationArmMarkup(markup, id)]);
     for (const [, gateId, content] of arms) {
       const black = strokePaths(content, '#202020'), red = strokePaths(content, '#c32d35');
       const isActive = Number(gateId) === activeGate;

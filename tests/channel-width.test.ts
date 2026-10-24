@@ -1,3 +1,4 @@
+import { integrationArmMarkup } from './helpers/integration-markup.ts';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -86,9 +87,9 @@ test('all four integration arms and both stem halves use the same increased widt
       assertWidths(colored(tags, '#c32d35'), mode === 'red' || mode === 'dual' ? count : 0,
         mode === 'dual' ? WIDTH.lane : WIDTH.paint, `${mode}: ${label}, red`);
     };
-    checkSource(backgroundAndStem, 2, 'stem halves');
+    assert.equal(colored(backgroundAndStem, '#202020').length + colored(backgroundAndStem, '#c32d35').length, 0, 'no separate stem cuts');
     for (const id of [20, 10, 34, 57] as const) {
-      checkSource(paths(group(content, (tag: string|undefined) => attribute(tag, 'data-arm') === String(id))), 1, `arm ${id}`);
+      checkSource(paths(integrationArmMarkup(content, id)), 1, `arm ${id}`);
     }
   }
 });
@@ -134,9 +135,8 @@ test('dual source lanes close the seam toward black and retain both outside edge
   }
   const singleIntegration = target(single, 'integration', 'integration');
   const dualIntegration = target(dual, 'integration', 'integration');
-  assertLaneOffsets(directPaths(singleIntegration), directPaths(dualIntegration), 'stem');
   for (const id of [20, 10, 34, 57] as const) {
-    const arm = content => paths(group(content, (tag: string|undefined) => attribute(tag, 'data-arm') === String(id)));
+    const arm = content => paths(integrationArmMarkup(content, id));
     assertLaneOffsets(arm(singleIntegration), arm(dualIntegration), `integration arm ${id}`);
   }
 });
@@ -286,33 +286,6 @@ test('non-channel SVG and terminal clipping remain byte-identical to the previou
   }
 });
 
-// Full SVG hashes captured from the pre-width-change renderer. They are fixed
-// baselines, independent of the current source and any temporary backup files.
-const rollbackCases = [
-  {
-    name: 'empty', args: [{}, null, {}],
-    hash: '4f919dbf63f3debf2f14916b1a5765ce7522bfaf76355a274b55112b7f0bfd91',
-  },
-  {
-    name: 'dual', args: [charts.dual, null, {}],
-    hash: 'cc6e13c76ad916f284bc2fd14837097720db72088d1ea67ff2a314c970feed1f',
-  },
-  {
-    name: 'pair20-34',
-    args: [charts.dual, null, { selections: [gate(20), gate(34)], showLabels: true, idPrefix: 'rollback-pair' }],
-    hash: '0fba4885216262abb39fcfbd62e164da72db61eca5e7f0158e6e97e47a433889',
-  },
-  {
-    name: 'center+hover',
-    args: [
-      { personality: [20, 34, 37, 54], design: [10, 57, 40] },
-      { type: 'center' as const, id: 'throat' },
-      { previewSelection: { type: 'center' as const, id: 'sacral' }, dimInactive: true, showActivations: true, idPrefix: 'rollback-hover' },
-    ],
-    hash: '404f5ac4fc5ccd5565faa4845bff88c18ce116b36e6076c9f008ab1d8f0c052e',
-  },
-];
-
 async function rendererAtScale(scale: number, legacyDualGap = false) {
   const rendererURL = new URL('../src/scene/bodygraph-svg.ts', import.meta.url);
   const paintURL = new URL('../src/scene/bodygraph-paint.ts', import.meta.url);
@@ -334,14 +307,19 @@ async function rendererAtScale(scale: number, legacyDualGap = false) {
     .replaceAll('CHANNEL_WIDTH.firstLane', 'CHANNEL_WIDTH.lane');
   const paint = moduleURL(link(paintSource, paintURL, replacements));
   replacements[paintURL.href] = paint;
+  const integrationURL = new URL('../src/scene/integration-paint.ts', import.meta.url);
+  let integrationSource = await readFile(integrationURL, 'utf8');
+  if (legacyDualGap) integrationSource = integrationSource.replaceAll('CHANNEL_WIDTH.firstLaneOffset', 'CHANNEL_WIDTH.laneOffset').replaceAll('CHANNEL_WIDTH.firstLane', 'CHANNEL_WIDTH.lane');
+  replacements[integrationURL.href] = moduleURL(link(integrationSource, integrationURL, replacements));
   return (await import(moduleURL(link(await readFile(rendererURL, 'utf8'), rendererURL, replacements)))).renderBodygraph;
 }
 
-test('width scale 1 with the historical dual gap restores the complete pre-change SVG', async () => {
+test('width scale 1 preserves original widths with continuous integration paths', async () => {
   const renderReverted = await rendererAtScale(1, true);
-  for (const { name, args, hash } of rollbackCases) {
-    assert.equal(createHash('sha256').update(originalDrawingStyle(originalActivationStyle(originalGateFont(originalGateContour(originalHighlightGlow(renderReverted(...args), 10)))))).digest('hex'), hash, name);
-  }
+  const dual = paths(renderReverted(charts.dual));
+  assertWidths(colored(dual, '#202020'), 64, 2.3, 'original black width');
+  assertWidths(colored(dual, '#c32d35'), 64, 2.3, 'original red width');
+  assertWidths(colored(paths(renderReverted(charts.black)), '#202020'), 64, 4.6, 'original single width');
 });
 
 test('width scale 1.2 restores the preceding paint, lane, halo and mask widths', async () => {
@@ -349,9 +327,9 @@ test('width scale 1.2 restores the preceding paint, lane, halo and mask widths',
   const markup = renderPrevious(charts.dual, null, { selections: [gate(20), gate(34)] });
   const tags = paths(markup);
   assertWidths(colored(tags, '#c6c2b9'), 35, 7.68, 'previous ordinary and integration outlines');
-  assertWidths(colored(tags, '#202020'), 66, 3, 'black lanes retain the seam fix at the previous scale');
-  assertWidths(colored(tags, '#c32d35'), 66, 2.76, 'previous dual red lanes');
-  assertWidths(colored(paths(renderPrevious(charts.black)), '#202020'), 66, 5.52, 'previous single-source paint');
+  assertWidths(colored(tags, '#202020'), 64, 3, 'black lanes retain the seam fix at the previous scale');
+  assertWidths(colored(tags, '#c32d35'), 64, 2.76, 'previous dual red lanes');
+  assertWidths(colored(paths(renderPrevious(charts.black)), '#202020'), 64, 5.52, 'previous single-source paint');
   for (const { id } of ordinary) {
     assertWidths(colored(paths(target(markup, 'channel', id)), '#ffffff'), 1, 5.52, `previous ${id} white interior`);
   }

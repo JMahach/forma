@@ -1,11 +1,12 @@
+import { paintIntegrationLayers } from './integration-paint.ts';
 import { canSoften, softHighlightOpacity, softHighlightFragment, observeSoftHighlightMotion, SOFT_HIGHLIGHT_DURATION } from './soft-highlight.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
 import type { SelectionType } from '../selection/selection-targets.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { paintOrder } from './geometry/drawing-geometry.ts';
-import { PALETTE, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
-  integrationOutlineMask, integrationChannels, armPaintPoints } from './bodygraph-paint.ts';
+import { PALETTE, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, integrationPaint, channelPaint, centerPaint, gatePaint,
+  integrationOutlineMask, integrationChannels } from './bodygraph-paint.ts';
 import { isSelectionPressed } from './render-state.ts';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.ts';
 
@@ -41,14 +42,10 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
     disc: node.querySelector('.bg-gate-disc'), glow: node.querySelector('.bg-gate-glow'), halo: node.querySelector('.bg-gate-highlight'), text: node.querySelector('text') }] : []; });
   const integration = byType('integration', 'integration');
   const background = [...drawing.querySelector('.bodygraph-integration-outlines')!.children, ...[...integration.children].slice(0, 5)];
-  const arms = [...integration.querySelectorAll<SVGElement>('.bg-integration-arm')].map(node => ({
-    gate: Number(node.dataset.arm), node, lanes: fragmentSlot(node, null, [...node.childNodes],
-      initialState ? paintGateActivation(armPaintPoints.get(Number(node.dataset.arm))!, initialState, Number(node.dataset.arm)) : undefined),
-  }));
-  const integrationChildren = [...integration.children], hit = integrationChildren.at(-1)!;
-  const lastArm = integrationChildren.indexOf(arms.at(-1)!.node);
-  const stem = fragmentSlot(integration, hit, integrationChildren.slice(lastArm + 1, -1),
-    initialState ? integrationStemPaint(initialState, initialIntegration!) : undefined);
+  const arms = [...integration.querySelectorAll<SVGElement>('.bg-integration-arm')].map(node => ({ gate: Number(node.dataset.arm), node }));
+  const colorLayer = integration.querySelector('.bodygraph-integration-paint')!;
+  const paintColors = fragmentSlot(colorLayer, null, [...colorLayer.childNodes],
+    initialState ? paintIntegrationLayers(initialState) : undefined);
   const highlights = drawing.querySelector('.bodygraph-integration-highlights')!;
   const focusHalos = [...highlights.querySelectorAll('.bg-integration-focus')];
   let selectionHalo = highlights.querySelector('.bg-integration-selection');
@@ -148,9 +145,8 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
       for (const arm of arms) {
         const part = integrationArmState.find(part => part.gate === arm.gate)!;
         setAttributes(arm.node, { 'data-related': part.highlighted, opacity: part.opacity });
-        arm.lanes(paintGateActivation(armPaintPoints.get(arm.gate)!, state, arm.gate));
       }
-      stem(integrationStemPaint(state, paint));
+      paintColors(paintIntegrationLayers(state));
       const selectionChanged = selectionHalo?.getAttribute('d') !== selectionPath
         || selectionHalo?.getAttribute('mask') !== `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})`;
       let reclaimedOpacity: string | undefined;

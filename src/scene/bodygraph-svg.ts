@@ -1,7 +1,8 @@
+import { paintIntegrationLayers } from './integration-paint.ts';
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
-import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, integrationOutlineMask, integrationChannels, armPaintPoints, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.ts';
+import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationOutlineMask, integrationChannels, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { renderActivationColumns } from './activation-columns.ts';
 import { renderVariableArrows, visibleVariables } from './variable-arrows.ts';
@@ -93,10 +94,10 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   const integrationBackground = backgroundParts.map(({ path, opacity }) => `<path d="${path}" fill="none" stroke="${PALETTE.paper}" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" pointer-events="none"/>`).join('');
   const integrationBranches = integrationArmState.map(({ gate, highlighted, opacity }) => {
     return `<g class="bg-integration-arm" data-arm="${gate}" data-related="${highlighted}" opacity="${opacity}" pointer-events="none">
-      ${paintGateActivation(armPaintPoints.get(gate)!, state, gate)}
+
     </g>`;
   }).join('');
-  const integrationStem = integrationStemPaint(state, integrationState);
+
   // Blue replaces the integration outline above ordinary crossings (including
   // 26–44) and its own gray outlines, below white/red/black semantic interiors.
   // Filter after each child's exact ownership mask, otherwise a partial-arm
@@ -122,7 +123,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   const integration = `<g ${attrs('integration', 'integration', 'Интеграция: ворота 20, 10, 57 и 34, шесть каналов', integrationSelected)} data-junction="integration" data-visual-selected="${integrationSelected}">
     ${integrationBackground}
     ${integrationBranches}
-    ${integrationStem}
+    <g class="bodygraph-integration-paint" pointer-events="none">${paintIntegrationLayers(state)}</g>
     ${thumbnail ? '' : `<path d="${INTEGRATION_PATH}" fill="none" stroke="transparent" stroke-width="20" stroke-linecap="round" pointer-events="${interactive ? 'stroke' : 'none'}"/>`}
   </g>${integrationSelectors}`;
 

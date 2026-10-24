@@ -1,12 +1,14 @@
+import { PUBLIC_FILES } from '../server/http/public-files.ts';
+import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
 import { PALETTE } from '../src/ui/chart-palette.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INTEGRATION_CASES, INTEGRATION_GATES } from '../src/dev/integration-cases.ts';
-import { integrationLayers, paintIntegrationLayers } from '../src/dev/integration-paint.ts';
+import { INTEGRATION_CASES, INTEGRATION_GATES } from './fixtures/integration-cases.ts';
+import { integrationLayers, paintIntegrationLayers } from '../src/scene/integration-paint.ts';
 import { createRenderState } from '../src/scene/render-state.ts';
 import { INTEGRATION_ARMS } from '../src/scene/geometry/drawing-geometry.ts';
 
-test('integration lab has thirty distinct states with every gate in every state', () => {
+test('approved integration fixtures have thirty distinct states with every gate in every state', () => {
   assert.equal(INTEGRATION_CASES.length, 30);
   assert.equal(new Set(INTEGRATION_CASES.map(c => c.pattern)).size, 30);
   for (let i = 0; i < 4; i++) assert.deepEqual([...new Set(INTEGRATION_CASES.map(c => c.pattern[i]))].sort(), ['0','1','2','3']);
@@ -38,4 +40,14 @@ test('case 22 paints all dual red lanes below every dual black lane', () => {
   const colors = [...markup.matchAll(/<path[^>]* stroke="([^"]+)"/g)].map(m => m[1]);
   assert.deepEqual(colors, [PALETTE.design, PALETTE.design, PALETTE.design, PALETTE.design,
     PALETTE.ink, PALETTE.ink, PALETTE.ink, PALETTE.ink]);
+});
+
+test('production and thumbnail renderers include the approved paint; lab route is gone', () => {
+  for (const chart of INTEGRATION_CASES) for (const profile of ['studio', 'thumbnail'] as const) {
+    const options = { profile };
+    const paint = paintIntegrationLayers(createRenderState(chart, null, options));
+    assert.ok(renderBodygraph(chart, null, options).includes(paint));
+  }
+  assert.equal(PUBLIC_FILES.has('integration'), false);
+  assert.equal([...PUBLIC_FILES.keys()].some(key => key.startsWith('src/dev/integration')), false);
 });

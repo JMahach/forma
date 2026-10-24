@@ -1,10 +1,9 @@
 import type { RenderState, RenderOptions } from './render-state.ts';
 import type { CENTERS } from './geometry/chart-geometry.ts';
 import { CHANNELS, GATES } from './geometry/chart-geometry.ts';
-import { STEM_POINTS } from './geometry/integration-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
-import { pointString, offsetPoints, splitAtHalfLength, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
+import { pointString, offsetPoints, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
 import { PALETTE } from '../ui/chart-palette.ts';
 export { PALETTE } from '../ui/chart-palette.ts';
 
@@ -36,8 +35,6 @@ export function integrationOutlineMask(id: string, gates: readonly number[] = [2
 
 
 export const integrationChannels = CHANNELS.filter(channel => INTEGRATION_IDS.has(channel.id));
-const stemHalves = splitAtHalfLength(STEM_POINTS);
-export const armPaintPoints = new Map(INTEGRATION_ARMS.map(arm => [arm.gate, arm.reversePaint ? [...arm.points].reverse() : arm.points]));
 // The catalogue of stroke paths is finite; geometry is prepared once, not on a minute/hover update.
 const strokePaths = new WeakMap<number[][], Map<number, string>>();
 function stroke(points: number[][], color: string, width: number, offset = 0) {
@@ -106,12 +103,6 @@ export function gatePaint(gate: typeof GATES[number], state: RenderState, option
     textWeight: active ? '650' : '500', textFill: active ? '#ffffff' : '#171513' };
 }
 
-export function integrationStemPaint(state: RenderState, paint: ReturnType<typeof integrationPaint>) {
-  return paint.crossesStem ? stemHalves.map((points, index) => {
-    const gates = index ? [34, 57] : [20, 10];
-    return paintGateActivation(points, state, gates);
-  }).join('') : '';
-}
 export function integrationPaint(state: RenderState, options: RenderOptions) {
   const { visualSelections, selectedChannels, halfGates, personality, design, relatedChannels } = state;
   const integrationSelected = visualSelections.some(value => value.type === 'integration');
