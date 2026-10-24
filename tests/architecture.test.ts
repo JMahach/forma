@@ -23,7 +23,7 @@ const only = (file: string, roots: string[], exact = []) => {
   for (const dependency of graph.get(file)!) assert.ok(exact.includes(dependency) || roots.some((prefix: string) => dependency.startsWith(prefix)), `${file} must not import ${dependency}`);
 };
 
-// Tests inspect both pages, not a hand-maintained list of module entry points.
+// Tests inspect the public pages, not a hand-maintained list of module entry points.
 test('production imports resolve and contain no dependency cycles', () => {
   const visited = new Set();
   function visit(file: unknown, ancestors = []) {
@@ -42,9 +42,9 @@ test('production imports resolve and contain no dependency cycles', () => {
 });
 
 test('all browser modules are reachable from real page entries and explicitly public', () => {
-  const entries = ['public/index.html', 'public/love.html'].flatMap(file =>
+  const entries = ['public/index.html', 'public/love.html', 'public/integration.html'].flatMap(file =>
     [...source(file).matchAll(/<script\b[^>]*src="\/(src\/[^"?]+)[^"]*"/g)].map(([, entry]) => entry));
-  assert.deepEqual(entries.sort(), ['src/dev/account-preview.ts', 'src/dev/control-colors.ts', 'src/dev/shared-chart-preview.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
+  assert.deepEqual(entries.sort(), ['src/dev/account-preview.ts', 'src/dev/control-colors.ts', 'src/dev/integration.ts', 'src/dev/shared-chart-preview.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
   assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/control-colors\.ts"/,
     'the temporary colour preview is an explicitly development-only page entry');
   assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/account-preview\.ts"/,

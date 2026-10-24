@@ -25,6 +25,11 @@ export const PUBLIC_FILES = new Map<string, string>([
   ['love.html', 'public/love.html'],
   ['love', 'public/love.html'],
   ['love.css', 'public/love.css'],
+  ['integration', 'public/integration.html'],
+  ['integration.css', 'public/integration.css'],
+  ['src/dev/integration.ts', 'src/dev/integration.ts'],
+  ['src/dev/integration-cases.ts', 'src/dev/integration-cases.ts'],
+  ['src/dev/integration-paint.ts', 'src/dev/integration-paint.ts'],
   ...[
     'src/dev/control-colors.ts',
     'src/dev/account-preview.ts',
