@@ -89,6 +89,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/reference/knowledge-catalog.ts',
     'src/scene/activation-columns.ts',
     'src/scene/activation-targets.ts',
+    'src/scene/activation-hover.ts',
     'src/scene/activation-painter.ts',
     'src/scene/backdrop.ts',
     'src/scene/bodygraph-paint.ts',

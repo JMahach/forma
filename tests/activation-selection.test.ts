@@ -35,7 +35,7 @@ function numericRows(markup: string) {
       id: attribute(content, 'data-activation'),
       selected: attribute(content, 'data-selected') === 'true',
       pressed: attribute(content, 'aria-pressed') === 'true',
-      painted: /<rect[^>]*fill="#eaf0f8"/.test(content),
+      painted: /<rect[^>]*fill="#91bce9"/.test(content),
     }));
 }
 

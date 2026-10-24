@@ -23,6 +23,7 @@ interface AppOptions {
 
 import { attachKnowledgeEntry } from './views/knowledge-entry.ts';
 import { attachActivationPopover } from './views/activation-popover.ts';
+import { attachActivationHover } from './scene/activation-hover.ts';
 import { attachHoverPreview } from './selection/hover-preview.ts';
 import { attachGestures } from './scene/gestures.ts';
 import { pointerTarget } from './scene/pointer-target.ts';
@@ -168,9 +169,10 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   };
   const gestures = startupGestures || attachGestures($('bodygraph'), gestureHandlers);
   if (startupGestures) gestures.setHandlers(gestureHandlers);
+  const activationHover = attachActivationHover($('bodygraph'));
   hoverPreview = attachHoverPreview($('bodygraph'), {
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
-    coalesceMandala: true, onPreview: graph.preview,
+    coalesceMandala: true, onPreview: graph.preview, onClear: activationHover.clear,
   });
   const knowledge = attachKnowledgeEntry({ button: $('openKnowledge'), dialog: $('knowledgeDialog'),
     onSelect: selection => { navigateWorkspace('chart'); graph.choose(selection); },

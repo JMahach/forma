@@ -18,8 +18,9 @@ interface ColumnRecord {
   rows: Map<string, { node: SVGElement; planetTarget: ReturnType<typeof capturePlanetTarget> }>;
 }
 
-import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget } from './activation-targets.ts';
+import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget, renderActivationPanel, activationPanelAttributes, activationPanelRule } from './activation-targets.ts';
 import { OVERLAY_SOURCES, overlayOriginLabel } from '../domain/chart-overlay.ts';
+import { PALETTE, ACTIVATION_HIGHLIGHT_OPACITY } from '../ui/chart-palette.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
 import { isChartOverlay } from '../domain/chart-composition.ts';
 import { PLANETS } from '../domain/planets.ts';
@@ -44,7 +45,7 @@ function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySe
     const sources = (['design', 'personality'] as const).filter(source => [...records[source].values()].some(valid));
     const single = sources.length === 1;
     const geometry = overlayActivationColumnLayout(columnSide, { single, showMandala, label });
-    const rows: OverlayRow[] = PLANETS.map(([planet, symbol, name], rowIndex) => ({ planet, symbol, name, x: geometry.x, y: activationRowY(rowIndex),
+    const rows: OverlayRow[] = PLANETS.map(([planet, symbol, name], rowIndex) => ({ planet, symbol, name, x: geometry.x, y: activationRowY(rowIndex) + geometry.rowOffset,
       values: sources.flatMap((source, sourceIndex) => {
         const entry = records[source].get(planet);
         if (!valid(entry)) return [];
@@ -58,13 +59,14 @@ function describeOverlayActivationColumns(chart: ChartView, selected: ReadonlySe
     for (const row of rows) row.planetTarget = describePlanetTarget({ id: `${origin}-${row.planet}`,
       symbol: row.symbol, label: `${label}, ${row.name}`, geometry: geometry.planet, color: OVERLAY_PALETTE[origin],
       selections, pressedSelections, available: row.values.length > 0 });
-    return { ...geometry, origin, columnSide, label, rows };
+    return { ...geometry, origin, columnSide, label, rows,
+      panelRight: Math.max(108, ...geometry.values.map(value => value.x + value.rectX + value.hitWidth)) };
   });
 }
 
 function valueMarkup(value: OverlayValue) {
   return `<g class="bg-activation cycle-activation-value" data-type="gate" data-id="${value.gate}" data-activation="${value.id}" data-cycle-source="${value.origin}-${value.source}" data-selected="${value.selected}" tabindex="0" role="button" aria-label="${esc(value.label)}" aria-pressed="${value.pressed}" fill="${value.color}" transform="translate(${value.x} 0)">
-    <rect x="${value.rectX}" y="${value.hitY}" width="${value.hitWidth}" height="${value.hitHeight}" rx="${value.hitRadius}" fill="${value.selected ? '#eaf0f8' : 'transparent'}"/>
+    <rect x="${value.rectX}" y="${value.hitY}" width="${value.hitWidth}" height="${value.hitHeight}" rx="${value.hitRadius}" fill="${value.selected ? PALETTE.halo : 'transparent'}" fill-opacity="${ACTIVATION_HIGHLIGHT_OPACITY}"/>
     <text x="${value.textX}" y="0" dominant-baseline="central" font-size="${value.fontSize}" font-weight="500" pointer-events="none">${value.gate}<tspan font-weight="400" opacity=".7">.${value.line}</tspan></text>
   </g>`;
 }
@@ -77,8 +79,9 @@ function columnsMarkup(columns: ReturnType<typeof describeOverlayActivationColum
   if (!columns.length) return '';
   return `<g class="activation-columns cycle-activation-columns">${columns.map(column => `<g class="activation-column" data-column-side="${column.columnSide}" data-cycle-origin="${column.origin}" data-cycle-layout="${column.layout}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
     <g class="activation-block-content" transform="${column.transform}">
+      ${renderActivationPanel(column.x, OVERLAY_PALETTE[column.origin], column.panelRight, column.rowOffset)}
       <svg class="activation-heading-viewport" x="${column.headingX}" y="${column.headingTop}" width="${column.headingViewportWidth}" height="${column.headingHeight}" viewBox="${column.headingX} ${column.headingTop} ${column.headingViewportWidth} ${column.headingHeight}" overflow="hidden" aria-label="${esc(column.label)}"><title>${esc(column.label)}</title><text class="activation-heading" x="${column.headingX}" y="${column.headingY}" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.headingSize}" font-weight="500">${esc(column.label)}</text></svg>
-      <path class="activation-header-rule" d="M ${column.headingX} ${column.ruleY} h ${column.headingWidth}" stroke="#8e897e" stroke-opacity=".25" stroke-width="1" fill="none"/>
+      <path class="activation-header-rule" d="${activationPanelRule(column.x, column.panelRight)}" stroke="#8e897e" stroke-opacity=".25" stroke-width="1" fill="none"/>
       <g class="cycle-source-headings"${column.single ? ' display="none"' : ''}>
         <text x="${column.captionX[0]}" y="${column.captionY}" text-anchor="middle" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.captionSize}">Дизайн</text>
         <text x="${column.captionX[1]}" y="${column.captionY}" text-anchor="middle" fill="${OVERLAY_PALETTE[column.origin]}" font-size="${column.captionSize}">Личность</text>
@@ -136,11 +139,12 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
       const nextIds = new Set();
       for (const column of models) {
         const record = columns.get(column.origin)!;
+        setAttributes(record.node.querySelector('.activation-panel'), activationPanelAttributes(column.x, OVERLAY_PALETTE[column.origin], column.panelRight, column.rowOffset));
         if (record.heading.textContent !== column.label) record.heading.textContent = column.label;
         if (record.headingTitle.textContent !== column.label) record.headingTitle.textContent = column.label;
         setAttributes(record.headingViewport, { x: column.headingX, width: column.headingViewportWidth,
           viewBox: `${column.headingX} ${column.headingTop} ${column.headingViewportWidth} ${column.headingHeight}`, 'aria-label': column.label });
-        setAttribute(record.rule, 'd', `M ${column.headingX} ${column.ruleY} h ${column.headingWidth}`);
+        setAttribute(record.rule, 'd', activationPanelRule(column.x, column.panelRight));
         if (record.layout !== column.layout) {
           setAttribute(record.node, 'data-cycle-layout', column.layout);
           setAttribute(record.heading, 'x', column.headingX);
@@ -169,7 +173,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
         record.previous = key;
         setAttributes(record.node, { 'data-id': value.gate, 'data-selected': value.selected,
           'aria-label': value.label, 'aria-pressed': value.pressed, transform: `translate(${value.x} 0)` });
-        setAttribute(record.rect, 'fill', value.selected ? '#eaf0f8' : 'transparent');
+        setAttribute(record.rect, 'fill', value.selected ? PALETTE.halo : 'transparent');
         setAttributes(record.rect, { x: value.rectX, width: value.hitWidth, y: value.hitY, height: value.hitHeight, rx: value.hitRadius });
         setAttributes(record.text, { x: value.textX, 'font-size': value.fontSize });
         if (record.text.firstChild!.nodeValue !== String(value.gate)) record.text.firstChild!.nodeValue = String(value.gate);

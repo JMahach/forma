@@ -86,7 +86,7 @@ function visibleHighlights(markup: string) {
     halfPaths: new Set(graph.filter(target => target.type === 'channel').flatMap(target => [...target.content.matchAll(/<g data-highlight-gate="(\d+)">(<path[^>]*\/>)/g)].map(([, id, path]) => `${target.id}:${id}:${path}`))),
     integrationPaths: new Set(integrationPath.split(/(?=M)/).map((path: string) => path.trim()).filter(Boolean)),
     numericCopies: new Set(numericCopies(markup).filter(target => attribute(target.tag, 'data-selected') === 'true').map(target => target.activation)),
-    planets: new Set(groups.filter(target => target.type === 'planet' && /<rect[^>]*fill="#eaf0f8"/.test(target.content)).map(target => target.id)),
+    planets: new Set(groups.filter(target => target.type === 'planet' && /<rect[^>]*fill="#91bce9"/.test(target.content)).map(target => target.id)),
   };
 }
 

@@ -46,8 +46,8 @@ test('overlay keeps exact natal and return source values in two side groups at n
     assert.equal(resolveOverlayActivation(chart, id)!.entry, id.startsWith('natal') ? natal.activations[id.includes('design') ? 'design' : 'personality'][0] : cycle.activations[id.includes('design') ? 'design' : 'personality'][0]);
   }
   const rows = root.querySelector('[data-cycle-origin="natal"]')!.querySelectorAll('[data-cycle-planet]');
-  assert.equal(rows[0].getAttribute('transform'), 'translate(-46 118)');
-  assert.equal(rows[1].getAttribute('transform'), 'translate(-46 166)');
+  assert.equal(rows[0].getAttribute('transform'), 'translate(-62 130)');
+  assert.equal(rows[1].getAttribute('transform'), 'translate(-62 178)');
   assert.match(root.textContent, /Личная карта/); assert.match(root.textContent, /Возврат/);
 });
 
@@ -82,12 +82,22 @@ test('ordinary gate selection highlights matching natal and return rows and hove
   const chart = overlayFixture(natal, cycle, RETURN_OVERLAY), root = fixture(chart), painter = createActivationPainter(root);
   painter.update(chart, state, options);
   for (const id of ['natal-personality-sun', 'cycle-personality-sun']) {
-    assert.equal(root.querySelector(`[data-activation="${id}"]`)!.getAttribute('aria-pressed'), 'true');
+    const target = root.querySelector(`[data-activation="${id}"]`)!;
+    assert.equal(target.getAttribute('aria-pressed'), 'true');
+    assert.equal(target.querySelector('rect')!.getAttribute('fill'), '#91bce9');
+    assert.equal(Number(target.querySelector('rect')!.getAttribute('fill-opacity')), 1 / 3);
+    assert.equal(target.getAttribute('opacity'), null);
+    assert.equal(target.querySelector('text')!.getAttribute('opacity'), null);
+    assert.equal(target.querySelector('text')!.getAttribute('fill-opacity'), null);
+    assert.equal(target.querySelector('tspan')!.getAttribute('opacity'), '.7', 'only the original line suffix is softer than the gate number');
   }
   painter.update(chart, { ...state, previewGates: new Set([49]) }, options);
   const other = root.querySelector('[data-activation="cycle-design-sun"]')!;
   assert.equal(other.dataset.selected, 'true');
   assert.equal(other.getAttribute('aria-pressed'), 'false');
+  assert.equal(Number(other.querySelector('rect')!.getAttribute('fill-opacity')), 1 / 3, 'preview and committed backgrounds use the same opacity');
+  assert.deepEqual(significantDOM(root.querySelector('.cycle-activation-columns')),
+    significantDOM(fixture(chart, options, { ...state, previewGates: new Set([49]) }).querySelector('.cycle-activation-columns')));
 });
 
 test('an adopted overlay retains surviving targets when exact source values disappear and arrive', () => {
@@ -130,7 +140,7 @@ test('a personality-only transit fills one native-size column without an empty D
   assert.equal(column!.querySelector('[data-cycle-source="cycle-design"]'), null);
   assert.equal(value!.querySelector('text')!.getAttribute('font-size'), '24');
   assert.equal(value!.getAttribute('transform'), 'translate(34 0)');
-  assert.equal(value!.querySelector('rect')!.getAttribute('width'), '68');
+  assert.equal(value!.querySelector('rect')!.getAttribute('width'), '72');
   assert.equal(column!.querySelector('.planet-symbol')!.getAttribute('font-size'), '26');
   assert.equal(column!.querySelector('.cycle-source-headings')!.getAttribute('display'), 'none');
 });
@@ -280,7 +290,11 @@ test('overlay planets hover and toggle independently of numbers with stable targ
       assert.equal(planet!.getAttribute('tabindex'), '0');
       assert.equal(planet!.getAttribute('aria-pressed'), String(selection.selections.some(item => item.id === `${origin}-sun`)));
       const highlighted = selected.visualSelections.some(item => item.id === `${origin}-sun`);
-      assert.equal(planet!.querySelector('rect')!.getAttribute('fill'), highlighted ? '#eaf0f8' : 'transparent');
+      assert.equal(planet!.querySelector('rect')!.getAttribute('fill'), highlighted ? '#91bce9' : 'transparent');
+      assert.equal(Number(planet!.querySelector('rect')!.getAttribute('fill-opacity')), 1 / 3);
+      assert.equal(planet!.getAttribute('opacity'), null);
+      assert.equal(planet!.querySelector('text')!.getAttribute('opacity'), null);
+      assert.equal(planet!.querySelector('text')!.getAttribute('fill-opacity'), null, 'planet symbols retain their original contrast');
       assert.equal(Boolean(planet!.querySelector('title')), false, 'a new planet target adds no hover popup');
       for (const source of ['design', 'personality'] as const) {
         const value = root.querySelector(`[data-activation="${origin}-${source}-sun"]`);
@@ -297,15 +311,19 @@ test('overlay planets hover and toggle independently of numbers with stable targ
   }
 });
 
-test('overlay target heights follow number size and stay aligned and separated through layout changes', () => {
+test('overlay targets fill equal rows and remain gapless through layout changes', () => {
   const returning = overlayFixture(natal, cycle, RETURN_OVERLAY);
   const transit = overlayFixture(natal, { ...cycle, design: [], activations: { design: [], personality: cycle.activations.personality } }, { kind: 'transit' as const });
   const root = fixture(returning), painter = createActivationPainter(root);
   const planet = root.querySelector('[data-activation="cycle-sun-planet"]');
-  let singleHeight;
   for (const [chart, showMandala] of [[transit, false], [returning, false], [returning, true], [transit, true]] as const) {
     const opt = { ...options, showMandala };
     painter.update(chart, createRenderState(chart, null, options), opt);
+    for (const column of root.querySelectorAll('.activation-column')) {
+      const panel = column.querySelector('.activation-panel')!, rule = column.querySelector('.activation-header-rule')!;
+      assert.equal(rule.getAttribute('d'), `M ${panel.getAttribute('x')} 88 h ${panel.getAttribute('width')}`, 'single, dual and wide separators follow the complete frame');
+      assert.equal(rule.getAttribute('stroke-opacity'), '.25', 'layout changes preserve the separator contrast');
+    }
     const row = root.querySelector('[data-cycle-origin="cycle"] [data-cycle-planet="sun"]');
     const target = row!.querySelector('.bg-planet');
     assert.ok(target, 'planet has its own highlight and hit area');
@@ -315,17 +333,18 @@ test('overlay target heights follow number size and stay aligned and separated t
     for (const value of values) {
       const rect = value.querySelector('rect');
       const height = Number(rect!.getAttribute('height'));
-      assert.ok(height < 40 && height >= Number(value.querySelector('text')!.getAttribute('font-size')), 'highlight is compact without cutting the numeral');
+      assert.equal(height, 48, 'single and dual targets fill the same complete row');
+      assert.equal(rect!.getAttribute('rx'), '10');
+      assert.ok(height >= Number(value.querySelector('text')!.getAttribute('font-size')), 'target contains the numeral');
       assert.equal(planetRect!.getAttribute('y'), rect!.getAttribute('y'));
       assert.equal(planetRect!.getAttribute('height'), rect!.getAttribute('height'));
-      if (values.length === 1) singleHeight = height;
-      else {
-        assert.ok(height < singleHeight!, 'smaller numbers get a smaller highlight');
-        assert.ok(118 + Number(rect!.getAttribute('y')) > 101 + 2, 'first row leaves space below source captions');
+      if (values.length > 1) {
+        const rowY = Number(/translate\([ -\d.]+ ([-\d.]+)\)/.exec(row!.getAttribute('transform')!)![1]);
+        assert.ok(rowY + Number(rect!.getAttribute('y')) > 101 + 2, 'first row leaves space below source captions');
       }
     }
     const first = values[0], firstLeft = Number(/translate\(([-\d.]+) 0\)/.exec(first.getAttribute('transform')!)![1]) + Number(first.querySelector('rect')!.getAttribute('x'));
-    assert.ok(Number(planetRect!.getAttribute('x')) + Number(planetRect!.getAttribute('width')) < firstLeft, 'planet and number hit areas never overlap');
+    assert.equal(Number(planetRect!.getAttribute('x')) + Number(planetRect!.getAttribute('width')), firstLeft, 'planet and number targets meet exactly without a gap or overlap');
     assert.ok(Number(target!.querySelector('text')!.getAttribute('y')) > Number(first.querySelector('text')!.getAttribute('y')), 'symbol receives a small downward optical correction');
     assert.deepEqual(significantDOM(root.querySelector('.cycle-activation-columns')), significantDOM(fixture(chart, opt).querySelector('.cycle-activation-columns')));
   }
@@ -352,7 +371,7 @@ test('the public renderer preserves single planet selections and explicit previe
     const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
     root.innerHTML = renderActivationColumns(chart, new Set<number>(), selection, renderOptions);
     const target = root.querySelector('[data-activation="cycle-sun-planet"]');
-    assert.equal(target!.querySelector('rect')!.getAttribute('fill'), selected ? '#eaf0f8' : 'transparent');
+    assert.equal(target!.querySelector('rect')!.getAttribute('fill'), selected ? '#91bce9' : 'transparent');
     assert.equal(target!.getAttribute('aria-pressed'), String(pressed));
     assert.equal(root.querySelector('[data-activation="natal-sun-planet"]')!.getAttribute('aria-pressed'), 'false');
   }

@@ -2,13 +2,13 @@ import type { ChartView } from '../domain/chart-composition.ts';
 import type { RenderOptions } from './render-state.ts';
 import { calculateVariables } from '../domain/variables.ts';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.ts';
-import { ACTIVATION_COLUMN_LAYOUT, activationBlockTransform, activationHeadingX } from './geometry/activation-layout.ts';
+import { ACTIVATION_COLUMN_LAYOUT, activationBlockTransform } from './geometry/activation-layout.ts';
 
 // A separate, non-interactive layer within the existing drawing bounds.
 // Arrow direction changes only the glyph, never the bodygraph geometry.
 const SOURCE_PRESENTATION = Object.freeze({
-  design: { columnSide: 'left' as const, x: 148, color: '#c32d35', label: 'Дизайн', rule: `M ${activationHeadingX('left') + ACTIVATION_COLUMN_LAYOUT.headingWidths['Дизайн']} ${ACTIVATION_COLUMN_LAYOUT.ruleY} H 198` },
-  personality: { columnSide: 'right' as const, x: 492, color: '#202020', label: 'Личность', rule: `M 437 ${ACTIVATION_COLUMN_LAYOUT.ruleY} H ${activationHeadingX('right')}` },
+  design: { columnSide: 'left' as const, x: 148, color: '#c32d35', label: 'Дизайн' },
+  personality: { columnSide: 'right' as const, x: 492, color: '#202020', label: 'Личность' },
 });
 const ROWS = Object.freeze({ top: 134, bottom: 206 });
 const GLYPH_SCALE = 1.3;
@@ -28,7 +28,7 @@ export function renderVariableArrows(chart: ChartView, variables = isChartOverla
   const headings = Object.entries(SOURCE_PRESENTATION).map(([source, presentation]) => `<g class="variable-block" data-column-side="${presentation.columnSide}" transform="${activationBlockTransform(presentation.columnSide)}"><g class="bodygraph-variable-headings" data-source="${source}" fill="${presentation.color}" aria-hidden="true">
     <text class="activation-heading" x="${presentation.x - GLYPH_OFFSET}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" text-anchor="middle" font-size="16" font-weight="500">Цвет</text>
     <text class="activation-heading" x="${presentation.x + GLYPH_OFFSET}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" text-anchor="middle" font-size="16" font-weight="500">Тон</text>
-    <path class="variable-header-rule" d="${presentation.rule}" fill="none" stroke="${presentation.color}" stroke-opacity=".18" stroke-width="1"/>
+    <path class="variable-header-rule" d="M ${presentation.x - GLYPH_OFFSET - 28} ${ACTIVATION_COLUMN_LAYOUT.ruleY} H ${presentation.x + GLYPH_OFFSET + 28}" fill="none" stroke="${presentation.color}" stroke-opacity=".18" stroke-width="1"/>
   </g></g>`).join('');
   return `<g class="bodygraph-variables" pointer-events="none" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">${headings}${variables.map(variable => {
     const presentation = SOURCE_PRESENTATION[variable.source];

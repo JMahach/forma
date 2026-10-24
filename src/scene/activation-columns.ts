@@ -12,12 +12,13 @@ export interface ColumnSelectionOptions {
 export type ActivationColumn = ReturnType<typeof describeActivationColumns>[number];
 export type ActivationRow = ActivationColumn['rows'][number];
 
-import { describePlanetTarget, renderPlanetTarget } from './activation-targets.ts';
+import { describePlanetTarget, renderPlanetTarget, renderActivationPanel, activationPanelRule } from './activation-targets.ts';
 import { renderOverlayActivationColumns } from './overlay-activation-columns.ts';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.ts';
 import { calculateLineFixings } from '../domain/line-fixing.ts';
 import { ACTIVATION_COLUMN_LAYOUT, ACTIVATION_ROW_LAYOUT, ACTIVATION_PLANET_FILTER_LAYOUT, activationTargetLayout, activationPlanetLayout, activationBlockTransform, activationHeadingX, activationRowY } from './geometry/activation-layout.ts';
 
+import { PALETTE, ACTIVATION_HIGHLIGHT_OPACITY } from '../ui/chart-palette.ts';
 import { PLANETS } from '../domain/planets.ts';
 
 const FIXING_LABELS = {
@@ -74,9 +75,8 @@ export function renderPlanetFilterControl(id: string, name: string, checked: boo
 export function alignPersonalityHeading(root: Element) {
   const column = root.querySelector('.activation-column[data-source="personality"]');
   const heading = column?.querySelector<SVGGraphicsElement>('.activation-heading');
-  const rule = column?.querySelector('.activation-header-rule');
   const value = column?.querySelector<SVGGraphicsElement>('[data-activation="personality-sun"] > text');
-  if (heading?.textContent !== 'Личность' || !rule || !value) return;
+  if (heading?.textContent !== 'Личность' || !value) return;
   const columnMatrix = heading.getCTM(), valueMatrix = value.getCTM();
   if (!columnMatrix || !valueMatrix) return;
   const bounds = value.getBBox();
@@ -92,7 +92,6 @@ export function alignPersonalityHeading(root: Element) {
   if (Number.isFinite(correction) && Math.abs(correction) > 1e-6) {
     heading.setAttribute('x', String(right + correction));
   }
-  rule.setAttribute('d', `M ${startX} ${ACTIVATION_COLUMN_LAYOUT.ruleY} H ${right}`);
 }
 
 // Planetary values come exclusively from the saved calculation, never from
@@ -135,7 +134,7 @@ export function describeActivationColumns(chart: ChartView, selectedGates: Reado
     const enabledCount = PLANETS.filter(([planet]) => selectedPlanets.has(planet)).length;
     return { source, columnSide, x, label, color, rows, hasMasterControl, filterId: `${filterPrefix}all`,
       allPlanetsChecked: enabledCount === PLANETS.length ? true : enabledCount ? 'mixed' as const : false,
-      transform: activationBlockTransform(columnSide), headingWidth: ACTIVATION_COLUMN_LAYOUT.headingWidths[label] };
+      transform: activationBlockTransform(columnSide) };
   }).filter((item): item is NonNullable<typeof item> => !!item);
   return columns;
 }
@@ -147,7 +146,7 @@ export function renderActivationRow(row: ActivationRow) {
         ${hasPlanetControl ? renderPlanetFilterControl(filterId, planetAria, planetEnabled) : ''}
         ${renderPlanetTarget(planetTarget)}
         <g class="bg-activation" data-type="gate" data-id="${gate}" data-activation="${id}" data-selected="${selected}" tabindex="0" role="button" aria-label="${gateAria}" aria-pressed="${pressed}"${planetEnabled ? '' : ' opacity=".22"'}>
-          <rect x="${ACTIVATION_ROW_LAYOUT.valueX[0] + ACTIVATION_ROW_LAYOUT.rectX}" y="${target.hitY}" width="${ACTIVATION_ROW_LAYOUT.hitWidth}" height="${target.hitHeight}" rx="${target.hitRadius}" fill="${selected ? '#eaf0f8' : 'transparent'}"/>
+          <rect x="${ACTIVATION_ROW_LAYOUT.valueX[0] + ACTIVATION_ROW_LAYOUT.rectX}" y="${target.hitY}" width="${ACTIVATION_ROW_LAYOUT.hitWidth}" height="${target.hitHeight}" rx="${target.hitRadius}" fill="${selected ? PALETTE.halo : 'transparent'}" fill-opacity="${ACTIVATION_HIGHLIGHT_OPACITY}"/>
           <text x="${ACTIVATION_COLUMN_LAYOUT.valueOffsetX}" y="0" dominant-baseline="central" font-size="${ACTIVATION_ROW_LAYOUT.fontSize}" font-weight="500" pointer-events="none">${gate}<tspan font-weight="400" opacity=".7">.${line}</tspan></text>
         </g>
         ${fixingMark(fixing)}
@@ -155,11 +154,12 @@ export function renderActivationRow(row: ActivationRow) {
 }
 
 export function renderActivationColumn(column: ActivationColumn) {
-  const { source, columnSide, x, label, color, transform, headingWidth, rows, hasMasterControl, filterId, allPlanetsChecked } = column;
+  const { source, columnSide, x, label, color, transform, rows, hasMasterControl, filterId, allPlanetsChecked } = column;
   return `<g class="activation-column" data-source="${source}" fill="${color}" data-column-side="${columnSide}" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" style="font-variant-numeric: tabular-nums">
       <g class="activation-block-content" transform="${transform}">
+      ${renderActivationPanel(x, color)}
       <text class="activation-heading" x="${activationHeadingX(columnSide)}" y="${ACTIVATION_COLUMN_LAYOUT.headingY}" font-size="16" font-weight="500">${label}</text>
-      <path class="activation-header-rule" d="M ${activationHeadingX(columnSide)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${headingWidth}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
+      <path class="activation-header-rule" d="${activationPanelRule(x)}" stroke="${color}" stroke-opacity=".18" stroke-width="1" fill="none"/>
       ${hasMasterControl ? renderPlanetFilterControl(filterId, `${label}, все планеты`, allPlanetsChecked, `translate(${x} ${ACTIVATION_COLUMN_LAYOUT.headingY - 6})`) : ''}
       ${rows.map(renderActivationRow).join('')}
       </g>

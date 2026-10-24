@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderActivationColumns } from '../src/scene/activation-columns.ts';
-import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.ts';
+import { ACTIVATION_BLOCK_BOUNDS } from '../src/scene/geometry/activation-layout.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
 
 const activation = (planet: string, gate: number, line: number) => ({ planet, gate, line } as Activation);
@@ -57,20 +57,22 @@ test('manual charts and unfixed lines receive no invented symbols', () => {
   }
 });
 
-test('marks inherit red or black without moving planet, number, hit area or popup anchor', () => {
+test('marks retain source colors and independent popup anchors in compact rows', () => {
   const markup = renderActivationColumns(chart([activation('pluto', 43, 2)], [activation('pluto', 43, 2)]), new Set([43]));
   assert.match(markup, /data-source="design" fill="#c32d35"/);
   assert.match(markup, /data-source="personality" fill="#202020"/);
-  for (const [source, x] of [['design', -32], ['personality', 584]] as const) {
+  for (const [source, x] of [['design', -48], ['personality', 600]] as const) {
     const row = rowFor(markup, `${source}-pluto`);
     assert.match(row, new RegExp(`transform="translate\\(${x} 694\\)"`));
-    assert.match(row, /<rect x="28" y="-16" width="68" height="32"/);
+    assert.match(row, /<rect x="24" y="-24" width="72" height="48"/);
     assert.match(row, /<text x="34" y="0"/);
     const numberStart = row.indexOf(`data-activation="${source}-pluto"`);
     const numberEnd = row.indexOf('</g>', numberStart);
     assert.ok(row.indexOf('class="line-fixing"') > numberEnd, 'marker is not part of the popover anchor');
-    assert.ok(x + 103 + 4 * 1.15 <= DRAWING_BOUNDS.x + DRAWING_BOUNDS.width, 'enlarged marker fits existing camera bounds');
-    assert.ok(x + 103 - 4 * 1.15 >= DRAWING_BOUNDS.x);
+    const pivot = source === 'design' ? 212 : 428;
+    const markerEdge = (edge: number) => pivot + (x + 103 + edge - pivot) * 1.09;
+    assert.ok(markerEdge(4 * 1.15) <= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width, 'enlarged marker fits the complete column footprint');
+    assert.ok(markerEdge(-4 * 1.15) >= ACTIVATION_BLOCK_BOUNDS.x);
     assert.match(row, /aria-pressed="true"/);
   }
   assert.equal((markup.match(/class="bg-activation"/g) || []).length, 2, 'no extra interactive targets');
@@ -82,7 +84,7 @@ test('enlarged double mark stays inside its row without approaching the numeric 
   assert.match(row, /data-fixing="juxtaposed" transform="translate\(103 0\) scale\(1\.15\)"/);
   assert.match(row, /d="M -4 -1 L 0 -8 L 4 -1 Z M -4 1 L 0 8 L 4 1 Z"/);
   assert.ok(8 * 1.15 < 16, 'double mark fits the compact row height');
-  assert.ok(103 - 4 * 1.15 > 28 + 68, 'mark remains outside the numeric hit area');
+  assert.ok(103 - 4 * 1.15 > 24 + 72, 'mark remains outside the numeric hit area');
 });
 
 test('selection and hover keep fixing symbols unchanged', () => {

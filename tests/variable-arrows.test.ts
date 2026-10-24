@@ -304,7 +304,7 @@ test('Color and Tone headings retain colors and positions with one connected rul
     });
     const rules = heading.children.filter((node: { name: string; }) => node.name === 'path');
     assert.equal(rules.length, 1);
-    assertHeaderRule(rules[0], 'variable-header-rule', source, source === 'design' ? 24 : 437, source === 'design' ? 198 : 582);
+    assertHeaderRule(rules[0], 'variable-header-rule', source, source === 'design' ? 84 : 428, source === 'design' ? 212 : 556);
   }
 });
 
@@ -325,17 +325,21 @@ test('calculated, manual and transit headings retain only the approved rule span
       const heading = headings[0];
       assert.ok(hasClass(heading, 'activation-heading'));
       assert.equal(heading.text.trim(), side === 'design' ? 'Дизайн' : source === 'transit' ? 'Транзит' : 'Личность');
-      assert.equal(heading.attrs.x, side === 'design' ? '-34' : '582');
+      assert.equal(heading.attrs.x, side === 'design' ? '-50' : '598');
       assert.equal(heading.attrs.y, '76');
       assert.equal(heading.attrs['font-size'], '16');
       assert.equal(heading.attrs['font-weight'], '500');
       assert.equal(heading.attrs['text-anchor'] ?? 'start', 'start');
       const rules = content.children.filter((node: { name: string; }) => node.name === 'path');
-      assert.equal(rules.length, 1, 'each calculation heading has exactly one short underline');
-      const start = side === 'design' ? -34 : 582;
-      const width = side === 'design' || source === 'transit' ? 58 : 74;
+      assert.equal(rules.length, 1, 'each calculation heading has exactly one full panel separator');
+      const start = side === 'design' ? -60 : 588;
+      const width = 130;
       assertHeaderRule(rules[0], 'activation-header-rule', side, start, start + width);
-      assert.ok(content.children.every(node => node === heading || node === rules[0] || hasClass(node, 'activation-row')), 'only the heading, its short rule and calculation rows belong to the column');
+      const panels = content.children.filter(node => hasClass(node, 'activation-panel'));
+      assert.equal(panels.length, 1, 'one compact frame surrounds each calculation column');
+      assert.equal(panels[0].name, 'rect');
+      assert.equal(panels[0].attrs['pointer-events'], 'none');
+      assert.ok(content.children.every(node => node === panels[0] || node === heading || node === rules[0] || hasClass(node, 'activation-row')), 'the frame, heading, full separator and calculation rows belong to the column');
     }
     const full = renderBodygraph(current, null, { showActivations: true });
     const headings = [...full.matchAll(/<text\b[^>]*>/g)].filter(([tag]) => hasClass({ attrs: attributes(tag) }, 'activation-heading'));
@@ -355,20 +359,20 @@ test('calculated, manual and transit headings retain only the approved rule span
       return [start, end];
     }).sort((a, b) => a[0] - b[0]);
     assert.deepEqual(spans, source === 'calculated'
-      ? [[-34, 24], [24, 198], [437, 582], [582, 656]]
-      : source === 'manual' ? [] : [[582, 640]], 'calculated headings connect on both sides; manual charts omit stale columns and transit retains its own underline');
+      ? [[-60, 70], [84, 212], [428, 556], [588, 718]]
+      : source === 'manual' ? [] : [[588, 718]], 'separate rules cover each panel and each Color/Tone pair; manual charts omit their rules');
     if (source !== 'calculated') assert.equal(renderVariableArrows(current), '');
     assert.doesNotMatch(renderBodygraph(current), /activation-heading|activation-header-rule|variable-header-rule/, 'hidden activation columns also omit their headings and short rules');
   }
 });
 
-test('both source heading rules join once without overlap and stop short of the centers', () => {
+test('source panels and Color/Tone rules retain visible gaps and stop short of the centers', () => {
   const chart = chartFor();
   const headings = variableContent(parseSvg(renderVariableArrows(chart))).filter(node => hasClass(node, 'bodygraph-variable-headings'));
   const columns = parseSvg(renderActivationColumns(chart)).children;
   for (const expected of [
-    { source: 'design' as const, columnSide: 'left', extension: [24, 198], underline: [-34, 24], joint: 24, anchors: [-34, 112, 184] },
-    { source: 'personality' as const, columnSide: 'right', extension: [437, 582], underline: [582, 656], joint: 582, anchors: [456, 528, 582] },
+    { source: 'design' as const, columnSide: 'left', extension: [84, 212], underline: [-60, 70], gap: 14, anchors: [-50, 112, 184] },
+    { source: 'personality' as const, columnSide: 'right', extension: [428, 556], underline: [588, 718], gap: 32, anchors: [456, 528, 598] },
   ] as const) {
     const heading = headings.find((node: { attrs: { [x: string]: string; }; }) => node.attrs['data-source'] === expected.source);
     const column = columns.find((node: { attrs: { [x: string]: string; }; }) => node.attrs['data-source'] === expected.source);
@@ -377,11 +381,13 @@ test('both source heading rules join once without overlap and stop short of the 
     assertHeaderRule(extension!, 'variable-header-rule', expected.source, expected.extension[0], expected.extension[1]);
     assertHeaderRule(underline!, 'activation-header-rule', expected.source, expected.underline[0], expected.underline[1]);
     const [left, right] = [horizontalRule(extension!.attrs), horizontalRule(underline!.attrs)].sort((a, b) => a.start - b.start);
-    assert.equal(left.end, expected.joint);
-    assert.equal(right.start, expected.joint, 'segments meet exactly at the unchanged calculation underline endpoint');
+    assert.equal(right.start - left.end, expected.gap, 'the independent segments have a visible gap');
+    const panel = columnContent(column!).children.find(node => hasClass(node, 'activation-panel'))!;
+    assert.equal(Number(panel.attrs.x), expected.underline[0]);
+    assert.equal(Number(panel.attrs.x) + Number(panel.attrs.width), expected.underline[1], 'the separator reaches both frame sides');
     assert.equal(Math.max(0, Math.min(left.end, right.end) - Math.max(left.start, right.start)), 0, 'no shared interval receives a second translucent stroke');
-    for (const node of [extension, underline] as const) assert.equal(node!.attrs['stroke-linecap'] ?? 'butt', 'butt', 'neither segment extends its cap across the shared endpoint');
-    for (const x of expected.anchors) assert.ok(left.start <= x && x < right.end, 'the continuous span covers each heading anchor on its side');
+    for (const node of [extension, underline] as const) assert.equal(node!.attrs['stroke-linecap'] ?? 'butt', 'butt', 'neither segment extends its cap into the gap');
+    for (const x of expected.anchors) assert.ok([left, right].some(span => span.start <= x && x < span.end), 'every heading remains over its own separator');
     for (const id of ['head', 'ajna'] as const) {
       const center = CENTERS.find(center => center.id === id);
       const xs = center!.points.split(/\s+/).map(pair => Number(pair.split(',')[0]));
@@ -394,7 +400,7 @@ test('both source heading rules join once without overlap and stop short of the 
   }
 });
 
-test('raising the complete source blocks preserves their size and the joined heading rules', () => {
+test('raising the source blocks preserves their size and the gaps between independent rules', () => {
   const chart = chartFor();
   const columns = parseSvg(renderActivationColumns(chart)).children;
   const variables = parseSvg(renderVariableArrows(chart));
@@ -426,7 +432,9 @@ test('raising the complete source blocks preserves their size and the joined hea
     const ends = columnSide === 'left'
       ? [{ x: extension.start, y: extension.y }, { x: underline.end, y: underline.y }]
       : [{ x: extension.end, y: extension.y }, { x: underline.start, y: underline.y }];
-    assert.deepEqual(project(headingWrapper!, ends[0]), project(content, ends[1]), 'the two visible rule endpoints still meet after the lift');
+    const pairEnd = project(headingWrapper!, ends[0]), panelEnd = project(content, ends[1]);
+    assert.equal(pairEnd.y, panelEnd.y, 'both separators retain the same vertical alignment');
+    assert.ok(Math.abs(Math.abs(pairEnd.x - panelEnd.x) - (columnSide === 'left' ? 14 : 32) * BLOCK_SCALE) < 1e-9, 'the visible gap receives the same block scale');
   }
 });
 
@@ -548,14 +556,14 @@ test('all eight arrows clear the numbers, planets and compact activation hit are
       const translated = row.attrs.transform.match(/^translate\((-?[\d.]+) (-?[\d.]+)\)$/);
       assert.ok(translated);
       const x = Number(translated[1]), y = Number(translated[2]);
-      assert.equal(x, columnSide === 'left' ? -32 : 584, 'calculation columns retain their old anchors');
+      assert.equal(x, columnSide === 'left' ? -48 : 600, 'only calculation columns shift sixteen units outward');
       const controls = row.children.filter((node: { attrs: { [x: string]: string; }; }) => ['planet', 'gate'].includes(node.attrs['data-type']));
       assert.equal(controls.length, 2);
       return controls.map(control => {
         const rectangles = control.children.filter((node: { name: string; }) => node.name === 'rect');
         assert.equal(rectangles.length, 1);
         const rect = rectangles[0].attrs, planet = control.attrs['data-type'] === 'planet';
-        assert.deepEqual([Number(rect.x), Number(rect.y), Number(rect.width), Number(rect.height)], planet ? [-8, -16, 32, 32] : [28, -16, 68, 32], 'both targets retain their horizontal bounds and share the compact row height');
+        assert.deepEqual([Number(rect.x), Number(rect.y), Number(rect.width), Number(rect.height)], planet ? [-8, -24, 32, 48] : [24, -24, 72, 48], 'both targets meet without a gap and fill the complete compact row');
         return blockBounds({ source, left: x + Number(rect.x), right: x + Number(rect.x) + Number(rect.width), top: y + Number(rect.y), bottom: y + Number(rect.y) + Number(rect.height) }, columnSide);
       });
     });
@@ -576,8 +584,8 @@ test('all eight arrows clear the numbers, planets and compact activation hit are
       }
     });
   }
-  assert.ok(Math.abs(minimum.design - 21.1875 * BLOCK_SCALE) < 1e-9, 'the whole left block scales its original clearance from calculation targets');
-  assert.ok(Math.abs(minimum.personality - 19.8875 * BLOCK_SCALE) < 1e-9, 'the whole right block scales its original clearance from calculation targets');
+  assert.ok(Math.abs(minimum.design - 37.1875 * BLOCK_SCALE) < 1e-9, 'the whole left block keeps its arrows fixed while the calculation targets move outward');
+  assert.ok(Math.abs(minimum.personality - 35.8875 * BLOCK_SCALE) < 1e-9, 'the whole right block keeps its arrows fixed while the calculation targets move outward');
 });
 
 test('the decorative Variable layer passes pointer input through and introduces no gesture or keyboard targets', () => {

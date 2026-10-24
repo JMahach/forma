@@ -359,7 +359,7 @@ test('ordinary numeric targets have no native tooltip and share compact highligh
   for (const source of ['design', 'personality'] as const) {
     const planet = h.root.querySelector(`[data-activation="${source}-sun-planet"]`);
     const number = h.root.querySelector(`[data-activation="${source}-sun"]`);
-    assert.equal(planet!.querySelector('rect')!.getAttribute('fill'), '#eaf0f8');
+    assert.equal(planet!.querySelector('rect')!.getAttribute('fill'), '#91bce9');
     assert.equal(planet!.getAttribute('aria-pressed'), String(source === 'personality'));
     assert.equal(number!.getAttribute('aria-pressed'), 'false');
   }
@@ -368,8 +368,70 @@ test('ordinary numeric targets have no native tooltip and share compact highligh
     assert.equal(Boolean(number!.querySelector('title')), false);
     assert.ok(number!.getAttribute('aria-label')!.includes('ворота'));
     const rect = number!.querySelector('rect'), planetRect = planet!.querySelector('rect');
-    assert.ok(Number(rect!.getAttribute('height')) < 40);
+    assert.equal(Number(rect!.getAttribute('height')), 48, 'each target fills its complete row');
+    assert.equal(Number(planetRect!.getAttribute('x')) + Number(planetRect!.getAttribute('width')), Number(rect!.getAttribute('x')), 'planet and number targets meet without a horizontal gap');
     assert.equal(planetRect!.getAttribute('y'), rect!.getAttribute('y'));
     assert.equal(planetRect!.getAttribute('height'), rect!.getAttribute('height'));
+    assert.equal(rect!.getAttribute('rx'), '10');
+    assert.equal(planetRect!.getAttribute('rx'), '10');
+  }
+  const selected = { ...options, selections: [selection, { type: 'gate' as const, id: chart.activations.personality[0].gate }] };
+  update(painter, chart, null, selected); assertEquivalent(h.root, chart, null, selected);
+  for (const id of ['personality-sun-planet', 'personality-sun']) {
+    const target = h.root.querySelector(`[data-activation="${id}"]`)!;
+    const rect = target.querySelector('rect')!, text = target.querySelector('text')!;
+    assert.equal(rect.getAttribute('fill'), '#91bce9');
+    assert.equal(Number(rect.getAttribute('fill-opacity')), 1 / 3, 'only the selected background is softened');
+    assert.equal(target.getAttribute('opacity'), null, 'the complete target stays fully visible');
+    assert.equal(text.getAttribute('opacity'), null);
+    assert.equal(text.getAttribute('fill-opacity'), null, 'the numeral or symbol does not inherit background transparency');
+  }
+  assert.equal(h.root.querySelector('[data-activation="personality-sun"] tspan')!.getAttribute('opacity'), '.7', 'the line suffix keeps its original contrast');
+});
+
+
+test('ordinary columns retain the approved first and last baselines beside the bodygraph', () => {
+  const root = fixture(chartAt()).root;
+  for (const column of root.querySelectorAll('.activation-column')) {
+    const side = column.getAttribute('data-column-side');
+    const x = side === 'left' ? -48 : 600, pivot = side === 'left' ? 212 : 428;
+    const content = column.querySelector('.activation-block-content')!;
+    assert.equal(content.getAttribute('transform'), `translate(${pivot} 60.25) scale(1.09) translate(${-pivot} -76)`, 'the complete block keeps its original scale and lift');
+    const rows = content.querySelectorAll('.activation-row');
+    assert.equal(rows.length, 13);
+    assert.equal(rows[0].getAttribute('transform'), `translate(${x} 118)`);
+    assert.equal(rows[12].getAttribute('transform'), `translate(${x} 694)`, 'Pluto stays at its approved height next to the root');
+    rows.forEach((row, index) => assert.equal(row.getAttribute('transform'), `translate(${x} ${118 + index * 48})`));
+  }
+});
+
+test('compact column panels contain every row and fixing while remaining behind the contents', () => {
+  const root = fixture(chartAt()).root;
+  for (const column of root.querySelectorAll('.activation-column')) {
+    const content = column.querySelector('.activation-block-content')!;
+    const panel = content.querySelector('.activation-panel')!;
+    assert.equal(panel.getAttribute('pointer-events'), 'none', 'decorative frames do not capture map gestures');
+    const rows = content.querySelectorAll('.activation-row');
+    assert.ok(content.children.indexOf(panel) < content.children.indexOf(rows[0]), 'fill and frame sit behind every interactive row');
+    const top = Number(panel.getAttribute('y')), bottom = top + Number(panel.getAttribute('height'));
+    const left = Number(panel.getAttribute('x')), right = left + Number(panel.getAttribute('width'));
+    let previousBottom: number | undefined;
+    for (const row of rows) {
+      const [, xText, yText] = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(row.getAttribute('transform')!)!;
+      const x = Number(xText), y = Number(yText);
+      const cells = row.querySelectorAll('.bg-activation');
+      const cell = cells[0].querySelector('rect')!;
+      const rowTop = y + Number(cell.getAttribute('y')), rowBottom = rowTop + Number(cell.getAttribute('height'));
+      if (previousBottom !== undefined) assert.equal(rowTop, previousBottom, 'neighbouring rows meet exactly');
+      previousBottom = rowBottom;
+      assert.ok(rowTop >= top && rowBottom <= bottom, 'every complete row fits inside its panel');
+      for (const target of cells) {
+        const rect = target.querySelector('rect')!;
+        assert.ok(x + Number(rect.getAttribute('x')) >= left);
+        assert.ok(x + Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) <= right);
+        assert.ok(target.children.indexOf(rect) < target.children.indexOf(target.querySelector('text')!), 'selection is beneath crisp text');
+      }
+      assert.ok(right - (x + 103 + 4 * 1.15) >= 10, 'fixing symbols retain the requested breathing room before the right frame');
+    }
   }
 });

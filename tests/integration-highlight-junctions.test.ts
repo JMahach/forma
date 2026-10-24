@@ -200,7 +200,7 @@ test('all 256 activation combinations preserve single masks and protect exactly 
     const owned = ownedPaths(actualMask!);
     assert.deepEqual(new Set(owned.map(path => attribute(path, 'd'))), new Set(selection.type === 'integration' ? [] : expectedParts(selection)), context);
     assert.deepEqual(subpaths(attribute(halo!, 'd')), expectedParts(selection), context);
-    assert.equal(attribute(halo!, 'stroke'), '#c4d9f1', context);
+    assert.equal(attribute(halo!, 'stroke'), '#91bce9', context);
     assert.equal(attribute(halo!, 'stroke-width'), '8.448', context);
     assert.equal(attribute(halo!, 'stroke-linecap'), selection.type === 'integration' ? 'butt' : 'round', context);
     assert.equal(attribute(halo!, 'stroke-linejoin'), 'round', context);

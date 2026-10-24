@@ -8,8 +8,8 @@ export const ACTIVATION_COLUMN_REVEAL_DISTANCE = 244;
 
 // The chart, incremental painter and loading illustration share these anchors.
 export const ACTIVATION_COLUMN_LAYOUT = Object.freeze({
-  x: Object.freeze({ left: -32, right: 584 }),
-  width: 108,
+  x: Object.freeze({ left: -48, right: 600 }),
+  width: 108, panelRightPadding: 10,
   firstRowY: 118, rowStep: 48,
   glyphOffsetX: 8, valueOffsetX: 34,
   headingY: 76, headingOffsetX: -2, ruleY: 88,
@@ -21,7 +21,7 @@ export const activationHeadingX = (columnSide: ColumnSide) => ACTIVATION_COLUMN_
 // Ordinary rows and single overlay rows share the same presentation metrics.
 export const ACTIVATION_ROW_LAYOUT = Object.freeze({
   valueX: Object.freeze([ACTIVATION_COLUMN_LAYOUT.valueOffsetX]),
-  fontSize: 24, textX: 0, rectX: -6, hitWidth: 68,
+  fontSize: 24, textX: 0, rectX: -10, hitWidth: 72,
   glyphX: ACTIVATION_COLUMN_LAYOUT.glyphOffsetX, glyphSize: 26,
 });
 
@@ -41,24 +41,27 @@ const OVERLAY_ACTIVATION_COLUMN_LAYOUT = Object.freeze({
     headingWidth: 123, captionX: Object.freeze([40, 100]), captionSize: 10 }),
 });
 
-// Number size owns the highlight height for both targets in a row. The font
-// of planet symbols needs a small optical correction, without moving row anchors.
+// Every row is fully tiled by equal-height targets. Planet glyphs keep their
+// optical correction independently of the common hit and highlight geometry.
 export function activationTargetLayout(fontSize: number = ACTIVATION_ROW_LAYOUT.fontSize) {
-  const hitHeight = fontSize + 8;
-  return { hitY: -hitHeight / 2, hitHeight, hitRadius: 4 };
+  const hitHeight = ACTIVATION_COLUMN_LAYOUT.rowStep;
+  return { hitY: -hitHeight / 2, hitHeight, hitRadius: 10 };
 }
-export function activationPlanetLayout(metrics: { valueX: readonly number[]; fontSize: number; glyphX: number; glyphSize: number } = ACTIVATION_ROW_LAYOUT) {
-  const hitWidth = metrics.valueX.length === 1 ? 32 : 24;
-  return { ...activationTargetLayout(metrics.fontSize), rectX: metrics.glyphX - hitWidth / 2,
+export function activationPlanetLayout(metrics: { valueX: readonly number[]; fontSize: number; glyphX: number; glyphSize: number; rectX: number } = ACTIVATION_ROW_LAYOUT) {
+  const rectX = -8, hitWidth = metrics.valueX[0] + metrics.rectX - rectX;
+  return { ...activationTargetLayout(metrics.fontSize), rectX,
     hitWidth, x: metrics.glyphX, y: 2, fontSize: metrics.glyphSize };
 }
+
+// Reserve caption clearance while ordinary columns retain their original baselines.
+const OVERLAY_DUAL_ROW_OFFSET = 12;
 
 export function overlayActivationColumnLayout(columnSide: ColumnSide, { single, showMandala, label }: { single: boolean; showMandala?: boolean; label: string }) {
   const layout = single ? 'single' : showMandala ? 'dual' : 'dual-wide';
   const metrics = OVERLAY_ACTIVATION_COLUMN_LAYOUT[layout];
   const x = ACTIVATION_COLUMN_LAYOUT.x[columnSide] + (columnSide === 'left' ? metrics.leftOffsetX : 0);
   const headingSize = 16;
-  return { x, layout, single, transform: activationBlockTransform(columnSide),
+  return { x, layout, single, rowOffset: single ? 0 : OVERLAY_DUAL_ROW_OFFSET, transform: activationBlockTransform(columnSide),
     headingX: x + ACTIVATION_COLUMN_LAYOUT.headingOffsetX, headingY: ACTIVATION_COLUMN_LAYOUT.headingY,
     ruleY: ACTIVATION_COLUMN_LAYOUT.ruleY, headingSize,
     headingTop: ACTIVATION_COLUMN_LAYOUT.headingY - headingSize, headingHeight: headingSize * 1.5,
@@ -97,16 +100,17 @@ export function activationBlockTransform(columnSide: ColumnSide) {
   return `translate(${x} ${PIVOT_Y - ACTIVATION_BLOCK_LIFT}) scale(${ACTIVATION_BLOCK_SCALE}) translate(${-x} ${-PIVOT_Y})`;
 }
 
-// Conservative envelope includes row hit areas and fixing marks on both sides.
+// Conservative envelope includes complete frame strokes, row hit areas and fixing marks.
 // Mandala separation is applied outside this scale, by its existing motion layer.
 const left = PIVOT_X.left + (ACTIVATION_COLUMN_LAYOUT.x.left + Math.min(-20, ACTIVATION_PLANET_FILTER_LAYOUT.hitLeft) - PIVOT_X.left) * ACTIVATION_BLOCK_SCALE;
-const columnRight = Math.max(ACTIVATION_COLUMN_LAYOUT.width, ...(['single', 'dual'] as const).map(layout => {
+const columnRight = Math.max(ACTIVATION_COLUMN_LAYOUT.width, ...(['single', 'dual', 'dual-wide'] as const).map(layout => {
   const metrics = OVERLAY_ACTIVATION_COLUMN_LAYOUT[layout];
   return metrics.valueX.at(-1)! + metrics.rectX + metrics.hitWidth;
 }));
-const right = PIVOT_X.right + (ACTIVATION_COLUMN_LAYOUT.x.right + columnRight - PIVOT_X.right) * ACTIVATION_BLOCK_SCALE;
-const top = Math.min(PIVOT_Y, activationRowY(0)) - 20;
-const bottom = Math.max(ACTIVATION_COLUMN_LAYOUT.ruleY, activationRowY(PLANETS.length - 1) + 22);
+const right = PIVOT_X.right + (ACTIVATION_COLUMN_LAYOUT.x.right + columnRight + ACTIVATION_COLUMN_LAYOUT.panelRightPadding + 1 - PIVOT_X.right) * ACTIVATION_BLOCK_SCALE;
+const top = Math.min(PIVOT_Y, activationRowY(0)) - 23;
+const bottom = Math.max(ACTIVATION_COLUMN_LAYOUT.ruleY, activationRowY(PLANETS.length - 1)
+  + OVERLAY_DUAL_ROW_OFFSET + ACTIVATION_COLUMN_LAYOUT.rowStep / 2 + 5);
 export const ACTIVATION_BLOCK_BOUNDS = Object.freeze({
   x: left, y: PIVOT_Y + (top - PIVOT_Y) * ACTIVATION_BLOCK_SCALE - ACTIVATION_BLOCK_LIFT,
   width: right - left, height: (bottom - top) * ACTIVATION_BLOCK_SCALE,

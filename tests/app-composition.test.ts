@@ -47,6 +47,7 @@ interface HarnessOptions {
 type AppPorts = Pick<typeof import('../src/views/knowledge-entry.ts'), 'attachKnowledgeEntry'>
   & Pick<typeof import('../src/views/activation-popover.ts'), 'attachActivationPopover'>
   & Pick<typeof import('../src/selection/hover-preview.ts'), 'attachHoverPreview'>
+  & Pick<typeof import('../src/scene/activation-hover.ts'), 'attachActivationHover'>
   & Pick<typeof import('../src/scene/gestures.ts'), 'attachGestures'>
   & Pick<typeof import('../src/scene/pointer-target.ts'), 'pointerTarget'>
   & Pick<typeof import('../src/scene/modes/mandala.ts'), 'attachMandalaMode'>
@@ -189,7 +190,8 @@ function harness({ realSummary = false, search = '', restore = async () => true,
   let birthOptions!: PortOptions<'attachBirthForm'>, lifetime!: ReturnType<typeof createLifetimeExplorer>;
   let lifetimeOptions!: Parameters<typeof attachLifetimeControls>[0];
   let returnsViewOptions!: Parameters<typeof attachReturnsPanel>[0], returnsViewState: ReturnsPanelState | undefined;
-  let transitNowRequests = 0;
+  let transitNowRequests = 0, activationHoverClears = 0;
+  const clearActivationHover = () => { activationHoverClears++; };
   let lifetimeStateOptions!: NonNullable<Parameters<typeof createLifetimeExplorer>[0]>;
   let transitOptions!: PortOptions<'attachLiveTransit'>;
   let finishModule!: (value: unknown) => void, failModule!: (error: unknown) => void;
@@ -216,7 +218,11 @@ function harness({ realSummary = false, search = '', restore = async () => true,
       } });
     },
     attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
-    attachHoverPreview: () => ({ clear: noop }),
+    attachActivationHover: () => ({ clear: clearActivationHover, dispose: noop }),
+    attachHoverPreview: (_svg, options) => {
+      assert.equal(options.onClear, clearActivationHover, 'preview dismissal also clears its decorative activation highlight');
+      return { clear: () => options.onClear?.() };
+    },
     attachGestures: (_svg, options) => {
       gestures = options;
       camera = options.camera!;
@@ -298,6 +304,7 @@ function harness({ realSummary = false, search = '', restore = async () => true,
     get lifetimeOptions() { return lifetimeOptions; },
     get returnsViewOptions() { return returnsViewOptions; }, get returnsViewState() { return returnsViewState; },
     get transitNowRequests() { return transitNowRequests; },
+    get activationHoverClears() { return activationHoverClears; },
     get lifetimeStateOptions() { return lifetimeStateOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
     clockTick() { transitOptions.onStateChange!({ wanted: false } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
@@ -321,6 +328,13 @@ function harness({ realSummary = false, search = '', restore = async () => true,
   };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('opening the birth form clears the activation highlight through preview dismissal', async () => {
+  const h = harness(); await tick();
+  const before = h.activationHoverClears;
+  h.edit();
+  assert.equal(h.activationHoverClears, before + 1);
+});
 
 test('lazy Lifetime uses a separate controls view and leaves the real controller independent of DOM methods', async () => {
   const h = harness();

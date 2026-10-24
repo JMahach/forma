@@ -14,6 +14,8 @@ interface PlanetTargetInput {
 }
 export type PlanetTarget = ReturnType<typeof describePlanetTarget>;
 
+import { PALETTE, ACTIVATION_HIGHLIGHT_OPACITY } from '../ui/chart-palette.ts';
+import { ACTIVATION_COLUMN_LAYOUT, activationRowY } from './geometry/activation-layout.ts';
 import { setAttributes } from './svg-patches.ts';
 import { escapeHtml as esc } from '../ui/html.ts';
 
@@ -38,7 +40,7 @@ const targetAttributes = (model: PlanetTarget) => ({
 });
 const rectAttributes = (model: PlanetTarget) => ({ x: model.geometry.rectX, y: model.geometry.hitY,
   width: model.geometry.hitWidth, height: model.geometry.hitHeight, rx: model.geometry.hitRadius,
-  fill: model.selected ? '#eaf0f8' : 'transparent' });
+  fill: model.selected ? PALETTE.halo : 'transparent', 'fill-opacity': ACTIVATION_HIGHLIGHT_OPACITY });
 const glyphAttributes = (model: PlanetTarget) => ({ class: 'planet-symbol', x: model.geometry.x, y: model.geometry.y,
   fill: model.color ?? null, 'text-anchor': 'middle', 'dominant-baseline': 'central',
   'font-size': model.geometry.fontSize, 'pointer-events': 'none' });
@@ -57,4 +59,25 @@ export function updatePlanetTarget(record: ReturnType<typeof capturePlanetTarget
   setAttributes(record.rect, rectAttributes(model));
   setAttributes(record.glyph, glyphAttributes(model));
   if (record.glyph.textContent !== model.symbol) record.glyph.textContent = model.symbol;
+}
+
+// Frame and header separator share exactly the same horizontal footprint.
+export function activationPanelGeometry(x: number, right = 108, rowOffset = 0) {
+  const y = ACTIVATION_COLUMN_LAYOUT.headingY - 22;
+  return { x: x - 12, y, width: right + 12 + ACTIVATION_COLUMN_LAYOUT.panelRightPadding,
+    height: activationRowY(12) + rowOffset + ACTIVATION_COLUMN_LAYOUT.rowStep / 2 + 4 - y };
+}
+export function activationPanelRule(x: number, right = 108) {
+  const panel = activationPanelGeometry(x, right);
+  return `M ${panel.x} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${panel.width}`;
+}
+
+// The frame is visual only; map gestures still pass through unused panel space.
+export function activationPanelAttributes(x: number, color: string, right = 108, rowOffset = 0) {
+  return { class: 'activation-panel', ...activationPanelGeometry(x, right, rowOffset),
+    rx: 14, fill: color, 'fill-opacity': .045, stroke: color, 'stroke-opacity': .55,
+    'stroke-width': 1, 'pointer-events': 'none' };
+}
+export function renderActivationPanel(x: number, color: string, right = 108, rowOffset = 0) {
+  return `<rect${attributes(activationPanelAttributes(x, color, right, rowOffset))}/>`;
 }

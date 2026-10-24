@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachBirthForm } from '../src/views/birth-form.ts';
+import { RANDOM_CHART_NAMES } from '../src/views/random-chart.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
 import { STORAGE_KEY, CHART_RECORD_PREFIX, readCharts } from '../src/data/storage.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
@@ -50,7 +51,7 @@ test('stand random example uses the real city and natal calculation before savin
   const payload = JSON.parse(String(calculation.options.body));
   assert.equal(payload.mode, 'natal'); assert.equal(payload.cityId, '524901');
   assert.equal(payload.date, '1950-01-01'); assert.equal(payload.time, '03:00'); assert.equal(payload.fold, 0);
-  assert.match(payload.name, /^Пример /);
+  assert.equal(payload.name, RANDOM_CHART_NAMES[0]);
   assert.ok(payload.date >= '1950-01-01' && payload.date <= '2005-12-31');
   assert.deepEqual(h.calls.persisted, [], 'no invented gates are saved while the server is pending');
   calculation.resolve({ chart: { name: payload.name, birthDate: payload.date, birthTime: payload.time, birthPlace: 'Москва', personality: [20], design: [57], utc: '1950-01-01T00:00:00Z' } });
@@ -59,6 +60,7 @@ test('stand random example uses the real city and natal calculation before savin
   assert.deepEqual(h.store.charts[0], original);
   assert.deepEqual(h.store.charts[1].personality, [20]); assert.deepEqual(h.store.charts[1].design, [57]);
   assert.equal(h.store.charts[1].source, 'calculated');
+  assert.equal(h.store.charts[1].name, payload.name);
   assert.equal(h.calls.saved.length, 1); assert.equal(h.form.opened, false);
   assert.equal(h.element('randomChartButton').disabled, false);
 });

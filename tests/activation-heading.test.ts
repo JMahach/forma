@@ -51,7 +51,7 @@ function headingHarness(options: Partial<HeadingModel> = {}) {
     label: 'Личность', text: '12.2', bounds: { x: 34.65625, y: -9.5, width: 43.21875, height: 18 },
     camera: new Matrix(), columnLocal: new Matrix(),
     blockLocal: new Matrix(1.09, 0, 0, 1.09, 428 * (1 - 1.09), 76 * (1 - 1.09) - 15.75),
-    valueLocal: new Matrix(1, 0, 0, 1, 584, 118),
+    valueLocal: new Matrix(1, 0, 0, 1, 600, 118),
     headingRightBearing: 0, missing: [], ...options,
   };
   const writes: [string, string, string][] = [], queries: unknown[][] = [], measurements: string[] = [];
@@ -59,7 +59,7 @@ function headingHarness(options: Partial<HeadingModel> = {}) {
     return {
       name, attrs: { ...attributes }, textContent,
       setAttribute(key, value) {
-        assert.ok(name === 'heading' && ['x', 'text-anchor'].includes(key) || name === 'rule' && key === 'd', name + '.' + key + ' must not change');
+        assert.ok(name === 'heading' && ['x', 'text-anchor'].includes(key), name + '.' + key + ' must not change');
         this.attrs[key] = String(value);
         writes.push([name, key, String(value)]);
       },
@@ -67,7 +67,7 @@ function headingHarness(options: Partial<HeadingModel> = {}) {
       getBBox() { assert.fail('must not measure ' + name); },
     };
   }
-  const heading = node('heading', { class: 'activation-heading', x: '582', y: '76', 'font-size': '16', 'font-weight': '500' }, model.label);
+  const heading = node('heading', { class: 'activation-heading', x: '598', y: '76', 'font-size': '16', 'font-weight': '500' }, model.label);
   const contentMatrix = () => model.camera.multiply(model.columnLocal).multiply(model.blockLocal);
   heading.getCTM = () => model.missing.includes('headingMatrix') ? null : contentMatrix();
   heading.getBBox = () => {
@@ -77,21 +77,21 @@ function headingHarness(options: Partial<HeadingModel> = {}) {
     const advance = 74, leftBearing = 0.75;
     return { x: x - (heading.attrs['text-anchor'] === 'end' ? advance : 0) + leftBearing, y: 64, width: advance - leftBearing - model.headingRightBearing, height: 14 };
   };
-  const rule = node('rule', { class: 'activation-header-rule', d: 'M 582 88 h 74', stroke: '#202020', 'stroke-opacity': '.18', 'stroke-width': '1', fill: 'none' });
+  const rule = node('rule', { class: 'activation-header-rule', d: 'M 588 88 h 124', stroke: '#202020', 'stroke-opacity': '.18', 'stroke-width': '1', fill: 'none' });
   const number = node('number', { x: '34', y: '0', 'font-size': '24', 'font-weight': '500', 'pointer-events': 'none' }, model.text);
   number.getBBox = () => { measurements.push('number'); return { ...model.bounds }; };
   number.getCTM = () => model.missing.includes('valueMatrix') ? null : contentMatrix().multiply(model.valueLocal);
   const protectedNodes = [number,
     node('lineTspan', { 'font-weight': '400', opacity: '.7' }, '.2'),
     node('numericButton', { 'data-activation': 'personality-sun', 'data-type': 'gate', 'data-id': '12', tabindex: '0', role: 'button', 'aria-pressed': 'true' }),
-    node('numericHitArea', { x: '28', y: '-20', width: '68', height: '40' }),
+    node('numericHitArea', { x: '24', y: '-24', width: '72', height: '48' }),
     node('planetButton', { 'data-activation': 'personality-sun-planet' }),
     node('fixing', { transform: 'translate(103 0) scale(1.15)', 'pointer-events': 'none' }),
-    node('designHeading', { x: '-34', y: '76' }, 'Дизайн'),
-    node('designRule', { d: 'M -34 88 h 58' }),
+    node('designHeading', { x: '-50', y: '76' }, 'Дизайн'),
+    node('designRule', { d: 'M -60 88 h 124' }),
     node('colorHeading', { x: '456', y: '76' }, 'Цвет'),
     node('toneHeading', { x: '528', y: '76' }, 'Тон'),
-    node('variableRule', { d: 'M 437 88 H 582' }),
+    node('variableRule', { d: 'M 428 88 H 556' }),
     node('popover', { 'data-anchor': 'personality-sun', open: 'true' }),
   ];
   const column = node('column', { 'data-source': 'personality', 'data-column-side': 'right', fill: '#202020' });
@@ -122,24 +122,22 @@ function assertAligned(harness: ReturnType<typeof headingHarness>, right: number
   const bbox = harness.heading.getBBox();
   assert.ok(Math.abs(bbox.x + bbox.width - right) < 1e-9, 'the visible heading edge matches the measured numeric edge');
   assert.equal(harness.heading.attrs['text-anchor'], 'end');
-  const rule = harness.rule.attrs.d.match(/^M\s*582\s+88\s*H\s*([\d.]+)$/);
-  assert.ok(rule, 'the rule keeps its original start and y coordinate');
-  assert.ok(Math.abs(Number(rule[1]) - right) < 1e-9, 'the rule endpoint matches the same numeric edge');
+  assert.equal(harness.rule.attrs.d, 'M 588 88 h 124', 'the full panel separator is independent of measured text width');
 }
 
 test('Personality heading uses the measured Sun text, including its line, across different numeric widths', () => {
   for (const [text, x, width, right] of [
-    ['12.2', 34.65625, 43.21875, 661.875],
-    ['29.1', 35.125, 47.59375, 666.71875],
-    ['1.1', 35, 28.75, 647.75],
-    ['64.6', 34.25, 48.40625, 666.65625],
+    ['12.2', 34.65625, 43.21875, 677.875],
+    ['29.1', 35.125, 47.59375, 682.71875],
+    ['1.1', 35, 28.75, 663.75],
+    ['64.6', 34.25, 48.40625, 682.65625],
   ] as const) {
     const harness = headingHarness({ text, bounds: { x, y: -9.5, width, height: 18 } });
     alignPersonalityHeading(harness.root);
     assertAligned(harness, right);
     assert.ok(harness.measurements.includes('number'));
-    assert.notEqual(right, 680, 'the number button right edge is not used');
-    assert.notEqual(right, 691.6, 'the fixing mark right edge is not used');
+    assert.notEqual(right, 696, 'the number button right edge is not used');
+    assert.notEqual(right, 707.6, 'the fixing mark right edge is not used');
   }
 });
 
@@ -150,7 +148,7 @@ test('shared SVG zoom and pan cancel while the numeric row translation remains',
   ] as const) {
     const harness = headingHarness({ camera });
     alignPersonalityHeading(harness.root);
-    assertAligned(harness, 661.875);
+    assertAligned(harness, 677.875);
   }
 });
 
@@ -158,11 +156,11 @@ test('alignment compensates the heading ink bearing and repeated calls do not dr
   for (const headingRightBearing of [0, 1.625, -0.375] as const) {
     const harness = headingHarness({ headingRightBearing });
     alignPersonalityHeading(harness.root);
-    assertAligned(harness, 661.875);
+    assertAligned(harness, 677.875);
     const first = harness.snapshot();
     for (let iteration = 0; iteration < 5; iteration++) alignPersonalityHeading(harness.root);
     assert.deepEqual(harness.snapshot(), first);
-    assertAligned(harness, 661.875);
+    assertAligned(harness, 677.875);
   }
 });
 
@@ -172,8 +170,8 @@ test('the enlarged and raised column aligns once, independently of camera and ma
       const harness = headingHarness({ camera, columnLocal: new Matrix(1, 0, 0, 1, offset, 0) });
       harness.column.getCTM = () => assert.fail('alignment must use the scaled heading coordinates, not the outer column');
       alignPersonalityHeading(harness.root);
-      assertAligned(harness, 661.875);
-      const headingEdge = harness.heading.getCTM!()!.transformPoint({ x: 661.875, y: 76 });
+      assertAligned(harness, 677.875);
+      const headingEdge = harness.heading.getCTM!()!.transformPoint({ x: 677.875, y: 76 });
       const bounds = harness.number.getBBox();
       const numberEdge = harness.number.getCTM!()!.transformPoint({ x: bounds.x + bounds.width, y: bounds.y });
       assert.ok(Math.abs(headingEdge.x - numberEdge.x) < 1e-9, 'the visible edges stay aligned after one shared scale');
@@ -184,21 +182,21 @@ test('the enlarged and raised column aligns once, independently of camera and ma
   }
 });
 
-test('only the Personality heading anchor and its underline endpoint may change', () => {
+test('only the Personality heading anchor may change while its full separator stays fixed', () => {
   const harness = headingHarness(), before = harness.snapshot();
   alignPersonalityHeading(harness.root);
   const after = harness.snapshot();
-  const protectedState = (rows: ReturnType<ReturnType<typeof headingHarness>['snapshot']>) => rows.filter((node: { name: string; }) => !['heading', 'rule'].includes(node.name));
+  const protectedState = (rows: ReturnType<ReturnType<typeof headingHarness>['snapshot']>) => rows.filter((node: { name: string; }) => node.name !== 'heading');
   assert.deepEqual(protectedState(after), protectedState(before), 'numbers, planets, fixing, popover and all other headings stay untouched');
   assert.deepEqual(harness.heading.attrs, { ...before.find(node => node.name === 'heading')!.attrs, x: harness.heading.attrs.x, 'text-anchor': 'end' });
-  assert.deepEqual(harness.rule.attrs, { ...before.find(node => node.name === 'rule')!.attrs, d: harness.rule.attrs.d });
-  assertAligned(harness, 661.875); // Matrix inversion may add a final floating-point digit.
+  assert.deepEqual(harness.rule.attrs, before.find(node => node.name === 'rule')!.attrs);
+  assertAligned(harness, 677.875); // Matrix inversion may add a final floating-point digit.
 });
 
 test('transit, missing columns, missing Sun and unavailable SVG measurements preserve the fallback unchanged', () => {
   const cases = [
     { label: 'Транзит' }, { label: 'Дизайн' }, { label: '' },
-    ...['column', 'heading', 'rule', 'value', 'headingMatrix', 'valueMatrix'].map(key => ({ missing: [key] })),
+    ...['column', 'heading', 'value', 'headingMatrix', 'valueMatrix'].map(key => ({ missing: [key] })),
     ...[0, -1, NaN, Infinity].map(width => ({ bounds: { x: 34, y: -9, width, height: 18 } })),
     { bounds: { x: NaN, y: -9, width: 40, height: 18 } },
     { valueLocal: new Matrix(1, 0, 0, 1, 400, 118) },
@@ -216,13 +214,13 @@ test('fresh font metrics and replacement charts are measured again instead of re
   let active = headingHarness();
   const root = { querySelector: (selector: string) => active.root.querySelector(selector) } as unknown as Element;
   alignPersonalityHeading(root);
-  assertAligned(active, 661.875);
+  assertAligned(active, 677.875);
   active.model.bounds.width = 46.71875;
   alignPersonalityHeading(root);
-  assertAligned(active, 665.375);
+  assertAligned(active, 681.375);
   active = headingHarness({ text: '1.1', bounds: { x: 35, y: -9, width: 28.75, height: 18 } });
   alignPersonalityHeading(root);
-  assertAligned(active, 647.75);
+  assertAligned(active, 663.75);
   active = headingHarness({ label: 'Транзит' });
   const transit = active.snapshot();
   alignPersonalityHeading(root);
@@ -242,7 +240,7 @@ test('persistent scene aligns the retained heading before changed-chart popover 
       const value = result.querySelector('[data-activation="personality-sun"] > text');
       heading!.getCTM = () => new Matrix() as unknown as DOMMatrix;
       heading!.getBBox = () => ({ x: Number(heading!.getAttribute('x')) - (heading!.getAttribute('text-anchor') === 'end' ? 74 : 0), y: 64, width: 74, height: 14 } as DOMRect);
-      value!.getCTM = () => new Matrix(1, 0, 0, 1, 584, 118) as unknown as DOMMatrix;
+      value!.getCTM = () => new Matrix(1, 0, 0, 1, 600, 118) as unknown as DOMMatrix;
       value!.getBBox = () => { measurements++; return { x: 35, y: -9, width: value!.textContent === '12.2' ? 43.25 : 28.75, height: 18 } as DOMRect; };
     }
     return result;
@@ -251,7 +249,7 @@ test('persistent scene aligns the retained heading before changed-chart popover 
     activationPopover: {
       refresh(chart) {
         const heading = query('.activation-column[data-source="personality"] .activation-heading');
-        assert.equal(Number(heading!.getAttribute('x')), chart === charts[0] ? 662.25 : 647.75);
+        assert.equal(Number(heading!.getAttribute('x')), chart === charts[0] ? 678.25 : 663.75);
         calls.push((chart as ChartInput & { id: string }).id);
       }, close() {},
     } as Parameters<typeof createGraphController>[0]['activationPopover'],

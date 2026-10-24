@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBirthMoment, moscowBirthAt } from '../src/views/random-chart.ts';
+import { randomBirthMoment, moscowBirthAt, RANDOM_CHART_NAMES } from '../src/views/random-chart.ts';
 
 test('random examples stay inside a supported past range and produce real calendar minutes', () => {
-  assert.deepEqual(randomBirthMoment(() => 0), { date: '1950-01-01', time: '03:00', name: 'Пример 01.01.1950', utc: '1950-01-01T00:00:00.000Z', fold: 0 });
+  assert.deepEqual(randomBirthMoment(() => 0), { date: '1950-01-01', time: '03:00', name: RANDOM_CHART_NAMES[0], utc: '1950-01-01T00:00:00.000Z', fold: 0 });
   const last = randomBirthMoment(() => 1 - Number.EPSILON);
   assert.equal(last.utc, '2005-12-31T20:59:00.000Z');
   assert.equal(last.date, '2005-12-31'); assert.equal(last.time, '23:59');
@@ -13,7 +13,7 @@ test('random examples stay inside a supported past range and produce real calend
   for (let i = 0; i < 1000; i++) {
     const birth = randomBirthMoment(() => i / 1000);
     assert.equal(new Date(`${birth.date}T${birth.time}:00Z`).toISOString().slice(0, 16), `${birth.date}T${birth.time}`);
-    assert.match(birth.name, /^Пример /);
+    assert.ok(RANDOM_CHART_NAMES.includes(birth.name));
     assert.ok(birth.name.length <= 30);
   }
 });

@@ -185,7 +185,9 @@ ${thumbnail ? '' : `  <style>
     .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
     /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */
     .bg-activation tspan { dominant-baseline: inherit; }
-    .bg-activation:focus-visible rect { stroke: #c4d9f1; stroke-width: 1.5; }
+    .bg-activation[data-fluid-active="true"] > rect { fill: transparent; }
+    .bg-activation[aria-pressed="true"] > rect { stroke: ${PALETTE.halo}; stroke-width: 2; }
+    .bg-activation:focus-visible rect { stroke: ${PALETTE.halo}; stroke-width: 1.5; }
     .planet-symbol { font-family: 'Apple Symbols', 'Segoe UI Symbol', 'Arial Unicode MS', sans-serif; }
     @media (hover: hover) {
       .bg-interactive:hover .bg-gate-highlight { opacity: 1; }

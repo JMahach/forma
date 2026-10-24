@@ -19,7 +19,7 @@ const sameVisiblePaint = (before: string|undefined, after: string|undefined, lab
   for (const name of ['r', 'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'] as const) {
     assert.equal(attribute(before!, name), attribute(after!, name), `${label} keeps ${name} after clicking`);
   }
-  assert.equal(attribute(before!, 'stroke'), '#c4d9f1', `${label} is always light blue`);
+  assert.equal(attribute(before!, 'stroke'), '#91bce9', `${label} is always light blue`);
 };
 
 test('center bloom is excluded from center and channel interiors without clipping its crisp border', () => {
@@ -146,8 +146,8 @@ test('direct and related gate highlights use the same compact light-blue ring', 
     const selectedRing = circle(selected, 'bg-gate-highlight'), relatedRing = circle(related, 'bg-gate-highlight');
     assert.equal(attribute(selectedRing!, 'data-state'), 'selected');
     assert.equal(attribute(relatedRing!, 'data-state'), 'related');
-    assert.equal(attribute(selectedRing!, 'stroke'), '#c4d9f1', `gate ${gate.id} has a light-blue selection ring`);
-    assert.equal(attribute(relatedRing!, 'stroke'), '#c4d9f1', `gate ${gate.id} has a light-blue related ring`);
+    assert.equal(attribute(selectedRing!, 'stroke'), '#91bce9', `gate ${gate.id} has a light-blue selection ring`);
+    assert.equal(attribute(relatedRing!, 'stroke'), '#91bce9', `gate ${gate.id} has a light-blue related ring`);
     for (const name of ['r', 'stroke-width'] as const) assert.equal(attribute(selectedRing!, name), attribute(relatedRing!, name), `gate ${gate.id} ring size is independent of selection type`);
     for (const ring of [selectedRing, relatedRing] as const) {
       assert.equal(attribute(ring!, 'r'), '9');
@@ -169,7 +169,7 @@ test('gate hover and keyboard focus reuse the inset ring without enlarging activ
     const ring = circle(group, 'bg-gate-highlight');
     assert.equal(attribute(ring!, 'data-state'), 'idle');
     assert.equal(attribute(ring!, 'opacity'), '0', `unselected gate ${group.id} has no visible ring`);
-    assert.equal(attribute(ring!, 'fill'), '#c4d9f1', 'hidden hover ring has the same fill as direct selection');
+    assert.equal(attribute(ring!, 'fill'), '#91bce9', 'hidden hover ring has the same fill as direct selection');
     assert.equal(outerRadius(ring!), 9.5, 'the same ring is ready for compact hover/focus');
   }
 });
@@ -230,7 +230,7 @@ test('unactivated selected and related gates retain a compact light-blue interio
     const group = gateGroups(renderBodygraph({}, selection)).find(gate => gate.id === 8);
     assert.equal(attribute(circle(group, 'bg-gate-disc')!, 'fill'), 'transparent');
     const ring = circle(group, 'bg-gate-highlight');
-    assert.equal(attribute(ring!, 'fill'), '#c4d9f1');
+    assert.equal(attribute(ring!, 'fill'), '#91bce9');
     assert.equal(outerRadius(ring!), 9.5);
   }
 });
@@ -287,7 +287,7 @@ test('integration hover uses a masked lower outline while keeping its source col
   assert.ok(integration.indexOf(hover) > integration.indexOf('data-type="channel" data-id="26-44"'), 'hover stays above ordinary crossings');
   assert.ok(integration.indexOf(hover) < integration.indexOf('data-junction="integration"'), 'hover stays below its own physical branches');
   assert.equal(attribute(hover, 'mask'), 'url(#bodygraph-integration-outline)');
-  assert.equal(attribute(hover, 'stroke'), '#c4d9f1');
+  assert.equal(attribute(hover, 'stroke'), '#91bce9');
   assert.equal(attribute(hover, 'stroke-width'), '8.448');
   assert.match(markup, /\.bodygraph-channels:has\(> \.bg-interactive\[data-type="integration"\]\[data-visual-selected="false"\]:hover\) > \.bodygraph-integration-highlights > \.bg-integration-hover\s*\{\s*opacity:\s*1;/);
   for (const gate of gateGroups(markup)) assert.equal(attribute(circle(gate, 'bg-gate-highlight')!, 'opacity'), '0', 'hover alone does not select gate numbers');

@@ -271,7 +271,7 @@ test('hover highlights every numeric copy of a gate across both columns without 
   const rows = [...markup.matchAll(/<g class="bg-activation"[^>]*data-id="([^"]+)"[^>]*data-activation="([^"]+)"[^>]*>([\s\S]*?)<\/g>/g)];
   assert.equal(rows.length, chart.activations.personality.length + chart.activations.design.length);
   for (const [whole, gate, id, content] of rows) {
-    assert.match(content, new RegExp(`fill="${gate === '41' ? '#eaf0f8' : 'transparent'}"`), `${id} follows the hovered gate number`);
+    assert.match(content, new RegExp(`fill="${gate === '41' ? '#91bce9' : 'transparent'}"`), `${id} follows the hovered gate number`);
     assert.match(whole, /aria-pressed="false"/, `${id} remains unpinned`);
   }
   assert.deepEqual(pressed(markup), []);
@@ -354,7 +354,7 @@ test('additive column highlights keep all repeated throat gate 20 copies and add
   const throatGates = new Set(GATES.filter(gate => gate.center === 'throat').map(gate => gate.id));
   for (const [whole, gate, id, content] of rows) {
     const pinnedCopy = throatGates.has(Number(gate)), lit = pinnedCopy || gate === '29';
-    assert.match(content, new RegExp(`fill="${lit ? '#eaf0f8' : 'transparent'}"`), `${id} uses additive numeric highlighting`);
+    assert.match(content, new RegExp(`fill="${lit ? '#91bce9' : 'transparent'}"`), `${id} uses additive numeric highlighting`);
     assert.match(whole, new RegExp(`aria-pressed="${pinnedCopy}"`), `${id} distinguishes the committed gate from the hovered gate`);
   }
   assert.equal(rows.filter(([, gate]) => gate === '20').length, 4, 'gate 20 repeats in both sources');

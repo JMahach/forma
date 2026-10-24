@@ -3,7 +3,8 @@ import type { ChartView } from '../domain/chart-composition.ts';
 import type { RenderState, RenderOptions, RenderedScene } from './render-state.ts';
 import type { ActivationRow } from './activation-columns.ts';
 
-import { capturePlanetTarget, updatePlanetTarget } from './activation-targets.ts';
+import { PALETTE } from '../ui/chart-palette.ts';
+import { capturePlanetTarget, updatePlanetTarget, activationPanelRule } from './activation-targets.ts';
 import { createOverlayActivationPainter } from './overlay-activation-columns.ts';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.ts';
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.ts';
@@ -88,7 +89,7 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
     updatePlanetTarget(entry.planetTarget, row.planetTarget);
     setAttributes(entry.gate, { 'data-id': row.gate, 'data-selected': row.selected, 'aria-label': row.gateAria, 'aria-pressed': row.pressed,
       opacity: row.planetEnabled ? null : '.22' });
-    setAttribute(entry.gateRect, 'fill', row.selected ? '#eaf0f8' : 'transparent');
+    setAttribute(entry.gateRect, 'fill', row.selected ? PALETTE.halo : 'transparent');
     if (entry.value.firstChild!.nodeValue !== String(row.gate)) entry.value.firstChild!.nodeValue = String(row.gate);
     text(entry.line, `.${row.line}`);
     if (row.fixingLabel) {
@@ -134,7 +135,7 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
         if (column.label !== model.label) {
           text(column.heading, model.label);
           setAttributes(column.heading, { x: activationHeadingX(model.columnSide), 'text-anchor': null });
-          setAttribute(column.rule, 'd', `M ${activationHeadingX(model.columnSide)} ${ACTIVATION_COLUMN_LAYOUT.ruleY} h ${model.headingWidth}`);
+          setAttribute(column.rule, 'd', activationPanelRule(model.x));
           column.label = model.label;
         }
         if (model.hasMasterControl) {

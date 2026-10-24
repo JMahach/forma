@@ -4,6 +4,9 @@ import { attachMandalaMode } from '../src/scene/modes/mandala.ts';
 import { MANDALA_FRAME, STUDIO_FRAME } from '../src/scene/geometry/frames.ts';
 import { ACTIVATION_BLOCK_BOUNDS, ACTIVATION_COLUMN_REVEAL_DISTANCE, MANDALA_COLUMN_SPAN } from '../src/scene/geometry/activation-layout.ts';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.ts';
+import { renderActivationColumns } from '../src/scene/activation-columns.ts';
+import { overlayFixture } from './helpers/chart-composition.ts';
+import { SVG_NS, svgDocument } from './helpers/svg-dom.ts';
 
 test('navigation includes enlarged columns and the complete outer planet envelope', () => {
   const { bounds } = MANDALA_FRAME;
@@ -14,13 +17,54 @@ test('navigation includes enlarged columns and the complete outer planet envelop
   assert.equal(bounds.width, MANDALA_COLUMN_SPAN.right - MANDALA_COLUMN_SPAN.left);
   assert.ok(bounds.x <= ACTIVATION_BLOCK_BOUNDS.x - ACTIVATION_COLUMN_REVEAL_DISTANCE);
   assert.ok(bounds.x + bounds.width >= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width + ACTIVATION_COLUMN_REVEAL_DISTANCE);
-  assert.ok(Math.abs(bounds.x - -370.828125) < 1e-9, 'the enlarged left checkbox target fits navigation');
-  assert.ok(Math.abs(bounds.x + bounds.width - 1000.0416666666667) < 1e-9, 'the widened adjacent number targets fit the right navigation edge');
+  assert.ok(Math.abs(bounds.x - -388.99479166666674) < 1e-9, 'the enlarged left checkbox target fits navigation');
+  assert.ok(Math.abs(bounds.x + bounds.width - 1048.8645833333335) < 1e-9, 'the widest number targets and complete surrounding frame stroke fit the right navigation edge');
   assert.equal(STUDIO_FRAME.bounds.x + STUDIO_FRAME.bounds.width / 2, 320, 'navigation bounds never move the shared Home center');
   assert.equal(bounds.y, STUDIO_FRAME.bounds.y);
   assert.equal(bounds.height, STUDIO_FRAME.bounds.height);
   assert.equal(MANDALA_FRAME.minScale, .1);
   assert.ok(Object.isFrozen(MANDALA_FRAME) && Object.isFrozen(bounds));
+});
+
+test('the shared activation envelope contains complete painted frames in every column layout', () => {
+  const chart = { personality: [41], design: [19], activations: {
+    personality: [{ planet: 'sun', gate: 41, line: 1, longitude: 302.1 }],
+    design: [{ planet: 'sun', gate: 19, line: 2, longitude: 307.8 }],
+  } };
+  const transit = { ...chart, design: [], activations: { design: [], personality: chart.activations.personality } };
+  const charts = [chart,
+    overlayFixture(chart, transit, { kind: 'transit' }),
+    overlayFixture(chart, chart, { kind: 'return', event: { id: 'frame-coverage', body: 'saturn', cycle: 1 } }),
+  ];
+  const layouts = new Set<string>();
+  for (const current of charts) for (const showMandala of [false, true]) {
+    const root = svgDocument().createElementNS(SVG_NS, 'svg');
+    root.innerHTML = renderActivationColumns(current, new Set(), null, { showMandala });
+    const columns = root.querySelectorAll('.activation-column');
+    assert.equal(columns.length, 2);
+    for (const column of columns) {
+      const layout = column.getAttribute('data-cycle-layout') ?? 'ordinary';
+      layouts.add(layout);
+      const content = column.querySelector('.activation-block-content')!;
+      const frame = content.querySelector('.activation-panel')!;
+      const transform = /^translate\(([-\d.]+) ([-\d.]+)\) scale\(([-\d.]+)\) translate\(([-\d.]+) ([-\d.]+)\)$/.exec(content.getAttribute('transform')!);
+      assert.ok(transform, 'read the actual block transform from the rendered SVG');
+      const [tx, ty, scale, lx, ly] = transform.slice(1).map(Number);
+      const halfStroke = Number(frame.getAttribute('stroke-width')) / 2;
+      const x = Number(frame.getAttribute('x')), y = Number(frame.getAttribute('y'));
+      const right = x + Number(frame.getAttribute('width')), bottom = y + Number(frame.getAttribute('height'));
+      const painted = { left: tx + scale * (x + lx - halfStroke),
+        right: tx + scale * (right + lx + halfStroke),
+        top: ty + scale * (y + ly - halfStroke),
+        bottom: ty + scale * (bottom + ly + halfStroke) };
+      const label = `${layout} ${column.getAttribute('data-column-side')}`;
+      assert.ok(painted.left >= ACTIVATION_BLOCK_BOUNDS.x, `${label}: left frame stroke fits`);
+      assert.ok(painted.right <= ACTIVATION_BLOCK_BOUNDS.x + ACTIVATION_BLOCK_BOUNDS.width, `${label}: right frame stroke fits`);
+      assert.ok(painted.top >= ACTIVATION_BLOCK_BOUNDS.y, `${label}: top frame stroke fits`);
+      assert.ok(painted.bottom <= ACTIVATION_BLOCK_BOUNDS.y + ACTIVATION_BLOCK_BOUNDS.height, `${label}: bottom frame stroke fits`);
+    }
+  }
+  assert.deepEqual(layouts, new Set(['ordinary', 'single', 'dual', 'dual-wide']));
 });
 
 function harness({ animate = false, immediate = false, layout = null } = {}) {

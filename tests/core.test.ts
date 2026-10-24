@@ -298,8 +298,8 @@ test('planet selection is independent of gate selection in both activation colum
   assert.equal(selected[0][1], 'planet');
   assert.match(selected[0][0], /data-id="design-sun"/);
   assert.doesNotMatch(markup, /data-highlight-gate=/);
-  assert.ok(markup.includes('translate(-32 118)') && markup.includes('translate(584 118)'), 'columns have a common baseline and mirrored outer bounds');
-  assert.ok(markup.includes('translate(-32 694)') && markup.includes('translate(584 694)'), 'columns extend almost to the root');
+  assert.ok(markup.includes('translate(-48 118)') && markup.includes('translate(600 118)'), 'columns have a common baseline and mirrored outer bounds');
+  assert.ok(markup.includes('translate(-48 694)') && markup.includes('translate(600 694)'), 'thirteen rows retain their approved height beside the bodygraph');
   assert.match(markup, /font-size="24"/);
 });
 
@@ -496,7 +496,7 @@ test('channel selection highlights the full connection and both gates, not other
       const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
       assert.deepEqual(new Set(arms), new Set(channel.gates));
     } else {
-      assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#c4d9f1" stroke-width="8.448"`));
+      assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#91bce9" stroke-width="8.448"`));
     }
   }
 });
@@ -512,7 +512,7 @@ test('integration selection outlines sit above ordinary channels and below their
     const integration = markup.slice(markup.indexOf('<g class="bodygraph-channels">'));
     const halo = integration.match(/<path class="bg-integration-selection"[^>]+\/>/);
     assert.ok(halo, `${selection.id} has a selection halo`);
-    assert.match(halo![0], /fill="none" stroke="#c4d9f1" stroke-width="8.448"/);
+    assert.match(halo![0], /fill="none" stroke="#91bce9" stroke-width="8.448"/);
     assert.match(halo![0], new RegExp(`stroke-linecap="${selection.type === 'integration' ? 'butt' : 'round'}"`), 'partial candidates cover the exact terminal plane; ownership masks set their visible ends');
     const bundleStart = integration.indexOf('data-junction="integration"');
     assert.ok(integration.indexOf(halo![0]) > integration.indexOf('data-type="channel" data-id="26-44"'), 'selected outline is above the ordinary crossing');

@@ -238,7 +238,11 @@ const originalActivationStyle = (markup: string) => markup.replace(
   '    .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }\n',
   '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n')
   // Explicit Safari baseline inheritance does not change channel geometry.
-  .replace('    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */\n    .bg-activation tspan { dominant-baseline: inherit; }\n', '');
+  .replace('    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */\n    .bg-activation tspan { dominant-baseline: inherit; }\n', '')
+  // Moving activation backgrounds are independent of this frozen shape oracle.
+  .replace('    .bg-activation[data-fluid-active="true"] > rect { fill: transparent; }\n', '')
+  // Committed cell outlines are unrelated to channel geometry.
+  .replace('    .bg-activation[aria-pressed="true"] > rect { stroke: #c4d9f1; stroke-width: 2; }\n', '');
 // A later layout split supplies the standalone mandala fallback explicitly.
 // These historical cases render normal charts, where that property is inert.
 // Normalize only this exact metadata attribute, retaining every transform,
@@ -257,7 +261,9 @@ function originalOutlineRecolor(markup: string, outlineWidth: number) {
     .replace(/<path class="bg-integration-(?:interior|connected-interior)"[^>]*\/>/g,
       path => path.replace(/stroke-width="[^"]+"/, `stroke-width="${outlineWidth}"`));
 }
-const originalHighlightGlow = (markup: string, legacyHaloWidth = 13.2) => originalOutlineRecolor(markup, Number((legacyHaloWidth * .64).toFixed(3)))
+const originalHighlightGlow = (markup: string, legacyHaloWidth = 13.2) => originalOutlineRecolor(
+  // The current highlight color is independent of this frozen geometry oracle.
+  markup.replaceAll('#91bce9', '#c4d9f1'), Number((legacyHaloWidth * .64).toFixed(3)))
   .replace(/    <filter id="[^"]+-(?:gate|highlight)-glow"[^>]*>[\s\S]*?<\/filter>\n/g, '')
   // Exterior-only bloom is decorative; keep the frozen physical oracle intact.
   .replace(/    <mask id="[^"]+-center-glow-exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
