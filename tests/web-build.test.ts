@@ -51,6 +51,11 @@ test('real release build preserves sources and produces complete deterministic c
     await fs.cp(path.join(project, directory), path.join(root, directory), { recursive: true });
   }
   await fs.copyFile(path.join(project, 'package.json'), path.join(root, 'package.json'));
+  // A Windows checkout must produce the same public routes and exclude dev entries.
+  for (const page of ['index.html', 'love.html']) {
+    const file = path.join(root, 'public', page);
+    await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace(/\r?\n/g, '\r\n'));
+  }
   // An independent snapshot must provide both its chart and its loading art.
   const placeholder = path.join(root, 'src/scene/loading-placeholder.ts');
   await fs.writeFile(placeholder, (await fs.readFile(placeholder, 'utf8')).replace('loading-centers', 'loading-centers-from-root'));
@@ -72,7 +77,7 @@ test('real release build preserves sources and produces complete deterministic c
   }
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
-  assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors|account-preview|shared-chart-preview/, 'stand studies stay out of the release');
+  assert.doesNotMatch(contents.get('index.html'), /data-development|randomChartButton|control-colors|account-preview|shared-chart-preview/, 'stand studies stay out of the release');
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
   assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
@@ -86,7 +91,7 @@ test('real release build preserves sources and produces complete deterministic c
   const knowledgeChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('knowledge-connections'))?.[0];
   assert.ok(knowledgeChunk, 'the full knowledge dialog remains available on demand');
   assert.ok(!contents.get('index.html').includes(`href="/${knowledgeChunk}"`), 'startup never preloads the knowledge dialog or its articles');
-  const articleChunks = [...contents].filter(([name, source]) => name.endsWith('.js') && source.includes('Human Design:'));
+  const articleChunks = [...contents].filter(([name, source]) => name.endsWith('.js') && source.includes('concept.personality-design'));
   assert.ok(articleChunks.length, 'all descriptions remain in the release');
   for (const [name] of articleChunks) assert.ok(!contents.get('index.html').includes(`/${name}`), 'no article-bearing chunk loads with the page');
 

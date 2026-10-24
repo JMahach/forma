@@ -20,6 +20,7 @@ import { promisify } from 'node:util';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { createTransitDays, generateTransitDay as generate, encodeDayPacket, transitCacheFingerprint } from '../server/services/transit-days.ts';
 import { negotiateEncoding } from '../server/http/content-encoding.ts';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import { decodeTransitDay } from '../shared/day-packets/decode.ts';
 import { transitChartAt } from '../src/domain/transit-day.ts';
 import { createRequestHandler } from '../server/http/app.ts';
@@ -376,8 +377,8 @@ test('batch workers are bounded and a terminated process must close before relea
   worker.kill = signal => { worker.signal = signal; };
   let settled = false;
   const result = generateTransitDay({ root, date: '2026-09-24', spawnWorker(command, args, options) {
-    assert.ok(command.endsWith('/.venv/bin/python'));
-    assert.ok(args![0].endsWith('/server/python/transit_day.py'));
+    assert.equal(command, pythonExecutable(root));
+    assert.equal(args![0], path.join(root, 'server/python/transit_day.py'));
     assert.deepEqual(options!.stdio, ['pipe', 'pipe', 'ignore']);
     return worker;
   } });
@@ -392,12 +393,12 @@ test('batch workers are bounded and a terminated process must close before relea
 });
 
 test('real Python batch and binary packet reproduce all 1440 scalar charts exactly', async t => {
-  try { await fs.access(path.join(root, '.venv/bin/python')); } catch { t.skip('Install the local Python environment to run real ephemeris parity'); return; }
+  try { await fs.access(pythonExecutable(root)); } catch { t.skip('Install the local Python environment to run real ephemeris parity'); return; }
   const date = '2026-09-24';
   const day = await generateTransitDay({ root, date });
   const packet = await encodeDayPacket(day), decoded = decodeTransitDay(packet);
   const script = "import datetime as dt,json; from server.python import calculator as c; print(json.dumps([c.calculate(dict(mode='natal',name='Parity',date='2026-09-24',time=f'{i//60:02d}:{i%60:02d}',city=dict(id='utc',name='UTC',timezone='UTC')))['chart']['activations'] for i in range(1440)],separators=(',',':')))";
-  const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, maxBuffer: 6000000 });
+  const { stdout } = await promisify(execFile)(pythonExecutable(root), ['-c', script], { cwd: root, maxBuffer: 6000000, env: pythonEnvironment() });
   const reference = JSON.parse(stdout) as ChartActivations[];
   let crossings = 0;
   for (let minute = 0; minute < 1440; minute++) {

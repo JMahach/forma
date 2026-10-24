@@ -9,6 +9,7 @@ const createLifetimeMoments = (options: Omit<MomentOptions, 'calculate'> & {
 import { captureResponse } from './helpers/http-response.ts';
 import { deferred } from './helpers/deferred.ts';
 import test from 'node:test';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -302,8 +303,8 @@ test('real Python file provenance is accepted by the Node startup verifier', asy
   const root = fileURLToPath(new URL('../', import.meta.url));
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
-  await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-m', 'server.python.lifetime_file', '--file', file,
-    '--start', '2026-10-02', '--end', '2026-10-03', '--workers', '1'], { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+  await promisify(execFile)(pythonExecutable(root), ['-m', 'server.python.lifetime_file', '--file', file,
+    '--start', '2026-10-02', '--end', '2026-10-03', '--workers', '1'], { cwd: root, env: { ...pythonEnvironment(), PYTHONDONTWRITEBYTECODE: '1' } });
   const metadataFile = file.replace('.f64le', '.metadata.json');
   const service = await openLifetime(t, { file, metadataFile });
   assert.equal(service.provenanceVerified, true);
@@ -320,8 +321,8 @@ test('optional ephemeris input presence and bytes invalidate file provenance and
   const { execFile } = await import('node:child_process'), { promisify } = await import('node:util');
   async function fingerprints() {
     const fileFingerprint = await lifetimeService.lifetimeFileFingerprint(directory);
-    const { stdout } = await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-B', '-c',
-      'from server.python.lifetime_file import calculation_fingerprint; print(calculation_fingerprint())'], { cwd: directory });
+    const { stdout } = await promisify(execFile)(pythonExecutable(root), ['-B', '-c',
+      'from server.python.lifetime_file import calculation_fingerprint; print(calculation_fingerprint())'], { cwd: directory, env: pythonEnvironment() });
     assert.equal(stdout.trim(), fileFingerprint, 'Python preparation and Node verification use identical names, ordering and bytes');
     return [fileFingerprint, await calculationVersion(directory)];
   }

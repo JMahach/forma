@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import {
   GATE_ORDER, GATE_LONGITUDE_START, GATE_WIDTH, LINE_WIDTH,
   normalizeLongitude, gatePositionAtLongitude,
@@ -33,9 +34,9 @@ test('Python and browser agree at every gate and line boundary, on either side a
     }
   }
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const results = JSON.parse(execFileSync(`${root}.venv/bin/python`, ['-c',
+  const results = JSON.parse(execFileSync(pythonExecutable(root), ['-c',
     'import json, sys; from server.python.astronomy import gate_line; print(json.dumps([gate_line(value) for value in json.load(sys.stdin)]))'],
-  { cwd: root, input: JSON.stringify(angles), encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 }));
+  { cwd: root, env: pythonEnvironment(), input: JSON.stringify(angles), encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 }));
   assert.equal(results.length, angles.length);
   angles.forEach((angle, index) => {
     const { gate, line } = gatePositionAtLongitude(angle);

@@ -32,12 +32,12 @@ test('library shows and hides as a workspace section without a modal API', () =>
   const h = harness();
   h.controller.show({ type: 'gate' as const, id: 10 });
   assert.equal(h.page.hidden, false);
-  assert.match(h.article.innerHTML, /<h3>10 · /);
+  assert.match(h.article.innerHTML, /<h3[^>]*>10 · /);
   h.controller.hide();
   assert.equal(h.page.hidden, true);
   h.controller.show();
   assert.equal(h.page.hidden, false);
-  assert.match(h.article.innerHTML, /<h3>10 · /, 'reopening retains the browsed topic');
+  assert.match(h.article.innerHTML, /<h3[^>]*>10 · /, 'reopening retains the browsed topic');
 });
 
 test('clicking whitespace or pressing Escape does not dismiss a workspace page', () => {

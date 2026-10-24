@@ -413,7 +413,7 @@ def provenance():
     digest = hashlib.sha256()
     names = ['server/python/return_index.py', 'server/python/astronomy.py', 'server/python/civil_time.py',
              'server/python/date_limits.py', 'server/python/errors.py', 'shared/date-limits.ts', 'requirements.txt']
-    names += [str(file.relative_to(astro.ROOT)) for file in sorted((astro.ROOT/'data'/'ephe').glob('*')) if file.is_file()]
+    names += [file.relative_to(astro.ROOT).as_posix() for file in sorted((astro.ROOT/'data'/'ephe').glob('*')) if file.is_file()]
     digest.update(f'{astro.swe.version}\0{astro.FLAGS}\0{SCHEMA}\0'.encode())
     for name in names:
         data = (astro.ROOT/name).read_bytes()
@@ -424,10 +424,15 @@ def provenance():
 # The TypeScript migration changes source paths only. Preserve the index bytes;
 # accept its prior provenance only for the exact reviewed current calculator.
 _TYPESCRIPT_REVISION = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
+# Portable path names and optional POSIX permissions do not alter trajectories.
+# Accept only the explicitly reviewed source fingerprints for this exact code.
+_PORTABLE_REVISION = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexPortable']
 
 
 def provenance_matches(generated, current):
-    return generated == current or (generated == _TYPESCRIPT_REVISION['from'] and current == _TYPESCRIPT_REVISION['to'])
+    return (generated == current
+            or (generated == _TYPESCRIPT_REVISION['from'] and current == _TYPESCRIPT_REVISION['to'])
+            or (generated in _PORTABLE_REVISION['from'] and current == _PORTABLE_REVISION['to']))
 
 
 class _ArrayView:
@@ -580,7 +585,8 @@ def prepare_index(path=DEFAULT_FILE, *, start=None, end=None, bodies=PHYSICAL_BO
             encoded = json.dumps(header, separators=(',',':'), allow_nan=False).encode()
             with os.fdopen(descriptor, 'wb') as output:
                 descriptor = None
-                os.fchmod(output.fileno(),0o644)
+                if hasattr(os, 'fchmod'):
+                    os.fchmod(output.fileno(),0o644)
                 output.write(PREFIX.pack(MAGIC, len(encoded), hashlib.sha256(encoded).digest()))
                 output.write(encoded); payload.seek(0)
                 while chunk := payload.read(1024*1024):

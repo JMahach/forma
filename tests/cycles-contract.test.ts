@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createComputeQueue } from '../server/runtime/compute-queue.ts';
+import { realCycleWorker } from './helpers/real-cycle-worker.ts';
 import { createCycles } from '../server/services/cycles.ts';
 import { createCyclesClient } from '../src/data/cycles-client.ts';
 import { chartAtMinute } from '../src/domain/natal-day.ts';
@@ -15,8 +16,9 @@ function result() {
   return { chart: { ...chartAtMinute(natalDayFixture({ date: '2028-07-21' }), 0, personalChartFixture()), utc } };
 }
 
-test('worker refinement within one second reaches the client and keeps the exact resolved chart UTC', async () => {
-  const service = createCycles({ root });
+test('worker refinement within one second reaches the client and keeps the exact resolved chart UTC', async t => {
+  const real = await realCycleWorker(t);
+  const service = createCycles({ root, generate: real.generate });
   try {
     const client = createCyclesClient({ request: (_, options) => service.chart(JSON.parse(options.body)) });
     for (const eventUtc of [utc, '2028-07-21T12:36:05.420Z', '2028-07-21T12:36:05Z'] as const) {

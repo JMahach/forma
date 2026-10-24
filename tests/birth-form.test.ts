@@ -16,7 +16,7 @@ interface FormNode {
   classList: { add(value: unknown): void; remove(value: unknown): void; contains(value: unknown): boolean; toggle(value: unknown, force?: boolean): boolean };
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null; removeAttribute(name: string): void;
   focus(): void; setSelectionRange(start: number, end: number): void; scrollIntoView(): void;
-  showModal(): void; close(): void; reset(): void;
+  showModal(): void; close(): void; reset(): void; requestSubmit(): void;
   addEventListener(type: string, handler: (event: FormEvent) => unknown): void;
   emit(type: string, options?: Record<string, unknown>): Promise<void>;
   dispatchEvent(event: { type: string }): Promise<void>;
@@ -32,6 +32,93 @@ const natalChart = () => ({ ...manualChart(), id: 'natal-1', source: 'calculated
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
 
+test('stand random example uses the real city and natal calculation before saving a new record', async t => {
+  t.mock.method(Math, 'random', () => 0);
+  const original = manualChart();
+  const h = formHarness(t, { charts: [original], port: '36' });
+  assert.equal(h.element('randomChartButton').hidden, false);
+  const creating = h.element('randomChartButton').emit('click');
+  assert.equal(h.form.opened, false, 'one click never opens or modifies the birth dialog');
+  assert.equal(h.requests.length, 1);
+  assert.ok(h.requests[0].url.startsWith('/api/cities?q='));
+  await h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 1, 'busy clicks cannot start another city request');
+  h.requests[0].resolve({ cities: [{ ...city('524901', 'Москва'), country: 'RU', timezone: 'Europe/Moscow' }] });
+  await settle();
+  const calculation = h.requests[1];
+  assert.equal(calculation.url, '/api/calculate');
+  const payload = JSON.parse(String(calculation.options.body));
+  assert.equal(payload.mode, 'natal'); assert.equal(payload.cityId, '524901');
+  assert.equal(payload.date, '1950-01-01'); assert.equal(payload.time, '03:00'); assert.equal(payload.fold, 0);
+  assert.match(payload.name, /^Пример /);
+  assert.ok(payload.date >= '1950-01-01' && payload.date <= '2005-12-31');
+  assert.deepEqual(h.calls.persisted, [], 'no invented gates are saved while the server is pending');
+  calculation.resolve({ chart: { name: payload.name, birthDate: payload.date, birthTime: payload.time, birthPlace: 'Москва', personality: [20], design: [57], utc: '1950-01-01T00:00:00Z' } });
+  await creating;
+  assert.equal(h.store.charts.length, 2);
+  assert.deepEqual(h.store.charts[0], original);
+  assert.deepEqual(h.store.charts[1].personality, [20]); assert.deepEqual(h.store.charts[1].design, [57]);
+  assert.equal(h.store.charts[1].source, 'calculated');
+  assert.equal(h.calls.saved.length, 1); assert.equal(h.form.opened, false);
+  assert.equal(h.element('randomChartButton').disabled, false);
+});
+
+test('opening a normal form supersedes a random example without accepting a late lookup', async t => {
+  const h = formHarness(t, { port: '3636' });
+  const creating = h.element('randomChartButton').emit('click');
+  h.form.open();
+  h.requests[0].resolve({ cities: [{ ...city('524901', 'Москва'), country: 'RU' }] });
+  await creating; await settle();
+  assert.equal(h.requests[0].options.signal!.aborted, true);
+  assert.equal(h.requests.length, 1); assert.deepEqual(h.calls.saved, []);
+  assert.equal(h.form.opened, true); assert.equal(h.element('chartName').value, '');
+});
+
+test('random lookup errors are a toast with no dialog and allow a fresh one-click retry', async t => {
+  const h = formHarness(t, { port: '36' });
+  const creating = h.element('randomChartButton').emit('click');
+  h.requests[0].reject(new Error('Нет соединения'));
+  await creating;
+  assert.equal(h.form.opened, false); assert.deepEqual(h.calls.saved, []);
+  assert.deepEqual(h.calls.toasts, ['Нет соединения']);
+  assert.equal(h.element('randomChartButton').disabled, false);
+  const retry = h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 2);
+  h.form.open(); h.requests[1].resolve({ cities: [] }); await retry;
+});
+
+test('random example is unavailable off the stand and respects the 500-record limit', async t => {
+  const h = formHarness(t);
+  assert.equal(h.element('randomChartButton').hidden, true);
+  await h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 0);
+  t.mock.timers.reset();
+  const full = formHarness(t, { port: '36', charts: Array.from({ length: 500 }, (_, i) => ({ ...manualChart(), id: `saved-${i}` })) });
+  await full.element('randomChartButton').emit('click');
+  assert.equal(full.requests.length, 0);
+  assert.equal(full.store.charts.length, 500);
+  assert.ok(full.calls.toasts.some(text => text.includes('500')));
+});
+
+test('a mismatched server UTC is never saved and a late random calculation cannot replace an opened form', async t => {
+  t.mock.method(Math, 'random', () => 0);
+  const h = formHarness(t, { port: '36' });
+  for (const superseded of [false, true]) {
+    const start = h.requests.length;
+    const creating = h.element('randomChartButton').emit('click');
+    h.requests[start].resolve({ cities: [{ ...city('524901', 'Москва'), country: 'RU', timezone: 'Europe/Moscow' }] });
+    await settle();
+    assert.equal(h.element('randomChartButton').disabled, true);
+    if (superseded) h.form.open();
+    h.requests[start + 1].resolve({ chart: { name: 'Пример', birthDate: '1950-01-01', birthTime: '03:00', birthPlace: 'Москва', personality: [20], design: [57], utc: '1950-01-01T01:00:00Z' } });
+    await creating;
+    assert.deepEqual(h.calls.saved, []); assert.equal(h.store.charts.length, 0);
+    assert.equal(h.element('randomChartButton').disabled, false);
+    assert.equal(h.form.opened, superseded);
+  }
+  assert.equal(h.calls.toasts.length, 1, 'only the current operation can report a UTC mismatch');
+});
+
 function persistentStore(charts: readonly TestRecord[]) {
   const values = new Map([[STORAGE_KEY, JSON.stringify(charts)]]);
   const storage = { get length() { return values.size; }, key: (index: number) => [...values.keys()][index],
@@ -39,12 +126,13 @@ function persistentStore(charts: readonly TestRecord[]) {
   return { values, storage, chartStore: createChartStore({ getStorage: () => storage }) };
 }
 
-function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null } = {}) {
+function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '' }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map<string, FormNode>(), requests: RequestRecord[] = [];
   const calls = { beforeOpen: 0, saved: [] as string[], saveOptions: [] as Parameters<BirthOptions['onSave']>[1][], persisted: [] as (readonly TestRecord[])[], replaced: [] as (readonly TestRecord[])[], toasts: [] as string[] };
   const fields = { name: 'chartName', birthDate: 'birthDate', birthTime: 'birthTime', birthPlace: 'birthPlace', note: 'chartNote', personality: 'personalityGates', design: 'designGates' };
   const document = {
+    defaultView: { location: { port } },
     activeElement: null as FormNode | null,
     getElementById(id: string) { return element(id); },
     querySelectorAll(selector: unknown) { assert.equal(selector, '[data-calculation-mode]'); return modes; },
@@ -67,7 +155,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
       focus() { document.activeElement = this; },
       setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; },
       scrollIntoView() {},
-      showModal() { this.open = true; }, close() { this.open = false; },
+      showModal() { this.open = true; }, close() { this.open = false; }, requestSubmit() { void this.emit('submit'); },
       addEventListener(type, handler) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type)!.push(handler); },
       async emit(type: string, options = {}) {
         const event = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...options };

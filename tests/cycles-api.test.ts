@@ -10,6 +10,7 @@ const generateCycles = (options: Omit<Parameters<typeof generate>[0], 'spawnWork
   generate(options as Parameters<typeof generate>[0]);
 import { captureResponse } from './helpers/http-response.ts';
 import { deferred } from './helpers/deferred.ts';
+import { realCycleWorker } from './helpers/real-cycle-worker.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable, PassThrough } from 'node:stream';
@@ -258,15 +259,16 @@ test('worker timeout waits for actual close; stdin is limited to calculation fie
   worker!.emit('close', null); await assert.rejects(output, (error: cyclesService.CycleError) => error.code === 'cycles_timeout');
 });
 
-test('real worker returns exact reference events and chart without minute truncation', async () => {
+test('real worker returns exact reference events and chart without minute truncation', async t => {
+  const real = await realCycleWorker(t);
   const input = { ...requestInput, action: 'events' as const, body: 'saturn', fromAge: 28, toAge: 30 };
-  const result = await generateCycles({ root, input }) as CycleEventsResult;
+  const result = await real.generate(input) as CycleEventsResult;
   assert.equal(result.events.length, 3); assert.deepEqual(result.events.map(item => item.pass), [1, 2, 3]);
   assert.equal(result.events[0].utc.slice(0, 19), '2028-07-21T12:36:05');
-  const chart = await generateCycles({ root, input: { action: 'chart', birthUtc: requestInput.birthUtc, body: 'saturn', eventUtc: result.events[0].utc, timezone: 'Europe/London' } }) as CycleChartResult & { chart: Partial<ChartRecord> };
+  const chart = await real.generate({ action: 'chart', birthUtc: requestInput.birthUtc, body: 'saturn', eventUtc: result.events[0].utc, timezone: 'Europe/London' }) as CycleChartResult & { chart: Partial<ChartRecord> };
   assert.equal(chart.chart.birthTime, '13:36'); assert.equal(chart.chart.utc, result.events[0].utc);
   assert.equal(chart.chart.activations.personality.length, 13); assert.equal(chart.chart.activations.design.length, 13);
-  const service = createCycles({ root });
+  const service = createCycles({ root, generate: real.generate });
   await assert.rejects(service.chart({ birthUtc: requestInput.birthUtc, body: 'saturn', eventUtc: '2028-07-21T12:36:00Z', timezone: 'UTC' }), (error: cyclesService.CycleError) => error.code === 'invalid_event');
   await service.close();
 });
@@ -306,11 +308,12 @@ test('native HTTP routes forward cycle events and charts while cross-origin call
   assert.equal(calls.length, 2);
 });
 
-test('opening a known UTC needs no cached event descriptor and ignores client-provided metadata', async () => {
+test('opening a known UTC needs no cached event descriptor and ignores client-provided metadata', async t => {
+  const real = await realCycleWorker(t);
   const observed: { input: cyclesService.CycleRequest & { verifiedEvent?: unknown }; trusted: { signal?: AbortSignal; verifiedEvent?: unknown } }[] = [];
   const service = createCycles({ root, generate: async (input, trusted) => {
     observed.push({ input, trusted });
-    return generateCycles({ root, input, ...trusted });
+    return real.generate(input, trusted);
   } });
   const input = { ...requestInput, body: 'saturn', fromAge: 28, toAge: 30 };
   const list = await service.events(input), event = list.events[2];
@@ -319,7 +322,7 @@ test('opening a known UTC needs no cached event descriptor and ignores client-pr
   assert.equal(observed[1].trusted?.verifiedEvent, undefined);
   assert.equal(observed[1].input.verifiedEvent, undefined);
   assert.equal((chart as CycleChartResult & { event?: unknown }).event, undefined); assert.equal(chart.chart.utc, event.utc);
-  const direct = await generateCycles({ root, input: { ...exact, action: 'chart' } }) as CycleChartResult;
+  const direct = await real.generate({ ...exact, action: 'chart' }) as CycleChartResult;
   const numbers = (value: CycleChartResult) => { const { createdAt, updatedAt, ...rest } = value.chart as CycleChartResult['chart'] & Partial<ChartRecord>; return { ...value, chart: rest }; };
   assert.deepEqual(numbers(chart), numbers(direct));
   await assert.rejects(service.chart({ ...exact, eventUtc: '2028-07-21T12:36:00Z', verifiedEvent: event } as CycleInput & { verifiedEvent: unknown }), (error: cyclesService.CycleError) => error.code === 'invalid_event');

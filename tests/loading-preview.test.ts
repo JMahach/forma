@@ -53,6 +53,16 @@ test('the same button exits preview over Wi-Fi without URL navigation flags', ()
   assert.equal(harness(h.location.href, storage).active, false);
 });
 
+test('port 36 exposes and toggles preview over the LAN just like the original stand', () => {
+  const href = 'http://192.168.1.116:36/';
+  const h = harness(href);
+  assert.equal(h.button.hidden, false);
+  h.button.click();
+  assert.equal(h.storage.getItem(KEY), '1');
+  assert.equal(harness(href, h.storage).active, true);
+  assert.deepEqual(h.events, [['save'], ['reload', href]]);
+});
+
 test('an independently opened tab does not inherit preview mode from a URL', () => {
   const first = harness(); first.button.click();
   assert.equal(harness(first.location.href, first.storage).active, true);

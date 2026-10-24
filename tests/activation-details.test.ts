@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import { activationDetails } from '../src/views/activation-details.ts';
 
 const values = rows => rows.map(row => row.value);
@@ -112,7 +113,7 @@ test('saved gates are retained without a second gate wheel', () => {
   assert.equal(rows![0].value, 14);
 });
 
-const python = fileURLToPath(new URL('../.venv/bin/python', import.meta.url));
+const python = pythonExecutable(fileURLToPath(new URL('../', import.meta.url)));
 test('real calculator planetary positions retain gate and line across historical and current dates', {
   skip: !existsSync(python) && 'Prepared calculator environment is not installed'
 }, () => {
@@ -126,7 +127,7 @@ for date in ['1900-01-01T00:00:00+00:00', '1990-06-15T10:30:00+00:00', '2026-09-
     entries.extend(calc.activations(jd))
     entries.extend(calc.activations(calc.design_time(jd)[0]))
 print(json.dumps(entries))
-`], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8' }));
+`], { cwd: fileURLToPath(new URL('..', import.meta.url)), env: pythonEnvironment(), encoding: 'utf8' }));
   assert.equal(entries.length, 78);
   for (const entry of entries) {
     const rows = activationDetails(entry);

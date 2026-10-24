@@ -4,13 +4,16 @@ import { attachAllCharts } from '../src/views/all-charts.ts';
 import { createChartPreview } from '../src/views/chart-preview-canvas.ts';
 import { libraryDom } from './helpers/library-dom.ts';
 import { dateDom } from './helpers/date-dom.ts';
+import type { SavedChart } from '../shared/chart-types.ts';
 
 const charts = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i), name: `Карта ${i}`, source: 'calculated' as const,
   birthDate: '1998-08-18', birthTime: '18:00', personality: [1], design: [2] }));
-function harness({ observe = true, onOpen, raster = false } = {}) {
+function harness({ observe = true, onOpen, raster = false, searchControls = false } = {}) {
   const dom = libraryDom(), events = dateDom();
   const dialog = events.createElement('section'), button = events.createElement('button');
   dialog.hidden = true;
+  const search = events.createElement('input'), resultCount = events.createElement('p'), empty = events.createElement('p');
+  dialog.querySelector = selector => searchControls ? ({ '#allChartsSearch': search, '#allChartsCount': resultCount, '#allChartsEmpty': empty }[selector] ?? null) : null;
   dom.document.defaultView = events.defaultView;
   const handlers = new Map(), jobs = new Map(), active = new Set(), painted = [], watched = new Set(), images: { src: string; onload: null; onerror: null; removeAttribute(): void; }[] = [];
   const list = dom.chartList;
@@ -18,7 +21,7 @@ function harness({ observe = true, onOpen, raster = false } = {}) {
   list.replaceChildren = () => { for (const row of [...dom.children] as const) row.remove(); };
   list.contains = target => dom.children.some(row => row === target || row.querySelector('.chart-card') === target);
   let intersection, nextJob = 0, disconnects = 0;
-  const store = { charts: charts(300) }, session = { selectedId: '1' };
+  const store = { charts: charts(300) as SavedChart[] }, session = { selectedId: '1' };
   const view = attachAllCharts({ button, dialog, list, store, session, onOpen, document: dom.document,
     createObserver: observe ? (callback, options) => {
       assert.equal(options.root, list); assert.equal(options.rootMargin, '120px 0px');
@@ -40,7 +43,8 @@ function harness({ observe = true, onOpen, raster = false } = {}) {
   });
   const tick = () => { const batch = [...jobs]; jobs.clear(); for (const [, callback] of batch) callback(); };
   const intersect = (index, visible) => intersection([{ target: dom.children[index], isIntersecting: visible }]);
-  return { ...dom, dialog, button, list, store, session, view, jobs, active, painted, watched, images, tick, intersect, resize: () => events.defaultView.dispatch('resize'),
+  return { ...dom, dialog, button, list, store, session, view, jobs, active, painted, watched, images, tick, intersect, search, resultCount, empty,
+    find(value: string) { search.value = value; search.dispatch('input'); }, resize: () => events.defaultView.dispatch('resize'),
     get disconnects() { return disconnects; }, scroll() { handlers.get('scroll')?.(); } };
 }
 
@@ -217,4 +221,68 @@ test('choosing an already visible cards page still sends the explicit navigation
   assert.deepEqual(h.children, rows, 'choosing the active page does not recreate its list');
   h.view.setVisible(true);
   assert.equal(requests, 1, 'the visibility projection is still not a navigation command');
+});
+
+test('card search matches normalized names, ISO and displayed dates, stored place and city', async () => {
+  const h = harness({ searchControls: true });
+  h.store.charts = [
+    { ...h.store.charts[0], name: 'Алёна', birthDate: '2000-02-03', birthPlace: 'Омск' },
+    { ...h.store.charts[1], name: 'Иван', birthDate: '1999-01-20', city: { name: 'Москва', region: 'Центр' } },
+    { ...h.store.charts[2], name: 'Транзит', source: 'transit' },
+  ];
+  h.view.show();
+  for (const [query, expected] of [
+    ['  АЛЕНА  ', 'Алёна'], ['2000-02-03', 'Алёна'], ['03.02.2000', 'Алёна'],
+    ['ОМСК', 'Алёна'], ['москва', 'Иван'], ['ИВАН Москва', 'Иван'],
+  ]) {
+    h.find(query);
+    assert.equal(h.children.length, 1, query);
+    assert.ok(h.list.innerHTML.includes(expected), query);
+    assert.equal(h.empty.hidden, true);
+    assert.match(h.resultCount.textContent, /1/);
+  }
+  h.find('не найдено');
+  assert.equal(h.children.length, 0);
+  assert.equal(h.empty.hidden, false);
+  assert.equal(await h.view.whenReady(), true);
+  h.find('');
+  assert.equal(h.children.length, 2, 'clearing shows manageable saved charts only');
+  assert.equal(h.empty.hidden, true);
+});
+
+test('filtering releases obsolete previews and readiness, then restores the query across navigation', async () => {
+  const h = harness({ searchControls: true, raster: true });
+  h.view.show();
+  const obsolete = h.view.whenReady();
+  h.tick();
+  const lateLoad = h.images[0].onload;
+  h.find('Карта 299');
+  assert.equal(await obsolete, null);
+  assert.equal(h.active.size, 0);
+  assert.equal(h.children.length, 1);
+  assert.equal(h.watched.size, 1, 'only the filtered row enters the observer');
+  const ready = h.view.whenReady(); h.tick(); lateLoad!();
+  assert.deepEqual(h.painted, [], 'a removed preview cannot paint the filtered result');
+  h.images.at(-1)!.onload!();
+  assert.equal(await ready, true);
+  assert.deepEqual(h.painted, ['299']);
+  h.view.close(); h.store.charts = [...h.store.charts]; h.view.show();
+  assert.equal(h.search.value, 'Карта 299');
+  assert.equal(h.children.length, 1);
+  assert.ok(h.list.innerHTML.includes('Карта 299'));
+  assert.match(h.list.innerHTML, /data-chart-action="edit"/);
+  assert.match(h.list.innerHTML, /data-chart-action="delete"/);
+  h.find('карта 299');
+  const first = h.children[0]; h.find('  КАРТА 299  ');
+  assert.equal(h.children[0], first, 'equivalent queries do not replace the row');
+});
+
+test('a query entered while hidden filters before any of the 300 row previews are registered', () => {
+  const h = harness({ searchControls: true });
+  h.find('Карта 299');
+  assert.equal(h.children.length, 0);
+  h.view.show();
+  assert.equal(h.children.length, 1);
+  assert.equal(h.watched.size, 1);
+  assert.equal(h.painted.length, 0);
 });

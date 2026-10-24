@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import { calculateVariables } from '../src/domain/variables.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
 
@@ -221,7 +222,7 @@ test('calculation reads frozen chart data and does not retain mutable result obj
   assert.deepEqual(chart, before);
 });
 
-const python = fileURLToPath(new URL('../.venv/bin/python', import.meta.url));
+const python = pythonExecutable(fileURLToPath(new URL('../', import.meta.url)));
 test('real natal calculator records yield the expected Variables across three dates', {
   skip: !existsSync(python) && 'Prepared calculator environment is not installed',
 }, () => {
@@ -234,7 +235,7 @@ for date in ['1900-01-01', '1990-06-15', '2026-09-12']:
                    city=dict(id='test-utc', name='UTC test', timezone='UTC'))
     charts.append(calc.calculate(request)['chart'])
 print(json.dumps(charts))
-`], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8' }));
+`], { cwd: fileURLToPath(new URL('..', import.meta.url)), env: pythonEnvironment(), encoding: 'utf8' }));
   // Expected Colors/Tones were checked independently from saved longitudes using
   // six Tone subdivisions per Color; these are engine regression examples,
   // not a claim of independent certification of an entire Human Design chart.

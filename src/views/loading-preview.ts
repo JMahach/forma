@@ -1,8 +1,9 @@
 // This stand-only UI mode belongs to the current tab, never to its address.
+import { isDevelopmentPort } from '../../shared/development.ts';
 const STORAGE_KEY = 'forma.loading-preview.v1';
 
 export function attachLoadingPreview({ button, location, getStorage = () => globalThis.sessionStorage, beforeNavigate = () => {} }: { button: HTMLButtonElement; location: Pick<Location, 'href' | 'reload'>; getStorage?: () => Storage; beforeNavigate?: () => void }) {
-  const allowed = new URL(location.href).port === '3636';
+  const allowed = isDevelopmentPort(new URL(location.href).port);
   let active = false;
   if (allowed) {
     try { active = getStorage().getItem(STORAGE_KEY) === '1'; } catch {}

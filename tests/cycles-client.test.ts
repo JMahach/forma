@@ -1,5 +1,6 @@
 import type { CycleInput } from '../shared/cycles-format.ts';
 import { deferred } from './helpers/deferred.ts';
+import { realCycleWorker } from './helpers/real-cycle-worker.ts';
 import type { CycleEvent, CycleEventsResult, CycleChartResult } from '../shared/cycles-format.ts';
 import type { TestCyclesOptions, TestReturnsOptions } from './fixtures/returns.ts';
 import type { ReturnStorage } from '../src/data/return-storage.ts';
@@ -107,11 +108,9 @@ test('chart must match the exact requested UTC and timezone and contain complete
   const result = await valid.chart(chartInput); assert.equal(result.chart.utc, event.utc);
 });
 
-test('real exact worker responses cross client validation without rounding away event seconds', async () => {
-  const { generateCycles } = await import('../server/services/cycles.ts');
-  const { fileURLToPath } = await import('node:url');
-  const root = fileURLToPath(new URL('../', import.meta.url));
-  const client = createCyclesClient({ request: (url, { body }) => generateCycles({ root, input: { ...JSON.parse(body as string), action: url.endsWith('/chart') ? 'chart' : 'events' } }) });
+test('real exact worker responses cross client validation without rounding away event seconds', async t => {
+  const real = await realCycleWorker(t);
+  const client = createCyclesClient({ request: (url, { body }) => real.generate({ ...JSON.parse(body as string), action: url.endsWith('/chart') ? 'chart' : 'events' }) });
   const result = await client.events(input); assert.equal(result.events.length, 3);
   const chosen = result.events[0]; const response = await client.chart({ ...chartInput, eventUtc: chosen.utc });
   assert.equal(response.chart.utc, chosen.utc);

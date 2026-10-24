@@ -356,14 +356,26 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   }
   function applyWorkspace() {
     const screen = workspace.screen, revision = ++initialPage.screenRevision;
-    studio.dataset.workspaceScreen = screen;
-    allCharts.setVisible(screen === 'charts');
-    const knowledgeReady = screen === 'library' ? knowledge.show() : (knowledge.hide(), null);
-    $('accountPage').hidden = screen !== 'account';
-    chartSummary!.layout(); library!.render(); updateWorkspaceNavigation();
-    activationPopover.close(); hoverPreview?.clear();
-    panelResizePending = true;
-    refreshStudioLayout({ preserveScale: true });
+    const switching = studio.dataset.workspaceScreen !== screen;
+    let knowledgeReady: ReturnType<typeof knowledge.show> | null = null;
+    // A section return restores the existing panel state, not a drawer command.
+    // Commit both the panel and the chart's final width before motion resumes.
+    if (switching) studio.dataset.workspaceSwitching = 'true';
+    try {
+      studio.dataset.workspaceScreen = screen;
+      allCharts.setVisible(screen === 'charts');
+      knowledgeReady = screen === 'library' ? knowledge.show() : (knowledge.hide(), null);
+      $('accountPage').hidden = screen !== 'account';
+      chartSummary!.layout(); library!.render(); updateWorkspaceNavigation();
+      activationPopover.close(); hoverPreview?.clear();
+      panelResizePending = true;
+      refreshStudioLayout({ preserveScale: true });
+    } finally {
+      if (switching) {
+        studio.getBoundingClientRect();
+        delete studio.dataset.workspaceSwitching;
+      }
+    }
     viewSession?.schedule();
     if (initialPage.active) {
       initialPage.screenFailed = false;

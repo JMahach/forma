@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -108,13 +109,13 @@ test('real lifetime Design float bits, UTC and residual equal the full calculato
     const script = `import json\nfrom unittest.mock import patch\nfrom server.python import calculator, civil_time\nwith patch.object(calculator, 'dt') as clock:\n clock.datetime.now.return_value=civil_time.transit_utc('${date}T12:30:00Z')\n print(json.dumps(calculator.calculate(dict(mode='transit'))))`;
     const { chart } = date <= '2299-12-31'
       ? await calculate({ mode: 'natal', name: 'Parity', date, time: '12:30', city: { id: 'utc', name: 'UTC', timezone: 'UTC' } })
-      : JSON.parse((await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-c', script], { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } })).stdout);
+      : JSON.parse((await promisify(execFile)(pythonExecutable(root), ['-c', script], { cwd: root, env: { ...pythonEnvironment(), PYTHONDONTWRITEBYTECODE: '1' } })).stdout);
     const expected = new Map(chart.activations.design.map(entry => [entry.planet, entry.longitude]));
     const longitudes = LIFETIME_PLANETS.map(planet => chart.activations.personality.find((entry: { planet: string; }) => entry.planet === planet).longitude);
     const file = path.join(directory, `${date}.f64le`), metadataFile = file.replace('.f64le', '.metadata.json');
     const end = new Date(Date.parse(`${date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
-    await promisify(execFile)(path.join(root, '.venv/bin/python'), ['-m', 'server.python.lifetime_file', '--file', file,
-      '--start', date, '--end', end, '--workers', '1'], { cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    await promisify(execFile)(pythonExecutable(root), ['-m', 'server.python.lifetime_file', '--file', file,
+      '--start', date, '--end', end, '--workers', '1'], { cwd: root, env: { ...pythonEnvironment(), PYTHONDONTWRITEBYTECODE: '1' } });
     const lifetime = await createLifetimeFile({ file, metadataFile }); t.after(() => lifetime.close());
     const response = await request({ index: 75, lifetime, calculate() { throw Error('Prepared points must never calculate'); } });
     assert.equal(response.status, 200);

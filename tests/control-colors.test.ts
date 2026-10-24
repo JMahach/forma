@@ -3,8 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStandConnection } from '../src/dev/control-colors.ts';
 import type { StandConnection } from '../src/dev/control-colors.ts';
+import { isDevelopmentPort } from '../shared/development.ts';
 
-const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^export /gm, '');
+const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^import[^\n]*\n/gm, '').replace(/^export /gm, '');
 const KEY = 'forma.control-colors.v1';
 function memory() {
   const values = new Map<string, string>();
@@ -23,6 +24,8 @@ class TestElement {
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   append(...children: TestElement[]) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
   prepend(child: TestElement) { child.parentElement = this; this.children.unshift(child); }
+  insertBefore(child: TestElement, before: TestElement | null) { if (!before) this.append(child); else { child.parentElement = this; this.children.splice(this.children.indexOf(before), 0, child); } }
+  querySelector(selector: string): TestElement | null { return this.children.find(child => `#${child.id}` === selector) ?? null; }
   addEventListener(type: string, handler: (event: { target: TestElement }) => void) { this.listeners.set(type, handler); }
   click() { for (let node: TestElement | null = this; node; node = node.parentElement) node.listeners.get('click')?.({ target: this }); }
   closest(selector: string): TestElement | null {
@@ -46,7 +49,7 @@ function harness(href = 'http://localhost:3636/', storage = memory()) {
   const location = { href, port: new URL(href).port };
   const document = { documentElement: root, head, createElement: () => new TestElement(),
     querySelector(selector: string) { assert.equal(selector, '.sidebar-footer'); return footer; } };
-  const connection = new Function('location', 'document', 'sessionStorage', `${code}\nreturn standConnection;`)(location, document, storage) as ReturnType<typeof createStandConnection>;
+  const connection = new Function('location', 'document', 'sessionStorage', 'isDevelopmentPort', `${code}\nreturn standConnection;`)(location, document, storage, isDevelopmentPort) as ReturnType<typeof createStandConnection>;
   const group = footer.children[0], toggle = footer.children[1], options = group?.children[0];
   return { root, footer, head, location, storage, connection, group, toggle, options, buttons: options?.children };
 }
@@ -148,6 +151,15 @@ test('connection controls and styles are absent outside the stand', () => {
     assert.equal(h.root.dataset.standConnection, undefined);
     assert.equal(h.storage.getItem(KEY), null);
   }
+});
+
+test('port 36 mounts Palettes and its working connection controls over the LAN', () => {
+  const h = harness('http://192.168.1.116:36/');
+  assert.equal(h.toggle?.textContent, 'Палитры');
+  h.toggle.click();
+  assert.equal(h.group.hidden, false);
+  h.buttons[1].click();
+  assertSelected(h, 'offline');
 });
 
 test('row expansion survives reloads independently of the connection mode', () => {

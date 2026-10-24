@@ -9,6 +9,7 @@ import { build } from 'esbuild';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const gzipAsync = promisify(gzip), brotli = promisify(brotliCompress);
+const publicPath = (relative: string) => relative.split(path.sep).join('/');
 
 // Source remains readable and runs directly in development. Only release HTML
 // refers to these content-versioned assets; the server reads one explicit map.
@@ -21,13 +22,13 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     bundle: true, splitting: true, format: 'esm', platform: 'browser', target: ['safari15', 'chrome100'],
     minify: true, metafile: true, write: false, logLevel: 'silent',
   });
-  const manifest: Record<string, ReleaseEntry> = {}, outputs = new Map(result.outputFiles.map(file => [path.relative(outdir, file.path), file.contents]));
+  const manifest: Record<string, ReleaseEntry> = {}, outputs = new Map(result.outputFiles.map(file => [publicPath(path.relative(outdir, file.path)), file.contents]));
   const entryOutput = (input: string) => {
     const output = Object.entries(result.metafile.outputs).find(([, meta]) => meta.entryPoint === input)?.[0];
     if (!output) throw new Error(`Missing browser entry: ${input}`);
     return output;
   };
-  const outputUrl = (output: string) => '/' + path.relative(outdir, path.resolve(root, output));
+  const outputUrl = (output: string) => '/' + publicPath(path.relative(outdir, path.resolve(root, output)));
   const entryUrl = (input: string) => outputUrl(entryOutput(input));
   const icon = await fs.readFile(path.join(root, 'public/favicon.svg'));
   const iconFile = `assets/favicon-${createHash('sha256').update(icon).digest('hex').slice(0, 16)}.svg`;
@@ -57,10 +58,11 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     // The local tab has a version label; the published site keeps its name.
     if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
     // Stand-only design controls never become a release dependency.
-    html = html.replace(/  <script\b[^>]*\bdata-development\b[^>]*><\/script>\n/g, '');
+    html = html.replace(/  <script\b[^>]*\bdata-development\b[^>]*><\/script>\r?\n/g, '');
+    html = html.replace(/^[ \t]*<button\b[^>]*\bdata-development\b[^>]*>[\s\S]*?<\/button>\r?\n?/gm, '');
     // Source preloads the UI graph alongside the small startup entry. In release
     // its generated chunk is included in the explicit preload list below.
-    html = html.replace(/  <link rel="modulepreload" href="\/src\/(?:startup|app)\.ts">\n/g, '');
+    html = html.replace(/  <link rel="modulepreload" href="\/src\/(?:startup|app)\.ts">\r?\n/g, '');
     html = html.replace(`src="/${script}"`, `src="${entryUrl(script)}"`)
       .replace(`href="${style}"`, `href="${entryUrl(styleEntry)}"`)
       .replace(/href="\/favicon\.svg(?:\?[^"]*)?"/, `href="/${iconFile}"`)

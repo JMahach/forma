@@ -9,7 +9,7 @@ import { PUBLIC_FILES } from '../server/http/public-files.ts';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const source = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 const files = (directory: string, pattern = /\.ts$/) => fs.readdirSync(path.join(root, directory), { recursive: true })
-  .filter(file => pattern.test(file)).map(file => `${directory}/${file}`);
+  .filter(file => pattern.test(file)).map(file => `${directory}/${file.split(path.sep).join('/')}`);
 const loadingGenerator = 'src/scene/loading-placeholder.ts';
 const sourceFiles = [...files('src'), ...files('shared')];
 const hasRuntime = (file: string) => stripTypeScriptTypes(source(file), { mode: 'strip' }).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').trim();

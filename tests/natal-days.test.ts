@@ -21,6 +21,7 @@ import { decodeNatalDay } from '../shared/day-packets/decode.ts';
 import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.ts';
 import { createRequestHandler } from '../server/http/app.ts';
 import { natalDayFixture } from './fixtures/natal-day.ts';
+import { pythonExecutable, pythonEnvironment } from '../server/runtime/python.ts';
 import type { DayPacket } from '../server/packets/compression.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -203,7 +204,7 @@ test('real historical and fold days survive production compression and reconstru
     const bits = (values: ArrayLike<number>) => Buffer.from(new Float64Array(values).buffer).toString('hex');
     assert.deepEqual(decoded.columns.map(bits), source.columns.map(bits));
     const script = `import json\nfrom server.python import calculator as c\nfrom server.python import civil_time as d\nminutes=d.local_minutes(${JSON.stringify(date)},${JSON.stringify(timezone)})\ncharts=[]\nfor i in ${JSON.stringify(indices)}:\n m,offset,fold,seconds=minutes[i]\n local=m+c.dt.timedelta(seconds=seconds)\n charts.append(c.calculate(dict(mode='natal',name='Reference',date=${JSON.stringify(date)},time=local.strftime('%H:%M'),fold=fold,city=dict(id='test',name='Test',timezone=${JSON.stringify(timezone)})))['chart'])\nprint(json.dumps(charts))`;
-    const references = JSON.parse((await run(`${root}.venv/bin/python`, ['-c', script], { cwd: root, maxBuffer: 100000 })).stdout);
+    const references = JSON.parse((await run(pythonExecutable(root), ['-c', script], { cwd: root, env: pythonEnvironment(), maxBuffer: 100000 })).stdout);
     indices.forEach((index: number, i: string|number) => {
       const chart = chartAtMinute(decoded, index), reference = references[i];
       for (const key of ['activations', 'personality', 'design', 'utc', 'utcOffset', 'fold', 'designUtc', 'designArcResidualDegrees'] as const) assert.deepEqual(chart[key], reference[key], `${timezone} sample ${index}: ${key}`);

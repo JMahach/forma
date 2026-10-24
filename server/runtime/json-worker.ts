@@ -18,6 +18,7 @@ export interface JsonWorkerOptions {
 
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { pythonExecutable, pythonEnvironment } from './python.ts';
 
 // Own physical process lifetime. The shared queue admits work; services own results.
 export function runJsonWorker<T>(options: JsonWorkerOptions & { validate: (value: unknown) => T }): Promise<T>;
@@ -31,8 +32,8 @@ export function runJsonWorker({ root, script, input, validate = value => value, 
     let worker, serialized;
     try {
       serialized = JSON.stringify(input);
-      worker = spawnWorker(path.join(root, '.venv/bin/python'), [path.join(root, 'server/python', script)],
-        { cwd: root, stdio: ['pipe', 'pipe', 'ignore'] });
+      worker = spawnWorker(pythonExecutable(root), [path.join(root, 'server/python', script)],
+        { cwd: root, stdio: ['pipe', 'pipe', 'ignore'], env: pythonEnvironment() });
     } catch { reject(unavailable()); return; }
     let output = '', size = 0, failure: unknown = null, settled = false, launched = Boolean(worker.pid);
     const finish = (error: unknown, value?: unknown) => {

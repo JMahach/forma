@@ -138,7 +138,7 @@ class ReturnEngineTests(unittest.TestCase):
         for date in ('1801-01-01T00:00:00Z', '2399-12-31T23:59:59Z'):
             cycles.position(astro.julian_tt(cycles.parse_utc(date)), 'chiron')
             source, start, end, de_number = astro.swe.get_current_file_data(2)
-            self.assertEqual(path, pathlib.Path(source))
+            self.assertEqual(path, pathlib.Path(source).resolve())
             self.assertEqual(de_number, 441)
             self.assertLessEqual(start, astro.julian_tt(cycles.parse_utc(date)))
             self.assertGreaterEqual(end, astro.julian_tt(cycles.parse_utc(date)))

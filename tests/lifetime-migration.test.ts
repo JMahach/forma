@@ -99,7 +99,9 @@ test('a second migration cannot remove an existing lock or modify metadata', asy
   assert.equal(await fs.readFile(input.metadataFile, 'utf8'), before);
 });
 
-test('metadata keeps its owner and permissions even under a restrictive process umask', async t => {
+test('metadata keeps its owner and permissions even under a restrictive process umask', {
+  skip: process.platform === 'win32' && 'Windows does not implement POSIX umask, uid/gid and mode bits',
+}, async t => {
   const input = await fixture(t);
   await fs.chmod(input.metadataFile, 0o644);
   const before = await fs.stat(input.metadataFile);

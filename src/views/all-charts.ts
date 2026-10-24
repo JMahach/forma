@@ -1,5 +1,6 @@
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type { ChartStore } from '../data/chart-store.ts';
+import { attachWorkspaceHeader } from './workspace-header.ts';
 interface PreviewEntry { row: HTMLElement; chart: SavedChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
 interface AllChartsOptions {
   button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; store: ChartStore; onOpen?: (() => void) | null; document?: Document;
@@ -12,6 +13,14 @@ import { renderChartLibraryRow } from './library.ts';
 import { canManageLibraryRecord } from './chart-display.ts';
 import { createChartPreview } from './chart-preview-canvas.ts';
 
+const normalizeSearch = (value: string) => value.toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ');
+function chartSearchText(chart: SavedChart) {
+  const date = chart.birthDate ?? '';
+  const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split('-').reverse().join('.') : '';
+  return normalizeSearch([chart.name, date, formattedDate, chart.birthPlace,
+    chart.city?.name, chart.city?.region, chart.city?.country].filter(Boolean).join(' '));
+}
+
 // This workspace page reads the same library; the existing document-level commands own
 // selection, editing and deletion. Only nearby, temporary pixels belong here.
 export function attachAllCharts({ button, dialog, list, store,
@@ -20,7 +29,12 @@ export function attachAllCharts({ button, dialog, list, store,
   createObserver = typeof globalThis.IntersectionObserver === 'function'
     ? (callback, options) => new globalThis.IntersectionObserver(callback, options) : null,
 }: AllChartsOptions) {
+  attachWorkspaceHeader(dialog);
   const rows = new Map<Element, PreviewEntry>(), pending = new Set<PreviewEntry>(), readiness = new Set<{ entries: PreviewEntry[]; resolve: (value: boolean | null) => void }>();
+  const search = dialog.querySelector?.<HTMLInputElement>('#allChartsSearch');
+  const resultCount = dialog.querySelector?.<HTMLElement>('#allChartsCount');
+  const empty = dialog.querySelector?.<HTMLElement>('#allChartsEmpty');
+  let query = normalizeSearch(search?.value ?? ''), renderedQuery = '';
   let charts: SavedChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
   function paint() {
     job = null;
@@ -87,9 +101,21 @@ export function attachAllCharts({ button, dialog, list, store,
   }
   function update() {
     if (dialog.hidden) return;
-    if (charts !== store.charts) {
+    if (charts !== store.charts || renderedQuery !== query) {
       release(); charts = store.charts;
-      for (const chart of charts.filter(canManageLibraryRecord)) {
+      renderedQuery = query;
+      const available = charts.filter(canManageLibraryRecord);
+      const terms = query.split(' ').filter(Boolean);
+      const filtered = terms.length ? available.filter(chart => {
+        const text = chartSearchText(chart);
+        return terms.every(term => text.includes(term));
+      }) : available;
+      if (resultCount) resultCount.textContent = query ? `Найдено: ${filtered.length} из ${available.length}` : `Карт: ${available.length}`;
+      if (empty) {
+        empty.hidden = filtered.length > 0;
+        empty.textContent = query ? 'Ничего не найдено. Попробуйте другое имя, дату или город.' : 'Сохранённых карт пока нет.';
+      }
+      for (const chart of filtered) {
         const row = document.createElement('div');
         row.className = 'chart-row has-actions';
         row.innerHTML = renderChartLibraryRow(chart, false, { preview: true });
@@ -135,6 +161,13 @@ export function attachAllCharts({ button, dialog, list, store,
   }
   function close() { setVisible(false); }
   button.addEventListener('click', show);
+  search?.addEventListener('input', () => {
+    const next = normalizeSearch(search.value);
+    if (next === query) return;
+    query = next;
+    list.scrollTop = 0;
+    update();
+  });
   list.addEventListener('scroll', measure, { passive: true });
   document.defaultView?.addEventListener('resize', () => { cancelReadiness(); measure(); });
   return { setVisible, show, close, update, whenReady };

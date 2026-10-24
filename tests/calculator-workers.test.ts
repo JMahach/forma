@@ -12,6 +12,7 @@ const createCalculator = createCalculation as unknown as (options: CalculatorOpt
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { createCalculator as createCalculation, CALCULATOR_LIMITS } from '../server/services/calculate.ts';
 
 const tick = () => new Promise(setImmediate);
@@ -46,7 +47,7 @@ test('Design uses the ordinary scalar worker, preserves exact input and waits fo
   const { calculate, workers } = harness(t);
   assert.equal(workers.length, 0);
   const first = calculate(input);
-  assert.ok(workers[0].script.endsWith('/calculator.py'));
+  assert.equal(workers[0].script, path.join('/unused', 'server/python/calculator.py'));
   assert.deepEqual(workers[0].inputs, [input]);
   let completed = false; first.then(() => { completed = true; });
   const body = JSON.stringify(point(utc));
@@ -65,7 +66,7 @@ test('four physical slots are shared across natal, transit, exact moment and Des
   const { calculate, workers } = harness(t);
   const requests = [calculate(input), calculate({ mode: 'transit_moment', utc }), calculate({ mode: 'transit' }), calculate({ mode: 'natal' })];
   assert.equal(workers.length, 4);
-  assert.ok(workers.every((worker: Worker) => worker.inputs.length === 1 && worker.script.endsWith('/calculator.py')));
+  assert.ok(workers.every((worker: Worker) => worker.inputs.length === 1 && worker.script === path.join('/unused', 'server/python/calculator.py')));
   assert.equal((await calculate(input)).error, 'busy');
   workers[0].respond(); await tick();
   assert.equal((await calculate(input)).error, 'busy');

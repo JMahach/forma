@@ -1,7 +1,8 @@
 // One design study inside the real account workspace; no authentication or personal-data writes.
 import { standConnection } from './control-colors.ts';
+import { isDevelopmentPort } from '../../shared/development.ts';
 
-if (location.port === '3636') {
+if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
   const page = document.getElementById('accountPage');
   const palettes = document.getElementById('controlColorPreviews');
   if (page && palettes) {
@@ -17,75 +18,59 @@ if (location.port === '3636') {
     const style = document.createElement('style');
     const loading = `.app-shell[data-page-state='loading'] .account-page[data-account-study]`;
     style.textContent = `
-      .account-page[data-account-study] { --account-ink: var(--account-accent); --account-edge: #b9b9b1; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; }
-      .account-study-content { flex: 0 0 auto; width: calc(100% - 80px); max-width: 480px; margin: 46px auto 30px; }
-      .account-study-panel { border: 1px solid var(--account-edge); border-radius: 7px; overflow: hidden; background: var(--canvas-background); }
-      .account-study-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 50px; padding: 11px 20px; border-bottom: 1px solid var(--account-ink); background: var(--account-ink); color: #fffefd; }
-      .account-study-heading h1 { margin: 0; font-size: 22px; line-height: 28px; letter-spacing: -.35px; font-weight: 500; color: inherit; }
-      .account-study-details { margin: 0; padding: 0 20px; }
+      .account-page[data-account-study] { --account-ink: var(--account-accent); --account-edge: var(--panel-border); padding: 0; overflow: hidden; }
+      .account-study-content { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+      .account-study-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 32px 24px max(40px, env(safe-area-inset-bottom)); }
+      .account-study-panel { width: 100%; max-width: 760px; margin: 0 auto; }
+      .account-study-details { margin: 0; padding: 0; }
       .account-study-details dt, .account-study-details dd { margin: 0; }
-      .account-study-mail, .account-study-telegram { display: grid; grid-template-columns: 80px minmax(0, 1fr) max-content; align-items: center; gap: 10px; min-height: 52px; padding: 12px 0; }
-      .account-study-mail { border-bottom: 1px solid var(--panel-border); }
-      .account-study-mail dt, .account-study-telegram dt { grid-column: 1; grid-row: 1; align-self: center; display: flex; align-items: center; gap: 7px; padding: 0; font-size: 13px; line-height: 24px; color: var(--panel-muted); }
-      .account-study-details dt span { flex: 1; text-align: center; }
-      .account-study-details dt svg { width: 14px; height: 14px; flex: none; color: var(--account-ink); }
-      .account-study-email, .account-study-handle { grid-column: 2; grid-row: 1; min-width: 0; padding-inline-start: 12px; overflow: auto; scrollbar-width: none; white-space: nowrap; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--panel-ink); letter-spacing: -.15px; }
-      .account-study-confirmed { grid-column: 3; grid-row: 1; justify-self: end; white-space: nowrap; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 17px; color: var(--panel-muted); }
+      .account-study-mail, .account-study-telegram { display: grid; grid-template-columns: 116px minmax(0, 1fr) max-content; align-items: center; gap: 16px; min-height: 96px; padding: 24px 0; border-bottom: 1px solid var(--panel-border); }
+      .account-study-mail dt, .account-study-telegram dt { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 22px; color: var(--panel-muted); }
+      .account-study-details dt svg { width: 18px; height: 18px; flex: none; color: var(--account-ink); }
+      .account-study-email, .account-study-handle { min-width: 0; overflow-wrap: anywhere; font-size: 20px; line-height: 28px; font-weight: 500; color: var(--panel-ink); letter-spacing: -.025em; }
+      .account-study-confirmed { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: var(--panel-muted); }
       .account-study-confirmed .account-study-mask, .account-study-status .account-study-mask { display: inline-flex; align-items: center; gap: 6px; }
-      .account-study-confirmed svg, .account-study-status svg { width: 14px; height: 14px; flex: none; color: var(--sage-accent); }
-      .account-study-status { grid-column: 3; grid-row: 1; justify-self: end; white-space: nowrap; display: flex; align-items: center; gap: 6px; color: var(--panel-ink); font-size: 14px; line-height: 24px; }
-      .account-study-status.is-unlinked { color: var(--panel-muted); }
-      .account-study-logout { display: grid; grid-template-columns: 118px minmax(0, 1fr); border-top: 1px solid var(--account-edge); background: var(--panel-surface); }
-      .account-study-exit-action { display: grid; place-items: center; padding: 13px 0; border-right: 1px solid var(--panel-border); }
-      .account-study-exit-note { display: grid; place-items: center; padding: 13px 16px; text-align: center; }
-      .account-study-action { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 7px 12px; border: 1px solid var(--account-ink); border-radius: 7px; background: var(--canvas-background); color: var(--account-ink); font: inherit; font-size: 13px; font-weight: 500; line-height: 18px; cursor: pointer; touch-action: manipulation; }
-      .account-study-action::after { content: ''; position: absolute; inset: -5px 0; }
-      .account-study-action:focus-visible { outline: 1px dashed var(--account-ink); outline-offset: 3px; }
-      .account-study-primary { background: var(--account-ink); color: #fffefd; }
-      .account-study-action svg { width: 16px; height: 16px; flex: none; }
-      .account-study-logout p { margin: 0; font-size: 12px; line-height: 18px; color: var(--panel-muted); }
-      .account-study-empty { padding: 24px 22px 26px; }
-      .account-study-intro { max-width: 350px; margin: 0 0 22px; font-size: 15px; line-height: 1.6; color: var(--panel-muted); }
-      .account-study-session { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 18px 22px; border-bottom: 1px solid var(--panel-border); }
-      .account-study-session p { flex: 1 1 230px; margin: 0; font-size: 13px; line-height: 19px; }
+      .account-study-confirmed svg { width: 16px; height: 16px; flex: none; color: var(--sage-accent); }
+      .account-study-status { grid-column: 2 / -1; font-size: 16px; line-height: 24px; color: var(--panel-muted); }
+      .account-study-logout { display: grid; grid-template-columns: 116px minmax(0, 1fr); align-items: start; gap: 16px; padding: 28px 0; }
+      .account-study-exit-action { display: flex; }
+      .account-study-exit-note { padding-top: 3px; }
+      .account-study-action { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--canvas-background); color: var(--account-ink); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; touch-action: manipulation; transition: transform 120ms ease-out, background 120ms ease-out; }
+      .account-study-action:active:not(:disabled) { transform: scale(.97); }
+      .account-study-action:focus-visible { outline: 2px solid var(--account-ink); outline-offset: 3px; }
+      .account-study-primary { border-color: var(--account-ink); background: var(--account-ink); color: #fffefd; }
+      .account-study-action svg { width: 18px; height: 18px; flex: none; }
+      .account-study-logout p { margin: 0; font-size: 13px; line-height: 21px; color: var(--panel-muted); }
+      .account-study-empty { padding: 24px 0; }
+      .account-study-intro { max-width: 480px; margin: 0 0 24px; font-size: 20px; line-height: 1.5; letter-spacing: -.02em; color: var(--panel-ink); }
+      .account-study-session { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--panel-surface); }
+      .account-study-session p { flex: 1 1 220px; margin: 0; font-size: 15px; line-height: 23px; }
       .app-shell[data-page-state='loading']:has(.studio[data-workspace-screen='account']) #accountPage[data-account-study] { display: flex !important; opacity: 1; }
-      ${loading} .account-study-heading { background: var(--panel-surface); border-bottom-color: var(--account-edge); }
-      ${loading} .account-study-heading h1,
       ${loading} :is(.account-study-mask, .account-study-status, .account-study-action, .account-study-intro, .account-study-session p, .account-study-exit-note p) { position: relative; color: transparent; }
-      ${loading} .account-study-heading h1::after,
-      ${loading} :is(.account-study-mask, .account-study-status, .account-study-action, .account-study-intro, .account-study-session p, .account-study-exit-note p)::after {
-        content: ''; position: absolute; inset: 50% 0 auto; transform: translateY(-50%); height: 6px; border-radius: 2px; background: var(--loading-ink); pointer-events: none;
-      }
-      ${loading} .account-study-heading h1::after { height: 10px; }
-      ${loading} :is(.account-study-intro, .account-study-session p, .account-study-exit-note p)::after { inset: 3px 0; height: auto; transform: none; background: repeating-linear-gradient(to bottom, var(--loading-ink) 0 5px, transparent 5px 18px); opacity: .65; }
+      ${loading} :is(.account-study-mask, .account-study-status, .account-study-action, .account-study-intro, .account-study-session p, .account-study-exit-note p)::after { content: ''; position: absolute; inset: 50% 0 auto; transform: translateY(-50%); height: 7px; border-radius: 2px; background: var(--loading-ink); pointer-events: none; }
+      ${loading} :is(.account-study-intro, .account-study-session p, .account-study-exit-note p)::after { inset: 3px 0; height: auto; transform: none; background: repeating-linear-gradient(to bottom, var(--loading-ink) 0 5px, transparent 5px 21px); opacity: .65; }
       ${loading} :is(.account-study-mask, .account-study-action) > * { visibility: hidden; }
       ${loading} .account-study-action { border-color: var(--panel-border); background: transparent; }
       ${loading} .account-study-action::after { inset-inline: 12px; }
-      ${loading} .account-study-details dt { color: var(--panel-muted); }
       ${loading} .account-study-details dt svg { opacity: .4; }
       .account-study-options { display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin-bottom: 2px; border-bottom: 1px solid var(--panel-border); }
       body:has(.studio[data-workspace-screen='account']) .account-study-options { display: grid; gap: 9px; }
       .account-study-option-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--panel-muted); font-size: 11px; }
       .account-study-option-heading select { width: auto; max-width: 176px; min-height: 32px; padding: 4px 18px 4px 7px; border: 1px solid var(--panel-border); border-radius: 6px; color: var(--panel-ink); background: var(--canvas-background); font: inherit; font-size: 12px; }
-      @media (hover: hover) and (pointer: fine) { .account-study-action:hover:not(:disabled) { box-shadow: inset 0 0 0 .5px currentColor; } }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-page[data-account-study] { padding-bottom: max(68px, calc(env(safe-area-inset-bottom) + 20px)); }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-content { width: calc(100% - 32px); margin-block: auto; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-heading { min-height: 50px; padding: 11px 18px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-heading h1 { font-size: 22px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-details { padding: 0 18px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.account-study-mail, .account-study-telegram) { grid-template-columns: 74px minmax(0, 1fr) max-content; gap: 6px; min-height: 49px; padding: 11px 0; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.account-study-email, .account-study-handle) { font-size: 14px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-confirmed { font-size: 11px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-confirmed .account-study-mask { gap: 3px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-details dt { gap: 5px; font-size: 12px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-logout { grid-template-columns: 106px minmax(0, 1fr); }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-exit-action { padding: 13px 0; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-exit-note { padding: 13px 12px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-empty { padding: 22px 18px; }
-      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-session { padding: 16px 18px; }
+      @media (hover: hover) and (pointer: fine) { .account-study-action:hover:not(:disabled) { background: var(--panel-hover); } .account-study-primary:hover:not(:disabled) { background: var(--account-hover); } }
+      @media (prefers-reduced-motion: reduce) { .account-study-action { transition: none; } .account-study-action:active:not(:disabled) { transform: none; } }
+      @media (max-width: 1099px) {
+        .account-study-mail, .account-study-telegram { grid-template-columns: minmax(0, 1fr) max-content; gap: 10px; padding: 20px 0; }
+        .account-study-details dt { grid-column: 1; grid-row: 1; }
+        .account-study-confirmed { grid-column: 2; grid-row: 1; }
+        .account-study-email, .account-study-handle, .account-study-status { grid-column: 1 / -1; grid-row: 2; }
+      }
+      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-body { padding: 24px 20px max(40px, env(safe-area-inset-bottom)); }
+      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-logout { grid-template-columns: 1fr; gap: 14px; padding-block: 24px; }
+      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-intro { font-size: 20px; }
+      .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-session { padding: 16px; }
       .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-option-heading select { min-height: 40px; font-size: 16px; }
       .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-options { gap: 12px; padding-bottom: 13px; }
-      @media (max-width: 359px) { .account-study-logout { grid-template-columns: 90px minmax(0, 1fr); } .account-study-exit-note { padding: 13px 9px; } .account-study-mail, .account-study-telegram { grid-template-columns: 70px minmax(0, 1fr) max-content; gap: 5px; } }
     `;
     document.head.append(style);
     const content = document.createElement('div');
@@ -120,7 +105,7 @@ if (location.port === '3636') {
       if (state === 'guest') body = '<div class="account-study-empty"><p class="account-study-intro">Войдите, чтобы сохранять карты и открывать их на других устройствах.</p><button class="account-study-action account-study-primary" type="button" data-account-action="login">Войти</button></div>';
       else if (state === 'error') body = '<div class="account-study-empty"><p class="account-study-intro" role="status">Не удалось загрузить аккаунт.</p><button class="account-study-action" type="button" data-account-action="retry">Повторить</button></div>';
       else body = signedIn(state);
-      content.innerHTML = `<div class="account-study-panel"><header class="account-study-heading"><h1>Аккаунт</h1></header>${body}</div>`;
+      content.innerHTML = `<header class="workspace-header"><div class="workspace-heading"><h1>Аккаунт</h1></div></header><div class="account-study-body"><div class="account-study-panel">${body}</div></div>`;
       updateAvailability();
     }
     select.addEventListener('change', () => { render(); remember(); });

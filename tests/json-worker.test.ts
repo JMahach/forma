@@ -26,6 +26,16 @@ test('JSON worker passes structured input, parses output and settles exactly onc
   assert.deepEqual(await h.promise, { minutes: 1440 });
 });
 
+test('JSON workers pass the UTF-8 and project-relative ephemeris environment contract', async () => {
+  let environment: NodeJS.ProcessEnv | undefined;
+  const base = harness();
+  base.worker.stdout.emit('data', '{}'); base.worker.emit('close', 0); await base.promise;
+  const h = harness({ spawnWorker(_command: string, _args: string[], options: import('node:child_process').SpawnOptions) { environment = options.env; return base.worker; } });
+  base.worker.stdout.emit('data', '{}'); base.worker.emit('close', 0); await h.promise;
+  assert.equal(environment?.PYTHONUTF8, '1');
+  assert.equal(environment?.SE_EPHE_PATH, 'data/ephe');
+});
+
 test('JSON worker limits bytes (not characters) and waits for termination', async () => {
   const h = harness({ maxOutput: 3 });
   let settled = false;

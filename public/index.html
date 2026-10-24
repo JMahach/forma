@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
-  <title>Форма 1</title>
+  <title>Форма 2</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=forma-lotus-1">
   <link rel="stylesheet" href="/styles.css">
   <link rel="modulepreload" href="/src/startup.ts">
@@ -31,8 +31,9 @@
           <div class="chart-list" id="chartList"></div>
         </section>
         <div class="sidebar-footer">
-          <button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">Счётчик FPS</button>
+          <button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-label="Счётчик FPS" title="Счётчик FPS" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">FPS</button>
           <button type="button" class="sidebar-tool" id="toggleLoadingPreview" aria-pressed="false" hidden>Превью</button>
+          <button type="button" class="sidebar-tool" id="randomChartButton" data-development hidden>Случайная карта</button>
         </div>
       </aside>
       <main class="studio">
@@ -129,13 +130,27 @@
           <p class="lifetime-status" id="lifetimeStatus" role="status"></p>
         </div>
   <section id="allChartsDialog" class="workspace-page all-charts-page" hidden aria-labelledby="allChartsTitle">
-    <header class="all-charts-header"><h2 id="allChartsTitle">Картотека</h2></header>
+    <header class="workspace-header all-charts-header">
+      <div class="workspace-heading"><h2 id="allChartsTitle">Картотека</h2><p id="allChartsCount" role="status" aria-live="polite"></p></div>
+      <label class="workspace-search"><span class="visually-hidden">Поиск по картотеке</span><svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.5"/></svg><input id="allChartsSearch" type="search" placeholder="Имя, дата или город" autocomplete="off" spellcheck="false" aria-controls="allChartsList"/></label>
+      <button type="button" class="workspace-search-toggle icon-button" data-workspace-search-toggle aria-controls="allChartsSearch" aria-expanded="false" aria-label="Открыть поиск"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.5"/></svg><span aria-hidden="true">×</span></button>
+    </header>
+    <p id="allChartsEmpty" class="all-charts-empty" hidden></p>
     <div class="all-charts-list" id="allChartsList"></div>
+    <div class="workspace-loading" aria-hidden="true"><div class="loading-chart"><i></i><i></i><i></i></div><div class="loading-chart"><i></i><i></i><i></i></div><div class="loading-chart"><i></i><i></i><i></i></div><div class="loading-chart"><i></i><i></i><i></i></div><div class="loading-chart"><i></i><i></i><i></i></div><div class="loading-chart"><i></i><i></i><i></i></div></div>
   </section>
   <section id="knowledgeDialog" class="workspace-page knowledge-page" hidden aria-labelledby="knowledgeTitle">
-    <header class="knowledge-header"><h2 id="knowledgeTitle">Библиотека</h2></header>
-    <nav class="knowledge-categories" aria-label="Разделы библиотеки"><button data-knowledge-category="gate" aria-pressed="true">Ворота</button><button data-knowledge-category="center" aria-pressed="false">Центры</button><button data-knowledge-category="channel" aria-pressed="false">Каналы</button></nav>
-    <div class="knowledge-body"><nav class="knowledge-index" id="knowledgeIndex" aria-label="Ворота"></nav><article class="knowledge-article" id="knowledgeArticle" aria-live="polite"></article></div>
+    <header class="workspace-header knowledge-header">
+      <div class="workspace-heading"><h2 id="knowledgeTitle">Библиотека</h2><p>Элементы карты и связи между ними</p></div>
+      <label class="workspace-search"><span class="visually-hidden">Поиск по библиотеке</span><svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.5"/></svg><input id="knowledgeSearch" type="search" placeholder="Название, номер или тема" autocomplete="off" spellcheck="false" aria-controls="knowledgeIndex"/></label>
+      <button type="button" class="workspace-search-toggle icon-button" data-workspace-search-toggle aria-controls="knowledgeSearch" aria-expanded="false" aria-label="Открыть поиск"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.5"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.5"/></svg><span aria-hidden="true">×</span></button>
+    </header>
+    <div class="knowledge-reader-bar"><button type="button" id="knowledgeBack"><span aria-hidden="true">←</span> К списку</button><span id="knowledgeReadingLabel"></span></div>
+    <nav id="knowledgeCategories" class="knowledge-categories" aria-label="Разделы библиотеки"></nav>
+    <div class="knowledge-mobile-section"><label class="visually-hidden" for="knowledgeSection">Раздел библиотеки</label><select id="knowledgeSection"></select></div>
+    <p id="knowledgeCount" class="knowledge-count" role="status" aria-live="polite" hidden></p>
+    <div class="knowledge-body"><nav class="knowledge-index" id="knowledgeIndex" aria-label="Ворота"></nav><article class="knowledge-article" id="knowledgeArticle" aria-label="Статья библиотеки"></article></div>
+    <div class="workspace-loading" aria-hidden="true"><div class="loading-categories"><i></i><i></i><i></i><i></i><i></i></div><div class="loading-library-columns"><div class="loading-index"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="loading-article"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
   </section>
   <section id="accountPage" class="workspace-page account-page" aria-label="Аккаунт" hidden></section>
       </main>

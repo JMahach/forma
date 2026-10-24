@@ -1,4 +1,5 @@
 // Temporary stand controls. Accepted section colours live in public/styles.css.
+import { isDevelopmentPort } from '../../shared/development.ts';
 export type StandConnection = 'online' | 'offline' | 'server';
 
 export function createStandConnection() {
@@ -20,7 +21,7 @@ export function createStandConnection() {
 }
 export const standConnection = createStandConnection();
 
-if (typeof location !== 'undefined' && location.port === '3636') {
+if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
   // Keep only the existing menu expansion, discarding retired colour trials.
   const storageKey = 'forma.control-colors.v1';
   let expanded = false;
@@ -58,5 +59,7 @@ if (typeof location !== 'undefined' && location.port === '3636') {
   }
   toggle.addEventListener('click', () => { group.hidden = !group.hidden; remember(); });
   const footer = document.querySelector<HTMLElement>('.sidebar-footer');
-  footer?.prepend(group); footer?.append(toggle); remember();
+  footer?.prepend(group);
+  footer?.insertBefore(toggle, footer.querySelector('#randomChartButton'));
+  remember();
 }

@@ -113,9 +113,11 @@ export class SvgElement {
   contains(node: unknown): boolean { return this === node || this.children.some(child => child.contains(node)); }
   matches(selector: string): boolean {
     if (selector.includes(',')) return selector.split(',').some(part => this.matches(part.trim()));
-    const requiredTag = /^[a-zA-Z][\w-]*/.exec(selector)?.[0];
+    const outsideAttributes = selector.replace(/\[[^\]]*\]/g, '');
+    const requiredTag = /^[a-zA-Z][\w-]*/.exec(outsideAttributes)?.[0];
     if (requiredTag && this.localName !== requiredTag) return false;
-    for (const [, name] of selector.matchAll(/\.([\w-]+)/g)) if (!this.classList.contains(name)) return false;
+    for (const [, id] of outsideAttributes.matchAll(/#([\w-]+)/g)) if (this.getAttribute('id') !== id) return false;
+    for (const [, name] of outsideAttributes.matchAll(/\.([\w-]+)/g)) if (!this.classList.contains(name)) return false;
     for (const [, name, , value] of selector.matchAll(/\[([\w-]+)(?:=(['"]?)(.*?)\2)?\]/g)) {
       if (!this.hasAttribute(name) || value !== undefined && this.getAttribute(name) !== value) return false;
     }

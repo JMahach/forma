@@ -7,9 +7,9 @@ const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const favicon = readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8');
 const paths = (svg: string) => [...svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/g)];
 
-test('the local browser tab uses the requested Forma 1 label and a versioned SVG favicon', () => {
+test('the local browser tab uses the requested Forma 2 label and a versioned SVG favicon', () => {
   // The real release build test separately verifies the canonical published name.
-  assert.deepEqual([...page.matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма 1']);
+  assert.deepEqual([...page.matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма 2']);
   const href = page.match(/<link rel="icon"[^>]*href="([^"]+)"/)?.[1];
   assert.ok(href);
   assert.match(href, /^\/favicon\.svg\?v=forma-lotus-\d+$/);

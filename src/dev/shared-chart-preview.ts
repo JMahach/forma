@@ -1,4 +1,5 @@
 import { standConnection } from './control-colors.ts';
+import { isDevelopmentPort } from '../../shared/development.ts';
 
 type Connection = 'online' | 'offline' | 'server';
 type CardKind = 'temporary' | 'saved';
@@ -39,7 +40,7 @@ export function createSharedChartStudy(onChange: (state: StudyState) => void,
 }
 
 // Stand-only visual study: no saving, sharing, account writes or URL changes.
-if (typeof location !== 'undefined' && location.port === '3636') {
+if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
   const panelCaption = document.querySelector('#summaryChartCaption .summary-moment-heading');
   if (panelCaption) {
     const style = document.createElement('style');

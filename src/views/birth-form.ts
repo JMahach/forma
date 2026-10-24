@@ -1,4 +1,4 @@
-import type { ChartRecord, City, CalculationRequest } from '../../shared/chart-types.ts';
+import type { ChartRecord, City, CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
 import type { ChartStore } from '../data/chart-store.ts';
 import type { ChartSession } from '../state/chart-session.ts';
 import type { ApiError } from '../data/api-client.ts';
@@ -16,6 +16,8 @@ import { bindNumericInput, formatDateInput, formatTimeInput, normalizeDate, norm
 import { canManageLibraryRecord } from './chart-display.ts';
 import { escapeHtml as esc } from '../ui/html.ts';
 import { requestJSON as defaultRequestJSON } from '../data/api-client.ts';
+import { isDevelopmentPort } from '../../shared/development.ts';
+import { randomBirthMoment } from './random-chart.ts';
 
 // Birth data, city search, DST ambiguity and calculation live within one dialog.
 export function attachBirthForm({ document, store, session, onSave, beforeOpen = () => {}, toast, requestJSON = defaultRequestJSON, getFormData = form => new FormData(form) }: BirthFormOptions) {
@@ -23,6 +25,21 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   let editingId: string | null = null;
   let calculationMode: 'calculated' | 'manual' = 'calculated', selectedCity: Partial<City> | null = null, cityResults: City[] = [], activeCityIndex = -1;
   let cityTimer: ReturnType<typeof setTimeout> | undefined, cityController: AbortController | undefined, citySequence = 0, calculationController: AbortController | undefined, formBusy = false;
+  const randomButton = $<HTMLButtonElement>('randomChartButton');
+  const randomAllowed = isDevelopmentPort(document.defaultView?.location?.port ?? '');
+  let randomController: AbortController | null = null;
+  if (randomButton) randomButton.hidden = !randomAllowed;
+  function setRandomBusy(busy: boolean) {
+    if (randomButton) { randomButton.disabled = busy; randomButton.setAttribute('aria-busy', String(busy)); }
+  }
+  function cancelRandom() { randomController?.abort(); randomController = null; setRandomBusy(false); }
+  function persistCharts(next: SavedChart[]) {
+    if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
+    const persisted = store.persist(next);
+    if (!persisted && store.saveError?.canKeepInMemory === false) throw new Error(store.saveError.message);
+    if (!persisted) store.replace(next);
+    return persisted;
+  }
 
   const countryNames = new Intl.DisplayNames(['ru'], { type: 'region' });
   const countryLabel = (code: string | undefined) => /^[A-Z]{2}$/.test(code || '') ? countryNames.of(code!) : code || '';
@@ -107,9 +124,10 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     $<HTMLFormElement>('chartForm').querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input, textarea, select, button').forEach(control => { if (control.id !== 'cancelDialog') control.disabled = busy; });
     $('saveChartButton').textContent = busy ? 'Рассчитываем…' : calculationMode === 'calculated' ? 'Рассчитать и сохранить' : 'Сохранить карту';
   }
-  function closeForm() { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); closeCityResults(); $<HTMLDialogElement>('chartDialog').close(); }
+  function closeForm() { cancelRandom(); calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); closeCityResults(); $<HTMLDialogElement>('chartDialog').close(); }
 
   function openForm(edit = false, id = session.selectedId) {
+    cancelRandom();
     const c = store.charts.find(item => item.id === id) || session.record;
     if (edit && !canManageLibraryRecord(c)) return;
     calculationController?.abort(); clearTimeout(cityTimer); cityController?.abort(); citySequence += 1;
@@ -180,10 +198,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       } else result = { ...previous, name, birthDate, birthTime, birthPlace: String(form.get('birthPlace') || '').trim(), personality: previous?.personality || [], design: previous?.design || [], source: 'manual' };
       const c = { ...result, id: editingId || createChartId(), name, note: String(form.get('note') || '').trim(), createdAt: previous?.createdAt || now, updatedAt: metadataOnly || calculationMode === 'manual' ? now : result.updatedAt || now };
       const next = editingId ? store.charts.map(item => item.id === editingId ? c : item) : [...store.charts, c];
-      if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
-      const persisted = store.persist(next);
-      if (!persisted && store.saveError?.canKeepInMemory === false) throw new Error(store.saveError.message);
-      if (!persisted) store.replace(next);
+      const persisted = persistCharts(next);
       $<HTMLDialogElement>('chartDialog').close(); onSave(c.id, { metadataOnly });
       if (!persisted) toast('Карта открыта, но не сохранена в браузере.');
     } catch (caught) {
@@ -232,6 +247,35 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   $('cityResults').addEventListener('click', event => {
     const option = (event.target as Element).closest<HTMLElement>('[data-city-index]');
     if (option && cityResults[Number(option.dataset.cityIndex)]) selectCity(cityResults[Number(option.dataset.cityIndex)]);
+  });
+
+  randomButton?.addEventListener('click', async () => {
+    if (!randomAllowed || formBusy || randomController || $<HTMLDialogElement>('chartDialog').open) return;
+    if (store.charts.length >= 500) { toast('В библиотеке уже 500 карт.'); return; }
+    const controller = new AbortController(); randomController = controller; setRandomBusy(true);
+    try {
+      const birth = randomBirthMoment();
+      const data = await requestJSON<{ cities?: City[] }>('/api/cities?q=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0', { signal: controller.signal });
+      if (controller.signal.aborted || randomController !== controller) return;
+      const city = data.cities?.find(item => String(item.id) === '524901' && item.country === 'RU' && item.timezone === 'Europe/Moscow');
+      if (!city) throw new Error('Москва не найдена в каталоге. Повторите создание примера.');
+      const payload: CalculationRequest = { name: birth.name, date: birth.date, time: birth.time, fold: birth.fold, cityId: String(city.id), cityName: city.name, mode: 'natal' };
+      const result = await requestJSON<{ chart?: FormCalculation }>('/api/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal });
+      if (controller.signal.aborted || randomController !== controller) return;
+      if (!result.chart || !Array.isArray(result.chart.personality) || !Array.isArray(result.chart.design)) throw new Error('Сервер вернул неполный расчёт. Карта не сохранена.');
+      if (Date.parse(result.chart.utc ?? '') !== Date.parse(birth.utc)) throw new Error('Правила часового пояса не совпали. Пример не сохранён; повторите попытку.');
+      const now = new Date().toISOString();
+      const chart: SavedChart = { ...result.chart, id: createChartId(), name: birth.name, birthDate: birth.date, birthTime: birth.time,
+        source: 'calculated', cityId: String(city.id), city: { ...city }, note: '', createdAt: now, updatedAt: now };
+      const persisted = persistCharts([...store.charts, chart]);
+      onSave(chart.id);
+      if (!persisted) toast('Карта открыта, но не сохранена в браузере.');
+    } catch (caught) {
+      const error = caught as Error;
+      if (!controller.signal.aborted && randomController === controller && error.name !== 'AbortError') toast(error.message);
+    } finally {
+      if (randomController === controller) { randomController = null; setRandomBusy(false); }
+    }
   });
 
   return { open: openForm, close: closeForm, get opened() { return $<HTMLDialogElement>('chartDialog').open; } };

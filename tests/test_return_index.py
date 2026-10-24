@@ -1,6 +1,7 @@
 """Prepared trajectories must preserve exact roots and reject stale/corrupt files."""
 import datetime as dt
 import importlib
+import hashlib
 import math
 import pathlib
 import tempfile
@@ -98,11 +99,41 @@ class FileTests(unittest.TestCase):
     def test_typescript_attestation_accepts_only_the_reviewed_pair(self):
         import json
         revision = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
-        self.assertEqual(engine.provenance(), revision['to'])
         self.assertTrue(engine.provenance_matches(revision['from'], revision['to']))
         self.assertTrue(engine.provenance_matches(revision['to'], revision['to']))
         self.assertFalse(engine.provenance_matches(revision['from'], 'f'*64))
         self.assertFalse(engine.provenance_matches('b'*64, revision['to']))
+
+    def test_portable_attestation_accepts_only_reviewed_sources_for_current_code(self):
+        import json
+        revision = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexPortable']
+        self.assertEqual(engine.provenance(), revision['to'])
+        for source in revision['from']:
+            self.assertTrue(engine.provenance_matches(source, revision['to']))
+            self.assertFalse(engine.provenance_matches(source, 'f'*64))
+        self.assertFalse(engine.provenance_matches('b'*64, revision['to']))
+        # A reviewed old file must still pass all ordinary loading checks.
+        for source in revision['from']:
+            with patch.object(engine, 'provenance', return_value=source):
+                self.build()
+            with engine.load_index(self.path, full=True) as index:
+                self.assertIsNotNone(index.trajectory('north_node'))
+            self.path.unlink()
+
+    def test_provenance_uses_portable_logical_names_for_ephemeris_files(self):
+        digest = hashlib.sha256()
+        updates = []
+        class RecordingDigest:
+            def update(self, data):
+                updates.append(data)
+                digest.update(data)
+            def hexdigest(self):
+                return digest.hexdigest()
+        with patch.object(engine.hashlib, 'sha256', return_value=RecordingDigest()):
+            engine.provenance()
+        names = [header.split(b'\0', 1)[0].decode('utf-8') for header in updates[1::2]]
+        self.assertIn('data/ephe/sepl_18.se1', names)
+        self.assertTrue(all('\\' not in name for name in names), names)
 
     def test_atomic_build_idempotent_load_and_read_only_arrays(self):
         self.build()
