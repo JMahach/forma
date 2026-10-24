@@ -495,7 +495,7 @@ test('channel selection highlights the full connection and both gates, not other
       const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
       assert.deepEqual(new Set(arms), new Set(channel.gates));
     } else {
-      assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#c4d9f1" stroke-width="13.2"`));
+      assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#c4d9f1" stroke-width="8.448"`));
     }
   }
 });
@@ -511,11 +511,12 @@ test('integration selection outlines sit above ordinary channels and below their
     const integration = markup.slice(markup.indexOf('<g class="bodygraph-channels">'));
     const halo = integration.match(/<path class="bg-integration-selection"[^>]+\/>/);
     assert.ok(halo, `${selection.id} has a selection halo`);
-    assert.match(halo![0], /fill="none" stroke="#c4d9f1" stroke-width="13.2"/);
+    assert.match(halo![0], /fill="none" stroke="#c4d9f1" stroke-width="8.448"/);
     assert.match(halo![0], new RegExp(`stroke-linecap="${selection.type === 'integration' ? 'butt' : 'round'}"`), 'partial candidates cover the exact terminal plane; ownership masks set their visible ends');
     const bundleStart = integration.indexOf('data-junction="integration"');
     assert.ok(integration.indexOf(halo![0]) > integration.indexOf('data-type="channel" data-id="26-44"'), 'selected outline is above the ordinary crossing');
-    assert.ok(integration.indexOf(halo![0]) < integration.indexOf('stroke="#c6c2b9"', bundleStart), 'selected outline is below its own physical channel outlines');
+    assert.ok(integration.indexOf(halo![0]) > integration.indexOf('class="bodygraph-integration-outlines"'), 'selected blue covers the original physical outlines');
+    assert.ok(integration.indexOf(halo![0]) < integration.indexOf('stroke="#ffffff"', bundleStart), 'semantic white interiors stay above selected blue');
     assert.ok(integration.indexOf(halo![0]) < integration.indexOf('class="bg-integration-arm"'), 'selected outline is below all branches');
     const maskId = selection.type === 'integration' ? 'integration-outline' : 'integration-selection-outline';
     assert.ok(halo![0].includes(`mask="url(#bodygraph-${maskId})"`), 'the lower outline retains its exterior ownership mask');

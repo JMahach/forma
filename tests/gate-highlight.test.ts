@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CENTERS, GATES, CHANNELS, getGate } from '../src/scene/geometry/chart-geometry.ts';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
+import { svgDocument, SVG_NS } from './helpers/svg-dom.ts';
+import { INTEGRATION_PATH, roundedCenter } from '../src/scene/geometry/drawing-geometry.ts';
+import { INTEGRATION_IDS } from '../src/domain/topology.ts';
 
 const attribute = (markup: string, name: string) => markup.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1];
 const gateGroups = (markup: string) => [...markup.matchAll(/<g\s+data-type="gate"\s+data-id="(\d+)"([^>]*)>([\s\S]*?)<\/g>/g)]
@@ -19,6 +22,123 @@ const sameVisiblePaint = (before: string|undefined, after: string|undefined, lab
   assert.equal(attribute(before!, 'stroke'), '#c4d9f1', `${label} is always light blue`);
 };
 
+test('center bloom is excluded from center and channel interiors without clipping its crisp border', () => {
+  const root = svgDocument().createElementNS(SVG_NS, 'svg');
+  root.innerHTML = renderBodygraph({}, { type: 'center', id: 'throat' }, { idPrefix: 'outside' });
+  for (const highlight of root.querySelectorAll('.bg-center-highlight')) {
+    const maskUrl = highlight.getAttribute('mask');
+    assert.ok(maskUrl, 'center glow needs an exclusion after its blur, including hover and focus');
+    const mask = root.querySelector(`mask[id="${maskUrl!.slice(5, -1)}"]`)!;
+    assert.ok(mask, 'mask resolves within this chart');
+    assert.equal(mask.getAttribute('maskUnits'), 'userSpaceOnUse');
+    assert.equal(mask.querySelector('rect')?.getAttribute('fill'), '#ffffff', 'unoccupied exterior remains visible');
+    const paths = mask.querySelectorAll('path');
+    for (const center of CENTERS) {
+      const cutout = paths.find(path => path.getAttribute('d') === roundedCenter(center.points));
+      assert.ok(cutout, `${center.id} interior is protected`);
+      assert.equal(cutout!.getAttribute('fill'), '#000000');
+      assert.equal(cutout!.getAttribute('stroke'), '#ffffff', 'the original thin center border remains visible');
+      assert.equal(cutout!.getAttribute('stroke-width'), '1.25');
+    }
+    for (const d of [...CHANNELS.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => channel.path), INTEGRATION_PATH]) {
+      const cutout = paths.find(path => path.getAttribute('d') === d);
+      assert.ok(cutout, 'connected and crossing channel interiors are protected');
+      assert.equal(cutout!.getAttribute('stroke'), '#000000');
+      assert.equal(cutout!.getAttribute('stroke-width'), '6.072');
+    }
+  }
+});
+
+test('ordinary full and half highlights replace the physical outline beneath unchanged activation interiors', () => {
+  for (const chart of [{}, { personality: [1, 8] }, { design: [1, 8] }, { personality: [1, 8], design: [1, 8] }]) {
+    for (const selection of [{ type: 'channel' as const, id: '1-8' }, { type: 'gate' as const, id: 1 }, { type: 'center' as const, id: 'g' }]) {
+      const root = svgDocument().createElementNS(SVG_NS, 'svg');
+      root.innerHTML = renderBodygraph(chart, selection);
+      const channel = root.querySelector('[data-type="channel"][data-id="1-8"]')!;
+      const children = channel.children, outline = channel.querySelector('.bg-channel-outline')!;
+      const paper = children.find(node => node.localName === 'path' && node.getAttribute('stroke') === '#ffffff')!;
+      const highlights = children.filter(node => node.hasAttribute('data-highlight-gate') || node.classList.contains('bg-channel-highlight'));
+      for (const highlight of highlights) {
+        const paint = highlight.localName === 'path' ? highlight : highlight.querySelector('path')!;
+        assert.equal(paint.getAttribute('stroke-width'), '8.448', 'blue occupies the existing physical outline, not an extra exterior stripe');
+        assert.ok(children.indexOf(outline) < children.indexOf(highlight), 'blue covers the gray outline');
+        assert.ok(children.indexOf(highlight) < children.indexOf(paper), 'paper and source lanes cover blue in the semantic interior');
+      }
+      assert.equal(paper.getAttribute('stroke-width'), '6.072');
+      for (const source of channel.querySelectorAll('path').filter(node => ['#202020', '#c32d35'].includes(node.getAttribute('stroke')!))) {
+        assert.ok(children.indexOf(source) > children.indexOf(paper));
+      }
+    }
+  }
+});
+
+test('stationary glow stays behind semantic gate discs and leaves the inset core and numbers sharp', () => {
+  for (const [chart, fill] of [
+    [{}, 'transparent'], [{ personality: [31] }, '#202020'], [{ design: [31] }, '#c32d35'],
+    [{ personality: [31], design: [31] }, 'url(#glow-test-dual)'],
+  ] as const) {
+    const markup = renderBodygraph(chart, { type: 'gate', id: 31 }, { idPrefix: 'glow-test' });
+    const group = gateGroups(markup).find(gate => gate.id === 31)!;
+    const glow = circle(group, 'bg-gate-glow'), disc = circle(group, 'bg-gate-disc')!, core = circle(group, 'bg-gate-highlight')!;
+    assert.ok(glow, 'a separate lower highlight owns bloom outside the semantic disc');
+    assert.equal(attribute(glow!, 'filter'), 'url(#glow-test-gate-glow)');
+    assert.equal(attribute(glow!, 'opacity'), '1');
+    assert.equal(attribute(glow!, 'pointer-events'), 'none');
+    assert.ok(group.content.indexOf(glow!) < group.content.indexOf(disc), 'disc covers any inward bloom');
+    assert.ok(group.content.indexOf(disc) < group.content.indexOf(core), 'existing crisp inset core keeps its paint order');
+    assert.equal(attribute(disc, 'fill'), fill);
+    for (const tag of [disc, core, group.content.match(/<text\b[^>]*>/)![0]]) {
+      assert.equal(attribute(tag, 'filter'), undefined, 'source fills, existing core and digits are not blurred');
+    }
+    for (const circle of [core, glow!]) {
+      assert.equal(attribute(circle, 'r'), '9');
+      assert.equal(attribute(circle, 'stroke-width'), '1');
+      assert.equal(outerRadius(circle), 9.5, 'thinner decorative line retains the semantic disc boundary');
+    }
+  }
+});
+
+test('each static highlight resolves a bounded namespaced glow without relying on path bounding-box area', () => {
+  const markup = renderBodygraph({}, null, { idPrefix: 'glow-bounds', selections: [
+    { type: 'gate', id: 1 }, { type: 'gate', id: 20 }, { type: 'center', id: 'root' }, { type: 'channel', id: '31-7' },
+  ] });
+  const filters = [...markup.matchAll(/<filter\b[^>]*>[\s\S]*?<\/filter>/g)].map(match => match[0]);
+  assert.equal(filters.length, 2, 'tiny translated gate circles and chart paths have their own bounded surfaces');
+  for (const [id, box] of [['glow-bounds-gate-glow', [-15, -15, 15, 15]], ['glow-bounds-highlight-glow', [0, 0, 640, 820]]] as const) {
+    const filter = filters.find(tag => attribute(tag, 'id') === id);
+    assert.ok(filter, `filter ${id} belongs to this chart`);
+    assert.equal(attribute(filter!, 'filterUnits'), 'userSpaceOnUse', 'horizontal/vertical paths must render even with a zero bbox dimension');
+    const x = Number(attribute(filter!, 'x')), y = Number(attribute(filter!, 'y'));
+    assert.ok(x <= box[0] && y <= box[1]);
+    assert.ok(x + Number(attribute(filter!, 'width')) >= box[2] && y + Number(attribute(filter!, 'height')) >= box[3]);
+    if (id.endsWith('gate-glow')) assert.ok(Number(attribute(filter!, 'width')) <= 40 && Number(attribute(filter!, 'height')) <= 40, 'each gate avoids a chart-sized offscreen surface');
+    const gate = id.endsWith('gate-glow');
+    assert.equal(attribute(filter!.match(/<feMorphology\b[^>]*>/)![0], 'radius'), gate ? '0.8' : '1.6');
+    assert.equal(attribute(filter!.match(/<feGaussianBlur\b[^>]*>/)![0], 'stdDeviation'), gate ? '1.6' : '2.4');
+    assert.equal((filter!.match(/<feGaussianBlur\b/g) || []).length, 1, 'only the wider halo blurs; the narrow core stays crisp');
+    assert.equal(attribute(filter!.match(/<feFuncA\b[^>]*>/)![0], 'slope'), gate ? '0.65' : '1');
+    assert.match(filter!, /<feMergeNode in="SourceGraphic"/);
+  }
+  for (const className of ['bg-channel-highlight', 'bg-center-highlight']) {
+    const paths = [...markup.matchAll(new RegExp(`<path class="${className}"[^>]*\\/>`, 'g'))];
+    assert.ok(paths.length, `${className} has paint`);
+    for (const [path] of paths) assert.equal(attribute(path, 'filter'), 'url(#glow-bounds-highlight-glow)');
+  }
+  const integrationLayer = markup.match(/<g class="bodygraph-integration-highlights"[^>]*>/)![0];
+  assert.equal(attribute(integrationLayer, 'filter'), 'url(#glow-bounds-highlight-glow)', 'bloom is applied after child masks so a partial arm keeps its exterior glow');
+  assert.equal(attribute(integrationLayer, 'mask'), 'url(#glow-bounds-integration-outline)', 'the final bloom is cut out of every physical interior, including dimmed inactive arms');
+  for (const className of ['bg-integration-hover', 'bg-integration-selection', 'bg-integration-focus']) {
+    const paths = [...markup.matchAll(new RegExp(`<path class="${className}"[^>]*\\/>`, 'g'))];
+    assert.ok(paths.length, `${className} has paint`);
+    for (const [path] of paths) {
+      assert.equal(attribute(path, 'filter'), undefined, 'child ownership masks shape the glow source before the shared filter');
+      assert.match(attribute(path, 'mask')!, /^url\(#glow-bounds-integration-/);
+    }
+  }
+  assert.match(markup, /<g data-highlight-gate="1" filter="url\(#glow-bounds-highlight-glow\)"/);
+  assert.doesNotMatch(markup, /<(?:animate|animateMotion)\b|stroke-dashoffset=/, 'glow has no travelling beam');
+});
+
 test('direct and related gate highlights use the same compact light-blue ring', () => {
   for (const gate of GATES) {
     const selected = gateGroups(renderBodygraph(allActive, { type: 'gate' as const, id: gate.id })).find(item => item.id === gate.id);
@@ -30,8 +150,8 @@ test('direct and related gate highlights use the same compact light-blue ring', 
     assert.equal(attribute(relatedRing!, 'stroke'), '#c4d9f1', `gate ${gate.id} has a light-blue related ring`);
     for (const name of ['r', 'stroke-width'] as const) assert.equal(attribute(selectedRing!, name), attribute(relatedRing!, name), `gate ${gate.id} ring size is independent of selection type`);
     for (const ring of [selectedRing, relatedRing] as const) {
-      assert.equal(attribute(ring!, 'r'), '8.5');
-      assert.equal(attribute(ring!, 'stroke-width'), '2');
+      assert.equal(attribute(ring!, 'r'), '9');
+      assert.equal(attribute(ring!, 'stroke-width'), '1');
       assert.equal(outerRadius(ring!), 9.5, 'highlight stays within the gate disc radius');
       assert.equal(attribute(ring!, 'opacity'), '1');
       assert.equal(attribute(ring!, 'pointer-events'), 'none');
@@ -168,7 +288,7 @@ test('integration hover uses a masked lower outline while keeping its source col
   assert.ok(integration.indexOf(hover) < integration.indexOf('data-junction="integration"'), 'hover stays below its own physical branches');
   assert.equal(attribute(hover, 'mask'), 'url(#bodygraph-integration-outline)');
   assert.equal(attribute(hover, 'stroke'), '#c4d9f1');
-  assert.equal(attribute(hover, 'stroke-width'), '13.2');
+  assert.equal(attribute(hover, 'stroke-width'), '8.448');
   assert.match(markup, /\.bodygraph-channels:has\(> \.bg-interactive\[data-type="integration"\]\[data-visual-selected="false"\]:hover\) > \.bodygraph-integration-highlights > \.bg-integration-hover\s*\{\s*opacity:\s*1;/);
   for (const gate of gateGroups(markup)) assert.equal(attribute(circle(gate, 'bg-gate-highlight')!, 'opacity'), '0', 'hover alone does not select gate numbers');
 });
@@ -179,7 +299,7 @@ test('selected integration arms keep lower outlines outside every branch interio
       { type: 'gate' as const, id }, { idPrefix: `arm-${id}` });
     const integration = markup.slice(markup.indexOf('<g class="bodygraph-channels">'), markup.indexOf('<g class="bodygraph-centers">'));
     const overlay = integration.match(/<path class="bg-integration-selection"[^>]*\/>/)![0];
-    assert.equal(attribute(overlay, 'stroke-width'), '13.2');
+    assert.equal(attribute(overlay, 'stroke-width'), '8.448');
     assert.equal(attribute(overlay, 'stroke-linecap'), 'round', `arm ${id} covers its masked terminal plane`);
     assert.equal(attribute(overlay, 'pointer-events'), 'none');
     assert.equal(attribute(overlay, 'mask'), `url(#arm-${id}-integration-selection-outline)`);
@@ -193,7 +313,7 @@ test('selected integration arms keep lower outlines outside every branch interio
     assert.equal((attribute(cutout, 'd')!.match(/M/g) || []).length, 5, 'all four branches and the stem cut out their interiors');
     assert.ok(attribute(cutout, 'd')!.includes(attribute(overlay, 'd')!), 'the selected branch is part of the complete physical-node cutout');
     assert.equal(attribute(cutout, 'stroke'), '#000000');
-    assert.equal(attribute(cutout, 'stroke-width'), '8.448', 'both activation lanes and their base outline remain visible');
+    assert.equal(attribute(cutout, 'stroke-width'), '6.072', 'both activation lanes remain untouched while blue replaces their outline');
     assert.equal(attribute(cutout, 'stroke-linecap'), 'round', 'cutout caps match the underlying physical node');
     assert.equal((attribute(overlay, 'd')!.match(/M/g) || []).length, 1, 'individual gate selection does not outline other branches');
   }
@@ -218,7 +338,7 @@ test('center hover and direct selection share one restrained outline without cha
     const after = groupContent(renderBodygraph(chart, { type: 'center' as const, id: center.id }), 'center', center.id);
     const hover = highlightPath(before!, 'bg-center-highlight'), selected = highlightPath(after!, 'bg-center-highlight');
     sameVisiblePaint(hover, selected, center.id);
-    assert.equal(attribute(hover!, 'stroke-width'), '2.5', 'center has no oversized glow');
+    assert.equal(attribute(hover!, 'stroke-width'), '1.25', 'center keeps a thin sharp core within its soft bloom');
     assert.equal(attribute(hover!, 'opacity'), '0');
     assert.equal(attribute(selected!, 'opacity'), '1');
     assert.equal(highlightPath(before!, 'bg-center-shape'), highlightPath(after!, 'bg-center-shape'), 'click does not recolor or resize the actual center');
@@ -232,11 +352,11 @@ test('ordinary channel clicks freeze the existing hover contour instead of chang
     const after = groupContent(renderBodygraph(allActive, { type: 'channel' as const, id: channel.id }), 'channel', channel.id);
     const hover = highlightPath(before!, 'bg-channel-highlight'), selected = highlightPath(after!, 'bg-channel-highlight');
     sameVisiblePaint(hover, selected, channel.id);
-    assert.equal(attribute(hover!, 'stroke-width'), '13.2');
+    assert.equal(attribute(hover!, 'stroke-width'), '8.448');
     assert.equal(attribute(hover!, 'opacity'), '0');
     assert.equal(attribute(selected!, 'opacity'), '1');
     assert.equal(highlightPath(before!, 'bg-channel-outline'), highlightPath(after!, 'bg-channel-outline'));
-    assert.ok(after!.indexOf(selected!) < after!.indexOf('class="bg-channel-outline"'), 'hover and click stay in the same background layer');
+    assert.ok(after!.indexOf(selected!) > after!.indexOf('class="bg-channel-outline"'), 'hover and click replace the same underlying outline');
   }
 });
 

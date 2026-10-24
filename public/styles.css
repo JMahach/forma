@@ -1316,3 +1316,17 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
   .loading-index { border-right: 0; padding: 16px; }
   .loading-index i { height: 112px; }
 }
+
+/* SmoothUI Fluid Hover Highlight: short, interruptible contour fades. */
+    .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus {
+      transition: opacity 69ms ease-out;
+    }
+    .bg-interactive:hover .bg-gate-highlight, .bg-interactive:hover .bg-gate-glow, .bg-interactive:hover .bg-center-highlight,
+    .bg-interactive:hover .bg-channel-highlight,
+    .bg-interactive:focus-visible .bg-gate-highlight, .bg-interactive:focus-visible .bg-gate-glow, .bg-interactive:focus-visible .bg-center-highlight,
+    .bg-interactive:focus-visible .bg-channel-highlight,
+    .bodygraph-channels:has(> .bg-interactive[data-type="integration"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover,
+    .bodygraph-channels:has(> .bg-interactive[data-type="integration"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { transition-duration: 92ms; }
+    @media (prefers-reduced-motion: reduce) {
+      .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus { transition: none !important; }
+    }

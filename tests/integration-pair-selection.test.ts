@@ -246,7 +246,7 @@ test('paired and explicit routes preserve same-fork cuts and restore continuous 
       assert.ok(outline.mask!.indexOf(footprint!) < outline.mask!.indexOf(interior!));
       assert.deepEqual(new Set(pathParts(attribute(footprint!, 'd')!)), new Set(pathParts(outline.path!)), 'the repaint follows only the complete selected route');
       assert.equal(attribute(interior!, 'd'), attribute(footprint!, 'd'));
-      for (const [element, stroke, width] of [[footprint, '#ffffff', '13.2'], [interior, '#000000', '8.448']] as const) {
+      for (const [element, stroke, width] of [[footprint, '#ffffff', '13.2'], [interior, '#000000', '6.072']] as const) {
         assert.equal(attribute(element!, 'fill'), 'none');
         assert.equal(attribute(element!, 'stroke'), stroke);
         assert.equal(attribute(element!, 'stroke-width'), width);

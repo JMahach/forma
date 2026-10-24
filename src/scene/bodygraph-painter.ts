@@ -1,9 +1,10 @@
+import { canSoften, softHighlightOpacity, softHighlightFragment, observeSoftHighlightMotion, SOFT_HIGHLIGHT_DURATION } from './soft-highlight.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
 import type { SelectionType } from '../selection/selection-targets.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { paintOrder } from './geometry/drawing-geometry.ts';
-import { PALETTE, CHANNEL_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
+import { PALETTE, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationStemPaint, channelPaint, centerPaint, gatePaint,
   integrationOutlineMask, integrationChannels, armPaintPoints } from './bodygraph-paint.ts';
 import { isSelectionPressed } from './render-state.ts';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.ts';
@@ -19,6 +20,7 @@ const coreKey = (state: RenderState, options: RenderOptions) => [state.personali
 // Targets never change identity when a minute, activation or selection changes.
 // Only a channel's variable lanes and the small integration masks are fragments.
 export function createBodygraphPainter(root: Element, initialState: RenderState | null = null, initialOptions: RenderOptions = {}) {
+  const disposeMotion = observeSoftHighlightMotion(root);
   const initialIntegration = initialState ? integrationPaint(initialState, initialOptions) : null;
   const drawing = root.querySelector('.bodygraph-drawing')!;
   const byType = (type: SelectionType, id: string | number) => drawing.querySelector<SVGElement>(`.bodygraph-${type === 'gate' ? 'gates' : type === 'center' ? 'centers' : 'channels'} [data-type="${type}"][data-id="${id}"]`)!;
@@ -27,18 +29,18 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
     const halo = node.querySelector('.bg-channel-highlight')!;
     const outline = node.querySelector('.bg-channel-outline')!;
     const hit = node.querySelector('.bg-focus-shape')!;
-    const children = [...node.children], paper = children[children.indexOf(outline) + 1];
+    const children = [...node.children], paper = children[children.indexOf(halo) + 1];
     const initialPaint = initialState ? channelPaint(channel, initialState, initialOptions) : null;
     return { channel, node, halo,
-      highlight: fragmentSlot(node, halo, children.slice(0, children.indexOf(halo)), initialPaint?.highlight),
+      highlight: softHighlightFragment(node, halo, children.slice(children.indexOf(outline) + 1, children.indexOf(halo)), initialPaint?.highlight),
       lanes: fragmentSlot(node, hit, children.slice(children.indexOf(paper) + 1, children.indexOf(hit)), initialPaint?.lanes) };
   });
   const centers = CENTERS.map(center => { const node = byType('center', center.id); return { center, node,
     shape: node.querySelector('.bg-center-shape'), halo: node.querySelector('.bg-center-highlight') }; });
   const gates = GATES.flatMap(gate => { const node = byType('gate', gate.id); return node ? [{ gate, node,
-    disc: node.querySelector('.bg-gate-disc'), halo: node.querySelector('.bg-gate-highlight'), text: node.querySelector('text') }] : []; });
+    disc: node.querySelector('.bg-gate-disc'), glow: node.querySelector('.bg-gate-glow'), halo: node.querySelector('.bg-gate-highlight'), text: node.querySelector('text') }] : []; });
   const integration = byType('integration', 'integration');
-  const background = [...integration.children].slice(0, 10);
+  const background = [...drawing.querySelector('.bodygraph-integration-outlines')!.children, ...[...integration.children].slice(0, 5)];
   const arms = [...integration.querySelectorAll<SVGElement>('.bg-integration-arm')].map(node => ({
     gate: Number(node.dataset.arm), node, lanes: fragmentSlot(node, null, [...node.childNodes],
       initialState ? paintGateActivation(armPaintPoints.get(Number(node.dataset.arm))!, initialState, Number(node.dataset.arm)) : undefined),
@@ -50,6 +52,34 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const highlights = drawing.querySelector('.bodygraph-integration-highlights')!;
   const focusHalos = [...highlights.querySelectorAll('.bg-integration-focus')];
   let selectionHalo = highlights.querySelector('.bg-integration-selection');
+  let selectionEnter: Animation | null = null;
+  let outgoing: { path: Element; mask: Element | null; animation: Animation } | null = null;
+  function retireSelection() {
+    outgoing?.animation.cancel(); outgoing?.path.remove(); outgoing?.mask?.remove(); outgoing = null;
+    if (!selectionHalo || !canSoften(selectionHalo)) return;
+    const path = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+    for (const name of selectionHalo.getAttributeNames()) path.setAttribute(name, selectionHalo.getAttribute(name)!);
+    path.setAttribute('data-soft-highlight-outgoing', 'paint');
+    path.removeAttribute('class');
+    const maskId = selectionHalo.getAttribute('mask')?.slice(5, -1);
+    const sourceMask = [...defs.children].find(node => node.id === maskId);
+    let mask: Element | null = null;
+    if (sourceMask) {
+      mask = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'mask');
+      for (const name of sourceMask.getAttributeNames()) mask.setAttribute(name, sourceMask.getAttribute(name)!);
+      mask.id = `${maskId}-outgoing`;
+      mask.setAttribute('data-soft-highlight-outgoing', 'mask');
+      mask.innerHTML = sourceMask.innerHTML;
+      defs.appendChild(mask);
+      path.setAttribute('mask', `url(#${mask.id})`);
+    }
+    const opacity = root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity;
+    highlights.insertBefore(path, selectionHalo);
+    const animation = path.animate([{ opacity }, { opacity: '0' }], { duration: SOFT_HIGHLIGHT_DURATION.exit, easing: 'ease-out' });
+    const retired = { path, mask, animation };
+    outgoing = retired;
+    animation.onfinish = () => { path.remove(); mask?.remove(); animation.cancel(); if (outgoing === retired) outgoing = null; };
+  }
   const focus = integrationChannels.map((channel, index) => ({ channel,
     target: byType('channel', channel.id), halo: focusHalos[index] }));
   const defs = root.querySelector('defs')!;
@@ -71,6 +101,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
     if (state.interactive) setAttribute(node, 'aria-pressed', Boolean(isSelectionPressed(state, type, id, fallback)));
   }
   return {
+    dispose: disposeMotion,
     update(state: RenderState, options: RenderOptions = {}) {
       const key = coreKey(state, options);
       if (key === previous) return false;
@@ -81,7 +112,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         const { channel, node, halo } = item, paint = channelPaint(channel, state, options);
         setAttributes(node, { 'data-defined': paint.defined, 'data-related': paint.related, opacity: paint.opacity });
         pressed(node, 'channel', channel.id, paint.selected, state);
-        setAttribute(halo, 'opacity', paint.selected ? 1 : 0);
+        softHighlightOpacity(halo, paint.selected ? 1 : 0);
         item.highlight(paint.highlight);
         item.lanes(paint.lanes);
       }
@@ -91,15 +122,18 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
         pressed(node, 'center', center.id, paint.selected, state);
         setAttributes(shape, { fill: paint.fill, stroke: paint.stroke });
-        setAttribute(halo, 'opacity', paint.selected ? 1 : 0);
+        softHighlightOpacity(halo, paint.selected ? 1 : 0);
       }
-      for (const { gate, node, disc, halo, text } of gates) {
+      for (const { gate, node, disc, glow, halo, text } of gates) {
         const paint = gatePaint(gate, state, options);
         setAttributes(node, { 'data-active': paint.active, 'data-related': paint.related, opacity: paint.opacity });
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
         pressed(node, 'gate', gate.id, paint.selected, state);
         setAttributes(disc, { fill: paint.fill, stroke: paint.stroke });
-        setAttributes(halo, { 'data-state': paint.highlightState, fill: paint.highlightFill, opacity: paint.highlightOpacity });
+        setAttribute(glow, 'fill', paint.highlightFill);
+        softHighlightOpacity(glow, paint.highlightOpacity);
+        setAttributes(halo, { 'data-state': paint.highlightState, fill: paint.highlightFill });
+        softHighlightOpacity(halo, paint.highlightOpacity);
         setAttributes(text, { 'font-weight': paint.textWeight, fill: paint.textFill });
       }
       const paint = integrationPaint(state, options);
@@ -117,15 +151,38 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         arm.lanes(paintGateActivation(armPaintPoints.get(arm.gate)!, state, arm.gate));
       }
       stem(integrationStemPaint(state, paint));
+      const selectionChanged = selectionHalo?.getAttribute('d') !== selectionPath
+        || selectionHalo?.getAttribute('mask') !== `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})`;
+      let reclaimedOpacity: string | undefined;
+      if (selectionChanged) {
+        if (!selectionHalo && outgoing && outgoing.path.getAttribute('d') === selectionPath && canSoften(outgoing.path)) {
+          reclaimedOpacity = root.ownerDocument.defaultView!.getComputedStyle(outgoing.path).opacity;
+          outgoing.animation.cancel(); outgoing.mask?.remove();
+          selectionHalo = outgoing.path;
+          selectionHalo.setAttribute('class', 'bg-integration-selection');
+          selectionHalo.removeAttribute('data-soft-highlight-outgoing');
+          highlights.insertBefore(selectionHalo, focusHalos[0]);
+          outgoing = null;
+        } else retireSelection();
+        selectionEnter?.cancel(); selectionEnter = null;
+      }
+      const enteringSelection = !selectionHalo;
       if (selectionPath) {
         if (!selectionHalo) {
           selectionHalo = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
           setAttributes(selectionHalo, { class: 'bg-integration-selection', fill: 'none', stroke: PALETTE.halo,
-            'stroke-width': CHANNEL_WIDTH.halo, 'stroke-linejoin': 'round', 'pointer-events': 'none' });
+            'stroke-width': CHANNEL_HIGHLIGHT_WIDTH, 'stroke-linejoin': 'round', 'pointer-events': 'none' });
           highlights.insertBefore(selectionHalo, focusHalos[0]);
         }
         setAttributes(selectionHalo, { d: selectionPath, 'stroke-linecap': integrationSelected ? 'butt' : 'round',
           mask: `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})` });
+        // A geometry change cross-fades its previous masked paint; fixed half halos
+        // elsewhere retain identity and never restart when their gate stays lit.
+        if (selectionChanged && canSoften(selectionHalo)) {
+          const animation = selectionHalo.animate([{ opacity: reclaimedOpacity ?? (enteringSelection || outgoing ? '0' : root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity) }, { opacity: '1' }], { duration: SOFT_HIGHLIGHT_DURATION.enter, easing: 'ease-out' });
+          selectionEnter = animation;
+          animation.onfinish = () => { if (selectionEnter === animation) selectionEnter = null; animation.cancel(); };
+        }
       } else { selectionHalo?.remove(); selectionHalo = null; }
       for (const { channel, target, halo } of focus) {
         setAttributes(target, { 'data-defined': definedChannels.has(channel.id), 'data-related': relatedChannels.has(channel.id), opacity: integrationFocusOpacity(channel) });

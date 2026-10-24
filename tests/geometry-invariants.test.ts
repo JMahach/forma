@@ -290,16 +290,18 @@ test('red and black halves belong to the correct endpoint and dual activations s
     assert.equal(blackLanes.length, 2);
     assert.equal(redLanes.length, 2);
     for (let half = 0; half < 2; half++) {
-      assert.equal(blackLanes[half].width, redLanes[half].width, `${channel.id} both sources have equal lane width`);
+      assert.equal(blackLanes[half].width, 3.3, `${channel.id} black closes the central seam`);
+      assert.equal(redLanes[half].width, 3.036, `${channel.id} red retains its width`);
       assert.ok(blackLanes[half].width < black[0].width, `${channel.id} dual lanes are not drawn over each other`);
       const blackPoints = polylinePoints(blackLanes[half].path), redPoints = polylinePoints(redLanes[half].path);
       assert.equal(blackPoints.length, redPoints.length);
       for (let i = 0; i < blackPoints.length; i++) {
         const separation = distance(blackPoints[i], redPoints[i]);
-        assert.ok(Math.abs(separation - 3.168) < 0.015, `${channel.id} dual lanes stay separated at sample ${i}`);
+        assert.ok(Math.abs(separation - 3.036) < 0.015, `${channel.id} dual lanes retain their intended offsets at sample ${i}`);
+        assert.ok((blackLanes[half].width + redLanes[half].width) / 2 > separation, `${channel.id} has no white seam at sample ${i}`);
       }
       const endpoint = half ? blackPoints.length - 1 : 0;
-      const center = blackPoints[endpoint].map((value, axis) => (value + redPoints[endpoint][axis]) / 2);
+      const center = blackPoints[endpoint].map((value, axis) => (value * 1.584 + redPoints[endpoint][axis] * 1.452) / 3.036);
       const gate = half ? second : first;
       assert.ok(distance(center, [gate!.x, gate!.y]) < 0.015, `${channel.id} dual lanes center on gate ${gate!.id}`);
     }
@@ -321,7 +323,7 @@ test('integration is drawn once with exactly four arms and six logical connectio
     const endpoint = INTEGRATION_ARMS.find(arm => arm.gate === Number(gateId))!.reversePaint ? -1 : 0;
     const a = polylinePoints(black[0].path).at(endpoint), b = polylinePoints(red[0].path).at(endpoint);
     const gate = getGate(gateId);
-    assert.ok(distance(a!.map((value, axis) => (value + b![axis]) / 2), [gate!.x, gate!.y]) < 0.015,
+    assert.ok(distance(a!.map((value, axis) => (value * 1.584 + b![axis] * 1.452) / 3.036), [gate!.x, gate!.y]) < 0.015,
       `integration arm ${gateId} starts at its gate`);
   }
 });

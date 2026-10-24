@@ -76,35 +76,44 @@ function inspect(markup: string) {
 }
 
 // Derived from the prior physical baseline by multiplying only stroke widths
-// and dual-lane offsets by 1.32. Every path and paint-order token is still covered.
+// and dual-lane offsets by 1.32. The dual baseline also includes the requested
+// black seam closure, checked independently in channel-width and seam tests.
+// Every path and paint-order token is still covered.
 const physicalBaselines = {
   inactive: 'e15a45c4e5ed90cded75ee1dbde0b5850759338a6aa14815f3568763f8eb4575',
   black: '49463a2bac593396162bad40b7e9d13eabbc6511748c4b4e510b8bdc0f36d1d5',
   red: '445b1978857ddd33252ccd656442999f25dceebd7b4dd98965e5fe0bc81fdcc0',
-  dual: '418947bd62abb7f8425f42d5df054eb313eb70c662a0bebd46034684a3468a11',
+  dual: 'd6bd6efca30592a3839412e7c68d1ae087689558384b3f16c94ca8ca0772e7f7',
   mixed: '5841b8767a0a3b6c4be97285808dde78e70cf96a10d12a5e4e9c8da602417e7a',
 };
 
 for (const mode of modes) {
-  test(`${mode.name}: integration halos paint above ordinary channels and below physical integration`, () => {
+  test(`${mode.name}: integration blue replaces the physical outline beneath source interiors`, () => {
     for (const [state, chart] of Object.entries(charts)) {
       const { nodes, channels, layer, halos, physical } = inspect(render(chart, mode));
       const ordinaryTargets = channels!.children.filter(node => node.attrs['data-type'] === 'channel' && node.attrs['data-integration'] !== 'true');
       const physicalIntegration = nodes.find(node => node.attrs['data-junction'] === 'integration');
-      const ordinaryPhysical = physical.filter(node => !inside(node, physicalIntegration));
+      const outlineLayer = nodes.find(node => hasClass(node, 'bodygraph-integration-outlines'));
+      assert.ok(outlineLayer, 'the five unchanged physical outlines have their own lower paint owner');
+      const outlinePaths = physical.filter(node => inside(node, outlineLayer));
+      const ordinaryPhysical = physical.filter(node => !inside(node, physicalIntegration) && !inside(node, outlineLayer));
       const integrationPhysical = physical.filter(node => inside(node, physicalIntegration));
       assert.equal(ordinaryTargets.length, 30);
-      assert.equal(channels!.children[ordinaryTargets.length], layer, 'the halo layer follows every ordinary channel target');
-      assert.equal(channels!.children[ordinaryTargets.length + 1], physicalIntegration, 'physical integration immediately follows its highlight layer');
+      assert.equal(channels!.children[ordinaryTargets.length], outlineLayer);
+      assert.equal(channels!.children[ordinaryTargets.length + 1], layer, 'blue paints over the original outline');
+      assert.equal(channels!.children[ordinaryTargets.length + 2], physicalIntegration, 'semantic interiors immediately follow blue');
       assert.ok(ordinaryTargets.every(target => target.end <= layer.start), 'adjacent SVG groups may share an exclusive end/start offset');
       assert.equal(layer.parent, channels);
       assert.equal(layer.attrs['pointer-events'], 'none');
       assert.equal(halos.length, mode.name === 'idle' ? 7 : 8, 'hover, six keyboard halos and any current selection share this layer');
       assert.ok(ordinaryPhysical.length >= 60, 'every ordinary physical channel path is checked');
-      assert.ok(integrationPhysical.length >= 10, 'every physical integration path is checked');
+      assert.equal(outlinePaths.length, 5, 'four arm outlines and the stem retain their original geometry');
+      assert.ok(integrationPhysical.length >= 5, 'every integration interior is checked');
       for (const halo of halos) {
         assert.ok(inside(halo, layer));
         assert.equal(halo.attrs['pointer-events'], 'none');
+        assert.equal(halo.attrs['stroke-width'], '8.448', 'blue exactly coincides with the existing outline');
+        for (const path of outlinePaths) assert.ok(path.end < halo.start, 'original gray outline is covered by blue');
         for (const path of ordinaryPhysical) assert.ok(path.end < halo.start, `${state}: every integration halo paints above every ordinary physical path`);
         for (const path of integrationPhysical) assert.ok(halo.end < path.start, `${state}: every physical integration stroke paints above every integration halo`);
       }
@@ -187,6 +196,8 @@ test('focus and hover CSS route interactive state to the matching lower highligh
     assert.ok(rule!.selector.includes(`[data-integration="true"][data-id="${id}"]:focus-visible)`));
     assert.ok(rule!.selector.includes(`> .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${id}"]`));
     assert.match(rule!.body, /opacity\s*:\s*var\(--integration-focus-opacity,\s*1\)\s*;/);
+    assert.match(rule!.body, /transition-duration\s*:\s*92ms\s*;/,
+      'only this matched focus route enters for 92ms; a route losing focus returns to the 69ms base');
   }
   for (const state of ['hover', 'focus-visible'] as const) {
     const rule = rules.find(rule => rule.selector.includes(`:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:${state})`));

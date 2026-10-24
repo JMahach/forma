@@ -25,6 +25,12 @@ function visibleArtwork(markup: string) {
     if (node.localName === 'style' || node.getAttribute('opacity') === '0'
       || node.localName === 'path' && node.getAttribute('fill') === 'none' && node.getAttribute('stroke') === 'transparent') node.remove();
   }
+  // A highlight group's children can all be invisible. Remove that empty owner
+  // before collecting references so its SourceGraphic-only glow is not retained
+  // as a resource used by visible artwork.
+  for (const node of all(root).reverse()) {
+    if (node.localName === 'g' && !node.children.length && !node.textContent.trim()) node.remove();
+  }
   const resources = new Map(root.querySelectorAll('defs').flatMap(defs => defs.children.map(node => [node.getAttribute('id'), node])));
   const used = new Set();
   function references(node: SvgElement&SVGElement) {

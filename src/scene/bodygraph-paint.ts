@@ -8,8 +8,8 @@ import { pointString, offsetPoints, splitAtHalfLength, channelHalves, INTEGRATIO
 import { PALETTE } from '../ui/chart-palette.ts';
 export { PALETTE } from '../ui/chart-palette.ts';
 
-import { CHANNEL_WIDTH } from './geometry/drawing-presentation.ts';
-export { CHANNEL_WIDTH } from './geometry/drawing-presentation.ts';
+import { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH } from './geometry/drawing-presentation.ts';
+export { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH } from './geometry/drawing-presentation.ts';
 
 export function integrationOutlineMask(id: string, gates: readonly number[] = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates: readonly number[] = [], activeParts: readonly string[] = []) {
   const whole = gates.length === 4 && includeStem;
@@ -28,8 +28,10 @@ export function integrationOutlineMask(id: string, gates: readonly number[] = [2
   const connectedPath = connectedParts.join(' ');
   const occludedPath = activeParts.filter(path => !connectedParts.includes(path)).join(' ');
   const continuous = connectedPath
-    ? `<path class="bg-integration-connected-footprint" d="${connectedPath}" fill="none" stroke="#ffffff" stroke-width="${CHANNEL_WIDTH.halo}" stroke-linecap="round" stroke-linejoin="round"/><path class="bg-integration-connected-interior" d="${connectedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round"/>${occludedPath ? `<path class="bg-integration-connected-occlusion" d="${occludedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round"/>` : ''}` : '';
-  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="820"><rect x="0" y="0" width="640" height="820" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
+    ? `<path class="bg-integration-connected-footprint" d="${connectedPath}" fill="none" stroke="#ffffff" stroke-width="${CHANNEL_WIDTH.halo}" stroke-linecap="round" stroke-linejoin="round"/><path class="bg-integration-connected-interior" d="${connectedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>${occludedPath ? `<path class="bg-integration-connected-occlusion" d="${occludedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round"/>` : ''}` : '';
+  // Preserve the semantic interior while allowing blue to replace its outline.
+  // Unselected active neighbors above retain protection through their full edge.
+  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="820"><rect x="0" y="0" width="640" height="820" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
 }
 
 
@@ -48,7 +50,7 @@ function stroke(points: number[][], color: string, width: number, offset = 0) {
 export const activationLaneColor = (state: RenderState, lane: number) => state.overlaySources
   ? OVERLAY_PALETTE[lane === 0 ? 'cycle' : 'natal'] : PALETTE[lane === 0 ? 'ink' : 'design'];
 const paintActivation = (points: number[][], first: boolean, second: boolean, state: RenderState) => first && second
-  ? stroke(points, activationLaneColor(state, 0), CHANNEL_WIDTH.lane, -CHANNEL_WIDTH.laneOffset) + stroke(points, activationLaneColor(state, 1), CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
+  ? stroke(points, activationLaneColor(state, 0), CHANNEL_WIDTH.firstLane, -CHANNEL_WIDTH.firstLaneOffset) + stroke(points, activationLaneColor(state, 1), CHANNEL_WIDTH.lane, CHANNEL_WIDTH.laneOffset)
   : first || second ? stroke(points, activationLaneColor(state, first ? 0 : 1), CHANNEL_WIDTH.paint) : '';
 
 // General graph paint shows two origins. The four independent source bits
@@ -68,7 +70,7 @@ export function channelPaint(channel: typeof CHANNELS[number], state: RenderStat
   return { selected, related, defined: state.definedChannels.has(channel.id),
     opacity: options.dimInactive && !active && !related ? .2 : 1,
     highlight: selected ? '' : channelHalves.get(channel.id)!.map((points, index) => state.halfGates.has(channel.gates[index])
-      ? `<g data-highlight-gate="${channel.gates[index]}">${stroke(points, PALETTE.halo, CHANNEL_WIDTH.halo)}</g>` : '').join(''),
+      ? `<g data-highlight-gate="${channel.gates[index]}" filter="url(#${state.prefix}-highlight-glow)">${stroke(points, PALETTE.halo, CHANNEL_HIGHLIGHT_WIDTH)}</g>` : '').join(''),
     lanes: channelHalves.get(channel.id)!.map((points, index) => paintGateActivation(points, state, channel.gates[index])).join(''),
   };
 }

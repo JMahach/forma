@@ -115,7 +115,7 @@ test('adopted integration masks and lanes survive unrelated selections and repai
   const selection = { type: 'gate' as const, id: 41 };
   h.renderer.update(chart, selection, options);
   assert.equal(h.document.parses.length, 1, 'only the newly selected ordinary half-channel is parsed');
-  assert.match(h.document.parses[0].markup, /^<g data-highlight-gate="41">/);
+  assert.match(h.document.parses[0].markup, /^<g data-highlight-gate="41"[\s>]/);
   assertSameNodes(h.root.querySelectorAll('mask path'), maskParts);
   assertRendered(h.root, chart, selection, options);
   for (const gates of [[], [10], [10, 20], [10, 20, 34, 57]] as const) {

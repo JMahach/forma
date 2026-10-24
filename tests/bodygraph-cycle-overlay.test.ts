@@ -31,12 +31,12 @@ const gate = (root: SvgElement, id: number) => root.querySelector(`.bodygraph-ga
 const center = (root: SvgElement, id: string) => root.querySelector(`.bodygraph-centers [data-id="${id}"] .bg-center-shape`);
 const coloredPaths = (node: (SvgElement&SVGElement)|null) => node!.querySelectorAll('path').filter((path) => [NATAL, CYCLE].includes(path.getAttribute('stroke')!));
 
-test('shared overlay lanes and gate halves retain the baseline geometry independently of their colors', () => {
+test('shared overlay lanes use the same closed black-red seam as ordinary channels', () => {
   const { root } = svg(overlayFixture(chart([63, 4]), chart([63, 4]), RETURN_OVERLAY));
   const channel = root.querySelector('.bodygraph-channels [data-id="4-63"]');
-  const paths = channel!.querySelectorAll('path').filter((path) => path.getAttribute('stroke-width') === '3.036');
+  const paths = coloredPaths(channel);
   assert.deepEqual(paths.map((path) => path.getAttribute('d')!.split(' ')[0]),
-    ['M342.58,106.00', 'M339.42,106.00', 'M342.58,131.00', 'M339.42,131.00']);
+    ['M342.45,106.00', 'M339.42,106.00', 'M342.45,131.00', 'M339.42,131.00']);
 });
 
 test('shared gate discs have exactly two adjoining fifty-percent halves', () => {
@@ -46,7 +46,7 @@ test('shared gate discs have exactly two adjoining fifty-percent halves', () => 
   assert.deepEqual(stops.map(stop => stop.getAttribute('offset')), ['50%', '50%']);
 });
 
-test('four source facts use the original black-red lane positions and fifty-fifty gate disc', () => {
+test('four source facts use two adjoining black-red lanes and a fifty-fifty gate disc', () => {
   const gates = [63, 4, 20, 34], overlay = overlayFixture(chart(gates, gates), chart(gates, gates), RETURN_OVERLAY);
   const state = createRenderState(overlay, null, {}), { root } = svg(overlay);
   assert.equal(state.overlaySources!.masks.get(63), 15, 'four independent source facts remain available to detail');
@@ -54,16 +54,17 @@ test('four source facts use the original black-red lane positions and fifty-fift
   const paths = coloredPaths(channel);
   assert.equal(paths.length, 4, 'each channel half contains two origins, never four thin lanes');
   assert.deepEqual(paths.map(path => path.getAttribute('stroke')), [CYCLE, NATAL, CYCLE, NATAL]);
-  for (const path of paths) assert.equal(path.getAttribute('stroke-width'), '3.036');
+  assert.deepEqual(paths.map(path => path.getAttribute('stroke-width')), ['3.3', '3.036', '3.3', '3.036']);
   assert.deepEqual(paths.map((path) => path.getAttribute('d')!.split(' ')[0]),
-    ['M342.58,106.00', 'M339.42,106.00', 'M342.58,131.00', 'M339.42,131.00']);
+    ['M342.45,106.00', 'M339.42,106.00', 'M342.45,131.00', 'M339.42,131.00']);
   const arm = coloredPaths(root.querySelector('.bg-integration-arm[data-arm="20"]'));
   assert.deepEqual(arm.map((path) => [path.getAttribute('stroke'), path.getAttribute('stroke-width'), path.getAttribute('d')!.split(' ')[0]]),
-    [[CYCLE, '3.036', 'M284.26,303.56'], [NATAL, '3.036', 'M283.74,300.44']]);
+    [[CYCLE, '3.3', 'M284.24,303.43'], [NATAL, '3.036', 'M283.74,300.44']]);
   assert.equal(Number(channel!.querySelector('.bg-channel-outline')!.getAttribute('stroke-width')), CHANNEL_WIDTH.outline);
   const shared = gate(root, 63), disc = shared!.querySelector('.bg-gate-disc');
   assert.equal(disc!.getAttribute('r'), '9.5'); assert.equal(disc!.getAttribute('stroke'), 'none');
-  assert.equal(shared!.querySelectorAll('circle').length, 3, 'the existing hit area, disc and selection halo remain the only gate marks');
+  assert.deepEqual(shared!.querySelectorAll('circle').map(node => node.getAttribute('class')),
+    [null, 'bg-gate-glow', 'bg-gate-disc', 'bg-gate-highlight'], 'a lower bloom joins the existing hit area, semantic disc and crisp core without extra source marks');
   assert.equal(shared!.querySelectorAll('path').length, 0, 'source ownership adds no arcs or extra outlines');
   const gradientId = disc!.getAttribute('fill')!.match(/^url\(#(.+)\)$/)?.[1];
   const stops = root.querySelector(`linearGradient[id="${gradientId}"]`)!.querySelectorAll('stop');

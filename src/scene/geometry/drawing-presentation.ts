@@ -11,4 +11,11 @@ const channelWidth = (value: number) => Number((value * CHANNEL_WIDTH_SCALE).toF
 export const CHANNEL_WIDTH = Object.freeze({
   outline: channelWidth(6.4), paint: channelWidth(4.6),
   lane: channelWidth(2.3), laneOffset: channelWidth(1.2), halo: channelWidth(10),
+  // First source (black) fills the middle gap with a small overlap beneath red.
+  // Width and offset move together, keeping its outer edge in the same place.
+  firstLane: channelWidth(2.5), firstLaneOffset: channelWidth(1.1),
 });
+
+// Blue replaces the physical outline; only its soft bloom extends beyond it.
+// Ownership footprints and keyboard bounds keep CHANNEL_WIDTH.halo.
+export const CHANNEL_HIGHLIGHT_WIDTH = CHANNEL_WIDTH.outline;

@@ -20,6 +20,45 @@ function assertEquivalent(actual: SvgElement, expected: SvgElement) {
   }
 }
 
+test('adding the opposite gate keeps canonical half order and the existing halo node', () => {
+  const chart = { design: [], personality: [] };
+  const initialOptions = { selections: [{ type: 'gate' as const, id: 1 }] };
+  const { root } = render(chart, null, initialOptions);
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, initialOptions), initialOptions);
+  const retained = root.querySelector('[data-highlight-gate="1"]');
+  const options = { selections: [...initialOptions.selections, { type: 'gate' as const, id: 8 }] };
+  painter.update(createRenderState(chart, null, options), options);
+  const expected = render(chart, null, options).root;
+  const order = (node: SvgElement) => [...node.querySelectorAll('[data-highlight-gate]')].map(half => half.getAttribute('data-highlight-gate'));
+  assert.deepEqual(order(root), order(expected), 'halves use canonical order regardless of selection history');
+  assert.equal(root.querySelector('[data-highlight-gate="1"]'), retained);
+  assertEquivalent(root, expected);
+});
+
+test('newly created persistent integration and gate highlights retain namespaced glow paint', () => {
+  const chart = { design: [20], personality: [31] }, initialOptions = { idPrefix: 'new-glow' };
+  const { root } = render(chart, null, initialOptions);
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, initialOptions), initialOptions);
+  for (const id of [20, 31, 1]) {
+    const options = { ...initialOptions, previewSelection: { type: 'gate' as const, id } };
+    painter.update(createRenderState(chart, null, options), options);
+    const gate = root.querySelector(`.bodygraph-gates [data-id="${id}"]`)!;
+    assert.equal(gate.querySelector('.bg-gate-glow')?.getAttribute('filter'), 'url(#new-glow-gate-glow)');
+    assert.equal(gate.querySelector('.bg-gate-glow')?.getAttribute('opacity'), '1');
+    if (id === 20) {
+      const selection = root.querySelector('.bg-integration-selection')!;
+      assert.equal(selection.getAttribute('filter'), null, 'new path is masked before the shared bloom');
+      assert.equal(selection.getAttribute('stroke-width'), '8.448', 'dynamic selection replaces the same physical outline as static paint');
+      assert.equal(selection.parentElement!.getAttribute('filter'), 'url(#new-glow-highlight-glow)');
+      assert.equal(selection.parentElement!.getAttribute('mask'), 'url(#new-glow-integration-outline)');
+    }
+    if (id === 1) assert.equal(root.querySelector('[data-highlight-gate="1"]')?.getAttribute('filter'), 'url(#new-glow-highlight-glow)');
+    assertEquivalent(root, render(chart, null, options).root);
+  }
+  painter.update(createRenderState(chart, null, initialOptions), initialOptions);
+  assertEquivalent(root, render(chart, null, initialOptions).root);
+});
+
 test('persistent body paint matches the static renderer across activations, previews and integration masks', () => {
   const initial = { design: [], personality: [] };
   const { root } = render(initial, null, {});
@@ -132,4 +171,89 @@ test('focus masks follow every inactive, personality, design and dual-source int
     previousActive = active;
     previousChildren = masks.map(node => [...node.childNodes]);
   }
+});
+
+test('center to gate preview retains the shared ordinary half halo node', () => {
+  const chart = { design: [], personality: [] };
+  const initialOptions = { previewSelection: { type: 'center' as const, id: 'g' } };
+  const { root } = render(chart, null, initialOptions);
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, initialOptions), initialOptions);
+  const shared = root.querySelector('[data-highlight-gate="1"]');
+  assert.ok(shared);
+  const options = { previewSelection: { type: 'gate' as const, id: 1 } };
+  painter.update(createRenderState(chart, null, options), options);
+  assert.equal(root.querySelector('[data-highlight-gate="1"]'), shared, 'shared highlight remains continuously painted');
+});
+
+test('integration outgoing paint keeps its old mask and remains bounded during rapid changes', () => {
+  const chart = { design: [], personality: [] };
+  const options = { previewSelection: { type: 'gate' as const, id: 10 } };
+  const { root, document } = render(chart, null, options);
+  const animations: Animation[] = [];
+  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: node => ({ opacity: node.getAttribute('opacity') ?? '1' }) } });
+  const create = document.createElementNS.bind(document);
+  document.createElementNS = (ns, tag) => {
+    const node = create(ns, tag);
+    node.animate = () => { const animation = { cancel() {}, onfinish: null } as unknown as Animation; animations.push(animation); return animation; };
+    return node;
+  };
+  for (const node of root.querySelectorAll('path')) node.animate = () => { const animation = { cancel() {}, onfinish: null } as unknown as Animation; animations.push(animation); return animation; };
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, options), options);
+  const oldMask = root.querySelector('mask[id="bodygraph-integration-selection-outline"]')!.innerHTML;
+  const change = id => { const next = { previewSelection: { type: 'gate' as const, id } }; painter.update(createRenderState(chart, null, next), next); };
+  change(20);
+  const outgoing = root.querySelector('[data-soft-highlight-outgoing="paint"]');
+  assert.ok(outgoing, 'old geometry remains during exit');
+  const mask = root.querySelector('[data-soft-highlight-outgoing="mask"]');
+  assert.ok(mask);
+  assert.equal(mask.innerHTML, oldMask, 'outgoing arm retains its own occlusion');
+  assert.equal(outgoing.getAttribute('mask'), `url(#${mask.id})`);
+  assert.equal(outgoing.getAttribute('filter'), null, 'retiring geometry keeps its exact mask before the shared bloom');
+  assert.equal(outgoing.parentElement!.getAttribute('filter'), 'url(#bodygraph-highlight-glow)', 'retiring geometry retains the same stationary bloom owner');
+  for (const gate of [34, 57, 10, 20]) {
+    change(gate);
+    assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing="paint"]').length, 1);
+    assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing="mask"]').length, 1);
+  }
+  for (const animation of animations) animation.onfinish?.({} as AnimationPlaybackEvent);
+  assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing]').length, 0);
+});
+
+test('rapid integration geometry changes cancel the previous enter effect on the retained path', () => {
+  const chart = { design: [], personality: [] }, options = { previewSelection: { type: 'gate' as const, id: 10 } };
+  const { root, document } = render(chart, null, options);
+  let active = 0;
+  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: () => ({ opacity: '0.5' }) } });
+  const create = document.createElementNS.bind(document);
+  document.createElementNS = (ns, tag) => { const node = create(ns, tag); node.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation); return node; };
+  const path = root.querySelector('.bg-integration-selection')!;
+  path.animate = (_frames, options) => {
+    assert.equal((options as KeyframeAnimationOptions).duration, 92, 'retained integration geometry enters with the shared duration');
+    active++; let cancelled = false; return { cancel() { if (!cancelled) { cancelled = true; active--; } }, onfinish: null } as unknown as Animation;
+  };
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, options), options);
+  for (const id of [20, 34, 57, 10]) {
+    const next = { previewSelection: { type: 'gate' as const, id } };
+    painter.update(createRenderState(chart, null, next), next);
+    assert.equal(active, 1, 'one enter effect belongs to the current integration geometry');
+  }
+});
+
+test('integration re-entry reclaims the exiting contour and its current opacity', () => {
+  const chart = { design: [], personality: [] }, options = { previewSelection: { type: 'gate' as const, id: 10 } };
+  const { root, document } = render(chart, null, options);
+  const frames: Keyframe[][] = [];
+  const durations: number[] = [];
+  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: () => ({ opacity: '0.4' }) } });
+  const create = document.createElementNS.bind(document);
+  document.createElementNS = (ns, tag) => { const node = create(ns, tag); node.animate = (values, settings) => { frames.push(values as Keyframe[]); durations.push((settings as KeyframeAnimationOptions).duration as number); return { cancel() {}, onfinish: null } as unknown as Animation; }; return node; };
+  root.querySelector('.bg-integration-selection')!.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation);
+  const painter = createBodygraphPainter(root, createRenderState(chart, null, options), options);
+  painter.update(createRenderState(chart, null, {}), {});
+  const retiring = root.querySelector('[data-soft-highlight-outgoing="paint"]');
+  painter.update(createRenderState(chart, null, options), options);
+  assert.ok(root.querySelector('.bg-integration-selection') === retiring, 'same contour is reclaimed during exit');
+  assert.equal(frames.at(-1)![0].opacity, '0.4', 're-entry continues from current paint');
+  assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing]').length, 0);
+  assert.deepEqual(durations, [69, 92], 'outgoing and reclaimed integration paint use the shared 15% longer timing');
 });

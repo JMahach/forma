@@ -53,7 +53,7 @@ test('overlay uses two distinct origins consistently while retaining four source
       assert.equal(root.querySelector('linearGradient'), gradient, 'the mounted gradient survives chart changes');
       assert.deepEqual(gradient!.querySelectorAll('stop').map(stop => stop.getAttribute('stop-color')), expected);
       const channel = root.querySelector('.bodygraph-channels [data-id="4-63"]');
-      const lanes = channel!.querySelectorAll('path').filter((path) => path.getAttribute('stroke-width') === '3.036');
+      const lanes = channel!.querySelectorAll('path').filter((path) => ['3.3', '3.036'].includes(path.getAttribute('stroke-width')!));
       assert.deepEqual(lanes.map(path => path.getAttribute('stroke')), expected);
       const fresh = svgDocument().createElementNS(SVG_NS, 'svg');
       fresh.innerHTML = renderBodygraph(chart);

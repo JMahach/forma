@@ -29,6 +29,7 @@ export function createSceneRenderer(root: Element) {
   let drawing: Element | null = null;
   let structure: string | null = null, backdropKey: string | undefined, variableKey: string | undefined;
   function mount(chart: ChartView, state: RenderState, options: RenderOptions) {
+    body?.dispose();
     const variables = visibleVariables(chart, options);
     variableKey = JSON.stringify(variables);
     root.innerHTML = renderBodygraphState(chart, state, options, renderVariableArrows(chart, variables));
@@ -88,6 +89,6 @@ export function createSceneRenderer(root: Element) {
       columns!.update(chart, state, options);
       return state;
     },
-    clear() { root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; backdropKey = variableKey = undefined; },
+    clear() { body?.dispose(); root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; backdropKey = variableKey = undefined; },
   };
 }

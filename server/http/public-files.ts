@@ -125,6 +125,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/ui/overlay-palette.ts',
     'src/ui/chart-palette.ts',
     'src/scene/svg-patches.ts',
+    'src/scene/soft-highlight.ts',
     'src/scene/updates.ts',
     'src/scene/variable-arrows.ts',
     'src/selection/hover-preview.ts',

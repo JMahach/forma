@@ -9,7 +9,7 @@ import { INTEGRATION_IDS } from '../src/domain/topology.ts';
 
 // Independent output requirements, deliberately not imported from the renderer:
 // Another 10% after the first 20% increase: 1.2 × 1.1 = 1.32 overall.
-const WIDTH = { outline: 8.448, paint: 6.072, lane: 3.036, offset: 1.584, halo: 13.2 };
+const WIDTH = { outline: 8.448, paint: 6.072, lane: 3.036, offset: 1.584, firstLane: 3.3, firstOffset: 1.452, halo: 13.2 };
 const allGates = Array.from({ length: 64 }, (_, index) => index + 1);
 const charts = {
   empty: {}, black: { personality: allGates }, red: { design: allGates },
@@ -67,7 +67,7 @@ test('all ordinary channel outlines, inactive interiors and source paint are 32%
       assert.equal(attribute(outline[0], 'd'), path, `${id}: centerline remains the authored curve`);
       assertWidths(colored(tags, '#ffffff'), 1, WIDTH.paint, `${mode} ${id}: white interior`);
       assertWidths(colored(tags, '#202020'), mode === 'black' || mode === 'dual' ? 2 : 0,
-        mode === 'dual' ? WIDTH.lane : WIDTH.paint, `${mode} ${id}: black source`);
+        mode === 'dual' ? WIDTH.firstLane : WIDTH.paint, `${mode} ${id}: black source`);
       assertWidths(colored(tags, '#c32d35'), mode === 'red' || mode === 'dual' ? 2 : 0,
         mode === 'dual' ? WIDTH.lane : WIDTH.paint, `${mode} ${id}: red source`);
     }
@@ -78,11 +78,11 @@ test('all four integration arms and both stem halves use the same increased widt
   for (const [mode, chart] of Object.entries(charts)) {
     const markup = renderBodygraph(chart), content = target(markup, 'integration', 'integration');
     const backgroundAndStem = directPaths(content);
-    assertWidths(colored(backgroundAndStem, '#c6c2b9'), 5, WIDTH.outline, `${mode}: four outlines and stem`);
+    assertWidths(paths(group(markup, tag => hasClass(tag, 'bodygraph-integration-outlines'))), 5, WIDTH.outline, `${mode}: four outlines and stem`);
     assertWidths(colored(backgroundAndStem, '#ffffff'), 5, WIDTH.paint, `${mode}: four white interiors and stem`);
     const checkSource = (tags: string[], count: number, label: string) => {
       assertWidths(colored(tags, '#202020'), mode === 'black' || mode === 'dual' ? count : 0,
-        mode === 'dual' ? WIDTH.lane : WIDTH.paint, `${mode}: ${label}, black`);
+        mode === 'dual' ? WIDTH.firstLane : WIDTH.paint, `${mode}: ${label}, black`);
       assertWidths(colored(tags, '#c32d35'), mode === 'red' || mode === 'dual' ? count : 0,
         mode === 'dual' ? WIDTH.lane : WIDTH.paint, `${mode}: ${label}, red`);
     };
@@ -108,22 +108,26 @@ function assertLaneOffsets(single: string[], dual: string[], label: string) {
       const a = black[index][step], b = red[index][step];
       // These measurements use rendered polylines, not the renderer's offset
       // helper. Two-decimal SVG coordinates allow at most 0.015px rounding.
-      near(Math.hypot(a[0] - point[0], a[1] - point[1]), WIDTH.offset, 0.015, `${label}: black offset`);
+      near(Math.hypot(a[0] - point[0], a[1] - point[1]), WIDTH.firstOffset, 0.015, `${label}: black offset`);
       near(Math.hypot(b[0] - point[0], b[1] - point[1]), WIDTH.offset, 0.015, `${label}: red offset`);
-      near(Math.hypot(a[0] - b[0], a[1] - b[1]), 3.168, 0.015, `${label}: lane separation`);
-      near((a[0] + b[0]) / 2, point[0], 0.01, `${label}: common x centerline`);
-      near((a[1] + b[1]) / 2, point[1], 0.01, `${label}: common y centerline`);
+      const separation = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      near(separation, 3.036, 0.015, `${label}: lane separation`);
+      assert.ok((WIDTH.firstLane + WIDTH.lane) / 2 - separation > .11, `${label}: overlap prevents an antialiased white seam`);
+      near((a[0] * 1.584 + b[0] * 1.452) / 3.036, point[0], 0.01, `${label}: common x centerline`);
+      near((a[1] * 1.584 + b[1] * 1.452) / 3.036, point[1], 0.01, `${label}: common y centerline`);
       const before = points[Math.max(0, step - 1)], after = points[Math.min(points.length - 1, step + 1)];
       const dx = after[0] - before[0], dy = after[1] - before[1], length = Math.hypot(dx, dy);
       assert.ok(length > 0, `${label}: nonzero local direction`);
       const signed = (shifted: number[]) => (-dy * (shifted[0] - point[0]) + dx * (shifted[1] - point[1])) / length;
-      near(signed(a), -WIDTH.offset, 0.02, `${label}: black lane side`);
+      near(signed(a), -WIDTH.firstOffset, 0.02, `${label}: black lane side`);
       near(signed(b), WIDTH.offset, 0.02, `${label}: red lane side`);
+      near(signed(a) - WIDTH.firstLane / 2, -3.102, .02, `${label}: original black exterior edge`);
+      near(signed(b) + WIDTH.lane / 2, 3.102, .02, `${label}: original red exterior edge`);
     });
   });
 }
 
-test('dual source lanes remain centered at minus/plus 1.584px throughout channels, arms and stem', () => {
+test('dual source lanes close the seam toward black and retain both outside edges throughout channels, arms and stem', () => {
   const single = renderBodygraph(charts.black), dual = renderBodygraph(charts.dual);
   for (const { id } of ordinary) {
     assertLaneOffsets(paths(target(single, 'channel', id)), paths(target(dual, 'channel', id)), id);
@@ -137,12 +141,13 @@ test('dual source lanes remain centered at minus/plus 1.584px throughout channel
   }
 });
 
-test('ordinary full-channel and gate-half highlights expand together to 13.2px', () => {
+test('ordinary full-channel and gate-half highlights coincide with the physical outline', () => {
   const markup = renderBodygraph(charts.dual, null, { selections: allGates.map(gate) });
   const highlights = paths(markup).filter(tag => hasClass(tag, 'bg-channel-highlight'));
-  assertWidths(highlights, 30, WIDTH.halo, 'whole-channel highlights');
-  const halfPaths = [...markup.matchAll(/<g data-highlight-gate="\d+">(<path[^>]*\/>)/g)].map(match => match[1]);
-  assertWidths(halfPaths, 60, WIDTH.halo, 'gate-half highlights');
+  assertWidths(highlights, 30, 8.448, 'whole-channel highlights');
+  const halfPaths = [...markup.matchAll(/<g data-highlight-gate="\d+"[^>]*>(<path[^>]*\/>)/g)].map(match => match[1]);
+  assertWidths(halfPaths, 60, 8.448, 'gate-half highlights');
+  for (const path of [...highlights, ...halfPaths]) assert.equal(width(path), WIDTH.outline, 'no additional crisp edge outside the physical outline');
 });
 
 test('integration footprints, halos and physical cutouts stay aligned at the larger width', () => {
@@ -158,18 +163,18 @@ test('integration footprints, halos and physical cutouts stay aligned at the lar
     for (const name of [...footprintClasses, ...interiorClasses] as const) {
       for (const tag of tags.filter(tag => hasClass(tag, name))) {
         seen.add(name);
-        assert.equal(width(tag), footprintClasses.includes(name) ? WIDTH.halo : WIDTH.outline, name);
+        assert.equal(width(tag), footprintClasses.includes(name) ? WIDTH.halo : name === 'bg-integration-connected-occlusion' ? WIDTH.outline : WIDTH.paint, name);
         assert.equal(attribute(tag, 'stroke'), footprintClasses.includes(name) ? '#ffffff' : '#000000', name);
       }
     }
     for (const name of ['bg-integration-selection', 'bg-integration-hover', 'bg-integration-focus', 'bg-integration-focus-target'] as const) {
       const selected = tags.filter(tag => hasClass(tag, name));
       assert.ok(selected.length > 0, name);
-      selected.forEach(tag => assert.equal(width(tag), WIDTH.halo, name));
+      selected.forEach(tag => assert.equal(width(tag), name === 'bg-integration-focus-target' ? WIDTH.halo : WIDTH.outline, name));
     }
     const physicalPath = attribute(directPaths(target(markup, 'integration', 'integration'))
       .find(tag => attribute(tag, 'stroke') === 'transparent'), 'd');
-    for (const [mask] of markup.matchAll(/<mask\b[\s\S]*?<\/mask>/g)) {
+    for (const [mask] of markup.matchAll(/<mask\b[^>]*id="[^"]+-integration-[^"]*"[\s\S]*?<\/mask>/g)) {
       const maskPaths = paths(mask);
       assert.equal(attribute(maskPaths.find(tag => hasClass(tag, 'bg-integration-interior')), 'd'), physicalPath,
         'every mask cuts the exact four arms and shared stem');
@@ -177,7 +182,7 @@ test('integration footprints, halos and physical cutouts stay aligned at the lar
       if (connected) {
         const cutout = maskPaths.find(tag => hasClass(tag, 'bg-integration-connected-interior'));
         assert.equal(attribute(cutout, 'd'), attribute(connected, 'd'), 'connected ring has matching outer and inner paths');
-        near((width(connected) - width(cutout)) / 2, 2.376, 1e-12, 'visible halo per side');
+        near((width(connected) - width(cutout)) / 2, 3.564, 1e-12, 'ownership footprint extends beyond the protected semantic interior');
       }
     }
   }
@@ -192,13 +197,15 @@ test('larger channel paint leaves gate/center dimensions and pointer hit areas u
   assertWidths(hits.filter(tag => hasClass(tag, 'bg-focus-shape')), 30, 19, 'ordinary pointer targets');
   assertWidths(hits.filter(tag => !hasClass(tag, 'bg-focus-shape')), 1, 20, 'integration pointer target');
   assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-shape')), 9, 1.25, 'center outlines');
-  assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-highlight')), 9, 2.5, 'center highlights');
+  assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-highlight')), 9, 1.25, 'thin center highlights');
   for (const { id, x, y } of GATES) {
-    const body = target(markup, 'gate', id), circles = [...body.matchAll(/<circle\b[^>]*\/>/g)].map(match => match[0]);
-    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 9.5, 8.5], `gate ${id}: radii`);
+    const body = target(markup, 'gate', id), circles = [...body.matchAll(/<circle\b[^>]*\/>/g)].map(match => match[0])
+      .filter(tag => !hasClass(tag, 'bg-gate-glow'));
+    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 9.5, 9], `gate ${id}: hit/disc radii and adjusted decorative core`);
     assert.equal(attribute(circles[1], 'stroke'), 'none');
     assert.equal(attribute(circles[1], 'stroke-width'), undefined);
-    assert.equal(width(circles[2]), 2);
+    assert.equal(width(circles[2]), 1);
+    assert.equal(Number(attribute(circles[2], 'r')) + width(circles[2]) / 2, 9.5, 'core retains its previous outer boundary');
     assert.match(markup, new RegExp(`data-type="gate" data-id="${id}"[^>]*transform="translate\\(${x} ${y}\\)"`));
   }
 });
@@ -239,11 +246,35 @@ const originalActivationStyle = (markup: string) => markup.replace(
 const originalDrawingStyle = (markup: string) => markup.replace(
   /(<g class="bodygraph-drawing"(?: transform="[^"]*")?) style="--activation-column-expanded-offset:244px"/,
   '$1');
+// The later stationary bloom is independent of width. Remove only its paint
+// additions and decorative core tuning for this historical geometry oracle;
+// gate-highlight.test.ts covers the current thin cores and retained boundaries.
+function originalOutlineRecolor(markup: string, outlineWidth: number) {
+  const outlines = markup.match(/<g class="bodygraph-integration-outlines" pointer-events="none">([\s\S]*?)<\/g>/)!;
+  return markup.replace(outlines[0], '')
+    .replace(/(<g data-type="integration"[^>]*>\n    )/, opening => opening + outlines[1])
+    .replace(/\n      (<path class="bg-channel-outline"[^>]*\/>)(\n      [\s\S]*?<path class="bg-channel-highlight"[^>]*\/>)/g, '$2\n      $1')
+    .replace(/<path class="bg-integration-(?:interior|connected-interior)"[^>]*\/>/g,
+      path => path.replace(/stroke-width="[^"]+"/, `stroke-width="${outlineWidth}"`));
+}
+const originalHighlightGlow = (markup: string, legacyHaloWidth = 13.2) => originalOutlineRecolor(markup, Number((legacyHaloWidth * .64).toFixed(3)))
+  .replace(/    <filter id="[^"]+-(?:gate|highlight)-glow"[^>]*>[\s\S]*?<\/filter>\n/g, '')
+  // Exterior-only bloom is decorative; keep the frozen physical oracle intact.
+  .replace(/    <mask id="[^"]+-center-glow-exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
+  .replace(/ mask="url\(#[^)]*-center-glow-exterior\)"/g, '')
+  .replace(/      <circle class="bg-gate-glow"[^>]*\/>\n/g, '')
+  .replace(/ filter="url\(#[^)]*-(?:gate|highlight)-glow\)"/g, '')
+  .replace(/(<g class="bodygraph-integration-highlights") mask="url\(#[^)]*-integration-outline\)"/, '$1')
+  .replace(/(<circle class="bg-gate-highlight"[^>]* r=")9("[^>]* stroke-width=")1(")/g, '$18.5$22$3')
+  .replace(/<path\b[^>]*stroke="#c4d9f1"[^>]*\/>/g, path => path.replace(/stroke-width="[^"]+"/,
+    `stroke-width="${hasClass(path, 'bg-center-highlight') ? 2.5 : legacyHaloWidth}"`))
+  .replace(/^ +\.bg-interactive:(?:hover|focus-visible) \.bg-gate-glow \{ opacity: 1; \}\n/gm, '')
+  .replaceAll('opacity: var(--integration-focus-opacity, 1); transition-duration: 92ms;', 'opacity: var(--integration-focus-opacity, 1);');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center' as const, id: 'throat' },
     { type: 'channel' as const, id: '37-40' }, { type: 'integration' as const, id: 'integration' }];
   for (const [mode, chart] of Object.entries(charts)) {
-    const markup = renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' });
+    const markup = originalHighlightGlow(renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' }));
     const unchanged = {
       gatesAndCenters: originalGateFont(originalGateContour(markup.slice(markup.indexOf('<g class="bodygraph-centers">')))),
       clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g),
@@ -282,7 +313,7 @@ const rollbackCases = [
   },
 ];
 
-async function rendererAtScale(scale: number) {
+async function rendererAtScale(scale: number, legacyDualGap = false) {
   const rendererURL = new URL('../src/scene/bodygraph-svg.ts', import.meta.url);
   const paintURL = new URL('../src/scene/bodygraph-paint.ts', import.meta.url);
   const presentationURL = new URL('../src/scene/geometry/drawing-presentation.ts', import.meta.url);
@@ -297,15 +328,19 @@ async function rendererAtScale(scale: number) {
   const moduleURL = (source: string) => 'data:text/javascript;base64,' + Buffer.from(stripTypeScriptTypes(source, { mode: 'strip' })).toString('base64');
   const presentation = moduleURL(link(presentationSource.replace(setting, `const CHANNEL_WIDTH_SCALE = ${scale};`), presentationURL));
   const replacements = { [presentationURL.href]: presentation };
-  const paint = moduleURL(link(await readFile(paintURL, 'utf8'), paintURL, replacements));
+  let paintSource = await readFile(paintURL, 'utf8');
+  // This full historical oracle predates the separately tested black seam fix.
+  if (legacyDualGap) paintSource = paintSource.replaceAll('CHANNEL_WIDTH.firstLaneOffset', 'CHANNEL_WIDTH.laneOffset')
+    .replaceAll('CHANNEL_WIDTH.firstLane', 'CHANNEL_WIDTH.lane');
+  const paint = moduleURL(link(paintSource, paintURL, replacements));
   replacements[paintURL.href] = paint;
   return (await import(moduleURL(link(await readFile(rendererURL, 'utf8'), rendererURL, replacements)))).renderBodygraph;
 }
 
-test('changing only the width scale to 1 restores the complete pre-change SVG', async () => {
-  const renderReverted = await rendererAtScale(1);
+test('width scale 1 with the historical dual gap restores the complete pre-change SVG', async () => {
+  const renderReverted = await rendererAtScale(1, true);
   for (const { name, args, hash } of rollbackCases) {
-    assert.equal(createHash('sha256').update(originalDrawingStyle(originalActivationStyle(originalGateFont(originalGateContour(renderReverted(...args)))))).digest('hex'), hash, name);
+    assert.equal(createHash('sha256').update(originalDrawingStyle(originalActivationStyle(originalGateFont(originalGateContour(originalHighlightGlow(renderReverted(...args), 10)))))).digest('hex'), hash, name);
   }
 });
 
@@ -314,7 +349,7 @@ test('width scale 1.2 restores the preceding paint, lane, halo and mask widths',
   const markup = renderPrevious(charts.dual, null, { selections: [gate(20), gate(34)] });
   const tags = paths(markup);
   assertWidths(colored(tags, '#c6c2b9'), 35, 7.68, 'previous ordinary and integration outlines');
-  assertWidths(colored(tags, '#202020'), 66, 2.76, 'previous dual black lanes');
+  assertWidths(colored(tags, '#202020'), 66, 3, 'black lanes retain the seam fix at the previous scale');
   assertWidths(colored(tags, '#c32d35'), 66, 2.76, 'previous dual red lanes');
   assertWidths(colored(paths(renderPrevious(charts.black)), '#202020'), 66, 5.52, 'previous single-source paint');
   for (const { id } of ordinary) {
@@ -327,9 +362,10 @@ test('width scale 1.2 restores the preceding paint, lane, halo and mask widths',
     'bg-integration-focus', 'bg-integration-focus-target'] as const) {
     const matching = tags.filter(tag => hasClass(tag, name));
     assert.ok(matching.length > 0, name);
-    matching.forEach(tag => assert.equal(width(tag), 12, `previous ${name}`));
+    const decorative = ['bg-channel-highlight', 'bg-integration-selection', 'bg-integration-hover', 'bg-integration-focus'].includes(name);
+    matching.forEach(tag => assert.equal(width(tag), decorative ? 7.68 : 12, `previous physical width with replacement-outline policy: ${name}`));
   }
   const cutouts = colored(tags, '#000000');
   assert.ok(cutouts.length > 0);
-  cutouts.forEach((tag: string|undefined) => assert.equal(width(tag), 7.68, 'previous physical mask cutouts'));
+  cutouts.forEach((tag: string|undefined) => assert.equal(width(tag), hasClass(tag!, 'bg-integration-connected-occlusion') ? 7.68 : 5.52, 'source interior and full active-neighbor protection follow the previous physical widths'));
 });

@@ -94,7 +94,8 @@ const fixtures = Array.from({ length: 256 }, (_, state) => {
 });
 
 // Captured before connected-route masks were introduced. These approved masks
-// must remain byte-for-byte unchanged after normalizing only the approved width increase.
+// retain ownership geometry after normalizing physical width and the later
+// interior-only cutout that permits replacement of the existing outline.
 const legacyMaskHashes = {
   'gate:10': 'eed4d27de19ff4f2e4f23fe3e408e09f7e4108ae0063fab9c3128887d49b4328',
   'gate:20': '461b326f4b95f9fcfc5dace64c5edd9f15a4b636a1e651647a3f645c6b372ec8',
@@ -108,7 +109,8 @@ const legacyMaskHashes = {
 };
 const stripConnectedLayers = (mask: string) => mask.replace(/<path class="bg-integration-connected-[^"]+"[^>]*\/>/g, '');
 const originalMaskWidths = (mask: string) => mask.replaceAll('stroke-width="13.2"', 'stroke-width="10"')
-  .replaceAll('stroke-width="8.448"', 'stroke-width="6.4"');
+  .replaceAll('stroke-width="8.448"', 'stroke-width="6.4"')
+  .replaceAll('stroke-width="6.072"', 'stroke-width="6.4"');
 const activeParts = chart => {
   const active = new Set([...(chart.personality || []), ...(chart.design || [])]);
   return [...INTEGRATION_ARMS.filter(arm => active.has(arm.gate)).map(arm => arm.path), ...(crossesStem([...active]) ? [stemPath] : [])];
@@ -130,7 +132,7 @@ function assertConnectedMask(markup: string, overlay: string|undefined, chart: {
     return mask;
   }
   assert.ok(footprint && interior, `${context}: a connected route has its own continuous ring`);
-  for (const [path, color, width] of [[footprint, '#ffffff', '13.2'], [interior, '#000000', '8.448']] as const) {
+  for (const [path, color, width] of [[footprint, '#ffffff', '13.2'], [interior, '#000000', '6.072']] as const) {
     assert.deepEqual(subpaths(attribute(path!, 'd')), parts, `${context}: connected layers reuse the exact authored route`);
     assert.equal(attribute(path!, 'fill'), 'none');
     assert.equal(attribute(path!, 'stroke'), color);
@@ -149,11 +151,11 @@ function assertConnectedMask(markup: string, overlay: string|undefined, chart: {
     assert.equal(attribute(occlusion, 'clip-path'), undefined);
   }
   assert.equal(mask!.slice(mask!.indexOf(wholeInterior!) + wholeInterior!.length), footprint! + interior! + (occlusion || ''), 'the connected ring supersedes the full-node subtraction, then active occlusion is last');
-  assert.ok(Math.abs((Number(attribute(footprint!, 'stroke-width')) - Number(attribute(interior!, 'stroke-width'))) / 2 - 2.376) < 1e-12, 'the halo band is exactly 32% wider at 2.376px');
+  assert.ok(Math.abs((Number(attribute(footprint!, 'stroke-width')) - Number(attribute(interior!, 'stroke-width'))) / 2 - 3.564) < 1e-12, 'the unchanged outer footprint protects a 6.072px semantic interior');
   return mask;
 }
 
-test('the integration mask subtracts the complete physical node, including every inactive branch', () => {
+test('the integration mask protects every semantic interior while leaving its existing outline available for blue', () => {
   const baseline = maskContent(renderBodygraph());
   for (const selection of selections) {
     const markup = renderBodygraph({}, selection), mask = maskContent(markup);
@@ -162,7 +164,7 @@ test('the integration mask subtracts the complete physical node, including every
     assert.equal(attribute(cutout!, 'd'), nodePath);
     assert.equal(attribute(cutout!, 'fill'), 'none');
     assert.equal(attribute(cutout!, 'stroke'), '#000000');
-    assert.equal(attribute(cutout!, 'stroke-width'), '8.448');
+    assert.equal(attribute(cutout!, 'stroke-width'), '6.072');
     assert.equal(attribute(cutout!, 'stroke-linecap'), 'round');
     assert.equal(attribute(cutout!, 'stroke-linejoin'), 'round');
     assert.equal((mask!.match(/<path\b/g) || []).length, 1, 'no active-only exclusions or artificial taper polygons');
@@ -198,7 +200,7 @@ test('all 256 activation combinations preserve single masks and protect exactly 
     assert.deepEqual(new Set(owned.map(path => attribute(path, 'd'))), new Set(selection.type === 'integration' ? [] : expectedParts(selection)), context);
     assert.deepEqual(subpaths(attribute(halo!, 'd')), expectedParts(selection), context);
     assert.equal(attribute(halo!, 'stroke'), '#c4d9f1', context);
-    assert.equal(attribute(halo!, 'stroke-width'), '13.2', context);
+    assert.equal(attribute(halo!, 'stroke-width'), '8.448', context);
     assert.equal(attribute(halo!, 'stroke-linecap'), selection.type === 'integration' ? 'butt' : 'round', context);
     assert.equal(attribute(halo!, 'stroke-linejoin'), 'round', context);
   }
@@ -243,7 +245,7 @@ test('all six keyboard-focus routes use equivalent ownership masks and exact sel
     }
     assert.equal(maskFor(markup, focus), maskFor(selectedMarkup, selected), `${id} focus and selection use the same physical-edge ownership`);
     assert.equal(attribute(focus!, 'mask'), `url(#${prefix}-integration-focus-${id})`);
-    assert.equal(attribute(focus!, 'stroke-width'), '13.2', 'focus no longer draws an unmasked line inside the channel');
+    assert.equal(attribute(focus!, 'stroke-width'), '8.448', 'focus replaces the physical outline and keeps semantic paint protected');
     assert.equal(attribute(focus!, 'opacity'), '0');
   }
 });
@@ -259,21 +261,21 @@ test('whole-integration hover and click share a single exterior mask without dou
   }
   assert.equal(attribute(hover!, 'd'), nodePath);
   assert.equal(attribute(hover!, 'mask'), 'url(#bodygraph-integration-outline)');
-  assert.equal((after.match(/<mask\b/g) || []).length, 7, 'whole-node selection reuses hover mask while six channels retain their ownership masks');
+  assert.equal((after.match(/<mask\b[^>]*id="[^"]+-integration-/g) || []).length, 7, 'whole-node selection reuses hover mask while six channels retain their ownership masks');
   assert.match(after, /\.bodygraph-channels:has\(> \.bg-interactive\[data-type="integration"\]\[data-visual-selected="false"\]:hover\) > \.bodygraph-integration-highlights > \.bg-integration-hover \{ opacity: 1; \}/);
 });
 
-test('single halos exclude the whole physical node while connected rings exclude their own interior and active neighbors', () => {
-  // Let U be the union of the five round-capped 8.448px background strokes.
-  // Singles subtract U last. Connected routes S instead repaint their exact
-  // 13.2px footprint, then subtract the 8.448px interior of S and active neighbors.
+test('single and connected highlights protect semantic interiors and active neighboring outlines', () => {
+  // Singles subtract the five 6.072px semantic interiors. Connected routes S
+  // repaint their exact 13.2px ownership footprint, then subtract the semantic
+  // interior of S and the complete 8.448px outlines of active neighbors.
   // Therefore connected rings can cross inactive white branches, but never
   // their own physical route or an active neighboring physical stroke. Exact
   // path/cap/width identity proves those interior exclusions for every point.
   for (const selection of selections) {
     const markup = renderBodygraph({}, selection);
     const integration = markup.slice(markup.indexOf('data-junction="integration"'), markup.indexOf('<g class="bodygraph-centers">'));
-    const physical = [...integration.matchAll(/<path\b[^>]*stroke="#c6c2b9"[^>]*\/>/g)].map(match => match[0]);
+    const physical = [...integration.matchAll(/<path\b[^>]*stroke="#ffffff"[^>]*\/>/g)].map(match => match[0]);
     const mask = maskContent(markup), cutout = pathWithClass(mask!, 'bg-integration-interior');
     assert.equal(physical.length, 5);
     assert.deepEqual(subpaths(attribute(cutout!, 'd')), physical.map(path => attribute(path, 'd')));
@@ -291,7 +293,7 @@ test('single halos exclude the whole physical node while connected rings exclude
       if (connected) assertConnectedMask(markup, overlay, {});
       else assert.ok(ownMask!.endsWith(cutout!), 'single and whole masks still subtract the complete physical interior last');
       assert.equal(attribute(overlay, 'fill'), 'none');
-      assert.equal(attribute(overlay, 'stroke-width'), '13.2');
+      assert.equal(attribute(overlay, 'stroke-width'), '8.448');
       assert.equal(attribute(overlay, 'stroke-linecap'), attribute(overlay, 'class') === 'bg-integration-hover' || selection.type === 'integration' && attribute(overlay, 'class') === 'bg-integration-selection' ? 'butt' : 'round');
       assert.ok(subpaths(attribute(overlay, 'd')).every((part: string) => nodeParts.includes(part)));
       const selectedParts = subpaths(attribute(overlay, 'd'));
@@ -318,10 +320,9 @@ test('single halos exclude the whole physical node while connected rings exclude
       assert.equal((ownMask!.match(/<path\b/g) || []).length, owned.length + 1 + connectedLayerCount, 'only the original ownership and specified connected-ring layers are present');
       assert.equal((ownMask!.match(/<rect\b/g) || []).length, 1);
       assert.equal(attribute(ownMask!.match(/^<rect[^>]*\/>/)![0], 'fill'), whole ? '#ffffff' : '#000000');
-      // Each candidate is a 6.6px-radius stroke of existing paths only. Removing
-      // its 4.224px physical interior leaves the existing 2.376px outer band.
+      // Blue occupies the existing 1.188px outline around the semantic paint.
       const bandWidth = (Number(attribute(overlay, 'stroke-width')) - Number(attribute(cutout!, 'stroke-width'))) / 2;
-      assert.ok(Math.abs(bandWidth - 2.376) < 1e-12);
+      assert.ok(Math.abs(bandWidth - 1.188) < 1e-12);
     }
   }
 });
@@ -382,7 +383,7 @@ test('inner fork ownership follows the original outer curve and stops at the phy
     const cuts = [...mask!.matchAll(/<path\b[^>]*stroke="#000000"[^>]*\/>/g)].map(match => match[0]);
     assert.equal(cuts.length, 1, 'no wider neighbor-halo subtraction can leave a gap');
     assert.equal(attribute(cuts[0], 'd'), nodePath);
-    assert.equal(attribute(cuts[0], 'stroke-width'), '8.448', 'the selected fork reaches the existing physical channel boundary');
+    assert.equal(attribute(cuts[0], 'stroke-width'), '6.072', 'the fork can recolor its existing outline while the source interior stays protected');
   }
 });
 
