@@ -8,7 +8,7 @@ import type { SavedChart } from '../shared/chart-types.ts';
 
 const charts = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i), name: `Карта ${i}`, source: 'calculated' as const,
   birthDate: '1998-08-18', birthTime: '18:00', personality: [1], design: [2] }));
-function harness({ observe = true, onOpen, raster = false, searchControls = false } = {}) {
+function harness({ observe = true, onOpen, raster = false, searchControls = false, initialView = undefined, onChange = () => {} } = {}) {
   const dom = libraryDom(), events = dateDom();
   const dialog = events.createElement('section'), button = events.createElement('button');
   dialog.hidden = true;
@@ -22,7 +22,7 @@ function harness({ observe = true, onOpen, raster = false, searchControls = fals
   list.contains = target => dom.children.some(row => row === target || row.querySelector('.chart-card') === target);
   let intersection, nextJob = 0, disconnects = 0;
   const store = { charts: charts(300) as SavedChart[] }, session = { selectedId: '1' };
-  const view = attachAllCharts({ button, dialog, list, store, session, onOpen, document: dom.document,
+  const view = attachAllCharts({ button, dialog, list, store, session, onOpen, initialView, onChange, document: dom.document,
     createObserver: observe ? (callback, options) => {
       assert.equal(options.root, list); assert.equal(options.rootMargin, '120px 0px');
       intersection = callback;
@@ -285,4 +285,23 @@ test('a query entered while hidden filters before any of the 300 row previews ar
   assert.equal(h.children.length, 1);
   assert.equal(h.watched.size, 1);
   assert.equal(h.painted.length, 0);
+});
+
+
+test('cartotheque restores its raw search and keeps it while hidden, including a manual clear', () => {
+  let changes = 0;
+  const first = harness({ searchControls: true, onChange: () => { changes++; } });
+  first.view.show(); first.find('КАРТА 29');
+  assert.ok(changes > 0);
+  const saved = first.view.snapshot;
+  assert.deepEqual(saved, { query: 'КАРТА 29', searchOpen: false });
+  const next = harness({ searchControls: true, initialView: saved });
+  next.view.show();
+  assert.equal(next.search.value, 'КАРТА 29');
+  assert.equal(next.children.length, 13);
+  next.view.close(); next.view.show();
+  assert.equal(next.children.length, 13);
+  next.find('');
+  assert.equal(next.children.length, 300);
+  assert.equal(next.view.snapshot.query, '');
 });

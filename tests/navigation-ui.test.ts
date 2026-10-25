@@ -5,6 +5,8 @@ import { chartTitle } from '../src/views/chart-display.ts';
 import { createChartComposition } from '../src/domain/chart-composition.ts';
 import { extractChartData } from '../src/domain/chart-data.ts';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.ts';
+import { attachPanelKeyboard } from '../src/views/side-panel-controls.ts';
+import { createPanelState } from '../src/state/panels.ts';
 import { libraryDom } from './helpers/library-dom.ts';
 import { attachTransitNavigation } from '../src/views/live-transit.ts';
 import { attachCameraControls } from '../src/views/camera-controls.ts';
@@ -109,6 +111,7 @@ function menuHarness({ dialogOpen = false } = {}) {
   let renders = 0, popupCloses = 0;
   const document = {
     activeElement: null,
+    defaultView: { addEventListener(type: string, handler: (event: Event) => void) { handlers.set(`window:${type}`, handler); } },
     getElementById(id: string) { return element(id); },
     querySelector(selector: string) { return selector === 'dialog[open]' && dialogOpen ? {} : null; },
     querySelectorAll() { return []; },
@@ -139,8 +142,10 @@ function menuHarness({ dialogOpen = false } = {}) {
     }
     return elements.get(id);
   };
+  const panels = createPanelState();
+  attachPanelKeyboard(document as unknown as Document, panels);
   const library = attachChartLibrary({
-    document,
+    document, panels,
     session: { selectedId: 'current-transit' },
     store: { charts: [], remove() { assert.fail('opening a menu must not delete a chart'); } },
     onSelect() { assert.fail('opening a menu does not select a chart'); },
@@ -151,7 +156,11 @@ function menuHarness({ dialogOpen = false } = {}) {
   });
   const context = { closeMenu: library.close };
   const click = id => handlers.get(`${id}:click`)();
-  const key = value => handlers.get('keydown')({ key: value, preventDefault() {} });
+  const key = (value: string) => {
+    const event = { key: value, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    handlers.get('keydown')?.(event);
+    handlers.get('window:keydown')?.(event);
+  };
   return { element, document, context, click, key, get renders() { return renders; }, get popupCloses() { return popupCloses; } };
 }
 

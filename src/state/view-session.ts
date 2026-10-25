@@ -20,6 +20,8 @@ interface ViewSessionOptions {
   cameraRestored?: boolean;
   panels?: PanelState;
   workspace?: WorkspaceState;
+  getKnowledgeView?: () => SavedView['knowledge'];
+  getChartsView?: () => SavedView['charts'];
   transit: LiveTransit;
   natalDay: NatalDayExplorer;
   planetFilter: TransitPlanetFilter;
@@ -48,7 +50,7 @@ import { resolveSelectedChartId } from './chart-session.ts';
 export function createViewSession({
   store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
-  getLifetimeIntent = () => null,
+  getLifetimeIntent = () => null, getKnowledgeView = () => undefined, getChartsView = () => undefined,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
   openReturnsTimeline = async () => null, acceptLifetimeMode = () => {},
   canRestoreLifetime = () => session.selectedId === 'current-transit',
@@ -60,9 +62,6 @@ export function createViewSession({
   let pendingTransit = saved?.transit?.live === false ? saved.transit : null;
   let pendingLifetime = saved?.lifetime || null, startedLifetime: SavedLifetimeView | null = null;
   let pendingReturns = saved?.returns || null;
-  // The tab's saved shell owns visibility, including a close made in preview.
-  // Retain the exact event and filters; old snapshots without panels keep their menu intent.
-  if (saved?.panels?.right === false && pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
   let pendingNatal = saved?.natalDay?.opened ? saved.natalDay : null;
   function lifetimeUtc(target: SavedLifetimeView | null, lifetimeState: LifetimeState | undefined) {
     if (Number.isFinite(target?.requestedUtc)) return target!.requestedUtc!;
@@ -88,8 +87,10 @@ export function createViewSession({
   }
   function presentationSnapshot() {
     const view = camera.getView(), home = camera.getFittedView();
+    const knowledge = getKnowledgeView() ?? saved?.knowledge, charts = getChartsView() ?? saved?.charts;
     return {
       mandala: mandala.enabled,
+      ...(knowledge ? { knowledge } : {}), ...(charts ? { charts } : {}),
       ...(panels ? { panels: panels.snapshot } : {}),
       ...(workspace ? { workspace: workspace.snapshot } : {}),
       camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k, k: view.k / home.k,
@@ -179,7 +180,6 @@ export function createViewSession({
       let returnRestoration: Promise<boolean> | undefined;
       const restoreReturn = () => {
         if (returnRestoration) return returnRestoration;
-        if (panels?.rightRequestDuringRestore != null && pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
         return returnRestoration ??= getReturns()!.restore(pendingReturns,
           { valid: () => valid() && session.selectedId === selectedId });
       };
@@ -232,12 +232,6 @@ export function createViewSession({
       if (valid()) {
         if (session.selectedId !== selectedId) pendingTransit = pendingLifetime = pendingNatal = pendingReturns = null;
         else if (!canRestoreLifetime()) pendingLifetime = null;
-        if (panels?.rightRequestDuringRestore != null) {
-          // The moment has settled. Close only its menu now, preserving the last
-          // explicit panel command and any exact target retained for a retry.
-          if (pendingReturns) pendingReturns = { ...pendingReturns, opened: false };
-          getReturns()?.close();
-        }
         panels?.finishRestore();
         restoring = false; flush();
       }

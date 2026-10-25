@@ -59,6 +59,11 @@ export function softHighlightFragment(parent: Element, before: Node, initial: Ch
         const opacity = parent.ownerDocument.defaultView!.getComputedStyle(entry.node).opacity;
         animate(entry, opacity, '1');
       }
+      // The half keeps its geometry and animation while pinning changes blue.
+      const strokes = entry.node.querySelectorAll('path');
+      candidate.querySelectorAll('path').forEach((path, index) => {
+        if (strokes[index]) setAttribute(strokes[index], 'stroke', path.getAttribute('stroke'));
+      });
       // Retain the live node while restoring the static renderer's paint order.
       parent.insertBefore(entry.node, before);
       entry.exiting = false;

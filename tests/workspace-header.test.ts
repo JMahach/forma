@@ -115,3 +115,15 @@ test('optional or incomplete header markup is safe', () => {
   assert.doesNotThrow(() => missingInput.click());
   assert.equal(missingInput.button.getAttribute('aria-expanded'), 'false');
 });
+
+
+test('restored search expansion is visible without stealing focus and later changes notify its owner', () => {
+  const h = fixture(); let changes = 0;
+  const header = attachWorkspaceHeader(h.page as unknown as HTMLElement, { initialExpanded: true, onChange: () => { changes++; } });
+  assert.equal(h.button.getAttribute('aria-expanded'), 'true');
+  assert.equal(h.active(), null);
+  assert.equal(changes, 0);
+  h.escape();
+  assert.equal(header!.expanded, false);
+  assert.equal(changes, 1);
+});

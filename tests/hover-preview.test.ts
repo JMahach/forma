@@ -43,7 +43,8 @@ function hoverHarness(t: test.TestContext) {
     if (!listeners.has(key)) listeners.set(key, []);
     listeners.get(key)!.push(callback);
   };
-  const document = { hidden: false, visibilityState: 'visible', addEventListener: addListener('document') };
+  let hit: HoverNode | null = null;
+  const document = { elementFromPoint: () => hit, hidden: false, visibilityState: 'visible', addEventListener: addListener('document') };
   const window = { addEventListener: addListener('window') };
   Object.defineProperty(globalThis, 'document', { configurable: true, writable: true, value: document });
   Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: window });
@@ -68,7 +69,7 @@ function hoverHarness(t: test.TestContext) {
   const target = (type: string, id: string | number, activation?: string) => node({ type, id: String(id), ...(activation ? { activation } : {}) });
   function send(surface: string, type: string, options: Partial<HoverEvent> = {}) {
     const event: HoverEvent = {
-      target: svg, relatedTarget: null, pointerType: 'mouse', pointerId: 1, buttons: 0, button: 0,
+      target: svg, clientX: 320, clientY: 436, relatedTarget: null, pointerType: 'mouse', pointerId: 1, buttons: 0, button: 0,
       defaultPrevented: false, propagationStopped: false,
       preventDefault() { this.defaultPrevented = true; },
       stopPropagation() { this.propagationStopped = true; },
@@ -78,8 +79,11 @@ function hoverHarness(t: test.TestContext) {
     return event;
   }
   const controller = attachHoverPreview(svg as unknown as SVGSVGElement, { onPreview(selection) { previews.push(selection); previewHandler?.(selection); } });
-  const move = (target: unknown, options: Partial<HoverEvent> = {}) => send('svg', 'pointermove', { target, ...options });
-  return { controller, svg, document, previews, classes, listeners, node, target, send, move, setPreviewHandler(handler: PreviewHandler) { previewHandler = handler; } };
+  const move = (target: unknown, options: Partial<HoverEvent> = {}) => {
+    hit = target as HoverNode;
+    return send('svg', 'pointermove', { target, ...options });
+  };
+  return { controller, svg, document, previews, classes, listeners, node, target, send, move, setHit(value: HoverNode | null) { hit = value; }, setPreviewHandler(handler: PreviewHandler) { previewHandler = handler; } };
 }
 
 test('pointer movement previews numeric activations, diagram gates, centers, channels and integration', t => {
@@ -188,12 +192,11 @@ test('moving with a pressed pointer or while dragging clears the preview and blo
   assert.deepEqual(harness.controller.currentSelection, { type: 'gate' as const, id: 41 });
 });
 
-test('background movement, leave, wheel, blur and hidden-document events restore the committed display once', t => {
+test('background movement, leave, blur and hidden-document events restore the committed display once', t => {
   const harness = hoverHarness(t), target = harness.target('center', 'solar');
   for (const dismiss of [
     () => harness.move(harness.node({})),
     () => harness.send('svg', 'pointerleave'),
-    () => harness.send('svg', 'wheel'),
     () => harness.send('window', 'blur'),
     () => { harness.document.hidden = true; harness.document.visibilityState = 'hidden'; harness.send('document', 'visibilitychange'); },
   ] as const) {
@@ -235,11 +238,15 @@ const chartFixture = () => ({
   },
 } as unknown as HoverChart);
 
-const withoutPressed = (markup: string) => markup.replace(/ aria-pressed="(?:true|false)"/g, '');
+// Geometry and source paint stay identical; committed feedback alone is darker.
+const withoutPressed = (markup: string) => markup.replace(/ aria-pressed="(?:true|false)"/g, '')
+  .replace(/<g class="bg-integration-color-defs">[\s\S]*?<\/g>(?=\n    <linearGradient)/g, '')
+  .replace(/url\(#[^)]*-integration-highlight-colors\)/g, '#91bce9')
+  .replaceAll('#83a9d2', '#91bce9');
 const pressed = (markup: string) => [...markup.matchAll(/<g\b[^>]*data-type="([^"]+)"[^>]*data-id="([^"]+)"[^>]*aria-pressed="true"[^>]*>/g)]
   .map(([, type, id]) => `${type}:${id}`).sort();
 
-test('unpinned gate hover uses the exact click paint for every gate, including its own channel halves and integration', () => {
+test('unpinned gate hover uses the click geometry for every gate, including its own channel halves and integration', () => {
   const chart = chartFixture(), pinned = null;
   const before = JSON.stringify({ chart, pinned });
   for (const gate of GATES) {
@@ -252,7 +259,7 @@ test('unpinned gate hover uses the exact click paint for every gate, including i
   assert.equal(JSON.stringify({ chart, pinned }), before);
 });
 
-test('unpinned center, channel and integration hover paint matches click paint without creating a committed selection', () => {
+test('unpinned center, channel and integration hover geometry matches click geometry without creating a committed selection', () => {
   const chart = chartFixture(), pinned = null;
   for (const preview of [
     ...CENTERS.map(center => ({ type: 'center' as const, id: center.id })),
@@ -744,4 +751,63 @@ test('hover alone opens no popup; diagram clicks clear hover and toggle their co
   assert.equal(harness.activationPopover.currentId, null);
   assert.equal(harness.popupCalls.show, 0, 'diagram selections never enter the numeric detail cycle');
   assert.equal(harness.viewport.innerHTML, renderBodygraph(harness.chart, null, { profile: 'studio', showActivations: true, showBackdrop: true }), 'the second diagram click clears its complete visual scope before pointer leave');
+});
+
+
+test('releasing a deselected center restores its whole hover scope without recommitting it', t => {
+  const h = graphHarness(t, null), center = h.hover.target('center', 'g');
+  h.hover.move(center);
+  h.context.select({ type: 'center', id: 'g', pointerType: 'mouse' });
+  h.hover.send('svg', 'pointerup', { target: h.hover.svg });
+  h.context.select({ type: 'center', id: 'g', pointerType: 'mouse' });
+  h.hover.send('svg', 'pointerup', { target: h.hover.svg });
+  assert.equal(h.context.selection, null);
+  assert.deepEqual(h.hover.controller.currentSelection, { type: 'center', id: 'g' });
+  assert.deepEqual(pressed(h.viewport.innerHTML), [], 'hover never pins the center or its gates');
+  assert.equal(h.viewport.innerHTML, renderBodygraph(h.chart, null, {
+    profile: 'studio', showActivations: true, showBackdrop: true, selections: [], previewSelection: { type: 'center', id: 'g' },
+  }), 'all gates and half-channels follow the center after release');
+  h.hover.send('svg', 'pointerleave');
+  assert.equal(h.hover.controller.currentSelection, null);
+});
+
+test('camera refresh follows the center under the stationary mouse through zoom and captured pan', t => {
+  const h = hoverHarness(t), first = h.target('center', 'g'), second = h.target('center', 'throat');
+  h.move(first);
+  h.send('svg', 'wheel');
+  h.controller.refreshCenter();
+  assert.deepEqual(h.controller.currentSelection, { type: 'center', id: 'g' });
+  const count = h.previews.length;
+  h.controller.refreshCenter();
+  assert.equal(h.previews.length, count, 'same center does not redraw each camera frame');
+  h.classes.add('is-dragging');
+  h.move(h.svg, { buttons: 1 });
+  h.setHit(second);
+  h.controller.refreshCenter();
+  assert.deepEqual(h.controller.currentSelection, { type: 'center', id: 'throat' }, 'hit-test ignores the captured event target');
+  h.setHit(null);
+  h.controller.refreshCenter();
+  assert.equal(h.controller.currentSelection, null, 'moving away never leaves a stale center lit');
+  h.setHit(first);
+  h.controller.refreshCenter();
+  assert.deepEqual(h.controller.currentSelection, { type: 'center', id: 'g' });
+  h.send('svg', 'pointerleave');
+  h.controller.refreshCenter();
+  assert.equal(h.controller.currentSelection, null, 'leaving forgets the cursor');
+});
+
+test('touch, cancelled gestures and blur cannot resurrect a mouse center preview', t => {
+  const h = hoverHarness(t), center = h.target('center', 'g');
+  for (const dismiss of [
+    () => h.send('svg', 'pointerdown', { pointerType: 'touch' }),
+    () => h.send('svg', 'pointercancel'),
+    () => h.send('window', 'blur'),
+    () => h.controller.clear({ notify: false }),
+  ]) {
+    h.move(center);
+    dismiss();
+    h.send('svg', 'pointerup', { pointerType: 'touch' });
+    h.controller.refreshCenter();
+    assert.equal(h.controller.currentSelection, null);
+  }
 });

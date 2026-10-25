@@ -12,6 +12,7 @@ interface GraphControllerOptions {
   getActiveElement?: () => Element | null;
   activationPopover: { close: () => void; refresh: (chart: ChartView) => void; show: (chart: ChartView, id: string) => void; currentId: string | null };
   getShowActivations?: () => boolean;
+  getHighlightStyle?: () => RenderOptions['highlightStyle'];
   getHoverPreview?: () => Pick<ReturnType<typeof attachHoverPreview>, 'clear' | 'currentSelection'> | null;
   getMandala?: () => Pick<MandalaMode, 'enabled' | 'visible'> | null;
   scene?: { update: (...args: Parameters<SceneRenderer['update']>) => void; clear: () => void };
@@ -28,7 +29,7 @@ import { createMandalaPreviewPainter } from './mandala-preview-painter.ts';
 export function createGraphController({
   selectionState = createSelectionModel(), getChart, hasChart = () => true,
   viewport, getActiveElement = () => null, activationPopover,
-  getShowActivations = () => true,
+  getShowActivations = () => true, getHighlightStyle = () => 'outline',
   getHoverPreview = () => null, getMandala = () => null,
   scene = createSceneRenderer(viewport),
   onChartChange = () => {},
@@ -45,7 +46,7 @@ export function createGraphController({
     const focused = getActiveElement()?.closest?.<HTMLElement | SVGElement>('#viewport [data-type]');
     const focusTarget = focused ? { type: focused.dataset.type, id: focused.dataset.id, activation: focused.dataset.activation, mandala: focused.classList.contains('mandala-gate') } : null;
     const renderOptions: RenderOptions = {
-      profile: 'studio',
+      profile: 'studio', highlightStyle: getHighlightStyle(),
       showActivations: getShowActivations(), showBackdrop: true, showMandala: getMandala()?.enabled,
       showMandalaLayer: getMandala()?.visible,
       pinnedCrosses: selectionState.crosses, selections: selectionState.items,

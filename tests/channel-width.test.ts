@@ -9,8 +9,8 @@ import { CHANNELS, GATES } from '../src/scene/geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../src/domain/topology.ts';
 
 // Independent output requirements, deliberately not imported from the renderer:
-// Another 10% after the first 20% increase: 1.2 × 1.1 = 1.32 overall.
-const WIDTH = { outline: 8.448, paint: 6.072, lane: 3.036, offset: 1.584, firstLane: 3.3, firstOffset: 1.452, halo: 13.2 };
+// Another 25% after the approved width: 1.32 × 1.25 = 1.65 overall.
+const WIDTH = { outline: 10.56, paint: 7.59, lane: 3.795, offset: 1.98, firstLane: 4.125, firstOffset: 1.815, halo: 16.5 };
 const allGates = Array.from({ length: 64 }, (_, index) => index + 1);
 const charts = {
   empty: {}, black: { personality: allGates }, red: { design: allGates },
@@ -57,7 +57,7 @@ function assertWidths(tags: (string|undefined)[], count: number, expected: numbe
   tags.forEach((tag: string|undefined) => assert.equal(width(tag), expected, `${label}: stroke width`));
 }
 
-test('all ordinary channel outlines, inactive interiors and source paint are 32% wider than the original', () => {
+test('all ordinary channel outlines, inactive interiors and source paint are 25% wider than the approved 1.32 baseline', () => {
   assert.equal(ordinary.length, 30);
   for (const [mode, chart] of Object.entries(charts)) {
     const markup = renderBodygraph(chart);
@@ -112,18 +112,18 @@ function assertLaneOffsets(single: string[], dual: string[], label: string) {
       near(Math.hypot(a[0] - point[0], a[1] - point[1]), WIDTH.firstOffset, 0.015, `${label}: black offset`);
       near(Math.hypot(b[0] - point[0], b[1] - point[1]), WIDTH.offset, 0.015, `${label}: red offset`);
       const separation = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      near(separation, 3.036, 0.015, `${label}: lane separation`);
+      near(separation, 3.795, 0.015, `${label}: lane separation`);
       assert.ok((WIDTH.firstLane + WIDTH.lane) / 2 - separation > .11, `${label}: overlap prevents an antialiased white seam`);
-      near((a[0] * 1.584 + b[0] * 1.452) / 3.036, point[0], 0.01, `${label}: common x centerline`);
-      near((a[1] * 1.584 + b[1] * 1.452) / 3.036, point[1], 0.01, `${label}: common y centerline`);
+      near((a[0] * 1.98 + b[0] * 1.815) / 3.795, point[0], 0.01, `${label}: common x centerline`);
+      near((a[1] * 1.98 + b[1] * 1.815) / 3.795, point[1], 0.01, `${label}: common y centerline`);
       const before = points[Math.max(0, step - 1)], after = points[Math.min(points.length - 1, step + 1)];
       const dx = after[0] - before[0], dy = after[1] - before[1], length = Math.hypot(dx, dy);
       assert.ok(length > 0, `${label}: nonzero local direction`);
       const signed = (shifted: number[]) => (-dy * (shifted[0] - point[0]) + dx * (shifted[1] - point[1])) / length;
       near(signed(a), -WIDTH.firstOffset, 0.02, `${label}: black lane side`);
       near(signed(b), WIDTH.offset, 0.02, `${label}: red lane side`);
-      near(signed(a) - WIDTH.firstLane / 2, -3.102, .02, `${label}: original black exterior edge`);
-      near(signed(b) + WIDTH.lane / 2, 3.102, .02, `${label}: original red exterior edge`);
+      near(signed(a) - WIDTH.firstLane / 2, -3.8775, .02, `${label}: original black exterior edge`);
+      near(signed(b) + WIDTH.lane / 2, 3.8775, .02, `${label}: original red exterior edge`);
     });
   });
 }
@@ -141,13 +141,13 @@ test('dual source lanes close the seam toward black and retain both outside edge
   }
 });
 
-test('ordinary full-channel and gate-half highlights coincide with the physical outline', () => {
+test('ordinary full-channel and gate-half highlights share the same exterior ring', () => {
   const markup = renderBodygraph(charts.dual, null, { selections: allGates.map(gate) });
   const highlights = paths(markup).filter(tag => hasClass(tag, 'bg-channel-highlight'));
-  assertWidths(highlights, 30, 8.448, 'whole-channel highlights');
+  assertWidths(highlights, 30, 16.06, 'whole-channel highlights');
   const halfPaths = [...markup.matchAll(/<g data-highlight-gate="\d+"[^>]*>(<path[^>]*\/>)/g)].map(match => match[1]);
-  assertWidths(halfPaths, 60, 8.448, 'gate-half highlights');
-  for (const path of [...highlights, ...halfPaths]) assert.equal(width(path), WIDTH.outline, 'no additional crisp edge outside the physical outline');
+  assertWidths(halfPaths, 60, 16.06, 'gate-half highlights');
+  for (const path of [...highlights, ...halfPaths]) assert.equal(width(path), 16.06, 'mask removes the physical outline plus its gap');
 });
 
 test('integration footprints, halos and physical cutouts stay aligned at the larger width', () => {
@@ -163,14 +163,14 @@ test('integration footprints, halos and physical cutouts stay aligned at the lar
     for (const name of [...footprintClasses, ...interiorClasses] as const) {
       for (const tag of tags.filter(tag => hasClass(tag, name))) {
         seen.add(name);
-        assert.equal(width(tag), footprintClasses.includes(name) ? WIDTH.halo : name === 'bg-integration-connected-occlusion' ? WIDTH.outline : WIDTH.paint, name);
+        assert.equal(width(tag), footprintClasses.includes(name) ? 16.06 : 12.06, name);
         assert.equal(attribute(tag, 'stroke'), footprintClasses.includes(name) ? '#ffffff' : '#000000', name);
       }
     }
     for (const name of ['bg-integration-selection', 'bg-integration-hover', 'bg-integration-focus', 'bg-integration-focus-target'] as const) {
       const selected = tags.filter(tag => hasClass(tag, name));
       assert.ok(selected.length > 0, name);
-      selected.forEach(tag => assert.equal(width(tag), name === 'bg-integration-focus-target' ? WIDTH.halo : WIDTH.outline, name));
+      selected.forEach(tag => assert.equal(width(tag), name === 'bg-integration-focus-target' ? WIDTH.halo : 16.06, name));
     }
     const physicalPath = attribute(directPaths(target(markup, 'integration', 'integration'))
       .find(tag => attribute(tag, 'stroke') === 'transparent'), 'd');
@@ -182,7 +182,7 @@ test('integration footprints, halos and physical cutouts stay aligned at the lar
       if (connected) {
         const cutout = maskPaths.find(tag => hasClass(tag, 'bg-integration-connected-interior'));
         assert.equal(attribute(cutout, 'd'), attribute(connected, 'd'), 'connected ring has matching outer and inner paths');
-        near((width(connected) - width(cutout)) / 2, 3.564, 1e-12, 'ownership footprint extends beyond the protected semantic interior');
+        near((width(connected) - width(cutout)) / 2, 2, 1e-12, 'ownership footprint extends beyond the protected semantic interior');
       }
     }
   }
@@ -197,15 +197,15 @@ test('larger channel paint leaves gate/center dimensions and pointer hit areas u
   assertWidths(hits.filter(tag => hasClass(tag, 'bg-focus-shape')), 30, 19, 'ordinary pointer targets');
   assertWidths(hits.filter(tag => !hasClass(tag, 'bg-focus-shape')), 1, 20, 'integration pointer target');
   assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-shape')), 9, 1.25, 'center outlines');
-  assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-highlight')), 9, 1.25, 'thin center highlights');
+  assertWidths(paths(markup).filter(tag => hasClass(tag, 'bg-center-highlight')), 9, 7.75, 'masked exterior center highlights');
   for (const { id, x, y } of GATES) {
     const body = target(markup, 'gate', id), circles = [...body.matchAll(/<circle\b[^>]*\/>/g)].map(match => match[0])
       .filter(tag => !hasClass(tag, 'bg-gate-glow'));
-    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 9.5, 9], `gate ${id}: hit/disc radii and adjusted decorative core`);
+    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 8.4, 8.4], `gate ${id}: hit/disc radii and adjusted decorative core`);
     assert.equal(attribute(circles[1], 'stroke'), 'none');
     assert.equal(attribute(circles[1], 'stroke-width'), undefined);
-    assert.equal(width(circles[2]), 1);
-    assert.equal(Number(attribute(circles[2], 'r')) + width(circles[2]) / 2, 9.5, 'core retains its previous outer boundary');
+    assert.equal(attribute(circles[2], 'stroke'), 'none');
+    assert.equal(Number(attribute(circles[2], 'r')), 8.4, 'core fits the approved precise-circle disc');
     assert.match(markup, new RegExp(`data-type="gate" data-id="${id}"[^>]*transform="translate\\(${x} ${y}\\)"`));
   }
 });
@@ -223,6 +223,16 @@ const unchangedHashes = {
 // Normalize only that typography change when comparing this historical oracle;
 // gate-highlight.test.ts independently requires the new 9.9 label size.
 const originalGateFont = (markup: string) => markup.replace(/font-size="9\.9"/g, 'font-size="11"');
+// The later approved precise-circle markers are independent of channel width.
+// Normalize their exact typography/paint to the historical gate presentation;
+// current marker and pointer invariants are verified above and in gate-highlight.
+const originalGateMarkers = (markup: string) => markup.replace(
+  /(<g data-type="gate"[^>]*>)([\s\S]*?)(<\/g>)/g,
+  (_all, opening, body, ending) => opening + body
+    .replace(/(<circle class="bg-gate-(?:disc|highlight)"[^>]* r=")8\.4(")/g, '$19.5$2')
+    .replace(/<text[^>]*font-size="10\.4"[^>]*fill="([^"]+)"[^>]*>(\d+)<\/text>/g,
+      (_text, fill, id) => `<text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="9.9" font-weight="${fill === '#ffffff' ? '650' : '500'}" fill="${fill}" pointer-events="none">${id}</text>`) + ending);
+
 // Gate contours were later removed independently of channel width. Restore
 // only the exact current disc tag; radius, fill, highlight and hit area remain
 // covered by the frozen oracle and the current assertions above.
@@ -239,6 +249,10 @@ const originalActivationStyle = (markup: string) => markup.replace(
   '    .bg-activation { cursor: pointer; outline: none; }\n    .bg-activation:hover rect { fill: #f1f4f8; }\n')
   // Explicit Safari baseline inheritance does not change channel geometry.
   .replace('    /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */\n    .bg-activation tspan { dominant-baseline: inherit; }\n', '')
+  // Center hover now belongs to the shared preview controller; this oracle
+  // covers the earlier width change, so restore only that former CSS line.
+  .replace('      .bg-interactive:hover .bg-gate-highlight { opacity: 1; }\n',
+    '      .bg-interactive:hover .bg-gate-highlight { opacity: 1; }\n      .bg-interactive:hover .bg-center-highlight { opacity: 1; }\n')
   // Moving activation backgrounds are independent of this frozen shape oracle.
   .replace('    .bg-activation[data-fluid-active="true"] > rect { fill: transparent; }\n', '')
   // Committed cell outlines are unrelated to channel geometry.
@@ -261,17 +275,17 @@ function originalOutlineRecolor(markup: string, outlineWidth: number) {
     .replace(/<path class="bg-integration-(?:interior|connected-interior)"[^>]*\/>/g,
       path => path.replace(/stroke-width="[^"]+"/, `stroke-width="${outlineWidth}"`));
 }
-const originalHighlightGlow = (markup: string, legacyHaloWidth = 13.2) => originalOutlineRecolor(
+const originalHighlightGlow = (markup: string, legacyHaloWidth = 16.5) => originalOutlineRecolor(
   // The current highlight color is independent of this frozen geometry oracle.
-  markup.replaceAll('#91bce9', '#c4d9f1'), Number((legacyHaloWidth * .64).toFixed(3)))
+  markup.replaceAll('#83a9d2', '#c4d9f1').replaceAll('#91bce9', '#c4d9f1'), Number((legacyHaloWidth * .64).toFixed(3)))
   .replace(/    <filter id="[^"]+-(?:gate|highlight)-glow"[^>]*>[\s\S]*?<\/filter>\n/g, '')
   // Exterior-only bloom is decorative; keep the frozen physical oracle intact.
-  .replace(/    <mask id="[^"]+-center-glow-exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
-  .replace(/ mask="url\(#[^)]*-center-glow-exterior\)"/g, '')
+  .replace(/    <mask id="[^"]+-highlight-exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
+  .replace(/ mask="url\(#[^)]*-highlight-exterior\)"/g, '')
   .replace(/      <circle class="bg-gate-glow"[^>]*\/>\n/g, '')
   .replace(/ filter="url\(#[^)]*-(?:gate|highlight)-glow\)"/g, '')
   .replace(/(<g class="bodygraph-integration-highlights") mask="url\(#[^)]*-integration-outline\)"/, '$1')
-  .replace(/(<circle class="bg-gate-highlight"[^>]* r=")9("[^>]* stroke-width=")1(")/g, '$18.5$22$3')
+  .replace(/(<circle class="bg-gate-highlight"[^>]* r=")9\.5("[^>]* stroke=")none(")/g, '$18.5$2#c4d9f1$3 stroke-width="2"')
   .replace(/<path\b[^>]*stroke="#c4d9f1"[^>]*\/>/g, path => path.replace(/stroke-width="[^"]+"/,
     `stroke-width="${hasClass(path, 'bg-center-highlight') ? 2.5 : legacyHaloWidth}"`))
   .replace(/^ +\.bg-interactive:(?:hover|focus-visible) \.bg-gate-glow \{ opacity: 1; \}\n/gm, '')
@@ -280,7 +294,7 @@ test('non-channel SVG and terminal clipping remain byte-identical to the previou
   const selections = [gate(54), { type: 'center' as const, id: 'throat' },
     { type: 'channel' as const, id: '37-40' }, { type: 'integration' as const, id: 'integration' }];
   for (const [mode, chart] of Object.entries(charts)) {
-    const markup = originalHighlightGlow(renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' }));
+    const markup = originalHighlightGlow(originalGateMarkers(renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' })));
     const unchanged = {
       gatesAndCenters: originalGateFont(originalGateContour(markup.slice(markup.indexOf('<g class="bodygraph-centers">')))),
       clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g),
@@ -297,7 +311,7 @@ async function rendererAtScale(scale: number, legacyDualGap = false) {
   const paintURL = new URL('../src/scene/bodygraph-paint.ts', import.meta.url);
   const presentationURL = new URL('../src/scene/geometry/drawing-presentation.ts', import.meta.url);
   const presentationSource = await readFile(presentationURL, 'utf8');
-  const setting = /^const CHANNEL_WIDTH_SCALE = 1\.32;$/gm;
+  const setting = /^const CHANNEL_WIDTH_SCALE = 1\.65;$/gm;
   assert.equal([...presentationSource.matchAll(setting)].length, 1, 'one explicit width setting provides the rollback');
   const link = (source: string, base: string|URL|undefined, replacements = {}) => source.replace(/from (['"])(\.\.?\/[^'"]+)\1/g,
     (_, quote, name) => {
@@ -346,10 +360,16 @@ test('width scale 1.2 restores the preceding paint, lane, halo and mask widths',
     'bg-integration-focus', 'bg-integration-focus-target'] as const) {
     const matching = tags.filter(tag => hasClass(tag, name));
     assert.ok(matching.length > 0, name);
-    const decorative = ['bg-channel-highlight', 'bg-integration-selection', 'bg-integration-hover', 'bg-integration-focus'].includes(name);
-    matching.forEach(tag => assert.equal(width(tag), decorative ? 7.68 : 12, `previous physical width with replacement-outline policy: ${name}`));
+    const decorative = name !== 'bg-integration-focus-target';
+    matching.forEach(tag => assert.equal(width(tag), decorative ? 13.18 : 12, `previous physical width with replacement-outline policy: ${name}`));
   }
-  const cutouts = colored(tags, '#000000');
-  assert.ok(cutouts.length > 0);
-  cutouts.forEach((tag: string|undefined) => assert.equal(width(tag), hasClass(tag!, 'bg-integration-connected-occlusion') ? 7.68 : 5.52, 'source interior and full active-neighbor protection follow the previous physical widths'));
+  for (const [mask] of markup.matchAll(/<mask\b[^>]*>[\s\S]*?<\/mask>/g)) {
+    const id = attribute(mask, 'id')!;
+    const cuts = colored(paths(mask), '#000000');
+    if (!cuts.length) continue;
+    for (const cut of cuts) {
+      const expected = attribute(cut, 'fill') === '#000000' ? 3.75 : 9.18;
+      assert.equal(width(cut), expected, `${id}: scaled physical edge and fixed 0.75-unit gap`);
+    }
+  }
 });

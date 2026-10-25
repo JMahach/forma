@@ -1,4 +1,5 @@
-import { CHANNELS, getGate, getChannel } from './chart-geometry.ts';
+import { CHANNELS, getGate, getChannel, getCenter } from './chart-geometry.ts';
+import { CENTER_STROKE } from './drawing-presentation.ts';
 import { INTEGRATION_IDS } from '../../domain/topology.ts';
 import { INTEGRATION_ARMS as ARM_GEOMETRY, STEM_POINTS, sampleBezier } from './integration-geometry.ts';
 
@@ -7,7 +8,7 @@ export const pointString = (points: number[][]) => points.map(([x, y], index) =>
 
 // Small true corner radii soften the silhouette without distorting the polygons
 // or moving the gate anchors. Geometry remains independent of activation data.
-export function roundedCenter(points: string, radius = 6) {
+function roundedCenterCorners(points: string, radius = 6) {
   const vertices = points.split(' ').map(pair => pair.split(',').map(Number));
   const toward = (from: number[], to: number[]) => {
     const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
@@ -17,15 +18,20 @@ export function roundedCenter(points: string, radius = 6) {
   return vertices.map((vertex, index) => {
     const entry = toward(vertex, vertices[(index + vertices.length - 1) % vertices.length]);
     const exit = toward(vertex, vertices[(index + 1) % vertices.length]);
-    return `${index ? 'L' : 'M'} ${entry.join(' ')} Q ${vertex.join(' ')} ${exit.join(' ')}`;
-  }).join(' ') + ' Z';
+    return { entry, vertex, exit };
+  });
 }
 
-export function splitAtHalfLength(points: number[][]) {
+export function roundedCenter(points: string, radius = 6) {
+  return roundedCenterCorners(points, radius).map(({ entry, vertex, exit }, index) =>
+    `${index ? 'L' : 'M'} ${entry.join(' ')} Q ${vertex.join(' ')} ${exit.join(' ')}`
+  ).join(' ') + ' Z';
+}
+
+function splitAtLength(points: number[][], midpoint: number) {
   const distinct = (items: number[][]) => items.filter((point, index) => !index
     || Math.hypot(point[0] - items[index - 1][0], point[1] - items[index - 1][1]) > 1e-7);
   const lengths = points.slice(1).map((point, index) => Math.hypot(point[0] - points[index][0], point[1] - points[index][1]));
-  const midpoint = lengths.reduce((sum, length) => sum + length, 0) / 2;
   let distance = 0;
   for (let index = 0; index < lengths.length; index += 1) {
     if (distance + lengths[index] >= midpoint) {
@@ -40,6 +46,49 @@ export function splitAtHalfLength(points: number[][]) {
   return [points, points.slice(-1)];
 }
 
+export function splitAtHalfLength(points: number[][]) {
+  const length = points.slice(1).reduce((sum, point, index) =>
+    sum + Math.hypot(point[0] - points[index][0], point[1] - points[index][1]), 0);
+  return splitAtLength(points, length / 2);
+}
+
+// Intersect a vertical rail with the same rounded silhouette that is rendered.
+// Sampling only the small corners also handles the G-center's rounded tips;
+// using the raw diamond vertices would leave its middle channels unequal.
+function centerVerticalBounds(points: string, x: number) {
+  const outline = roundedCenterCorners(points).flatMap(({ entry, vertex, exit }) =>
+    Array.from({ length: 33 }, (_, index) => {
+      const t = index / 32, u = 1 - t;
+      return [0, 1].map(axis => u * u * entry[axis] + 2 * u * t * vertex[axis] + t * t * exit[axis]);
+    }));
+  const crossings = outline.flatMap((a, index) => {
+    const b = outline[(index + 1) % outline.length], dx = b[0] - a[0], dy = b[1] - a[1];
+    if (Math.abs(dx) < 1e-9) return [];
+    const t = (x - a[0]) / dx;
+    if (t < 0 || t > 1) return [];
+    // Include the visible center stroke; a diagonal side covers more of a
+    // vertical rail than a horizontal side with the same stroke width.
+    const strokeY = CENTER_STROKE / 2 * Math.hypot(dx, dy) / Math.abs(dx);
+    return [{ y: a[1] + t * dy, strokeY }];
+  });
+  return [Math.min(...crossings.map(({ y, strokeY }) => y - strokeY)),
+    Math.max(...crossings.map(({ y, strokeY }) => y + strokeY))];
+}
+
+function splitChannel(channel: typeof CHANNELS[number]) {
+  const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
+  const [start, end] = channel.gates.map(id => getGate(id)!);
+  // Only the six straight G ↔ throat/sacral routes change their division.
+  // Other channels and the separate integration geometry keep their seams.
+  const centers = [start.center, end.center];
+  if (start.x !== end.x || !centers.includes('g')
+    || !centers.some(center => center === 'throat' || center === 'sacral')) return splitAtHalfLength(points);
+  const down = end.y > start.y;
+  const startEdge = centerVerticalBounds(getCenter(start.center)!.points, start.x)[down ? 1 : 0];
+  const endEdge = centerVerticalBounds(getCenter(end.center)!.points, end.x)[down ? 0 : 1];
+  return splitAtLength(points, Math.abs((startEdge + endEdge) / 2 - start.y));
+}
+
 export function offsetPoints(points: number[][], offset: number) {
   return points.map(([x, y], index) => {
     const before = points[Math.max(0, index - 1)], after = points[Math.min(points.length - 1, index + 1)];
@@ -51,9 +100,8 @@ export function offsetPoints(points: number[][], offset: number) {
 
 // Ordinary channels use two halves; integration uses its own arms and stem.
 // Geometry is cached, so selection changes do not resample these curves.
-export const channelHalves = new Map(CHANNELS.filter(channel => !INTEGRATION_IDS.has(channel.id)).map((channel) => [channel.id, splitAtHalfLength(
-  channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0))
-)]));
+export const channelHalves = new Map(CHANNELS.filter(channel => !INTEGRATION_IDS.has(channel.id))
+  .map(channel => [channel.id, splitChannel(channel)]));
 // 26–44 crosses the central routes behind every other channel, including integration.
 export const paintOrder = [CHANNELS.find(channel => channel.id === '26-44')!, ...CHANNELS.filter(channel => channel.id !== '26-44')];
 

@@ -76,7 +76,7 @@ export function createSceneRenderer(root: Element) {
   return {
     update(chart: ChartView, selection?: SelectionTarget | null, options: RenderOptions = {}) {
       const nextStructure = JSON.stringify([options.profile, options.interactive !== false, options.idPrefix,
-        options.showLabels === true]);
+        options.showLabels === true, options.highlightStyle ?? 'outline']);
       const state = createRenderState(chart, selection, options);
       if (!body || structure !== nextStructure) {
         mount(chart, state, options); structure = nextStructure;

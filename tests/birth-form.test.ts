@@ -37,7 +37,6 @@ test('stand random example uses the real city and natal calculation before savin
   t.mock.method(Math, 'random', () => 0);
   const original = manualChart();
   const h = formHarness(t, { charts: [original], port: '36' });
-  assert.equal(h.element('randomChartButton').hidden, false);
   const creating = h.element('randomChartButton').emit('click');
   assert.equal(h.form.opened, false, 'one click never opens or modifies the birth dialog');
   assert.equal(h.requests.length, 1);
@@ -91,7 +90,6 @@ test('random lookup errors are a toast with no dialog and allow a fresh one-clic
 
 test('random example is unavailable off the stand and respects the 500-record limit', async t => {
   const h = formHarness(t);
-  assert.equal(h.element('randomChartButton').hidden, true);
   await h.element('randomChartButton').emit('click');
   assert.equal(h.requests.length, 0);
   t.mock.timers.reset();

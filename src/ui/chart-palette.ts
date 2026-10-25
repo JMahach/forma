@@ -10,3 +10,7 @@ export const PALETTE = {
 
 // Column feedback keeps the map hue; its fill is half the previous 2/3 density.
 export const ACTIVATION_HIGHLIGHT_OPACITY = 1 / 3;
+
+// Pinned map feedback is the same blue, with each sRGB channel 10% darker.
+export const SELECTED_HIGHLIGHT_COLOR = '#' + PALETTE.halo.slice(1).match(/../g)!
+  .map(channel => Math.round(parseInt(channel, 16) * .9).toString(16).padStart(2, '0')).join('');

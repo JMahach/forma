@@ -30,7 +30,7 @@ function harness(t: test.TestContext, transform = matrix(), reportedTransform = 
     handlers.set(key, [...(handlers.get(key) || []), handler]);
   };
   for (const [key, value] of Object.entries({ DOMPoint: Point, window: { addEventListener: listen('window') },
-    document: { hidden: false, addEventListener: listen('document') } })) {
+    document: { hidden: false, elementFromPoint: () => null, addEventListener: listen('document') } })) {
     const old = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
     t.after(() => old ? Object.defineProperty(globalThis, key, old) : delete globalThis[key]);

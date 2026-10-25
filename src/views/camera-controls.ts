@@ -2,7 +2,7 @@ import type { CameraPosition } from '../scene/camera.ts';
 import type { Gestures } from '../scene/gestures.ts';
 interface CameraChangeOptions {
   heading: HTMLElement | null; fitButton: HTMLButtonElement | null;
-  getHoverPreview?: () => { clear: () => void } | null;
+  getHoverPreview?: () => { refreshCenter: () => void } | null;
   activationPopover: { reposition: () => void };
   getSummary?: () => { layout: () => void } | null;
 }
@@ -16,7 +16,7 @@ export function createCameraChangeHandler({ heading, fitButton, getHoverPreview 
     // it while the drawing is away from Home.
     if (heading && heading.hidden !== !home) heading.hidden = !home;
     if (fitButton && fitButton.hidden !== home) fitButton.hidden = home;
-    getHoverPreview()?.clear();
+    getHoverPreview()?.refreshCenter();
     activationPopover.reposition();
     getSummary()?.layout();
   };

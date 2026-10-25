@@ -36,7 +36,7 @@ test('shared overlay lanes use the same closed black-red seam as ordinary channe
   const channel = root.querySelector('.bodygraph-channels [data-id="4-63"]');
   const paths = coloredPaths(channel);
   assert.deepEqual(paths.map((path) => path.getAttribute('d')!.split(' ')[0]),
-    ['M342.45,106.00', 'M339.42,106.00', 'M342.45,131.00', 'M339.42,131.00']);
+    ['M342.81,106.00', 'M339.02,106.00', 'M342.81,131.00', 'M339.02,131.00']);
 });
 
 test('shared gate discs have exactly two adjoining fifty-percent halves', () => {
@@ -54,17 +54,17 @@ test('four source facts use two adjoining black-red lanes and a fifty-fifty gate
   const paths = coloredPaths(channel);
   assert.equal(paths.length, 4, 'each channel half contains two origins, never four thin lanes');
   assert.deepEqual(paths.map(path => path.getAttribute('stroke')), [CYCLE, NATAL, CYCLE, NATAL]);
-  assert.deepEqual(paths.map(path => path.getAttribute('stroke-width')), ['3.3', '3.036', '3.3', '3.036']);
+  assert.deepEqual(paths.map(path => path.getAttribute('stroke-width')), ['4.125', '3.795', '4.125', '3.795']);
   assert.deepEqual(paths.map((path) => path.getAttribute('d')!.split(' ')[0]),
-    ['M342.45,106.00', 'M339.42,106.00', 'M342.45,131.00', 'M339.42,131.00']);
+    ['M342.81,106.00', 'M339.02,106.00', 'M342.81,131.00', 'M339.02,131.00']);
   const arm = root.querySelectorAll('[data-integration-layer="20"] path').reverse();
   assert.deepEqual(arm.map((path) => [path.getAttribute('stroke'), path.getAttribute('stroke-width'), path.getAttribute('d')!.split(' ')[0]]),
-    [[CYCLE, '3.3', 'M284.24,303.43'], [NATAL, '3.036', 'M283.74,300.44']]);
+    [[CYCLE, '4.125', 'M284.30,303.79'], [NATAL, '3.795', 'M283.67,300.05']]);
   assert.equal(Number(channel!.querySelector('.bg-channel-outline')!.getAttribute('stroke-width')), CHANNEL_WIDTH.outline);
   const shared = gate(root, 63), disc = shared!.querySelector('.bg-gate-disc');
-  assert.equal(disc!.getAttribute('r'), '9.5'); assert.equal(disc!.getAttribute('stroke'), 'none');
+  assert.equal(disc!.getAttribute('r'), '8.4'); assert.equal(disc!.getAttribute('stroke'), 'none');
   assert.deepEqual(shared!.querySelectorAll('circle').map(node => node.getAttribute('class')),
-    [null, 'bg-gate-glow', 'bg-gate-disc', 'bg-gate-highlight'], 'a lower bloom joins the existing hit area, semantic disc and crisp core without extra source marks');
+    [null, 'bg-gate-disc', 'bg-gate-glow', 'bg-gate-highlight'], 'the inset ring follows the semantic disc; inactive fill stays above it without extra source marks');
   assert.equal(shared!.querySelectorAll('path').length, 0, 'source ownership adds no arcs or extra outlines');
   const gradientId = disc!.getAttribute('fill')!.match(/^url\(#(.+)\)$/)?.[1];
   const stops = root.querySelector(`linearGradient[id="${gradientId}"]`)!.querySelectorAll('stop');

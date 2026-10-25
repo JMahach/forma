@@ -1,3 +1,5 @@
+import { isDevelopmentPort } from '../shared/development.ts';
+import { attachPanelKeyboard } from './views/side-panel-controls.ts';
 import type { SavedView } from './data/view-store.ts';
 import { createTransitDayClient } from './data/transit-day-client.ts';
 import { createViewStore } from './data/view-store.ts';
@@ -46,6 +48,9 @@ const store = createChartStore({ onStorageError: toast });
 // The first preview and the application share these state owners. Project the
 // saved shells before importing the application, while boot transitions are off.
 const panels = createPanelState(), workspace = createWorkspaceState();
+attachPanelKeyboard(document, panels);
+const randomButton = document.getElementById('randomChartButton');
+if (randomButton) randomButton.hidden = !isDevelopmentPort(new URL(location.href).port);
 panels.restore(savedView?.panels); workspace.restore(savedView?.workspace);
 const studio = element('canvasWrap').parentElement!;
 studio.dataset.workspaceScreen = workspace.screen;
@@ -82,7 +87,7 @@ function renderLoadingTools() {
   const dayOpened = !initialLifetime && dayAvailable && sameChart
     && (pendingView?.natalDay?.opened === true || personalAvailable && pendingView?.natalDay?.opened !== false);
   const view = studioPresentation({ isTransit, personalAvailable, dayOpened, lifetime: initialLifetime,
-    returnsOpened: Boolean(savedReturns && pendingView?.returns?.opened && pendingView?.panels?.right !== false), returnsEnabled: Boolean(initialLifetime && personalAvailable),
+    returnsOpened: Boolean(savedReturns && pendingView?.returns?.opened), returnsEnabled: Boolean(initialLifetime && personalAvailable),
     transitEnabled: Boolean(initialLifetime && isTransit) });
   element('chartSummary').dataset.screen = view.returnsVisible ? 'returns' : 'summary';
   studio.dataset.initialTimeline = view.timelinePanel || 'none';

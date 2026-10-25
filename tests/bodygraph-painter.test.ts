@@ -35,7 +35,7 @@ test('adding the opposite gate keeps canonical half order and the existing halo 
   assertEquivalent(root, expected);
 });
 
-test('newly created persistent integration and gate highlights retain namespaced glow paint', () => {
+test('newly created persistent integration and gate highlights retain native rings and namespaced masks', () => {
   const chart = { design: [20], personality: [31] }, initialOptions = { idPrefix: 'new-glow' };
   const { root } = render(chart, null, initialOptions);
   const painter = createBodygraphPainter(root, createRenderState(chart, null, initialOptions), initialOptions);
@@ -43,16 +43,16 @@ test('newly created persistent integration and gate highlights retain namespaced
     const options = { ...initialOptions, previewSelection: { type: 'gate' as const, id } };
     painter.update(createRenderState(chart, null, options), options);
     const gate = root.querySelector(`.bodygraph-gates [data-id="${id}"]`)!;
-    assert.equal(gate.querySelector('.bg-gate-glow')?.getAttribute('filter'), 'url(#new-glow-gate-glow)');
+    assert.equal(gate.querySelector('.bg-gate-glow')?.getAttribute('fill'), 'none');
     assert.equal(gate.querySelector('.bg-gate-glow')?.getAttribute('opacity'), '1');
     if (id === 20) {
       const selection = root.querySelector('.bg-integration-selection')!;
-      assert.equal(selection.getAttribute('filter'), null, 'new path is masked before the shared bloom');
-      assert.equal(selection.getAttribute('stroke-width'), '8.448', 'dynamic selection replaces the same physical outline as static paint');
-      assert.equal(selection.parentElement!.getAttribute('filter'), 'url(#new-glow-highlight-glow)');
-      assert.equal(selection.parentElement!.getAttribute('mask'), 'url(#new-glow-integration-outline)');
+      assert.equal(selection.getAttribute('filter'), null, 'new path is masked without a blur filter');
+      assert.equal(selection.getAttribute('stroke-width'), '16.06', 'dynamic selection uses the same exterior ring as static paint');
+      assert.equal(selection.parentElement!.getAttribute('filter'), null);
+      assert.equal(selection.parentElement!.getAttribute('mask'), 'url(#new-glow-highlight-exterior)');
     }
-    if (id === 1) assert.equal(root.querySelector('[data-highlight-gate="1"]')?.getAttribute('filter'), 'url(#new-glow-highlight-glow)');
+    if (id === 1) assert.equal(root.querySelector('[data-highlight-gate="1"]')?.getAttribute('mask'), 'url(#new-glow-highlight-exterior)');
     assertEquivalent(root, render(chart, null, options).root);
   }
   painter.update(createRenderState(chart, null, initialOptions), initialOptions);
@@ -208,8 +208,8 @@ test('integration outgoing paint keeps its old mask and remains bounded during r
   assert.ok(mask);
   assert.equal(mask.innerHTML, oldMask, 'outgoing arm retains its own occlusion');
   assert.equal(outgoing.getAttribute('mask'), `url(#${mask.id})`);
-  assert.equal(outgoing.getAttribute('filter'), null, 'retiring geometry keeps its exact mask before the shared bloom');
-  assert.equal(outgoing.parentElement!.getAttribute('filter'), 'url(#bodygraph-highlight-glow)', 'retiring geometry retains the same stationary bloom owner');
+  assert.equal(outgoing.getAttribute('filter'), null, 'retiring geometry keeps its exact mask without a blur filter');
+  assert.equal(outgoing.parentElement!.getAttribute('filter'), null, 'retiring geometry does not introduce blur');
   for (const gate of [34, 57, 10, 20]) {
     change(gate);
     assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing="paint"]').length, 1);

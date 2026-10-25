@@ -13,6 +13,7 @@ interface HarnessOptions {
   loadLifetime?: ViewOptions['loadLifetime'] | null; canRestoreLifetime?: ViewOptions['canRestoreLifetime'] | null;
   returnsClient?: TestReturnsOptions['client'] | null; panelView?: boolean; openReturnsTimeline?: ViewOptions['openReturnsTimeline'];
   getNow?: () => number; zone?: string; cameraRestored?: boolean;
+  getKnowledgeView?: ViewOptions['getKnowledgeView']; getChartsView?: ViewOptions['getChartsView'];
   normalizeSavedView?: (saved: ReturnType<ReturnType<typeof createViewStore>['read']>) => Partial<SavedView> | null;
   lifetimeClient?: TestLifetimeOptions['client'];
 }
@@ -70,7 +71,7 @@ const point = (index: number, source = metadata) => {
 };
 function harness(storage = new Map<string, string>(), { size = 1000, transitDay = async (date: string) => day(date), loadLifetime = null, canRestoreLifetime = null,
     returnsClient = null, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
-    zone = 'UTC', cameraRestored = false, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
+    zone = 'UTC', cameraRestored = false, getKnowledgeView, getChartsView, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
   const frames: (string|undefined)[] = [], writes: [string, string][] = [], pending = new Map<number, () => void>(), attributes: Record<string, string> = {}, styles = new Map<string, string>();
   const storagePort = { getItem: (key: string) => storage.get(key) ?? null,
     setItem(key: string, value: string) { storage.set(key, value); writes.push([key, value]); } };
@@ -118,7 +119,7 @@ function harness(storage = new Map<string, string>(), { size = 1000, transitDay 
   let counter = 0;
   const savedView = normalizeSavedView(viewStore.read());
   view = createViewSession({ panels, workspace, store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, cameraRestored, transit, natalDay,
-    ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline,
+    ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline, getKnowledgeView, getChartsView,
     planetFilter: planets, getReturns: () => returns, getLifetime: () => lifetime, loadLifetime: loadLifetime || (async () => ensureLifetime()), eventTarget: eventTarget as unknown as EventTarget, interactionTarget: interactionTarget as unknown as EventTarget & { hidden: boolean },
     acceptLifetimeMode: exploration.acceptLifetimeMode,
     getPersonalLive: () => exploration.live, restorePersonalLive: exploration.restoreLive,
@@ -137,8 +138,7 @@ function harness(storage = new Map<string, string>(), { size = 1000, transitDay 
     const switcher = document.createElement('button');
     (panel as unknown as { classList: { toggle(): void } }).classList = { toggle() {} };
     summaryScreen.append(returnsButton); panel.append(summaryScreen, returnsPanel);
-    summary = attachChartSummary({ panels, panel, summaryScreen, returnsPanel, returnsButton, switcher,
-      onOpen: () => returns.close(), onClose: () => returns.close() } as unknown as Parameters<typeof attachChartSummary>[0]);
+    summary = attachChartSummary({ panels, panel, summaryScreen, returnsPanel, returnsButton, switcher } as unknown as Parameters<typeof attachChartSummary>[0]);
   }
   const tick = () => { for (const [id, callback] of [...pending] as const) { pending.delete(id); callback(); } };
   return { panels, workspace, summary, frames, view, session, exploration, returns, returnEvent, mandala, camera, cameraSurface, transit, natalDay, planets, storage, writes, attributes, styles, eventTarget, interactionTarget, ensureLifetime, setPersonalLive, tick };
@@ -1106,7 +1106,7 @@ for (const delayed of ['events', 'return'] as const) for (const reopen of [false
   test(`a right-panel command during ${delayed} restoration preserves the exact return (reopen: ${reopen})`, async t => {
     const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
     const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
-    first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
+    first.session.select(source.id); first.summary!.open(); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
     let release;
     const second = harness(first.storage, { panelView: true, returnsClient: {
       events: (input: { body: string; }) => {
@@ -1130,10 +1130,10 @@ for (const delayed of ['events', 'return'] as const) for (const reopen of [false
     assert.equal(second.view.interrupted, false);
     assert.equal(second.returns.state.selectedEvent?.id, first.returnEvent.id);
     assert.equal(second.session.current.utc, first.returnEvent.utc);
-    assert.equal(second.summary!.screen, reopen ? 'summary' : 'closed');
-    assert.equal(second.returns.opened, false, 'the manual summary command supersedes only the saved returns-menu state');
+    assert.equal(second.summary!.screen, reopen ? 'returns' : 'closed');
+    assert.equal(second.returns.opened, true, 'the shell command preserves the saved Returns screen');
     const saved = JSON.parse(second.storage.get('liniya.view.v1')!);
-    assert.equal(saved.panels.right, reopen); assert.equal(saved.returns.opened, false);
+    assert.equal(saved.panels.right, reopen); assert.equal(saved.returns.opened, true);
     assert.equal(saved.returns.eventId, first.returnEvent.id);
   });
 }
@@ -1290,7 +1290,7 @@ for (const personal of [false, true] as const) for (const flushBy of ['flush', '
 
 
 for (const command of ['none', 'open', 'open-close'] as const) {
-  test(`saved closed right shell survives a stale opened Returns snapshot and late exact result (${command})`, async t => {
+  test(`saved closed right shell preserves the active Returns screen through a late exact result (${command})`, async t => {
     const first = harness(undefined, { panelView: true });
     t.after(() => first.transit.stop()); await first.view.restore();
     const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
@@ -1311,17 +1311,17 @@ for (const command of ['none', 'open', 'open-close'] as const) {
     const restoring = second.view.restore(); await nextTurn();
     assert.equal(typeof release, 'function');
     assert.equal(second.panels.right, false, 'restoring chart data cannot reopen the saved closed shell');
-    assert.equal(second.returns.opened, false, 'the menu is normalized without dropping its selected event');
+    assert.equal(second.returns.opened, true, 'restoration retains the active screen behind the closed shell');
     if (command !== 'none') second.summary!.open();
     if (command === 'open-close') second.summary!.close();
     release!(); assert.equal(await restoring, true);
-    assert.equal(second.summary!.screen, command === 'open' ? 'summary' : 'closed');
-    assert.equal(second.returns.opened, false);
+    assert.equal(second.summary!.screen, command === 'open' ? 'returns' : 'closed');
+    assert.equal(second.returns.opened, true);
     assert.equal(second.returns.state.selectedEvent!.id, first.returnEvent.id);
     assert.equal(second.session.current.utc, first.returnEvent.utc);
     const saved = JSON.parse(second.storage.get('liniya.view.v1')!);
     assert.equal(saved.panels.right, command === 'open');
-    assert.equal(saved.returns.opened, false);
+    assert.equal(saved.returns.opened, true);
     assert.equal(saved.returns.eventId, first.returnEvent.id);
     assert.equal(second.storage.get('liniya.charts.v1'), libraryBefore);
   });
@@ -1340,4 +1340,29 @@ test('legacy Returns snapshots without panel visibility still restore their open
   assert.equal(await second.view.restore(), true);
   assert.equal(second.summary!.screen, 'returns');
   assert.equal(second.returns.state.selectedEvent!.id, first.returnEvent.id);
+});
+
+
+test('search and article survive chart restoration, pagehide and a still-unloaded library', async t => {
+  const knowledge = { query: 'красное', searchOpen: true, collection: 'gates', entryId: 'concept.personality-design', view: 'article' as const };
+  let charts = { query: 'Анна', searchOpen: true };
+  let ready!: (value: TransitDay) => void;
+  const storage = new Map([['liniya.view.v1', JSON.stringify({ version: 1, selectedId: 'current-transit', knowledge, charts })]]);
+  const h = harness(storage, { getChartsView: () => charts, transitDay: () => new Promise(resolve => { ready = resolve; }) });
+  t.after(() => h.transit.stop());
+  const restore = h.view.restore();
+  charts = { query: '', searchOpen: false };
+  h.view.flush();
+  let saved = JSON.parse(storage.get('liniya.view.v1')!);
+  assert.deepEqual(saved.knowledge, knowledge, 'an unmounted library must retain its saved article');
+  assert.deepEqual(saved.charts, charts, 'new page input survives an unrelated chart loading');
+  ready(day('2026-10-04')); await restore;
+  h.eventTarget.dispatch('pagehide');
+  saved = JSON.parse(storage.get('liniya.view.v1')!);
+  assert.deepEqual(saved.knowledge, knowledge);
+  assert.deepEqual(saved.charts, charts);
+  const nextKnowledge = { ...knowledge, query: '', entryId: 'gate.8', view: 'catalog' as const };
+  const next = harness(storage, { getKnowledgeView: () => nextKnowledge, getChartsView: () => charts });
+  t.after(() => next.transit.stop()); await next.view.restore(); next.view.flush();
+  assert.deepEqual(JSON.parse(storage.get('liniya.view.v1')!).knowledge, nextKnowledge);
 });

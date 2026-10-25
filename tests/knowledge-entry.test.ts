@@ -14,17 +14,18 @@ function element() {
 }
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const drain = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
-function harness({ navigate = true } = {}) {
+function harness({ navigate = true, initialView = undefined } = {}) {
   const button = element(), dialog = { hidden: true }, requests: { promise: Promise<unknown>; resolve: undefined; reject: undefined; }[] = [], shown = [], errors: string[] = [];
   let attached = 0, opened = 0, current = !navigate, selection = { type: 'gate' as const, id: 37 };
-  const module = { attachKnowledge(received: unknown) {
+  const module = { attachKnowledge(received: unknown, _onSelect: unknown, options: { initialView?: unknown } = {}) {
     assert.equal(received, dialog); attached++;
     return {
+      snapshot: options.initialView,
       show(value) { dialog.hidden = false; shown.push(value); },
       hide() { dialog.hidden = true; },
     };
   } };
-  const controller = attachKnowledgeEntry({ button, dialog, onSelect() {},
+  const controller = attachKnowledgeEntry({ button, dialog, initialView, onSelect() {},
     getSelection: () => selection, onOpen: navigate ? () => { current = true; opened++; return controller.show(); } : undefined, isCurrent: () => current,
     onError: message => errors.push(message),
     load() { assert.equal(current, true, 'navigation happens before loading'); const request = deferred(); requests.push(request); return request.promise; } });
@@ -133,4 +134,16 @@ test('an explicit navigation callback alone decides when the library is shown', 
   assert.equal(opened, 1);
   assert.equal(loaded, 0);
   assert.equal(dialog.hidden, true);
+});
+
+
+test('a lazy library retains the saved snapshot before loading and through a late hidden import', async () => {
+  const initialView = { query: 'красное', searchOpen: true, collection: 'gates', entryId: 'concept.personality-design', view: 'article' };
+  const h = harness({ initialView });
+  assert.deepEqual(h.controller.snapshot, initialView);
+  const opening = h.button.dispatch('click'); await drain();
+  h.controller.hide();
+  h.requests[0].resolve!(h.module); assert.equal(await opening, false);
+  assert.deepEqual(h.controller.snapshot, initialView, 'loaded view receives exactly the saved reading intent');
+  assert.equal(h.dialog.hidden, true);
 });

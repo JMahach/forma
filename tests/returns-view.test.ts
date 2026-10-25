@@ -31,6 +31,8 @@ import { createViewportLayout } from './helpers/viewport-layout.ts';
 import assert from 'node:assert/strict';
 import { renderReturnEvents as renderEvents, attachReturnsPanel, type ReturnsPanelState } from '../src/views/returns-panel.ts';
 import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
+import { attachPanelKeyboard } from '../src/views/side-panel-controls.ts';
+import { createPanelState } from '../src/state/panels.ts';
 import { completedAge } from '../src/domain/personal-age.ts';
 import { returnMomentDetails } from '../src/views/returns-clock.ts';
 import { readFileSync } from 'node:fs';
@@ -220,12 +222,13 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: bool
     summary.setReturnsVisible(facts.returnsVisible);
     view.update({ ...current, visible: facts.returnsVisible } as ReturnsPanelState);
   };
-  const summary = attachChartSummary({ panel: nodes.chartSummary, summaryScreen: nodes.summaryScreen,
+  const panels = createPanelState(); panels.setRight(true);
+  attachPanelKeyboard(document as unknown as Document, panels);
+  const summary = attachChartSummary({ panels, panel: nodes.chartSummary, summaryScreen: nodes.summaryScreen,
     returnsPanel: nodes.returnsPanel, returnsButton: nodes.summaryReturns,
     switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
-    onOpen: () => update({ opened: false }), onClose: () => update({ opened: false }),
   } as unknown as Parameters<typeof attachChartSummary>[0]);
-  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), getLayout, onBack: () => { backs.push('summary'); summary.open(); },
+  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), getLayout, onBack: () => { backs.push('summary'); update({ opened: false }); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
     onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ });
   function escape(target = document.activeElement || nodes.returnsPanel) {
@@ -234,6 +237,7 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: bool
       preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; } };
     for (let node: PanelNode | null = target; node && !stopped; node = node.parentElement) node.dispatch?.('keydown', event);
     if (!stopped) document.dispatch('keydown', event);
+    if (!stopped) document.defaultView.dispatch('keydown', event);
     return event;
   }
   return { document, nodes, view, summary, update, escape, selected, years, moments, bodySelections, backs, get layouts() { return layouts; } };
@@ -368,7 +372,7 @@ test('Returns shares the existing calendar and closes it when the planet menu or
 });
 
 test('return drawer requires an explicit visible Lifetime owner', () => {
-  const h = panelHarness(); h.update({ opened: true });
+  const h = panelHarness(); h.summary.close(); h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, true); assert.equal(h.nodes.chartSummary.inert, true);
   assert.equal(h.summary.screen, 'closed');
   assert.equal(h.nodes.summaryBackdrop.hidden, true);
@@ -381,15 +385,20 @@ test('a restored return drawer closes and restores the same selected exact event
   assert.equal(h.nodes.returnsPanel.hidden, true);
   h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.nodes.summaryBackdrop.hidden, false);
+  h.nodes.returnsContent.scrollTop = 120;
   h.nodes.summarySwitch.dispatch('click');
   assert.equal(h.summary.opened, false);
   assert.equal(h.nodes.chartSummary.inert, true, 'the shared shell disables the retained exit-animation content');
   assert.equal(h.nodes.returnsPanel.hidden, false);
   h.update({ opened: true });
+  assert.equal(h.summary.opened, false, 'content updates do not reopen the closed shell');
+  h.nodes.summarySwitch.dispatch('click');
+  assert.equal(h.summary.screen, 'returns');
   assert.equal(h.nodes.returnsPanel.hidden, false);
   assert.match(h.nodes.returnsContent.innerHTML, /aria-pressed="true"/);
-
-  assert.equal(h.layouts, 3); assert.equal(h.document.activeElement, h.nodes.returnsBack);
+  assert.equal(h.nodes.returnsContent.scrollTop, 120);
+  assert.equal(h.layouts, 1, 'shell commands retain the existing Returns presentation');
+  assert.equal(h.document.activeElement, h.nodes.summarySwitch);
 });
 
 test('hiding Lifetime returns to summary while keeping the right panel open until explicit dismissal', () => {
@@ -401,9 +410,10 @@ test('hiding Lifetime returns to summary while keeping the right panel open unti
   assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true'); assert.equal(h.nodes.summaryBackdrop.hidden, false);
   assert.equal(h.layouts, 2, 'leaving returns updates layout without closing its shared panel');
   const otherControl = h.document.createElement('input'); otherControl.focus();
-  h.document.dispatch('keydown', { key: 'Escape' });
+  h.escape(otherControl);
   assert.equal(h.summary.opened, false); assert.equal(h.document.activeElement, h.nodes.summarySwitch);
   h.update({ timelineVisible: true, opened: false }); h.update({ opened: true });
+  h.nodes.summarySwitch.dispatch('click');
   assert.equal(h.nodes.returnsPanel.hidden, false); assert.equal(h.layouts, 3);
 });
 

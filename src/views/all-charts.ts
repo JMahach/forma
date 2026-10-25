@@ -1,8 +1,10 @@
+import type { SavedView } from '../data/view-store.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type { ChartStore } from '../data/chart-store.ts';
 import { attachWorkspaceHeader } from './workspace-header.ts';
 interface PreviewEntry { row: HTMLElement; chart: SavedChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
 interface AllChartsOptions {
+  initialView?: SavedView['charts']; onChange?: () => void;
   button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; store: ChartStore; onOpen?: (() => void) | null; document?: Document;
   preview?: typeof createChartPreview; schedule?: (callback: () => void) => ReturnType<typeof setTimeout>; cancel?: typeof clearTimeout;
   createObserver?: ((callback: IntersectionObserverCallback, options: IntersectionObserverInit) => IntersectionObserver) | null;
@@ -24,16 +26,17 @@ function chartSearchText(chart: SavedChart) {
 // This workspace page reads the same library; the existing document-level commands own
 // selection, editing and deletion. Only nearby, temporary pixels belong here.
 export function attachAllCharts({ button, dialog, list, store,
-  onOpen = null, document = dialog.ownerDocument,
+  onOpen = null, document = dialog.ownerDocument, initialView, onChange = () => {},
   preview = createChartPreview, schedule = callback => setTimeout(callback, 0), cancel = clearTimeout,
   createObserver = typeof globalThis.IntersectionObserver === 'function'
     ? (callback, options) => new globalThis.IntersectionObserver(callback, options) : null,
 }: AllChartsOptions) {
-  attachWorkspaceHeader(dialog);
+  const header = attachWorkspaceHeader(dialog, { initialExpanded: initialView?.searchOpen, onChange });
   const rows = new Map<Element, PreviewEntry>(), pending = new Set<PreviewEntry>(), readiness = new Set<{ entries: PreviewEntry[]; resolve: (value: boolean | null) => void }>();
   const search = dialog.querySelector?.<HTMLInputElement>('#allChartsSearch');
   const resultCount = dialog.querySelector?.<HTMLElement>('#allChartsCount');
   const empty = dialog.querySelector?.<HTMLElement>('#allChartsEmpty');
+  if (search && initialView) search.value = initialView.query;
   let query = normalizeSearch(search?.value ?? ''), renderedQuery = '';
   let charts: SavedChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
   function paint() {
@@ -163,6 +166,7 @@ export function attachAllCharts({ button, dialog, list, store,
   button.addEventListener('click', show);
   search?.addEventListener('input', () => {
     const next = normalizeSearch(search.value);
+    onChange();
     if (next === query) return;
     query = next;
     list.scrollTop = 0;
@@ -170,5 +174,6 @@ export function attachAllCharts({ button, dialog, list, store,
   });
   list.addEventListener('scroll', measure, { passive: true });
   document.defaultView?.addEventListener('resize', () => { cancelReadiness(); measure(); });
-  return { setVisible, show, close, update, whenReady };
+  return { setVisible, show, close, update, whenReady,
+    get snapshot(): NonNullable<SavedView['charts']> { return { query: search?.value ?? '', searchOpen: header?.expanded ?? false }; } };
 }

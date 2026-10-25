@@ -30,6 +30,7 @@ import { pointerTarget } from './scene/pointer-target.ts';
 import { attachMandalaMode } from './scene/modes/mandala.ts';
 import { createMandalaMotion } from './scene/modes/mandala-motion.ts';
 import { mandalaPreviewFromPointer, mandalaPreviewFromFocus, mandalaSelectionFromTarget } from './scene/mandala-preview.ts';
+import { chartHighlight } from './state/chart-highlight.ts';
 import { createGraphController } from './scene/updates.ts';
 import { attachCameraControls, createCameraChangeHandler } from './views/camera-controls.ts';
 import { createChartSession } from './state/chart-session.ts';
@@ -132,6 +133,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   };
 
   const graph = createGraphController({
+    getHighlightStyle: () => chartHighlight.current,
     getChart: currentChart, hasChart: () => session.hasCurrent,
     viewport: $('viewport'),
     getActiveElement: () => document.activeElement, activationPopover,
@@ -142,6 +144,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
       void exploration!.select(id);
     },
   });
+  chartHighlight.subscribe(() => graph.render());
   const cameraChanged = createCameraChangeHandler({
     heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
@@ -171,10 +174,12 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   if (startupGestures) gestures.setHandlers(gestureHandlers);
   const activationHover = attachActivationHover($('bodygraph'));
   hoverPreview = attachHoverPreview($('bodygraph'), {
+    surface: $('canvasWrap'),
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
     coalesceMandala: true, onPreview: graph.preview, onClear: activationHover.clear,
   });
   const knowledge = attachKnowledgeEntry({ button: $('openKnowledge'), dialog: $('knowledgeDialog'),
+    initialView: savedView?.knowledge, onChange: () => viewSession?.schedule(),
     onSelect: selection => { navigateWorkspace('chart'); graph.choose(selection); },
     onOpen: () => {
       const alreadyShown = workspace.screen === 'library';
@@ -187,8 +192,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'),
     switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration!.openReturnsList(); },
-    onOpen: () => { returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
-    onClose: () => returns?.close(),
+    onOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
   const mandalaMotion = createMandalaMotion({
     viewport: $('canvasWrap'), onUpdate: () => activationPopover.reposition(),
@@ -217,7 +221,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
   const allCharts = attachAllCharts({ button: $('openAllCharts'), dialog: $('allChartsDialog'),
-    list: $('allChartsList'), store,
+    list: $('allChartsList'), store, initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
   });
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
@@ -444,6 +448,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
   viewSession = createViewSession({
     store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
     mandala: mandalaMode, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
+    getKnowledgeView: () => knowledge.snapshot, getChartsView: () => allCharts.snapshot,
     getPersonalPreview: () => returns!.available ? exploration!.preview : undefined,
     getPersonalLive: () => returns!.available ? exploration!.live : undefined,
     restorePersonalPreview: exploration!.restorePreview,
@@ -474,7 +479,7 @@ export function startApp({ dayClient, layout, toast, viewStore, savedView, panel
     if (returnsViewLoading) return returnsViewLoading;
     returnsViewLoading = import('./views/returns-panel.ts').then(({ attachReturnsPanel }) => {
       returnsView = attachReturnsPanel({ getLayout: () => layout.returnsLayout, viewportLayout: layout,
-        document, onBack: () => chartSummary!.open(),
+        document, onBack: () => returns!.close(),
         onYear: value => returns!.setYear(value),
         onBodies: value => returns!.setBodies(value),
         onSelect: async value => { viewSession?.interrupt(); await returns!.selectEvent(value); },

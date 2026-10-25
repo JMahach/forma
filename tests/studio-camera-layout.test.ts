@@ -52,7 +52,7 @@ function harness(t: test.TestContext, width: number, height: number, mandala = f
     onBackgroundTap() { calls.clear++; selection.clear(); },
     onChange: createCameraChangeHandler({
       heading, fitButton,
-      getHoverPreview: () => ({ clear() { calls.preview++; } }),
+      getHoverPreview: () => ({ refreshCenter() { calls.preview++; } }),
       activationPopover: { reposition() { calls.popover++; } },
       getSummary: () => ({ layout() { calls.summary++; } }),
     }),
@@ -405,7 +405,7 @@ test('camera chrome avoids repeated visibility writes without skipping dependent
   };
   const heading = element(false), fitButton = element(true);
   const change = createCameraChangeHandler({ heading, fitButton,
-    getHoverPreview: () => ({ clear() { previews++; } }),
+    getHoverPreview: () => ({ refreshCenter() { previews++; } }),
     activationPopover: { reposition() { popovers++; } },
     getSummary: () => ({ layout() { summaries++; } }),
   });

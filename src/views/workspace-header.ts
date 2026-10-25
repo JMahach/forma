@@ -1,6 +1,7 @@
 // CSS owns the responsive layout; this controller only expands search and
 // manages its accessible state and focus. The filter value belongs to the view.
-export function attachWorkspaceHeader(page: HTMLElement): void {
+export function attachWorkspaceHeader(page: HTMLElement,
+  { initialExpanded, onChange = () => {} }: { initialExpanded?: boolean; onChange?: () => void } = {}) {
   const button = page.querySelector<HTMLButtonElement>('[data-workspace-search-toggle]');
   if (!button) return;
   const controls = button.getAttribute('aria-controls');
@@ -15,12 +16,13 @@ export function attachWorkspaceHeader(page: HTMLElement): void {
     button!.setAttribute('aria-expanded', String(expanded));
     button!.setAttribute('aria-label', expanded ? 'Закрыть поиск' : 'Открыть поиск');
   }
-  setExpanded(page.dataset.searchOpen === 'true' || button.getAttribute('aria-expanded') === 'true');
+  setExpanded(initialExpanded ?? (page.dataset.searchOpen === 'true' || button.getAttribute('aria-expanded') === 'true'));
 
   button.addEventListener('click', () => {
     const expanded = page.dataset.searchOpen !== 'true';
     setExpanded(expanded);
     (expanded ? input : button).focus({ preventScroll: true });
+    onChange();
   });
   page.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || event.isComposing || page.dataset.searchOpen !== 'true') return;
@@ -30,5 +32,7 @@ export function attachWorkspaceHeader(page: HTMLElement): void {
     event.stopPropagation();
     setExpanded(false);
     button.focus({ preventScroll: true });
+    onChange();
   });
+  return { get expanded() { return page.dataset.searchOpen === 'true'; } };
 }

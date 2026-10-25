@@ -28,7 +28,6 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   const randomButton = $<HTMLButtonElement>('randomChartButton');
   const randomAllowed = isDevelopmentPort(document.defaultView?.location?.port ?? '');
   let randomController: AbortController | null = null;
-  if (randomButton) randomButton.hidden = !randomAllowed;
   function setRandomBusy(busy: boolean) {
     if (randomButton) { randomButton.disabled = busy; randomButton.setAttribute('aria-busy', String(busy)); }
   }

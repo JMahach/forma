@@ -44,10 +44,8 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
     if (next === 'summary' && returnsPanel.contains(document.activeElement)) summaryFocus().focus({ preventScroll: true });
   }
   function open() {
-    if (screen() === 'summary') return;
-    returnsVisible = false;
+    if (screen() !== 'closed') return;
     panels.setRight(true);
-    // Closing the returns controller mid-restore would also cancel its moment.
     if (!panels.restoring) onOpen();
     layout();
     if (screen() === 'summary') summaryFocus().focus({ preventScroll: true });
@@ -56,18 +54,16 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
     const active = screen();
     if (active === 'closed') return;
     if (focus || panel.contains(document.activeElement)) switcher.focus({ preventScroll: true });
-    returnsVisible = false;
     panels.setRight(false);
     if (!panels.restoring) onClose();
     layout();
   }
   const toggle = () => screen() === 'closed' ? open() : close();
   function setReturnsVisible(value: boolean) {
-    const visible = Boolean(value) && panels.rightRequestDuringRestore == null;
+    const visible = Boolean(value);
     if (returnsVisible === visible) return;
     // A view projection supplied by app.ts, not another return-opening command.
     returnsVisible = visible;
-    if (visible) panels.setRight(true, { automatic: true });
     layout();
   }
   returnsButton?.addEventListener('click', () => {
@@ -75,11 +71,6 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
   });
   switcher.addEventListener('click', toggle);
   backdrop?.addEventListener('click', () => close());
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && screen() !== 'closed' && !event.defaultPrevented && !document.querySelector('dialog[open]') && !document.querySelector('.library.open')) {
-      event.preventDefault(); close({ focus: true });
-    }
-  });
   panels.subscribe(layout);
   layout();
   return { layout, open, close, toggle, setReturnsVisible,

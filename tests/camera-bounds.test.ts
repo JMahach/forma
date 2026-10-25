@@ -335,7 +335,7 @@ test('camera changes keep Home visibility, hover and auxiliary views in sync acr
   const calls = { preview: 0, popover: 0, summary: 0 };
   const cameraChanged = createCameraChangeHandler({
     fitButton,
-    getHoverPreview: () => ({ clear() { calls.preview++; } }),
+    getHoverPreview: () => ({ refreshCenter() { calls.preview++; } }),
     activationPopover: { reposition() { calls.popover++; } },
     getSummary: () => ({ layout() { calls.summary++; } }),
   });

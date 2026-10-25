@@ -19,6 +19,8 @@ export interface SavedView {
   mandala: boolean;
   workspace?: 'chart' | 'library' | 'charts' | 'account';
   panels?: { left: boolean; right: boolean };
+  charts?: { query: string; searchOpen: boolean };
+  knowledge?: { query: string; searchOpen: boolean; collection: string; entryId: string; view: 'catalog' | 'article' };
   camera: SavedCameraPosition | null;
   lifetime: SavedLifetimeView | null;
   transit: { live: boolean; date: string; timeZone: string; index: number } | null;
@@ -58,11 +60,26 @@ function normalizeReturns(input: unknown): SavedReturnView | null {
   }
   return { opened: value.opened, year, bodies, eventId: value.eventId };
 }
+function normalizeSearchView(input: unknown): SavedView['charts'] {
+  const value = input as SavedView['charts'];
+  return object(value) && typeof value!.query === 'string' && typeof value!.searchOpen === 'boolean'
+    ? { query: value!.query, searchOpen: value!.searchOpen } : undefined;
+}
+function normalizeKnowledgeView(input: unknown): SavedView['knowledge'] {
+  const value = input as SavedView['knowledge'], search = normalizeSearchView(input);
+  return search && typeof value!.collection === 'string' && /^[a-z0-9-]{1,80}$/.test(value!.collection)
+    && typeof value!.entryId === 'string' && /^[a-z0-9.-]{1,100}$/.test(value!.entryId)
+    && (value!.view === 'catalog' || value!.view === 'article')
+    ? { ...search, collection: value!.collection, entryId: value!.entryId, view: value!.view } : undefined;
+}
 function normalize(input: unknown): SavedView | null {
   const value = input as Omit<SavedView, 'lifetime'> & { lifetime: (Omit<SavedLifetimeView, 'mode'> & { mode: 'day' | 'lifetime' | 'archive' }) | null };
   if (!object(value) || value.version !== 1) return null;
   const returnView = normalizeReturns(value.returns);
-  const panels = value.panels;
+  const charts = normalizeSearchView(value.charts), knowledge = normalizeKnowledgeView(value.knowledge);
+  // Before shell visibility was saved separately, an open Returns screen
+  // also meant an open right panel. Explicit shell state always wins.
+  const panels = !('panels' in value) && returnView?.opened ? { left: false, right: true } : value.panels;
   const camera = value.camera, lifetime = value.lifetime, transit = value.transit, natalDay = value.natalDay, planets = value.planets;
   // Read the former saved name once; the application uses only lifetime.
   const lifetimeMode = lifetime?.mode === 'archive' ? 'lifetime' : lifetime?.mode;
@@ -71,6 +88,7 @@ function normalize(input: unknown): SavedView | null {
   return {
     version: 1,
     ...(returnView ? { returns: returnView } : {}),
+    ...(charts ? { charts } : {}), ...(knowledge ? { knowledge } : {}),
     selectedId: typeof value.selectedId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.selectedId) ? value.selectedId : 'current-transit',
     mandala: value.mandala === true,
     ...(['chart', 'library', 'charts', 'account'].includes(value.workspace!) ? { workspace: value.workspace } : {}),

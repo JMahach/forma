@@ -38,11 +38,11 @@ test('all nine native center silhouettes keep their own color, gate anchors and 
       assert.equal(node.getAttribute('tabindex'), '0');
       assert.match(node.getAttribute('aria-label')!, new RegExp(`Ворота ${gate.id}:`));
       assert.equal(node.querySelector('.knowledge-center-hit')?.getAttribute('r'), '12.5');
-      assert.equal(node.querySelector('.knowledge-center-disc')?.getAttribute('r'), '9.5');
+      assert.equal(node.querySelector('.knowledge-center-disc')?.getAttribute('r'), '8.4');
       assert.equal(node.querySelector('.knowledge-center-disc')?.getAttribute('fill'), 'transparent');
       assert.equal(node.querySelector('.knowledge-center-disc')?.getAttribute('stroke'), 'none');
       assert.equal(node.querySelector('text')?.textContent, String(gate.id));
-      assert.equal(node.querySelector('text')?.getAttribute('font-size'), '9.9');
+      assert.equal(node.querySelector('text')?.getAttribute('font-size'), '10.4');
     }
   }
   assert.deepEqual(seen.sort((a, b) => a - b), Array.from({ length: 64 }, (_, index) => index + 1));

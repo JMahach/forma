@@ -175,7 +175,6 @@ export function attachChartLibrary({ panels = createPanelState(), document, view
     if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('dialog[open]')) return;
     const menu = document.querySelector<HTMLDetailsElement>('.chart-actions[open]');
     if (menu) { menu.open = false; menu.querySelector('summary')!.focus(); e.preventDefault(); return; }
-    if (panels.left) { closeLibrary(); e.preventDefault(); }
   });
 
   panels.subscribe(syncOpen);

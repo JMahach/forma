@@ -75,15 +75,15 @@ function inspect(markup: string) {
   return { nodes, channels, layer, halos, physical };
 }
 
-// Approved continuous integration baseline: red below black below dual,
+// Continuous integration baseline at the requested 1.65 width scale: red below black below dual,
 // and black above red within the dual pass. All physical paths remain frozen
 // across hover and selection; lane widths and joins have independent checks.
 const physicalBaselines = {
-  inactive: 'e15a45c4e5ed90cded75ee1dbde0b5850759338a6aa14815f3568763f8eb4575',
-  black: '969e1e910db6c0d03710d5200951335793e306f09fe9d5ada0d7e40959080327',
-  red: '2bd530dfd5b16b7015922202cdb800d192dcb67a4884058d0bf2f0c7b07b1f56',
-  dual: '3cf2c226b665d48beb23593db1eebbd6a9f7f3b13cc8a140020dd5c77ab3fe9f',
-  mixed: 'c75d1b2e094bcb91413025e9aca9d9de7813c7ab92fed43c7c709e17a894b567',
+  inactive: 'de8b8a745274b2e03928badfa064730b7647c2eff637c69cc10695529e3a1e08',
+  black: '8908bdb594ac3214bdaf2491b193db2350734a983a76216d039e84de3ba7fd88',
+  red: 'f101e83e9c15ac3027b13a8d9c817980f531e3c03666a1882a2ccc68e93c84b1',
+  dual: 'ff19728b0adbba4013a94db3218f6c08779beac21fba8aac572b652bc7749de1',
+  mixed: 'a8c2b37f2eb1eb3353f74bc46b3b366b7b56ef6a4c67e1945a46a41a5e7c4fe0',
 };
 
 for (const mode of modes) {
@@ -111,7 +111,7 @@ for (const mode of modes) {
       for (const halo of halos) {
         assert.ok(inside(halo, layer));
         assert.equal(halo.attrs['pointer-events'], 'none');
-        assert.equal(halo.attrs['stroke-width'], '8.448', 'blue exactly coincides with the existing outline');
+        assert.equal(halo.attrs['stroke-width'], '16.06', 'blue outlines the physical figure with a transparent gap');
         for (const path of outlinePaths) assert.ok(path.end < halo.start, 'original gray outline is covered by blue');
         for (const path of ordinaryPhysical) assert.ok(path.end < halo.start, `${state}: every integration halo paints above every ordinary physical path`);
         for (const path of integrationPhysical) assert.ok(halo.end < path.start, `${state}: every physical integration stroke paints above every integration halo`);
@@ -173,7 +173,7 @@ test('all six keyboard-only channel targets retain transparent bounds matching t
     assert.deepEqual(parts(bounds[0].attrs.d), new Set(expected));
     assert.equal(bounds[0].attrs.fill, 'none');
     assert.equal(bounds[0].attrs.stroke, 'transparent');
-    assert.equal(bounds[0].attrs['stroke-width'], '13.2');
+    assert.equal(bounds[0].attrs['stroke-width'], '16.5');
     assert.equal(bounds[0].attrs['stroke-linecap'], 'round');
     assert.equal(bounds[0].attrs['stroke-linejoin'], 'round');
     assert.equal(bounds[0].attrs['pointer-events'], 'none');

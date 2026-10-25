@@ -5,7 +5,8 @@ import type { SelectionType } from '../selection/selection-targets.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { paintOrder } from './geometry/drawing-geometry.ts';
-import { PALETTE, CHANNEL_HIGHLIGHT_WIDTH, activationLaneColor, integrationPaint, channelPaint, centerPaint, gatePaint,
+import { channelHighlightWidth } from './geometry/drawing-presentation.ts';
+import { PALETTE, activationLaneColor, integrationPaint, integrationHighlightPaint, channelPaint, centerPaint, gatePaint,
   integrationOutlineMask, integrationChannels } from './bodygraph-paint.ts';
 import { isSelectionPressed } from './render-state.ts';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.ts';
@@ -50,9 +51,9 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const focusHalos = [...highlights.querySelectorAll('.bg-integration-focus')];
   let selectionHalo = highlights.querySelector('.bg-integration-selection');
   let selectionEnter: Animation | null = null;
-  let outgoing: { path: Element; mask: Element | null; animation: Animation } | null = null;
+  let outgoing: { path: Element; mask: Element | null; colors: Element | null; animation: Animation } | null = null;
   function retireSelection() {
-    outgoing?.animation.cancel(); outgoing?.path.remove(); outgoing?.mask?.remove(); outgoing = null;
+    outgoing?.animation.cancel(); outgoing?.path.remove(); outgoing?.mask?.remove(); outgoing?.colors?.remove(); outgoing = null;
     if (!selectionHalo || !canSoften(selectionHalo)) return;
     const path = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
     for (const name of selectionHalo.getAttributeNames()) path.setAttribute(name, selectionHalo.getAttribute(name)!);
@@ -70,16 +71,29 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
       defs.appendChild(mask);
       path.setAttribute('mask', `url(#${mask.id})`);
     }
+    let colors: Element | null = null;
+    const stroke = selectionHalo.getAttribute('stroke');
+    if (stroke?.startsWith('url(#') && colorDefs.innerHTML) {
+      const colorId = stroke.slice(5, -1);
+      colors = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
+      colors.setAttribute('data-soft-highlight-outgoing', 'colors');
+      colors.innerHTML = colorDefs.innerHTML.replaceAll(colorId, `${colorId}-outgoing`);
+      defs.appendChild(colors);
+      path.setAttribute('stroke', `url(#${colorId}-outgoing)`);
+    }
     const opacity = root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity;
     highlights.insertBefore(path, selectionHalo);
     const animation = path.animate([{ opacity }, { opacity: '0' }], { duration: SOFT_HIGHLIGHT_DURATION.exit, easing: 'ease-out' });
-    const retired = { path, mask, animation };
+    const retired = { path, mask, colors, animation };
     outgoing = retired;
-    animation.onfinish = () => { path.remove(); mask?.remove(); animation.cancel(); if (outgoing === retired) outgoing = null; };
+    animation.onfinish = () => { path.remove(); mask?.remove(); colors?.remove(); animation.cancel(); if (outgoing === retired) outgoing = null; };
   }
   const focus = integrationChannels.map((channel, index) => ({ channel,
     target: byType('channel', channel.id), halo: focusHalos[index] }));
   const defs = root.querySelector('defs')!;
+  const colorDefs = defs.querySelector('.bg-integration-color-defs')!;
+  const paintHighlightColors = fragmentSlot(colorDefs, null, [...colorDefs.childNodes],
+    initialState ? integrationHighlightPaint(initialState, initialOptions).definitions : undefined);
   const dualStops = [...defs.querySelector('linearGradient')!.querySelectorAll('stop')];
   const selectionMaskSignature = (paint: ReturnType<typeof integrationPaint>) => JSON.stringify([paint.selectionPath, paint.integrationSelected,
     [...paint.highlightedArms], paint.stemHighlighted, paint.connectedIntegrationGates, paint.activeIntegrationParts]);
@@ -109,6 +123,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         const { channel, node, halo } = item, paint = channelPaint(channel, state, options);
         setAttributes(node, { 'data-defined': paint.defined, 'data-related': paint.related, opacity: paint.opacity });
         pressed(node, 'channel', channel.id, paint.selected, state);
+        setAttribute(halo, 'stroke', paint.highlightColor);
         softHighlightOpacity(halo, paint.selected ? 1 : 0);
         item.highlight(paint.highlight);
         item.lanes(paint.lanes);
@@ -119,6 +134,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
         pressed(node, 'center', center.id, paint.selected, state);
         setAttributes(shape, { fill: paint.fill, stroke: paint.stroke });
+        setAttribute(halo, 'stroke', paint.highlightColor);
         softHighlightOpacity(halo, paint.selected ? 1 : 0);
       }
       for (const { gate, node, disc, glow, halo, text } of gates) {
@@ -127,13 +143,18 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
         pressed(node, 'gate', gate.id, paint.selected, state);
         setAttributes(disc, { fill: paint.fill, stroke: paint.stroke });
-        setAttribute(glow, 'fill', paint.highlightFill);
+        if (options.highlightStyle === 'glow') setAttribute(glow, 'fill', paint.highlightFill);
+        setAttribute(glow, 'stroke', paint.highlightColor);
+        if (options.highlightStyle === 'glow') setAttribute(halo, 'stroke', paint.highlightColor);
         softHighlightOpacity(glow, paint.highlightOpacity);
         setAttributes(halo, { 'data-state': paint.highlightState, fill: paint.highlightFill });
         softHighlightOpacity(halo, paint.highlightOpacity);
         setAttributes(text, { 'font-weight': paint.textWeight, fill: paint.textFill });
       }
       const paint = integrationPaint(state, options);
+      const integrationHighlight = integrationHighlightPaint(state, options);
+      setAttribute(highlights.querySelector('.bg-integration-hover'), 'stroke', integrationHighlight.color);
+      for (const halo of focusHalos) setAttribute(halo, 'stroke', integrationHighlight.color);
       const { integrationSelected, highlightedArms, integrationArmState, stemHighlighted,
         connectedIntegrationGates, activeIntegrationParts, stemOpacity, selectionPath, integrationFocusOpacity } = paint;
       setAttribute(integration, 'data-visual-selected', integrationSelected);
@@ -153,7 +174,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
       if (selectionChanged) {
         if (!selectionHalo && outgoing && outgoing.path.getAttribute('d') === selectionPath && canSoften(outgoing.path)) {
           reclaimedOpacity = root.ownerDocument.defaultView!.getComputedStyle(outgoing.path).opacity;
-          outgoing.animation.cancel(); outgoing.mask?.remove();
+          outgoing.animation.cancel(); outgoing.mask?.remove(); outgoing.colors?.remove();
           selectionHalo = outgoing.path;
           selectionHalo.setAttribute('class', 'bg-integration-selection');
           selectionHalo.removeAttribute('data-soft-highlight-outgoing');
@@ -162,15 +183,16 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         } else retireSelection();
         selectionEnter?.cancel(); selectionEnter = null;
       }
+      paintHighlightColors(integrationHighlight.definitions);
       const enteringSelection = !selectionHalo;
       if (selectionPath) {
         if (!selectionHalo) {
           selectionHalo = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
           setAttributes(selectionHalo, { class: 'bg-integration-selection', fill: 'none', stroke: PALETTE.halo,
-            'stroke-width': CHANNEL_HIGHLIGHT_WIDTH, 'stroke-linejoin': 'round', 'pointer-events': 'none' });
+            'stroke-width': channelHighlightWidth(options.highlightStyle), 'stroke-linejoin': 'round', 'pointer-events': 'none' });
           highlights.insertBefore(selectionHalo, focusHalos[0]);
         }
-        setAttributes(selectionHalo, { d: selectionPath, 'stroke-linecap': integrationSelected ? 'butt' : 'round',
+        setAttributes(selectionHalo, { d: selectionPath, stroke: integrationHighlight.color, 'stroke-linecap': integrationSelected ? 'butt' : 'round',
           mask: `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})` });
         // A geometry change cross-fades its previous masked paint; fixed half halos
         // elsewhere retain identity and never restart when their gate stays lit.
@@ -190,7 +212,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         selectionMaskKey = nextSelectionMaskKey;
         const id = `${prefix}-integration-selection-outline`;
         patchMask(selectionPath && !integrationSelected
-          ? integrationOutlineMask(id, [...highlightedArms], stemHighlighted, prefix, connectedIntegrationGates, activeIntegrationParts) : '', id,
+          ? integrationOutlineMask(id, [...highlightedArms], stemHighlighted, prefix, connectedIntegrationGates, activeIntegrationParts, options.highlightStyle) : '', id,
           [...defs.children].find(node => node.id === `${prefix}-integration-focus-${integrationChannels[0].id}`)!);
       }
       // Focus routes are fixed. Only active arms/stem change their occlusion;
@@ -201,7 +223,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         for (const channel of integrationChannels) {
           const id = `${prefix}-integration-focus-${channel.id}`;
           patchMask(integrationOutlineMask(id, channel.gates,
-            [20, 10].includes(channel.gates[0]) !== [20, 10].includes(channel.gates[1]), prefix, channel.gates, activeIntegrationParts), id);
+            [20, 10].includes(channel.gates[0]) !== [20, 10].includes(channel.gates[1]), prefix, channel.gates, activeIntegrationParts, options.highlightStyle), id);
         }
       }
       return true;

@@ -1,7 +1,9 @@
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { MandalaCross } from '../domain/mandala-cross.ts';
 import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
+import type { HighlightStyle } from './geometry/drawing-presentation.ts';
 export interface RenderOptions {
+  highlightStyle?: HighlightStyle;
   profile?: 'studio' | 'thumbnail';
   interactive?: boolean;
   idPrefix?: string;

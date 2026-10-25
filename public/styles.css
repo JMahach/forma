@@ -366,9 +366,9 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .knowledge-center-gate:focus-visible { outline: 1px solid var(--knowledge-accent); outline-offset: 2px; }
 .knowledge-center-outline { fill: var(--knowledge-center-color); stroke: #84715b; stroke-width: 1.25; stroke-linejoin: round; }
 .knowledge-center-disc { fill: transparent; stroke: none; }
-.knowledge-center-gate text { fill: #171513; font-family: inherit; }
+.knowledge-center-gate text { fill: #171513; }
 .knowledge-center-gate[data-selected='true'] .knowledge-center-disc { fill: #202020; }
-.knowledge-center-gate[data-selected='true'] text { fill: #fff; font-weight: 650; }
+.knowledge-center-gate[data-selected='true'] text { fill: #fff; }
 .knowledge-center-branch { cursor: pointer; }
 .knowledge-center-channel-outline { fill: none; stroke: #c6c2b9; stroke-width: 8.448; }
 .knowledge-center-channel { fill: none; stroke: #fff; stroke-width: 6.072; pointer-events: stroke; }

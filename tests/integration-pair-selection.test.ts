@@ -246,7 +246,7 @@ test('paired and explicit routes preserve same-fork cuts and restore continuous 
       assert.ok(outline.mask!.indexOf(footprint!) < outline.mask!.indexOf(interior!));
       assert.deepEqual(new Set(pathParts(attribute(footprint!, 'd')!)), new Set(pathParts(outline.path!)), 'the repaint follows only the complete selected route');
       assert.equal(attribute(interior!, 'd'), attribute(footprint!, 'd'));
-      for (const [element, stroke, width] of [[footprint, '#ffffff', '13.2'], [interior, '#000000', '6.072']] as const) {
+      for (const [element, stroke, width] of [[footprint, '#ffffff', '16.06'], [interior, '#000000', '12.06']] as const) {
         assert.equal(attribute(element!, 'fill'), 'none');
         assert.equal(attribute(element!, 'stroke'), stroke);
         assert.equal(attribute(element!, 'stroke-width'), width);
@@ -292,7 +292,7 @@ test('connected masks protect only active unselected physical arms and an active
       assert.ok(outline.mask!.indexOf(occlusion!) > outline.mask!.indexOf(interior!), 'neighbor protection is applied after the connected route layers');
       assert.equal(attribute(occlusion!, 'fill'), 'none');
       assert.equal(attribute(occlusion!, 'stroke'), '#000000');
-      assert.equal(attribute(occlusion!, 'stroke-width'), '8.448');
+      assert.equal(attribute(occlusion!, 'stroke-width'), '12.06');
       assert.equal(attribute(occlusion!, 'stroke-linecap'), 'round');
       assert.equal(attribute(occlusion!, 'stroke-linejoin'), 'round');
       assert.deepEqual(outline, integrationOutline(render(chart, [channel(pair.id)])), 'gate-pair and explicit-channel masks protect the same active neighbors');

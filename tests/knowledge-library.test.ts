@@ -5,7 +5,7 @@ import { KNOWLEDGE_ENTRIES } from '../src/reference/knowledge-content.ts';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.ts';
 import type { SelectionIdentity } from '../src/selection/selection-targets.ts';
 
-function fixture() {
+function fixture(options: Parameters<typeof attachKnowledge>[2] = {}) {
   const document = svgDocument(), create = document.createElementNS.bind(document);
   document.createElementNS = (namespace, name) => {
     const node = create(namespace, name);
@@ -31,7 +31,7 @@ function fixture() {
   const handlers = new Map<string, (event: { target: typeof index }) => void>();
   page.addEventListener = (name: string, callback: unknown) => { handlers.set(name, callback as (event: { target: typeof index }) => void); };
   const selected: SelectionIdentity[] = [];
-  const controller = attachKnowledge(page as unknown as HTMLElement, selection => selected.push(selection));
+  const controller = attachKnowledge(page as unknown as HTMLElement, selection => selected.push(selection), options);
   const click = (node: typeof index | null) => { assert.ok(node); handlers.get('click')?.({ target: node! }); };
   const find = (query: string) => { search.value = query; handlers.get('input')?.({ target: search }); };
   const key = (node: typeof index, value: string) => {
@@ -195,4 +195,51 @@ test('all subject sections are available without deferred onboarding or private 
   h.find('Солнце'); h.click(h.index.querySelector('[data-entry-id="planet.sun"]'));
   assert.ok(h.article.textContent.includes('Главная тема выражения'));
   assert.doesNotMatch(h.article.textContent, /sourceRefs|sourceRegistry|Ра Уру Ху|C:\\Users/);
+});
+
+
+test('library snapshot restores the search and article on a phone without storing reading positions', () => {
+  let changes = 0;
+  const first = fixture({ isPhone: () => true, onChange: () => { changes++; } });
+  first.controller.show(); first.find('красное');
+  first.click(first.index.querySelector('[data-entry-id="concept.personality-design"]'));
+  first.article.scrollTop = 320;
+  assert.ok(changes >= 2, 'query and article selection notify the shared snapshot owner');
+  const saved = first.controller.snapshot;
+  assert.deepEqual(saved, { query: 'красное', searchOpen: false, collection: 'gates', entryId: 'concept.personality-design', view: 'article' });
+  const next = fixture({ initialView: saved, initialSelection: { type: 'gate', id: 8 }, isPhone: () => true });
+  next.controller.show({ type: 'gate', id: 8 });
+  assert.equal(next.page.dataset.view, 'article');
+  assert.equal(next.search.value, 'красное');
+  assert.match(next.article.querySelector('h3')!.textContent, /Личность и Дизайн/);
+  assert.equal(next.article.scrollTop, 0, 'reload starts at the beginning of the remembered article');
+  next.controller.hide(); next.controller.show({ type: 'gate', id: 8 });
+  assert.match(next.article.querySelector('h3')!.textContent, /Личность и Дизайн/);
+  next.find('');
+  assert.equal(next.controller.snapshot.query, '');
+  assert.ok(next.index.querySelector('[data-entry-id="gate.8"]'), 'clearing returns to the saved catalogue');
+});
+
+test('new diagram selection takes priority after the remembered article has been restored', () => {
+  const h = fixture({ initialView: { query: 'Дружба', searchOpen: false, collection: 'gates', entryId: 'gate.37', view: 'article' }, initialSelection: { type: 'gate', id: 8 } });
+  h.controller.show({ type: 'gate', id: 8 });
+  assert.match(h.article.querySelector('h3')!.textContent, /^37 · /);
+  h.controller.hide(); h.controller.show({ type: 'gate', id: 10 });
+  assert.match(h.article.querySelector('h3')!.textContent, /^10 · /);
+  assert.equal(h.search.value, 'Дружба', 'opening a new diagram topic does not erase an independent search');
+});
+
+test('unknown saved library entries and collections fall back to the real catalogue', () => {
+  const h = fixture({ initialView: { query: '', searchOpen: true, collection: 'missing', entryId: 'gate.999', view: 'article' } });
+  h.controller.show();
+  assert.match(h.article.querySelector('h3')!.textContent, /^37 · /);
+  assert.ok(h.index.querySelector('[data-entry-id="gate.37"]'));
+});
+
+
+test('a new selection before the first lazy opening supersedes the remembered article', () => {
+  const h = fixture({ initialView: { query: 'Дружба', searchOpen: false, collection: 'gates', entryId: 'gate.37', view: 'article' }, initialSelection: null });
+  h.controller.show({ type: 'gate', id: 10 });
+  assert.match(h.article.querySelector('h3')!.textContent, /^10 · /);
+  assert.equal(h.search.value, 'Дружба');
 });

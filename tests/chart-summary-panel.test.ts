@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
+import { attachPanelKeyboard } from '../src/views/side-panel-controls.ts';
 import { createPanelState } from '../src/state/panels.ts';
 import { attachChartLibrary } from '../src/views/library.ts';
 
@@ -95,14 +96,16 @@ function harness({ initialReturnsVisible = false, width = 1440, withBackdrop = t
   document.querySelector = selector => selector === 'dialog[open]' && globals.dialogOpen || selector === '.library.open' && globals.libraryOpen ? {} as SummaryNode : null;
   const window = node(); window.innerWidth = width;
   document.defaultView = window;
+  document.getElementById = id => id === 'chartSummary' ? panel : id === 'summarySwitch' ? switcher : undefined;
+  attachPanelKeyboard(document as unknown as Document, panels);
   let openCalls = 0, closeCalls = 0, returnsCalls = 0;
   const config = {
     panels, initialReturnsVisible, panel, summaryScreen, returnsPanel, switcher, backdrop, returnsButton,
     onReturns() { returnsCalls++; controller.setReturnsVisible(true); },
   } as unknown as SummaryOptions;
   if (callbacks) {
-    config.onOpen = () => { openCalls++; globals.libraryOpen = false; controller.setReturnsVisible(false); };
-    config.onClose = () => { closeCalls++; controller.setReturnsVisible(false); };
+    config.onOpen = () => { openCalls++; globals.libraryOpen = false; };
+    config.onClose = () => { closeCalls++; };
   }
   const controller = attachChartSummary(config as unknown as SummaryOptions);
   return {
@@ -198,21 +201,21 @@ test('optional backdrop and lifecycle callbacks are not required', () => {
   assert.equal(h.controller.opened, false);
 });
 
-test('Escape closes summary unless a dialog, drawer or earlier handler owns the event', () => {
+test('Escape closes summary unless a dialog or earlier handler owns the event', () => {
   const h = harness({ width: 390 });
   h.controller.open();
-  h.document.dispatch('keydown', { key: 'Enter' });
+  h.window.dispatch('keydown', { key: 'Enter' });
   assert.equal(h.controller.opened, true);
-  for (const blocker of ['dialogOpen', 'libraryOpen'] as const) {
+  for (const blocker of ['dialogOpen'] as const) {
     h.globals[blocker] = true;
-    const event = h.document.dispatch('keydown', { key: 'Escape' });
+    const event = h.window.dispatch('keydown', { key: 'Escape' });
     assert.equal(h.controller.opened, true);
     assert.equal(event.defaultPrevented, false);
     h.globals[blocker] = false;
   }
-  h.document.dispatch('keydown', { key: 'Escape', defaultPrevented: true });
+  h.window.dispatch('keydown', { key: 'Escape', defaultPrevented: true });
   assert.equal(h.controller.opened, true);
-  const event = h.document.dispatch('keydown', { key: 'Escape' });
+  const event = h.window.dispatch('keydown', { key: 'Escape' });
   assert.equal(event.defaultPrevented, true);
   assert.equal(h.controller.opened, false);
   assert.equal(h.canvas.inert, false);
@@ -263,11 +266,14 @@ test('camera layout repeats perform no DOM writes, including after resize and cl
   assert.equal(h.globals.activeElement, h.switcher);
 });
 
-test('returns alone opens the shared shell without opening or rendering the summary', () => {
+test('Returns projection preserves a closed shell until its explicit opening command', () => {
   const h = harness();
   h.switcher.focus();
   assert.equal(typeof h.controller.setReturnsVisible, 'function');
   h.controller.setReturnsVisible(true);
+  assert.equal(h.controller.opened, false);
+  assert.equal(h.panels.right, false);
+  h.controller.open();
   assert.equal(h.controller.opened, true);
   assert.equal(h.controller.screen, 'returns');
   assert.equal(h.panel.dataset.screen, 'returns');
@@ -280,14 +286,14 @@ test('returns alone opens the shared shell without opening or rendering the summ
   assert.equal(h.backdrop!.hidden, false);
   assert.equal(h.switcher.getAttribute('aria-expanded'), 'true');
   assert.equal(h.globals.activeElement, h.switcher, 'the returns view chooses its own initial focus');
-  assert.equal(h.openCalls, 0);
+  assert.equal(h.openCalls, 1);
   assert.equal(h.closeCalls, 0);
 });
 
-test('closing a returns-only shell closes its owner once and keeps content for the exit animation', () => {
+test('closing and reopening the shell preserves the active Returns screen', () => {
   for (const dismiss of [(h: ReturnType<typeof harness>) => h.controller.close(), (h: ReturnType<typeof harness>) => h.switcher.dispatch('click'), (h: ReturnType<typeof harness>) => h.backdrop!.dispatch('click')]) {
     const h = harness();
-    h.controller.setReturnsVisible(true); h.returnsBack.focus();
+    h.panels.setRight(true); h.controller.setReturnsVisible(true); h.returnsBack.focus();
     dismiss(h);
     assert.equal(h.controller.screen, 'closed');
     assert.equal(h.controller.opened, false);
@@ -304,25 +310,29 @@ test('closing a returns-only shell closes its owner once and keeps content for t
     h.controller.close(); h.controller.layout();
     assert.equal(h.closeCalls, 1);
     assert.equal(h.openCalls, 0);
+    h.controller.open();
+    assert.equal(h.controller.screen, 'returns');
+    assert.equal(h.returnsPanel.hidden, false);
+    assert.equal(h.summaryScreen.hidden, true);
   }
 });
 
 test('Escape consumed by a nested return control leaves the shell open; the next Escape closes it', () => {
   const h = harness();
-  h.controller.setReturnsVisible(true); h.returnsBack.focus();
-  h.document.dispatch('keydown', { key: 'Escape', defaultPrevented: true });
+  h.panels.setRight(true); h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.window.dispatch('keydown', { key: 'Escape', defaultPrevented: true });
   assert.equal(h.controller.screen, 'returns');
   assert.equal(h.closeCalls, 0);
-  const event = h.document.dispatch('keydown', { key: 'Escape' });
+  const event = h.window.dispatch('keydown', { key: 'Escape' });
   assert.equal(event.defaultPrevented, true);
   assert.equal(h.controller.screen, 'closed');
-  assert.equal(h.closeCalls, 1);
+  assert.equal(h.closeCalls, 0, 'the shared keyboard owner changes shell state without invoking content callbacks');
   assert.equal(h.globals.activeElement, h.switcher);
 });
 
 test('returns projection and camera layout repeats preserve focus and avoid shell DOM writes', () => {
   const h = harness();
-  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.panels.setRight(true); h.controller.setReturnsVisible(true); h.returnsBack.focus();
   const writes = observeLayoutWrites(h);
   for (let i = 0; i < 1000; i++) { h.controller.setReturnsVisible(true); h.controller.layout(); }
   h.resize(390); h.resize(1440);
@@ -335,7 +345,7 @@ test('returns projection and camera layout repeats preserve focus and avoid shel
 
 test('leaving returns keeps the right panel open and restores summary focus without a close command', () => {
   const h = harness();
-  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.panels.setRight(true); h.controller.setReturnsVisible(true); h.returnsBack.focus();
   h.controller.setReturnsVisible(false);
   assert.equal(h.controller.screen, 'summary');
   assert.equal(h.panel.inert, false);
@@ -409,14 +419,14 @@ test('Back restores the ordinary panel and focuses its Returns entry', () => {
   h.controller.open();
   h.returnsButton.dispatch('click');
   h.returnsBack.focus();
-  h.controller.open();
+  h.controller.setReturnsVisible(false);
   assert.equal(h.controller.screen, 'summary');
   assert.equal(h.panel.dataset.screen, 'summary');
   assert.equal(h.panel.getAttribute('aria-labelledby'), 'chartSummaryTitle');
   assert.equal(h.summaryScreen.hidden, false);
   assert.equal(h.returnsPanel.hidden, true);
   assert.equal(h.globals.activeElement, h.returnsButton);
-  assert.equal(h.openCalls, 2);
+  assert.equal(h.openCalls, 1);
   assert.equal(h.closeCalls, 0);
 });
 
@@ -428,9 +438,10 @@ for (const width of [390, 1440] as const) test(`Returns entry at ${width}px chan
   assert.equal(h.controller.screen, 'returns');
   assert.equal(h.controller.opened, true);
   assert.equal(h.closeCalls, 0);
+  h.returnsBack.focus();
   h.controller.open();
-  assert.equal(h.controller.screen, 'summary');
-  assert.equal(h.globals.activeElement, h.returnsButton);
+  assert.equal(h.controller.screen, 'returns', 'an already open shell does not change its active instrument');
+  assert.equal(h.globals.activeElement, h.returnsBack);
 });
 
 for (const property of ['hidden', 'disabled'] as const) test(`a ${property} Returns entry never receives focus or dispatches an action`, () => {
@@ -440,7 +451,7 @@ for (const property of ['hidden', 'disabled'] as const) test(`a ${property} Retu
   assert.equal(h.globals.activeElement, h.switcher);
   h.returnsButton.dispatch('click');
   assert.equal(h.returnsCalls, 0);
-  h.controller.setReturnsVisible(true); h.returnsBack.focus();
+  h.panels.setRight(true); h.controller.setReturnsVisible(true); h.returnsBack.focus();
   h.controller.setReturnsVisible(false);
   assert.equal(h.globals.activeElement, h.switcher);
 });

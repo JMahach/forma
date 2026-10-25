@@ -1,3 +1,4 @@
+import { createChartHighlight } from '../src/state/chart-highlight.ts';
 import type { LifetimePoint } from '../src/domain/lifetime.ts';
 import type { CycleInput } from '../shared/cycles-format.ts';
 import type { TestStub } from './helpers/test-stub.ts';
@@ -54,6 +55,7 @@ type AppPorts = Pick<typeof import('../src/views/knowledge-entry.ts'), 'attachKn
   & Pick<typeof import('../src/scene/modes/mandala-motion.ts'), 'createMandalaMotion'>
   & Pick<typeof import('../src/scene/mandala-preview.ts'), 'mandalaPreviewFromPointer' | 'mandalaPreviewFromFocus' | 'mandalaSelectionFromTarget'>
   & Pick<typeof import('../src/scene/updates.ts'), 'createGraphController'>
+  & Pick<typeof import('../src/state/chart-highlight.ts'), 'chartHighlight'>
   & Pick<typeof import('../src/views/camera-controls.ts'), 'attachCameraControls' | 'createCameraChangeHandler'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
@@ -232,6 +234,7 @@ function harness({ realSummary = false, search = '', restore = async () => true,
     pointerTarget: noop,
     attachMandalaMode: (options) => dimensions ? attachMandalaMode(options) : ({ enabled: false }), createMandalaMotion: noop,
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
+    chartHighlight: createChartHighlight(),
     createGraphController: (options) => { graph = options;
       if (dimensions) return createGraphController({ ...options, scene: {
         update(chart, selection, settings) { renders++; element('viewport').innerHTML = renderBodygraph(chart, selection, settings); },
@@ -260,7 +263,7 @@ function harness({ realSummary = false, search = '', restore = async () => true,
     attachChartLoading: () => ({ update: noop }), createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
-  for (const name of imports) assert.equal(typeof ports[name as keyof AppPorts], 'function', `provide the explicit browser port ${name}`);
+  for (const name of imports) assert.equal(typeof ports[name as keyof AppPorts], name === 'chartHighlight' ? 'object' : 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState', 'loadReturnsViewModule',
     `${body.replace("import('./views/lifetime-controls.ts')", 'loadLifetimeView()')
       .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')
@@ -1113,15 +1116,16 @@ test('legacy performance parameters cannot enable the FPS monitor at application
 });
 
 
-async function openedReturnsHarness(width: number, navigationOpen = false) {
+async function openedReturnsHarness(width: number, navigationOpen = false, getReturn?: HarnessOptions['getReturn']) {
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const event = { id: 'saturn:2050-01-01T12:00:29.432Z', body: 'saturn', utc: '2050-01-01T12:00:29.432Z', cycle: 1 };
   const exact = { ...chart, id: 'exact-return', utc: event.utc };
   const transit = { ...chart, id: 'current-transit', source: 'transit' as const, utc: '2028-01-01T12:00:00Z' };
   const h = harness({ realSummary: true, studioSize: { width, height: 844 }, charts: [chart, transit],
-    returnEvents: [event], getReturn: async () => ({ event, chart: exact }) });
+    returnEvents: [event], getReturn: getReturn || (async () => ({ event, chart: exact })) });
   await tick(); h.select(chart.id); await tick();
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
+  await h.element('summarySwitch').click();
   await h.element('summaryReturns').click(); await tick();
   if (navigationOpen) h.panels.setLeft(true);
   assert.ok(h.returnsViewOptions, 'the lazy returns view receives the actual app callbacks');
@@ -1181,4 +1185,48 @@ for (const width of [390, 1400]) test(`breaking a comparison retains returns fil
   assert.equal(h.returnsViewState?.visible, true);
   assert.equal(h.interruptions, interruptions + 1, 'the explicit action supersedes pending restoration');
   assert.deepEqual(h.camera.getView(), camera);
+});
+
+
+for (const width of [390, 1400]) for (const reopenBeforeResult of [false, true]) {
+  test(`closing the right shell retains pending Returns work at width ${width} (reopen early: ${reopenBeforeResult})`, async () => {
+    let signal: AbortSignal | undefined, finish: ((value: Awaited<ReturnType<NonNullable<HarnessOptions['getReturn']>>>) => void) | undefined;
+    const { h, event, exact } = await openedReturnsHarness(width, false, (_input, currentSignal) => {
+      signal = currentSignal; return new Promise(done => { finish = done; });
+    });
+    const selecting = h.returnsViewOptions.onSelect(event.id); await tick();
+    assert.equal(h.returns.state.loadingChart, true);
+    assert.ok(signal); assert.equal(signal.aborted, false);
+    await h.element('summarySwitch').click();
+    assert.equal(h.panels.right, false);
+    assert.equal(h.returns.opened, true);
+    assert.equal(signal.aborted, false, 'closing the shell does not cancel its active instrument');
+    assert.equal(h.returns.state.loadingChart, true);
+    if (reopenBeforeResult) await h.element('summarySwitch').click();
+    finish!({ event, chart: exact }); await selecting; await tick();
+    assert.equal(h.returns.state.selectedEvent?.id, event.id);
+    assert.deepEqual(h.shown.secondary, extractChartData(exact));
+    assert.equal(h.panels.right, reopenBeforeResult, 'a late result cannot reopen a closed shell');
+    if (!reopenBeforeResult) await h.element('summarySwitch').click();
+    assert.equal(h.element('chartSummary').dataset.screen, 'returns');
+    assert.equal(h.returns.opened, true);
+    assert.equal(h.returnsViewState?.visible, true);
+  });
+}
+
+test('Back explicitly closes Returns and cancels its pending exact work while retaining the shell', async () => {
+  let signal: AbortSignal | undefined, finish: ((value: Awaited<ReturnType<NonNullable<HarnessOptions['getReturn']>>>) => void) | undefined;
+  const { h, event, exact } = await openedReturnsHarness(390, false, (_input, currentSignal) => {
+    signal = currentSignal; return new Promise(done => { finish = done; });
+  });
+  const selecting = h.returnsViewOptions.onSelect(event.id); await tick();
+  assert.ok(signal); assert.equal(signal.aborted, false);
+  h.returnsViewOptions.onBack();
+  assert.equal(signal.aborted, true);
+  assert.equal(h.returns.opened, false);
+  assert.equal(h.returns.state.loadingChart, false);
+  assert.equal(h.panels.right, true);
+  assert.equal(h.element('chartSummary').dataset.screen, 'summary');
+  finish!({ event, chart: exact }); await selecting;
+  assert.equal(h.returns.state.selectedEvent, null, 'the canceled result cannot restore the closed instrument');
 });

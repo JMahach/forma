@@ -1,3 +1,5 @@
+import { isDevelopmentPort } from '../shared/development.ts';
+import { attachPanelKeyboard } from '../src/views/side-panel-controls.ts';
 import { readModuleSource } from './helpers/module-source.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +34,7 @@ type StartupPorts = Parameters<typeof import('../src/app.ts').startApp>[0];
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
+  'isDevelopmentPort', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createTransitDayClient', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source);
 function tabStorage() {
   const values = new Map();
   return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, String(value)), removeItem: (key: string) => values.delete(key) };
@@ -42,7 +44,7 @@ const run = (...args) => {
   args.length = 10;
   args[9] = { ...args[9], href: args[9]?.href || 'http://localhost:3636/' };
   const attachPreview = (options: { button: HTMLButtonElement; location: Pick<Location,"href"|"reload">; getStorage?: () => Storage; beforeNavigate?: () => void; }) => attachLoadingPreview({ ...options, getStorage: () => storage });
-  return evaluate(attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(isDevelopmentPort, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, cameraModule.createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), ...args);
 };
 
@@ -95,7 +97,7 @@ function startupDocument(overrides = {}) {
     }
     return nodes.get(id);
   };
-  const document = Object.assign(new EventTarget(), { activeElement: null as unknown, defaultView: { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }, body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
+  const document = Object.assign(new EventTarget(), { activeElement: null as unknown, defaultView: Object.assign(new EventTarget(), { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }), body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
     createElement: library.document.createElement, getElementById: element,
     querySelector: (selector: string) => {
       const id = { '.app-shell': 'shell', '.chart-tools': 'chartTools', '#summaryScreen .summary-heading': 'summaryHeading' }[selector];
@@ -494,4 +496,81 @@ test('switching phone drawers preserves the selected Returns screen and moment',
   assert.deepEqual(received.panels.snapshot, { left: false, right: true });
   assert.equal(element('chartSummary').dataset.screen, 'returns');
   assert.deepEqual(received.savedView?.returns, saved.returns);
+});
+
+
+for (const side of ['left', 'right'] as const) test(`Escape closes the ${side} panel in the real loading Preview`, async () => {
+  const { document, element } = startupDocument();
+  const storage = tabStorage(); storage.setItem('forma.loading-preview.v1', '1');
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+    () => () => {}, () => ({ read: () => ({ selectedId: 'current-transit', panels: { left: side === 'left', right: side === 'right' } }) }), emptyStore,
+    async () => { assert.fail('Preview must hold before importing the application'); }, { href: 'http://localhost:3636/', reload() {} }, storage);
+  const panel = element(side === 'left' ? 'library' : 'chartSummary');
+  assert.equal(panel.classList.contains('open'), true);
+  const escape = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape' });
+  document.defaultView.dispatchEvent(escape);
+  assert.equal(panel.classList.contains('open'), false);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(document.activeElement, element(side === 'left' ? 'openLibrary' : 'summarySwitch'));
+});
+
+for (const preview of [false, true]) test(`random chart shares initial availability in ${preview ? 'Preview' : 'ordinary startup'}`, async () => {
+  const { document, element } = startupDocument({ randomChartButton: { hidden: true } });
+  const storage = tabStorage(); if (preview) storage.setItem('forma.loading-preview.v1', '1');
+  let release: (() => void) | undefined;
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
+    () => () => {}, () => ({ read: () => null }), emptyStore,
+    async () => ({ startApp(ports: StartupPorts) { release = ports.releaseLoadingContent!; } }),
+    { href: 'http://localhost:3636/', reload() {} }, storage);
+  assert.equal(element('randomChartButton').hidden, false, 'the same stand button supplies the loading placeholder in both paths');
+  assert.equal(element('randomChartButton').inert, true, 'creation cannot interrupt unfinished restoration');
+  if (!preview) { release!(); assert.equal(element('randomChartButton').inert, false); }
+});
+
+
+test('the same panel keyboard owner survives handoff without closing both desktop panels', async () => {
+  const { document } = startupDocument();
+  let received: StartupPorts | undefined;
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
+    () => () => {}, () => ({ read: () => ({ panels: { left: true, right: true } }) }), emptyStore,
+    async () => ({ startApp(ports: StartupPorts) { received = ports; ports.panels.finishRestore(); } }));
+  assert.ok(received);
+  const escape = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape' });
+  document.defaultView.dispatchEvent(escape);
+  assert.deepEqual(received.panels.snapshot, { left: false, right: true });
+});
+
+test('public startup keeps the stand-only random action hidden', async () => {
+  const { document, element } = startupDocument({ randomChartButton: { hidden: true } });
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
+    () => () => {}, () => ({ read: () => null }), emptyStore, async () => ({ startApp() {} }),
+    { href: 'https://forma.juxtaposition.ru/', reload() {} });
+  assert.equal(element('randomChartButton').hidden, true);
+});
+
+for (const preview of [false, true]) test(`reopening a saved closed panel keeps Returns in ${preview ? 'Preview' : 'ordinary early loading'}`, async () => {
+  const { document, element } = startupDocument();
+  const personal = libraryRecordAtMinute(natalDayFixture(), 754);
+  const saved = { selectedId: personal.id, panels: { left: false, right: false }, returns: { opened: true, eventId: 'selected-return' } };
+  const store = { charts: [personal], has: (id: string) => id === personal.id, get: (id: string) => id === personal.id ? personal : undefined };
+  const storage = tabStorage(); if (preview) storage.setItem('forma.loading-preview.v1', '1');
+  let handedOff = false;
+  const reopen = () => {
+    assert.equal(element('chartSummary').classList.contains('open'), false);
+    element('summarySwitch').click();
+    assert.equal(element('chartSummary').classList.contains('open'), true);
+    assert.equal(element('chartSummary').dataset.screen, 'returns');
+  };
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+    () => () => {}, () => ({ read: () => saved }), () => store, async () => {
+      assert.equal(preview, false);
+      reopen();
+      return { startApp(ports: StartupPorts) {
+        assert.deepEqual(ports.savedView?.returns, saved.returns);
+        handedOff = true;
+        assert.equal(ports.panels.right, true);
+        ports.panels.finishRestore();
+      } };
+    }, { href: 'http://localhost:3636/', reload() {} }, storage);
+  if (preview) reopen(); else assert.equal(handedOff, true, 'ordinary startup must reach the ready app');
 });

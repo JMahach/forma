@@ -242,3 +242,43 @@ test('retired phone sheet heights are ignored without losing the saved view', ()
   }
   assert.deepEqual([...storage.records.keys()], [VIEW_STORAGE_KEY]);
 });
+
+
+test('legacy open Returns supplies shell visibility only when the snapshot has no panel state', () => {
+  const returns = { opened: true, bodies: ['saturn'], year: null, eventId: null };
+  const legacy = memory({ ...snapshot, returns });
+  const restored = createViewStore({ getStorage: () => legacy }).read()!;
+  assert.deepEqual(restored.panels, { left: false, right: true });
+  assert.equal(legacy.writes.length, 0, 'reading migration does not rewrite the tab');
+  for (const panels of [{ left: false, right: false }, { left: true, right: false }, { left: true, right: true }]) {
+    const storage = memory({ ...snapshot, returns, panels });
+    assert.deepEqual(createViewStore({ getStorage: () => storage }).read()!.panels, panels);
+  }
+  const closed = memory({ ...snapshot, returns: { ...returns, opened: false } });
+  assert.equal(createViewStore({ getStorage: () => closed }).read()!.panels, undefined);
+  const malformed = memory({ ...snapshot, returns, panels: null });
+  assert.equal(createViewStore({ getStorage: () => malformed }).read()!.panels, undefined);
+});
+
+
+test('one tab snapshot stores independent search and article metadata, excluding reading history and pixels', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  const knowledge = { query: ' Красное ', searchOpen: true, collection: 'gates', entryId: 'concept.personality-design', view: 'article' };
+  const charts = { query: 'Анна', searchOpen: false };
+  store.write({ ...snapshot, knowledge: { ...knowledge, scrollTop: 234, history: ['gate.1'] }, charts: { ...charts, svg: '<svg/>' } });
+  const restored = createViewStore({ getStorage: () => storage }).read()!;
+  assert.deepEqual(restored.knowledge, knowledge);
+  assert.deepEqual(restored.charts, charts);
+  assert.equal(storage.records.size, 1, 'no separate storage key');
+  store.write({ ...restored, charts: { query: '', searchOpen: false } });
+  assert.deepEqual(store.read()!.knowledge, knowledge);
+  assert.equal(store.read()!.charts!.query, '');
+});
+
+test('invalid page snapshots cannot spoil the chart or revive unknown fields', () => {
+  for (const invalid of [null, [], 'oops', { query: 42, searchOpen: true }, { query: 'ok', searchOpen: 'yes' }]) {
+    const storage = memory({ ...snapshot, knowledge: invalid, charts: invalid });
+    const restored = createViewStore({ getStorage: () => storage }).read()!;
+    assert.deepEqual(restored, snapshot);
+  }
+});

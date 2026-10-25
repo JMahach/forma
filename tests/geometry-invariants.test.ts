@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.ts';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
-import { INTEGRATION_ARMS, STEM_POINTS } from '../src/scene/geometry/integration-geometry.ts';
+import { INTEGRATION_ARMS, STEM_POINTS, sampleBezier } from '../src/scene/geometry/integration-geometry.ts';
+import { channelHalves, splitAtHalfLength } from '../src/scene/geometry/drawing-geometry.ts';
 
 // The redesign may change coordinates and curves, but never the underlying graph.
 const CENTER_GATES = {
@@ -272,6 +273,40 @@ test('ordinary rendered channel outlines use the exact topology route and avoid 
   }
 });
 
+// Visible endpoints include the 1.25 center outline. The G diamond has
+// diagonal sides and a radius-6 quadratic corner at its top and bottom.
+const G_RAIL_VISIBLE_BOUNDS = [
+  ['7-31', 352 + .625, 395.4 - .625 * Math.SQRT2],
+  ['1-8', 352 + .625, 374.4 + 3 / Math.SQRT2 - .625],
+  ['13-33', 352 + .625, 395.4 - .625 * Math.SQRT2],
+  ['5-15', 476.6 + .625 * Math.SQRT2, 528 - .625],
+  ['2-14', 497.6 - 3 / Math.SQRT2 + .625, 528 - .625],
+  ['29-46', 476.6 + .625 * Math.SQRT2, 528 - .625],
+] as const;
+
+test('six G-center rails divide the visible opening into equal halves', () => {
+  for (const [id, top, bottom] of G_RAIL_VISIBLE_BOUNDS) {
+    const [first, second] = channelHalves.get(id)!;
+    const seam = first.at(-1)!;
+    assert.deepEqual(seam, second[0], `${id}: both gates meet at one seam`);
+    assert.ok(Math.abs((seam[1] - top) - (bottom - seam[1])) < .002,
+      `${id}: visible halves must match, got ${seam[1] - top} and ${bottom - seam[1]}`);
+    const channel = getChannel(id)!;
+    const [a, b] = channel.gates.map(getGate);
+    assert.deepEqual(first[0], [a!.x, a!.y], `${id}: first anchor stays inside its center`);
+    assert.deepEqual(second.at(-1), [b!.x, b!.y], `${id}: second anchor stays inside its center`);
+    assert.ok([...first, ...second].every(([x]) => Math.abs(x - a!.x) < 1e-8), `${id}: no sideways shift`);
+  }
+});
+
+test('visible G-rail division does not move the other ordinary channel seams', () => {
+  const changed = new Set<string>(G_RAIL_VISIBLE_BOUNDS.map(([id]) => id));
+  for (const channel of ordinaryChannels.filter(channel => !changed.has(channel.id))) {
+    const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
+    assert.deepEqual(channelHalves.get(channel.id), splitAtHalfLength(points), channel.id);
+  }
+});
+
 test('red and black halves belong to the correct endpoint and dual activations stay in parallel lanes', () => {
   for (const channel of ordinaryChannels) {
     const [first, second] = channel.gates.map(getGate);
@@ -291,18 +326,18 @@ test('red and black halves belong to the correct endpoint and dual activations s
     assert.equal(blackLanes.length, 2);
     assert.equal(redLanes.length, 2);
     for (let half = 0; half < 2; half++) {
-      assert.equal(blackLanes[half].width, 3.3, `${channel.id} black closes the central seam`);
-      assert.equal(redLanes[half].width, 3.036, `${channel.id} red retains its width`);
+      assert.equal(blackLanes[half].width, 4.125, `${channel.id} black closes the central seam`);
+      assert.equal(redLanes[half].width, 3.795, `${channel.id} red retains its width`);
       assert.ok(blackLanes[half].width < black[0].width, `${channel.id} dual lanes are not drawn over each other`);
       const blackPoints = polylinePoints(blackLanes[half].path), redPoints = polylinePoints(redLanes[half].path);
       assert.equal(blackPoints.length, redPoints.length);
       for (let i = 0; i < blackPoints.length; i++) {
         const separation = distance(blackPoints[i], redPoints[i]);
-        assert.ok(Math.abs(separation - 3.036) < 0.015, `${channel.id} dual lanes retain their intended offsets at sample ${i}`);
+        assert.ok(Math.abs(separation - 3.795) < 0.015, `${channel.id} dual lanes retain their intended offsets at sample ${i}`);
         assert.ok((blackLanes[half].width + redLanes[half].width) / 2 > separation, `${channel.id} has no white seam at sample ${i}`);
       }
       const endpoint = half ? blackPoints.length - 1 : 0;
-      const center = blackPoints[endpoint].map((value, axis) => (value * 1.584 + redPoints[endpoint][axis] * 1.452) / 3.036);
+      const center = blackPoints[endpoint].map((value, axis) => (value * 1.98 + redPoints[endpoint][axis] * 1.815) / 3.795);
       const gate = half ? second : first;
       assert.ok(distance(center, [gate!.x, gate!.y]) < 0.015, `${channel.id} dual lanes center on gate ${gate!.id}`);
     }
@@ -324,7 +359,7 @@ test('integration is drawn once with exactly four arms and six logical connectio
     const endpoint = INTEGRATION_ARMS.find(arm => arm.gate === Number(gateId))!.reversePaint ? -1 : 0;
     const a = polylinePoints(black[0].path).at(endpoint), b = polylinePoints(red[0].path).at(endpoint);
     const gate = getGate(gateId);
-    assert.ok(distance(a!.map((value, axis) => (value * 1.584 + b![axis] * 1.452) / 3.036), [gate!.x, gate!.y]) < 0.015,
+    assert.ok(distance(a!.map((value, axis) => (value * 1.98 + b![axis] * 1.815) / 3.795), [gate!.x, gate!.y]) < 0.015,
       `integration arm ${gateId} starts at its gate`);
   }
 });
@@ -413,9 +448,10 @@ test('branch 34 crosses 26–44 only once at a clear angle without following it'
   let closeRun = 0;
   for (let i = 1; i < branch.length; i++) {
     const nearest = Math.min(...channel.slice(1).map((end, j) => edgeDistance(branch[i], channel[j], end)));
-    if (nearest < 8.448) closeRun += distance(branch[i], branch[i - 1]);
+    if (nearest < 10.56) closeRun += distance(branch[i], branch[i - 1]);
   }
-  assert.ok(closeRun < 20, `the branch does not visually merge with 26–44 over a long run: ${closeRun}`);
+  // The permitted crossing span scales with the requested 25% wider strokes.
+  assert.ok(closeRun < 25, `the branch does not visually merge with 26–44 over a long run: ${closeRun}`);
 });
 
 test('outer 16–48 and 35–36 channels are exact mirrored curves', () => {

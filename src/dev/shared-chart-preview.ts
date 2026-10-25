@@ -1,3 +1,5 @@
+import { PALETTE } from '../ui/chart-palette.ts';
+import { chartHighlight } from '../state/chart-highlight.ts';
 import { standConnection } from './control-colors.ts';
 import { isDevelopmentPort } from '../../shared/development.ts';
 
@@ -50,8 +52,28 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
       .summary-chart-actions { position: relative; display: flex; flex: none; align-items: center; gap: var(--chart-control-gap); }
       .summary-title:has(.summary-comparison:not([hidden])) .summary-chart-actions { display: none; }
       .summary-chart-actions button:disabled { opacity: .45; cursor: default; }
-      .shared-chart-study-options { display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin: 0 0 2px; border-bottom: 1px solid var(--panel-border); gap: 8px; }
-      body:has(.studio[data-workspace-screen='chart']) .shared-chart-study-options { display: grid; }
+      .shared-chart-study-options { position: relative; display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin: 0 0 2px; border-bottom: 1px solid var(--panel-border); gap: 8px; }
+      body:has(.studio[data-workspace-screen='chart']) .shared-chart-study-options { position: relative; display: grid; }
+      .shared-chart-study-options > .chart-highlight-switch {
+        position: absolute; right: 0; top: 0; width: 44px; height: 32px;
+        display: grid; place-items: center; padding: 0; border: 0;
+        border-radius: 6px; background: transparent; cursor: pointer;
+        touch-action: manipulation;
+      }
+      .chart-highlight-track {
+        display: block; position: relative; width: 34px; height: 20px;
+        border: 1px solid var(--panel-border); border-radius: 999px;
+        background: var(--panel-bg, #f3f0e8);
+      }
+      .chart-highlight-thumb {
+        position: absolute; left: 2px; top: 2px; width: 14px; height: 14px;
+        display: grid; place-items: center; border-radius: 50%;
+        background: ${PALETTE.halo}; color: #202020; font: 500 9px/1 system-ui;
+        transition: transform 100ms ease-out;
+      }
+      .chart-highlight-switch[aria-checked="true"] .chart-highlight-thumb { transform: translateX(14px); }
+      .chart-highlight-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      @media (prefers-reduced-motion: reduce) { .chart-highlight-thumb { transition: none; } }
       .shared-study-choices { display: flex; gap: 5px; flex-wrap: wrap; }
       .shared-study-choices button { min-height: 32px; padding: 5px 8px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: 11px/16px var(--sans); }
       .shared-study-choices button[aria-pressed='true'] { border-color: #89654a; background: #efe5da; color: #68472f; box-shadow: inset 0 0 0 1px #89654a; }
@@ -134,6 +156,26 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
         <button type="button" data-kind="temporary">Временная карта</button>
         <button type="button" data-kind="saved">В картотеке</button>
       </div>`;
+      const highlightSwitch = document.createElement('button');
+      highlightSwitch.type = 'button';
+      highlightSwitch.className = 'chart-highlight-switch';
+      highlightSwitch.setAttribute('role', 'switch');
+      highlightSwitch.setAttribute('aria-label', 'Подсветка 1 / 2');
+      highlightSwitch.innerHTML = '<span class="chart-highlight-track" aria-hidden="true"><span class="chart-highlight-thumb"></span></span>';
+      options.append(highlightSwitch);
+      const highlightKey = 'forma.chart-highlight.v1';
+      try { chartHighlight.set(sessionStorage.getItem(highlightKey)); } catch {}
+      const showHighlight = () => {
+        const outline = chartHighlight.current === 'outline';
+        highlightSwitch.setAttribute('aria-checked', String(outline));
+        highlightSwitch.querySelector('.chart-highlight-thumb')!.textContent = outline ? '2' : '1';
+      };
+      showHighlight();
+      chartHighlight.subscribe(() => {
+        showHighlight();
+        try { sessionStorage.setItem(highlightKey, chartHighlight.current); } catch {}
+      });
+      highlightSwitch.addEventListener('click', () => chartHighlight.set(chartHighlight.current === 'outline' ? 'glow' : 'outline'));
       palettes.prepend(options);
       const clockIcon = '<circle cx="10" cy="10" r="6.5"/><path d="M10 6v4l2.5 1.5"/>';
       const errorIcon = '<circle cx="10" cy="10" r="6.5"/><path d="M10 6v4.5M10 13.2v.1"/>';

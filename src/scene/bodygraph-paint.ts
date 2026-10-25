@@ -4,20 +4,25 @@ import { CHANNELS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
 import { pointString, offsetPoints, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
-import { PALETTE } from '../ui/chart-palette.ts';
+import { gatesForSelection } from '../selection/selection-targets.ts';
+import { PALETTE, SELECTED_HIGHLIGHT_COLOR } from '../ui/chart-palette.ts';
 export { PALETTE } from '../ui/chart-palette.ts';
 
-import { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH } from './geometry/drawing-presentation.ts';
-export { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH } from './geometry/drawing-presentation.ts';
+import type { HighlightStyle } from './geometry/drawing-presentation.ts';
+import { GATE_MARKER, channelHighlightWidth, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH } from './geometry/drawing-presentation.ts';
+export { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH } from './geometry/drawing-presentation.ts';
 
-export function integrationOutlineMask(id: string, gates: readonly number[] = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates: readonly number[] = [], activeParts: readonly string[] = []) {
+export function integrationOutlineMask(id: string, gates: readonly number[] = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates: readonly number[] = [], activeParts: readonly string[] = [], style: HighlightStyle = 'outline') {
+  const footprintWidth = style === 'glow' ? CHANNEL_WIDTH.halo : CHANNEL_HIGHLIGHT_WIDTH;
+  const innerWidth = style === 'glow' ? CHANNEL_WIDTH.paint : CHANNEL_HIGHLIGHT_INNER_WIDTH;
+  const occlusionWidth = style === 'glow' ? CHANNEL_WIDTH.outline : CHANNEL_HIGHLIGHT_INNER_WIDTH;
   const whole = gates.length === 4 && includeStem;
   const owned = whole ? '' : INTEGRATION_ARMS.filter(({ gate }) => gates.includes(gate)).map(({ gate, path }) => {
     const outer = gate === 20 || gate === 57;
     const clip = outer ? `${prefix}-integration-end-${gate}` : `${prefix}-integration-inner-side`;
-    const footprint = `<path class="bg-integration-owned-arm" data-owner-gate="${gate}" d="${path}" fill="none" stroke="#ffffff" stroke-width="${CHANNEL_WIDTH.halo}" stroke-linecap="${outer ? 'round' : 'butt'}" stroke-linejoin="round" clip-path="url(#${clip})"/>`;
+    const footprint = `<path class="bg-integration-owned-arm" data-owner-gate="${gate}" d="${path}" fill="none" stroke="#ffffff" stroke-width="${footprintWidth}" stroke-linecap="${outer ? 'round' : 'butt'}" stroke-linejoin="round" clip-path="url(#${clip})"/>`;
     return outer ? `<g clip-path="url(#${prefix}-integration-outer-owner-${gate})">${footprint}</g>` : footprint;
-  }).join('') + (includeStem ? `<path class="bg-integration-owned-stem" d="${STEM_PATH}" fill="none" stroke="#ffffff" stroke-width="${CHANNEL_WIDTH.halo}" stroke-linecap="butt" stroke-linejoin="round"/>` : '');
+  }).join('') + (includeStem ? `<path class="bg-integration-owned-stem" d="${STEM_PATH}" fill="none" stroke="#ffffff" stroke-width="${footprintWidth}" stroke-linecap="butt" stroke-linejoin="round"/>` : '');
   // Only a route through the shared stem needs an extra continuous ring.
   // Same-fork pairs (10–20, 34–57) retain the two approved arm cuts: a round
   // footprint here would extend past the terminal plane into the unselected
@@ -27,10 +32,10 @@ export function integrationOutlineMask(id: string, gates: readonly number[] = [2
   const connectedPath = connectedParts.join(' ');
   const occludedPath = activeParts.filter(path => !connectedParts.includes(path)).join(' ');
   const continuous = connectedPath
-    ? `<path class="bg-integration-connected-footprint" d="${connectedPath}" fill="none" stroke="#ffffff" stroke-width="${CHANNEL_WIDTH.halo}" stroke-linecap="round" stroke-linejoin="round"/><path class="bg-integration-connected-interior" d="${connectedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>${occludedPath ? `<path class="bg-integration-connected-occlusion" d="${occludedPath}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round"/>` : ''}` : '';
-  // Preserve the semantic interior while allowing blue to replace its outline.
+    ? `<path class="bg-integration-connected-footprint" d="${connectedPath}" fill="none" stroke="#ffffff" stroke-width="${footprintWidth}" stroke-linecap="round" stroke-linejoin="round"/><path class="bg-integration-connected-interior" d="${connectedPath}" fill="none" stroke="#000000" stroke-width="${innerWidth}" stroke-linecap="round" stroke-linejoin="round"/>${occludedPath ? `<path class="bg-integration-connected-occlusion" d="${occludedPath}" fill="none" stroke="#000000" stroke-width="${occlusionWidth}" stroke-linecap="round" stroke-linejoin="round"/>` : ''}` : '';
+  // Subtract the physical node plus its gap, leaving only the exterior blue ring.
   // Unselected active neighbors above retain protection through their full edge.
-  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="820"><rect x="0" y="0" width="640" height="820" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
+  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="820"><rect x="0" y="0" width="640" height="820" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${innerWidth}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
 }
 
 
@@ -61,13 +66,14 @@ export function paintGateActivation(points: number[][], state: RenderState, gate
 }
 
 // The static SVG and persistent painter use the same visual decisions.
+const highlightColor = (committed: boolean) => committed ? SELECTED_HIGHLIGHT_COLOR : PALETTE.halo;
 export function channelPaint(channel: typeof CHANNELS[number], state: RenderState, options: RenderOptions = {}) {
   const selected = state.selectedChannels.has(channel.id), related = state.relatedChannels.has(channel.id);
   const active = channel.gates.some(gate => state.personality.has(gate) || state.design.has(gate));
-  return { selected, related, defined: state.definedChannels.has(channel.id),
+  return { selected, related, highlightColor: highlightColor(Boolean(state.committedIdsByType.get('channel')?.has(channel.id))), defined: state.definedChannels.has(channel.id),
     opacity: options.dimInactive && !active && !related ? .2 : 1,
     highlight: selected ? '' : channelHalves.get(channel.id)!.map((points, index) => state.halfGates.has(channel.gates[index])
-      ? `<g data-highlight-gate="${channel.gates[index]}" filter="url(#${state.prefix}-highlight-glow)">${stroke(points, PALETTE.halo, CHANNEL_HIGHLIGHT_WIDTH)}</g>` : '').join(''),
+      ? `<g data-highlight-gate="${channel.gates[index]}" ${options.highlightStyle === 'glow' ? `filter="url(#${state.prefix}-highlight-glow)"` : `mask="url(#${state.prefix}-highlight-exterior)"`}>${stroke(points, highlightColor(state.committedGates.has(channel.gates[index])), channelHighlightWidth(options.highlightStyle))}</g>` : '').join(''),
     lanes: channelHalves.get(channel.id)!.map((points, index) => paintGateActivation(points, state, channel.gates[index])).join(''),
   };
 }
@@ -81,7 +87,8 @@ export function centerPaint(center: typeof CENTERS[number], state: RenderState, 
   const ownership = !state.overlaySources || !defined ? '' : state.overlaySources.natal.centers.has(center.id)
     ? ', определён в натале' : state.overlaySources.cycle.centers.has(center.id)
       ? `, определён в карте ${secondOrigin}` : `, определён только в соединении натала и ${secondOrigin}`;
-  return { selected, defined, label: `${center.name} центр, ${defined ? 'определён' : 'не определён'}${ownership}`,
+  const pinned = Boolean(state.committedIdsByType.get('center')?.has(String(center.id)));
+  return { selected, highlightColor: highlightColor(pinned), defined, label: `${center.name} центр, ${defined ? 'определён' : 'не определён'}${ownership}`,
     opacity: options.dimInactive && !defined && !selected ? .45 : 1,
     fill: defined ? PALETTE[center.id as keyof typeof PALETTE] : PALETTE.paper, stroke: defined ? '#84715b' : '#b4b0a7' };
 }
@@ -93,18 +100,22 @@ export function gatePaint(gate: typeof GATES[number], state: RenderState, option
   const active = black || red;
   const selected = state.selectedGates.has(gate.id), related = state.relatedGates.has(gate.id);
   const fill = black && red ? `url(#${state.prefix}-dual)` : black ? activationLaneColor(state, 0) : red ? activationLaneColor(state, 1) : PALETTE.paper;
+  const color = highlightColor(state.committedGates.has(gate.id));
   const source = state.overlaySources ? state.overlaySources.sources.filter(source => source.gates.has(gate.id)).map(source => source.label).join('; ') || 'не активированы'
     : black && red ? 'личность и дизайн' : black ? 'личность' : red ? 'дизайн' : 'не активированы';
   return { active, selected, related, label: `Ворота ${gate.id}: ${gate.name}, ${source}`,
     opacity: options.dimInactive && !active && !selected && !related ? .3 : 1,
     fill: active ? fill : 'transparent', stroke: 'none',
     highlightState: selected ? 'selected' : related ? 'related' : 'idle',
-    highlightFill: active ? 'none' : PALETTE.halo, highlightOpacity: selected || related ? 1 : 0,
-    textWeight: active ? '650' : '500', textFill: active ? '#ffffff' : '#171513' };
+    highlightColor: color, highlightFill: active ? 'none' : color, highlightOpacity: selected || related ? 1 : 0,
+    textWeight: String(GATE_MARKER.fontWeight), textFill: active ? '#ffffff' : '#171513' };
 }
 
-export function integrationPaint(state: RenderState, options: RenderOptions) {
-  const { visualSelections, selectedChannels, halfGates, personality, design, relatedChannels } = state;
+export function integrationPaint(state: RenderState, options: RenderOptions, committedOnly = false) {
+  const { personality, design, relatedChannels } = state;
+  const visualSelections = committedOnly ? state.committedSelections : state.visualSelections;
+  const selectedChannels = committedOnly ? state.committedIdsByType.get('channel') || new Set<string>() : state.selectedChannels;
+  const halfGates = committedOnly ? new Set(visualSelections.filter(value => ['gate', 'center', 'mandala-cross'].includes(value.type)).flatMap(gatesForSelection)) : state.halfGates;
   const integrationSelected = visualSelections.some(value => value.type === 'integration');
   // Gates selected individually or through their centers complete the same
   // visual route as their channel, without pinning another selection item.
@@ -132,4 +143,19 @@ export function integrationPaint(state: RenderState, options: RenderOptions) {
   const integrationFocusOpacity = (channel: typeof CHANNELS[number]) => options.dimInactive && !channel.gates.some(active) && !relatedChannels.has(channel.id) ? 0.2 : 1;
   return { integrationSelected, highlightedArms, integrationArmState, crossesStem, stemHighlighted,
     connectedIntegrationGates, activeIntegrationParts, stemOpacity, selectionPath, integrationFocusOpacity };
+}
+
+// Integration shares one continuous contour. A color pattern changes only the
+// pinned footprints; simultaneous hover on another arm keeps its original blue.
+// Reuse the ownership mask so the color boundary follows the same terminal cuts.
+export function integrationHighlightPaint(state: RenderState, options: RenderOptions = {}) {
+  const paint = integrationPaint(state, options, true);
+  if (!paint.selectionPath) return { color: PALETTE.halo, definitions: '' };
+  const { prefix } = state, id = `${prefix}-integration-highlight-colors`, maskId = `${id}-mask`;
+  const mask = integrationOutlineMask(maskId, [...paint.highlightedArms], paint.stemHighlighted, prefix,
+    paint.connectedIntegrationGates, paint.activeIntegrationParts, options.highlightStyle);
+  return { color: `url(#${id})`, definitions: `${mask}<pattern id="${id}" patternUnits="userSpaceOnUse" patternContentUnits="userSpaceOnUse" x="-16" y="-16" width="672" height="852">
+    <rect x="-16" y="-16" width="672" height="852" fill="${PALETTE.halo}"/>
+    <path d="${paint.selectionPath}" fill="none" stroke="${SELECTED_HIGHLIGHT_COLOR}" stroke-width="${channelHighlightWidth(options.highlightStyle)}" stroke-linecap="${paint.integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${maskId})"/>
+  </pattern>` };
 }
