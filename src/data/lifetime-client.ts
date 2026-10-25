@@ -1,4 +1,5 @@
-type LifetimeResponse = Pick<Response, 'ok' | 'json'>;
+import { fetchResource, responseError } from './http-transport.ts';
+type LifetimeResponse = Pick<Response, 'ok' | 'json'> & Partial<Pick<Response, 'status'>>;
 import type { LifetimeMetadata } from '../../shared/lifetime-format.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { NatalDay, NatalTimeline } from '../../shared/day-packets/natal-format.ts';
@@ -29,7 +30,7 @@ import { createAbortError, shareRequest } from './shared-request.ts';
 
 // Only completed days are reusable. A point or exact minute belongs to its
 // current view; independent visits use the server again without HTTP storage.
-export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, timeoutMs = 20_000, dayClient = null,
+export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeoutMs = 20_000, dayClient = null,
   days = dayClient?.days || createTransitDayCache(), natalDayClient = null, getPersonalRecord = () => null,
 }: LifetimeClientOptions = {}) {
   const pending = new Map<string | number, SharedRequest<unknown>>();
@@ -46,16 +47,19 @@ export function createLifetimeClient({ fetch: fetchPoint = globalThis.fetch, tim
           const response = await fetchPoint(url, { signal: controller.signal, cache: 'no-store' });
           if (!response.ok) {
             let failure;
-            try { failure = await response.json(); } catch { /* Local server errors may have no JSON body. */ }
-            throw Object.assign(new Error(failure?.message || 'Не удалось загрузить летопись.'), { code: failure?.error });
+            try { failure = await response.json(); } catch (error) {
+              if (error instanceof TypeError || ['AbortError', 'ConnectionError'].includes((error as Error)?.name)) throw error;
+              // A completed HTTP refusal can have no usable JSON body.
+            }
+            throw responseError(response.status, failure, 'Не удалось загрузить летопись.');
           }
           const value = await response.json();
           if (controller.signal.aborted) throw createAbortError();
           return validate(value);
         } catch (error) {
-          if (timedOut) throw new Error('Летопись не успела загрузиться. Повторите попытку.');
+          if (timedOut) throw Object.assign(new Error('Летопись не успела загрузиться. Повторите попытку.'), {code:'server_unavailable'});
           if (controller.signal.aborted || (error as Error)?.name === 'AbortError') throw createAbortError();
-          if (error instanceof TypeError) throw new Error('Не удалось загрузить летопись. Проверьте соединение.');
+          if (error instanceof TypeError) throw Object.assign(new Error('Не удалось загрузить летопись. Проверьте соединение.'), {code:'connection_failed'});
           throw error;
         } finally { clearTimeout(deadline); }
       });

@@ -1,3 +1,4 @@
+import { UI_MESSAGES } from '../ui/messages.ts';
 interface ChartLoadingOptions { canvas: HTMLElement; drawing: SVGSVGElement & { inert?: boolean }; art: Element; message: HTMLElement; status: HTMLElement; retry: HTMLButtonElement; heading: HTMLElement; onRetry: () => void }
 export interface ChartLoadingState { hasChart: boolean; failed?: boolean; loading?: boolean; holdLoading?: boolean }
 export type ChartLoading = ReturnType<typeof attachChartLoading>;
@@ -23,7 +24,7 @@ export function attachChartLoading({ canvas, drawing, art, message, status, retr
       art.toggleAttribute('hidden', ready);
       message.hidden = ready;
       heading.style.visibility = ready ? '' : 'hidden';
-      status.textContent = ready ? '' : state === 'error' ? 'Не удалось загрузить карту' : 'Загружаем карту…';
+      status.textContent = ready ? '' : state === 'error' ? UI_MESSAGES.chartUnavailable : UI_MESSAGES.chartLoading;
       retry.hidden = state !== 'error';
     },
   };

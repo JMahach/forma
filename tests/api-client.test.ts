@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { requestJSON } from '../src/data/api-client.ts';
+import { failureMessage, UI_MESSAGES } from '../src/ui/messages.ts';
 
 test('JSON client forwards request options and returns the server payload', async t => {
   const options = { method: 'POST', body: '{"mode":"transit"}' }, payload = { chart: { id: 'test' } };
@@ -50,7 +51,7 @@ test('JSON client preserves structured DST error choices for the birth form', as
 
 test('JSON client reports an unreadable server response without exposing parser details', async t => {
   t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected HTML'); } }));
-  await assert.rejects(requestJSON('/api/calculate'), /Сервер расчёта не ответил/);
+  await assert.rejects(requestJSON('/api/calculate'), /Не удалось получить ответ сервера/);
 });
 
 
@@ -59,4 +60,14 @@ test('JSON client distinguishes a broken response stream from invalid JSON', asy
   await assert.rejects(requestJSON('/api/cities'), error => error instanceof Error && 'code' in error && error.code === 'connection_failed');
   fetch.mock.mockImplementation(async () => ({ ok: true, json: async () => { throw new SyntaxError('invalid JSON'); } }));
   await assert.rejects(requestJSON('/api/cities'), error => error instanceof Error && 'code' in error && error.code !== 'connection_failed');
+});
+
+test('server internal details do not leak into a user-facing technical failure', async t => {
+  t.mock.method(globalThis, 'fetch', async () => ({ status: 500, ok: false, json: async () => ({message:'Secret local engine path',error:'engine_failed'}) }));
+  await assert.rejects(requestJSON('/api/calculate'), error => {
+    assert.equal(error.code, 'engine_failed');
+    assert.equal(error.status, 500);
+    assert.equal(failureMessage(error, error.message, 'chart-form'), UI_MESSAGES.serverError);
+    return true;
+  });
 });

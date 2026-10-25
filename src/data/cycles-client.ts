@@ -95,7 +95,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
         if (!validCycleResult(action, data, input)) throw new Error('Сервер вернул неполные данные цикла.');
         return accept(data, { save: true });
       } catch (error) {
-        if ((error as Error).name === 'AbortError' && timedOut) throw new Error('Расчёт не успел завершиться. Попробуйте ещё раз.');
+        if ((error as Error).name === 'AbortError' && timedOut) throw Object.assign(new Error('Расчёт не успел завершиться. Попробуйте ещё раз.'), {code:'server_unavailable'});
         throw error;
       } finally { clearTimeout(timeout); }
     }, { signal });

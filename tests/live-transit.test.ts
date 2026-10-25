@@ -749,3 +749,15 @@ test('choosing Now cancels the previous first-chart wait before its paused packe
   pending.get('2026-09-23')(day('2026-09-23'));
   await Promise.all([first, current]);
 });
+
+test('the labelled Transit navigation has no duplicate hover title in ready or failed state', async t => {
+  let failed=false;
+  const h=harness({getDay:async date=>{if(failed) throw new Error('Offline'); return day(date);}}); t.after(()=>h.live.stop());
+  await h.live.refresh(); assert.equal(h.button.title,'');
+  failed=true; h.utc='2026-09-25T12:00:00Z'; await h.live.refresh(true); assert.equal(h.button.title,'');
+});
+
+test('network failure cause reaches the live-day consumer without replacing the ready chart', async t => {
+ const h=harness({getDay:async()=>{throw Object.assign(new Error('internal'),{code:'offline'});}}); t.after(()=>h.live.stop());
+ await h.live.refresh(); assert.equal(h.live.state.errorCode,'offline');
+});

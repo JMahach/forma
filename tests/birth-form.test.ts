@@ -134,15 +134,20 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
   const document = {
     defaultView: { location: { port } },
     activeElement: null as FormNode | null,
+    createElement: () => element('generated-' + elements.size),
     getElementById(id: string) { return element(id); },
     querySelectorAll(selector: unknown) { assert.equal(selector, '[data-calculation-mode]'); return modes; },
   };
   function element(id: string): FormNode {
     if (elements.has(id)) return elements.get(id)!;
     const attributes = new Map<string, string>(), classes = new Set<unknown>(), handlers = new Map<string, ((event: FormEvent) => unknown)[]>();
-    let markup = '';
+    let markup = '', ownText = ''; let children: FormNode[] = [];
     const node: FormNode = {
-      id, value: '', textContent: '', hidden: true, open: false, disabled: false, dataset: {} as DOMStringMap, selectionStart: 0, selectionEnd: 0,
+      id, value: '', ownerDocument:document, className:'',
+      get textContent(){return ownText + children.map(child=>child.textContent).join('');},
+      set textContent(value){ownText=value;children=[];},
+      replaceChildren(...nodes:FormNode[]){ownText='';children=nodes;},append(node:FormNode){children.push(node);},
+      hidden: true, open: false, disabled: false, dataset: {} as DOMStringMap, selectionStart: 0, selectionEnd: 0,
       get innerHTML() { return markup; },
       set innerHTML(value) { markup = String(value); if (id === 'foldChoice') this.value = ''; },
       classList: {
@@ -632,4 +637,60 @@ test('city transport failure uses the agreed copy and clears on the next query',
   assert.equal(h.element('cityStatus').classList.contains('is-error'), false);
   next!.resolve({ cities: [] }); await settle();
   assert.equal(h.element('cityStatus').textContent, 'Город не найден. Попробуйте другое написание.');
+});
+
+test('offline blocks new requests and preserves an open draft until explicit retry', async t => {
+ const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
+ const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ const h=formHarness(t);h.form.open();h.element('chartName').value='Анна';
+ connection.set('offline');assert.equal(h.element('chartName').disabled,true);assert.equal(h.element('saveChartButton').disabled,true);
+ await h.submit();assert.equal(h.requests.length,0);assert.equal(h.element('chartName').value,'Анна');
+ connection.set('online');assert.equal(h.element('chartName').disabled,false);assert.equal(h.requests.length,0);assert.equal(h.element('chartName').value,'Анна');
+});
+test('offline while city search waits invalidates late options; server mode explains its failure', async t => {
+ const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
+ const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ const h=formHarness(t);h.form.open();const pending=await h.search('Москва');connection.set('offline');
+ pending!.resolve({cities:[city(1,'Москва')]});await settle();assert.equal(h.element('cityResults').hidden,true);
+ connection.set('server');const retry=await h.search('Москва');retry!.reject({code:'server_unavailable'});await settle();
+ assert.equal(h.element('cityStatus').textContent,'Нет соединения. Не можем найти город');
+});
+
+
+test('a completed busy response remains a neutral fact, not a false active wait or a server failure', async t => {
+ const h=formHarness(t,{charts:[natalChart()]});
+ h.form.open(true,'natal-1');h.element('chartName').value='Черновик';
+ const submitting=h.submit();
+ h.requests.at(-1)!.reject(Object.assign(new Error('Server is busy'),{code:'busy',status:503}));
+ await submitting;
+ assert.equal(h.element('formError').textContent,'Сервер занят');
+ assert.equal(h.element('formError').dataset.tone,'neutral');
+ assert.equal(h.element('formError').getAttribute('aria-busy'),'false','completed rejection cannot pretend to be an active queue');
+ assert.equal(h.element('chartForm').getAttribute('aria-busy'),'false');
+ assert.equal(h.element('chartName').value,'Черновик');
+ assert.equal(h.form.opened,true);
+ assert.equal(h.requests.length,1,'no new request or automatic save is started');
+ assert.deepEqual(h.calls.persisted,[]);
+ assert.deepEqual(h.calls.saved,[]);
+});
+
+test('an actually held calculation shows preparing and cancel keeps the existing chart', async t => {
+ const original=natalChart(),h=formHarness(t,{charts:[original]});
+ h.form.open(true,original.id);h.element('chartName').value='Сохранённый ввод';
+ const submitting=h.submit(),request=h.requests.at(-1)!;
+ assert.equal(h.element('formError').textContent,'Готовим карту…');
+ assert.equal(h.element('formError').dataset.tone,'neutral');
+ assert.equal(h.element('formError').getAttribute('aria-busy'),'true');
+ assert.equal(h.element('cancelDialog').disabled,false);
+ await h.submit();
+ assert.equal(h.requests.length,1);
+ await h.element('cancelDialog').emit('click');
+ request.reject(abortError());await submitting;
+ assert.equal(request.options.signal!.aborted,true);
+ assert.deepEqual(h.store.charts,[original]);
+ assert.deepEqual(h.calls.persisted,[]);
+ assert.deepEqual(h.calls.saved,[]);
+ assert.equal(h.element('formError').textContent,'');
 });

@@ -261,12 +261,12 @@ test('opening the birth editor reads the saved birth time while the selected min
   h.explorer.select(original); await h.explorer.open(); h.explorer.scrub(0);
   assert.notEqual(h.explorer.current, original);
   const preview = h.explorer.current;
-  type FormNode = ReturnType<typeof element> & { classList: { remove(): void; add(): void; toggle(): void }; removeAttribute(): void; reset(): void; close(): void; querySelector(): FormNode; querySelectorAll(): never[]; showModal(): void; elements?: Record<string, FormNode> };
+  type FormNode = ReturnType<typeof element> & { classList: { remove(): void; add(): void; toggle(): void }; replaceChildren(): void; removeAttribute(): void; reset(): void; close(): void; querySelector(): FormNode; querySelectorAll(): never[]; showModal(): void; elements?: Record<string, FormNode> };
   const nodes = new Map<string, FormNode>();
   function node(id: string): FormNode {
     if (!nodes.has(id)) nodes.set(id, {
       ...element(), value: '', classList: { remove() {}, add() {}, toggle() {} },
-      removeAttribute() {}, reset() {}, close() {}, querySelector: () => node('formExtras'), querySelectorAll: () => [],
+      replaceChildren() { this.textContent = ''; }, removeAttribute() {}, reset() {}, close() {}, querySelector: () => node('formExtras'), querySelectorAll: () => [],
       showModal() {
         assert.equal(h.explorer.state.opened, true);
         assert.equal(h.explorer.current, preview);
@@ -343,7 +343,7 @@ test('controls expose loading, error and retry without enabling unavailable minu
   assert.equal(h.panel.dataset.status, 'loading');
   assert.equal(h.marker.hidden, true);
   await pending;
-  assert.equal(h.status.textContent, 'Расчёт недоступен');
+  assert.equal(h.status.textContent, 'День не загружен: нет связи с сервером');
   assert.equal(h.retryButton.textContent, 'Повторить');
   assert.equal(h.retryButton.disabled, false);
   assert.equal(h.panel.dataset.status, 'error');

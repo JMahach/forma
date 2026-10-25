@@ -16,12 +16,17 @@ import { createPanelState } from '../state/panels.ts';
 import { formatDateInput } from './date-input.ts';
 import { canManageLibraryRecord } from './chart-display.ts';
 import { escapeHtml as esc } from '../ui/html.ts';
+import { createFeedback } from '../ui/feedback.ts';
+import { UI_MESSAGES } from '../ui/messages.ts';
+import { actionAvailability } from '../ui/action-state.ts';
+import { getConnectionMode, subscribeConnection } from '../data/http-transport.ts';
 
 const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Транзит' };
 
 export function renderChartLibraryRow(chart: SavedChart, selected: boolean, { preview = false } = {}) {
+  const editDisabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled;
   const caption = chart.birthDate ? [formatDateInput(chart.birthDate), chart.birthTime].filter(Boolean).join(' · ') : sourceNames[chart.source] || 'Ручные активации';
-  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}">${preview ? '<canvas class="chart-preview" width="0" height="0" aria-hidden="true"></canvas>' : ''}<span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary aria-label="Действия с картой «${esc(chart.name)}»"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
+  return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}">${preview ? '<canvas class="chart-preview" width="0" height="0" aria-hidden="true"></canvas>' : ''}<span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary title="Действия с картой" aria-label="Действия с картой «${esc(chart.name)}»"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" ${editDisabled ? 'disabled' : ''} data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
 }
 
 // Saved data never lives here. Compact navigation rows keep their identity
@@ -102,8 +107,14 @@ export function createChartLibraryView({ chartList, libraryCount, nowButton, doc
 export function attachChartLibrary({ panels = createPanelState(), document, view = null, store, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {}, getSelectedId = () => session.selectedId }: LibraryOptions) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   let deletingId: string | null = null, appliedOpen: boolean | null = null;
+  let deleteFeedback: ReturnType<typeof createFeedback> | null = null;
   view ??= createChartLibraryView({ chartList: $('chartList'), libraryCount: $('libraryCount'), nowButton: $('nowButton'), document });
-  function render() { view!.update(store.charts, getSelectedId()); }
+  function updateAvailability() {
+    const disabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled;
+    $<HTMLButtonElement>('newChartButton').disabled = disabled;
+    document.querySelectorAll<HTMLButtonElement>('[data-chart-action="edit"]').forEach(button => {button.disabled = disabled;});
+  }
+  function render() { view!.update(store.charts, getSelectedId()); updateAvailability(); }
 
   function syncOpen() {
     const opened = panels.left;
@@ -137,6 +148,7 @@ export function attachChartLibrary({ panels = createPanelState(), document, view
     if (action) {
       const c = store.charts.find(item => item.id === action.dataset.actionChartId);
       if (!canManageLibraryRecord(c)) return;
+      if (action.dataset.chartAction === 'edit' && actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled) return;
       action.closest('details')!.open = false;
       if (action.dataset.chartAction === 'edit') onEdit(c!.id);
       else openDeleteChart(c!);
@@ -149,12 +161,14 @@ export function attachChartLibrary({ panels = createPanelState(), document, view
     document.querySelectorAll<HTMLDetailsElement>('.chart-actions[open]').forEach(item => { if (item !== e.target) item.open = false; });
   }, true);
   document.addEventListener('pointerdown', e => document.querySelectorAll<HTMLDetailsElement>('.chart-actions[open]').forEach(item => { if (!item.contains(e.target as Node | null)) item.open = false; }));
-  $('newChartButton').addEventListener('click', () => onNew());
+  $('newChartButton').addEventListener('click', () => {
+    if (!actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled) onNew();
+  });
   function openDeleteChart(c: SavedChart) {
     if (!canManageLibraryRecord(c)) return;
     deletingId = c.id;
     $('deleteChartName').textContent = `«${c.name}»`;
-    $('deleteChartError').textContent = '';
+    if (deleteFeedback) deleteFeedback.clear(); else $('deleteChartError').textContent = '';
     $<HTMLDialogElement>('deleteChartDialog').showModal();
     $('cancelDeleteChart').focus();
   }
@@ -163,10 +177,13 @@ export function attachChartLibrary({ panels = createPanelState(), document, view
     try {
       store.remove(deletingId!);
       $<HTMLDialogElement>('deleteChartDialog').close();
-      if (session.selectedId === deletingId) onSelect(store.charts.find(c => c.id !== 'current-transit')?.id || 'current-transit');
+      if (session.selectedId === deletingId) onSelect('current-transit');
       else onUpdate();
       deletingId = null;
-    } catch { $('deleteChartError').textContent = 'Не удалось удалить карту. Она осталась в библиотеке.'; }
+    } catch {
+      deleteFeedback ??= createFeedback($('deleteChartError'), {kind:'action'});
+      deleteFeedback.show({message:UI_MESSAGES.chartDeleteFailed,tone:'error'});
+    }
   });
 
   $('openLibrary').addEventListener('click', toggle);
@@ -177,6 +194,7 @@ export function attachChartLibrary({ panels = createPanelState(), document, view
     if (menu) { menu.open = false; menu.querySelector('summary')!.focus(); e.preventDefault(); return; }
   });
 
+  subscribeConnection(updateAvailability);
   panels.subscribe(syncOpen);
   syncOpen();
   return { open: openLibrary, close: closeLibrary, toggle, render, syncOpen, get opened() { return panels.left; } };

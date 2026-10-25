@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { createStandConnection } from '../src/dev/control-colors.ts';
 import type { StandConnection } from '../src/dev/control-colors.ts';
 import { isDevelopmentPort } from '../shared/development.ts';
+import { createCalculationPreview } from '../src/dev/calculation-preview.ts';
 
-const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^import[^\n]*\n/gm, '').replace(/^export /gm, '');
+const code = readModuleSource(new URL('../src/dev/control-colors.ts', import.meta.url)).replace(/^import[^\n]*\n/gm, '').replace(/^export \{[^\n]*\n/gm, '').replace(/^export /gm, '');
 const KEY = 'forma.control-colors.v1';
 function memory() {
   const values = new Map<string, string>();
@@ -49,7 +50,7 @@ function harness(href = 'http://localhost:3636/', storage = memory()) {
   const location = { href, port: new URL(href).port };
   const document = { documentElement: root, head, createElement: () => new TestElement(),
     querySelector(selector: string) { assert.equal(selector, '.sidebar-footer'); return footer; } };
-  const connection = new Function('location', 'document', 'sessionStorage', 'isDevelopmentPort', `${code}\nreturn standConnection;`)(location, document, storage, isDevelopmentPort) as ReturnType<typeof createStandConnection>;
+  const connection = new Function('location', 'document', 'sessionStorage', 'isDevelopmentPort', 'standConnection', 'configureTransportSimulation', 'createCalculationPreview', `${code}\nreturn standConnection;`)(location, document, storage, isDevelopmentPort, createStandConnection(), () => {}, createCalculationPreview) as ReturnType<typeof createStandConnection>;
   const group = footer.children[0], toggle = footer.children[1], options = group?.children[0];
   return { root, footer, head, location, storage, connection, group, toggle, options, buttons: options?.children };
 }
@@ -87,13 +88,13 @@ test('legacy palette URLs leave the row closed without restoring retired colour 
   assert.equal(h.location.href, href);
 });
 
-test('buttons select all three connection modes without changing the address or retaining the mode', () => {
+test('buttons select all three connection modes without changing the address and retain the selected mode', () => {
   const h = harness('http://localhost:3636/#map');
   h.toggle.click(); assert.equal(h.group.hidden, false);
   for (const mode of ['offline', 'server', 'online'] as const) {
     h.buttons.find(button => button.dataset.connection === mode)!.click();
     assertSelected(h, mode);
-    assert.deepEqual(JSON.parse(h.storage.getItem(KEY)!), { expanded: true });
+    assert.deepEqual(JSON.parse(h.storage.getItem(KEY)!), { expanded: true, connection: mode });
   }
   assert.equal(h.location.href, 'http://localhost:3636/#map');
   h.connection.set('server'); h.toggle.click();
@@ -110,17 +111,17 @@ test('the same connection owner updates the visible buttons for commands from an
   assertSelected(h, 'server');
 });
 
-test('reload keeps only legacy expansion and resets connection to online', () => {
+test('reload keeps expansion and connection without restoring retired palette fields', () => {
   const storage = memory();
   storage.setItem(KEY, JSON.stringify({ family: 'gold', index: 2, expanded: true, screen: 'library' }));
   const h = harness(undefined, storage);
   assert.equal(h.group.hidden, false);
   assert.equal(h.root.dataset.controlColors, undefined);
-  assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: true });
+  assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: true, connection: 'online' });
   h.connection.set('offline');
   const restored = harness(undefined, storage);
   assert.equal(restored.group.hidden, false);
-  assertSelected(restored, 'online');
+  assertSelected(restored, 'offline');
   assertSelected(h, 'offline');
 });
 
@@ -139,7 +140,7 @@ test('damaged remembered selections leave a closed row with the regular online s
     assert.equal(h.root.dataset.controlColors, undefined);
     assert.equal(h.group.hidden, true);
     assertSelected(h, 'online');
-    assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: false });
+    assert.deepEqual(JSON.parse(storage.getItem(KEY)!), { expanded: false, connection: 'online' });
   }
 });
 
@@ -169,11 +170,29 @@ test('row expansion survives reloads independently of the connection mode', () =
     assert.equal(opened.group.hidden, false);
     assert.equal(opened.toggle.getAttribute('aria-expanded'), 'true');
     assert.equal(opened.toggle.getAttribute('aria-pressed'), 'true');
-    assertSelected(opened, 'online');
+    assertSelected(opened, mode);
     opened.toggle.click();
     const closed = harness(undefined, h.storage);
     assert.equal(closed.group.hidden, true);
     assert.equal(closed.toggle.getAttribute('aria-expanded'), 'false');
     assert.equal(closed.toggle.getAttribute('aria-pressed'), 'false');
   }
+});
+
+test('a stand-only URL can seed the connection before the first data request in an empty tab', () => {
+ const h=harness('http://localhost:3636/?connection=offline'); assertSelected(h,'offline');
+ h.connection.set('online'); const restored=harness(h.location.href,h.storage); assertSelected(restored,'online');
+ assert.equal(harness('https://forma.example/?connection=offline').connection.current,'online');
+});
+
+test('calculation preview keeps its selection across reload in the existing stand settings', () => {
+  const storage = memory(), h = harness(undefined, storage);
+  const choice = h.group.children[1].children[0] as TestElement & {value:string};
+  choice.value = 'waiting'; choice.listeners.get('change')?.({target:choice});
+  assert.equal(JSON.parse(storage.getItem(KEY)!).calculation, 'waiting');
+  const restored = harness(undefined, storage);
+  const restoredChoice = restored.group.children[1].children[0] as TestElement & {value:string};
+  assert.equal(restoredChoice.value, 'waiting');
+  restoredChoice.value = 'ordinary'; restoredChoice.listeners.get('change')?.({target:restoredChoice});
+  assert.equal(JSON.parse(storage.getItem(KEY)!).calculation, undefined);
 });

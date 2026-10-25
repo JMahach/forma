@@ -29,6 +29,7 @@ attachPageGestures(document);
 
 const element = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 const toast = createToast(element('toast'));
+element('chartLoadingStatus').textContent = 'Загружаем карту…';
 const viewStore = createViewStore({ onStorageError: toast }), savedView = viewStore.read();
 let saveBeforeNavigate = () => {}, flushLoadingView = () => {};
 const previewLoading = attachLoadingPreview({ button: element('toggleLoadingPreview'), location,
@@ -220,7 +221,14 @@ if (!previewLoading) try {
 } catch {
   const shell = document.querySelector<HTMLElement>('.app-shell')!;
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
-  releaseLoadingContent();
+  delete shell.dataset.shellReady;
+  loadingActive = false;
+  loadingLayoutObserver.disconnect();
+  handoffLoadingPanels();
+  document.removeEventListener('visibilitychange', flushOnHide);
+  page?.removeEventListener?.('pagehide', flushLoadingView);
+  element('chartLoadingArt').hidden = false;
+  element('chartLoadingMessage').hidden = false;
   studio.dataset.workspaceScreen = 'chart';
   const canvas = document.getElementById('canvasWrap')!;
   canvas.dataset.chartState = 'error';
@@ -229,5 +237,4 @@ if (!previewLoading) try {
   const retry = document.getElementById('chartLoadingRetry')!;
   retry.hidden = false;
   retry.addEventListener('click', () => location.reload());
-  commitLoadingLayout(document);
 }

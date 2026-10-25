@@ -419,7 +419,7 @@ test('deleting the selected chart uses Home for the automatically opened fallbac
   const selected = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const remaining = { ...selected, id: 'remaining' };
   for (const { name, charts, fallback } of [
-    { name: 'another saved chart remains', charts: [selected, remaining], fallback: 'remaining' },
+    { name: 'another saved chart remains', charts: [selected, remaining], fallback: 'current-transit' },
     { name: 'the last saved chart returns to Transit', charts: [selected], fallback: 'current-transit' },
   ] as const) await t.test(name, async () => {
     const h = harness({ charts });

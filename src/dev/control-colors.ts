@@ -1,31 +1,25 @@
 // Temporary stand controls. Accepted section colours live in public/styles.css.
 import { isDevelopmentPort } from '../../shared/development.ts';
-export type StandConnection = 'online' | 'offline' | 'server';
-
-export function createStandConnection() {
-  let current: StandConnection = 'online';
-  const listeners = new Set<(mode: StandConnection) => void>();
-  return {
-    get current() { return current; },
-    set(mode: StandConnection) {
-      if (mode === current) return;
-      current = mode;
-      for (const listener of listeners) listener(mode);
-    },
-    subscribe(listener: (mode: StandConnection) => void) {
-      listeners.add(listener);
-      listener(current);
-      return () => { listeners.delete(listener); };
-    },
-  };
-}
-export const standConnection = createStandConnection();
+import { standConnection } from './stand-connection.ts';
+import { createCalculationPreview } from './calculation-preview.ts';
+import { configureTransportSimulation } from '../data/http-transport.ts';
+export { createStandConnection, standConnection } from './stand-connection.ts';
+export type { StandConnection } from './stand-connection.ts';
+import type { StandConnection } from './stand-connection.ts';
 
 if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
-  // Keep only the existing menu expansion, discarding retired colour trials.
+  // Keep the stand mode across reloads, alongside the existing menu expansion.
   const storageKey = 'forma.control-colors.v1';
+  const calculation = createCalculationPreview(undefined, () => Boolean(document.querySelector<HTMLDialogElement>('#chartDialog')?.open));
   let expanded = false;
-  try { expanded = Boolean(JSON.parse(sessionStorage.getItem(storageKey) || 'null')?.expanded); } catch {}
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+    expanded = Boolean(saved?.expanded);
+    calculation.setWaiting(saved?.calculation === 'waiting');
+    const requested = saved?.connection ?? new URL(location.href).searchParams.get('connection');
+    if (requested === 'offline' || requested === 'server') standConnection.set(requested);
+  } catch {}
+  configureTransportSimulation(standConnection, calculation.fetch);
   const style = document.createElement('style');
   style.textContent = `
     .control-color-previews { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 100%; margin: 4px 0 8px; }
@@ -48,14 +42,23 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
   standConnection.subscribe(mode => {
     connection.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.connection === mode)));
     document.documentElement.dataset.standConnection = mode;
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ expanded: !group.hidden, connection: mode, ...(calculation.waiting ? {calculation:'waiting'} : {}) })); } catch {}
   });
   group.append(connection);
+  const calculationLabel = document.createElement('label');
+  calculationLabel.className = 'stand-calculation-setting'; calculationLabel.textContent = 'Расчёт';
+  const calculationChoice = document.createElement('select');
+  calculationChoice.id = 'calculationPreviewMode'; calculationChoice.setAttribute('aria-label', 'Режим расчёта');
+  calculationChoice.innerHTML = '<option value="ordinary">Обычный</option><option value="waiting">Ожидание</option>';
+  calculationChoice.value = calculation.waiting ? 'waiting' : 'ordinary';
+  calculationChoice.addEventListener('change', () => { calculation.setWaiting(calculationChoice.value === 'waiting'); remember(); });
+  calculationLabel.append(calculationChoice); group.append(calculationLabel);
   const toggle = document.createElement('button');
   toggle.type = 'button'; toggle.id = 'toggleControlColors'; toggle.className = 'sidebar-tool'; toggle.textContent = 'Палитры';
   toggle.setAttribute('aria-controls', group.id);
   function remember() {
     toggle.setAttribute('aria-expanded', String(!group.hidden)); toggle.setAttribute('aria-pressed', String(!group.hidden));
-    try { sessionStorage.setItem(storageKey, JSON.stringify({ expanded: !group.hidden })); } catch {}
+    try { sessionStorage.setItem(storageKey, JSON.stringify({ expanded: !group.hidden, connection: standConnection.current, ...(calculation.waiting ? {calculation:'waiting'} : {}) })); } catch {}
   }
   toggle.addEventListener('click', () => { group.hidden = !group.hidden; remember(); });
   const footer = document.querySelector<HTMLElement>('.sidebar-footer');

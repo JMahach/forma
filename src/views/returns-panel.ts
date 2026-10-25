@@ -1,3 +1,4 @@
+import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
 import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { ReturnsState } from '../state/returns.ts';
 import type { StudioLayout } from '../ui/layout/studio-controller.ts';
@@ -230,7 +231,7 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
     if (events.length !== eventInput.length || events.some((event, index) => event !== eventInput[index])) {
       eventInput = [...events]; preparedEvents = firstReturnEvents(events);
     }
-    status.textContent = state.loadingChart ? '' : state.chartError || (busy ? 'Создаём летопись' : '');
+    status.textContent = state.loadingChart ? '' : state.chartError ? failureMessage({code:state.chartErrorCode}, UI_MESSAGES.returnUnavailable) : busy ? UI_MESSAGES.returnsLoading : '';
     panel.setAttribute('aria-busy', String(busy || state.loadingChart));
     $('returnsRetry').hidden = !state.chartError && !state.errors?.length;
     const now = Date.now(), errors = state.errors || [];
@@ -239,7 +240,9 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
       completedAge(new Date(now).toISOString(), state.natal), errors]);
     const unchanged = listSnapshot?.key === listKey && listSnapshot.events === preparedEvents;
     if (!unchanged) {
-      const nextMarkup = renderPreparedReturnEvents(state, preparedEvents, now) + errors.map(error => `<p class="returns-error">${esc(cycleLabel(error.body))}: ${esc(error.message)}</p>`).join('');
+      const causes = [...new Set(errors.map(error => failureMessage(error, '')).filter(Boolean))];
+      const causeText = causes.length ? `${causes.map(esc).join('. ')}. ` : '';
+      const nextMarkup = renderPreparedReturnEvents(state, preparedEvents, now) + (errors.length ? `<p class="returns-error">${causeText}Не удалось загрузить: ${errors.map(error => esc(cycleLabel(error.body))).join(', ')}</p>` : '');
       listSnapshot = { key: listKey, events: preparedEvents };
       if (nextMarkup !== markup) {
         const focused = (document.activeElement as HTMLElement | null)?.dataset, scroll = content.scrollTop;

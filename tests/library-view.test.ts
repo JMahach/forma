@@ -68,3 +68,35 @@ test('library presentation preserves repeated existing IDs without deduplicating
   for (const row of h.children) assert.equal(row.querySelector('.chart-card').getAttribute('aria-pressed'), 'true');
   assert.equal(saved[0], first); assert.equal(saved[1], second);
 });
+
+test('edit availability is identical in menu and card-catalog rows while ready cards stay openable', async t => {
+ const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
+ const {renderChartLibraryRow}=await import('../src/views/library.ts');
+ const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ for(const mode of ['offline','server','online'] as const){
+  connection.set(mode);
+  for(const preview of [false,true]){
+   const html=renderChartLibraryRow(charts(1)[0],false,{preview});
+   const edit=html.match(/<button[^>]*data-chart-action="edit"[^>]*>/)![0];
+   assert.equal(/\bdisabled\b/.test(edit),mode==='offline');
+   assert.doesNotMatch(html.match(/<button class="chart-card"[^>]*>/)![0],/disabled/);
+   assert.doesNotMatch(html.match(/<button[^>]*data-chart-action="delete"[^>]*>/)![0],/disabled/,'current deletion is local, not a server write');
+  }
+ }
+});
+test('live connection changes update New and every Edit without resetting the list or bypassing guards', async t=>{
+ const {attachChartLibrary}=await import('../src/views/library.ts');
+ const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
+ const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ const nodes=new Map(), handlers=new Map();let newCalls=0,editCalls=0;
+ function node(id){if(!nodes.has(id))nodes.set(id,{id,disabled:false,dataset:{},classList:{toggle(){}},setAttribute(){},contains(){return false;},focus(){},addEventListener(type,fn){handlers.set(id+':'+type,fn);}});return nodes.get(id);}
+ const edits=[node('menuEdit'),node('catalogEdit')];for(const edit of edits){edit.dataset={chartAction:'edit',actionChartId:'0'};edit.closest=selector=>selector==='[data-chart-action]'?edit:{open:true};}
+ const document={getElementById:node,querySelectorAll:selector=>selector==='[data-chart-action="edit"]'?edits:[],querySelector:()=>null,addEventListener(type,fn){handlers.set('document:'+type,fn);}};
+ attachChartLibrary({document,store:{charts:charts(1)},session:{selectedId:'0'},view:{update(){},show(){},hide(){}},onNew(){newCalls++;},onEdit(){editCalls++;},onSelect(){}});
+ connection.set('offline');assert.equal(node('newChartButton').disabled,true);assert.ok(edits.every(x=>x.disabled));
+ handlers.get('newChartButton:click')();handlers.get('document:click')({target:edits[0]});assert.equal(newCalls,0);assert.equal(editCalls,0);
+ connection.set('server');assert.equal(node('newChartButton').disabled,false);assert.ok(edits.every(x=>!x.disabled));
+ handlers.get('newChartButton:click')();handlers.get('document:click')({target:edits[1]});assert.equal(newCalls,1);assert.equal(editCalls,1);
+});

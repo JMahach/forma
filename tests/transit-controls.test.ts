@@ -133,7 +133,7 @@ test('Lifetime coverage hides the ordinary panel while retaining the latest exac
   assert.equal(h.panel.hidden, false); assert.equal(h.range.value, '150');
 
   assert.equal(h.panel.dataset.status, 'error'); assert.equal(h.retryButton.textContent, 'Повторить');
-  assert.equal(h.range.disabled, true); assert.equal(h.status.textContent, 'День не загрузился');
+  assert.equal(h.range.disabled, true); assert.equal(h.status.textContent, 'День не загружен: нет связи с сервером');
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
 });
 
@@ -162,7 +162,7 @@ test('hidden Day updates perform zero DOM writes or time formatting and reveal o
   assert.equal(h.range.value, '150');
 
   assert.equal(h.range.getAttribute('aria-valuetext'), '1 ноября, 01:30, UTC-5');
-  assert.equal(h.retryButton.textContent, 'Повторить'); assert.equal(h.status.textContent, 'День не загрузился');
+  assert.equal(h.retryButton.textContent, 'Повторить'); assert.equal(h.status.textContent, 'День не загружен: нет связи с сервером');
   assert.equal(h.range.value, '150', 'reveal projects the latest state once');
   assert.deepEqual(h.scrubCalls, []); assert.deepEqual(h.nowCalls, []);
 });
@@ -307,7 +307,7 @@ test('loading and error retain minute labels, expose retry, then clear status on
   assert.equal(h.retryButton.disabled, true);
   h.update(state({ status: 'error', index: 754 }));
   assert.equal(h.panel.getAttribute('aria-busy'), 'false');
-  assert.equal(h.status.textContent, 'День не загрузился');
+  assert.equal(h.status.textContent, 'День не загружен: нет связи с сервером');
   assert.equal(h.range.disabled, true);
   assert.equal(h.retryButton.disabled, false);
   assert.equal(h.retryButton.title, '');

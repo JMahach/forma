@@ -22,7 +22,7 @@ const pageSource = readFileSync(new URL('../public/index.html', import.meta.url)
 test('transit is consistently named without renaming saved personal charts', () => {
   const button = pageSource.match(/<button\b[^>]*id="nowButton"[^>]*>[\s\S]*?<\/button>/)?.[0];
   assert.match(button, /<span>Транзит<\/span>/);
-  assert.match(button, /title="Транзит"/);
+  assert.doesNotMatch(button, /\btitle=/, 'the visible label is not repeated by a native tooltip');
   assert.doesNotMatch(pageSource + appSource, /Текущий момент/);
   assert.match(bootstrapSource, /headingLayout\.updateText\(caption\.title, caption\.subtitle, caption\.moments\)/, 'the caption owner receives the selected-chart caption policy');
   for (const [c, expected] of [

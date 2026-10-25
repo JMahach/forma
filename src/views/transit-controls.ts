@@ -1,3 +1,4 @@
+import { UI_MESSAGES } from '../ui/messages.ts';
 import type { LiveTransitState } from '../state/live-transit.ts';
 interface TransitControlsOptions { panel: HTMLElement; range: HTMLInputElement; status: HTMLElement; retryButton: HTMLButtonElement; hourMarks?: HTMLElement | null; marker?: HTMLButtonElement | null; onScrub: (value: number) => void; onNow: () => void }
 export type TransitControls = ReturnType<typeof attachTransitControls>;
@@ -29,7 +30,7 @@ export function attachTransitControls({ panel, range, status, retryButton, hourM
     retryButton.hidden = state.status !== 'error';
     retryButton.disabled = state.status === 'loading';
     setText(retryButton, 'Повторить');
-    setText(status, state.status === 'loading' ? 'Загружаем день…' : state.status === 'error' ? 'День не загрузился' : '');
+    setText(status, state.status === 'loading' ? UI_MESSAGES.dayLoading : state.status === 'error' ? UI_MESSAGES.dayUnavailable : '');
     timelineMarks.day(state.timeline, state.timeline?.minutes, (day, index) => formatTimelineMinute(day, index).time);
     if (state.timeline) {
       range.min = '0'; range.max = String(state.timeline.minutes - 1); range.step = '1';

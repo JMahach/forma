@@ -607,3 +607,9 @@ test('return year choices include birth year plus one hundred even for January f
     await control.setYear(maxYear + 1); assert.equal(control.state.year, maxYear);
   }
 });
+
+test('a failed return chart preserves its cause until a new selection clears it', async()=>{
+ const {control}=fast({client:{chart:async()=>{throw Object.assign(new Error('transport internal'),{code:'server_unavailable'});}}});
+ control.select(natal()); await control.open(); await control.selectEvent(event());
+ assert.equal(control.state.chartErrorCode,'server_unavailable'); control.reset(); assert.equal(control.state.chartErrorCode,'');
+});

@@ -1,3 +1,4 @@
+import { fetchResource } from './http-transport.ts';
 type DayResponse = Pick<Response, 'ok' | 'json' | 'arrayBuffer'>;
 import type { TransitDay } from '../../shared/day-packets/transit-format.ts';
 import type { TransitDayCache } from './transit-day-cache.ts';
@@ -21,7 +22,7 @@ import { createMemoryCache } from './memory-cache.ts';
 import { createAbortError, shareRequest } from './shared-request.ts';
 
 // Day is a transport adapter. The common full-day cache owns reusable numbers.
-export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, decode = decodeTransitDay,
+export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode = decodeTransitDay,
   calculationVersion: suppliedVersion = null, timeoutMs = 20_000, initialDate = null,
   memory = createMemoryCache(), days = createTransitDayCache({ memory }),
 }: TransitClientOptions = {}) {
@@ -46,7 +47,8 @@ export function createTransitDayClient({ fetch: fetchDay = globalThis.fetch, dec
           response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}${calculationVersion ? `&r=${calculationVersion}` : ''}`, { signal: controller.signal, cache: 'no-store' });
         } catch (error) {
           if (controller.signal.aborted && !timedOut) throw createAbortError();
-          throw new Error(timedOut ? 'Транзит дня не успел загрузиться. Повторите попытку.' : 'Не удалось загрузить транзит дня. Проверьте соединение.');
+          if ((error as Error).name === 'ConnectionError') throw error;
+          throw Object.assign(new Error(timedOut ? 'Транзит дня не успел загрузиться. Повторите попытку.' : 'Не удалось загрузить транзит дня. Проверьте соединение.'), {code: timedOut ? 'server_unavailable' : 'connection_failed'});
         }
         if (!response.ok) {
           let failure; try { failure = await response.json(); } catch {}

@@ -1,3 +1,4 @@
+import { UI_MESSAGES } from '../ui/messages.ts';
 import type { NatalExplorerState, NatalExplorerOptions } from '../state/natal-day.ts';
 interface NatalDayControlsOptions extends NatalExplorerOptions {
   toggle: HTMLButtonElement; panel: HTMLElement; range: HTMLInputElement; status: HTMLElement; retryButton: HTMLButtonElement;
@@ -28,7 +29,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     retryButton.hidden = state.status !== 'error';
     retryButton.disabled = state.status === 'loading';
     setText(retryButton, 'Повторить');
-    setText(status, state.status === 'loading' ? 'Рассчитываем день…' : state.status === 'error' ? state.error : '');
+    setText(status, state.status === 'loading' ? UI_MESSAGES.dayPreparing : state.status === 'error' ? UI_MESSAGES.dayUnavailable : '');
     const chart = state.current;
     const date = chart?.localDate ? formatDateInput(chart.localDate) : '';
     if (state.day) {

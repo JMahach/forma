@@ -105,9 +105,12 @@ small { font-size: 11px; }
   --section-control-idle: #735039; --section-control-edge: #d4c1ae;
   display: block; position: relative; min-height: 0; height: 100dvh; overflow: hidden; background: var(--canvas-background);
 }
-/* Initial HTML has no saved panel state or device layout. Do not paint its
-   provisional controls before startup has committed the complete shell. */
-.app-shell:not([data-shell-ready='true']) { opacity: 0; pointer-events: none; }
+/* The server already supplies the preview. Show it before JavaScript while
+   provisional controls wait for restored state and measured layout. */
+.app-shell:not([data-shell-ready='true']) { pointer-events: none; }
+.app-shell:not([data-shell-ready='true']) * { visibility: hidden !important; }
+.app-shell:not([data-shell-ready='true']) :is(#chartLoadingArt, #chartLoadingArt *) { visibility: visible !important; }
+.app-shell:not([data-shell-ready='true']):is(:not(:has(#chartLoadingArt)), [data-page-state='error']) :is(#chartLoadingMessage, #chartLoadingMessage *) { visibility: visible !important; pointer-events: auto; }
 .workspace { position: absolute; inset: 0; display: block; width: 100%; height: 100%; min-height: 0; }
 /* One permanent composition area; controls never take part in its sizing. */
 /* Native tap feedback belongs to the whole scene, including its gesture surface and timelines. */
@@ -293,8 +296,8 @@ dialog::backdrop { background: #18263b25; }
 .city-results [role='option']:hover, .city-results [aria-selected='true'] { background: #f0f4f9; }
 .fold-field { padding: 14px; border: 1px solid #d9e2ee; border-radius: 6px; background: #f2f5f9; }
 .form-note { border: 1px solid #e5eaf1; border-radius: 5px; padding: 13px; margin: 4px 0 18px; background: #f4f6f9; }
-.form-error, .city-status.is-error { color: #b31f2c; }
-.form-error:not(:empty) { border: 1px solid #f1dce0; padding: 11px; border-radius: 5px; margin-top: 8px; background: #fff5f5; }
+.form-error:not([data-tone='neutral']), .city-status.is-error { color: #b31f2c; }
+.form-error:not(:empty):not([data-tone='neutral']) { border: 1px solid #f1dce0; padding: 11px; border-radius: 5px; margin-top: 8px; background: #fff5f5; }
 dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 1px solid #e2e7ef; padding: 0; color: var(--ink); overflow: auto; background: #ffffff; border-radius: 12px; box-shadow: 0 20px 80px #15223425; width: min(560px, calc(100vw - 24px)); }
 .dialog-content { padding: 28px; }
 .dialog-header h2 { line-height: 1.2; color: #262f3b; font-family: var(--sans); font-weight: 400; font-size: 1.875rem; letter-spacing: -.03em; }
@@ -1071,7 +1074,7 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 #chartDialog .primary-button:hover { background: var(--panel-selected-hover); border-color: var(--panel-selected-hover); }
 #chartDialog .secondary-button { background: transparent; color: var(--panel-ink); border-color: var(--panel-border); }
 #chartDialog .form-error:empty { display: none; }
-#chartDialog .form-error:not(:empty) { font-size: .8125rem; line-height: 1.35; }
+#chartDialog .form-error:not(:empty):not([data-tone='neutral']) { font-size: .8125rem; line-height: 1.35; }
 @media (max-width: 380px) {
   #chartDialog .dialog-content { padding: 16px; }
   #chartDialog .form-grid { gap: 0 8px; }
@@ -1330,3 +1333,77 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
     @media (prefers-reduced-motion: reduce) {
       .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus { transition: none !important; }
     }
+
+
+/* Shared field/action feedback: each message stays beside its owner. */
+.ui-feedback { min-width: 0; color: var(--panel-ink); font: 400 14px/1.45 var(--sans); overflow-wrap: anywhere; }
+.ui-feedback[hidden] { display: none !important; }
+.ui-feedback p { margin: 0; font: inherit; }
+.ui-feedback .ui-feedback-detail { margin-top: 4px; color: var(--panel-muted); font-size: 13px; }
+.ui-feedback[data-tone='error'] > .ui-feedback-text { color: #a3272d; }
+.ui-feedback--field { margin-top: 5px; font-size: 13px; line-height: 1.35; }
+.ui-feedback--action { margin-top: 16px; }
+.ui-feedback-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+:is(.ui-feedback, .account-auth-form) :is(.primary-button, .secondary-button) {
+  min-height: 44px; padding: 10px 14px; border-radius: 6px; font: 500 14px/1.35 var(--sans);
+  white-space: normal; touch-action: manipulation; transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+:is(.ui-feedback, .account-auth-form) .secondary-button { border-color: var(--panel-border); color: var(--panel-ink); background: transparent; }
+.account-auth-form .primary-button { background: var(--account-accent); border-color: var(--account-accent); color: #fffefd; }
+:is(.ui-feedback, .account-auth-form) button:focus-visible { outline: 2px solid var(--control-focus); outline-offset: 3px; }
+:is(.ui-feedback, .account-auth-form) button:disabled { opacity: .5; cursor: default; transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  :is(.ui-feedback, .account-auth-form) .secondary-button:hover:not(:disabled) { background: var(--panel-surface, #f2f0e9); border-color: var(--control-focus); }
+  .account-auth-form .primary-button:hover:not(:disabled) { background: var(--account-hover); border-color: var(--account-hover); }
+}
+.account-auth-form { --control-focus: var(--account-accent); width: 100%; max-width: 400px; min-width: 0; color: var(--panel-ink); }
+.account-auth-form h2 { margin: 0 0 12px; font: 600 24px/1.2 var(--sans); letter-spacing: -.02em; }
+.account-auth-intro { margin: 0 0 24px; font: 400 14px/1.5 var(--sans); color: var(--panel-muted); overflow-wrap: anywhere; }
+.account-auth-form .field { display: grid; gap: 6px; margin: 0 0 16px; }
+.account-auth-form .field label { color: var(--panel-ink); font-size: 13px; line-height: 1.35; }
+.account-auth-form .field input {
+  min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--panel-border); border-radius: 6px;
+  background: #fff; color: var(--panel-ink); font: 400 16px/1.35 var(--sans);
+}
+.account-auth-form .field input:focus { border-color: var(--control-focus); outline: 2px solid color-mix(in srgb, var(--control-focus) 20%, transparent); outline-offset: 1px; }
+.account-auth-form .field input[aria-invalid='true'] { border-color: #a3272d; }
+.account-auth-form .field input[aria-invalid='true']:focus { outline-color: color-mix(in srgb, #a3272d 20%, transparent); }
+.account-auth-code { font-variant-numeric: tabular-nums; letter-spacing: .12em; }
+.account-auth-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.account-auth-alternatives { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+@media (prefers-reduced-motion: reduce) { :is(.ui-feedback, .account-auth-form) button { transition: none; } }
+
+.toast.ui-feedback { width: min(400px, calc(100vw - 32px)); padding: 12px 16px; border: 1px solid var(--panel-border); border-radius: 6px; background: var(--canvas-background); box-shadow: 0 4px 16px #30282414; text-align: left; }
+.toast.ui-feedback.visible { pointer-events: auto; }
+.toast.ui-feedback .ui-feedback-actions { justify-content: flex-end; }
+
+:is(.shared-copy-setting, .stand-calculation-setting) { display: grid; grid-template-columns: 1fr minmax(0, 1.3fr); align-items: center; gap: 8px; font: 12px/1.35 var(--sans); color: var(--panel-muted); }
+:is(.shared-copy-setting, .stand-calculation-setting) select { min-width: 0; min-height: 32px; padding: 5px 7px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: inherit; }
+@media (pointer: coarse) { :is(.shared-copy-setting, .stand-calculation-setting) select, .stand-connection-options button, .shared-study-choices button { min-height: 44px; } }
+
+.account-study-panel .account-study-action { border-radius: 6px; padding: 10px 14px; font: 500 14px/1.35 var(--sans); }
+
+.stand-calculation-setting { width: 100%; }
+
+/* One anchored action surface; content and operation semantics stay with their owners. */
+.action-notice.ui-feedback {
+  position: fixed; z-index: 140; box-sizing: border-box; width: 280px;
+  margin: 0; padding: 8px 10px; overflow: auto; overscroll-behavior: contain; touch-action: pan-y;
+  border: 1px solid var(--panel-border); border-radius: var(--floating-control-radius);
+  background: var(--canvas-background); box-shadow: 0 2px 8px #30282414;
+  font-size: 13px; line-height: 18px; text-align: left;
+  animation: action-notice-in 120ms ease-out;
+}
+.action-notice .ui-feedback-actions { flex-wrap: nowrap; }
+.action-notice .ui-feedback-actions button { flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px; }
+.action-notice:has(.ui-feedback-actions > :only-child) { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
+.action-notice:has(.ui-feedback-actions > :only-child) > p { grid-column: 1; }
+.action-notice:has(.ui-feedback-actions > :only-child) .ui-feedback-actions { grid-column: 2; grid-row: 1 / span 2; margin: 0; }
+.action-notice[data-tone='success'] .ui-feedback-text::before { content: '✓'; color: var(--sage-accent); margin-right: 8px; }
+.action-notice[data-compact='true'] { height: 36px; }
+.action-notice[data-compact='true'] .ui-feedback-text { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; align-items: center; }
+.action-notice[data-compact='true'] .ui-feedback-text::before { margin: 0; text-align: center; }
+.action-notice[data-compact='true'][data-tone='error'] .ui-feedback-text::before { content: '×'; }
+.app-shell[data-page-state='loading'] .action-notice { display: none; }
+@keyframes action-notice-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .action-notice.ui-feedback { animation: none; } }

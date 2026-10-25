@@ -124,7 +124,7 @@ test('chronicle retry feedback is silent twice, centered after the third failure
     assert.equal(h.status.textContent, '', `failure ${retryCount} stays quiet`);
   }
   h.setDayState({ status: 'loading', retryCount: 3 });
-  assert.equal(h.status.textContent, 'Загружаю момент');
+  assert.equal(h.status.textContent, 'Загружаем момент…');
   assert.equal(h.panel.getAttribute('aria-busy'), 'true');
   assert.equal(h.range.parentElement!.hidden, false);
   h.setDayState({ status: 'ready', retryCount: 0 });
@@ -645,7 +645,7 @@ test('date errors remain inside the date while repeated failures recover automat
   for (let attempt = 1; attempt <= 3; attempt++) {
     h.requests.at(-1)!.reject(new Error('Нет соединения')); await tick();
     assert.equal(h.toError.textContent, 'Дата некорректна');
-    assert.equal(h.status.textContent, attempt < 3 ? '' : 'Загружаю момент');
+    assert.equal(h.status.textContent, attempt < 3 ? '' : 'Загружаем момент…');
     t.mock.timers.tick(1000 * 2 ** (attempt - 1)); await tick();
   }
   await complete(h);
@@ -948,7 +948,7 @@ test('retry feedback follows the live owner even when the lifetime is ready', as
   live = { ...h.day, status: 'error', retryCount: 2 }; h.syncTransit();
   assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
   live = { ...live, retryCount: 3 }; h.syncTransit();
-  assert.equal(h.status.textContent, 'Загружаю момент');
+  assert.equal(h.status.textContent, 'Загружаем момент…');
   assert.equal(h.panel.getAttribute('aria-busy'), 'true');
   live = { ...live, status: 'ready', retryCount: 0 }; h.syncTransit();
   assert.equal(h.status.textContent, ''); h.explorer.close();
@@ -1133,7 +1133,7 @@ test('a ready personal chart cannot hide a pending or failed lifetime file', asy
   assert.equal(await opening, false);
   assert.equal(h.panel.dataset.status, 'error');
   assert.equal(h.panel.getAttribute('aria-busy'), 'false');
-  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.status.textContent, 'Не удалось загрузить летопись');
   h.explorer.close();
 });
 
@@ -1275,7 +1275,7 @@ test('an invalid lifetime file stops metadata retries and an explicit retry reta
   const snapshot = { opened: true, mode: 'lifetime', fromDate: '1998-08-18', toDate: '2098-08-18', minimumUtc: natal.utc, requestedUtc: Date.parse(natal.utc) };
   assert.equal(await h.explorer.restore(snapshot), false);
   assert.equal(h.explorer.state.status, 'error');
-  assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.status.textContent, 'Не удалось загрузить летопись');
   assert.equal(h.explorer.state.retryCount, 0);
   t.mock.timers.tick(60_000); await tick(); h.syncTransit();
   assert.equal(metadataCalls, 1, 'a rejected file cannot be repaired by repeating its metadata request');
@@ -1314,7 +1314,7 @@ test('metadata rejection after a changed revision remains a file error before a 
   await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected });
   assert.equal(h.explorer.state.status, 'loading');
   t.mock.timers.tick(1000); await tick();
-  assert.equal(h.explorer.state.status, 'error'); assert.equal(h.status.textContent, 'Данные летописи недоступны.');
+  assert.equal(h.explorer.state.status, 'error'); assert.equal(h.status.textContent, 'Не удалось загрузить летопись');
   assert.equal(h.explorer.state.requestedUtc, selected); assert.equal(pointCalls, 1);
   t.mock.timers.tick(60_000); await tick(); assert.equal(metadataCalls, 2);
   h.explorer.close();
@@ -1545,3 +1545,9 @@ for (const openEdge of ['start', 'end'] as const) {
     assert.equal(h.fromError.textContent, ''); assert.equal(h.toError.textContent, '');
   });
 }
+
+test('a connection failure keeps its cause through waiting and shows the shared phrase immediately', async t => {
+ const h=harness({client:{getMeta:async()=>{throw Object.assign(new Error('transport internal'),{code:'offline'});}}});
+ t.after(()=>h.explorer.close()); await h.explorer.open();
+ assert.equal(h.explorer.state.errorCode,'offline'); assert.equal(h.status.textContent,'Нет соединения');
+});

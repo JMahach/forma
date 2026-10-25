@@ -1,3 +1,4 @@
+import { fetchResource } from './http-transport.ts';
 type DayResponse = Pick<Response, 'ok' | 'json' | 'arrayBuffer'>;
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
@@ -24,7 +25,7 @@ import { createAbortError, shareRequest } from './shared-request.ts';
 const compatibleTimezone = (day: NatalDay, timezone: string | undefined) => !timezone || day.timezone === timezone;
 
 export function createNatalDayClient({
-  fetch: fetchDay = globalThis.fetch, decode = decodeNatalDay,
+  fetch: fetchDay = fetchResource, decode = decodeNatalDay,
   persistentCache = createBinaryCache({ databaseName: 'bodygraph-chart-days' }),
   memory = createMemoryCache(), calculationVersion = null, timeoutMs = 60_000,
 }: NatalClientOptions = {}) {

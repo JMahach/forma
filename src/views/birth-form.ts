@@ -18,6 +18,10 @@ import { escapeHtml as esc } from '../ui/html.ts';
 import { requestJSON as defaultRequestJSON } from '../data/api-client.ts';
 import { isDevelopmentPort } from '../../shared/development.ts';
 import { randomBirthMoment } from './random-chart.ts';
+import { getConnectionMode, subscribeConnection } from '../data/http-transport.ts';
+import { actionAvailability } from '../ui/action-state.ts';
+import { createFeedback } from '../ui/feedback.ts';
+import { failureMessage, UI_MESSAGES } from '../ui/messages.ts';
 
 // Birth data, city search, DST ambiguity and calculation live within one dialog.
 export function attachBirthForm({ document, store, session, onSave, beforeOpen = () => {}, toast, requestJSON = defaultRequestJSON, getFormData = form => new FormData(form) }: BirthFormOptions) {
@@ -29,7 +33,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   const randomAllowed = isDevelopmentPort(document.defaultView?.location?.port ?? '');
   let randomController: AbortController | null = null;
   function setRandomBusy(busy: boolean) {
-    if (randomButton) { randomButton.disabled = busy; randomButton.setAttribute('aria-busy', String(busy)); }
+    if (randomButton) { randomButton.disabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:busy}).disabled; randomButton.setAttribute('aria-busy', String(busy)); }
   }
   function cancelRandom() { randomController?.abort(); randomController = null; setRandomBusy(false); }
   function persistCharts(next: SavedChart[]) {
@@ -49,14 +53,21 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
 
   const fieldIds = ['chartName', 'birthDate', 'birthTime', 'birthPlace', 'foldChoice'] as const;
   type FieldId = typeof fieldIds[number];
+  const fieldFeedback = Object.fromEntries(fieldIds.map(id => [id, createFeedback($(id + 'Error'), {kind:'field',field:$(id)})])) as Record<FieldId, ReturnType<typeof createFeedback>>;
+  const formFeedback = createFeedback($('formError'), {kind:'action'});
+  let formMessageKind: 'busy' | 'offline' | 'unavailable' | 'error' | null = null;
+  function showForm(message = '', busy = false, code?: string) {
+    formMessageKind = !message ? null : busy ? 'busy' : code === 'offline' ? 'offline' : code === 'busy' ? 'unavailable' : 'error';
+    if (message) formFeedback.show({message,busy,tone:busy || code === 'busy' ? 'neutral' : 'error'});
+    else formFeedback.clear();
+  }
   function fieldError(id: FieldId, message = '') {
-    $(id + 'Error').textContent = message;
-    if (message) $(id).setAttribute('aria-invalid', 'true');
-    else $(id).removeAttribute('aria-invalid');
+    if (message) fieldFeedback[id].show({message,tone:'error'});
+    else fieldFeedback[id].clear();
   }
   function clearErrors() {
     fieldIds.forEach(id => fieldError(id));
-    $('formError').textContent = '';
+    showForm();
   }
   for (const id of fieldIds) $(id).addEventListener(id === 'foldChoice' ? 'change' : 'input', () => fieldError(id));
 
@@ -100,7 +111,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       const error = caught as ApiError;
       if (controller.signal.aborted || error.name === 'AbortError' || sequence !== citySequence) return;
       closeCityResults();
-      $('cityStatus').textContent = error.code === 'connection_failed' ? 'Нет соединения. Не можем найти город' : error.message;
+      $('cityStatus').textContent = failureMessage(error, error.message || UI_MESSAGES.cityLookupFailed, 'city');
       $('cityStatus').classList.add('is-error');
     }
   }
@@ -119,18 +130,21 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     clearErrors();
   }
   function setFormBusy(busy: boolean) {
+    if (busy) showForm(UI_MESSAGES.chartPreparing, true);
+    else if (formMessageKind === 'busy') showForm();
     formBusy = busy; $<HTMLFormElement>('chartForm').setAttribute('aria-busy', String(busy));
-    $<HTMLFormElement>('chartForm').querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input, textarea, select, button').forEach(control => { if (control.id !== 'cancelDialog') control.disabled = busy; });
+    $<HTMLFormElement>('chartForm').querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input, textarea, select, button').forEach(control => { if (control.id !== 'cancelDialog') control.disabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:busy}).disabled; });
     $('saveChartButton').textContent = busy ? 'Рассчитываем…' : calculationMode === 'calculated' ? 'Рассчитать и сохранить' : 'Сохранить карту';
   }
   function closeForm() { cancelRandom(); calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); closeCityResults(); $<HTMLDialogElement>('chartDialog').close(); }
 
   function openForm(edit = false, id = session.selectedId) {
+    if (actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled) return;
     cancelRandom();
     const c = store.charts.find(item => item.id === id) || session.record;
     if (edit && !canManageLibraryRecord(c)) return;
     calculationController?.abort(); clearTimeout(cityTimer); cityController?.abort(); citySequence += 1;
-    $<HTMLFormElement>('chartForm').reset(); $('formError').textContent = ''; setFormBusy(false); selectedCity = null; cityResults = []; closeCityResults();
+    $<HTMLFormElement>('chartForm').reset(); showForm(); setFormBusy(false); selectedCity = null; cityResults = []; closeCityResults();
     $('cityStatus').classList.remove('is-error');
     editingId = edit ? c!.id : null;
     $('dialogTitle').textContent = edit ? 'Редактировать карту' : 'Новая карта';
@@ -150,7 +164,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm);
   $<HTMLDialogElement>('chartDialog').addEventListener('cancel', () => { calculationController?.abort(); cityController?.abort(); clearTimeout(cityTimer); });
   $<HTMLFormElement>('chartForm').addEventListener('submit', async e => {
-    e.preventDefault(); if (formBusy) return; clearErrors();
+    e.preventDefault(); if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy}).disabled) return; clearErrors();
     const controller = new AbortController(); calculationController = controller;
     try {
       const form = getFormData(e.target as HTMLFormElement), now = new Date().toISOString();
@@ -203,7 +217,11 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
     } catch (caught) {
       const error = caught as ApiError;
       if (controller.signal.aborted || calculationController !== controller || error.name === 'AbortError') return;
-      if (error.code === 'ambiguous_time' && Array.isArray(error.choices)) {
+      if (error.code === 'busy') {
+        // This response ended the request. Real admission/resumption is not wired;
+        // only a still-pending request may display the preparing state.
+        showForm(UI_MESSAGES.calculationBusy, false, 'busy');
+      } else if (error.code === 'ambiguous_time' && Array.isArray(error.choices)) {
         $('foldField').hidden = false; $('foldMessage').textContent = error.message;
         $<HTMLSelectElement>('foldChoice').innerHTML = '<option value="">Выберите вариант</option>' + error.choices.filter(choice => choice.fold === 0 || choice.fold === 1).map(choice => `<option value="${choice.fold}">${esc(choice.label)}</option>`).join('');
         fieldError('foldChoice', 'Из-за перевода часов это время встречается дважды. Уточните вариант и повторите расчёт.');
@@ -212,7 +230,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       } else {
         const field = ({ name_required: 'chartName', invalid_date: 'birthDate', unsupported_date: 'birthDate', nonexistent_time: 'birthTime' } as Partial<Record<string, FieldId>>)[error.code!];
         if (field) { setFormBusy(false); fieldError(field, error.message); $(field).focus(); }
-        else $('formError').textContent = error.message;
+        else showForm(failureMessage(error, error.message || UI_MESSAGES.chartCalculationFailed, 'chart-form'));
       }
     } finally { if (calculationController === controller) setFormBusy(false); }
   });
@@ -249,7 +267,7 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
   });
 
   randomButton?.addEventListener('click', async () => {
-    if (!randomAllowed || formBusy || randomController || $<HTMLDialogElement>('chartDialog').open) return;
+    if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy || Boolean(randomController),available:randomAllowed}).disabled || $<HTMLDialogElement>('chartDialog').open) return;
     if (store.charts.length >= 500) { toast('В библиотеке уже 500 карт.'); return; }
     const controller = new AbortController(); randomController = controller; setRandomBusy(true);
     try {
@@ -271,11 +289,23 @@ export function attachBirthForm({ document, store, session, onSave, beforeOpen =
       if (!persisted) toast('Карта открыта, но не сохранена в браузере.');
     } catch (caught) {
       const error = caught as Error;
-      if (!controller.signal.aborted && randomController === controller && error.name !== 'AbortError') toast(error.message);
+      if (!controller.signal.aborted && randomController === controller && error.name !== 'AbortError') toast(failureMessage(error, error.message));
     } finally {
       if (randomController === controller) { randomController = null; setRandomBusy(false); }
     }
   });
 
+  subscribeConnection(mode => {
+    if (mode === 'offline') {
+      calculationController?.abort(); cityController?.abort(); citySequence += 1;
+      clearTimeout(cityTimer); closeCityResults(); cancelRandom();
+    }
+    setRandomBusy(Boolean(randomController));
+    setFormBusy(formBusy && mode !== 'offline');
+    if ($<HTMLDialogElement>('chartDialog').open) {
+      if (mode === 'offline') showForm(UI_MESSAGES.offline, false, 'offline');
+      else if (formMessageKind === 'offline') showForm();
+    }
+  });
   return { open: openForm, close: closeForm, get opened() { return $<HTMLDialogElement>('chartDialog').open; } };
 }

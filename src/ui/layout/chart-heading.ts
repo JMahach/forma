@@ -28,6 +28,12 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
     if (element.style.getPropertyValue(name) !== next) element.style.setProperty(name, next);
   };
   function refresh() {
+    for (const element of [panelCaption?.title, panelCaption?.details, panelCaption?.comparison?.title, panelCaption?.comparison?.details]) {
+      if (!element) continue;
+      const rect = visibleRect(element, true);
+      const hint = rect && element.scrollWidth > rect.width + .5 ? element.textContent || '' : '';
+      if (element.title !== hint) element.title = hint;
+    }
     // The panel caption keeps its own measured height when zoom hides the
     // central caption. Visibility-hidden text still has usable geometry.
     const panelRect = visibleRect(panelCaption?.root, true);
@@ -105,8 +111,7 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
       const text = value == null ? '' : String(value);
       if (element.textContent !== text) {
         element.textContent = text;
-        if (element === panelCaption?.title || element === comparison?.title
-          || element === panelCaption?.details || element === comparison?.details) element.title = text;
+
         changed = true;
       }
     }

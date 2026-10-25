@@ -172,6 +172,9 @@ for (const failure of ['import', 'initialization'] as const) {
       () => ({ read: () => null }), emptyStore, loadApp, { reload() { reloads++; } });
     assertPageZoomBlocked(document);
     assert.equal(canvas.dataset.chartState, 'error');
+    assert.equal(document.querySelector('.app-shell').dataset.shellReady, undefined, 'fatal startup cannot expose half-attached controls');
+    assert.equal(document.getElementById('chartLoadingArt').hidden, false, 'the original preview is retained after failure');
+    assert.equal(document.getElementById('chartLoadingMessage').hidden, false);
     assert.equal(attributes.get('aria-busy'), 'false');
     assert.equal(document.getElementById('chartLoadingStatus').textContent, 'Не удалось загрузить приложение');
     assert.equal(document.getElementById('chartLoadingRetry').hidden, false);

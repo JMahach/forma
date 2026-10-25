@@ -17,7 +17,7 @@ export function attachLiveTransit({ document, button, isFormOpen = () => false, 
     onStateChange(state) {
       if (state.loading) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');
-      button.title = state.unavailable ? 'Транзит недоступен. Нажмите, чтобы повторить.' : 'Транзит';
+      button.title = ''; // The visible label already names this action; failure belongs to the day tool.
       onStateChange(state);
     },
   });

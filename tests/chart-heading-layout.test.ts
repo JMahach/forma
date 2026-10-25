@@ -291,6 +291,7 @@ test('invisible navigation does not reserve space and observers can be disposed'
 test('the panel caption mirrors the canonical title and every moment part without changing the original caption', () => {
   const h = harness({ withPanelCaption: true });
   const subtitle = '1 января 2000 г. · 12:00 · UTC+3 · Москва · 26 лет';
+  h.panelCaption!.title.scrollWidth = 500;
   h.layout.updateText('Мария', subtitle);
   assert.equal(h.title.textContent, 'Мария');
   assert.equal(h.subtitle.textContent, subtitle);
@@ -327,10 +328,10 @@ test('unchanged mirrored captions perform no text writes, height writes or measu
   assert.equal(writes, 5);
   assert.equal(reads, measured);
   assert.equal(heightWrites, 0, 'unchanged panel height is not rewritten');
-  assert.equal(titleWrites, 1, 'unchanged full-name tooltip is not rewritten');
+  assert.equal(titleWrites, 0, 'unchanged full-name tooltip is not rewritten');
   h.layout.updateText('Транзит', '21 октября · 12:01 · UTC');
   assert.equal(writes, 7, 'only the original subtitle and mirrored details change');
-  assert.equal(titleWrites, 1, 'a new moment does not rewrite the full-name tooltip');
+  assert.equal(titleWrites, 0, 'a new moment does not rewrite the full-name tooltip');
   assert.equal(heightWrites, 0);
 });
 
@@ -369,7 +370,7 @@ test('a pair projects each source into its own panel row without replacing the c
   assert.equal(panel.details.textContent, '18:00 · UTC+4 · Мурманск');
   assert.equal(comparison.root.hidden, false);
   assert.equal(comparison.title.textContent, 'Возврат Сатурна 1');
-  assert.equal(comparison.title.title, 'Возврат Сатурна 1');
+  assert.equal(comparison.title.title, '', 'a visible title is not duplicated');
   assert.equal(comparison.date.textContent, '8 октября 2026 г.');
   assert.equal(comparison.details.textContent, '12:25:37 · UTC+3 · 28 лет');
 });
@@ -417,7 +418,7 @@ test('unchanged pair values avoid repeated text, tooltip, visibility writes and 
   ];
   h.layout.updateText('Анна · Транзит', '8 октября · 12:25 · UTC+3', pair);
   assert.equal(counts.text, 8);
-  assert.equal(counts.tooltip, 2);
+  assert.equal(counts.tooltip, 0);
   assert.equal(counts.hidden, 1);
   assert.ok(counts.measure > 0);
   const first = { ...counts };
@@ -486,4 +487,12 @@ test('single-card UTC separates without losing precision and pair transition res
   h.layout.updateText('Без времени', '1 января 2000 г. · Москва');
   assert.equal(h.panelCaption!.clock!.textContent, '');
   assert.equal(h.panelCaption!.utc!.textContent, '');
+});
+
+test('full caption appears as a native hint only while its text is clipped', () => {
+  const h=harness({withPanelCaption:true}); const title=h.panelCaption!.title;
+  h.layout.updateText('Длинное имя карты','Сегодня');
+  assert.equal(title.title,'');
+  title.scrollWidth=500; h.resize(); assert.equal(title.title,'Длинное имя карты');
+  title.rect.width=600; h.resize(); assert.equal(title.title,'');
 });

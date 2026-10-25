@@ -11,7 +11,7 @@ export interface LifetimeBounds { minUtc: number; maxUtc: number }
 export type LifetimeTarget = SavedLifetimeView & { minimumUtc?: string; maximumUtc?: string };
 type LifetimeRestoration = Omit<Partial<LifetimeTarget>, 'opened' | 'requestedUtc'> & { mode: 'day' | 'lifetime'; requestedUtc?: number | null };
 type LifetimeDataClient = Omit<LifetimeClient, 'readMinute'> & Partial<Pick<LifetimeClient, 'readMinute'>>;
-export interface MomentState { current: ChartInput | null; status: LifetimeStatus; error?: string; live?: boolean; retryCount?: number }
+export interface MomentState { current: ChartInput | null; status: LifetimeStatus; error?: string; errorCode?: string; live?: boolean; retryCount?: number }
 type LifetimeStatus = 'idle' | 'loading' | 'ready' | 'error' | 'preparing';
 export type LifetimeExplorer = ReturnType<typeof createLifetimeExplorer>;
 export type LifetimeState = LifetimeExplorer['state'];
@@ -54,7 +54,7 @@ export function createLifetimeExplorer({
   let requestedUtc: number | null = null, restoring = false, pendingRestore: LifetimeRestoration | null = null;
   const current = () => planetFilter.filter(fullChart);
   let interacting = false, selection = 0, selectionBounds: LifetimeBounds | null = null, selectionRound = Math.round;
-  let opened = false, mode: 'day' | 'lifetime' = 'day', status: LifetimeStatus = 'idle', error = '', sequence = 0;
+  let opened = false, mode: 'day' | 'lifetime' = 'day', status: LifetimeStatus = 'idle', error = '', errorCode = '', sequence = 0;
   let active: { controller: AbortController; promise: Promise<boolean> } | null = null, notifiedReference: number | null = null;
   let retryCount = 0, retryTimer: ReturnType<typeof setTimeout> | null = null;
   let openStart = false, openEnded = false;
@@ -81,7 +81,7 @@ export function createLifetimeExplorer({
     const value = Math.floor(now() / 60000) * 60000;
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc! ? value : null;
   }
-  const state = () => ({ opened, mode, status, error, retryCount, metadata, current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
+  const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata, current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
     fromDate, toDate, openStart, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
     ...planetFilter.state });
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
@@ -119,12 +119,12 @@ export function createLifetimeExplorer({
     const next = clampUtc(utc);
     if (chart === fullChart && next === requestedUtc && !exploredChart && status === 'ready' && !active) return true;
     cancel(); requestedUtc = next; fullChart = chart!; exploredChart = null;
-    status = 'ready'; error = ''; notify();
+    status = 'ready'; error = ''; errorCode = ''; notify();
     return true;
   }
   function publishReady(chart: ChartInput, utc: number) {
     cancel(); requestedUtc = utc; fullChart = exploredChart = chart;
-    status = 'ready'; error = '';
+    status = 'ready'; error = ''; errorCode = '';
     const generation = sequence; notify();
     if (generation === sequence && opened && mode === 'lifetime') onRender();
     return Promise.resolve(true);
@@ -153,7 +153,7 @@ export function createLifetimeExplorer({
     if (active) return active.promise;
     clearTimeout(retryTimer!); retryTimer = null;
     const request = { controller: new AbortController(), promise: null as unknown as Promise<boolean> }, generation = ++sequence;
-    active = request; restoring = Boolean(restoration); status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = '';
+    active = request; restoring = Boolean(restoration); status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = ''; errorCode = '';
     request.promise = Promise.resolve().then(async () => {
       if (generation !== sequence || !opened) return false;
       try {
@@ -203,7 +203,7 @@ export function createLifetimeExplorer({
           if (momentState) {
             if (momentState.current) alignMoment(momentState.current);
             else {
-              exploredChart = null; status = momentState.status || 'loading'; error = momentState.error || '';
+              exploredChart = null; status = momentState.status || 'loading'; error = momentState.error || ''; errorCode = momentState.errorCode || '';
               pendingRestore = null; notify();
             }
             return true;
@@ -236,7 +236,7 @@ export function createLifetimeExplorer({
                   return false;
                 }
                 if (exploredChart && shownUtc() === fallback) {
-                  requestedUtc = fallback; status = 'ready'; error = ''; pendingRestore = null; notify();
+                  requestedUtc = fallback; status = 'ready'; error = ''; errorCode = ''; pendingRestore = null; notify();
                   return true;
                 }
                 if (target === requestedUtc) { requestedUtc = fallback; notify(); }
@@ -260,7 +260,7 @@ export function createLifetimeExplorer({
           if (target < minUtc! || target > maxUtc! || selected !== selection && !interacting) continue;
           fullChart = exploredChart = chart;
           retryCount = 0;
-          status = target === requestedUtc ? 'ready' : 'loading'; error = ''; notify();
+          status = target === requestedUtc ? 'ready' : 'loading'; error = ''; errorCode = ''; notify();
           if (generation !== sequence || !opened || mode !== 'lifetime') return false;
           onRender();
           if (target === requestedUtc) { pendingRestore = null; return true; }
@@ -277,7 +277,7 @@ export function createLifetimeExplorer({
             ...(rangeCeiling ? { maximumUtc: rangeCeiling } : {}) } : { mode };
           client.invalidateMetadata?.(metadata); metadata = null; exploredChart = null;
         }
-        error = '';
+        error = ''; errorCode = problem?.code || '';
         if (problem?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
         else if (!metadata && problem?.code === 'lifetime_unavailable') {
           // Opening rejected the prepared file. A repaired file can be tried
@@ -304,7 +304,7 @@ export function createLifetimeExplorer({
     if (opened) return active?.promise || Promise.resolve(true);
     cancel(); opened = true; mode = 'day'; minUtc = maxUtc = rangeCeiling = null;
     planetFilter.setExpanded(true);
-    status = 'idle'; error = ''; borrowDay();
+    status = 'idle'; error = ''; errorCode = ''; borrowDay();
     const generation = sequence;
     onModeAccepted({ opened, mode });
     if (!opened || generation !== sequence) return Promise.resolve(false);
@@ -338,7 +338,7 @@ export function createLifetimeExplorer({
     const restoration = { mode: snapshot.mode, fromDate: snapshot.fromDate, toDate: snapshot.toDate,
       openStart: snapshot.openStart === true, openEnded: snapshot.openEnded === true, requestedUtc: snapshot.requestedUtc, index: snapshot.index, minimumUtc: snapshot.minimumUtc, maximumUtc: snapshot.maximumUtc };
     cancel(); opened = true; mode = restoration.mode; minUtc = maxUtc = rangeCeiling = null; exploredChart = null;
-    planetFilter.setExpanded(true); status = 'idle'; error = '';
+    planetFilter.setExpanded(true); status = 'idle'; error = ''; errorCode = '';
     if (mode === 'day') borrowDay();
     else { fullChart = null; requestedUtc = restoration.requestedUtc ?? null; fromDate = restoration.fromDate; toDate = restoration.toDate; openStart = restoration.openStart!; openEnded = restoration.openEnded!; }
     pendingRestore = restoration;
@@ -347,7 +347,7 @@ export function createLifetimeExplorer({
 
   function close() {
     if (!opened) return;
-    cancel(); interacting = false; opened = false; status = 'idle'; error = '';
+    cancel(); interacting = false; opened = false; status = 'idle'; error = ''; errorCode = '';
     planetFilter.setExpanded(false);
     onModeAccepted({ opened, mode });
     notify(); onRender();
@@ -364,7 +364,7 @@ export function createLifetimeExplorer({
     selectionBounds = bounds ? { minUtc: bounds.minUtc, maxUtc: bounds.maxUtc } : null;
     selectionRound = round;
     if (next.chart) return publishReady(next.chart, next.utc);
-    selection++; retryCount = 0; requestedUtc = next.utc; status = 'loading'; error = ''; notify();
+    selection++; retryCount = 0; requestedUtc = next.utc; status = 'loading'; error = ''; errorCode = ''; notify();
     return load();
   }
   function adjacentUtc(direction: number) {
@@ -425,7 +425,7 @@ export function createLifetimeExplorer({
       if (!nextOpenStart && !nextOpenEnded && from === currentDay && through === currentDay) {
         if (mode === 'day') return true;
         cancel(); mode = 'day'; minUtc = maxUtc = rangeCeiling = null;
-        status = 'idle'; error = ''; borrowDay();
+        status = 'idle'; error = ''; errorCode = ''; borrowDay();
         const generation = sequence;
         onModeAccepted({ opened, mode });
         if (generation !== sequence || !opened) return false;
@@ -459,7 +459,7 @@ export function createLifetimeExplorer({
       if (generation !== sequence || !opened) return false;
       if (target.chart && !getMomentState()) return publishReady(target.chart, target.utc);
       const needsPoint = active || !exploredChart || shownUtc() !== requestedUtc;
-      status = needsPoint ? 'loading' : 'ready'; error = '';
+      status = needsPoint ? 'loading' : 'ready'; error = ''; errorCode = '';
       notify();
       return needsPoint ? load() : true;
     },

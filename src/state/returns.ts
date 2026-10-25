@@ -35,7 +35,7 @@ const normalizeBodies = (value: unknown): string[] | null => Array.isArray(value
 export function createReturnsController({ client = createCyclesClient(), onStateChange = () => {}, onRender = () => {}, onRequest = () => {} }: ReturnsOptions = {}) {
   let natal: ChartRecord | null = null, opened = false, markersEnabled = false;
   let year: number | null = null, bodies = [...DEFAULT_CYCLE_BODIES];
-  let current: ChartInput | null = null, selectedEvent: CycleEvent | null = null, pendingEvent: CycleEvent | null = null, chartError = '', loadingChart = false;
+  let current: ChartInput | null = null, selectedEvent: CycleEvent | null = null, pendingEvent: CycleEvent | null = null, chartError = '', chartErrorCode = '', loadingChart = false;
   let generation = 0, chartGeneration = 0;
   let chartJob: ReturnJob<unknown> | null = null, failedEvent: CycleEvent | null = null, releaseCurrent: (() => void) | null = null;
   let minYear = EPHEMERIS_FIRST_YEAR, maxYear = EPHEMERIS_LAST_YEAR, calendarZone = 'UTC';
@@ -60,7 +60,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
   const state = () => ({ natal, available: available(), opened, bodies: [...bodies], year, minYear, maxYear,
     range: cycleRangeForChart(natal), events: visibleEvents(),
     errors: bodies.flatMap(body => records.get(body)?.error ? [records.get(body)!.error!] : []), markersEnabled,
-    pendingBodies: bodies.filter(body => records.get(body)?.job), loadingChart, selectedEvent, pendingEvent, chartError, current });
+    pendingBodies: bodies.filter(body => records.get(body)?.job), loadingChart, selectedEvent, pendingEvent, chartError, chartErrorCode, current });
   function emit(render = false) { if (render) onRender(current, selectedEvent); onStateChange(state()); }
   // Admission belongs after client RAM/device lookup, not before it. Each
   // controller job is only this tool's cancellable wait for a shared result.
@@ -77,7 +77,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
   function acceptChart(input: CycleInput, data: CachedCycleChart, event: CycleEvent) {
     const release = client.retainChart?.(input, data);
     dropCurrent(); releaseCurrent = release; current = extractChartData(data.chart);
-    selectedEvent = event; failedEvent = null; chartError = ''; loadingChart = false; pendingEvent = null; chartJob = null; emit(true);
+    selectedEvent = event; failedEvent = null; chartError = ''; chartErrorCode = ''; loadingChart = false; pendingEvent = null; chartJob = null; emit(true);
   }
   function cancelSearch(record: BodyReturns) { abortJob(record.job); record.job = null; }
   function cancelSearches() {
@@ -123,7 +123,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
     const hadPreview = Boolean(current);
     generation++; cancelChart(); cancelSearches(); records.clear();
     natal = chart; opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
-    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; calendarZone = 'UTC';
+    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; chartErrorCode = ''; calendarZone = 'UTC';
     if (available()) {
       ({ minYear, maxYear } = cycleYearBoundsForChart(natal!));
       calendarZone = cycleTimeZone(natal!.timezone);
@@ -146,13 +146,13 @@ export function createReturnsController({ client = createCyclesClient(), onState
   }
   function reset() {
     const changed = current || selectedEvent || failedEvent || chartError || loadingChart || pendingEvent;
-    cancelChart(); dropCurrent(); selectedEvent = failedEvent = null; chartError = '';
+    cancelChart(); dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; chartErrorCode = '';
     if (changed) emit(true);
   }
   function exit() {
     // Closing tools leaves the selected natal's date preparation intact.
     cancelChart(); markersEnabled = false; opened = false;
-    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; emit(true);
+    dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; chartErrorCode = ''; emit(true);
   }
   function setBodies(value: unknown) {
     const next = normalizeBodies(value);
@@ -173,7 +173,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
     if (!available() || !selected) return Promise.resolve(false);
     cancelChart(); const version = chartGeneration, owner = natal;
     onRequest(selected);
-    loadingChart = true; pendingEvent = selected; failedEvent = null; chartError = ''; emit();
+    loadingChart = true; pendingEvent = selected; failedEvent = null; chartError = ''; chartErrorCode = ''; emit();
     const job = start(async signal => {
       if (version !== chartGeneration || signal.aborted) return false;
       try {
@@ -186,7 +186,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
           const error = failure as Error & { code?: string };
         if (version !== chartGeneration || signal.aborted || error?.name === 'AbortError') return false;
         if (!valid()) { cancelChart(); emit(); return false; }
-        chartError = error.message || 'Не удалось загрузить карту возврата.'; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
+        chartError = error.message || 'Не удалось загрузить карту возврата.'; chartErrorCode = error.code || ''; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
       }
     });
     chartJob = job; return job.promise;

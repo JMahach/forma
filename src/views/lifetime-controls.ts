@@ -1,3 +1,4 @@
+import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { LifetimeExplorer, LifetimeState, LifetimeBounds, MomentState } from '../state/lifetime.ts';
 import type { LiveTransitState } from '../state/live-transit.ts';
@@ -189,9 +190,11 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       unshown && shown ? `на карте ${shown.date}, ${shown.time} ${shown.zone}` : ''].filter(Boolean).join('; '));
     // Temporary failures stay quiet at first; a rejected file needs repair.
     // The request owner decides whether to retry and owns the failure count.
-    setText(status, fileStatus && state.status === 'error' ? state.error
+    const reasonCode = (fileStatus ? state : momentState || state).errorCode;
+    const connectionMessage = reasonCode ? failureMessage({code:reasonCode}, '') : '';
+    setText(status, connectionMessage || (fileStatus && state.status === 'error' ? UI_MESSAGES.lifetimeUnavailable
       : preparing ? 'Создаём летопись'
-      : state.opened && retryCount >= 3 && ['loading', 'error'].includes(displayStatus) ? 'Загружаю момент' : '');
+      : state.opened && retryCount >= 3 && ['loading', 'error'].includes(displayStatus) ? UI_MESSAGES.momentLoading : ''));
     if (waitingForMetadata && state.metadata && state.opened) {
       const pending = submitted;
       waitingForMetadata = false;

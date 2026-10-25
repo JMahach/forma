@@ -5,7 +5,7 @@ import type { TransitDayClient } from '../data/transit-day-client.ts';
 import type { SavedView } from '../data/view-store.ts';
 export interface LiveTransitState {
   wanted: boolean; live: boolean; timeline: LocalDayTimeline | null; index: number; referenceIndex: number | null;
-  status: 'idle' | 'loading' | 'ready' | 'error'; error: string; retryCount: number;
+  status: 'idle' | 'loading' | 'ready' | 'error'; error: string; errorCode?: string; retryCount: number;
   current: ChartInput | null; loading: boolean; unavailable: boolean;
 }
 export interface LiveTransitOptions {
@@ -32,7 +32,7 @@ export function createLiveTransit({
 }: LiveTransitOptions) {
   let wanted = true, live = true, index = 0;
   let timeline: LocalDayTimeline | null = null, days: Map<string, TransitDay> | null = null, current: ReturnType<typeof transitChartAt> | null = null;
-  let status: LiveTransitState['status'] = 'idle', error = '', sequence = 0, failures = 0, nextRetry = 0;
+  let status: LiveTransitState['status'] = 'idle', error = '', errorCode = '', sequence = 0, failures = 0, nextRetry = 0;
   let activeLoad: { key: string | null; promise: Promise<boolean>; failedDates: Set<string> } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null, running = false, activated = false, loading = false, unavailable = false;
   const retained = new Map<string, () => void>();
@@ -49,7 +49,7 @@ export function createLiveTransit({
     // paused. Never paint yesterday's endpoint while a new day is unavailable.
     const referenceIndex = status === 'ready' && days && timeline && utc >= timeline.startUtc && utc < timeline.endUtc
       ? timelineIndexAt(timeline, utc) : null;
-    return { wanted, live, timeline, index, referenceIndex, status, error, retryCount: failures, current, loading, unavailable };
+    return { wanted, live, timeline, index, referenceIndex, status, error, errorCode, retryCount: failures, current, loading, unavailable };
   };
   const notify = () => onStateChange(state());
   const visible = () => wanted && isVisible();
@@ -114,7 +114,7 @@ export function createLiveTransit({
     timeline = target;
     retainActiveDays();
     if (!sameDay || live) index = timelineIndexAt(target, now());
-    status = 'loading'; error = '';
+    status = 'loading'; error = ''; errorCode = '';
     loading = true;
     notify();
     const promise = (async () => {
@@ -144,7 +144,7 @@ export function createLiveTransit({
         if (!isCurrentTimeline()) { status = 'idle'; return false; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) throw failed.reason;
-        timeline = target; status = 'ready'; error = '';
+        timeline = target; status = 'ready'; error = ''; errorCode = '';
         failures = 0; nextRetry = 0;
         unavailable = false;
         return true;
@@ -152,7 +152,7 @@ export function createLiveTransit({
         if (requestSequence !== sequence) return false;
         failures += 1;
         nextRetry = now() + Math.min(300_000, 30_000 * 2 ** Math.min(failures - 1, 4));
-        status = 'error'; error = (failure as Error).message || 'Не удалось загрузить транзит дня.';
+        status = 'error'; error = (failure as Error).message || 'Не удалось загрузить транзит дня.'; errorCode = (failure as {code?: string}).code || '';
         unavailable = true;
         return false;
       } finally {

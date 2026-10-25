@@ -20,7 +20,7 @@
     <div class="workspace">
       <aside class="library" id="library" aria-label="Главное меню" inert>
         <nav class="main-navigation" id="mainNavigation" aria-label="Разделы">
-          <button class="menu-item" id="nowButton" aria-pressed="true" title="Транзит"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5V10l3 1.8" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Транзит</span></button>
+          <button class="menu-item" id="nowButton" aria-pressed="true"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.5V10l3 1.8" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Транзит</span></button>
           <button type="button" class="menu-item" id="openAccount" aria-controls="accountPage" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="6" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M4 17v-1a6 6 0 0 1 12 0v1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Аккаунт</span></button>
           <button type="button" class="menu-item" id="openAllCharts" aria-controls="allChartsDialog" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="11" y="3" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="3" y="11" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="11" y="11" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.4"/></svg><span>Картотека</span></button>
           <button class="menu-item" id="openKnowledge" aria-label="Библиотека знаний" aria-controls="knowledgeDialog" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 5.5C7.5 3.5 4.5 3.5 2.5 4.5v11c2-1 5-1 7.5 1 2.5-2 5.5-2 7.5-1v-11c-2-1-5-1-7.5 1Zm0 0v11" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Библиотека</span></button>
@@ -106,7 +106,7 @@
           <svg id="bodygraph" viewBox="0 0 640 820" xmlns="http://www.w3.org/2000/svg" aria-label="Бодиграф. Выбирайте ворота, центры или каналы" role="group" tabindex="-1" aria-hidden="true"><g id="viewport"></g></svg>
         </section>
         <div class="chart-loading-message" id="chartLoadingMessage">
-          <p id="chartLoadingStatus" role="status">Загружаем карту…</p>
+          <p id="chartLoadingStatus" role="status">Загружаем приложение…</p>
           <button type="button" class="secondary-button" id="chartLoadingRetry" hidden>Повторить</button>
         </div>
         <div class="timeline-dock" aria-hidden="true"></div>
@@ -162,20 +162,20 @@
     <div class="dialog-content">
       <div class="dialog-header"><h2 id="dialogTitle">Новая карта</h2><button class="icon-button" id="closeDialog" aria-label="Закрыть">×</button></div>
       <form id="chartForm" novalidate>
-        <div class="field"><label for="chartName">Имя карты</label><input id="chartName" name="name" required autocomplete="off" placeholder="Например, Анна" aria-describedby="chartNameError"><p class="field-error" id="chartNameError" role="alert"></p></div>
+        <div class="field"><label for="chartName">Имя карты</label><input id="chartName" name="name" required autocomplete="off" placeholder="Например, Анна" aria-describedby="chartNameError"><div class="field-error" id="chartNameError"></div></div>
         <div class="form-grid">
-          <div class="field"><label for="birthDate">Дата рождения</label><input id="birthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="off" placeholder="ДД.ММ.ГГГГ" aria-describedby="birthDateError"><p class="field-error" id="birthDateError" role="alert"></p></div>
-          <div class="field"><label for="birthTime">Время рождения</label><input id="birthTime" name="birthTime" type="text" inputmode="numeric" autocomplete="off" placeholder="ЧЧ:ММ" aria-describedby="birthTimeError"><p class="field-error" id="birthTimeError" role="alert"></p></div>
+          <div class="field"><label for="birthDate">Дата рождения</label><input id="birthDate" name="birthDate" type="text" inputmode="numeric" autocomplete="off" placeholder="ДД.ММ.ГГГГ" aria-describedby="birthDateError"><div class="field-error" id="birthDateError"></div></div>
+          <div class="field"><label for="birthTime">Время рождения</label><input id="birthTime" name="birthTime" type="text" inputmode="numeric" autocomplete="off" placeholder="ЧЧ:ММ" aria-describedby="birthTimeError"><div class="field-error" id="birthTimeError"></div></div>
         </div>
         <div class="field city-field" id="cityField">
           <label for="birthPlace">Город рождения</label>
           <div class="city-input-wrap"><input id="birthPlace" name="birthPlace" maxlength="120" placeholder="Начните вводить город" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cityResults" aria-describedby="cityStatus birthPlaceError"><ul class="city-results" id="cityResults" role="listbox" aria-label="Найденные города" hidden></ul></div>
-          <p class="field-error" id="birthPlaceError" role="alert"></p>
+          <div class="field-error" id="birthPlaceError"></div>
           <p class="city-status" id="cityStatus" role="status">Выберите город из списка — часовой пояс определится автоматически.</p>
         </div>
-        <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage foldChoiceError"><option value="">Выберите вариант</option></select><p class="field-error" id="foldChoiceError" role="alert"></p></div>
+        <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage foldChoiceError"><option value="">Выберите вариант</option></select><div class="field-error" id="foldChoiceError"></div></div>
         <div class="field note-field"><label for="chartNote">Заметка</label><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div>
-        <p class="form-error" id="formError" role="alert"></p>
+        <div class="form-error" id="formError"></div>
         <div class="dialog-actions"><button class="secondary-button" type="button" id="cancelDialog">Отмена</button><button class="primary-button" id="saveChartButton" type="submit">Рассчитать и сохранить</button></div>
       </form>
     </div>
@@ -185,7 +185,7 @@
       <div class="dialog-header"><h2 id="deleteChartTitle">Удалить карту?</h2></div>
       <p id="deleteChartName" class="delete-chart-name"></p>
       <p id="deleteChartDescription" class="form-note">Карта будет удалена из библиотеки.</p>
-      <p id="deleteChartError" class="form-error" role="alert"></p>
+      <div id="deleteChartError" class="form-error"></div>
       <div class="dialog-actions"><button class="secondary-button" id="cancelDeleteChart">Оставить</button><button class="primary-button danger-button" id="confirmDeleteChart">Удалить</button></div>
     </div>
   </dialog>

@@ -1,5 +1,9 @@
 // One design study inside the real account workspace; no authentication or personal-data writes.
-import { standConnection } from './control-colors.ts';
+import { standConnection } from './stand-connection.ts';
+import { createAccountFlow } from '../state/account-flow.ts';
+import { attachAccountView } from '../views/account.ts';
+import { createAccountAdapter, accountPreviewIdentity, type AccountScenario } from './account-adapter.ts';
+import type { AccountScreen } from '../state/account-flow.ts';
 import { isDevelopmentPort } from '../../shared/development.ts';
 
 if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
@@ -73,55 +77,31 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
       .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-options { gap: 12px; padding-bottom: 13px; }
     `;
     document.head.append(style);
-    const content = document.createElement('div');
-    content.className = 'account-study-content';
-    page.append(content);
     const options = document.createElement('div');
     options.className = 'account-study-options';
-    options.innerHTML = '<div class="account-study-option-heading"><span>Аккаунт</span><select aria-label="Состояние макета аккаунта"><option value="linked">Почта + Telegram</option><option value="unlinked">Только почта</option><option value="guest">Без входа</option><option value="expired">Войти снова</option><option value="error">Ошибка</option></select></div>';
+    options.innerHTML = `<div class="account-study-option-heading"><span>Аккаунт</span><select data-account-screen aria-label="Состояние макета аккаунта"><option value="linked">Почта + Telegram</option><option value="unlinked">Только почта</option><option value="guest">Без входа</option><option value="expired">Войти снова</option><option value="error">Ошибка</option></select></div>
+      <div class="account-study-option-heading"><span>Вход</span><select data-account-scenario aria-label="Сценарий входа"><option value="normal">Обычный</option><option value="new-telegram">Новый Telegram</option><option value="code-expired">Код истёк</option><option value="attempt-expired">Вход истёк</option><option value="rate-limit">Ограничение попыток</option><option value="send-failed">Код не отправлен</option><option value="delivery-failed">Письмо не доставлено</option><option value="verify-failed">Код не проверен</option><option value="telegram-conflict">Telegram занят</option></select></div>
+      <p class="account-study-preview-note">Вариант для приёмки. Письма не отправляются. Код для проверки: 123456.</p>`;
     palettes.prepend(options);
-    const select = options.querySelector('select')!;
+    const select = options.querySelector<HTMLSelectElement>('[data-account-screen]')!;
+    const scenario = options.querySelector<HTMLSelectElement>('[data-account-scenario]')!;
     select.value = screen;
-    function remember() { try { sessionStorage.setItem(storageKey, JSON.stringify({ screen: select.value })); } catch {} }
-    const check = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4 10 4 4 8-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const exitIcon = '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M9 3H4v14h5m4-11 4 4-4 4m-6-4h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const mailIcon = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="1.5" stroke="currentColor" stroke-width="1.25"/><path d="m3 5 7 5 7-5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const telegramIcon = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m17 3-3 14-5-4-3 2V10L2 8l15-5ZM6 10l11-7-8 10" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    function signedIn(state: string) {
-      return `${state === 'expired' ? '<div class="account-study-session"><p>Войдите снова, чтобы сохранять изменения.</p><button class="account-study-action" type="button" data-account-action="login">Войти</button></div>' : ''}
-        <dl class="account-study-details"><div class="account-study-mail"><dt>${mailIcon}<span>Почта</span></dt><dd class="account-study-email"><span class="account-study-mask">anna@example.com</span></dd><dd class="account-study-confirmed"><span class="account-study-mask">${check} Подтверждена</span></dd></div>
-        <div class="account-study-telegram"><dt>${telegramIcon}<span>Telegram</span></dt>${state === 'unlinked' ? '<dd class="account-study-status is-unlinked">Не привязан</dd>' : `<dd class="account-study-handle"><span class="account-study-mask">@username</span></dd><dd class="account-study-confirmed"><span class="account-study-mask">${check} Привязан</span></dd>`}</div></dl>
-        <div class="account-study-logout"><div class="account-study-exit-action"><button class="account-study-action account-study-mask" type="button" data-account-action="logout">${exitIcon}<span>Выйти</span></button></div><div class="account-study-exit-note"><p>Выход из всех вкладок этого браузера.<br>Несохранённые изменения будут удалены.<br>Карты в аккаунте сохранятся.</p></div></div>`;
-    }
-    function updateAvailability() {
-      // Connection changes affect actions, never the already shown account data.
-      for (const button of content.querySelectorAll<HTMLButtonElement>('[data-account-action]')) {
-        button.disabled = button.dataset.accountAction !== 'logout' && standConnection.current === 'offline';
-      }
-    }
-    function render() {
-      const state = select.value;
-      let body;
-      if (state === 'guest') body = '<div class="account-study-empty"><p class="account-study-intro">Войдите, чтобы сохранять карты и открывать их на других устройствах.</p><button class="account-study-action account-study-primary" type="button" data-account-action="login">Войти</button></div>';
-      else if (state === 'error') body = '<div class="account-study-empty"><p class="account-study-intro" role="status">Не удалось загрузить аккаунт.</p><button class="account-study-action" type="button" data-account-action="retry">Повторить</button></div>';
-      else body = signedIn(state);
-      content.innerHTML = `<header class="workspace-header"><div class="workspace-heading"><h1>Аккаунт</h1></div></header><div class="account-study-body"><div class="account-study-panel">${body}</div></div>`;
-      updateAvailability();
-    }
-    select.addEventListener('change', () => { render(); remember(); });
-    content.addEventListener('click', event => {
-      const button = (event.target as Element).closest<HTMLElement>('[data-account-action]');
-      if (!button) return;
-      const action = button.dataset.accountAction;
-      // A server failure cannot turn a login/link/retry rehearsal into success.
-      // Logout is local and remains available regardless of the connection.
-      if (action !== 'logout' && standConnection.current !== 'online') return;
-      select.value = action === 'logout' ? 'guest' : 'linked';
-      render(); remember();
-      const nextAction = content.querySelector<HTMLElement>('[data-account-action]');
-      nextAction?.focus({preventScroll:true});
+    const flow = createAccountFlow({ initial: screen as AccountScreen, identity: accountPreviewIdentity(screen as AccountScreen), connection: () => standConnection.current,
+      request: createAccountAdapter({scenario: () => scenario.value as AccountScenario}) });
+    attachAccountView({page, flow, offline: () => standConnection.current === 'offline'});
+    select.addEventListener('change', () => flow.choose(select.value as AccountScreen, accountPreviewIdentity(select.value as AccountScreen)));
+    scenario.addEventListener('change', () => flow.cancel());
+    flow.subscribe(state => {
+      select.value = state.screen;
+      try { sessionStorage.setItem(storageKey, JSON.stringify({screen:state.screen})); } catch {}
     });
-    standConnection.subscribe(updateAvailability);
-    render(); remember();
+    standConnection.subscribe(() => flow.connectionChanged());
+    const timer = setInterval(() => flow.tick(), 1000);
+    const observer = new MutationObserver(() => { if (page.hidden) flow.close(); });
+    observer.observe(page, {attributes:true, attributeFilter:['hidden']});
+    addEventListener('pagehide', event => {
+      flow.close();
+      if (!(event as PageTransitionEvent).persisted) { clearInterval(timer); observer.disconnect(); flow.destroy(); }
+    });
   }
 }
