@@ -299,8 +299,34 @@ test('six G-center rails divide the visible opening into equal halves', () => {
   }
 });
 
-test('visible G-rail division does not move the other ordinary channel seams', () => {
-  const changed = new Set<string>(G_RAIL_VISIBLE_BOUNDS.map(([id]) => id));
+test('25–51 divides its visible curved opening equally, including the center outlines', () => {
+  const [first, second] = channelHalves.get('25-51')!;
+  const points = [...first, ...second.slice(1)];
+  const length = (path: number[][]) => path.slice(1).reduce((sum, point, i) => sum + distance(path[i], point), 0);
+  // This route exits the straight southeast G edge and enters the straight
+  // southwest Ego edge, away from both centers' rounded corners.
+  function crossingDistance(nx: number, ny: number, edge: number) {
+    let travelled = 0;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i], segment = distance(a, b);
+      const before = nx * a[0] + ny * a[1], after = nx * b[0] + ny * b[1];
+      if (before <= edge && after >= edge) return travelled + segment * (edge - before) / (after - before);
+      travelled += segment;
+    }
+    assert.fail('the channel must cross its visible center edge');
+  }
+  const start = crossingDistance(1, 1, 817.6 + .625 * Math.SQRT2);
+  const end = crossingDistance(68, 42, 46648 - .625 * Math.hypot(68, 42));
+  const seam = length(first);
+  assert.ok(Math.abs((seam - start) - (end - seam)) < .002,
+    '25 and 51 must own equal visible lengths along the curved channel');
+  assert.deepEqual(first.at(-1), second[0], 'both colors meet at a single seam');
+  assert.deepEqual(first[0], [357.4, 436]);
+  assert.deepEqual(second.at(-1), [413, 461]);
+});
+
+test('visible G-channel division does not move the other ordinary channel seams', () => {
+  const changed = new Set<string>([...G_RAIL_VISIBLE_BOUNDS.map(([id]) => id), '25-51']);
   for (const channel of ordinaryChannels.filter(channel => !changed.has(channel.id))) {
     const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
     assert.deepEqual(channelHalves.get(channel.id), splitAtHalfLength(points), channel.id);

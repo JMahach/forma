@@ -1378,8 +1378,10 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 .toast.ui-feedback .ui-feedback-actions { justify-content: flex-end; }
 
 :is(.shared-copy-setting, .stand-calculation-setting) { display: grid; grid-template-columns: 1fr minmax(0, 1.3fr); align-items: center; gap: 8px; font: 12px/1.35 var(--sans); color: var(--panel-muted); }
-:is(.shared-copy-setting, .stand-calculation-setting) select { min-width: 0; min-height: 32px; padding: 5px 7px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: inherit; }
-@media (pointer: coarse) { :is(.shared-copy-setting, .stand-calculation-setting) select, .stand-connection-options button, .shared-study-choices button { min-height: 44px; } }
+.shared-copy-setting { grid-template-columns: 1fr; gap: 0; padding-top: 10px; margin-top: 2px; border-top: 1px solid var(--panel-border); }
+.shared-copy-options.stand-connection-options { grid-template-columns: 1fr 1fr; }
+.stand-calculation-setting select { min-width: 0; min-height: 32px; padding: 5px 7px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: inherit; }
+@media (pointer: coarse) { .stand-calculation-setting select, .stand-connection-options button, .shared-study-choices button { min-height: 44px; } }
 
 .account-study-panel .account-study-action { border-radius: 6px; padding: 10px 14px; font: 500 14px/1.35 var(--sans); }
 

@@ -75,11 +75,45 @@ function centerVerticalBounds(points: string, x: number) {
     Math.max(...crossings.map(({ y, strokeY }) => y + strokeY))];
 }
 
+// 25–51 meets straight sides, clear of the rounded corners. Find the first
+// exit from the convex center, including its stroke, along the painted curve.
+function centerStraightExitLength(points: number[][], centerPoints: string) {
+  const vertices = centerPoints.split(' ').map(pair => pair.split(',').map(Number));
+  const orientation = Math.sign(vertices.reduce((sum, a, index) => {
+    const b = vertices[(index + 1) % vertices.length];
+    return sum + a[0] * b[1] - a[1] * b[0];
+  }, 0));
+  const edges = vertices.map((a, index) => {
+    const b = vertices[(index + 1) % vertices.length], dx = b[0] - a[0], dy = b[1] - a[1];
+    return (point: number[]) => orientation * (dx * (point[1] - a[1]) - dy * (point[0] - a[0]))
+      / Math.hypot(dx, dy) + CENTER_STROKE / 2;
+  });
+  let travelled = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let exit = 1;
+    for (const signedDistance of edges) {
+      const before = signedDistance(a), after = signedDistance(b);
+      if (before >= 0 && after < 0) exit = Math.min(exit, before / (before - after));
+    }
+    if (exit < 1) return travelled + length * exit;
+    travelled += length;
+  }
+  return travelled;
+}
+
 function splitChannel(channel: typeof CHANNELS[number]) {
   const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
   const [start, end] = channel.gates.map(id => getGate(id)!);
-  // Only the six straight G ↔ throat/sacral routes change their division.
-  // Other channels and the separate integration geometry keep their seams.
+  if (channel.id === '25-51') {
+    const total = points.slice(1).reduce((sum, point, index) =>
+      sum + Math.hypot(point[0] - points[index][0], point[1] - points[index][1]), 0);
+    const startEdge = centerStraightExitLength(points, getCenter(start.center)!.points);
+    const endEdge = total - centerStraightExitLength([...points].reverse(), getCenter(end.center)!.points);
+    return splitAtLength(points, (startEdge + endEdge) / 2);
+  }
+  // The six straight G ↔ throat/sacral routes also split their visible opening.
+  // All remaining channels and the separate integration geometry keep their seams.
   const centers = [start.center, end.center];
   if (start.x !== end.x || !centers.includes('g')
     || !centers.some(center => center === 'throat' || center === 'sacral')) return splitAtHalfLength(points);

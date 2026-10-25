@@ -183,11 +183,22 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
         try { sessionStorage.setItem(highlightKey, chartHighlight.current); } catch {}
       });
       highlightSwitch.addEventListener('click', () => chartHighlight.set(chartHighlight.current === 'outline' ? 'glow' : 'outline'));
-      const copySetting = document.createElement('label'); copySetting.className = 'shared-copy-setting';
-      copySetting.textContent = 'Копирование';
-      const copyOutcome = document.createElement('select'); copyOutcome.id = 'sharedCopyOutcome'; copyOutcome.setAttribute('aria-label', 'Результат копирования');
-      copyOutcome.innerHTML = '<option value="success">Успешно</option><option value="error">Ошибка копирования</option>';
-      copySetting.append(copyOutcome); options.append(copySetting);
+      const copySetting = document.createElement('div'); copySetting.className = 'shared-copy-setting';
+      let copyOutcome = 'success';
+      const copyChoices = document.createElement('div');
+      copyChoices.className = 'stand-connection-options shared-copy-options';
+      copyChoices.setAttribute('role', 'group'); copyChoices.setAttribute('aria-label', 'Результат копирования');
+      for (const [value, label] of [['success', 'Успешное копирование'], ['error', 'Ошибка копирования']]) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = label;
+        button.setAttribute('aria-pressed', String(value === copyOutcome));
+        button.addEventListener('click', () => {
+          copyOutcome = value;
+          for (const choice of copyChoices.querySelectorAll('button')) choice.setAttribute('aria-pressed', String(choice === button));
+        });
+        copyChoices.append(button);
+      }
+      copySetting.append(copyChoices); options.append(copySetting);
       palettes.prepend(options);
       const surface = createActionNotice(document.querySelector<HTMLElement>('.app-shell')!);
       const study = createSharedChartStudy(render);
@@ -196,7 +207,7 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
         add:group.querySelector<HTMLElement>('.shared-chart-add')!,
         copy:document.querySelector<HTMLElement>('.shared-chart-send')!,
         boundary:group.closest<HTMLElement>('.chart-summary') || undefined,
-        getState:()=>study.state,copyOutcome:()=>copyOutcome.value,
+        getState:()=>study.state,copyOutcome:()=>copyOutcome,
         cancel:()=>study.cancel(),dismiss:()=>study.dismiss(),
         returnAddFocus:()=>addFocusTarget(group),
       });
