@@ -647,3 +647,35 @@ test('adoption refuses a changed calculation or an obsolete selected source with
   assert.equal(session.adopt(original.id,'old-selection'),false);assert.equal(session.current,shown);
   assert.equal(session.selectedId,original.id);
 });
+
+test('confirmed obsolete numerical data is hidden without changing the chosen record or admitting late values', async () => {
+  const record = personalChartFixture({name:'Сохранённое имя',note:'Сохранённая заметка'});
+  const manual = {...record,id:'manual',source:'manual' as const,personality:[1],design:[8]};
+  const records=[record,manual];
+  const h = {session:createChartSession({store:{get:id=>records.find(value=>value.id===id),has:id=>records.some(value=>value.id===id)}})};
+  h.session.select(record.id);
+  const original = h.session.current;
+  h.session.invalidateCalculations({calculation:true,returns:true});
+  assert.equal(h.session.selectedId,record.id); assert.deepEqual(h.session.record,record);
+  assert.equal(h.session.hasCurrent,false);
+  assert.deepEqual(h.session.current.primary.personality,[]);
+  assert.equal(h.session.current.primary.activations,undefined);
+  assert.equal(h.session.current.primary.utc,original.primary.utc);
+  assert.equal(h.session.record?.note,'Сохранённая заметка');
+  assert.equal(h.session.publish(h.session.owner,original.primary),false);
+  await Promise.resolve(); assert.equal(h.session.hasCurrent,false);
+  h.session.select(manual.id); assert.equal(h.session.hasCurrent,true);
+  assert.deepEqual(h.session.current.primary.personality,[1]);
+});
+
+test('a returns-only mismatch removes its overlay but keeps compatible natal numbers', () => {
+  const record = personalChartFixture(), h = harness([record]); h.session.select(record.id);
+  const natal = h.session.baseChart;
+  const selected = {id:'saturn:2050-01-01T00:00:00Z',body:'saturn',utc:'2050-01-01T00:00:00Z'} as CycleEvent;
+  h.session.expect('return');h.session.publish('return',{...natal,utc:selected.utc},selected);
+  assert.equal(Boolean(h.session.current.secondary),true);
+  h.session.invalidateCalculations({calculation:false,returns:true});
+  assert.equal(h.session.hasCurrent,true);assert.equal(h.session.current.primary,natal);
+  assert.equal(h.session.current.secondary,null);assert.equal(h.session.current.kind,'single');
+  assert.equal(h.session.publish('return',{...natal,utc:selected.utc},selected),false);
+});

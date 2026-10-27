@@ -264,7 +264,7 @@ test('default Lifetime client receives the shared day cache through controller o
   t.mock.method(globalThis, 'fetch', async (url: unknown) => {
     requests.push(url);
     assert.equal(url, '/api/lifetime/meta', 'a cached lifetime minute needs no point request');
-    return response({ ...fullMeta, engine: day.engine });
+    return new Response(JSON.stringify({ ...fullMeta, engine: day.engine }));
   });
   const owner = createTransitPlanetFilter(); owner.setAllPlanets(true, 'design');
   const explorer = createLifetimeExplorer({ planetFilter: owner,
@@ -869,4 +869,24 @@ for (const openStart of [true, false] as const) test(`metadata expansion ${openS
   assert.equal(explorer.state.minUtc, Date.parse(openStart ? nextMeta.startUtc : minimumUtc));
   assert.equal(explorer.state.fromDate, openStart ? '1899-12-31' : '1900-01-01');
   assert.equal(explorer.state.requestedUtc, requestedUtc);
+});
+
+test('offline lifetime reads ready minutes but a missing target keeps the accepted chart without a point request', async () => {
+  let mode: 'online' | 'offline' = 'online', points = 0, readyUtc: number | null = null;
+  const ready = lifetimeChartAt(meta, moment(150));
+  const explorer = createLifetimeExplorer({connection:()=>mode,now:()=>Date.parse('1900-01-02T00:00:00Z'),
+    getDayState:()=>({current:ready,timeline:{date:'1900-01-02'}}),client:{
+      getMeta:async()=>meta,getPoint:async index=>{points++;return moment(index);},
+      readMinute:async utc=>utc===readyUtc?ready:null,
+    }});
+  await explorer.open(); await explorer.setDateRange('1900-01-01','1900-01-03');
+  const before = explorer.current, count = points;
+  mode = 'offline'; explorer.refreshAvailability();
+  await explorer.scrub(Date.parse('1900-01-02T02:00:00Z'));
+  assert.equal(points,count); assert.equal(explorer.current,before);
+  assert.equal(explorer.state.status,'ready');
+  readyUtc = Date.parse(ready.utc!); await explorer.scrub(readyUtc);
+  assert.equal(explorer.current?.utc,ready.utc); assert.equal(points,count);
+  mode = 'online'; explorer.refreshAvailability(); assert.equal(points,count);
+  explorer.close();
 });

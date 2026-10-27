@@ -9,6 +9,7 @@ import type { SavedView } from '../src/data/view-store.ts';
 type ViewOptions = Parameters<typeof createViewSession>[0];
 type LiveOptions = NonNullable<Parameters<typeof createLiveTransit>[0]>;
 interface HarnessOptions {
+  returnsConnection?: TestReturnsOptions['connection'];
   onPersisted?: () => void;
   getBirthForm?: ViewOptions['getBirthForm'];
   getLifetimeDraft?: () => SavedView['lifetimeDraft'];
@@ -79,7 +80,7 @@ const point = (index: number, source = metadata) => {
       designArcResidualDegrees: 0, longitudes: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] } };
 };
 function harness(storage = new Map<string, string>(), { denyWrites = () => false, size = 1000, transitDay = async (date: string) => day(date), loadLifetime = null, canRestoreLifetime = null,
-    returnsClient = null, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
+    returnsClient = null, returnsConnection, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
     zone = 'UTC', cameraRestored = false, getBirthForm, getLifetimeDraft, getAccountView, getPendingChartWrites, getKnowledgeView, getChartsView, getLibrarySelection, onPersisted, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
   const frames: (string|undefined)[] = [], writes: [string, string][] = [], pending = new Map<number, () => void>(), attributes: Record<string, string> = {}, styles = new Map<string, string>();
   const storagePort = { getItem: (key: string) => storage.get(key) ?? null,
@@ -98,7 +99,7 @@ function harness(storage = new Map<string, string>(), { denyWrites = () => false
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime: loadLifetime || (async () => ensureLifetime()), onModeChange: changed, onChange: changed });
   const setPersonalLive = (value: boolean) => exploration.restoreLive(value);
   const returnEvent: CycleEvent = { id: 'saturn:2055-10-01T12:00:00Z', utc: '2055-10-01T12:00:00Z', body: 'saturn', cycle: 1, pass: 1, cycleId: 'saturn:1', age: 29, direction: 'direct' };
-  returns = createReturnsController({ client: returnsClient || {
+  returns = createReturnsController({ connection: returnsConnection, client: returnsClient || {
     events: async input => ({ events: input.body === 'saturn' ? [returnEvent] : [] }),
     chart: async input => ({ event: { ...returnEvent, id: `${input.body}:${input.eventUtc}`, body: input.body, utc: input.eventUtc! },
       chart: { ...saved, utc: input.eventUtc, personality: [2,14], design: [3,60] } as CycleChartResult['chart'] }),
@@ -574,6 +575,35 @@ test('reload during a cold Returns opening restores its rail even before a Lifet
   assert.equal(JSON.parse(storage.get('liniya.view.v1')!).lifetime.opened, true);
 });
 
+
+for (const exact of ['none', 'ready', 'missing'] as const) test(`cold offline Returns restore independently of an unavailable rail: ${exact}`, async t => {
+  const storage = await saveColdReturns(t);
+  const source = JSON.parse(storage.get('liniya.charts.v1')!)[0];
+  const event: CycleEvent = { id: 'saturn:2055-10-01T12:00:00Z', utc: '2055-10-01T12:00:00Z', body: 'saturn', cycle: 1, pass: 1, cycleId: 'saturn:1', age: 29, direction: 'direct' };
+  if (exact !== 'none') {
+    const snapshot = JSON.parse(storage.get('liniya.view.v1')!);
+    snapshot.returns.eventId = event.id;
+    storage.set('liniya.view.v1', JSON.stringify(snapshot));
+  }
+  let railLoads = 0, calculations = 0;
+  const second = harness(storage, { canRestoreLifetime: () => true, returnsConnection: () => 'offline',
+    openReturnsTimeline: async () => { railLoads++; return null; },
+    returnsClient: {
+      readEvents: async input => ({ events: input.body === 'saturn' ? [event] : [], range: {fromAge:input.fromAge!,toAge:input.toAge!} }),
+      readChart: async () => exact === 'ready' ? {event, chart:{...source,utc:event.utc} as CycleChartResult['chart']} : null,
+      events: async () => { calculations++; throw Error('offline calculation'); },
+      chart: async () => { calculations++; throw Error('offline calculation'); },
+    } });
+  t.after(() => second.transit.stop());
+  assert.equal(await second.view.restore(), exact !== 'missing');
+  assert.equal(second.returns.opened, true);
+  assert.equal(second.returns.state.events.some(value => value.id === event.id), true);
+  assert.equal(railLoads, 0); assert.equal(calculations, 0);
+  assert.equal(second.returns.current?.utc ?? null, exact === 'ready' ? event.utc : null);
+  assert.equal(second.view.pendingReturns?.eventId ?? null, exact === 'missing' ? event.id : null);
+  assert.equal(JSON.parse(storage.get('liniya.view.v1')!).returns.opened, true);
+  if (exact !== 'ready') assert.equal(await second.returns.selectEvent(event.id), false, 'dates alone cannot enable an uncalculated chart');
+});
 
 test('an open Returns menu owns restoration ahead of a stale natal Day snapshot', async t => {
   const storage = await saveColdReturns(t);

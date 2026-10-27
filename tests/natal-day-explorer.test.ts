@@ -472,3 +472,39 @@ test('birth reference tooltip describes the saved chart time', async () => {
   h.explorer.select(personalChartFixture()); await h.explorer.open();
   assert.equal(h.marker.title, 'Время рождения');
 });
+
+test('offline day availability reads existing device data and never starts a missing calculation', async () => {
+  let mode: 'offline' | 'online' = 'offline', ready: NatalDay | null = null, requests = 0;
+  const explorer = createNatalDayExplorer({ connection: () => mode, dayClient: {
+    getDay: async () => { if (ready) return ready; requests++; return natalDayFixture(); }, readDay: async () => ready,
+  } });
+  explorer.select(personalChartFixture()); await explorer.refreshAvailability();
+  assert.equal(explorer.state.canOpen, false);
+  assert.equal(requests, 0);
+  ready = natalDayFixture(); await explorer.refreshAvailability();
+  assert.equal(explorer.state.canOpen, true);
+  assert.equal(await explorer.open(), true);
+  explorer.scrub(600); assert.equal(explorer.state.index, 600);
+  assert.equal(requests, 0);
+  explorer.close(); ready = null; await explorer.refreshAvailability();
+  assert.equal(explorer.state.canOpen, false);
+  mode = 'online'; await explorer.refreshAvailability();
+  assert.equal(explorer.state.canOpen, true);
+  assert.equal(requests, 0, 'reconnection restores availability without starting work');
+  await explorer.open(); assert.equal(requests, 1);
+});
+
+test('a late offline day readiness lookup cannot enable a different selected chart', async () => {
+  let release!: (day: NatalDay | null) => void;
+  const pending = new Promise<NatalDay | null>(resolve => { release = resolve; });
+  const explorer = createNatalDayExplorer({ connection: () => 'offline', dayClient: {
+    getDay: async () => { throw new Error('must not calculate'); },
+    readDay: async chart => chart?.cityId === 'first' ? pending : null,
+  } });
+  explorer.select(personalChartFixture({ cityId: 'first' }));
+  const first = explorer.refreshAvailability();
+  explorer.select(personalChartFixture({ cityId: 'second' })); await explorer.refreshAvailability();
+  release(natalDayFixture()); await first;
+  assert.equal(explorer.state.original?.cityId, 'second');
+  assert.equal(explorer.state.canOpen, false);
+});

@@ -13,6 +13,12 @@ export function extractChartData(payload: Partial<ChartRecord>): Readonly<ChartI
   return Object.freeze(data);
 }
 
+/** Keep the user's moment while confirmed obsolete numerical values are hidden. */
+export function withoutChartCalculation(chart: ChartInput): Readonly<ChartInput> {
+  return Object.freeze({ source: chart.source, utc: chart.utc, localDate: chart.localDate, localTime: chart.localTime,
+    timezone: chart.timezone, utcOffset: chart.utcOffset, personality: [], design: [] });
+}
+
 // Eligibility is shared by the early loading projection and the day owner.
 export const canExploreNatalDay = (chart: Partial<ChartRecord> | null | undefined) => Boolean(chart?.source === 'calculated'
   && chart.id !== 'current-transit' && /^\d{4}-\d{2}-\d{2}$/.test(chart.birthDate || '')

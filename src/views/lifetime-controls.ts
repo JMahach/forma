@@ -149,8 +149,8 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     panel.dataset.status = displayStatus;
     panel.dataset.mode = state.mode;
     panel.setAttribute('aria-busy', String(displayStatus === 'loading' || preparing));
-    range.disabled = preparing || (dayMode ? !dayReady : !state.metadata);
-    for (const input of inputs) input.disabled = preparing;
+    range.disabled = preparing || (dayMode ? !dayReady : !state.metadata) || state.canScrub === false;
+    for (const input of inputs) input.disabled = preparing || Boolean(state.offline && !state.metadata);
     if (fromCalendar) fromCalendar.disabled = !state.metadata;
     if (toCalendar) toCalendar.disabled = !state.metadata;
     const window = !dayMode && visibleWindow ? visibleWindow : state;

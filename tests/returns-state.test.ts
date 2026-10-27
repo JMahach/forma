@@ -677,3 +677,44 @@ test('an exact return finishing after adoption is attached to the confirmed card
   hold.resolve!(chartPacket(event()));await pending;
   assert.deepEqual(calls,['saturn']);
 });
+
+test('offline return dates enable the list but only a ready chart enables its event', async () => {
+  let mode: 'offline' | 'online' = 'offline', readyChart = false, calculations = 0;
+  const selected = event();
+  const control = createReturnsController({ connection: () => mode, client: {
+    events: async () => { calculations++; throw Error('must not calculate dates'); },
+    chart: async () => { calculations++; throw Error('must not calculate chart'); },
+    readEvents: async input => input.body === 'saturn' ? packet(input, [selected]) : null,
+    readChart: async () => readyChart ? { ...chartPacket(selected), event: selected } : null,
+  } });
+  await control.select(natal());
+  assert.equal(control.state.canOpen, true);
+  assert.deepEqual(control.state.readyBodies, ['saturn']);
+  assert.deepEqual(control.state.readyEvents, []);
+  await control.open(); assert.equal(control.opened, true);
+  assert.equal(await control.selectEvent(selected.id), false);
+  assert.equal(calculations, 0);
+  readyChart = true; await control.refreshAvailability();
+  assert.deepEqual(control.state.readyEvents, [selected.id]);
+  assert.equal(await control.selectEvent(selected.id), true);
+  assert.equal(control.current?.utc, selected.utc);
+  assert.equal(calculations, 0);
+  mode = 'online'; await control.refreshAvailability();
+  assert.equal(control.state.offline, false);
+  assert.equal(calculations, 0, 'reconnection only restores available commands');
+});
+
+test('offline return readiness from an old natal cannot enable the new selection', async () => {
+  let release!: (value: ReturnType<typeof chartPacket>) => void;
+  const pending = new Promise<ReturnType<typeof chartPacket>>(resolve => { release = resolve; });
+  const first = natal(), second = natal({ id: 'second', utc: '2001-01-01T00:00:00Z' });
+  const control = createReturnsController({ connection: () => 'offline', client: {
+    readEvents: async input => input.birthUtc === first.utc && input.body === 'saturn' ? packet(input) : null,
+    readChart: async () => pending,
+  } });
+  const selecting = control.select(first); await tick();
+  await control.select(second); release(chartPacket(event())); await selecting;
+  assert.equal(control.natal, second);
+  assert.equal(control.state.canOpen, false);
+  assert.deepEqual(control.state.readyEvents, []);
+});

@@ -179,7 +179,7 @@ function persistentStore(charts: readonly TestRecord[]) {
   return { values, storage, chartStore: createChartStore({ getStorage: () => storage }) };
 }
 
-function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, reuseTimers=false }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; reuseTimers?:boolean } = {}) {
+function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, canCalculate, reuseTimers=false }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; canCalculate?:()=>boolean; reuseTimers?:boolean } = {}) {
   if(!reuseTimers)t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map<string, FormNode>(), requests: RequestRecord[] = [];
   const documentHandlers=new Map<string,(()=>void)[]>();
@@ -248,7 +248,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
     document: document as unknown as Document,
     getChart: getChart ?? (id => store.charts.find(chart => chart.id === id) as SavedChart | undefined),
     saveChart: saveChart ?? ((chart, id) => saveChartRecord(store as ChartStore, chart, id)),
-    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode, subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
+    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, canCalculate, getConnectionMode, subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
     onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])) as unknown as FormData,
     ...createBirthClient(function requestJSON<T = unknown>(url: string, options: RequestInit = {}) {
@@ -1027,4 +1027,15 @@ test('new temporary form keeps the ready chart on failure and cancellation and r
   assert.equal(store.temporaryChart?.name,'Новая карта');
   assert.equal(h.form.opened,false);
   assert.deepEqual([...disk.values],bytes);
+});
+
+test('a version mismatch blocks calculation but preserves editable draft and text selection', async t => {
+  let compatible=true;
+  const h=formHarness(t,{canCalculate:()=>compatible});h.form.open();
+  const field=h.element('chartNote');field.value='Сохраняем этот черновик';field.focus();field.setSelectionRange(10,14,'backward');
+  const before=h.form.snapshot;
+  compatible=false;h.form.refreshAvailability();
+  assert.equal(h.element('saveChartButton').disabled,true);assert.equal(field.disabled,false);
+  assert.deepEqual(h.form.snapshot,before);
+  await h.submit();assert.equal(h.requests.length,0);
 });

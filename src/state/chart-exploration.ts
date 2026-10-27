@@ -20,6 +20,7 @@ interface ExplorationOptions {
 }
 
 import { lifeTimelineForChart } from '../domain/cycles.ts';
+import { getConnectionMode } from '../data/http-transport.ts';
 
 // One owner for chart navigation and moment commands. Tools retain their
 // ranges, jobs and local cancellation; the session accepts their visible result.
@@ -107,16 +108,15 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   async function openReturnsList() {
     if (!personal()) return false;
-    const natal = session.record, returns = getReturns();
+    const returns = getReturns();
     // Record intent before loading the timeline, so closing or changing charts
     // during that load cannot reopen the list when it eventually completes.
     const opening = returns!.open();
+    // Ready return dates/charts do not depend on downloading lifetime metadata.
+    if (getConnectionMode() === 'offline' && !getLifetime()?.state.metadata) return opening;
     if (!returnsEnabled()) {
       session.showOriginal();
-      if (!await openTimeline()) {
-        if (session.record === natal && !returnsEnabled()) returns!.close();
-        return false;
-      }
+      await openTimeline();
     }
     return opening;
   }

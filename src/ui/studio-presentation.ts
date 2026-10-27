@@ -12,7 +12,7 @@ export function studioPresentation({ isTransit = false, personalAvailable = fals
   const personalTimelineVisible = Boolean(personalAvailable && lifetime?.opened && lifetime.mode === 'lifetime' && !dayOpened);
   return {
     personalTimelineVisible,
-    returnsVisible: personalTimelineVisible && returnsOpened,
+    returnsVisible: personalAvailable && returnsOpened,
     lifetimeAvailable: isTransit || personalAvailable,
     lifetimeHeadingVisible: !personalAvailable,
     timelinePanel: dayOpened ? 'natal-day' : lifetime?.opened ? 'lifetime' : isTransit ? 'transit' : null,

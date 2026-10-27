@@ -7,6 +7,7 @@ import type { TransitDayClient } from '../data/transit-day-client.ts';
 import type { NatalDayClient } from '../data/natal-day-client.ts';
 import type { SavedLifetimeView } from '../data/view-store.ts';
 import type { TransitPlanetFilter } from './transit-planets.ts';
+import { getConnectionMode, type ConnectionMode } from '../data/http-transport.ts';
 interface LifetimeDayState { current: ChartInput | null; timeline?: { date: string } | null }
 export interface LifetimeBounds { minUtc: number; maxUtc: number }
 export type LifetimeTarget = SavedLifetimeView & { minimumUtc?: string; maximumUtc?: string };
@@ -17,6 +18,7 @@ type LifetimeStatus = 'idle' | 'loading' | 'ready' | 'error' | 'preparing';
 export type LifetimeExplorer = ReturnType<typeof createLifetimeExplorer>;
 export type LifetimeState = LifetimeExplorer['state'];
 interface LifetimeOptions {
+  connection?: () => ConnectionMode;
   observe?:ObserveClientAction;
   dayClient?: TransitDayClient | null;
   natalDayClient?: NatalDayClient | null;
@@ -46,7 +48,7 @@ function dateStart(value: unknown) {
 // Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
 export function createLifetimeExplorer({
-  observe, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
+  observe, connection = getConnectionMode, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
   client = createLifetimeClient({ dayClient, natalDayClient, getPersonalRecord }), getDayState = () => null, now = () => Date.now(),
   getMomentState = () => null,
   planetFilter = createTransitPlanetFilter(),
@@ -54,6 +56,7 @@ export function createLifetimeExplorer({
 }: LifetimeOptions = {}) {
   let observation:ClientObservation|undefined;
   let metadata: LifetimeMetadata | null = null, fullChart: ChartInput | null = null, exploredChart: ChartInput | null = null;
+  let compatible = true;
   let requestedUtc: number | null = null, restoring = false, pendingRestore: LifetimeRestoration | null = null;
   const current = () => planetFilter.filter(fullChart);
   let interacting = false, selection = 0, selectionBounds: LifetimeBounds | null = null, selectionRound = Math.round;
@@ -84,7 +87,10 @@ export function createLifetimeExplorer({
     const value = Math.floor(now() / 60000) * 60000;
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc! ? value : null;
   }
-  const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata, current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
+  const offline = () => connection() === 'offline';
+  const canScrub = () => compatible && (!offline() || mode === 'day' && Boolean(getDayState()?.current)
+    || Boolean(metadata && minUtc !== null && maxUtc !== null && Number.isFinite(client.nearestMinute?.(requestedUtc ?? minUtc, {min: minUtc, max: maxUtc}, Math.round))));
+  const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata: compatible ? metadata : null, offline: offline(), canScrub: canScrub(), current: compatible && opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
     fromDate, toDate, openStart, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
     ...planetFilter.state });
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
@@ -153,7 +159,7 @@ export function createLifetimeExplorer({
     return utc === null ? null : { utc, chart: client.peekMinute?.(utc) || null };
   }
   function load(restoration = pendingRestore, refreshNatalDay = false) {
-    if (!opened) return Promise.resolve(false);
+    if (!compatible || !opened) return Promise.resolve(false);
     if (active) return active.promise;
     clearTimeout(retryTimer!); retryTimer = null;
     observation??=observe?.({action:'data_read',component:'lifetime'});
@@ -219,7 +225,7 @@ export function createLifetimeExplorer({
           let chart: ChartInput | null | undefined, checkedDay: { date: string; version?: string } | null = null;
           try {
             chart = client.peekMinute?.(target);
-            if (!chart && client.readMinute && (client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
+            if (!chart && client.readMinute && (offline() || client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
               chart = await client.readMinute(target, { signal: request.controller.signal });
               // Historical natal minutes can have UTC seconds; their miss
               // does not inspect the whole-minute transit day.
@@ -229,6 +235,10 @@ export function createLifetimeExplorer({
             // A disk miss has no ready progress to show. Recheck ownership and
             // the selected UTC before starting another request for this target.
             if (!chart && (getMomentState() || target !== requestedUtc)) continue;
+            if (!chart && offline()) {
+              pendingRestore = null; retryCount = 0; requestedUtc = shownUtc();
+              status = fullChart ? 'ready' : 'idle'; error = ''; errorCode = ''; notify(); return false;
+            }
             if (!chart) {
               // A catalogue can outlive a disk entry. Restoration and scrubbing
               // share the same bounded fallback to a prepared grid point.
@@ -286,7 +296,8 @@ export function createLifetimeExplorer({
           client.invalidateMetadata?.(metadata); metadata = null; exploredChart = null;
         }
         error = ''; errorCode = problem?.code || '';
-        if (problem?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
+        if (offline() || problem?.code === 'offline') { status = fullChart ? 'ready' : 'idle'; retryCount = 0; }
+        else if (problem?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
         else if (!metadata && problem?.code === 'lifetime_unavailable') {
           // Opening rejected the prepared file. A repaired file can be tried
           // again explicitly; repeating the same validation cannot repair it.
@@ -323,7 +334,7 @@ export function createLifetimeExplorer({
     if (!opened || generation !== sequence) return Promise.resolve(false);
     onRender();
     const refreshNatalDay = Boolean(getPersonalRecord());
-    return metadata && !refreshNatalDay ? Promise.resolve(true) : load(null, refreshNatalDay);
+    return offline() && fullChart || metadata && !refreshNatalDay ? Promise.resolve(true) : load(null, refreshNatalDay);
   }
 
   function restore(input: unknown) {
@@ -364,7 +375,7 @@ export function createLifetimeExplorer({
     notify(); onRender();
   }
   function scrub(value: number, bounds: LifetimeBounds | null = null, round = Math.round) {
-    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
+    if (!compatible || !opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
         || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
     const next = chooseTarget(value, round, bounds);
     if (!next) return;
@@ -392,9 +403,11 @@ export function createLifetimeExplorer({
     return fallback === requestedUtc ? prepared! : forward ? Math.min(prepared!, fallback!) : Math.max(prepared!, fallback!);
   }
   return {
-    get current() { return opened ? current() : null; },
+    get current() { return compatible && opened ? current() : null; },
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
+    refreshAvailability: notify,
+    invalidateCalculations() { compatible = false; cancel(); notify(); },
     setInteracting(value: boolean) { interacting = Boolean(value); },
     adjacentUtc,
     step(direction: number, bounds: LifetimeBounds | null = null, beforeSelect: (utc: number) => boolean | void = () => {}) {

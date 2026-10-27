@@ -112,6 +112,8 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
       return run(value,signal,signal=>client.syncPrepared(input,owner,signal));},
     events(input,signal,options){const value=current,client=value.clients.cycles;
       return run(value,signal,signal=>client.events(input,signal,options)).then(data=>rememberCycle(data,value,client,signal));},
+    readEvents(input,options){const value=current,client=value.clients.cycles;
+      return run(value,options?.signal,signal=>client.readEvents(input,{signal})).then(data=>rememberCycle(data,value,client,options?.signal));},
     chart(input,signal,options){const value=current,client=value.clients.cycles;
       return run(value,signal,signal=>client.chart(input,signal,options)).then(data=>rememberCycle(data,value,client,signal));},
     readChart(input,options){const value=current,client=value.clients.cycles;

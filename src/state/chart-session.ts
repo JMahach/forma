@@ -21,7 +21,7 @@ interface ChartSessionOptions {
 }
 
 import { createChartComposition } from '../domain/chart-composition.ts';
-import { extractChartData } from '../domain/chart-data.ts';
+import { extractChartData, withoutChartCalculation } from '../domain/chart-data.ts';
 
 const emptyMoment: ChartInput = Object.freeze({ source: 'transit', personality: [], design: [], utc: '' });
 const owners = new Set(['original', 'natal-day', 'transit', 'lifetime', 'return']);
@@ -39,6 +39,17 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
   let baseChart = record ? extractChartData(record) : emptyMoment;
   let accepted = createChartComposition(baseChart, { id: selectedId, primaryLabel: record?.name || 'Транзит' }), hasCurrent = store.has(selectedId);
   let acceptedSource = baseChart, acceptedKind: ChartOwner = 'original';
+  let calculationsValid = true, returnsValid = true;
+  let masked: { source: typeof accepted; value: typeof accepted } | null = null;
+  const baseUsable = () => calculationsValid || baseChart.source === 'manual';
+  function visibleComposition() {
+    if (calculationsValid && (returnsValid || accepted.kind !== 'return') || acceptedKind === 'original' && baseChart.source === 'manual') return accepted;
+    if (masked?.source === accepted) return masked.value;
+    const source = accepted.kind === 'return' ? baseChart : accepted.primary;
+    const primary = baseUsable() && accepted.kind === 'return' ? baseChart : withoutChartCalculation(source);
+    const value = createChartComposition(primary, { id: selectedId, primaryLabel: accepted.primaryLabel });
+    masked = { source: accepted, value }; return value;
+  }
   function refresh() { if (!selecting) onChange(); }
   function expect(kind: ChartOwner) {
     if (!owners.has(kind)) throw new TypeError(`Unknown chart owner: ${kind}`);
@@ -64,7 +75,7 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
     refresh(); return true;
   }
   function publish(source: ChartOwner, chart: ChartInput | null | undefined, event: CompositionEvent | null = null) {
-    if (selecting || source !== owner) return false;
+    if (selecting || source !== owner || !calculationsValid || source === 'return' && !returnsValid) return false;
     return accept(owner, chart, event);
   }
   function showOriginal(kind: ChartOwner = 'original') {
@@ -75,11 +86,16 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
     get selectedId() { return selectedId; },
     get record() { return record; },
     get baseChart() { return baseChart; },
-    get current() { return accepted; },
+    get current() { return visibleComposition(); },
     get shownSource() { return acceptedKind; },
-    get hasCurrent() { return hasCurrent; },
+    get hasCurrent() { return hasCurrent && (calculationsValid || acceptedKind === 'original' && baseChart.source === 'manual'); },
     get owner() { return owner; },
     expect, publish, showOriginal, refresh,
+    invalidateCalculations({ calculation = true, returns = true }: { calculation?: boolean; returns?: boolean } = {}) {
+      if (calculation) calculationsValid = false;
+      if (returns || calculation) returnsValid = false;
+      masked = null; refresh();
+    },
     refilter() { return accept(acceptedKind, acceptedKind === 'lifetime' ? filterTransit(acceptedSource) : acceptedSource, accepted.event); },
     /** Adopt a confirmed identity without reselecting tools or allocating cache copies. */
     adopt(id:string,expectedId=selectedId) {

@@ -32,6 +32,7 @@ export function createLiveTransit({
 }: LiveTransitOptions) {
   let wanted = true, live = true, index = 0;
   let timeline: LocalDayTimeline | null = null, days: Map<string, TransitDay> | null = null, current: ReturnType<typeof transitChartAt> | null = null;
+  let compatible = true;
   let status: LiveTransitState['status'] = 'idle', error = '', errorCode = '', sequence = 0, failures = 0, nextRetry = 0;
   let activeLoad: { key: string | null; promise: Promise<boolean>; failedDates: Set<string> } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null, running = false, activated = false, loading = false, unavailable = false;
@@ -47,9 +48,9 @@ export function createLiveTransit({
     const utc = now();
     // The reference follows the real clock even while the selected minute is
     // paused. Never paint yesterday's endpoint while a new day is unavailable.
-    const referenceIndex = status === 'ready' && days && timeline && utc >= timeline.startUtc && utc < timeline.endUtc
+    const referenceIndex = compatible && status === 'ready' && days && timeline && utc >= timeline.startUtc && utc < timeline.endUtc
       ? timelineIndexAt(timeline, utc) : null;
-    return { wanted, live, timeline, index, referenceIndex, status, error, errorCode, retryCount: failures, current, loading, unavailable };
+    return { wanted, live, timeline, index, referenceIndex, status: compatible ? status : 'idle' as const, error, errorCode, retryCount: failures, current: compatible ? current : null, loading, unavailable };
   };
   const notify = () => onStateChange(state());
   const visible = () => wanted && isVisible();
@@ -168,6 +169,7 @@ export function createLiveTransit({
   }
 
   async function refresh(resume = false) {
+    if (!compatible) return false;
     activated = true;
     if (resume) { finishFirstCharts(false); live = true; }
     if (!visible()) { finishFirstCharts(false); notify(); return; }
@@ -189,7 +191,7 @@ export function createLiveTransit({
 
   function schedule() {
     clearTimeout(timer!);
-    if (!running || !wanted || isSuspended()) return;
+    if (!compatible || !running || !wanted || isSuspended()) return;
     const utc = now(), retryDelay = visible() && nextRetry > utc ? nextRetry - utc : Infinity;
     timer = setTimeout(() => {
       refresh();
@@ -204,9 +206,10 @@ export function createLiveTransit({
   }
 
   return {
-    get current() { return current; },
+    get current() { return compatible ? current : null; },
     get state() { return state(); },
     refresh, visibilityChanged,
+    invalidateCalculations() { compatible = false; sequence++; activeLoad = null; loading = false; clearTimeout(timer!); timer = null; finishFirstCharts(false); notify(); },
     setWanted(value: boolean) {
       if (wanted !== value) { failures = 0; nextRetry = 0; }
       wanted = value;
@@ -217,7 +220,7 @@ export function createLiveTransit({
       schedule();
     },
     scrub(value: number) {
-      if (!Number.isFinite(value) || !visible() || status !== 'ready') return;
+      if (!compatible || !Number.isFinite(value) || !visible() || status !== 'ready') return;
       live = false;
       publish(value);
     },

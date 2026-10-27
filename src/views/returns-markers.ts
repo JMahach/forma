@@ -3,7 +3,7 @@ import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { TimelinePointer, TimelineGeometry, TimelineTarget } from './timeline-range.ts';
 type MarkerUtc = string | number | null | undefined;
 interface ReturnMarkerGroup { events: CycleEvent[]; position: number; labelLane?: 'below' | 'above'; labelHidden?: boolean; labelOffset?: number }
-interface MarkerInputs { events?: readonly CycleEvent[] | null; natal?: Partial<ChartRecord> | null; fromUtc?: MarkerUtc; toUtc?: MarkerUtc; displayedUtc?: MarkerUtc; visible?: boolean }
+interface MarkerInputs { events?: readonly CycleEvent[] | null; natal?: Partial<ChartRecord> | null; fromUtc?: MarkerUtc; toUtc?: MarkerUtc; displayedUtc?: MarkerUtc; visible?: boolean; readyEvents?: readonly string[] }
 interface MarkerLayout {
   visible: boolean; fromUtc: MarkerUtc; toUtc: MarkerUtc;
   natalId: ChartRecord['id'] | undefined; natalUtc: ChartRecord['utc']; natalTimezone: ChartRecord['timezone'];
@@ -106,6 +106,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   function updateActive() {
     const displayed = milliseconds(inputs!.displayedUtc);
     for (const target of targets) {
+      target.button.disabled = Boolean(inputs!.readyEvents && !inputs!.readyEvents.includes(target.event.id));
       const active = String(isReferenceMoment(displayed, target.utc));
       if (target.button.getAttribute('aria-pressed') !== active) target.button.setAttribute('aria-pressed', active);
     }
@@ -207,6 +208,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
     }
     let winner: { target: ReturnMarkerNode; direct: boolean; distance: number } | null = null;
     for (const { target, rect } of hitBoxes) {
+      if (target.button.disabled) continue;
       const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
       const dx = Math.abs(pointer.clientX - x), dy = Math.abs(pointer.clientY - y);
       const direct = dx <= rect.width / 2 && dy <= rect.height / 2;
@@ -220,7 +222,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
     const winner = targetAt(pointer, metrics);
     if (!winner) return null;
     const owner = `${inputs!.natal?.id}:${inputs!.natal?.utc}`, target = winner.target, { id, utc } = target.event;
-    const valid = () => !!inputs?.visible && `${inputs!.natal?.id}:${inputs!.natal?.utc}` === owner
+    const valid = () => !!inputs?.visible && !target.button.disabled && `${inputs!.natal?.id}:${inputs!.natal?.utc}` === owner
       && records.get(id) === target && target.event.utc === utc;
     return { direct: winner.direct, distance: winner.distance, valid, title: target.button.title, hover: target.hover, press: target.press,
       select() { if (valid()) onSelect(target!.event); } };

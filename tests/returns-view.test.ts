@@ -371,12 +371,12 @@ test('Returns shares the existing calendar and closes it when the planet menu or
   assert.equal(h.document.body.children.filter((node: { className: string; }) => node.className.split(' ').includes('date-picker')).length, 1);
 });
 
-test('return drawer requires an explicit visible Lifetime owner', () => {
+test('an independent return list respects an explicitly closed summary shell', () => {
   const h = panelHarness(); h.summary.close(); h.update({ opened: true });
   assert.equal(h.nodes.returnsPanel.hidden, true); assert.equal(h.nodes.chartSummary.inert, true);
   assert.equal(h.summary.screen, 'closed');
   assert.equal(h.nodes.summaryBackdrop.hidden, true);
-  assert.equal(h.layouts, 0, 'an opened state without a visible drawer cannot move the studio');
+  assert.equal(h.layouts, 1, 'list content is prepared independently, without opening its closed shell');
 });
 
 test('a restored return drawer closes and restores the same selected exact event', () => {
@@ -401,10 +401,13 @@ test('a restored return drawer closes and restores the same selected exact event
   assert.equal(h.document.activeElement, h.nodes.summarySwitch);
 });
 
-test('hiding Lifetime returns to summary while keeping the right panel open until explicit dismissal', () => {
+test('hiding Lifetime preserves the independent list until that list is closed', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true });
   assert.equal(h.layouts, 1); assert.equal(h.nodes.returnsPanel.hidden, false);
   h.update({ timelineVisible: false });
+  assert.equal(h.summary.screen, 'returns');
+  assert.equal(h.layouts, 1);
+  h.update({ opened: false });
   assert.equal(h.summary.screen, 'summary');
   assert.equal(h.nodes.chartSummary.inert, false); assert.equal(h.nodes.chartSummary.getAttribute('aria-hidden'), 'false');
   assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true'); assert.equal(h.nodes.summaryBackdrop.hidden, false);
@@ -684,4 +687,17 @@ test('the return year input includes the centenary year while its visible interv
   assert.equal(h.nodes.returnsYear.getAttribute('aria-invalid'), 'true');
   assert.deepEqual(returnsVisibleWindow(source, 2100, { minUtc: Date.parse(source.utc), maxUtc: Date.parse(span!.maximumUtc) }),
     { minUtc: Date.parse('2100-01-01T00:00:00Z'), maxUtc: Date.parse('2100-01-01T12:34:56Z') });
+});
+
+test('offline return rows distinguish ready dates from ready charts and update without replacing the list', () => {
+  const h = panelHarness({ rows: true }), selected = event('saturn', '2027-01-01T00:00:00Z');
+  h.update({ opened: true, events: [selected], offline: true, readyBodies: ['saturn'], readyEvents: [] });
+  const button = h.nodes.returnsContent.querySelector('[data-return-event]')!;
+  assert.equal(button.disabled, true);
+  const writes = h.nodes.returnsContent.innerHTMLWrites;
+  h.update({ readyEvents: [selected.id] });
+  assert.equal(button.disabled, false);
+  assert.equal(h.nodes.returnsContent.innerHTMLWrites, writes);
+  h.update({ offline: false, readyEvents: [] });
+  assert.equal(button.disabled, false);
 });

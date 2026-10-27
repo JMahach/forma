@@ -1,18 +1,20 @@
 import { UI_MESSAGES } from '../ui/messages.ts';
 interface ChartLoadingOptions { canvas: HTMLElement; drawing: SVGSVGElement & { inert?: boolean }; art: Element; message: HTMLElement; status: HTMLElement; retry: HTMLButtonElement; heading: HTMLElement; onRetry: () => void }
-export interface ChartLoadingState { hasChart: boolean; failed?: boolean; loading?: boolean; holdLoading?: boolean }
+export interface ChartLoadingState { hasChart: boolean; failed?: boolean; loading?: boolean; holdLoading?: boolean; preserveHeading?: boolean }
 export type ChartLoading = ReturnType<typeof attachChartLoading>;
 
 // Presentation only: the session owns whether a chart exists; its active
 // moment source owns loading/errors. A ready chart must never wait for the rest of the day packet.
 export function attachChartLoading({ canvas, drawing, art, message, status, retry, heading, onRetry }: ChartLoadingOptions) {
   let previous: 'ready' | 'error' | 'loading' | null = null;
+  let previousHeading = false;
   retry.addEventListener('click', onRetry);
   return {
-    update({ hasChart, failed = false, loading = false, holdLoading = false }: ChartLoadingState) {
+    update({ hasChart, failed = false, loading = false, holdLoading = false, preserveHeading = false }: ChartLoadingState) {
       const state = hasChart && !holdLoading ? 'ready' : failed && !loading ? 'error' : 'loading';
-      if (state === previous) return;
+      if (state === previous && preserveHeading === previousHeading) return;
       previous = state;
+      previousHeading = preserveHeading;
       const ready = state === 'ready';
       canvas.dataset.chartState = state;
       canvas.setAttribute('aria-busy', String(state === 'loading'));
@@ -23,7 +25,7 @@ export function attachChartLoading({ canvas, drawing, art, message, status, retr
       drawing.setAttribute('aria-hidden', String(!ready));
       art.toggleAttribute('hidden', ready);
       message.hidden = ready;
-      heading.style.visibility = ready ? '' : 'hidden';
+      heading.style.visibility = ready || preserveHeading ? '' : 'hidden';
       status.textContent = ready ? '' : state === 'error' ? UI_MESSAGES.chartUnavailable : UI_MESSAGES.chartLoading;
       retry.hidden = state !== 'error';
     },

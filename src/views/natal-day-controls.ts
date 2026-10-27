@@ -17,6 +17,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
   const timelineMarks = attachTimelineMarks(hourMarks);
   function update(state: NatalExplorerState) {
     toggle.hidden = !state.available;
+    toggle.disabled = !state.opened && !state.canOpen;
     toggle.setAttribute('aria-expanded', String(state.opened));
     toggle.setAttribute('aria-pressed', String(state.opened));
     toggle.title = 'Шкала дня';
@@ -27,7 +28,7 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
     timelineMarks.day(state.opened ? state.day : null, state.day?.samples, (day, index) => natalDayMinute(day, index).localTime);
     range.disabled = state.status !== 'ready';
     retryButton.hidden = state.status !== 'error';
-    retryButton.disabled = state.status === 'loading';
+    retryButton.disabled = state.status === 'loading' || !state.canOpen;
     setText(retryButton, 'Повторить');
     setText(status, state.status === 'loading' ? UI_MESSAGES.dayPreparing : state.status === 'error' ? UI_MESSAGES.dayUnavailable : '');
     const chart = state.current;

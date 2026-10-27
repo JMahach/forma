@@ -2,7 +2,7 @@ import type { ChartExploration } from '../src/state/chart-exploration.ts';
 import type { LifetimeExplorer } from '../src/state/lifetime.ts';
 import type { ReturnsController } from '../src/state/returns.ts';
 import type { LifetimeMetadata } from '../shared/lifetime-format.ts';
-import type { CycleEvent } from '../shared/cycles-format.ts';
+import type { CycleEvent, CycleChartResult } from '../shared/cycles-format.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
 import type { SavedView } from '../src/data/view-store.ts';
 import type { TestLifetime } from './fixtures/chart-session.ts';
@@ -329,14 +329,14 @@ test('a return list opening from the previous chart cannot open the list on a ne
   assert.deepEqual(h.restorations, [], 'the canceled request cannot restore its old birth range');
 });
 
-for (const failure of ['load', 'restore'] as const) test(`failed ${failure} during return list opening clears its otherwise hidden opening intent`, async () => {
+for (const failure of ['load', 'restore'] as const) test(`failed lifetime ${failure} leaves the independent return list open`, async () => {
   const h = returnListHarness({ restoreResult: failure !== 'restore' });
   const shown = h.session.current;
   const opening = h.exploration.openReturnsList();
   assert.equal(h.returns.state.opened, true);
   h.finishLoad(failure === 'load' ? null : h.rail);
-  assert.equal(await opening, false);
-  assert.equal(h.returns.state.opened, false);
+  await opening;
+  assert.equal(h.returns.state.opened, true);
   assert.equal(h.exploration.returnsEnabled, false);
   assert.equal(h.session.current, shown);
 });
@@ -374,4 +374,30 @@ test('entering returns from a birthday-minute preview restores the natal chart b
   h.finishLoad(); await opening;
   assert.equal(h.rail.state.requestedUtc, Date.parse(h.natal.utc));
   assert.equal(h.session.current.utc, h.natal.utc, 'the displayed chart and initial rail position agree');
+});
+
+test('cold offline ready returns open and select without lifetime metadata', async t => {
+  const { configureTransportSimulation } = await import('../src/data/http-transport.ts');
+  const { studioPresentation } = await import('../src/ui/studio-presentation.ts');
+  configureTransportSimulation({current:'offline',subscribe(){return()=>{};}});
+  t.after(()=>configureTransportSimulation(null));
+  const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  let exploration: ChartExploration, metadataLoads = 0;
+  const returns = createReturnsController({client:{
+    readEvents: async input => ({events:input.body === event.body ? [event] : [],range:{fromAge:input.fromAge!,toAge:input.toAge!}}),
+    readChart: async input => ({chart:{...natal,utc:input.eventUtc!} as CycleChartResult['chart'],event}),
+    events: async () => {throw Error('must not calculate dates');},chart:async()=>{throw Error('must not calculate chart');},
+  },onRequest:()=>exploration.requestReturn(),onRender:(chart,selected)=>exploration.publishReturn(chart,selected)});
+  const natalDay = createNatalDayExplorer({dayClient:{getDay:async()=>natalDayFixture()}});
+  const session = createChartSession({store:{get:id=>id===natal.id?natal:null,has:id=>id===natal.id},getReturns:()=>returns,getNatalDay:()=>natalDay});
+  exploration=createChartExploration({session,getTransit:()=>null,getLifetime:()=>null,getNatalDay:()=>natalDay,getReturns:()=>returns,
+    loadLifetime:async()=>{metadataLoads++;throw Error('metadata unavailable');}});
+  session.select(natal.id); await returns.refreshAvailability();
+  await exploration.openReturnsList();
+  assert.equal(returns.opened,true);
+  assert.equal(studioPresentation({personalAvailable:true,returnsOpened:true}).returnsVisible,true);
+  assert.equal(metadataLoads,0);
+  assert.equal(await returns.selectEvent(event.id),true);
+  assert.equal(session.current.secondary?.utc,event.utc);
+  assert.equal(metadataLoads,0);
 });

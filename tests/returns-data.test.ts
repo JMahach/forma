@@ -216,3 +216,16 @@ test('accepted replacement retains the new return before releasing the previous 
   assert.deepEqual(order, ['retain', 'retain', 'release']);
   control.reset(); assert.deepEqual(order, ['retain', 'retain', 'release', 'release']);
 });
+
+test('cache-only return dates and charts survive a fresh client without entering calculation', async () => {
+  const storage=device();let requests=0;
+  const options:TestCyclesOptions={cacheVersion:revision,returnStorage:storage,request:async url=>{requests++;return url.endsWith('/chart')?chartResult:packet();}};
+  const first=createCyclesClient(options),exact={birthUtc:input.birthUtc,body:'saturn',eventUtc:event.utc,timezone:'UTC'};
+  await first.events(input);await first.chart(exact,undefined,{event});await tick();
+  const before=requests,second=createCyclesClient(options);
+  assert.deepEqual((await second.readEvents(input))?.events,[event]);
+  assert.equal((await second.readChart(exact))?.chart.utc,event.utc);
+  assert.equal(await second.readEvents({...input,body:'chiron'}),null);
+  assert.equal(await second.readChart({...exact,eventUtc:'2029-01-01T00:00:00Z'}),null);
+  assert.equal(requests,before);first.close();second.close();
+});

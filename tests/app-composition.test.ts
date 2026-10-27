@@ -323,11 +323,11 @@ function harness({actualStore, calculationVersion = '', accountReady = Promise.r
     }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop }),
-    attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
+    attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
     attachLiveTransit: (options) => {
       transitOptions = options;
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, setWanted: noop, start: async () => {transitStarts++;return true;},
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, invalidateCalculations:noop, setWanted: noop, start: async () => {transitStarts++;return true;},
         goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
@@ -378,7 +378,7 @@ function harness({actualStore, calculationVersion = '', accountReady = Promise.r
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
   return { element, layout, natalClient, inputRestores, notices, restoration:application.restoration,
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
-    offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
+    invalidateCalculations:application.invalidateCalculations,offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
     attachJournal:application.attachJournal,saveShown:application.saveShownChart,cancelSave:application.cancelChartSave,
     get pendingWrites() {return savedSnapshot?.pendingChartWrites;},
@@ -2402,4 +2402,37 @@ test('late journal attachment reaches the already created returns owner and the 
   {action:{action:'calculate',component:'cycles'},code:'engine_unavailable',step:{stage:'request'}},
   {action:{action:'data_read',component:'lifetime'},code:'lifetime_unavailable',step:{stage:'request'}},
  ]);
+});
+
+test('incompatible calculations preserve the temporary original and draft for the ready bundle transition', async () => {
+  const record=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-obsolete',name:'Сохранённая карта',note:'Оставить заметку'}));
+  const actualStore=createChartStore({initialTemporaryChart:record,getStorage:()=>{throw Error('no guest library');}});
+  const h=harness({realViewSession:true,actualStore,savedView:{selectedId:record.id,temporaryChart:record}});await h.restoration;
+  h.setBirthDraft({editingId:null,accountId:null,calculationMode:'calculated',fields:{chartName:'Черновик обновления',birthDate:'12.',birthTime:'',birthPlace:'',chartNote:'Ввод сохранён'},city:null,fold:null,base:null,focus:null});
+  h.invalidateCalculations({calculation:true,returns:true});h.flushView();
+  assert.equal(h.loading.hasChart,false);assert.equal(h.loading.preserveHeading,true);
+  assert.equal(h.savedSnapshot?.temporaryChart?.name,record.name);
+  assert.equal(h.savedSnapshot?.temporaryChart?.note,record.note);
+  assert.equal(h.savedBirthDraft?.fields.chartName,'Черновик обновления');
+  assert.equal(await h.prepareOfflineUpdate(),true);
+});
+
+test('an early mismatch hands an unresolved saved return to the new bundle without dropping its target', async () => {
+  const record=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-pending-return'}));
+  const actualStore=createChartStore({initialTemporaryChart:record,getStorage:()=>{throw Error('no guest library');}});
+  const target={opened:true,bodies:['saturn'],year:null,eventId:'saturn:2055-10-01T12:00:00Z'};
+  const h=harness({realViewSession:true,actualStore,savedView:{selectedId:record.id,temporaryChart:record,returns:target}});
+  h.invalidateCalculations({calculation:true,returns:true});h.finishModule();await h.restoration;
+  assert.equal(h.offlineRestored(),true);
+  assert.equal(await h.prepareOfflineUpdate(),true);
+  assert.equal(h.savedSnapshot?.returns?.eventId,target.eventId);
+  assert.equal(h.savedSnapshot?.returns?.opened,true);
+  assert.equal(h.savedSnapshot?.temporaryChart?.id,record.id);
+});
+
+test('a confirmed mismatch does not authorize reload after a restoration exception', async () => {
+  const h=harness({restore:async()=>{throw Error('restoration failed');}});
+  h.invalidateCalculations({calculation:true,returns:true});await h.restoration;
+  assert.equal(h.offlineRestored(),false);
+  assert.equal(await h.prepareOfflineUpdate(),false);
 });

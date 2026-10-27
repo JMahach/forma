@@ -761,3 +761,13 @@ test('network failure cause reaches the live-day consumer without replacing the 
  const h=harness({getDay:async()=>{throw Object.assign(new Error('internal'),{code:'offline'});}}); t.after(()=>h.live.stop());
  await h.live.refresh(); assert.equal(h.live.state.errorCode,'offline');
 });
+
+test('confirmed incompatible transit hides old numbers and prevents late publication or further requests', async () => {
+  let release!: (value: TransitDay) => void;
+  const h=harness({getDay:date=>new Promise(resolve=>{release=resolve;})});
+  const pending=h.live.start();await settle();
+  h.live.invalidateCalculations();release(day('2026-09-24'));await pending;
+  assert.equal(h.live.current,null);assert.equal(h.live.state.current,null);
+  const count=h.requests.length;await h.live.goNow();h.live.scrub(600);
+  assert.equal(h.requests.length,count);assert.equal(h.events.length,0);h.live.stop();
+});

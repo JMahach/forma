@@ -92,6 +92,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
     ? savedView?.temporaryChartSave ?? null : null;
   let publicRefreshRequest:AbortController|null=null;
+  let calculationObsolete = false, returnsObsolete = false;
+  let restorationException = false;
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   let chartSave:{action:ChartSaveAction;source:SavedChart;work:Promise<void>|null}|null=null;
@@ -185,6 +187,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
     const firstFailed = initialPage.restored && initialPage.restoreFailed && !session.hasCurrent;
     chartLoading.update({ hasChart: !routePending && !routeFailed && session.hasCurrent, holdLoading: initialPage.active,
+      preserveHeading: calculationObsolete,
       failed: routeFailed || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
       loading: routePending || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
     updateInitialPage();
@@ -381,7 +384,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const button=$<HTMLButtonElement>('saveShownChart'),wrap=$('saveShownChartWrap');
     $('saveShownChartGroup').hidden=!visible;
     const availability=actionAvailability({connection:getConnectionMode(),requiresConnection:true,
-      available:visible,pending:Boolean(chartSave?.work && !chartSave.action.waitingForLogin)});
+      available:visible && (!calculationObsolete || source?.source === 'manual'),pending:Boolean(chartSave?.work && !chartSave.action.waitingForLogin)});
     button.disabled=availability.disabled;button.setAttribute('aria-busy',String(availability.busy));
     const unavailable=Boolean(availability.reason);
     wrap.dataset.unavailable=String(unavailable);wrap.title=availability.reason;
@@ -588,6 +591,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
   const birthForm = attachBirthForm({
+    canCalculate: () => !calculationObsolete,
     getAccountId: () => accountLibrary.accountId,
     onDraftChange: () => { pendingBirthForm = null; viewSession?.schedule(); },
     document, getChart: id => id ? store.get(id) : undefined,
@@ -993,6 +997,9 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   subscribeConnection(() => {
     const connection = getConnectionMode(), returned = previousConnection !== 'online' && connection === 'online';
     previousConnection = connection;updateChartSaveControl();
+    void natalDay?.refreshAvailability();
+    void returns?.refreshAvailability();
+    lifetime?.refreshAvailability(); updateTimelineTools();
     if (returned) {void calculationUpdates?.refresh();void journal?.wake();void refreshPublicChart();}
     if (!libraryInitialized) return;
     if (getConnectionMode() !== 'offline') void calculationClients?.retryPersonalCleanup().catch(() => {});
@@ -1014,13 +1021,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       const restored = await viewSession!.restore();
       if (!viewSession!.interrupted) initialPage.restoreFailed = restored === false;
     }
-    catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
+    catch { restorationException = true; initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
     if (viewSession!.interrupted || !routeCurrent()) return;
     try {
       const resumed = await exploration!.finishRestore({ saved: restoreView, interrupted: viewSession!.interrupted,
         pendingLifetime: viewSession!.pendingLifetime, pendingReturns: viewSession!.pendingReturns });
       initialPage.restoreFailed ||= resumed === false;
-    } catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
+    } catch { restorationException = true; initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
     if (viewSession!.interrupted || !routeCurrent()) return;
     const draft = pendingBirthForm; pendingBirthForm = null;
     if(draft && !birthForm.opened)birthForm.restore(draft);
@@ -1050,7 +1057,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updateTimelineTools();
       return returnsView;
     }).catch(() => {
-      if (initialPage.active) initialPage.restoreFailed = true;
+      if (initialPage.active) { restorationException = true; initialPage.restoreFailed = true; }
       if (returns!.opened) { returns!.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
       return null;
     }).finally(() => { returnsViewLoading = null; updateInitialPage(); });
@@ -1072,15 +1079,19 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     heading.hidden = !view.lifetimeHeadingVisible; heading.inert = !view.lifetimeHeadingVisible;
     $('lifetimeControls').dataset.personalLife = String(state.available);
     $('summaryReturns').hidden = !state.available;
+    $<HTMLButtonElement>('summaryReturns').disabled = !state.opened && !state.canOpen;
     // Source labels describe the same resolved chart as the scene.
     const chart = currentChart();
     const viewState = { ...state, visible: view.returnsVisible,
-      birthSelected: !exploration!.live && chart.primary === session.baseChart && !chart.secondary, live: exploration!.live };
+      birthSelected: !exploration!.live && chart.primary === session.baseChart && !chart.secondary, live: exploration!.live,
+      nowAvailable: !calculationObsolete && (getConnectionMode() !== 'offline' || transit?.state.referenceIndex != null) };
     chartSummary!.setReturnsVisible(view.returnsVisible);
     if (returnsView) returnsView!.update(viewState);
     else if (view.returnsVisible) void loadReturnsView();
     const lifetimeToggle = $('lifetimeToggle');
     lifetimeToggle.hidden = !view.lifetimeAvailable;
+    (lifetimeToggle as HTMLButtonElement).disabled = !view.toggleEnabled && (calculationObsolete || getConnectionMode() === 'offline'
+      && !lifetimeState?.metadata && (session.selectedId !== 'current-transit' || !transit?.state.current));
     lifetimeToggle.title = view.toggleLabel;
     lifetimeToggle.setAttribute('aria-label', view.toggleLabel);
     lifetimeToggle.setAttribute('aria-controls', 'lifetimeControls');
@@ -1091,6 +1102,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     lifetimeControls?.setVisibleWindow(window && { ...window, calendar: Number.isInteger(state.year),
       timeZone: cycleTimeZone(state.natal?.timezone) });
     returnMarkers?.update({ events: state.events, natal: state.natal, displayedUtc: chart?.utc,
+      readyEvents: state.offline ? state.readyEvents : undefined,
       fromUtc: window?.minUtc ?? NaN,
       toUtc: window?.maxUtc ?? NaN,
       visible: Boolean(valid) });
@@ -1161,6 +1173,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         });
         lifetime = controller;
         lifetimeControls = controls;
+        if (calculationObsolete) lifetime.invalidateCalculations();
         return lifetime;
       } catch {
         lifetimeLoadFailed = true; updateLoading(); updateTimelineTools();
@@ -1205,8 +1218,20 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
-  const offlineRestored = () => initialPage.restored && !initialPage.restoreFailed && !initialPage.screenPending && !initialPage.screenFailed && !routePending && !routeFailed;
+  // An obsolete calculation may deliberately remain pending in the durable view
+  // snapshot. Waiting for it to calculate with old code would deadlock the update.
+  // Exceptions, missing records/screens and unconfirmed writes still block it.
+  const offlineRestored = () => initialPage.restored
+    && (!initialPage.restoreFailed || (calculationObsolete || returnsObsolete) && !restorationException)
+    && !initialPage.screenPending && !initialPage.screenFailed && !routePending && !routeFailed;
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
+    invalidateCalculations({ calculation = true, returns: obsoleteReturns = true }: {calculation?:boolean;returns?:boolean} = {}) {
+      calculationObsolete ||= calculation; returnsObsolete ||= obsoleteReturns || calculation;
+      session.invalidateCalculations({calculation:calculationObsolete,returns:returnsObsolete});
+      if (calculationObsolete) { natalDay?.invalidateCalculations(); lifetime?.invalidateCalculations(); transit?.invalidateCalculations(); }
+      if (returnsObsolete) returns?.invalidateCalculations();
+      birthForm.refreshAvailability(); updateChartSaveControl(); updateTimelineTools(); updateLoading();
+    },
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate() {
       const ready=()=>{

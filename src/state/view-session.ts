@@ -250,7 +250,8 @@ export function createViewSession({
         if (!valid() || session.selectedId !== selectedId) return false;
         // The menu or exact return can be saved before lazy Lifetime controls
         // exist. Resume the normal opening path and retain its target on failure.
-        if ((target.opened || getReturns()!.selectedEvent) && !getLifetime()?.state.opened && canRestoreLifetime()) {
+        const railAvailable = !getReturns()!.state.offline || Boolean(getLifetime()?.state.metadata);
+        if (railAvailable && (target.opened || getReturns()!.selectedEvent) && !getLifetime()?.state.opened && canRestoreLifetime()) {
           await openReturnsTimeline();
           if (!valid() || session.selectedId !== selectedId) return false;
           const lifetimeState = getLifetime()?.state;

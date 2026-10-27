@@ -998,3 +998,15 @@ test('connected view storage reports one failure per outage, recovers on disk su
  assert.equal(ports!.viewStore.write!({...snapshot,mandala:true}),false);await wait(3);assert.equal(reports[2]!.accountId,'42');
  for(let i=0;i<10;i++)ports!.viewStore.write!({...snapshot,mandala:true});await journal.wake();assert.equal(reports.length,3);
 });
+
+test('a confirmed returns-only mismatch invalidates only that domain before discovering the next bundle',async()=>{
+ const {document}=startupDocument();let ports:StartupPorts|undefined;
+ document.body.dataset.calculationVersion='a'.repeat(64);document.body.dataset.cyclesVersion='b'.repeat(64);
+ const invalidations:{calculation:boolean;returns:boolean}[]=[];
+ const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
+  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;return {invalidateCalculations(value:{calculation:boolean;returns:boolean}){invalidations.push({...value});}};}}),{},undefined,undefined,undefined,
+  ()=>({refresh:async()=>({status:'incompatible',versions:{calculationVersion:'a'.repeat(64),cyclesVersion:'c'.repeat(64)}}),onTimelineChanged:async()=>({status:'unconfirmed'})}));
+ await ports!.calculationUpdates!.refresh();
+ assert.deepEqual(invalidations.at(-1),{calculation:false,returns:true});
+ let discoveries=0;startup.connectOfflineUpdates(()=>{discoveries++;});assert.equal(discoveries,1);
+});

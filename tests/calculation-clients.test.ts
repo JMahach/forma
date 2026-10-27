@@ -185,3 +185,12 @@ test('an attachment from the retired RAM port survives promotion but is cancelle
   const cleanup=owner.resetPersonal();assert.equal(signal!.aborted,true,'logout must revoke retired transports as well');
   await cleanup;await tick();assert.equal(accepts,1,'there is no automatic attachment retry');
 });
+
+test('cache-only return readiness uses the current personal generation and never starts a calculation',async t=>{
+ const indexedDB=new IDBFactory();let requests=0;
+ const owner=createCalculationClients({cacheOptions:{indexedDB},cycles:{cacheVersion:version,request:async()=>{requests++;return cycleResult();}}});
+ t.after(()=>owner.close());
+ assert.equal(await owner.cycles.readEvents(cycleInput),null);assert.equal(requests,0);
+ await owner.cycles.events(cycleInput);assert.deepEqual((await owner.cycles.readEvents(cycleInput))?.events,[]);
+ await owner.resetPersonal();assert.equal(await owner.cycles.readEvents(cycleInput),null);assert.equal(requests,1);
+});

@@ -145,6 +145,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     }, { signal });
   }
   return { events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
+    readEvents: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('events', input, signal, { cacheOnly: true }) as Promise<CycleEventsResult | null>,
     chart: (input: CycleInput, signal?: AbortSignal, options?: Omit<CycleOptions, 'cacheOnly'>) => get('chart', input, signal, options) as Promise<CachedCycleChart>,
     // A confirmed cached chart carries its own current-revision event label.
     // This never joins numerical requests or asks for the body's dates.

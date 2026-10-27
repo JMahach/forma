@@ -39,6 +39,14 @@ type Journal=ReturnType<typeof createJournal>;
 let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
 let applicationFailed=false,connectedJournal:Journal|undefined,connection:Promise<void>|undefined;
 let refreshOffline:(()=>void)|undefined,offlineRefreshPending=false;
+const obsoleteCalculations = { calculation: false, returns: false };
+function rejectIncompatibleCalculations(versions?: {calculationVersion:string;cyclesVersion:string}) {
+  const previous = `${obsoleteCalculations.calculation}:${obsoleteCalculations.returns}`;
+  obsoleteCalculations.calculation ||= !versions || versions.calculationVersion !== document.body.dataset.calculationVersion;
+  obsoleteCalculations.returns ||= !versions || versions.cyclesVersion !== document.body.dataset.cyclesVersion;
+  if (previous !== `${obsoleteCalculations.calculation}:${obsoleteCalculations.returns}`) application?.invalidateCalculations?.(obsoleteCalculations);
+  requestOfflineRefresh();
+}
 function requestOfflineRefresh() {
   if (!refreshOffline) { offlineRefreshPending=true; return; }
   // Discovery is optional; only the existing page/worker handshake may reload.
@@ -131,12 +139,12 @@ const calculationVersionOwner = createCalculationUpdates({clients: calculationCl
 const calculationUpdates = {
   async refresh(...args:Parameters<typeof calculationVersionOwner.refresh>) {
     const result=await calculationVersionOwner.refresh(...args);
-    if (result.status==='incompatible') requestOfflineRefresh();
+    if (result.status==='incompatible') rejectIncompatibleCalculations(result.versions);
     return result;
   },
   async onTimelineChanged(...args:Parameters<typeof calculationVersionOwner.onTimelineChanged>) {
     const result=await calculationVersionOwner.onTimelineChanged(...args);
-    if (result.status==='incompatible') requestOfflineRefresh();
+    if (result.status==='incompatible') rejectIncompatibleCalculations();
     return result;
   },
 };
@@ -338,6 +346,7 @@ if (!previewLoading) try {
   document.removeEventListener('visibilitychange', flushOnHide);
   page?.removeEventListener?.('pagehide', flushLoadingView);
   application = app.startApp({ navigation, storagePressure, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  if (obsoleteCalculations.calculation || obsoleteCalculations.returns) application?.invalidateCalculations?.(obsoleteCalculations);
   saveBeforeNavigate = () => application?.flushView();
 } catch {
   applicationFailed=true;
