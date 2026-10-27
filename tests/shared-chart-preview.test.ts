@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSharedChartStudy } from '../src/dev/shared-chart-preview.ts';
+import { createSharedChartStudy } from './helpers/preview/shared-chart-preview.ts';
 function harness() {
   const jobs: Array<() => void> = [];
   const study = createSharedChartStudy(() => {}, callback => {

@@ -1,10 +1,8 @@
 import { registerAccountPreview, connectAccountPreview, type AccountPreviewPort } from '../src/views/account.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAccountAdapter, accountPreviewIdentity, type AccountScenario } from '../src/dev/account-adapter.ts';
-import { standConnection } from '../src/dev/stand-connection.ts';
-import { readModuleSource } from './helpers/module-source.ts';
-import { isDevelopmentPort } from '../shared/development.ts';
+import { createAccountAdapter, accountPreviewIdentity, type AccountScenario } from './helpers/preview/account-adapter.ts';
+import { standConnection } from './helpers/preview/stand-connection.ts';
 import type { AccountRequest } from '../src/state/account-flow.ts';
 
 const request: AccountRequest = {operation:'send',email:'anna@example.com',code:'',attempt:null,screen:'guest',telegramPending:false};
@@ -32,13 +30,6 @@ test('stand request cancellation rejects rather than delivering success',async()
  const c=new AbortController();const pending=createAccountAdapter({delay:20})(request,c.signal);c.abort();
  await assert.rejects(pending,{name:'AbortError'});
 });
-const source=readModuleSource(new URL('../src/dev/account-preview.ts',import.meta.url)).replace(/^import[^\n]*\n/gm,'');
-for(const port of ['', '80','443','8080','3637']) test(`account study is inert on ordinary port ${port||'default'}`,()=>{
- const forbidden=new Proxy({}, {get(){throw new Error('Stand code ran on a release port');}});
- new Function('location','document','sessionStorage','isDevelopmentPort',source)({port},forbidden,forbidden,isDevelopmentPort);
-});
-
-
 test('only the stand adapter supplies sample account identities and keeps explicitly entered mail', async () => {
  assert.equal(accountPreviewIdentity('guest'),null);
  assert.equal(accountPreviewIdentity('error'),null);

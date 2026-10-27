@@ -7,14 +7,10 @@ import { promisify } from 'node:util';
 import { gzip, brotliCompress, constants } from 'node:zlib';
 import { build } from 'esbuild';
 import { buildOfflineWorker } from './offline-manifest.ts';
-import boundaries from './architecture/architecture-boundaries.json' with { type: 'json' };
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const gzipAsync = promisify(gzip), brotli = promisify(brotliCompress);
 const publicPath = (relative: string) => relative.split(path.sep).join('/');
-const developmentOwners = boundaries.modules.filter(module => module.id === 'browser-dev');
-if (developmentOwners.length !== 1 || !developmentOwners[0].files.length) throw new Error('Missing or ambiguous browser-dev declaration');
-const developmentFiles = new Set(developmentOwners[0].files);
 
 // Source remains readable and runs directly in development. Only release HTML
 // refers to these content-versioned assets; the server reads one explicit map.
@@ -28,7 +24,7 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     define: { __FORMA_RELEASE__: 'true' },
     minify: true, metafile: true, write: false, logLevel: 'silent',
   });
-  const development = Object.keys(result.metafile.inputs).find(input => developmentFiles.has(publicPath(input)));
+  const development = Object.keys(result.metafile.inputs).find(input => publicPath(input).startsWith('src/dev/'));
   if (development) throw new Error(`Development module in release: ${publicPath(development)}`);
   const manifest: Record<string, ReleaseEntry> = {}, outputs = new Map(result.outputFiles.map(file => [publicPath(path.relative(outdir, file.path)), file.contents]));
   const entryOutput = (input: string) => {
@@ -65,7 +61,8 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
     // The local tab has a version label; the published site keeps its name.
     if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
-    // Stand-only design controls never become a release dependency.
+    // Explicitly development-only entries remain excluded; shared preview tools
+    // are regular dependencies of the application entry.
     html = html.replace(/  <script\b[^>]*\bdata-development\b[^>]*><\/script>\r?\n/g, '');
     html = html.replace(/^[ \t]*<button\b[^>]*\bdata-development\b[^>]*>[\s\S]*?<\/button>\r?\n?/gm, '');
     // Source preloads the UI graph alongside the small startup entry. In release

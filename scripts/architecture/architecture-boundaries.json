@@ -57,7 +57,7 @@
         "account-flow",
         "account-library",
         "browser-composition",
-        "browser-dev",
+        "browser-preview",
         "camera",
         "chart-actions",
         "chart-input",
@@ -137,7 +137,6 @@
         "shared/day-packets/moment-columns.ts",
         "shared/day-packets/natal-format.ts",
         "shared/day-packets/transit-format.ts",
-        "shared/development.ts",
         "shared/lifetime-exact-format.ts",
         "shared/lifetime-format.ts",
         "shared/utc-format.ts",
@@ -160,7 +159,6 @@
         "shared/day-packets/moment-columns.ts",
         "shared/day-packets/natal-format.ts",
         "shared/day-packets/transit-format.ts",
-        "shared/development.ts",
         "shared/lifetime-exact-format.ts",
         "shared/lifetime-format.ts",
         "shared/utc-format.ts",
@@ -882,57 +880,21 @@
       ]
     },
     {
-      "id": "browser-dev",
-      "responsibility": "Explicit development-only visual studies using actual public UI APIs; no persistence/authentication claims.",
+      "id": "browser-preview",
+      "responsibility": "Shared palette controls restore the user-selected drawing style before local and production startup.",
       "files": [
-        "src/dev/account-adapter.ts",
-        "src/dev/account-preview.ts",
-        "src/dev/calculation-preview.ts",
-        "src/dev/control-colors.ts",
-        "src/dev/shared-chart-preview.ts",
-        "src/dev/stand-connection.ts"
+        "src/preview/control-colors.ts"
       ],
       "publicEntries": [
-        "src/dev/control-colors.ts"
+        "src/preview/control-colors.ts"
       ],
       "allowRuntime": [
-        "browser-dev",
-        "feature-views",
-        "ui-furniture",
         "ui-styles",
-        "ui-layout",
-        "presentation-rules",
-        "domain",
-        "shared-contracts",
-        "renderers",
-        "reference",
-        "diagnostics",
-        "presentation-primitives",
-        "account-flow",
-        "message-catalog",
         "shell-state"
       ],
-      "allowTypes": [
-        "browser-dev",
-        "feature-views",
-        "ui-furniture",
-        "ui-styles",
-        "ui-layout",
-        "presentation-rules",
-        "domain",
-        "shared-contracts",
-        "renderers",
-        "reference",
-        "diagnostics",
-        "presentation-primitives",
-        "account-flow",
-        "message-catalog",
-        "shell-state"
-      ],
+      "allowTypes": [],
       "executionEntries": [
-        "src/dev/account-preview.ts",
-        "src/dev/control-colors.ts",
-        "src/dev/shared-chart-preview.ts"
+        "src/preview/control-colors.ts"
       ]
     },
     {

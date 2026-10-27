@@ -6,7 +6,6 @@ import { createCalculationUpdates } from './data/calculation-updates.ts';
 import { createNavigation } from './state/navigation.ts';
 import { viewForRoute } from './state/view-session.ts';
 import { attachAccount } from './account.ts';
-import { isDevelopmentPort } from '../shared/development.ts';
 import { attachPanelKeyboard } from './views/side-panel-controls.ts';
 import type { SavedView } from './data/view-store.ts';
 import { createCalculationClients } from './data/calculation-clients.ts';

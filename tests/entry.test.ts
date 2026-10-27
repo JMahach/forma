@@ -11,7 +11,6 @@ const html = await fs.readFile(path.join(root, 'public/index.html'), 'utf8');
 const entry = [...html.matchAll(/<script\b[^>]*src="\/(src\/[^"]+)"[^>]*><\/script>/g)].at(-1)![1];
 const source = await fs.readFile(path.join(root, entry), 'utf8');
 const transportURL = new URL('../src/data/http-transport.ts', import.meta.url).href;
-const connectionURL = new URL('../src/dev/stand-connection.ts', import.meta.url).href;
 
 // Deliberately small DOM model; installed only at the dynamic-module boundary.
 class EntryElement {
@@ -38,8 +37,8 @@ function browser(withArt = false, standSrc?: string) {
     nodes.set('chartLoadingArt', new EntryElement());
     const canvas = new EntryElement(); canvas.dataset.chartState = 'loading'; nodes.set('canvasWrap', canvas);
   }
-  const document = { body, querySelector: (selector: string) => selector === '.app-shell' ? shell
-    : selector === 'script[data-development][src="/src/dev/control-colors.ts"]' && standSrc ? {src: standSrc} : null,
+  if (standSrc) nodes.set('toggleLoadingPreview', new EntryElement());
+  const document = { body, querySelector: (selector: string) => selector === '.app-shell' ? shell : null,
   getElementById: (id: string) => nodes.get(id) };
   let reloads = 0;
   return { document, shell, nodes, location: { reload() { reloads++; } }, get reloads() { return reloads; } };
@@ -71,10 +70,10 @@ async function runEntry(t: test.TestContext, startup: string, withArt = false,
     await fs.writeFile(path.join(temporary,'offline/page-coordinator.ts'),offlineSource);
   }
   if(journalSource!==undefined)await fs.writeFile(path.join(temporary,'journal.ts'),journalSource);
-  await fs.mkdir(path.join(temporary, 'dev'));
+  await fs.mkdir(path.join(temporary, 'preview'));
   await fs.mkdir(path.join(temporary, 'data'));
   await fs.writeFile(path.join(temporary, 'data/http-transport.ts'), transportSource);
-  const standFile = path.join(temporary, 'dev/control-colors.ts');
+  const standFile = path.join(temporary, 'preview/control-colors.ts');
   await fs.writeFile(standFile, devSource);
   const h = browser(withArt, stand ? pathToFileURL(standFile).href : undefined);
   if(journalSource!==undefined)h.document.body.dataset={appVersion:'0.2-test',appEnvironment:'stand'};
@@ -119,56 +118,30 @@ test('successful startup keeps ownership of the prepared shell and existing load
   assert.equal(h.reloads, 0);
 });
 
-for (const [mode, expected] of [['online', 'stand'], ['offline', 'offline'], ['server', 'server_unavailable']]) {
-  test(`source installs the ${mode} stand gate before the first startup request`, async t => {
-    const h = await runEntry(t, `import {fetchResource} from './data/http-transport.ts';
-      const shell = document.querySelector('.app-shell');
-      try { shell.dataset.firstRequest = await (await fetchResource('/api/startup')).text(); }
-      catch (error) { shell.dataset.firstRequest = error.code; }`, false, {
-      stand: true, preloadStand: true,
-      devSource: `import {createStandConnection} from ${JSON.stringify(connectionURL)};
-        const shell = document.querySelector('.app-shell');
-        shell.dataset.devLoads = String(Number(shell.dataset.devLoads || 0) + 1);
-        await new Promise(resolve => setTimeout(resolve, 0));
-        const connection = createStandConnection(); connection.set(${JSON.stringify(mode)});
-        export const standTransport = {connection, fetch: async () => {
-          shell.dataset.devRequests = String(Number(shell.dataset.devRequests || 0) + 1);
-          return new Response('stand');
-        }};`,
-    });
-    assert.equal(h.shell.dataset.firstRequest, expected);
-    assert.equal(h.shell.dataset.devLoads, '1', 'HTML and entry share one ESM evaluation');
-    assert.equal(h.shell.dataset.devRequests, mode === 'online' ? '1' : undefined);
-    assert.equal(h.nodes.get('chartLoadingRetry')!.hidden, true);
+for (const release of [false, true]) test(`palette restoration precedes startup without simulation wiring (release=${release})`, async t => {
+  const h = await runEntry(t, `import {fetchResource} from './data/http-transport.ts';
+    const shell = document.querySelector('.app-shell');
+    shell.dataset.readyAtStartup = shell.dataset.paletteReady;
+    shell.dataset.firstRequest = await (await fetchResource('/api/startup')).text();`, false, {
+    stand: true, release,
+    devSource: `await new Promise(resolve => setTimeout(resolve, 0));
+      document.querySelector('.app-shell').dataset.paletteReady = 'true';
+      export const standTransport = {connection: {subscribe() {throw Error('retired simulation connected');}}};`,
   });
-}
+  assert.equal(h.shell.dataset.readyAtStartup, 'true');
+  assert.equal(h.shell.dataset.firstRequest, 'ordinary');
+  assert.equal(h.nodes.get('chartLoadingRetry')!.hidden, true);
+});
 
-test('a stand marker outside a supported port leaves transport untouched', async t => {
+test('a page without the preview button does not mount palette controls', async t => {
   const h = await runEntry(t, 'document.querySelector(".app-shell").dataset.started = "true";', false, {
-    stand: true, devSource: 'export const standTransport = null;',
-    transportSource: 'throw new Error("a null stand transport must not load request wiring");',
+    devSource: 'throw new Error("a page without the preview button must not load palette code");',
   });
   assert.equal(h.shell.dataset.started, 'true');
   assert.equal(h.nodes.get('chartLoadingRetry')!.hidden, true);
 });
 
-test('source without a stand marker skips dev code even when the module exists', async t => {
-  const h = await runEntry(t, 'document.querySelector(".app-shell").dataset.started = "true";', false, {
-    devSource: 'throw new Error("a page without the stand marker must not load dev code");',
-  });
-  assert.equal(h.shell.dataset.started, 'true');
-  assert.equal(h.nodes.get('chartLoadingRetry')!.hidden, true);
-});
-
-test('a release entry ignores a leftover stand marker and never loads its module', async t => {
-  const h = await runEntry(t, 'document.querySelector(".app-shell").dataset.started = "true";', false, {
-    stand: true, release: true, devSource: 'throw new Error("release must not evaluate dev code");',
-  });
-  assert.equal(h.shell.dataset.started, 'true');
-  assert.equal(h.nodes.get('chartLoadingRetry')!.hidden, true);
-});
-
-test('a missing stand dependency reaches recovery before startup can run', async t => {
+test('a missing palette dependency reaches recovery before startup can run', async t => {
   const h = await runEntry(t, 'document.querySelector(".app-shell").dataset.started = "true";', false, {
     stand: true, devSource: 'import "./missing-stand-dependency.ts";',
   });

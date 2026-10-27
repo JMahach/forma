@@ -145,7 +145,7 @@ test('a mismatched server UTC is never saved and a late random calculation canno
 });
 
 test('random generation cancels offline without saving a late result and permits a server retry', async t => {
-  const {createStandConnection} = await import('../src/dev/stand-connection.ts');
+  const {createStandConnection} = await import('./helpers/preview/stand-connection.ts');
   const {configureTransportSimulation} = await import('../src/data/http-transport.ts');
   const connection = createStandConnection();
   configureTransportSimulation(connection); t.after(() => configureTransportSimulation(null));
@@ -699,7 +699,7 @@ test('city transport failure uses the agreed copy and clears on the next query',
 });
 
 test('offline blocks new requests and preserves an open draft until explicit retry', async t => {
- const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
  const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
  const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
  const h=formHarness(t);h.form.open();h.element('chartName').value='Анна';
@@ -708,7 +708,7 @@ test('offline blocks new requests and preserves an open draft until explicit ret
  connection.set('online');assert.equal(h.element('chartName').disabled,false);assert.equal(h.requests.length,0);assert.equal(h.element('chartName').value,'Анна');
 });
 test('offline while city search waits invalidates late options; server mode explains its failure', async t => {
- const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
  const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
  const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
  const h=formHarness(t);h.form.open();const pending=await h.search('Москва');connection.set('offline');

@@ -1,4 +1,4 @@
-/** Stand-only hold before sending a calculation. It never invents a result. */
+/** Preview-only hold before sending a calculation. It never invents a result. */
 export function createCalculationPreview(send: typeof globalThis.fetch = (...args) => globalThis.fetch(...args), canHold = () => true) {
   let waiting = false;
   const pending = new Set<() => void>();

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalculationPreview } from '../src/dev/calculation-preview.ts';
+import { createCalculationPreview } from './helpers/preview/calculation-preview.ts';
 import { createHttpTransport } from '../src/data/http-transport.ts';
-import { createStandConnection } from '../src/dev/stand-connection.ts';
+import { createStandConnection } from './helpers/preview/stand-connection.ts';
 
 for (const exit of ['abort', 'ordinary', 'offline'] as const) test(`calculation preview holds without sending, then ${exit} cancels without replay`, async () => {
   let calls = 0;

@@ -22,7 +22,6 @@ import { createStoragePressure } from '../src/data/storage-pressure.ts';
 import { viewForRoute } from '../src/state/view-session.ts';
 import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
 import { actionAvailability } from '../src/ui/action-state.ts';
-import { isDevelopmentPort } from '../shared/development.ts';
 import { attachPanelKeyboard } from '../src/views/side-panel-controls.ts';
 import { readModuleSource } from './helpers/module-source.ts';
 import test from 'node:test';
@@ -129,7 +128,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'isDevelopmentPort', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -156,7 +155,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = (options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}});
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate(clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, isDevelopmentPort, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 

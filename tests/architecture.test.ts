@@ -59,11 +59,8 @@ test('product literal imports resolve and runtime/type file graphs have no cycle
 test('browser modules belong to real page entries or the generated worker, with separate publication boundaries', () => {
   const entries = ['public/index.html', 'public/love.html'].flatMap(file =>
     [...source(file).matchAll(/<script\b[^>]*src="\/(src\/[^"?]+)[^"]*"/g)].map(([, entry]) => entry));
-  assert.deepEqual(entries.sort(), ['src/dev/account-preview.ts', 'src/dev/control-colors.ts', 'src/dev/shared-chart-preview.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
-  assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/control-colors\.ts"/,
-    'the temporary colour preview is an explicitly development-only page entry');
-  assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/account-preview\.ts"/,
-    'the account mockup is an explicitly development-only page entry');
+  assert.deepEqual(entries.sort(), ['src/entry.ts', 'src/stories/vessel-of-love.ts']);
+  assert.doesNotMatch(source('public/index.html'), /data-development/);
   const reachable = new Set();
   function visit(file: string) {
     if (reachable.has(file)) return;

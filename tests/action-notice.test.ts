@@ -81,7 +81,7 @@ test('position prefers above and falls below when there is no room, staying in n
   assert.equal(h.panel().style.left,'64px');
 });
 
-import * as shared from '../src/dev/shared-chart-preview.ts';
+import * as shared from './helpers/preview/shared-chart-preview.ts';
 function chartMessages(h: ReturnType<typeof harness>, copyOutcome = () => 'success') {
   assert.equal(typeof shared.createSharedChartMessages,'function','both chart actions must use the shared surface');
   let messages: ReturnType<typeof shared.createSharedChartMessages>;

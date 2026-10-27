@@ -71,7 +71,7 @@ test('library presentation preserves repeated existing IDs without deduplicating
 });
 
 test('edit availability is identical in menu and card-catalog rows while ready cards stay openable', async t => {
- const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
  const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
  const {renderChartLibraryRow}=await import('../src/views/library.ts');
  const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
@@ -88,7 +88,7 @@ test('edit availability is identical in menu and card-catalog rows while ready c
 });
 test('live connection changes update New and every Edit without resetting the list or bypassing guards', async t=>{
  const {attachChartLibrary}=await import('../src/views/library.ts');
- const {createStandConnection}=await import('../src/dev/stand-connection.ts');
+ const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
  const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
  const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
  const nodes=new Map(), handlers=new Map();let newCalls=0,editCalls=0;

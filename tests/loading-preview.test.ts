@@ -70,14 +70,14 @@ test('an independently opened tab does not inherit preview mode from a URL', () 
 });
 
 for (const href of ['https://forma.example/?preview=loading', 'http://localhost:8080/?preview=loading'] as const) {
-  test(`outside the stand the mode and button remain disabled even with remembered preview: ${href}`, () => {
+  test(`production and other stands use the same real preview toggle: ${href}`, () => {
+    assert.equal(harness(href).active, false, 'query flags cannot activate preview');
     const storage = memory(); storage.setItem(KEY, '1');
     const h = harness(href, storage);
-    assert.equal(h.active, false);
-    assert.equal(h.button.hidden, true);
+    assert.equal(h.active, true); assert.equal(h.button.hidden, false);
     h.button.click();
-    assert.deepEqual(h.events, []);
-    assert.equal(h.listeners.size, 0);
+    assert.equal(storage.getItem(KEY), null);
+    assert.deepEqual(h.events, [['save'], ['reload', href]]);
   });
 }
 

@@ -18,18 +18,8 @@ function prepareJournal():Promise<Journal|undefined> {
   return journalReady;
 }
 try {
-  // The release build removes this branch before resolving the stand graph.
-  // Source mode waits for the request gate before startup reads data.
-  if (typeof __FORMA_RELEASE__ === 'undefined' || !__FORMA_RELEASE__) {
-    const stand = document.querySelector<HTMLScriptElement>('script[data-development][src="/src/dev/control-colors.ts"]');
-    if (stand) {
-      const {standTransport} = await import('./dev/control-colors.ts');
-      if (standTransport) {
-        const {configureTransportSimulation} = await import('./data/http-transport.ts');
-        configureTransportSimulation(standTransport.connection, standTransport.fetch);
-      }
-    }
-  }
+  // One palette owner restores the chosen drawing style before the real startup.
+  if (document.getElementById('toggleLoadingPreview')) await import('./preview/control-colors.ts');
   void prepareJournal();
   const startup=await import('./startup.ts');
   // Only a built, complete public bundle is eligible for offline installation.

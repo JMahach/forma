@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHttpTransport, configureTransportSimulation, fetchResource, getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
-import { createStandConnection } from '../src/dev/control-colors.ts';
+import { createStandConnection } from './helpers/preview/stand-connection.ts';
 
 test('offline prevents a request; returning online permits it without replaying the rejected call', async () => {
   const mode = createStandConnection(); let calls = 0;

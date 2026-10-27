@@ -42,7 +42,7 @@ apiTest('the page loads the complete frontend module graph through public source
   const entryPoints = [...page.body.matchAll(/<script\b([^>]*)>/g)]
     .filter(([, attributes]) => /\btype=["']module["']/.test(attributes))
     .map(([, attributes]) => attributes.match(/\bsrc=["']([^"']+)["']/)?.[1]);
-  assert.deepEqual(entryPoints, ['/src/dev/control-colors.ts', '/src/dev/account-preview.ts', '/src/dev/shared-chart-preview.ts', '/src/entry.ts']);
+  assert.deepEqual(entryPoints, ['/src/entry.ts']);
   const story = await request('/love');
   assert.equal(story.status, 200);
   assert.match(story.headers.get('content-type') ?? '', /html/);

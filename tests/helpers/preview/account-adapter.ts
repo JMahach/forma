@@ -1,6 +1,6 @@
-// Stand-only transport for reviewing forms. Never sends mail, opens Telegram,
+// Preview-only transport for reviewing forms. Never sends mail, opens Telegram,
 // creates a real session or changes the user's stored charts.
-import type { AccountRequest, AccountReply, AccountScreen, AccountIdentity } from '../state/account-flow.ts';
+import type { AccountRequest, AccountReply, AccountScreen, AccountIdentity } from '../../../src/state/account-flow.ts';
 import { standConnection } from './stand-connection.ts';
 const previewIdentity: AccountIdentity = { email: 'anna@example.com', telegramHandle: '@username' };
 export function accountPreviewIdentity(screen: AccountScreen): AccountIdentity | null {

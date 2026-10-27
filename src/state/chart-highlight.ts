@@ -2,7 +2,7 @@ import type { HighlightStyle } from '../scene/geometry/drawing-presentation.ts';
 
 // Current presentation only: changing it never alters a chart or its selection.
 export function createChartHighlight() {
-  let current: HighlightStyle = 'outline';
+  let current: HighlightStyle = 'glow';
   const listeners = new Set<(style: HighlightStyle) => void>();
   return {
     get current() { return current; },

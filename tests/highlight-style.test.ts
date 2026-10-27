@@ -34,12 +34,12 @@ test('both highlight styles retain physical paint, pressed selection and camera 
 
 test('highlight preference changes once, ignores invalid values and supports unsubscribe', () => {
   const style = createChartHighlight(), values: string[] = [];
-  assert.equal(style.current, 'outline');
+  assert.equal(style.current, 'glow');
   const unsubscribe = style.subscribe(value => values.push(value));
-  style.set('glow'); style.set('glow'); style.set('invalid'); style.set('outline');
-  assert.deepEqual(values, ['glow', 'outline']);
-  unsubscribe(); style.set('glow');
-  assert.deepEqual(values, ['glow', 'outline']);
+  style.set('outline'); style.set('outline'); style.set('invalid'); style.set('glow');
+  assert.deepEqual(values, ['outline', 'glow']);
+  unsubscribe(); style.set('outline');
+  assert.deepEqual(values, ['outline', 'glow']);
 });
 
 

@@ -125,7 +125,7 @@ test('real release build produces complete compressed browser entries without de
     contents.set(entry.file, bytes.toString());
     if (entry.file.endsWith('.js')) {
       moduleReferences(bytes.toString());
-      assert.doesNotMatch(bytes.toString(), /__FORMA_RELEASE__|data-development|forma\.control-colors|stand-connection-options/);
+      assert.doesNotMatch(bytes.toString(), /__FORMA_RELEASE__|data-development|stand-connection-options|forma\.account-preview|calculationPreviewMode|shared-copy-options/);
     }
     assert.deepEqual(gunzipSync(await fs.readFile(path.join(outdir, entry.gzip))), bytes, `${route}: gzip bytes`);
     assert.deepEqual(brotliDecompressSync(await fs.readFile(path.join(outdir, entry.br))), bytes, `${route}: Brotli bytes`);
@@ -134,6 +134,12 @@ test('real release build produces complete compressed browser entries without de
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
   assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors|account-preview|shared-chart-preview/, 'stand studies stay out of the release');
+  assert.match(contents.get('index.html'), /id="toggleLoadingPreview"/);
+  const compiled = [...contents].filter(([name]) => name.endsWith('.js')).map(([,text]) => text).join('\n');
+  for (const token of ['toggleControlColors', 'chart-highlight-switch', 'forma.chart-highlight.v1', 'forma.loading-preview.v1']) {
+    assert.ok(compiled.includes(token), `release includes the shared control: ${token}`);
+  }
+  assert.doesNotMatch(compiled, /forma\.account-preview|calculationPreviewMode|shared-copy-options|standConnection/);
   assert.match(contents.get('index.html'), /<button\b[^>]*id="randomChartButton"/, 'the regular random-card action survives release compilation');
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
