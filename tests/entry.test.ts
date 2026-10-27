@@ -57,15 +57,19 @@ function installGlobals(values: Record<string, unknown>) {
 }
 
 async function runEntry(t: test.TestContext, startup: string, withArt = false,
-  {stand = false, devSource = '', release, preloadStand = false,
+  {stand = false, devSource = '', release, preloadStand = false, offlineSource,
     journalSource, serviceWorkers, transportSource = `export {configureTransportSimulation, fetchResource} from ${JSON.stringify(transportURL)};`}: {
-      serviceWorkers?: Pick<ServiceWorkerContainer,'register'>; stand?: boolean; devSource?: string; release?: boolean; journalSource?: string; preloadStand?: boolean; transportSource?: string;
+      serviceWorkers?: Pick<ServiceWorkerContainer,'register'>; stand?: boolean; devSource?: string; release?: boolean; journalSource?: string; preloadStand?: boolean; transportSource?: string; offlineSource?: string;
     } = {}) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-entry-'));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   await fs.writeFile(path.join(temporary, 'package.json'), '{"type":"module"}');
   await fs.writeFile(path.join(temporary, 'entry.ts'), source);
   await fs.writeFile(path.join(temporary, 'startup.ts'), startup);
+  if(offlineSource!==undefined){
+    await fs.mkdir(path.join(temporary,'offline'));
+    await fs.writeFile(path.join(temporary,'offline/page-coordinator.ts'),offlineSource);
+  }
   if(journalSource!==undefined)await fs.writeFile(path.join(temporary,'journal.ts'),journalSource);
   await fs.mkdir(path.join(temporary, 'dev'));
   await fs.mkdir(path.join(temporary, 'data'));
@@ -74,6 +78,7 @@ async function runEntry(t: test.TestContext, startup: string, withArt = false,
   await fs.writeFile(standFile, devSource);
   const h = browser(withArt, stand ? pathToFileURL(standFile).href : undefined);
   if(journalSource!==undefined)h.document.body.dataset={appVersion:'0.2-test',appEnvironment:'stand'};
+  if(offlineSource!==undefined)h.document.body.dataset.offlineVersion='a'.repeat(64);
   const restoreGlobals = installGlobals({ document: h.document, location: h.location,
     fetch: async () => new Response('ordinary'), window:new EventTarget(), navigator:{serviceWorker:serviceWorkers}, __FORMA_RELEASE__: release });
   configureTransportSimulation(null);
@@ -81,7 +86,7 @@ async function runEntry(t: test.TestContext, startup: string, withArt = false,
     const preloaded = preloadStand ? import(pathToFileURL(standFile).href) : null;
     await import(pathToFileURL(path.join(temporary, 'entry.ts')).href);
     await preloaded;
-    if(journalSource!==undefined){await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));}
+    if(journalSource!==undefined||offlineSource!==undefined){await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));}
   }
   finally {
     configureTransportSimulation(null);
@@ -238,4 +243,28 @@ test('offline registration failure never replaces the working application with s
     {release:true,serviceWorkers:{register:()=>Promise.reject(new Error('Browser denied offline storage'))}});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.nodes.get('chartLoadingRetry')!.hidden,true);
+});
+
+test('release connects a queued calculation mismatch to the existing page refresh without reloading directly',async t=>{
+ const h=await runEntry(t,`
+  export function prepareOfflineUpdate(){return false;}
+  export function offlineRestored(){return false;}
+  export function subscribeOfflineReady(){return()=>{};}
+  export function offlineReady(){return Promise.resolve();}
+  export function connectOfflineUpdates(refresh){refresh();}
+  document.querySelector('.app-shell').dataset.shellReady='true';`,false,{
+  release:true,serviceWorkers:{register:async()=>({} as ServiceWorkerRegistration)},
+  offlineSource:`
+   export function holdOfflineInput(){throw new Error('Discovery must not hold input');}
+   export function attachOfflinePage(options){
+    const shell=document.querySelector('.app-shell');
+    shell.dataset.prepared=String(options.owner.prepare());
+    return {refresh(){shell.dataset.refreshes=String(Number(shell.dataset.refreshes??0)+1);return Promise.resolve();},
+      check(){shell.dataset.checks=String(Number(shell.dataset.checks??0)+1);return Promise.resolve();}};
+   }`,
+ });
+ assert.equal(h.shell.dataset.shellReady,'true');
+ assert.equal(h.shell.dataset.prepared,'false');
+ assert.equal(h.shell.dataset.refreshes,'2','startup discovery and the queued mismatch reach the same page owner');
+ assert.equal(h.shell.dataset.checks,'1');assert.equal(h.reloads,0);
 });

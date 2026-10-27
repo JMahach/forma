@@ -42,6 +42,7 @@ try {
       const page=attachOfflinePage({registration,serviceWorker:navigator.serviceWorker,loadedVersion,
         owner:{prepare:startup.prepareOfflineUpdate,restored:startup.offlineRestored,subscribe:startup.subscribeOfflineReady},
         hold:()=>holdOfflineInput(window),reload:()=>location.reload()});
+      startup.connectOfflineUpdates(()=>{void page.refresh();});
       void page.refresh();void startup.offlineReady().then(()=>page.check()).catch(()=>{});
     }).catch(()=>{}); }
     catch { /* Browser storage/security restrictions must not hide the working app. */ }

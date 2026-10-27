@@ -41,23 +41,37 @@ export function createHttpTransport({ connection, fetch: send = (...args) => glo
     } catch (error) { stop(); throw error; }
   };
 }
-let simulation: typeof globalThis.fetch | null = null;
+let simulatedFetch: typeof globalThis.fetch | null = null;
 let connectionSource: ConnectionSource | null = null;
 export function configureTransportSimulation(connection: ConnectionSource | null, fetch?: typeof globalThis.fetch) {
   connectionSource = connection;
-  simulation = connection ? createHttpTransport({ connection, fetch }) : null;
+  simulatedFetch = connection ? fetch ?? null : null;
 }
-export const fetchResource: typeof globalThis.fetch = (input, options) => simulation ? simulation(input, options) : globalThis.fetch(input, options);
+// Browser connectivity and the optional stand mode share the same gate. Ready
+// data never reaches this boundary; reconnecting does not replay a request.
+export const fetchResource: typeof globalThis.fetch = createHttpTransport({
+  connection: { get current() { return getConnectionMode(); }, subscribe: subscribeConnection },
+  fetch: (input, options) => (simulatedFetch ?? globalThis.fetch)(input, options),
+});
 
 export function getConnectionMode(): ConnectionMode {
-  return connectionSource?.current ?? (typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'online');
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+  return connectionSource?.current ?? 'online';
 }
 export function subscribeConnection(listener: (mode: ConnectionMode) => void): () => void {
-  if (connectionSource) return connectionSource.subscribe(listener);
-  const update = () => listener(getConnectionMode()); update();
-  if (typeof window === 'undefined') return () => {};
-  window.addEventListener('online', update); window.addEventListener('offline', update);
-  return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  let previous: ConnectionMode | undefined;
+  const update = () => {
+    const mode = getConnectionMode();
+    if (mode !== previous) { previous = mode; listener(mode); }
+  };
+  const stopSimulation = connectionSource?.subscribe(update);
+  const events = typeof window === 'undefined' ? null : window;
+  events?.addEventListener('online', update); events?.addEventListener('offline', update);
+  update();
+  return () => {
+    stopSimulation?.();
+    events?.removeEventListener('online', update); events?.removeEventListener('offline', update);
+  };
 }
 
 export interface HttpResponseError extends Error { code?: string; status?: number; choices?: unknown; details?: unknown }

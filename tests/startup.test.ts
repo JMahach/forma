@@ -83,7 +83,10 @@ type LibraryFixture = Omit<TestStub<LibraryOptions>, 'getCharts'> & {
   getCharts(): readonly TestStub<ReturnType<LibraryOptions['getCharts']>[number]>[];
 };
 type StartupLocation = Partial<Pick<Location, 'href' | 'pathname' | 'port' | 'hostname' | 'search' | 'reload'>>;
-type StartupExports = {connectJournal(journal: Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'>):Promise<void>};
+type StartupExports = {
+  connectJournal(journal: Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'>):Promise<void>;
+  connectOfflineUpdates(refresh:()=>void):void;
+};
 type LoadApp = () => Promise<{startApp(ports: StartupPorts): unknown}>;
 type AccountFactory = (options: Parameters<typeof import('../src/account.ts').attachAccount>[0]) => AccountFixture;
 
@@ -126,7 +129,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'isDevelopmentPort', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'isDevelopmentPort', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -939,6 +942,40 @@ for(const source of ['view','versions'] as const)test(`early ${source} failure c
  const state=await inspect.state();assert.equal(state.status,'ready');if(state.status==='ready')assert.equal(state.count,0);
 });
 
+
+test('an early incompatible calculation response reaches the release updater attached after startup',async t=>{
+ const clients=createCalculationClients({cacheOptions:{indexedDB:new IDBFactory()}});
+ let owner:ReturnType<typeof createCalculationUpdates>|undefined,first:Promise<unknown>|undefined,ports:StartupPorts|undefined;
+ t.after(()=>{owner?.close();clients.close();});
+ const expected={calculationVersion:'a'.repeat(64),cyclesVersion:'b'.repeat(64)};
+ const newer={calculationVersion:'c'.repeat(64),cyclesVersion:'d'.repeat(64)};
+ const before=await clients.status(),{document}=startupDocument();
+ const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
+  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;}}),{},undefined,undefined,undefined,
+  options=>{
+   owner=createCalculationUpdates({...options,clients,expected,request:async()=>newer});
+   return {onTimelineChanged:owner.onTimelineChanged,refresh(options){const work=owner!.refresh(options);first??=work;return work;}};
+  });
+ await first;await Promise.resolve();let discoveries=0;
+ startup.connectOfflineUpdates(()=>{discoveries++;});
+ assert.equal(discoveries,1,'the response is retained until entry supplies the existing updater');
+ const next=await ports!.calculationUpdates!.refresh();
+ assert.deepEqual(next,{status:'incompatible',versions:newer});
+ assert.equal(discoveries,2,'the application receives the same connected refresh path');
+ assert.deepEqual(await clients.status(),before,'an old client never confirms a new numerical epoch');
+});
+
+test('an incompatible local window wakes the same updater, but cancelled and unavailable results do not',async()=>{
+ const {document}=startupDocument();let ports:StartupPorts|undefined,discoveries=0;
+ let result:'cancelled'|'unavailable'='cancelled';
+ const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
+  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;}}),{},undefined,undefined,undefined,
+  ()=>({refresh:async()=>({status:result}),onTimelineChanged:async()=>({status:'incompatible'})}));
+ startup.connectOfflineUpdates(()=>{discoveries++;});assert.equal(discoveries,0);
+ result='unavailable';assert.equal((await ports!.calculationUpdates!.refresh()).status,'unavailable');assert.equal(discoveries,0);
+ assert.equal((await ports!.calculationUpdates!.onTimelineChanged(null)).status,'incompatible');
+ assert.equal(discoveries,1);
+});
 
 test('connected view storage reports one failure per outage, recovers on disk success and resets at an account boundary',async t=>{
  const reports:ClientReport[]=[],indexedDB=new IDBFactory();

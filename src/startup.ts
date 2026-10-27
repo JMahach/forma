@@ -38,6 +38,17 @@ import { lifeTimelineForChart } from './domain/cycles.ts';
 type Journal=ReturnType<typeof createJournal>;
 let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
 let applicationFailed=false,connectedJournal:Journal|undefined,connection:Promise<void>|undefined;
+let refreshOffline:(()=>void)|undefined,offlineRefreshPending=false;
+function requestOfflineRefresh() {
+  if (!refreshOffline) { offlineRefreshPending=true; return; }
+  // Discovery is optional; only the existing page/worker handshake may reload.
+  try { refreshOffline(); } catch { /* A failed discovery keeps the current page. */ }
+}
+/** A version response can arrive before entry attaches the release updater. */
+export function connectOfflineUpdates(refresh:()=>void) {
+  refreshOffline=refresh;
+  if (offlineRefreshPending) { offlineRefreshPending=false; requestOfflineRefresh(); }
+}
 // One first startup fact, before the optional journal is available. No snapshot,
 // raw exception, private identity, queue or delivery state lives in this handoff.
 let earlyFailure:{action:ClientActionContext;step:ClientContextStep & {reason:ClientReportReason};occurredAt:number}|undefined;
@@ -114,9 +125,21 @@ const calculationClients = createCalculationClients({ cacheOptions: {pressure: s
 }, natal: {calculationVersion: document.body.dataset.calculationVersion},
   cycles: {cacheVersion: document.body.dataset.cyclesVersion} });
 const dayClient = calculationClients.transit;
-const calculationUpdates = createCalculationUpdates({clients: calculationClients,
+const calculationVersionOwner = createCalculationUpdates({clients: calculationClients,
   observe:action=>connectedJournal?.begin(action)??(earlyCalculation??=earlyObservation(action)),
   expected: {calculationVersion: document.body.dataset.calculationVersion, cyclesVersion: document.body.dataset.cyclesVersion}});
+const calculationUpdates = {
+  async refresh(...args:Parameters<typeof calculationVersionOwner.refresh>) {
+    const result=await calculationVersionOwner.refresh(...args);
+    if (result.status==='incompatible') requestOfflineRefresh();
+    return result;
+  },
+  async onTimelineChanged(...args:Parameters<typeof calculationVersionOwner.onTimelineChanged>) {
+    const result=await calculationVersionOwner.onTimelineChanged(...args);
+    if (result.status==='incompatible') requestOfflineRefresh();
+    return result;
+  },
+};
 if (!previewLoading && getConnectionMode() === 'online') void calculationUpdates.refresh();
 const store = createChartStore({ onStorageError: toast, initialTemporaryChart: savedView?.temporaryChart,
   initialPublicChart:savedView?.publicChart, calculationVersion:document.body.dataset.calculationVersion });
