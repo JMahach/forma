@@ -12,7 +12,7 @@ import { createTransitDays } from './services/transit-days.ts';
 import { createNatalDays } from './services/natal-days.ts';
 import { createPublicFileHandler, readReleaseManifest } from './http/public-files.ts';
 import { createCycles, cyclesCalculationFingerprint } from './services/cycles.ts';
-import { createLifetimeService } from './services/lifetime.ts';
+import { createLifetimeService, LifetimeError } from './services/lifetime.ts';
 
 import { createComputeQueue } from './runtime/compute-queue.ts';
 import { calculationVersion } from './runtime/calculation-version.ts';
@@ -76,6 +76,13 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     const cycles = createCycles({ root, computeQueue, report: journal.report, cacheVersion: cyclesVersion }); cleanup.push(() => cycles.close());
     component='lifetime';
     const lifetime = createLifetimeService({ root, calculationVersion: numericVersion, report: journal.report }); cleanup.push(() => lifetime?.close());
+    // The same reader verifies once before HTTP opens, not inside the first
+    // visitor's request. An unfinished file keeps the existing limited mode.
+    try { await lifetime.getMetadata(); }
+    catch (error) {
+      if (!(error instanceof LifetimeError) || error.code !== 'lifetime_preparing') throw error;
+      console.log('Форма: летопись ещё готовится; остальные функции доступны.');
+    }
     const invalidChartResult = createCalculationFailureReporter('calculator', journal.report);
     component='account';
     const account = await createAccountRuntime({ configuration: accountConfiguration,

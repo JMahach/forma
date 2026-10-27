@@ -8,13 +8,16 @@ import path from 'node:path';
 import os from 'node:os';
 import { Readable } from 'node:stream';
 import { createAccountRuntime } from '../server/accounts.ts';
+import {fileURLToPath} from 'node:url';
+import {createCalculator} from '../server/services/calculate.ts';
+import type {AccountChart} from '../shared/chart-record-contract.ts';
 import { createCityCatalog } from '../server/services/cities.ts';
 import { openDatabase } from '../server/storage/database.ts';
 import { captureResponse } from './helpers/http-response.ts';
 import type { PostfixEntry } from '../server/mail/postfix.ts';
 
 // Both protocol endpoints live only inside this test; no public SMTP or DNS is contacted.
-test('SMTP acceptance, real account verification and restart use one persistent runtime', async t => {
+test('local SMTP code leads to login, saved chart, public link and persistent library after restart', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'forma-smtp-test-'));
   const socketPath = path.join(directory, 'control.sock'), connections = new Set<net.Socket>();
   const entries: PostfixEntry[] = [], jar = new Map<string, string>();
@@ -73,18 +76,20 @@ test('SMTP acceptance, real account verification and restart use one persistent 
   control.listen(socketPath); await once(control, 'listening');
   const configuration = { stateDir: path.join(directory, 'state'), origins: ['http://localhost:3636'],
     trustLoopbackProxy: false, postfix: { controlSocket: socketPath, smtpPort: (smtp.address() as net.AddressInfo).port } };
-  const charts = { cities: createCityCatalog([]), calculationVersion: 'runtime-test',
-    calculate: Object.assign(async () => { throw new Error('Library reads do not calculate'); }, { close: async () => {} }) };
+  const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});
+  t.after(()=>calculate.close());
+  const charts = { cities: createCityCatalog([{id:'1',name:'Test City',aliases:['Test City'],country:'Test',region:'',
+    timezone:'UTC',latitude:0,longitude:0}]), calculationVersion: 'runtime-test', calculate };
   const runtimeOptions = { configuration, charts, now: () => clock, report: (event: { event: string }) => { events.push(event.event); } };
   let runtime = await createAccountRuntime(runtimeOptions);
   t.after(() => runtime.close());
-  async function request(url: string, body?: unknown) {
+  async function request(url: string, body?: unknown, guest=false) {
     const req = Object.assign(Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []), {
       method: body ? 'POST' : 'GET', headers: { host: 'localhost:3636', origin: 'http://localhost:3636',
-        cookie: [...jar].map(([key, value]) => `${key}=${value}`).join('; '), 'content-type': 'application/json' },
+        cookie: guest ? '' : [...jar].map(([key, value]) => `${key}=${value}`).join('; '), 'content-type': 'application/json' },
       socket: { remoteAddress: '127.0.0.1' },
     }) as unknown as IncomingMessage;
-    const res = captureResponse(); await (url.startsWith('/api/charts') ? runtime.chartHandler! : runtime.handler)(req, res, new URL(url, 'http://localhost:3636'));
+    const res = captureResponse(); await ((url.startsWith('/api/charts') || url.startsWith('/api/shared-charts')) ? runtime.chartHandler! : runtime.handler)(req, res, new URL(url, 'http://localhost:3636'));
     for (const header of (res.headers['Set-Cookie'] ?? []) as string[]) {
       const pair = header.split(';')[0]!, at = pair.indexOf('='), name = pair.slice(0, at);
       if (header.includes('Max-Age=0;') || header.endsWith('Max-Age=0')) jar.delete(name);
@@ -103,6 +108,18 @@ test('SMTP acceptance, real account verification and restart use one persistent 
   const accountId = (confirmed.body.account as { id: string }).id;
   const library = await request('/api/charts?accountId=' + accountId);
   assert.equal(library.status, 200); assert.deepEqual(library.body.charts, []);
+  const saved=await request('/api/charts',{operationId:'a'.repeat(32),expectedAccountId:accountId,
+    name:'Local mail acceptance',note:'Private note',birth:{source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'}});
+  assert.equal(saved.status,200,JSON.stringify(saved.body));
+  const chartId=saved.body.chartId as string;
+  const own=await request(`/api/charts/${chartId}?accountId=${accountId}`);
+  assert.equal(own.status,200);assert.equal((own.body.chart as AccountChart).note,'Private note');
+  assert.equal((own.body.chart as AccountChart).activations.personality.length,13);
+  assert.equal((own.body.chart as AccountChart).activations.design.length,13);
+  const shared=await request(`/api/shared-charts/${chartId}`,undefined,true);
+  assert.equal(shared.status,200);assert.equal((shared.body.chart as AccountChart).name,'Local mail acceptance');
+  assert.equal('note' in (shared.body.chart as object),false);assert.equal('accountId' in (shared.body.chart as object),false);
+  assert.equal((await request(`/api/charts?accountId=${accountId}`,undefined,true)).status,401);
   assert.equal(cleanups.length, 1, 'Charts reuse the account cleanup timer');
   const database = openDatabase(path.join(configuration.stateDir, 'forma.sqlite'));
   try {
@@ -118,6 +135,9 @@ test('SMTP acceptance, real account verification and restart use one persistent 
   await runtime.close(); runtime = await createAccountRuntime(runtimeOptions);
   const resumed = await request('/api/account'); assert.equal(resumed.status, 200);
   assert.deepEqual(resumed.body.account, confirmed.body.account);
+  const restored=await request(`/api/charts?accountId=${accountId}`);
+  assert.equal(restored.status,200);assert.deepEqual((restored.body.charts as AccountChart[]).map(chart=>chart.id),[chartId]);
+  assert.deepEqual((await request(`/api/charts/${chartId}?accountId=${accountId}`)).body.chart,own.body.chart);
   assert.equal((await request('/api/auth/logout', { sessionId: attemptId })).status, 200);
   assert.equal((await request('/api/account')).body.account, null);
   assert.equal(submissions, 1, 'Restart and logout never resubmit an SMTP message');
