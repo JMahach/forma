@@ -14,6 +14,11 @@ import { createChartRecords } from '../server/services/chart-records.ts';
 import { createChartHandler } from '../server/http/charts.ts';
 import type { AccountChartBirth } from '../shared/chart-record-contract.ts';
 
+import { createChartClient } from '../src/data/chart-client.ts';
+import { createChartActions } from '../src/state/chart-actions.ts';
+import { createViewStore } from '../src/data/view-store.ts';
+import { accountChart } from './helpers/account-chart.ts';
+
 const op = (n:number) => n.toString(16).padStart(32,'0');
 const birth: AccountChartBirth = {source:'transit', birthDate:'2000-01-01', birthTime:'12:00', birthPlace:'',
   utc:'2000-01-01T12:00:32.789Z', activations:{personality:[],design:[]},
@@ -322,4 +327,69 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
   assert.equal((await fresh.events(input,undefined,{owner})).events[0]!.utc,utc);
   assert.equal((await fresh.chart(chartInput,undefined,{owner,event})).chart.utc,utc);
   assert.equal(dateCalls,1);assert.equal(chartCalls,1);
+});
+
+for (const committed of [false, true]) test(`lost save response survives reload and recovers through HTTP without another write (committed=${committed})`, async t => {
+  const f = await fixture(t, async () => accountChart());
+  const access = {accountId: f.accountId, sessionId: f.id};
+  const storage = new Map<string, string>();
+  const getStorage = () => ({getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => {storage.set(key, value);}});
+  let connected = true, loseResponse = true, writes = 0;
+  const requests: {method: string; path: string}[] = [];
+  const client = createChartClient({getSession: () => access, fetch: async (path, options = {}) => {
+    if (!connected) throw new TypeError('offline');
+    const method = options.method ?? 'GET';
+    requests.push({method, path: String(path)});
+    if (method !== 'GET') writes++;
+    if (loseResponse && method !== 'GET' && !committed) {
+      connected = false;
+      throw new TypeError('connection lost before server received the write');
+    }
+    const result = await f.request(String(path), method, options.body ? JSON.parse(String(options.body)) : undefined);
+    if (loseResponse && method !== 'GET') {
+      assert.equal(result.status, 200, 'the database accepted the write before its reply was lost');
+      connected = false;
+      throw new TypeError('reply lost after commit');
+    }
+    return Response.json(result.body, {status: result.status});
+  }});
+  const openPage = () => {
+    const view = createViewStore({getStorage});
+    const saved = view.read();
+    return {view, actions: createChartActions({client, getSession: () => access,
+      library: {open: id => client.own({chartId: id, expectedAccountId: access.accountId}), async forget() {}},
+      async calculate() {throw new Error('recovery must never calculate');}, newId: () => op(701),
+      initialPending: saved?.pendingChartWrites,
+      onPending: pendingChartWrites => {assert.equal(view.write({...saved, version: 1, pendingChartWrites}), true);},
+    })};
+  };
+  const original = openPage();
+  const result = await original.actions.create({name: 'Проверка потерянного ответа', note: 'Не повторять запись',
+    birth: {source: 'transit', utc: birth.utc!}});
+  assert.equal(result.kind, 'unknown'); assert.equal(writes, 1);
+  const pointer = {operationId: op(701), expectedAccountId: access.accountId};
+  assert.deepEqual(original.view.read()?.pendingChartWrites, [pointer]);
+  const reloaded = openPage();
+  assert.deepEqual(reloaded.actions.pending, [pointer]);
+  await assert.rejects(reloaded.actions.recover(pointer));
+  assert.equal(writes, 1, 'offline restoration cannot re-send the save');
+  const beforeRecovery = requests.length;
+  connected = true; loseResponse = false;
+  const recovered = await reloaded.actions.recover(pointer);
+  assert.equal(recovered.kind, committed ? 'settled' : 'unknown');
+  if (recovered.kind === 'settled') {
+    assert.equal(recovered.active, true); assert.equal(recovered.readError, undefined);
+    assert.equal(recovered.chart?.name, 'Проверка потерянного ответа');
+    assert.equal(recovered.chart?.note, 'Не повторять запись');
+  }
+  assert.deepEqual(reloaded.view.read()?.pendingChartWrites, committed ? [] : [pointer]);
+  assert.ok(requests.slice(beforeRecovery).every(request => request.method === 'GET'));
+  assert.ok(requests[beforeRecovery].path.includes('/operations/'));
+  const secondReload = openPage();
+  for (const pending of secondReload.actions.pending) await secondReload.actions.recover(pending);
+  assert.equal(writes, 1, 'subsequent reload and online outcome checks must never write');
+  const library = await f.request(`/api/charts?accountId=${access.accountId}`);
+  assert.equal(library.body.charts.length, committed ? 1 : 0);
+  assert.equal(f.calls(), committed ? 1 : 0, 'recovery never repeats a calculation');
 });
