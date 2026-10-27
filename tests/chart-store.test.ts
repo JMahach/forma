@@ -1,5 +1,6 @@
 import type { SavedChart } from '../shared/chart-types.ts';
 import test from 'node:test';
+import { accountChart, accountNatalChart } from './helpers/account-chart.ts';
 import assert from 'node:assert/strict';
 import { createChartStore } from '../src/data/chart-store.ts';
 import { createChartSession } from '../src/state/chart-session.ts';
@@ -424,4 +425,138 @@ test('legacy chart metadata survives the first per-record edit without rewriting
   const persisted = JSON.parse(storage.getItem(`${CHART_RECORD_PREFIX}${personal.id}`)!).chart;
   assert.equal(persisted.birthTime, original.birthTime);
   assert.deepEqual(persisted.calculation, original.calculation);
+});
+
+
+test('projected account records cannot be persisted or removed by the legacy local writer', () => {
+  const storage = storageHarness([personal]);
+  const store = createChartStore({getStorage: () => storage});
+  const cloud = {...personal, id: 'cloud', name: 'Server chart'};
+  store.projectLibrary([cloud], true);
+  assert.equal(store.has(personal.id), false); assert.equal(store.get('cloud'), cloud);
+  assert.equal(store.persist(), false); assert.equal(store.saveError?.canKeepInMemory, false);
+  assert.throws(() => store.remove('cloud'));
+  assert.throws(() => store.replace([personal]));
+  assert.deepEqual(storage.writes, []);
+  assert.deepEqual(readCharts(storage).map(chart => chart.id), [personal.id]);
+  store.projectLibrary([], true);
+  assert.deepEqual(store.charts, [], 'logout does not restore the prototype collection into the working account view');
+});
+
+
+test('a downloaded outdated account chart remains listed but cannot become the restored drawing', () => {
+  const store = createChartStore({getStorage: () => storageHarness()});
+  store.projectLibrary([personal], true, []);
+  assert.equal(store.charts.length, 1);
+  const session = createChartSession({store, initialSelectedId: personal.id});
+  assert.equal(session.selectedId, 'current-transit'); assert.equal(session.hasCurrent, false);
+});
+
+
+test('an older private projection cannot borrow readiness from a public chart with the same ID', () => {
+ const chart={id:'a'.repeat(32),name:'Shared'} as never;
+ const store=createChartStore({getStorage:()=>({getItem:()=>null,setItem(){},removeItem(){},length:0,key:()=>null})});
+ store.showPublic(chart);assert.equal(store.has('a'.repeat(32)),true);
+ store.projectLibrary([chart],true,[]);
+ assert.equal(store.has('a'.repeat(32)),false);
+});
+
+
+test('a tab owns one temporary chart independently of legacy records, public viewing and account projection', () => {
+  const storage = storageHarness([personal]);
+  const bytes = storage.values.get(STORAGE_KEY);
+  const first = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({id:'temporary-one'}));
+  const store = createChartStore({getStorage:()=>storage,initialTemporaryChart:first});
+  assert.equal(store.temporaryChart?.id, first.id);
+  assert.equal(store.has(first.id), true);
+  assert.equal(store.get(first.id), store.temporaryChart);
+  assert.deepEqual(store.charts.map(chart=>chart.id), ['personal']);
+  store.projectLibrary([], true);
+  store.showPublic({...first,id:'foreign'});
+  assert.equal(store.has(first.id), true, 'sign-in projection does not remove the tab chart');
+  assert.equal(store.has('foreign'), true);
+  const replacement = {...first,id:'temporary-two',name:'New result'};
+  store.setTemporary(replacement);
+  assert.equal(store.has(first.id), false);
+  assert.equal(store.get(replacement.id)?.name, 'New result');
+  assert.equal(store.has('foreign'), true, 'own and foreign charts have separate owners');
+  assert.deepEqual(store.charts, []);
+  replacement.name='Changed outside owner';
+  assert.equal(store.temporaryChart?.name, 'New result');
+  assert.equal(store.clearTemporary(first.id), false, 'a late save cannot remove a newer temporary chart');
+  assert.equal(store.clearTemporary('temporary-two'), true);
+  assert.equal(store.temporaryChart, null);
+  assert.equal(storage.values.get(STORAGE_KEY), bytes);
+  assert.deepEqual(storage.writes, [], 'no guest collection or account write is created');
+});
+
+test('a failed temporary replacement keeps the last ready result even when persistent storage is denied', () => {
+  const first = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({id:'temporary'}));
+  const store=createChartStore({getStorage(){throw new Error('denied');},initialTemporaryChart:first});
+  assert.throws(()=>store.setTemporary({...first,personality:[65]}));
+  assert.equal(store.temporaryChart?.id,first.id);
+  assert.deepEqual(store.temporaryChart?.personality,first.personality);
+  store.projectLibrary([],false);
+  assert.equal(store.has(first.id),true);
+  const session=createChartSession({store,initialSelectedId:first.id});
+  assert.equal(session.selectedId,first.id);
+  assert.equal(session.hasCurrent,true);
+});
+
+
+test('account projection keeps unchanged display records and order without ignoring availability', () => {
+  const storage = storageHarness(), store = createChartStore({getStorage: () => storage});
+  const first = accountChart(1), second = accountChart(2);
+  store.projectLibrary([first, second], true);
+  const list = store.charts, one = list[0], two = list[1];
+  store.projectLibrary([first, second], false, [second.id]);
+  assert.equal(store.charts, list, 'same source records retain the rendered list');
+  assert.equal(store.storageAvailable, false);
+  assert.equal(store.has(first.id), false, 'calculation readiness is independent of list identity');
+  assert.equal(store.has(second.id), true);
+  assert.equal(one!.createdAt, '', 'account records are adapted at their projection owner');
+  assert.equal('createdAt' in first, false, 'the source record is not mutated');
+  const changed = {...first, name: 'New name', revision: 2, publicRevision: 2};
+  store.projectLibrary([changed, second], true);
+  assert.notEqual(store.charts, list);
+  assert.notEqual(store.charts[0], one);
+  assert.equal(store.charts[1], two, 'the unchanged neighbour keeps its display record');
+  const renamed = store.charts[0];
+  store.projectLibrary([second, changed], true);
+  assert.deepEqual(store.charts, [two, renamed], 'reordering retains the existing display records');
+  store.projectLibrary([], true);
+  assert.deepEqual(store.charts, []);
+  assert.equal(storage.writes.length, 0, 'a projection never persists the account in legacy storage');
+});
+
+
+test('the navigation list retains its current temporary and library projection until either changes', () => {
+  const store=createChartStore({getStorage:()=>storageHarness()});
+  const first=accountChart(1);store.projectLibrary([first],true);
+  const saved=store.charts;
+  assert.equal(store.displayCharts,saved);
+  const temporary=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-navigation'}));
+  store.setTemporary(temporary);
+  const menu=store.displayCharts;
+  assert.equal(menu[0],store.temporaryChart);assert.equal(menu[1],saved[0]);
+  for(let i=0;i<10;i++)assert.equal(store.displayCharts,menu);
+  store.projectLibrary([first],false,[]);
+  assert.equal(store.displayCharts,menu,'a readiness change does not rebuild navigation');
+  store.clearTemporary(temporary.id);
+  assert.equal(store.displayCharts,saved);
+});
+
+
+test('one public source stays outside both the tab temporary and the account library',()=>{
+  const a=accountNatalChart(109,'2'),b=accountNatalChart(110,'2');
+  const publicPart=(value:typeof a)=>{const {accountId,note,noteRevision,publicRevision,...result}=value;return result;};
+  const temporary={...accountNatalChart(111),id:'own-temporary',createdAt:'',updatedAt:''};
+  const store=createChartStore({initialTemporaryChart:temporary,initialPublicChart:publicPart(a),calculationVersion:a.calculationVersion,getStorage:()=>{throw Error('no guest library');}});store.projectLibrary([],false);
+  assert.equal(store.has(a.id),true);assert.equal(store.get(a.id)?.note,'');assert.deepEqual(store.charts,[]);
+  assert.deepEqual(store.displayCharts.map(c=>c.id),[temporary.id]);
+  const input=publicPart(b);store.acceptPublic(input);input.name='Mutated outside';
+  assert.equal(store.publicChart?.name,b.name);assert.equal(store.get(a.id),undefined);assert.equal(store.temporaryChart?.id,temporary.id);
+  assert.throws(()=>store.acceptPublic({...publicPart(a),note:'private'} as unknown as ReturnType<typeof publicPart>));
+  assert.equal(store.publicChart?.id,b.id);assert.equal(store.clearPublic(a.id),false);assert.equal(store.publicChart?.id,b.id);
+  assert.equal(store.clearPublic(b.id),true);assert.equal(store.publicChart,null);assert.equal(store.temporaryChart?.id,temporary.id);
 });

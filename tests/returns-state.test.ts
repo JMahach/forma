@@ -613,3 +613,67 @@ test('a failed return chart preserves its cause until a new selection clears it'
  control.select(natal()); await control.open(); await control.selectEvent(event());
  assert.equal(control.state.chartErrorCode,'server_unavailable'); control.reset(); assert.equal(control.state.chartErrorCode,'');
 });
+
+
+test('adopting an own saved identity keeps the selected return, filters and prepared lists',async()=>{
+  const {control,calls}=fast(),original=natal({id:'foreign'}),saved={...original,id:'own',name:'Own'};
+  const records=new Map([[original.id,original],[saved.id,saved]]);
+  const session=createChartSession({store:{get:id=>records.get(id),has:id=>records.has(id)},getReturns:()=>control});
+  session.select(original.id);await control.open();await control.setYear(2028);await control.selectEvent(event().id);
+  session.publish(session.expect('return'),control.current,control.selectedEvent);
+  const current=control.current,selected=control.selectedEvent,lists=control.state.events,requests=calls.length;
+  assert.equal(session.adopt(saved.id,original.id),true);
+  assert.equal(control.natal,saved);assert.equal(control.current,current);assert.equal(control.selectedEvent,selected);
+  assert.equal(control.opened,true);assert.equal(control.year,2028);assert.deepEqual(control.state.events,lists);
+  assert.equal(session.current.secondary,current);assert.equal(session.current.event,selected);
+  assert.equal(session.selectedId,saved.id);assert.equal(calls.length,requests);
+});
+
+
+test('return jobs carry only the selected natal ownership supplied by the library', async () => {
+  const requests: {kind: string; owner: unknown}[] = [];
+  const own = natal({id:'123'}), temporary = natal({id:'temporary'});
+  const owner = {chartId:'123', expectedAccountId:'7'};
+  const control = createReturnsController({getOwner: chart => chart.id === own.id ? owner : null,
+    client: {
+      events: async (input, _signal, options) => { requests.push({kind:'events', owner:options?.owner}); return packet(input); },
+      chart: async (input, _signal, options) => { requests.push({kind:'chart', owner:options?.owner}); return chartPacket(event(input.body,input.eventUtc)); },
+    }});
+  await control.select(own);
+  await control.selectEvent(event().id);
+  assert.equal(requests.length,majorBodies.length+1);
+  assert.ok(requests.every(request=>request.owner===owner));
+  requests.length=0;
+  await control.select(temporary);
+  await control.selectEvent(event().id);
+  assert.ok(requests.every(request=>request.owner===null));
+});
+
+
+test('adopting a saved natal preserves ready returns and transfers late temporary results once ready', async () => {
+  const hold=deferred(),calls:{body:string;chartId:string}[]=[];
+  const temporary=natal({id:'temporary'}), saved=natal({id:'123'});
+  const control=createReturnsController({getOwner: chart=>chart.id==='123'?{chartId:'123',expectedAccountId:'7'}:null,
+    client:{events:async input=>{if(input.body==='saturn')await hold.promise;return packet(input);},
+      syncPrepared:async(input,owner)=>{calls.push({body:input.body,chartId:owner.chartId});}}});
+  const loading=control.select(temporary);await tick();
+  assert.equal(control.adopt(saved),true);
+  assert.deepEqual(calls.map(call=>call.body).sort(),majorBodies.filter(body=>body!=='saturn').sort());
+  hold.resolve!();await loading;await tick();
+  assert.deepEqual(calls.map(call=>call.body).sort(),[...majorBodies].sort());
+  assert.ok(calls.every(call=>call.chartId==='123'));
+});
+
+
+test('an exact return finishing after adoption is attached to the confirmed card', async () => {
+  const hold=deferred(),calls:string[]=[];
+  const temporary=natal({id:'temporary'}),saved=natal({id:'123'});
+  const control=createReturnsController({getOwner: chart=>chart.id==='123'?{chartId:'123',expectedAccountId:'7'}:null,
+    client:{events:async input=>packet(input),chart:async()=>hold.promise,
+      syncPrepared:async input=>{calls.push(input.body);}}});
+  await control.select(temporary);
+  const pending=control.selectEvent(event().id);await tick();
+  control.adopt(saved);calls.length=0;
+  hold.resolve!(chartPacket(event()));await pending;
+  assert.deepEqual(calls,['saturn']);
+});

@@ -64,7 +64,7 @@ test('four source facts use two adjoining black-red lanes and a fifty-fifty gate
   const shared = gate(root, 63), disc = shared!.querySelector('.bg-gate-disc');
   assert.equal(disc!.getAttribute('r'), '8.4'); assert.equal(disc!.getAttribute('stroke'), 'none');
   assert.deepEqual(shared!.querySelectorAll('circle').map(node => node.getAttribute('class')),
-    [null, 'bg-gate-disc', 'bg-gate-glow', 'bg-gate-highlight'], 'the inset ring follows the semantic disc; inactive fill stays above it without extra source marks');
+    ['bg-gate-hit', 'bg-gate-disc', 'bg-gate-glow', 'bg-gate-highlight'], 'the inset ring follows the semantic disc; inactive fill stays above it without extra source marks');
   assert.equal(shared!.querySelectorAll('path').length, 0, 'source ownership adds no arcs or extra outlines');
   const gradientId = disc!.getAttribute('fill')!.match(/^url\(#(.+)\)$/)?.[1];
   const stops = root.querySelector(`linearGradient[id="${gradientId}"]`)!.querySelectorAll('stop');

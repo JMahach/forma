@@ -30,9 +30,10 @@ def calculate(request):
         return dict(utc=request['utc'], designUtc=civil.iso(astro.tt_to_datetime(design_jd)),
                     designArcResidualDegrees=residual, longitudes=list(values.values()),
                     engine='Swiss Ephemeris ' + astro.swe.version)
-    city, offset, fold = None, 'UTC+00:00', 0
+    city, offset, fold, ambiguous = None, 'UTC+00:00', 0, False
     if mode == 'transit':
-        moment = dt.datetime.now(civil.UTC).replace(microsecond=0)
+        moment = (civil.transit_utc(request['utc']) if 'utc' in request
+                  else dt.datetime.now(civil.UTC).replace(microsecond=0))
         name, date, time, place, timezone = 'Транзит', moment.strftime('%Y-%m-%d'), moment.strftime('%H:%M'), '', 'UTC'
     elif mode == 'natal':
         city = request.get('city')
@@ -43,19 +44,21 @@ def calculate(request):
             raise ChartError('name_required', 'Добавьте имя карты.')
         date, time, place, timezone = request.get('date'), request.get('time'), city['name'], city['timezone']
         dates.validate_natal_date(date)
-        moment, offset, fold = civil.local_to_utc(date, time, timezone, request.get('fold'))
+        moment, offset, fold, ambiguous = civil.resolve_local_time(date, time, timezone, request.get('fold'))
         dates.validate_natal_moment(moment)
     else:
         raise ChartError('invalid_mode', 'Неизвестный режим расчёта.')
+    # Validated explicit transit UTC retains milliseconds as well as its numbers.
+    utc = request['utc'] if mode == 'transit' and 'utc' in request else civil.iso(moment)
     jd = astro.julian_tt(moment)
     personality = astro.activations(jd)
     design_jd, residual = astro.design_time(jd)
     design = astro.activations(design_jd)
     design_utc = civil.iso(astro.tt_to_datetime(design_jd))
-    return {'chart': dict(
+    return {'timeResolution': dict(ambiguous=ambiguous), 'chart': dict(
         id=None, name=name, personality=sorted(set(a['gate'] for a in personality)), design=sorted(set(a['gate'] for a in design)),
         source='transit' if mode == 'transit' else 'calculated', birthDate=date, birthTime=time, birthPlace=place, timezone=timezone,
-        utc=civil.iso(moment), utcOffset=offset, fold=fold, designUtc=design_utc, cityId=city['id'] if city else None, city=city,
+        utc=utc, utcOffset=offset, fold=fold, designUtc=design_utc, cityId=city['id'] if city else None, city=city,
         activations=dict(personality=personality, design=design), engine='Swiss Ephemeris ' + astro.swe.version, ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
         timezoneDatabase='IANA tzdata ' + civil.tzdata.__version__, nodeModel='true', zodiac='tropical-geocentric-apparent',
         designArcResidualDegrees=residual, updatedAt=civil.iso(dt.datetime.now(civil.UTC)), createdAt=civil.iso(dt.datetime.now(civil.UTC)), note='',

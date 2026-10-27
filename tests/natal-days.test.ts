@@ -61,6 +61,51 @@ test('singleflight queue runs one day at a time and short-lived memory never sur
   await replacement.get('1990-06-18', 'UTC'); assert.equal(calls.length, 6);
 });
 
+test('default natal memory retains ten results and the eleventh evicts the least recently read day', async () => {
+  const calls: string[] = [];
+  const service = createNatalDays({ now: () => 1_000, generateDay: async (date, timezone) => {
+    calls.push(date); return makeDay(date, timezone);
+  } });
+  const dates = Array.from({ length: 11 }, (_, index) => `1990-06-${String(index + 1).padStart(2, '0')}`);
+  const packets = new Map<string, DayPacket>();
+  for (const date of dates.slice(0, 10)) packets.set(date, await service.get(date, 'UTC'));
+  assert.equal(service.size, 10);
+  for (const date of dates.slice(0, 10)) assert.equal(await service.get(date, 'UTC'), packets.get(date));
+  assert.equal(calls.length, 10, 'all ten results remain available without another calculation');
+  await service.get(dates[0]!, 'UTC'); // Reading moves this day ahead of the second day in LRU order.
+  packets.set(dates[10]!, await service.get(dates[10]!, 'UTC'));
+  assert.equal(service.size, 10);
+  for (const date of [dates[0]!, ...dates.slice(2)]) assert.equal(await service.get(date, 'UTC'), packets.get(date));
+  assert.equal(calls.length, 11, 'the ten retained days still reuse their original packets');
+  await service.get(dates[1]!, 'UTC');
+  assert.deepEqual(calls, [...dates, dates[1]!], 'only the evicted second day needs regeneration');
+  assert.equal(service.size, 10);
+});
+
+test('default natal lifetime is ten minutes from preparation and cache reads never extend it', async () => {
+  let instant = 1_000, calls = 0;
+  const started = deferred(), release = deferred();
+  const service = createNatalDays({ now: () => instant, generateDay: async (date, timezone) => {
+    calls++;
+    if (calls === 1) { started.resolve!(); await release.promise; }
+    return makeDay(date, timezone);
+  } });
+  const pending = service.get('1990-06-15', 'UTC');
+  await started.promise;
+  instant = 121_000; release.resolve!();
+  const packet = await pending; // Preparation completed after two minutes of waiting.
+  instant = 601_000; // Ten minutes after the request, but only eight after preparation.
+  assert.equal(await service.get('1990-06-15', 'UTC'), packet);
+  instant = 720_999;
+  assert.equal(await service.get('1990-06-15', 'UTC'), packet);
+  assert.equal(calls, 1);
+  instant = 721_000;
+  assert.equal(service.size, 0, 'the read one millisecond earlier must not renew the deadline');
+  const replacement = await service.get('1990-06-15', 'UTC');
+  assert.notEqual(replacement, packet);
+  assert.equal(calls, 2);
+});
+
 test('failed generation releases admission and same day can be retried', async () => {
   let calls = 0;
   const service = createNatalDays({ root, generateDay: async (date, timezone) => { if (++calls === 1) throw new Error('Unavailable'); return makeDay(date, timezone); } });

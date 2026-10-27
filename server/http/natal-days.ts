@@ -1,3 +1,4 @@
+import { reportServerFailure, type ServerFailureReport } from '../journal/report.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NatalDays } from '../services/natal-days.ts';
 import type { CityCatalog } from '../services/cities.ts';
@@ -16,7 +17,7 @@ export function validateNatalDayRequest(value: unknown, cities: CityCatalog, cal
   validateNatalZone(city.timezone);
   return { date: input.birthDate, timezone: city.timezone };
 }
-export function createNatalDayHandler({ get, calculationVersion = null }: Pick<NatalDays, 'get' | 'calculationVersion'>) {
+export function createNatalDayHandler({ get, calculationVersion = null }: Pick<NatalDays, 'get' | 'calculationVersion'>, {report}: {report?:ServerFailureReport} = {}) {
   return async function handle(req: IncomingMessage, res: ServerResponse, cities: CityCatalog) {
     const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
     if (req.method !== 'POST') { res.writeHead(405, { ...headers, Allow: 'POST' }); res.end(); return; }
@@ -52,6 +53,7 @@ export function createNatalDayHandler({ get, calculationVersion = null }: Pick<N
     } catch (error) {
       if (controller.signal.aborted) return;
       const known = error instanceof NatalDayError;
+      if (!known) reportServerFailure(report,{event:'http_request_failed',component:'natal_day',reason:'unexpected'});
       res.writeHead(known ? error.status : 503, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
         ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 5) }) });
       res.end(JSON.stringify({ error: known ? error.code : 'natal_day_unavailable', message: known ? error.message : 'Не удалось подготовить день рождения. Повторите попытку.' }));

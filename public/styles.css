@@ -105,11 +105,10 @@ small { font-size: 11px; }
   --section-control-idle: #735039; --section-control-edge: #d4c1ae;
   display: block; position: relative; min-height: 0; height: 100dvh; overflow: hidden; background: var(--canvas-background);
 }
-/* The server already supplies the preview. Show it before JavaScript while
-   provisional controls wait for restored state and measured layout. */
+/* Reveal the preview only after the shared camera and layout are prepared.
+   A fatal startup error exposes only recovery over the plain canvas background. */
 .app-shell:not([data-shell-ready='true']) { pointer-events: none; }
 .app-shell:not([data-shell-ready='true']) * { visibility: hidden !important; }
-.app-shell:not([data-shell-ready='true']) :is(#chartLoadingArt, #chartLoadingArt *) { visibility: visible !important; }
 .app-shell:not([data-shell-ready='true']):is(:not(:has(#chartLoadingArt)), [data-page-state='error']) :is(#chartLoadingMessage, #chartLoadingMessage *) { visibility: visible !important; pointer-events: auto; }
 .workspace { position: absolute; inset: 0; display: block; width: 100%; height: 100%; min-height: 0; }
 /* One permanent composition area; controls never take part in its sizing. */
@@ -209,7 +208,8 @@ small { font-size: 11px; }
 /* Navigation and compact saved-chart list. */
 .new-chart-button { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; border: 1px solid var(--forest); border-radius: 6px; font-weight: 500; }
 .new-chart-button:active, .primary-button:active { transform: translateY(1px); }
-.chart-list { min-height: 0; overscroll-behavior: contain; overflow-y: auto; overflow-x: hidden; margin: 0 -7px; padding: 0 7px 12px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+/* Expand the scroll viewport for the existing focus ring without moving rows. */
+.chart-list { min-height: 0; overscroll-behavior: contain; overflow-y: auto; overflow-x: hidden; margin: -7px -14px 0 -7px; padding: 7px 14px 12px 7px; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .chart-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 5px; }
 .chart-caption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
@@ -250,7 +250,8 @@ small { font-size: 11px; }
 .app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-panels-layout='side']) .library:has(.control-color-previews:not([hidden])) .saved-charts { padding-bottom: 44px; }
 .chart-row { position: relative; margin-bottom: 7px; border-radius: 8px; }
 .chart-row[data-active='true'] { background: var(--panel-selected); }
-.library .chart-row { --library-row-height: 52px; }
+/* Row width follows the section, not the scrollbar's changing content box. */
+.library .chart-row { --library-row-height: 52px; width: 100cqw; }
 .library .chart-row .chart-card { margin: 0; }
 .library .chart-actions summary { top: calc((var(--library-row-height) - 44px) / 2); right: calc((var(--library-row-height) - 44px) / 2); }
 .library .chart-row.has-actions .chart-card { padding-right: 54px; }
@@ -272,7 +273,7 @@ small { font-size: 11px; }
 
 .menu-item[aria-pressed='true'], .menu-item[aria-expanded='true'], #openKnowledge[aria-pressed='true'] { background: var(--panel-selected); color: var(--panel-selected-ink); font-weight: 550; }
 .menu-item[aria-pressed='true'] svg, .menu-item[aria-expanded='true'] svg, #openKnowledge[aria-pressed='true'] svg { color: inherit; }
-.saved-charts { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--panel-border); }
+.saved-charts { container-type: inline-size; display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--panel-border); }
 .saved-charts .sidebar-heading { min-height: 24px; margin: 0 4px 14px; }
 .saved-charts .new-chart-button { flex-shrink: 0; margin-bottom: 14px; }
 .saved-charts .chart-list { flex: 1; min-height: 0; }
@@ -717,7 +718,6 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 /* Responsive layouts: wide → narrow, then short screens. */
 /* Where expanded columns cannot fit, they return at their ordinary positions. */
 [data-mandala-columns='hidden'] .activation-column { transform: none !important; opacity: calc(1 - var(--mandala-reveal, 0)); }
-[data-layout='phone'] .line-fixing { translate: -8px 0; }
 
 .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']):has(.chart-summary.open) .studio-header, .app-shell:has(.library.open) .studio[data-panels-layout='overlay']:has(.canvas-wrap[data-layout='desktop']) .studio-header { visibility: hidden; }
 /* A drawer covering the chart leaves no usable lane for both date fields. */
@@ -803,6 +803,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .returns-filter-popover .returns-menu-heading button { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 8px; background: transparent; color: #666666; font-size: 22px; font-weight: 400; }
 .returns-body-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 4px; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 8px; }
 .returns-body-option { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 5px; border-radius: 7px; font-size: 13px; line-height: 1.35; cursor: pointer; }
+.returns-body-option > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .returns-body-option:has(input:checked) { background: var(--panel-hover); color: var(--panel-ink); }
 .returns-body-option:hover:not(:has(input:checked)) { background: var(--panel-hover); }
 .returns-body-option input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: #626262; }
@@ -1088,6 +1089,15 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 .summary-moment { position: relative; min-width: 0; min-height: var(--summary-moment-height, var(--panel-heading-height)); padding: var(--chart-control-top) 0 6px; }
 .summary-moment-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; height: var(--chart-control-size); }
 .app-shell :is(.summary-chart-title, .summary-comparison-title) { flex: 1; display: block; width: auto; min-width: 0; min-height: 23px; margin: 0; padding: 0; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--panel-ink); font: 600 18px/24px var(--sans); letter-spacing: -.02em; }
+.shared-chart-save { display: flex; align-items: center; gap: var(--chart-control-gap); position: static; margin: 0; pointer-events: auto; }
+.shared-chart-save[hidden] { display: flex !important; visibility: hidden; pointer-events: none; }
+.summary-chart-actions { position: relative; display: flex; flex: none; align-items: center; gap: var(--chart-control-gap); }
+.summary-title:has(.summary-comparison:not([hidden])) .summary-chart-actions { display: none; }
+.summary-chart-actions button:disabled { opacity: .45; cursor: default; }
+.shared-chart-add-wrap { display: inline-flex; position: relative; }
+.shared-chart-add-wrap[data-unavailable='true'] .shared-chart-add { pointer-events: none; }
+.shared-chart-add-wrap:focus-visible { outline: 1px dashed var(--control-focus); outline-offset: 3px; border-radius: var(--floating-control-radius); }
+.app-shell[data-page-state='loading'] .summary-chart-actions { visibility: hidden; pointer-events: none; }
 .summary-moment-clock { display: block; flex: none; color: var(--panel-ink); font: 600 14px/16px var(--sans); font-variant-numeric: tabular-nums; }
 .summary-chart-moment > span:empty { display: none; }
 .app-shell .summary-chart-moment { position: relative; display: flex; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin-top: 4px; padding: 0; min-width: 0; }
@@ -1409,3 +1419,67 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 .app-shell[data-page-state='loading'] .action-notice { display: none; }
 @keyframes action-notice-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .action-notice.ui-feedback { animation: none; } }
+
+/* Account workspace: one presentation for real and review adapters. */
+.account-page[data-account-study] { --account-ink: var(--account-accent); --account-edge: var(--panel-border); padding: 0; overflow: hidden; }
+.account-study-content { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; }
+.account-study-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 32px 24px max(40px, env(safe-area-inset-bottom)); }
+.account-study-panel { width: 100%; max-width: 760px; margin: 0 auto; }
+.account-study-details { margin: 0; padding: 0; }
+.account-study-details dt, .account-study-details dd { margin: 0; }
+.account-study-mail, .account-study-telegram { display: grid; grid-template-columns: 116px minmax(0, 1fr) max-content; align-items: center; gap: 16px; min-height: 96px; padding: 24px 0; border-bottom: 1px solid var(--panel-border); }
+.account-study-mail dt, .account-study-telegram dt { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 22px; color: var(--panel-muted); }
+.account-study-details dt svg { width: 18px; height: 18px; flex: none; color: var(--account-ink); }
+.account-study-email, .account-study-handle { min-width: 0; overflow-wrap: anywhere; font-size: 20px; line-height: 28px; font-weight: 500; color: var(--panel-ink); letter-spacing: -.025em; }
+.account-study-confirmed { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: var(--panel-muted); }
+.account-study-confirmed .account-study-mask, .account-study-status .account-study-mask { display: inline-flex; align-items: center; gap: 6px; }
+.account-study-confirmed svg { width: 16px; height: 16px; flex: none; color: var(--sage-accent); }
+.account-study-status { grid-column: 2 / -1; font-size: 16px; line-height: 24px; color: var(--panel-muted); }
+.account-study-logout { display: grid; grid-template-columns: 116px minmax(0, 1fr); align-items: start; gap: 16px; padding: 28px 0; }
+.account-study-exit-action { display: flex; }
+.account-study-exit-note { padding-top: 3px; }
+.account-study-action { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--canvas-background); color: var(--account-ink); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; touch-action: manipulation; transition: transform 120ms ease-out, background 120ms ease-out; }
+.account-study-action:active:not(:disabled) { transform: scale(.97); }
+.account-study-action:focus-visible { outline: 2px solid var(--account-ink); outline-offset: 3px; }
+.account-study-primary { border-color: var(--account-ink); background: var(--account-ink); color: #fffefd; }
+.account-study-action svg { width: 18px; height: 18px; flex: none; }
+.account-study-logout p { margin: 0; font-size: 13px; line-height: 21px; color: var(--panel-muted); }
+.account-study-empty { padding: 24px 0; }
+.account-study-intro { max-width: 480px; margin: 0 0 24px; font-size: 20px; line-height: 1.5; letter-spacing: -.02em; color: var(--panel-ink); }
+.account-study-session { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px; border: 1px solid var(--panel-border); border-radius: 8px; background: var(--panel-surface); }
+.account-study-session p { flex: 1 1 220px; margin: 0; font-size: 15px; line-height: 23px; }
+.app-shell[data-page-state='loading']:has(.studio[data-workspace-screen='account']) #accountPage[data-account-study] { display: flex !important; opacity: 1; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] :is(.account-study-mask, .account-study-status, .account-study-action, .account-study-intro, .account-study-session p, .account-study-exit-note p) { position: relative; color: transparent; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] :is(.account-study-mask, .account-study-status, .account-study-action, .account-study-intro, .account-study-session p, .account-study-exit-note p)::after { content: ''; position: absolute; inset: 50% 0 auto; transform: translateY(-50%); height: 7px; border-radius: 2px; background: var(--loading-ink); pointer-events: none; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] :is(.account-study-intro, .account-study-session p, .account-study-exit-note p)::after { inset: 3px 0; height: auto; transform: none; background: repeating-linear-gradient(to bottom, var(--loading-ink) 0 5px, transparent 5px 21px); opacity: .65; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] :is(.account-study-mask, .account-study-action) > * { visibility: hidden; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-action { border-color: var(--panel-border); background: transparent; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-action::after { inset-inline: 12px; }
+.app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-details dt svg { opacity: .4; }
+.account-study-options { display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin-bottom: 2px; border-bottom: 1px solid var(--panel-border); }
+body:has(.studio[data-workspace-screen='account']) .account-study-options { display: grid; gap: 9px; }
+.account-study-option-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--panel-muted); font-size: 11px; }
+.account-study-option-heading select { width: auto; max-width: 176px; min-height: 32px; padding: 4px 18px 4px 7px; border: 1px solid var(--panel-border); border-radius: 6px; color: var(--panel-ink); background: var(--canvas-background); font: inherit; font-size: 12px; }
+@media (hover: hover) and (pointer: fine) { .account-study-action:hover:not(:disabled) { background: var(--panel-hover); } .account-study-primary:hover:not(:disabled) { background: var(--account-hover); } }
+@media (prefers-reduced-motion: reduce) { .account-study-action { transition: none; } .account-study-action:active:not(:disabled) { transform: none; } }
+@media (max-width: 1099px) {
+  .account-study-mail, .account-study-telegram { grid-template-columns: minmax(0, 1fr) max-content; gap: 10px; padding: 20px 0; }
+  .account-study-details dt { grid-column: 1; grid-row: 1; }
+  .account-study-confirmed { grid-column: 2; grid-row: 1; }
+  .account-study-email, .account-study-handle, .account-study-status { grid-column: 1 / -1; grid-row: 2; }
+}
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-body { padding: 24px 20px max(40px, env(safe-area-inset-bottom)); }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-logout { grid-template-columns: 1fr; gap: 14px; padding-block: 24px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-intro { font-size: 20px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-session { padding: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-option-heading select { min-height: 40px; font-size: 16px; }
+.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-options { gap: 12px; padding-bottom: 13px; }
+
+/* Account loading preserves the real form geometry without exposing its input. */
+.app-shell[data-page-state='loading'] .account-auth-form :is(h2, .account-auth-intro, label, .primary-button, .secondary-button) { position: relative; color: transparent; }
+.app-shell[data-page-state='loading'] .account-auth-form :is(h2, label) { width: fit-content; max-width: 100%; }
+.app-shell[data-page-state='loading'] .account-auth-form :is(h2, .account-auth-intro, label, .primary-button, .secondary-button)::after { content: ''; position: absolute; inset: 50% 0 auto; height: 7px; transform: translateY(-50%); border-radius: 2px; background: var(--loading-ink); pointer-events: none; }
+.app-shell[data-page-state='loading'] .account-auth-form :is(.primary-button, .secondary-button) { background: transparent; border-color: var(--panel-border); }
+.app-shell[data-page-state='loading'] .account-auth-form :is(.primary-button, .secondary-button)::after { inset-inline: 12px; }
+.app-shell[data-page-state='loading'] .account-auth-form input { color: transparent; caret-color: transparent; background-image: linear-gradient(var(--loading-ink), var(--loading-ink)); background-size: calc(100% - 24px) 7px; background-position: center; background-repeat: no-repeat; }
+.app-shell[data-page-state='loading'] .account-auth-form .ui-feedback { visibility: hidden; }

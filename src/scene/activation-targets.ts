@@ -1,6 +1,14 @@
 import type { SelectionTarget } from '../selection/selection-targets.ts';
 import type { activationPlanetLayout } from './geometry/activation-layout.ts';
 import type { AttributeValue } from './svg-patches.ts';
+export interface ColumnSelectionOptions {
+  pressedGates?: ReadonlySet<number>;
+  pressedSelection?: SelectionTarget | null;
+  selections?: readonly SelectionTarget[];
+  pressedSelections?: readonly SelectionTarget[];
+  previewGates?: ReadonlySet<number>;
+  showMandala?: boolean;
+}
 interface PlanetTargetInput {
   id: string;
   symbol: string;
@@ -80,4 +88,26 @@ export function activationPanelAttributes(x: number, color: string, right = 108,
 }
 export function renderActivationPanel(x: number, color: string, right = 108, rowOffset = 0) {
   return `<rect${attributes(activationPanelAttributes(x, color, right, rowOffset))}/>`;
+}
+
+
+// Use the approved two-digit footprint (64.1) for every gate/line value.
+// Tabular figures share one advance: reserve the missing digit on short labels.
+// Keep text, fixings and row height fixed in every responsive layout.
+// Hover, selection and camera transforms reuse the current measured width.
+export function createActivationNumberFitter(node: SVGElement) {
+  const rect = node.querySelector('rect')!, text = node.querySelector('text')!;
+  let previous: string | null = null;
+  const fit = () => {
+    const key = JSON.stringify([text.textContent, text.getAttribute('x'), text.getAttribute('font-size'), rect.getAttribute('x')]);
+    if (key === previous || !text.getBBox) return;
+    const bounds = text.getBBox(), left = bounds.x - Number(rect.getAttribute('x'));
+    const missingDigit = text.firstChild?.nodeValue?.length === 1 ? text.getSubStringLength(0, 1) : 0;
+    const width = bounds.width + missingDigit + 2 * left;
+    if (!Number.isFinite(width) || bounds.width <= 0 || left < 0) return;
+    setAttributes(rect, { width });
+    previous = key;
+  };
+  fit();
+  return fit;
 }

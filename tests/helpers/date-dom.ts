@@ -20,9 +20,9 @@ export interface DateNode extends EventSurface {
   hidden: boolean; disabled: boolean; dataset: Record<string, string>;
   value: string; textContent: string; dateTime: string; title: string; id: string; className: string;
   style: { setProperty(name: string, value: string): void; [name: string]: unknown };
-  selectionStart: number; selectionEnd: number;
+  selectionStart: number; selectionEnd: number; selectionDirection: 'none' | 'forward' | 'backward';
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null;
-  setSelectionRange(start: number, end: number): void; select(): void; focus(): void;
+  setSelectionRange(start: number, end: number, direction?: 'none' | 'forward' | 'backward'): void; select(): void; focus(): void; blur(): void;
   append(...nodes: DateNode[]): void; insertBefore(node: DateNode, reference: DateNode | null): DateNode;
   remove(): void; replaceChildren(...nodes: DateNode[]): void; contains(target: unknown): boolean;
   all(predicate: (node: DateNode) => boolean): DateNode[];
@@ -50,11 +50,12 @@ export function dateDom() {
     const attributes = new Map<string, string>();
     const node: DateNode = { ...eventTarget(), tagName: tag, ownerDocument: document, children: [], parentElement: null,
       hidden: false, disabled: false, dataset: {}, value: '', textContent: '', dateTime: '', title: '', id: '', className: '',
-      style: { setProperty(name: string, value: string) { this[name] = value; } }, selectionStart: 0, selectionEnd: 0,
+      style: { setProperty(name: string, value: string) { this[name] = value; } }, selectionStart: 0, selectionEnd: 0, selectionDirection: 'none',
       setAttribute(name, value) { attributes.set(name, String(value)); },
       getAttribute(name) { return attributes.get(name) ?? null; },
-      setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
+      setSelectionRange(start, end, direction = 'none') { this.selectionDirection = direction; this.selectionStart = start; this.selectionEnd = end; },
       select() { this.setSelectionRange(0, this.value.length); },
+      blur() { if (document.activeElement === this) { document.activeElement=document.body; this.dispatch('blur'); } },
       focus() {
         if (document.activeElement === this) return;
         const previous = document.activeElement;

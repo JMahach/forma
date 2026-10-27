@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachKnowledge } from '../src/views/knowledge.ts';
 import { KNOWLEDGE_ENTRIES } from '../src/reference/knowledge-content.ts';
+import { createViewStore, VIEW_STORAGE_KEY } from '../src/data/view-store.ts';
 import { SVG_NS, svgDocument } from './helpers/svg-dom.ts';
 import type { SelectionIdentity } from '../src/selection/selection-targets.ts';
 
@@ -22,7 +23,9 @@ function fixture(options: Parameters<typeof attachKnowledge>[2] = {}) {
   const element = (name: string) => document.createElementNS(SVG_NS, name);
   const page = Object.assign(element('section'), { hidden: true });
   const index = element('nav'), article = element('article'), categories = element('nav');
-  const search = Object.assign(element('input'), { value: '' });
+  const inputEvents = new EventTarget();
+  const search = Object.assign(element('input'), { value: '',
+    addEventListener: inputEvents.addEventListener.bind(inputEvents), removeEventListener: inputEvents.removeEventListener.bind(inputEvents) });
   const section = Object.assign(element('select'), { value: '' });
   const count = element('p');
   const nodes: Record<string, typeof index> = { knowledgeIndex: index, knowledgeArticle: article,
@@ -242,4 +245,78 @@ test('a new selection before the first lazy opening supersedes the remembered ar
   h.controller.show({ type: 'gate', id: 10 });
   assert.match(h.article.querySelector('h3')!.textContent, /^10 · /);
   assert.equal(h.search.value, 'Дружба');
+});
+
+
+test('remembered library search restores selection without changing the remembered article', () => {
+  const focus={start:1,end:3,direction:'backward'} as const;
+  const h=fixture({initialView:{query:'горло',searchOpen:true,collection:'centers',entryId:'center.throat',view:'catalog',focus}});
+  Object.assign(h.search,{selectionStart:0,selectionEnd:0,selectionDirection:'none',
+    focus(){Object.assign(h.search.ownerDocument,{activeElement:h.search});},
+    setSelectionRange(start:number,end:number,direction:string){Object.assign(h.search,{selectionStart:start,selectionEnd:end,selectionDirection:direction});}});
+  assert.equal(h.controller.restoreInputFocus(),false);
+  h.controller.show();
+  assert.equal(h.controller.restoreInputFocus(),true);
+  assert.deepEqual(h.controller.snapshot.focus,focus);
+  assert.equal(h.controller.snapshot.entryId,'center.throat');
+  h.controller.hide(); assert.equal(h.controller.snapshot.focus,undefined);
+});
+
+
+test('every published article is reachable from search and its displayed cross-links return to the same reading context', t => {
+  const h = fixture(); h.controller.show();
+  let traversed = 0;
+  for (const entry of KNOWLEDGE_ENTRIES) {
+    h.find(entry.title);
+    h.click(h.index.querySelector(`[data-entry-id="${entry.id}"]`));
+    assert.equal(h.controller.snapshot.entryId, entry.id);
+    for (const paragraph of entry.paragraphs) assert.ok(h.article.textContent.includes(paragraph), entry.id);
+    const groups = h.article.querySelectorAll('[data-relation-panel]').map(panel => ({
+      group: panel.dataset.relationPanel,
+      targets: panel.querySelectorAll('[data-entry-id]').map(link => link.dataset.entryId),
+    }));
+    for (const { group, targets } of groups) for (const id of targets) {
+      h.click(h.article.querySelector(`[data-relation-group="${group}"]`));
+      const panel = h.article.querySelector(`[data-relation-panel="${group}"]`)!;
+      assert.ok('hidden' in panel && panel.hidden === false, 'the relation group is visible before following its link');
+      h.click(panel.querySelector(`[data-entry-id="${id}"]`));
+      assert.equal(h.controller.snapshot.entryId, id);
+      h.click(h.article.querySelector('[data-reading-back]'));
+      assert.equal(h.controller.snapshot.entryId, entry.id);
+      assert.equal(h.controller.snapshot.query, entry.title);
+      traversed++;
+    }
+  }
+  assert.deepEqual(h.selected, [], 'reading and relation navigation never select a chart');
+  t.diagnostic(`${KNOWLEDGE_ENTRIES.length} published articles and ${traversed} displayed relation links traversed`);
+});
+
+test('real tab serialization restores reading separately from Cartoteka and drops only in-memory reading history', () => {
+  const records = new Map<string, string>();
+  const storage = { getItem: (key: string) => records.get(key) ?? null,
+    setItem: (key: string, value: string) => { records.set(key, value); } };
+  const store = createViewStore({ getStorage: () => storage });
+  const first = fixture({ isPhone: () => true }); first.controller.show(); first.find('Вклад');
+  first.click(first.index.querySelector('[data-entry-id="gate.8"]'));
+  first.click(first.article.querySelector('[data-entry-id="channel.1-8"]'));
+  first.article.scrollTop = 220;
+  assert.equal(store.write({ version: 1, selectedId: '', mandala: false,
+    camera: null, lifetime: null, transit: null, natalDay: null, planets: null,
+    workspace: 'library', knowledge: first.controller.snapshot, charts: { query: 'Анна', searchOpen: true } }), true);
+  const saved = createViewStore({ getStorage: () => storage }).read()!;
+  const second = fixture({ isPhone: () => true, initialView: saved.knowledge }); second.controller.show();
+  assert.equal(second.search.value, 'Вклад');
+  assert.equal(second.controller.snapshot.entryId, 'channel.1-8');
+  assert.equal(second.page.dataset.view, 'article');
+  assert.equal(second.article.scrollTop, 0);
+  assert.equal(second.article.querySelector('[data-reading-back]'), null);
+  second.find('');
+  assert.equal(store.write({ ...saved, knowledge: second.controller.snapshot }), true);
+  const cleared = createViewStore({ getStorage: () => storage }).read()!;
+  assert.equal(cleared.knowledge?.query, '');
+  assert.equal(cleared.knowledge?.entryId, 'channel.1-8');
+  assert.deepEqual(cleared.charts, { query: 'Анна', searchOpen: true });
+  store.write({ ...cleared, charts: { query: '', searchOpen: false } });
+  assert.deepEqual(store.read()!.knowledge, cleared.knowledge);
+  assert.deepEqual([...records.keys()], [VIEW_STORAGE_KEY]);
 });

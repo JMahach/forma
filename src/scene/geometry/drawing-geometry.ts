@@ -105,6 +105,19 @@ function centerStraightExitLength(points: number[][], centerPoints: string) {
 function splitChannel(channel: typeof CHANNELS[number]) {
   const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
   const [start, end] = channel.gates.map(id => getGate(id)!);
+  // The two sources meet underneath the central 2–14 rail in both styles.
+  // Keep the authored curve; only move its ownership boundary to this crossing.
+  if (channel.id === '26-44') {
+    const railX = getGate(getChannel('2-14')!.gates[0])!.x;
+    let travelled = 0;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (a[0] <= railX && b[0] >= railX && b[0] > a[0]) {
+        return splitAtLength(points, travelled + length * (railX - a[0]) / (b[0] - a[0]));
+      }
+      travelled += length;
+    }
+  }
   if (channel.id === '25-51') {
     const total = points.slice(1).reduce((sum, point, index) =>
       sum + Math.hypot(point[0] - points[index][0], point[1] - points[index][1]), 0);
@@ -137,7 +150,8 @@ export function offsetPoints(points: number[][], offset: number) {
 export const channelHalves = new Map(CHANNELS.filter(channel => !INTEGRATION_IDS.has(channel.id))
   .map(channel => [channel.id, splitChannel(channel)]));
 // 26–44 crosses the central routes behind every other channel, including integration.
-export const paintOrder = [CHANNELS.find(channel => channel.id === '26-44')!, ...CHANNELS.filter(channel => channel.id !== '26-44')];
+export const UNDERPASS_CHANNEL_ID = '26-44';
+export const paintOrder = [CHANNELS.find(channel => channel.id === UNDERPASS_CHANNEL_ID)!, ...CHANNELS.filter(channel => channel.id !== UNDERPASS_CHANNEL_ID)];
 
 // Integration is a shared anatomical stem with two spaced branch attachments.
 // There is no central dot, radial menu, or additional Center.

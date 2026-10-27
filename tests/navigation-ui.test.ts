@@ -1,3 +1,4 @@
+import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -144,10 +145,10 @@ function menuHarness({ dialogOpen = false } = {}) {
   };
   const panels = createPanelState();
   attachPanelKeyboard(document as unknown as Document, panels);
-  const library = attachChartLibrary({
+  const library = attachChartLibrary({getConnectionMode, subscribeConnection,
     document, panels,
     session: { selectedId: 'current-transit' },
-    store: { charts: [], remove() { assert.fail('opening a menu must not delete a chart'); } },
+    getCharts: () => [], removeChart() { assert.fail('opening a menu must not delete a chart'); },
     onSelect() { assert.fail('opening a menu does not select a chart'); },
     onEdit() { assert.fail('opening a menu does not edit a chart'); },
     onNew() { assert.fail('opening a menu does not create a chart'); },

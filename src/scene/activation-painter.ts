@@ -4,7 +4,7 @@ import type { RenderState, RenderOptions, RenderedScene } from './render-state.t
 import type { ActivationRow } from './activation-columns.ts';
 
 import { PALETTE } from '../ui/chart-palette.ts';
-import { capturePlanetTarget, updatePlanetTarget, activationPanelRule } from './activation-targets.ts';
+import { capturePlanetTarget, updatePlanetTarget, activationPanelRule, createActivationNumberFitter } from './activation-targets.ts';
 import { createOverlayActivationPainter } from './overlay-activation-columns.ts';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.ts';
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.ts';
@@ -36,7 +36,7 @@ function captureRow(row: SVGElement) {
   const planet = row.querySelector<SVGElement>('.bg-planet')!;
   const gate = row.querySelector<SVGElement>('[data-type="gate"]')!;
   const value = gate.querySelector('text')!;
-  return { row, planet, gate, value, line: value.querySelector('tspan')!,
+  return { row, planet, gate, value, fitNumber: createActivationNumberFitter(gate), line: value.querySelector('tspan')!,
     planetTarget: capturePlanetTarget(planet), gateRect: gate.querySelector('rect'),
     fixing: row.querySelector<SVGElement>('.line-fixing'), filter: row.querySelector<SVGElement>('.activation-planet-filter'), previous: null as string | null };
 }
@@ -92,6 +92,7 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
     setAttribute(entry.gateRect, 'fill', row.selected ? PALETTE.halo : 'transparent');
     if (entry.value.firstChild!.nodeValue !== String(row.gate)) entry.value.firstChild!.nodeValue = String(row.gate);
     text(entry.line, `.${row.line}`);
+    entry.fitNumber();
     if (row.fixingLabel) {
       if (!entry.fixing) {
         entry.fixing = elementFrom(entry.row, fixingMark(row.fixing));
@@ -152,8 +153,8 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
           let entry = column.rows.get(row.id);
           if (!entry) {
             const node = elementFrom(column.content, renderActivationRow(row));
-            entry = captureRow(node); column.rows.set(row.id, entry);
             column.content.insertBefore(node, next);
+            entry = captureRow(node); column.rows.set(row.id, entry);
           } else if (entry.row.nextElementSibling !== next) column.content.insertBefore(entry.row, next);
           updateRow(entry, row); next = entry.row;
         }

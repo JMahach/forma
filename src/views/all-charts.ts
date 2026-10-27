@@ -1,11 +1,11 @@
+import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import type { SavedView } from '../data/view-store.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
-import type { ChartStore } from '../data/chart-store.ts';
 import { attachWorkspaceHeader } from './workspace-header.ts';
-interface PreviewEntry { row: HTMLElement; chart: SavedChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
+interface PreviewEntry { key: string; row: HTMLElement; chart: SavedChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
 interface AllChartsOptions {
-  initialView?: SavedView['charts']; onChange?: () => void;
-  button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; store: ChartStore; onOpen?: (() => void) | null; document?: Document;
+  initialView?: SavedView['charts']; onChange?: () => void; onRowsChange?: () => void; canEdit?: () => boolean;
+  button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; getCharts: () => readonly SavedChart[]; onOpen?: (() => void) | null; document?: Document;
   preview?: typeof createChartPreview; schedule?: (callback: () => void) => ReturnType<typeof setTimeout>; cancel?: typeof clearTimeout;
   createObserver?: ((callback: IntersectionObserverCallback, options: IntersectionObserverInit) => IntersectionObserver) | null;
 }
@@ -13,7 +13,7 @@ export type AllCharts = ReturnType<typeof attachAllCharts>;
 
 import { renderChartLibraryRow } from './library.ts';
 import { canManageLibraryRecord } from './chart-display.ts';
-import { createChartPreview } from './chart-preview-canvas.ts';
+import { createChartPreview, sameSavedChartPreview } from './chart-preview-canvas.ts';
 
 const normalizeSearch = (value: string) => value.toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ');
 function chartSearchText(chart: SavedChart) {
@@ -25,20 +25,25 @@ function chartSearchText(chart: SavedChart) {
 
 // This workspace page reads the same library; the existing document-level commands own
 // selection, editing and deletion. Only nearby, temporary pixels belong here.
-export function attachAllCharts({ button, dialog, list, store,
-  onOpen = null, document = dialog.ownerDocument, initialView, onChange = () => {},
+export function attachAllCharts({ button, dialog, list, getCharts,
+  onOpen = null, document = dialog.ownerDocument, initialView, onChange = () => {}, onRowsChange = () => {}, canEdit = () => true,
   preview = createChartPreview, schedule = callback => setTimeout(callback, 0), cancel = clearTimeout,
   createObserver = typeof globalThis.IntersectionObserver === 'function'
     ? (callback, options) => new globalThis.IntersectionObserver(callback, options) : null,
 }: AllChartsOptions) {
   const header = attachWorkspaceHeader(dialog, { initialExpanded: initialView?.searchOpen, onChange });
-  const rows = new Map<Element, PreviewEntry>(), pending = new Set<PreviewEntry>(), readiness = new Set<{ entries: PreviewEntry[]; resolve: (value: boolean | null) => void }>();
+  let rows = new Map<Element, PreviewEntry>();
+  const pending = new Set<PreviewEntry>(), readiness = new Set<{ entries: PreviewEntry[]; resolve: (value: boolean | null) => void }>();
   const search = dialog.querySelector?.<HTMLInputElement>('#allChartsSearch');
   const resultCount = dialog.querySelector?.<HTMLElement>('#allChartsCount');
   const empty = dialog.querySelector?.<HTMLElement>('#allChartsEmpty');
   if (search && initialView) search.value = initialView.query;
+  if (search) watchTextSelection([search], onChange);
+  const inputFocus = () => dialog.hidden ? null : captureTextSelection(search);
+  const restoreInputFocus = () => !dialog.hidden && restoreTextSelection(search, initialView?.focus);
   let query = normalizeSearch(search?.value ?? ''), renderedQuery = '';
-  let charts: SavedChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
+  let charts: readonly SavedChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
+  let renderedEditDisabled = false;
   function paint() {
     job = null;
     if (dialog.hidden) return;
@@ -104,8 +109,15 @@ export function attachAllCharts({ button, dialog, list, store,
   }
   function update() {
     if (dialog.hidden) return;
-    if (charts !== store.charts || renderedQuery !== query) {
-      release(); charts = store.charts;
+    const currentCharts = getCharts();
+    const editDisabled = !canEdit();
+    if (renderedEditDisabled !== editDisabled) for (const entry of rows.values()) {
+      const edit = entry.row.querySelector<HTMLButtonElement>('[data-chart-action="edit"]');
+      if (edit) edit.disabled = editDisabled;
+    }
+    renderedEditDisabled = editDisabled;
+    if (charts !== currentCharts || renderedQuery !== query) {
+      charts = currentCharts;
       renderedQuery = query;
       const available = charts.filter(canManageLibraryRecord);
       const terms = query.split(' ').filter(Boolean);
@@ -118,14 +130,59 @@ export function attachAllCharts({ button, dialog, list, store,
         empty.hidden = filtered.length > 0;
         empty.textContent = query ? 'Ничего не найдено. Попробуйте другое имя, дату или город.' : 'Сохранённых карт пока нет.';
       }
+      let buttonsChanged = false;
+      const previous = new Map([...rows.values()].map(entry => [entry.key, entry]));
+      const next = new Map<Element, PreviewEntry>(), occurrences = new Map<string, number>();
       for (const chart of filtered) {
-        const row = document.createElement('div');
-        row.className = 'chart-row has-actions';
-        row.innerHTML = renderChartLibraryRow(chart, false, { preview: true });
-        const entry: PreviewEntry = { row, chart, canvas: row.querySelector('canvas')!, visible: false, release: null, paint: null, painted: false, failed: false };
-        rows.set(row, entry); list.insertBefore(row, null); observer?.observe(row);
+        const occurrence = occurrences.get(chart.id) ?? 0;
+        occurrences.set(chart.id, occurrence + 1);
+        const key = `${chart.id}:${occurrence}`;
+        let entry = previous.get(key);
+        if (!entry) {
+          const row = document.createElement('div');
+          row.className = 'chart-row has-actions';
+          row.innerHTML = renderChartLibraryRow(chart, false, { preview: true, editDisabled });
+          buttonsChanged = true;
+          entry = { key, row, chart, canvas: row.querySelector('canvas')!, visible: false, release: null, paint: null, painted: false, failed: false };
+        } else {
+          if (!sameSavedChartPreview(entry.chart, chart)) {
+            releaseEntry(entry);
+            if (entry.visible) {
+              pending.add(entry);
+              if (job === null) job = schedule(paint);
+            }
+          }
+          if (entry.chart.name !== chart.name || entry.chart.source !== chart.source
+            || entry.chart.birthDate !== chart.birthDate || entry.chart.birthTime !== chart.birthTime) {
+            const actionsOpen = entry.row.querySelector<HTMLDetailsElement>('.chart-actions')?.open;
+            const deleteDisabled = entry.row.querySelector<HTMLButtonElement>('[data-chart-action="delete"]')?.disabled;
+            entry.row.innerHTML = renderChartLibraryRow(chart, false, { preview: true, editDisabled });
+            buttonsChanged = true;
+            entry.row.querySelector('canvas')!.replaceWith(entry.canvas);
+            const actions = entry.row.querySelector<HTMLDetailsElement>('.chart-actions');
+            if (actions) actions.open = Boolean(actionsOpen);
+            const remove = entry.row.querySelector<HTMLButtonElement>('[data-chart-action="delete"]');
+            if (remove) remove.disabled = Boolean(deleteDisabled);
+          }
+          entry.chart = chart;
+        }
+        next.set(entry.row, entry);
       }
+      const oldOrder = [...rows.keys()], nextOrder = [...next.keys()];
+      if (oldOrder.length !== nextOrder.length || oldOrder.some((row, index) => row !== nextOrder[index])) cancelReadiness();
+      for (const entry of rows.values()) if (!next.has(entry.row)) {
+        pending.delete(entry); observer?.unobserve(entry.row); releaseEntry(entry); entry.row.remove();
+      }
+      let cursor = list.firstChild;
+      for (const entry of next.values()) {
+        if (entry.row !== cursor) list.insertBefore(entry.row, cursor);
+        cursor = entry.row.nextSibling;
+        if (!rows.has(entry.row)) observer?.observe(entry.row);
+      }
+      rows = next;
+      if (buttonsChanged) onRowsChange();
       measure();
+      settleReadiness();
     }
   }
   function setVisible(value: boolean) {
@@ -174,6 +231,6 @@ export function attachAllCharts({ button, dialog, list, store,
   });
   list.addEventListener('scroll', measure, { passive: true });
   document.defaultView?.addEventListener('resize', () => { cancelReadiness(); measure(); });
-  return { setVisible, show, close, update, whenReady,
-    get snapshot(): NonNullable<SavedView['charts']> { return { query: search?.value ?? '', searchOpen: header?.expanded ?? false }; } };
+  return { setVisible, show, close, update, whenReady, restoreInputFocus,
+    get snapshot(): NonNullable<SavedView['charts']> { const focus=inputFocus(); return { query: search?.value ?? '', searchOpen: header?.expanded ?? false, ...(focus ? {focus} : {}) }; } };
 }

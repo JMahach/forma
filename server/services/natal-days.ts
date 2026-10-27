@@ -1,3 +1,4 @@
+import { createCalculationFailureReporter, type CalculationFailureReport } from './calculation-failure.ts';
 import type { NatalDay } from '../packets/encode.ts';
 import type { DayPacket } from '../packets/compression.ts';
 import type { ComputeQueue, QueueOptions } from '../runtime/compute-queue.ts';
@@ -13,6 +14,7 @@ interface NatalWork extends SharedJob<DayPacket> {
   reject: (reason: unknown) => void;
 }
 interface GenerateNatalOptions extends QueueOptions {
+  report?: CalculationFailureReport;
   root: string;
   date: string;
   timezone: string;
@@ -22,6 +24,7 @@ interface GenerateNatalOptions extends QueueOptions {
   maxOutputBytes?: number;
 }
 interface NatalDayOptions {
+  report?: CalculationFailureReport;
   root?: string;
   computeQueue?: ComputeQueue;
   calculationVersion?: string | null;
@@ -59,20 +62,22 @@ export function validateNatalZone(timezone: unknown): asserts timezone is string
     throw new NatalDayError('invalid_timezone', 'Некорректный часовой пояс города.', 422, null);
   }
 }
-export function generateNatalDay({ root, date, timezone, spawnWorker, computeQueue, signal, priority, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }: GenerateNatalOptions) {
+export function generateNatalDay({ root, date, timezone, spawnWorker, computeQueue, signal, priority, report, timeoutMs = 30_000, maxOutputBytes = 2_000_000 }: GenerateNatalOptions) {
   validateNatalDayDate(date); validateNatalZone(timezone);
   const unavailable = () => new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
+  const failure = createCalculationFailureReporter('natal_day', report);
+  const invalid = () => { if (!signal?.aborted) failure('invalid_result'); return unavailable(); };
   return runJsonWorker({
-    root, script: 'natal_day.py', input: { date, timezone }, spawnWorker, computeQueue, signal, priority, timeoutMs, maxOutput: maxOutputBytes, unavailable,
+    root, script: 'natal_day.py', input: { date, timezone }, spawnWorker, computeQueue, signal, priority, timeoutMs, maxOutput: maxOutputBytes, unavailable, onFailure: failure,
     timeoutError: () => new NatalDayError('natal_day_timeout', 'День рождения не успел рассчитаться. Повторите попытку.'),
     validate(value) {
       const day = value as NatalDay & { error?: string; message?: string };
-      if (!day) throw unavailable();
+      if (!day) throw invalid();
       if (day.error) {
         const known = ['invalid_date', 'unsupported_date', 'invalid_timezone', 'nonexistent_date'].includes(day.error);
-        throw known ? new NatalDayError(day.error, day.message!, 422, null) : unavailable();
+        throw known ? new NatalDayError(day.error, day.message!, 422, null) : invalid();
       }
-      if (day.date !== date || day.timezone !== timezone) throw unavailable();
+      if (day.date !== date || day.timezone !== timezone) throw invalid();
       return day;
     },
   });
@@ -83,8 +88,9 @@ export function encodeNatalDayPacket(day: NatalDay) {
 
 // Only bounded, short-lived RAM. No personal disk cache, persistent workers,
 // prewarming, request logging, or birth data in a public/cacheable URL.
-export function createNatalDays({ root, computeQueue, calculationVersion = null, generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, ...options }),
-  now = Date.now, capacity = 4, ttlMs = 600_000, maxQueued = 3 }: NatalDayOptions = {}) {
+export function createNatalDays({ root, computeQueue, calculationVersion = null, report, generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
+  now = Date.now, capacity = 10, ttlMs = 600_000, maxQueued = 3 }: NatalDayOptions = {}) {
+  const failure = createCalculationFailureReporter('natal_day', report);
   if (calculationVersion !== null && (typeof calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(calculationVersion))) throw new TypeError('Invalid calculation version');
   const memory = new Map<string, { packet: DayPacket; expires: number }>(), pending = new Map<string, NatalWork>(), queue: NatalWork[] = [];
   let running = false;
@@ -112,8 +118,14 @@ export function createNatalDays({ root, computeQueue, calculationVersion = null,
       }
       const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
       if (job.controller.signal.aborted) throw aborted();
-      if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
-      const raw = await encodeNatalDayPacket(calculationVersion ? { ...day, calculationVersion } : day);
+      let raw: Buffer;
+      try {
+        if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
+        raw = await encodeNatalDayPacket(calculationVersion ? { ...day, calculationVersion } : day);
+      } catch (error) {
+          if (job.controller.signal.aborted) throw error;
+          failure('invalid_result'); throw new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
+        }
       const packet = { bytes: await compressDayPacket(raw, { quality: 9 }) };
       prune(); memory.set(job.key, { packet, expires: now() + ttlMs });
       while (memory.size > capacity) memory.delete(memory.keys().next().value!);

@@ -26,17 +26,20 @@ const sameVisiblePaint = (before: string|undefined, after: string|undefined, lab
     : label === 'integration' ? 'url(#bodygraph-integration-highlight-colors)' : '#83a9d2');
 };
 
-test('shared outline mask removes crossing tails and uses closer channel and center gaps', () => {
+test('outline masks preserve shared center junctions and compact physical gaps', () => {
   const root = svgDocument().createElementNS(SVG_NS, 'svg');
   root.innerHTML = renderBodygraph({}, { type: 'center', id: 'throat' }, { idPrefix: 'outside' });
-  const centerMask = root.querySelector('.bg-center-highlight')!.getAttribute('mask');
   for (const highlight of [
     ...root.querySelectorAll('.bg-channel-highlight'),
     ...root.querySelectorAll('[data-highlight-gate]'),
     root.querySelector('.bodygraph-integration-highlights')!,
   ]) {
-    assert.equal(highlight.getAttribute('mask'), centerMask,
-      'every outline must stop at the same inner union: no crossing tails at center/channel junctions');
+    const maskUrl = highlight.getAttribute('mask')!;
+    const mask = root.querySelector(`mask[id="${maskUrl.slice(5, -1)}"]`)!;
+    for (const center of CENTERS) {
+      const cut = mask.querySelectorAll('path').find(path => path.getAttribute('d') === roundedCenter(center.points));
+      assert.equal(cut?.getAttribute('stroke-width'), '3.75', 'all outline layers preserve the same center junction cutout');
+    }
   }
   for (const highlight of root.querySelectorAll('.bg-center-highlight')) {
     const maskUrl = highlight.getAttribute('mask');
@@ -113,10 +116,14 @@ test('path highlights resolve native namespaced masks and never blur their figur
     { type: 'gate', id: 1 }, { type: 'gate', id: 20 }, { type: 'center', id: 'root' }, { type: 'channel', id: '31-7' },
   ] });
   assert.doesNotMatch(markup, /<filter|filter=|feGaussianBlur/);
-  for (const [className, maskId] of [['bg-channel-highlight', 'highlight-exterior'], ['bg-center-highlight', 'highlight-exterior']]) {
+  for (const [className, maskId] of [['bg-channel-highlight', 'highlight-exterior'], ['bg-center-highlight', 'highlight-center-exterior']]) {
     const paths = [...markup.matchAll(new RegExp(`<path class="${className}"[^>]*\\/>`, 'g'))];
     assert.ok(paths.length);
-    for (const [path] of paths) assert.equal(attribute(path, 'mask'), `url(#outline-bounds-${maskId})`);
+    for (const [path] of paths) {
+      const expected = className === 'bg-channel-highlight' && attribute(path, 'd') === CHANNELS.find(c => c.id === '26-44')!.path
+        ? 'highlight-underpass-exterior' : maskId;
+      assert.equal(attribute(path, 'mask'), `url(#outline-bounds-${expected})`);
+    }
     const mask = markup.match(new RegExp(`<mask id="outline-bounds-${maskId}"[^>]*>[\\s\\S]*?<\\/mask>`))![0];
     assert.equal(attribute(mask, 'maskUnits'), 'userSpaceOnUse');
     assert.equal(attribute(mask, 'width'), '672');
@@ -174,10 +181,10 @@ test('gate hover and keyboard focus reuse the inset ring without enlarging activ
   }
 });
 
-test('compact rings keep the existing touch target, activation disc and readable labels', () => {
+test('compact rings keep a matching mouse target, activation disc and readable labels', () => {
   for (const selection of [null, { type: 'gate' as const, id: 31 }, { type: 'gate' as const, id: 8 }, { type: 'center' as const, id: 'throat' }] as const) {
     for (const group of gateGroups(renderBodygraph(allActive, selection))) {
-      assert.match(group.content, /<circle r="12\.5" fill="transparent" pointer-events="all"\/>/, `gate ${group.id} keeps its touch target`);
+      assert.match(group.content, /<circle class="bg-gate-hit" r="8\.975" fill="transparent" pointer-events="fill"\/>/, `gate ${group.id} matches its visible ring edge`);
       const disc = circle(group, 'bg-gate-disc'), ring = circle(group, 'bg-gate-highlight');
       assert.equal(attribute(disc!, 'r'), '8.4');
       assert.equal(attribute(disc!, 'stroke'), 'none');
@@ -188,7 +195,7 @@ test('compact rings keep the existing touch target, activation disc and readable
   }
 });
 
-test('precise-circle labels keep their approved size without shrinking hit targets or mandala numbers', () => {
+test('precise-circle labels keep their approved size and matching hit targets without changing mandala numbers', () => {
   for (const showMandala of [false, true] as const) {
     const markup = renderBodygraph(allActive, null, { showMandala });
     const groups = gateGroups(markup);
@@ -196,7 +203,7 @@ test('precise-circle labels keep their approved size without shrinking hit targe
     for (const group of groups) {
       const text = group.content.match(/<text\b[^>]*>/)![0];
       assert.equal(Number(attribute(text, 'font-size')), 10.4);
-      assert.match(group.content, /<circle r="12\.5" fill="transparent" pointer-events="all"\/>/);
+      assert.match(group.content, /<circle class="bg-gate-hit" r="8\.975" fill="transparent" pointer-events="fill"\/>/);
     }
     const ringLabels = [...markup.matchAll(/<text class="mandala-number"[^>]*>/g)];
     assert.equal(ringLabels.length, showMandala ? 64 : 0);

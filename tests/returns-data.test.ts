@@ -19,8 +19,18 @@ event.id = `${event.body}:${event.utc}`; event.cycleId = 'saturn:1'; event.age =
 const input = { birthUtc: natal().utc, body: 'saturn', fromAge: 0, toAge: 100 };
 const packet = (value: CycleInput = input) => ({ range: { fromAge: value.fromAge!, toAge: value.toAge! }, events: value.body === 'saturn' ? [event] : [] });
 const chartResult = { chart: { ...natal(), utc: event.utc } as CycleChartResult['chart'] };
-function device() { const records = new Map<string, unknown>(); return { records, getEvents: async (key: string) => records.get(key), putEvents: async (key: string, _input: CycleInput, data: CycleEventsResult) => { records.set(key, data); }, removeEvents: async (key: string) => { records.delete(key); },
-  getChart: async (key: string) => records.get(key), putChart: async (key: string, data: unknown) => { records.set(key, data); }, removeChart: async (key: string) => { records.delete(key); } }; }
+// These doubles preserve raw reads and absent write receipts. The client validates
+// stored data and ignores receipts; only the fixture-to-port boundary is narrowed.
+type StorageDouble = Partial<{
+  [K in 'getEvents' | 'putEvents' | 'removeEvents' | 'getChart' | 'putChart' | 'removeChart']:
+    (...args: Parameters<ReturnStorage[K]>) => Promise<unknown>;
+}>;
+function storageDouble<T extends StorageDouble>(value: T) {
+  return value as unknown as Omit<T, keyof ReturnStorage> & Partial<ReturnStorage>;
+}
+
+function device() { const records = new Map<string, unknown>(); return storageDouble({ records, getEvents: async (key: string) => records.get(key), putEvents: async (key: string, _input: CycleInput, data: CycleEventsResult) => { records.set(key, data); }, removeEvents: async (key: string) => { records.delete(key); },
+  getChart: async (key: string) => records.get(key), putChart: async (key: string, data: unknown) => { records.set(key, data); }, removeChart: async (key: string) => { records.delete(key); } }); }
 
 test('both prepared dates and opened return charts persist across reloads', async () => {
   const storage = device(), calls: string[] = [];
@@ -126,7 +136,7 @@ test('one failed body never erases successful empty lists or retries them', asyn
 
 test('dates completed by another tab are readable before this tab’s older same-key request finishes', async () => {
   const waiting = deferred(); let stored: unknown = null, calls = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: { getEvents: async () => stored, putEvents: async () => {} },
+  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: async () => stored, putEvents: async () => {} }),
     request: async () => { calls++; return waiting.promise; } });
   const first = client.events(input); await tick(); stored = packet();
   const second = client.events(input);
@@ -138,7 +148,7 @@ test('dates completed by another tab are readable before this tab’s older same
 
 test('a stale device miss reuses the same-key network result that completed during its read', async () => {
   const network = deferred(), disk = deferred(); let reads = 0, requests = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: { getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} },
+  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
     request: async () => { requests++; return network.promise; } });
   const first = client.events(input); await tick(); const second = client.events(input); await tick();
   network.resolve!(packet()); await first; disk.resolve!(null); await second;
@@ -147,7 +157,7 @@ test('a stale device miss reuses the same-key network result that completed duri
 
 test('an aborted captured request does not replace a later consumer’s own live result', async () => {
   const disk = deferred(), jobs: (ReturnType<typeof deferred<CycleEventsResult>> & { signal?: AbortSignal | null })[] = []; let reads = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: { getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} },
+  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
     request: async (_url, { signal }) => { const job = { signal, ...deferred<CycleEventsResult>() }; jobs.push(job); return job.promise; } });
   const controller = new AbortController(), first = client.events(input, controller.signal); await tick();
   const next = client.events(input); await tick(); controller.abort(); await assert.rejects(first, { name: 'AbortError' });

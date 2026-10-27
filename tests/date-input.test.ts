@@ -17,25 +17,27 @@ test('date entry accepts digits or any typed separator, including short day and 
 });
 
 test('separator entry keeps the caret after the separator and backspace remains usable', () => {
-  const handlers = new Map();
+  type InputEventFixture = {type?:string;inputType?:string;preventDefault?():void};
+  const handlers = new Map<string,(event:InputEventFixture)=>void>();
   const input = { value: '', selectionStart: 0, selectionEnd: 0,
-    addEventListener(type, handler) { handlers.set(type, handler); },
-    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
-    dispatchEvent(event) { handlers.get(event.type)?.(event); } };
-  bindNumericInput(input, formatDateInput);
-  const enter = value => { input.value = value; input.selectionStart = input.selectionEnd = value.length; handlers.get('input')({}); };
+    addEventListener(type:string, handler:(event:InputEventFixture)=>void) { handlers.set(type, handler); },
+    setSelectionRange(start:number, end:number) { this.selectionStart = start; this.selectionEnd = end; },
+    dispatchEvent(event:Event) { handlers.get(event.type)?.(event); } };
+  // The input model deliberately implements only the masking port.
+  bindNumericInput(input as unknown as HTMLInputElement, formatDateInput);
+  const enter = (value:string) => { input.value = value; input.selectionStart = input.selectionEnd = value.length; handlers.get('input')!({}); };
   enter('1,'); assert.equal(input.value, '1.'); assert.equal(input.selectionStart, 2);
   enter('01.2/'); assert.equal(input.value, '01.2.'); assert.equal(input.selectionStart, 5);
   enter('01.02.2000'); assert.equal(input.selectionStart, 10);
   input.selectionStart = input.selectionEnd = 3;
   let prevented = false;
-  handlers.get('beforeinput')({ inputType: 'deleteContentBackward', preventDefault() { prevented = true; } });
+  handlers.get('beforeinput')!({ inputType: 'deleteContentBackward', preventDefault() { prevented = true; } });
   assert.equal(prevented, true); assert.equal(input.selectionStart, 1);
 });
 
 // Exercise every intermediate value produced while typing into an already masked field.
 test('sequential typing retains the whole date and time after automatic separators appear', () => {
-  const type = (text, format) => [...text].reduce((value, character) => format(value + character), '');
+  const type = (text:string, format:(value:string)=>string) => [...text].reduce((value, character) => format(value + character), '');
   assert.equal(type('01022000', formatDateInput), '01.02.2000');
   assert.equal(type('1,2,2000', formatDateInput), '1.2.2000');
   assert.equal(type('1205', formatTimeInput), '12:05');

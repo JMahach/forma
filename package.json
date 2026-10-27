@@ -16,12 +16,18 @@
     "start:release": "node server/server.ts --release",
     "prepare:returns": "node scripts/python.ts -m server.python.return_index --file .cache/returns/return-index.bin",
     "typecheck": "tsc -p tsconfig.json",
-    "typecheck:tests": "tsc -p tsconfig.test.json"
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "check:architecture": "node scripts/architecture/run.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "@types/nodemailer": "8.0.2",
     "esbuild": "0.28.2",
     "fake-indexeddb": "6.2.5",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "jose": "6.2.13",
+    "nodemailer": "10.2.1"
   }
 }

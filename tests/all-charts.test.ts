@@ -8,13 +8,30 @@ import type { SavedChart } from '../shared/chart-types.ts';
 
 const charts = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i), name: `Карта ${i}`, source: 'calculated' as const,
   birthDate: '1998-08-18', birthTime: '18:00', personality: [1], design: [2] }));
-function harness({ observe = true, onOpen, raster = false, searchControls = false, initialView = undefined, onChange = () => {} } = {}) {
+type HarnessOptions = { observe?: boolean; onOpen?: () => void; raster?: boolean; searchControls?: boolean; initialView?: Parameters<typeof attachAllCharts>[0]['initialView']; onChange?: () => void; onRowsChange?: () => void; canEdit?: () => boolean };
+function harness({ observe = true, onOpen, raster = false, searchControls = false, initialView, onChange = () => {}, onRowsChange, canEdit }: HarnessOptions = {}) {
   const dom = libraryDom(), events = dateDom();
   const dialog = events.createElement('section'), button = events.createElement('button');
   dialog.hidden = true;
   const search = events.createElement('input'), resultCount = events.createElement('p'), empty = events.createElement('p');
   dialog.querySelector = selector => searchControls ? ({ '#allChartsSearch': search, '#allChartsCount': resultCount, '#allChartsEmpty': empty }[selector] ?? null) : null;
   dom.document.defaultView = events.defaultView;
+  // Keep canvas identity observable when a row's surrounding markup changes.
+  const createElement = dom.document.createElement.bind(dom.document);
+  dom.document.createElement = tag => {
+    const row = createElement(tag), html = Object.getOwnPropertyDescriptor(row, 'innerHTML')!;
+    const query = row.querySelector.bind(row);
+    let canvas: HTMLCanvasElement, edit: HTMLButtonElement, remove: HTMLButtonElement;
+    Object.defineProperty(row, 'innerHTML', { configurable: true, get: html.get, set(value) {
+      html.set!.call(row, value);
+      canvas = { replaceWith(replacement: HTMLCanvasElement) { canvas = replacement; } } as HTMLCanvasElement;
+      edit = { disabled: /data-chart-action="edit" disabled/.test(value) } as HTMLButtonElement;
+      remove = { disabled: false } as HTMLButtonElement;
+    } });
+    row.querySelector = selector => selector === 'canvas' ? canvas : selector === '[data-chart-action="edit"]' ? edit
+      : selector === '[data-chart-action="delete"]' ? remove : query(selector);
+    return row;
+  };
   const handlers = new Map(), jobs = new Map(), active = new Set(), painted = [], watched = new Set(), images: { src: string; onload: null; onerror: null; removeAttribute(): void; }[] = [];
   const list = dom.chartList;
   list.addEventListener = (type, listener) => handlers.set(type, listener);
@@ -22,11 +39,11 @@ function harness({ observe = true, onOpen, raster = false, searchControls = fals
   list.contains = target => dom.children.some(row => row === target || row.querySelector('.chart-card') === target);
   let intersection, nextJob = 0, disconnects = 0;
   const store = { charts: charts(300) as SavedChart[] }, session = { selectedId: '1' };
-  const view = attachAllCharts({ button, dialog, list, store, session, onOpen, initialView, onChange, document: dom.document,
+  const view = attachAllCharts({ button, dialog, list, getCharts: () => store.charts, onOpen, initialView, onChange, onRowsChange, canEdit, document: dom.document,
     createObserver: observe ? (callback, options) => {
       assert.equal(options.root, list); assert.equal(options.rootMargin, '120px 0px');
       intersection = callback;
-      return { observe: row => watched.add(row), disconnect() { watched.clear(); disconnects++; } };
+      return { observe: row => watched.add(row), unobserve: row => watched.delete(row), disconnect() { watched.clear(); disconnects++; } };
     } : null,
     preview(canvas, chart, { onReady } = {}) {
       const drawing = { canvas, chart }; active.add(drawing);
@@ -304,4 +321,108 @@ test('cartotheque restores its raw search and keeps it while hidden, including a
   next.find('');
   assert.equal(next.children.length, 300);
   assert.equal(next.view.snapshot.query, '');
+});
+
+
+test('card search restores its active selection only on the visible page and reports caret changes', () => {
+  let changes=0;
+  const focus={start:1,end:3,direction:'backward'} as const;
+  const h=harness({searchControls:true,initialView:{query:'Анна',searchOpen:true,focus},onChange:()=>changes++});
+  assert.equal(h.view.restoreInputFocus(),false);
+  h.view.setVisible(true);
+  assert.equal(h.view.restoreInputFocus(),true);
+  assert.equal(h.search.ownerDocument.activeElement,h.search);
+  assert.deepEqual(h.view.snapshot.focus,focus);
+  const before=changes;
+  h.search.setSelectionRange(2,2); h.search.ownerDocument.dispatch('selectionchange');
+  assert.ok(changes>before);
+  assert.equal(h.view.snapshot.focus.start,2);
+  h.view.setVisible(false); assert.equal(h.view.snapshot.focus,undefined);
+});
+
+test('fresh copies of unchanged records retain all rows and decoded previews', async () => {
+  const h = harness({ raster: true }); h.view.show();
+  const ready = h.view.whenReady(); h.tick(); h.tick();
+  for (const image of h.images) image.onload!();
+  assert.equal(await ready, true);
+  const rows = [...h.children], canvas = rows[0].querySelector('canvas');
+  h.store.charts = h.store.charts.map(chart => ({ ...chart, personality: [...chart.personality], design: [...chart.design] }));
+  h.view.update(); h.tick();
+  assert.ok(h.children.every((row, i) => row === rows[i]));
+  assert.equal(h.children[0].querySelector('canvas'), canvas);
+  assert.equal(h.images.length, 3, 'an unchanged collection starts no new image decoding');
+  assert.equal(h.active.size, 3);
+});
+
+test('renaming a card keeps its pending drawing and readiness; a note edit keeps its markup', async () => {
+  const h = harness({ raster: true }); h.store.charts = h.store.charts.slice(0, 1); h.view.show();
+  const row = h.children[0], canvas = row.querySelector('canvas');
+  const ready = h.view.whenReady(); h.tick();
+  h.store.charts = [{ ...h.store.charts[0], name: 'Новое имя', note: 'Заметка' }];
+  h.view.update(); h.tick();
+  assert.equal(h.children[0], row); assert.equal(row.querySelector('canvas'), canvas);
+  assert.match(h.list.innerHTML, /Новое имя/);
+  assert.equal(h.images.length, 1);
+  h.images[0].onload!(); assert.equal(await ready, true);
+  const markup = row.innerHTML;
+  h.store.charts = [{ ...h.store.charts[0], note: 'Другая заметка' }];
+  h.view.update(); h.tick();
+  assert.equal(row.innerHTML, markup); assert.equal(h.images.length, 1);
+});
+
+test('changed gates replace only that drawing and ignore its obsolete decoded image', async () => {
+  const h = harness({ raster: true }); h.store.charts = h.store.charts.slice(0, 2); h.view.show();
+  const ready = h.view.whenReady(); h.tick();
+  const lateLoad = h.images[0].onload, untouched = h.children[1].querySelector('canvas');
+  h.store.charts = [{ ...h.store.charts[0], personality: [64], design: [47] }, h.store.charts[1]];
+  h.view.update(); h.tick();
+  assert.equal(h.images.length, 3, 'only the changed card starts another decode');
+  assert.equal(h.children[1].querySelector('canvas'), untouched);
+  lateLoad!(); assert.deepEqual(h.painted, []);
+  h.images[1].onload!(); h.images[2].onload!();
+  assert.equal(await ready, true);
+  assert.deepEqual(h.painted, ['1', '0']);
+  h.view.close(); assert.equal(h.active.size, 0);
+});
+
+test('reordering retains rows and pixels, filtering removes only excluded rows', async () => {
+  const h = harness({ searchControls: true }); h.store.charts = h.store.charts.slice(0, 3);
+  h.store.charts[0] = { ...h.store.charts[0], name: 'Целевая' }; h.view.show();
+  const ready = h.view.whenReady(); h.tick(); h.tick(); assert.equal(await ready, true);
+  const rows = [...h.children];
+  h.store.charts = [h.store.charts[2], h.store.charts[0], h.store.charts[1]];
+  h.view.update(); h.tick();
+  assert.deepEqual(h.children, [rows[2], rows[0], rows[1]]);
+  assert.deepEqual(h.painted, ['0', '1', '2']);
+  h.find('Целевая'); h.tick();
+  assert.deepEqual(h.children, [rows[0]]); assert.equal(h.watched.size, 1); assert.equal(h.active.size, 1);
+  assert.deepEqual(h.painted, ['0', '1', '2']);
+  h.view.close(); assert.equal(h.active.size, 0); assert.equal(h.jobs.size, 0);
+});
+
+test('availability changes keep existing controls and the deletion restriction set by the library', () => {
+  let editable = true;
+  const h = harness({ canEdit: () => editable }); h.store.charts = h.store.charts.slice(0, 1); h.view.show();
+  const row = h.children[0], edit = row.querySelector('[data-chart-action="edit"]') as HTMLButtonElement;
+  const remove = row.querySelector('[data-chart-action="delete"]') as HTMLButtonElement;
+  remove.disabled = true;
+  editable = false; h.view.update();
+  assert.equal(row.querySelector('[data-chart-action="edit"]'), edit, 'a focused control must stay in the DOM');
+  assert.equal(row.querySelector('[data-chart-action="delete"]'), remove);
+  assert.equal(edit.disabled, true); assert.equal(remove.disabled, true);
+  h.store.charts = [{ ...h.store.charts[0], name: 'Новое имя' }]; h.view.update();
+  assert.equal((row.querySelector('[data-chart-action="delete"]') as HTMLButtonElement).disabled, true);
+});
+
+
+test('row availability is refreshed after catalogue creation and filtering, but not on unchanged updates', () => {
+  let notified=0;
+  const h=harness({searchControls:true,onRowsChange(){notified++;}});
+  h.view.setVisible(true);
+  assert.equal(notified,1);
+  h.view.update();assert.equal(notified,1);
+  h.store.charts=h.store.charts.map(chart=>({...chart,note:'Changed note'}));
+  h.view.update();assert.equal(notified,1,'unchanged buttons need no repeated availability pass');
+  h.find('missing');assert.equal(notified,1,'removed buttons need no availability pass');
+  h.find('');assert.equal(notified,2);
 });

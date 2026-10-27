@@ -718,7 +718,7 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
   const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
     getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
     getPoint: async index => { failFirst(); return moment(index, fullMeta); },
-    getMoment: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
+    readMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
   } });
   t.after(() => explorer.close());
   if (source === 'metadata') await explorer.open();
@@ -774,7 +774,7 @@ test('day clock updates cannot erase metadata retry feedback or its failure coun
 });
 
 
-for (const minute of [false, true] as const) test(`a rejected lifetime revision refreshes metadata and preserves ${minute ? 'the exact minute' : 'UTC across shifted indexes'}`, async t => {
+for (const minute of [false, true] as const) test(`a rejected lifetime revision refreshes metadata and preserves ${minute ? 'the prepared fallback UTC' : 'UTC across shifted indexes'}`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const oldMeta = { ...meta, cacheVersion: 'a'.repeat(64) };
   const newMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576, cacheVersion: 'b'.repeat(64) };
@@ -789,10 +789,7 @@ for (const minute of [false, true] as const) test(`a rejected lifetime revision 
       return { ok: false, json: async () => ({ error: 'unsupported_version' }) };
     }
     const currentMeta = updated ? newMeta : oldMeta;
-    if (parsed.pathname.endsWith('/moment')) {
-      const utc = parsed.searchParams.get('utc')!;
-      return response({ version: '1', utc, longitudes: point(0).longitudes, design: designAt(utc) });
-    }
+    assert.equal(parsed.pathname, '/api/lifetime');
     return response(moment(Number(parsed.searchParams.get('index')), currentMeta));
   } });
   const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
@@ -802,11 +799,12 @@ for (const minute of [false, true] as const) test(`a rejected lifetime revision 
   assert.equal(explorer.state.status, 'ready');
   assert.equal(explorer.state.metadata!.cacheVersion, newMeta.cacheVersion);
   assert.equal(explorer.state.maxUtc, Date.parse(maximumUtc), 'refreshing numerical data preserves the personal centenary');
-  assert.equal(explorer.state.requestedUtc, requestedUtc);
-  assert.equal(Date.parse(explorer.current!.utc!), requestedUtc);
+  const preparedUtc = Date.parse('1900-01-02T00:00:00Z');
+  assert.equal(explorer.state.requestedUtc, preparedUtc);
+  assert.equal(Date.parse(explorer.current!.utc!), preparedUtc);
   assert.equal(explorer.state.fromDate, '1900-01-01'); assert.equal(explorer.state.toDate, '1900-01-03');
   assert.equal(calls.filter(url => url.endsWith('/meta')).length, 2);
-  if (!minute) assert.match(calls.at(-1)!, /index=288&v=b{64}$/);
+  assert.match(calls.at(-1)!, /index=288&v=b{64}$/);
   assert.equal((await client.getPoint(0)).utc, newMeta.startUtc, 'old memory entries cannot survive a revision change');
   const complete = calls.length; t.mock.timers.tick(60000); await tick();
   assert.equal(calls.length, complete, 'success stops automatic retries');

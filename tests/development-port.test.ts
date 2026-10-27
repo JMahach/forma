@@ -14,7 +14,7 @@ test('shared-chart study enters its DOM setup only on assigned development ports
   for (const port of ['36', '3636', '', '80', '443', '8080']) {
     let lookups = 0;
     new Function('location', 'document', 'isDevelopmentPort', code)({ port }, {
-      querySelector(selector: string) { assert.equal(selector, '#summaryChartCaption .summary-moment-heading'); lookups++; return null; },
+      querySelector(selector: string) { assert.equal(selector, '#summaryChartCaption .summary-chart-actions'); lookups++; return null; },
     }, isDevelopmentPort);
     assert.equal(lookups, isDevelopmentPort(port) ? 1 : 0, `port ${port || 'default'}`);
   }

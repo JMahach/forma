@@ -19,7 +19,7 @@ interface LifetimeClientOptions {
 type DaySample = { day: NatalDay; index: number; natal: true } | { day: TransitDay; index: number; natal?: false };
 export type LifetimeClient = ReturnType<typeof createLifetimeClient>;
 
-import { validateLifetimeMetadata, validateLifetimeMoment, lifetimeChartAt, lifetimeExactChartAt } from '../domain/lifetime.ts';
+import { validateLifetimeMetadata, validateLifetimeMoment, lifetimeExactChartAt } from '../domain/lifetime.ts';
 import { transitSampleAt, transitChartAt } from '../domain/transit-day.ts';
 import { natalDayMinute, natalDayIndexAt, natalDayNearestIndex, natalDaySampleAt } from '../domain/natal-day.ts';
 import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
@@ -186,21 +186,6 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     const sample = await readSample(milliseconds, metadata, signal);
     return sample ? chartAt(sample) : null;
   }
-  async function getMoment(milliseconds: number, { signal }: { signal?: AbortSignal } = {}) {
-    const meta = await getMeta({ signal });
-    if (!validMoment(milliseconds, meta)) throw new Error('Некорректная минута летописи.');
-    const index = (milliseconds - Date.parse(meta.startUtc)) / (meta.stepSeconds * 1000);
-    if (Number.isInteger(index)) return lifetimeChartAt(meta, await getPoint(index, { signal }));
-    const cached = await readMinute(milliseconds, { signal });
-    if (metadata !== meta || signal?.aborted) throw createAbortError();
-    if (cached) return cached;
-    const utc = new Date(milliseconds).toISOString().replace('.000Z', 'Z');
-    const version = meta.cacheVersion ? `&v=${encodeURIComponent(meta.cacheVersion)}` : '';
-    return shared(`utc:${utc}`, `/api/lifetime/moment?utc=${encodeURIComponent(utc)}${version}`, value => {
-      if (metadata !== meta) throw createAbortError();
-      return lifetimeExactChartAt(value, meta, milliseconds);
-    }, signal);
-  }
   async function getPoint(index: number, { signal, checkedDay = null }: { signal?: AbortSignal; checkedDay?: { date: string; version?: string } | null } = {}) {
     const meta = await getMeta({ signal });
     if (!Number.isInteger(index) || index < 0 || index >= meta.samples) throw new Error('Некорректный момент летописи.');
@@ -218,5 +203,5 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
       return validateLifetimeMoment(value, meta, index);
     }, signal);
   }
-  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, getMoment, invalidateMetadata };
+  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, invalidateMetadata };
 }

@@ -1,0 +1,76 @@
+import test, {mock} from 'node:test';
+import http from 'node:http';
+import {EventEmitter} from 'node:events';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { startServer } from '../server/server.ts';
+import { completeJournalEvent } from '../server/journal/events.ts';
+
+const project=fileURLToPath(new URL('../',import.meta.url));
+async function fixture(t:{after(fn:()=>Promise<void>):void}) {
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'forma-startup-'));
+ t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const env={FORMA_STATE_DIR:path.join(directory,'state'),FORMA_JOURNAL_DIR:path.join(directory,'journal'),
+  FORMA_ACCOUNT_ORIGINS:'http://localhost:3636',TRANSIT_CACHE_DIR:path.join(directory,'transit'),HOST:'127.0.0.1',PORT:'65536'};
+ async function records() {
+  const archive=path.join(env.FORMA_JOURNAL_DIR,'archive');
+  const names=await fs.readdir(archive);
+  return (await Promise.all(names.filter(name=>name.endsWith('.jsonl')).map(name=>fs.readFile(path.join(archive,name),'utf8'))))
+   .join('').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line) as Record<string,unknown>);
+ }
+ return {directory,env,records};
+}
+
+test('startup facts accept a known stage and reject raw exception, paths and user details',()=>{
+ const defaults={environment:'stand' as const,occurredAt:1000,eventId:'startup'};
+ for(const component of ['configuration','cities','versions','public_files','account','listener']) {
+  const fact={event:'startup_failed',component,reason:'unexpected'};
+  assert.ok(completeJournalEvent(fact,defaults));
+  for(const extra of [{error:Error('PRIVATE')},{path:'/PRIVATE'},{message:'PRIVATE'},{recipient:'private@example.test'},
+   {accountId:'1'},{reason:'PRIVATE'},{component:'PRIVATE'}]) assert.equal(completeJournalEvent({...fact,...extra},defaults),null);
+ }
+});
+
+test('configuration and early file failures survive shutdown in the existing archive',async t=>{
+ const f=await fixture(t);
+ await assert.rejects(startServer({root:f.directory,env:{...f.env,FORMA_ENVIRONMENT:'production'}}),/FORMA_APP_VERSION/);
+ await assert.rejects(startServer({root:path.join(f.directory,'PRIVATE'),env:f.env}),{code:'ENOENT'});
+ const rows=await f.records();
+ assert.deepEqual(rows.map(row=>[row.event,row.component,row.reason]),[
+  ['startup_failed','configuration','unexpected'],['startup_failed','cities','unexpected']]);
+ assert.equal(JSON.stringify(rows).includes('PRIVATE'),false);
+});
+
+test('failed listener closes initialized resources and a second attempt preserves state',async t=>{
+ const f=await fixture(t),signals=['SIGINT','SIGTERM'] as const;
+ const listeners=signals.map(signal=>process.listenerCount(signal));
+ await assert.rejects(startServer({root:project,env:f.env}),{code:'ERR_SOCKET_BAD_PORT'});
+ const key=await fs.readFile(path.join(f.env.FORMA_STATE_DIR,'keys/account-hmac.bin'));
+ await assert.rejects(startServer({root:project,env:f.env}),{code:'ERR_SOCKET_BAD_PORT'});
+ assert.deepEqual(await fs.readFile(path.join(f.env.FORMA_STATE_DIR,'keys/account-hmac.bin')),key);
+ assert.deepEqual(signals.map(signal=>process.listenerCount(signal)),listeners);
+ const rows=await f.records();assert.equal(rows.length,2);
+ assert.ok(rows.every(row=>row.event==='startup_failed' && row.component==='listener'));
+ assert.notEqual(rows[0]!.eventId,rows[1]!.eventId);
+});
+
+test('an unavailable journal never replaces or retries the original startup failure',async t=>{
+ const f=await fixture(t),blocked=path.join(f.directory,'blocked');await fs.writeFile(blocked,'PRIVATE');
+ await assert.rejects(startServer({root:path.join(f.directory,'missing'),env:{...f.env,FORMA_JOURNAL_DIR:blocked}}),{code:'ENOENT'});
+ assert.equal(await fs.readFile(blocked,'utf8'),'PRIVATE');
+});
+
+
+test('an asynchronous bind failure preserves the same error and records one safe fact',async t=>{
+ const f=await fixture(t),failure=Object.assign(new Error('PRIVATE occupied interface'),{code:'EADDRINUSE'});
+ const server=Object.assign(new EventEmitter(),{listening:false,listen(){queueMicrotask(()=>server.emit('error',failure));return server;}});
+ const create=mock.method(http,'createServer',()=>server as unknown as http.Server);
+ try {
+  await assert.rejects(startServer({root:project,env:f.env}),error=>error===failure);
+ } finally {create.mock.restore();}
+ const rows=await f.records();assert.equal(rows.length,1);
+ assert.equal(rows[0]!.component,'listener');assert.equal(JSON.stringify(rows).includes('PRIVATE'),false);
+});

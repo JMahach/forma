@@ -71,3 +71,29 @@ test('title helpers format numeric headings while preserving nonnumeric headings
   assert.equal(catalog.knowledgeTopicLabel(catalog.getKnowledgeEntry('concept.bodygraph')!), 'Как устроена карта');
   assert.ok(KNOWLEDGE_ENTRIES.every(e => catalog.knowledgeEntryTitle(e).length && catalog.knowledgeTopicLabel(e).length));
 });
+
+
+test('all copied gate and channel screen titles find their own article first', () => {
+  assert.equal(catalog.findKnowledgeEntries('8 · Вклад', 'centers')[0]?.id, 'gate.8');
+  assert.equal(catalog.findKnowledgeEntries('1–8 · Вдохновение', 'gates')[0]?.id, 'channel.1-8');
+  const numbered = KNOWLEDGE_ENTRIES.filter(entry => entry.kind === 'gate' || entry.kind === 'channel');
+  assert.equal(numbered.length, 100);
+  for (const entry of numbered) {
+    const copied = catalog.knowledgeEntryTitle(entry);
+    assert.equal(catalog.findKnowledgeEntries(copied, 'basics')[0]?.id, entry.id, copied);
+  }
+});
+
+test('screen title search keeps number boundaries, partial words and every combined term', () => {
+  for (const query of ['8', 'Вклад', 'Вкл', '8 Вкл', 'Вкл 8', '8 · Вкл', '  8   ·   ВКЛАД  ']) {
+    const results = catalog.findKnowledgeEntries(query, 'centers');
+    assert.ok(results.some(entry => entry.id === 'gate.8'), query);
+    if (query.includes('8')) assert.equal(results.some(entry => entry.id === 'gate.48'), false, query);
+  }
+  for (const query of ['1-8', '1–8', '1—8', '1–8 Вдох', '1–8 · Вдох', '1–8 · Вдохновение']) {
+    assert.equal(catalog.findKnowledgeEntries(query, 'gates')[0]?.id, 'channel.1-8', query);
+  }
+  for (const query of ['8 · Вклад абракадабра', '1–8 · Вдохновение абракадабра']) {
+    assert.deepEqual(catalog.findKnowledgeEntries(query, 'gates'), [], query);
+  }
+});

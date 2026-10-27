@@ -42,5 +42,5 @@ export function attachKnowledgeEntry({ button, dialog, onSelect, getSelection, o
     else dialog.hidden = true;
   }
   button.addEventListener('click', () => onOpen ? onOpen() : show());
-  return { show, hide, get snapshot() { return view?.snapshot ?? initialView; } };
+  return { show, hide, restoreInputFocus: () => view?.restoreInputFocus() ?? false, get snapshot() { return view?.snapshot ?? initialView; } };
 }

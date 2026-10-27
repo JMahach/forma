@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createChartComposition } from '../src/domain/chart-composition.ts';
 import { createActivationPainter } from '../src/scene/activation-painter.ts';
 import { renderActivationColumns } from '../src/scene/activation-columns.ts';
 import { createRenderState } from '../src/scene/render-state.ts';
@@ -434,4 +435,53 @@ test('compact column panels contain every row and fixing while remaining behind 
       assert.ok(right - (x + 103 + 4 * 1.15) >= 10, 'fixing symbols retain the requested breathing room before the right frame');
     }
   }
+});
+
+
+test('all numeric highlights use the approved two-digit width without moving text or fixings', () => {
+  const chart = chartAt(), h = fixture(chart);
+  const target = targets(h.root).get('personality-sun')!;
+  const rect = target.querySelector('rect')!, value = target.querySelector('text')!;
+  let reads = 0;
+  value.getBBox = () => { reads++; return { x: 34, width: value.textContent.length === 4 ? 50.32 : 35.3 } as DOMRect; };
+  (value as unknown as SVGTextElement).getSubStringLength = () => 15.02;
+  chart.activations.personality[0].gate = 56; chart.activations.personality[0].line = 1;
+  value.firstChild!.nodeValue = '56'; value.querySelector('tspan')!.textContent = '.1';
+  const painter = createActivationPainter(h.root, { chart, state: createRenderState(chart, null, options), options });
+  assert.equal(Number(rect.getAttribute('width')), 70.32, 'already mounted rows are fitted even when the initial paint is adopted');
+  assert.equal(rect.getAttribute('x'), '24'); assert.equal(value.getAttribute('x'), '34');
+  assert.equal(rect.getAttribute('height'), '48'); assert.equal(rect.getAttribute('rx'), '10');
+  update(painter, chart, { type: 'gate', id: 56 });
+  assert.equal(reads, 1, 'hover or selection does not measure unchanged text again');
+  chart.activations.personality[0].gate = 9;
+  update(painter, chart);
+  assert.equal(Number(rect.getAttribute('width')), 70.32, 'one-digit values keep the approved two-digit footprint');
+  assert.equal(value.getAttribute('x'), '34', 'short numbers stay in the original position');
+  assert.equal(reads, 2);
+  chart.activations.personality[0].gate = 56;
+  update(painter, chart);
+  assert.equal(Number(rect.getAttribute('width')), 70.32, 'a wider value regains its required space');
+  assert.equal(reads, 3);
+});
+
+test('overlay numeric highlights stay fitted through selection and compact-to-single layout changes', () => {
+  const primary = chartAt(), secondary = chartAt(1);
+  const chart = createChartComposition(primary, { secondary, kind: 'transit' });
+  const h = fixture(chart), target = h.root.querySelector('.cycle-activation-value')!;
+  const rect = target.querySelector('rect')!, value = target.querySelector('text')!;
+  let reads = 0;
+  value.getBBox = () => { reads++; return { x: Number(value.getAttribute('x')), width: Number(value.getAttribute('font-size')) * (value.textContent.length === 4 ? 2 : 1.375) } as DOMRect; };
+  (value as unknown as SVGTextElement).getSubStringLength = () => Number(value.getAttribute('font-size')) * .625;
+  const painter = createActivationPainter(h.root, { chart, state: createRenderState(chart, null, options), options });
+  const expectedWidth = () => Number(value.getAttribute('font-size')) * 2 + 2 * (Number(value.getAttribute('x')) - Number(rect.getAttribute('x')));
+  assert.equal(Number(rect.getAttribute('width')), expectedWidth());
+  update(painter, chart, { type: 'gate', id: Number(target.dataset.id) });
+  assert.equal(reads, 1); assert.equal(Number(rect.getAttribute('width')), expectedWidth());
+  primary.activations.personality = [];
+  update(painter, chart);
+  assert.equal(Number(rect.getAttribute('width')), expectedWidth());
+  assert.equal(value.getAttribute('font-size'), '24'); assert.equal(reads, 2);
+  primary.activations.design[0].gate = 9;
+  update(painter, chart);
+  assert.equal(Number(rect.getAttribute('width')), expectedWidth(), 'single overlay rows also reserve the two-digit width');
 });

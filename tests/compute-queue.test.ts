@@ -1,18 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createComputeQueue } from '../server/runtime/compute-queue.ts';
-import { runJsonWorker } from '../server/runtime/json-worker.ts';
+import { runJsonWorker, type JsonWorkerOptions } from '../server/runtime/json-worker.ts';
 import { createNatalDays, generateNatalDay } from '../server/services/natal-days.ts';
 import { createCycles, generateCycles } from '../server/services/cycles.ts';
 import { createCalculator } from '../server/services/calculate.ts';
 import { EventEmitter } from 'node:events';
 const tick = () => new Promise(setImmediate);
-const worker = () => { const value = new EventEmitter(); value.pid = 10; value.stdout = new EventEmitter(); value.stdout.setEncoding = () => {}; value.stdin = new EventEmitter(); value.stdin.end = () => {}; value.kill = () => { value.killed = true; }; return value; };
+const worker = () => {
+  const value: EventEmitter & { killed?: boolean } = new EventEmitter();
+  return Object.assign(value, {
+    pid: 10,
+    stdout: Object.assign(new EventEmitter(), { setEncoding() {} }),
+    stdin: Object.assign(new EventEmitter(), { end() {} }),
+    kill() { value.killed = true; },
+  });
+};
 test('different scripts share a physical process budget and cancellation keeps its slot until close', async () => {
-  const queue = createComputeQueue({ concurrency: 1, maxQueued: 2 }), workers = [];
-  const run = (script: string, signal: AbortSignal|undefined) => runJsonWorker({ root: '/unused', script, input: {}, signal, computeQueue: queue,
+  const queue = createComputeQueue({ concurrency: 1, maxQueued: 2 }), workers: ReturnType<typeof worker>[] = [];
+  const run = (script: string, signal?: AbortSignal) => runJsonWorker({ root: '/unused', script, input: {}, signal, computeQueue: queue,
     timeoutMs: 1000, maxOutput: 100, unavailable: () => Error('unavailable'), timeoutError: () => Error('timeout'),
-    spawnWorker: () => { const value = worker(); workers.push(value); return value; } });
+    // Only the process events and streams used by runJsonWorker are supplied.
+    spawnWorker: (() => { const value = worker(); workers.push(value); return value; }) as unknown as JsonWorkerOptions['spawnWorker'] });
   const a = new AbortController(), first = run('calculator.py', a.signal), failed = assert.rejects(first, { name: 'AbortError' });
   const second = run('transit_day.py');
   assert.equal(workers.length, 1); a.abort(); await tick();
@@ -48,7 +57,8 @@ test('abandoned natal, return and scalar jobs leave the common queue before any 
   const failures = [assert.rejects(a, { name: 'AbortError' }), assert.rejects(b, { name: 'AbortError' })];
   await tick(); assert.equal(computeQueue.queued, 3);
   controllers.forEach(controller => controller.abort()); await Promise.all(failures);
-  assert.equal((await c).name, 'AbortError'); assert.equal(computeQueue.queued, 0);
+  // The calculator resolves cancellation errors; its declared result omits that variant.
+  assert.equal(((await c) as unknown as Error).name, 'AbortError'); assert.equal(computeQueue.queued, 0);
   release!(); await held; await tick(); assert.equal(starts, 0); await cycles.close(); await calculate.close();
 });
 

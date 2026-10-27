@@ -2,8 +2,7 @@ import type { Activation } from '../../shared/chart-types.ts';
 import type { ChartView, ChartComposition } from '../domain/chart-composition.ts';
 import type { OverlaySource } from '../domain/chart-overlay.ts';
 import type { RenderState, RenderOptions, RenderedScene } from './render-state.ts';
-import type { ColumnSelectionOptions } from './activation-columns.ts';
-import type { PlanetTarget } from './activation-targets.ts';
+import type { ColumnSelectionOptions, PlanetTarget } from './activation-targets.ts';
 type OverlayValue = OverlaySource & ReturnType<typeof overlayActivationColumnLayout>['values'][number] & {
   color: string; id: string; planet: string; gate: number; line: number;
   selected: boolean; pressed: boolean; label: string;
@@ -18,7 +17,7 @@ interface ColumnRecord {
   rows: Map<string, { node: SVGElement; planetTarget: ReturnType<typeof capturePlanetTarget> }>;
 }
 
-import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget, renderActivationPanel, activationPanelAttributes, activationPanelRule } from './activation-targets.ts';
+import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget, renderActivationPanel, activationPanelAttributes, activationPanelRule, createActivationNumberFitter } from './activation-targets.ts';
 import { OVERLAY_SOURCES, overlayOriginLabel } from '../domain/chart-overlay.ts';
 import { PALETTE, ACTIVATION_HIGHLIGHT_OPACITY } from '../ui/chart-palette.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
@@ -106,7 +105,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
   let group = drawing.querySelector('.cycle-activation-columns');
   let values = new Map<string, ReturnType<typeof captureValue>>(), columns = new Map<string, ColumnRecord>();
   let previousInput: string | null = null;
-  const captureValue = (node: SVGElement) => ({ node, rect: node.querySelector('rect'),
+  const captureValue = (node: SVGElement) => ({ node, fitNumber: createActivationNumberFitter(node), rect: node.querySelector('rect'),
     text: node.querySelector('text')!, line: node.querySelector('tspan')!, previous: null as string | null });
   function capture() {
     values = new Map([...group!.querySelectorAll<SVGElement>('.cycle-activation-value')].map(node => [node.dataset.activation!, captureValue(node)]));
@@ -174,10 +173,14 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
         setAttributes(record.node, { 'data-id': value.gate, 'data-selected': value.selected,
           'aria-label': value.label, 'aria-pressed': value.pressed, transform: `translate(${value.x} 0)` });
         setAttribute(record.rect, 'fill', value.selected ? PALETTE.halo : 'transparent');
-        setAttributes(record.rect, { x: value.rectX, width: value.hitWidth, y: value.hitY, height: value.hitHeight, rx: value.hitRadius });
+        if (record.text.getAttribute('font-size') !== String(value.fontSize) || record.rect!.getAttribute('x') !== String(value.rectX)) {
+          setAttribute(record.rect, 'width', value.hitWidth);
+        }
+        setAttributes(record.rect, { x: value.rectX, y: value.hitY, height: value.hitHeight, rx: value.hitRadius });
         setAttributes(record.text, { x: value.textX, 'font-size': value.fontSize });
         if (record.text.firstChild!.nodeValue !== String(value.gate)) record.text.firstChild!.nodeValue = String(value.gate);
         if (record.line.textContent !== `.${value.line}`) record.line.textContent = `.${value.line}`;
+        record.fitNumber();
       }
       for (const [id, record] of values) if (!nextIds.has(id)) { record.node.remove(); values.delete(id); }
       previousInput = input;

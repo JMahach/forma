@@ -106,3 +106,83 @@ test('only the current reply can supply confirmed account identity', async () =>
  h.pending.at(-1)!.resolve({screen:'linked',identity});await stale;
  assert.equal(h.flow.state.identity,null);
 });
+
+test('Back keeps the server attempt and pause; another email has its own permission', async () => {
+  const h = harness(); await h.code();
+  const attempt = h.flow.state.attempt;
+  h.flow.back();
+  assert.equal(h.flow.state.attempt, attempt);
+  assert.equal(h.flow.state.resendSeconds, 60);
+  const before = h.pending.length; await h.flow.submit(); assert.equal(h.pending.length, before);
+  h.flow.input('email', 'other@example.com'); assert.equal(h.flow.state.resendSeconds, 0);
+  const sending = h.flow.submit();
+  assert.equal(h.pending.at(-1)!.request.attempt?.id, attempt!.id, 'server replaces the old context atomically');
+  h.pending.at(-1)!.resolve({ attempt: { id: 'b', expiresAt: 1_801_000, codeExpiresAt: 601_000, resendAt: 61_000 } }); await sending;
+  h.flow.back(); h.flow.input('email', ' ANNA@example.com ');
+  assert.equal(h.flow.state.resendSeconds, 60, 'editing case cannot erase a known server pause');
+});
+
+test('a server retryAt is retained when returning to the email form', async () => {
+  const h = harness(); await h.start(); h.flow.input('email', 'anna@example.com');
+  const sending = h.flow.submit(); h.pending.at(-1)!.reject({ code: 'auth_rate_limited', retryAt: 31_000 }); await sending;
+  assert.equal(h.flow.state.resendSeconds, 30);
+  h.flow.close(); await h.start();
+  assert.equal(h.flow.state.resendSeconds, 30);
+  h.setNow(31_000); assert.equal(h.flow.state.resendSeconds, 0);
+});
+
+test('logout revokes the exact pending context while clearing local identity immediately', async () => {
+  const ids: readonly string[][] = [];
+  const flow = createAccountFlow({ connection: () => 'online',
+    request: async request => request.operation === 'begin' ? {} : { attempt: { id: 'pending', expiresAt: Date.now()+100000, codeExpiresAt: Date.now()+60000, resendAt: Date.now()+60000 } },
+    onLogout: async contextIds => { (ids as string[][]).push([...contextIds]); } });
+  await flow.begin(); flow.input('email', 'anna@example.com'); await flow.submit();
+  const logout = flow.logout(); assert.equal(flow.state.identity, null); assert.equal(flow.state.step, 'account');
+  await logout; assert.deepEqual(ids, [['pending']]);
+});
+
+test('reload restores the unfinished step through a read, without keeping the code or confirming', async () => {
+  const attempt = { id: 'a'.repeat(32), expiresAt: 1800000, codeExpiresAt: 600000, resendAt: 60000 };
+  const calls: string[] = [];
+  const client = {
+    current: async () => { calls.push('current'); return null; },
+    progress: async () => { calls.push('progress'); return { ...attempt, stage: 'verified', canConfirm: true }; },
+    confirm: async () => { calls.push('confirm'); throw new Error('Reload must not confirm'); },
+  };
+  const { createAccountServerRequest } = await import('../src/state/account-flow.ts');
+  const flow = createAccountFlow({ connection: () => 'online', now: () => 1000,
+    saved: { email: 'a@example.org', attemptEmail: 'a@example.org', attemptId: attempt.id, step: 'code', verificationPending: true },
+    request: createAccountServerRequest(client as unknown as Parameters<typeof createAccountServerRequest>[0]) });
+  await flow.retry();
+  assert.deepEqual(calls, ['current', 'progress']);
+  assert.equal(flow.state.step, 'code');
+  assert.equal(flow.state.verificationPending, true);
+  assert.equal(flow.state.resendSeconds, 59);
+  flow.input('code', '123456');
+  assert.equal('code' in flow.snapshot!, false);
+  flow.close(); assert.equal(flow.snapshot, null);
+});
+
+
+test('a linked Telegram without a public handle is still shown as linked', async () => {
+  const {createAccountServerRequest} = await import('../src/state/account-flow.ts');
+  const current = {account:{id:'1',email:'a@example.org',telegramHandle:null,telegramLinked:true},
+    session:{id:'session',expiresAt:999999}};
+  const request = createAccountServerRequest({current:async()=>current} as unknown as Parameters<typeof createAccountServerRequest>[0]);
+  const flow = createAccountFlow({connection:()=> 'online', request});
+  await flow.retry();
+  assert.equal(flow.state.screen,'linked');
+  assert.equal(flow.state.identity?.telegramHandle,null);
+});
+
+
+test('recovering an earlier email attempt does not trim the unfinished email draft', async () => {
+  const email='  still editing@  ';
+  const attempt={id:'a'.repeat(32),expiresAt:1800000,codeExpiresAt:600000,resendAt:60000};
+  const flow=createAccountFlow({connection:()=> 'online',now:()=>1000,
+    saved:{email,attemptEmail:'previous@example.org',attemptId:attempt.id,step:'email',verificationPending:false},
+    request:async()=>({attempt,step:'email',attemptEmail:'previous@example.org'})});
+  await flow.retry();
+  assert.equal(flow.state.email,email);assert.equal(flow.snapshot?.email,email);
+  assert.equal(flow.state.attemptEmail,'previous@example.org');flow.destroy();
+});

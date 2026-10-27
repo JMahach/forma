@@ -1,214 +1,81 @@
-interface MockRequest<T = unknown> {
-  result?: T; onsuccess?: () => void; onerror?: () => void; onblocked?: () => void;
-}
-interface StoredEntry { key: string; [field: string]: unknown }
-interface MockStore {
-  get(key: string): MockRequest; put(entry: StoredEntry): MockRequest; delete(key: string): MockRequest;
-  getAll(): MockRequest; openCursor(): MockRequest;
-}
-interface MockTransaction {
-  oncomplete?: () => void; onabort?: () => void; onerror?: () => void;
-  abort(): void; objectStore(name: string): Partial<MockStore>;
-}
-interface MockDatabase {
-  close(): void; transaction?: () => MockTransaction; onversionchange?: () => void;
-  objectStoreNames?: { contains(name: string): boolean }; createObjectStore?(name: string): object;
-}
-interface OpenRequest extends MockRequest<MockDatabase> {
-  transaction?: MockTransaction; onupgradeneeded?: (event: { oldVersion: number }) => void;
-}
-type CacheOptions = Omit<NonNullable<Parameters<typeof createCache>[0]>, 'indexedDB'> & {
-  indexedDB?: { open(name?: string, version?: number): OpenRequest } | null;
-};
-const createBinaryCache = createCache as (options: CacheOptions) => ReturnType<typeof createCache>;
-
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createBinaryCache as createCache } from '../src/data/binary-cache.ts';
-// Exercise asynchronous transaction completion and access with a small
-// IndexedDB-compatible in-memory adapter, without requiring a browser session.
-function databaseHarness() {
-  const records = new Map<string, StoredEntry>(), metadata = new Map<string, StoredEntry>();
-  const stores = new Map([['packets', records]]), names: (string | undefined)[] = [], operations: [string, string][] = [];
-  let opens = 0, version = 1;
-  function transaction(): MockTransaction {
-    const tx = {} as MockTransaction;
-    let pending = 0, completed = false, aborted = false;
-    const finish = () => queueMicrotask(() => {
-      if (!pending && !completed && !aborted) { completed = true; tx.oncomplete?.(); }
-    });
-    function request<T>(store: string, operation: string, action: () => T) {
-      const result: MockRequest<T> = {};
-      pending++;
-      queueMicrotask(() => {
-        if (!aborted) {
-          try { operations.push([store, operation]); result.result = action(); result.onsuccess?.(); }
-          catch { aborted = true; tx.onerror?.(); }
-        }
-        pending--; finish();
-      });
-      return result;
-    }
-    tx.abort = () => { aborted = true; tx.onabort?.(); };
-    tx.objectStore = (name: string) => {
-      const entries = stores.get(name);
-      return {
-        get: key => request(name, 'get', () => structuredClone(entries!.get(key))),
-        put: entry => request(name, 'put', () => entries!.set(entry.key, structuredClone(entry))),
-        delete: key => request(name, 'delete', () => entries!.delete(key)),
-        getAll: () => request(name, 'getAll', () => structuredClone([...entries!.values()])),
-        openCursor() {
-          const keys = [...entries!.keys()], result: MockRequest<{ value: StoredEntry | undefined; continue: () => void } | null> = {};
-          let index = 0;
-          pending++;
-          function next() {
-            queueMicrotask(() => {
-              if (index < keys.length) {
-                const key = keys[index++];
-                result.result = { value: structuredClone(entries!.get(key)), continue: next };
-                result.onsuccess?.();
-              } else { result.result = null; result.onsuccess?.(); pending--; finish(); }
-            });
-          }
-          next(); return result;
-        },
-      };
-    };
-    finish(); return tx;
-  }
-  const database: MockDatabase = {
-    objectStoreNames: { contains: (name: string) => stores.has(name) }, close() {}, transaction,
-    createObjectStore(name: string) { stores.set(name, metadata); return {}; },
-  };
-  return {
-    records, metadata, operations, database, names, get opens() { return opens; },
-    indexedDB: { open(name?: string, requestedVersion?: number) {
-      names.push(name); opens++;
-      const request: OpenRequest = { result: database };
-      queueMicrotask(() => {
-        if (requestedVersion! > version) {
-          const previousVersion = version; version = requestedVersion!;
-          request.transaction = transaction();
-          request.transaction.oncomplete = () => request.onsuccess?.();
-          request.onupgradeneeded?.({ oldVersion: previousVersion });
-        } else request.onsuccess?.();
-      });
-      return request;
-    } },
-  };
+import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
+import { createBinaryCache } from '../src/data/binary-cache.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
+
+const tick=()=>new Promise(setImmediate);
+function open(factory:IDBFactory,name:string,version:number,upgrade?:(db:IDBDatabase)=>void):Promise<IDBDatabase> {
+  return new Promise((resolve,reject)=>{
+    const request=factory.open(name,version);request.onupgradeneeded=()=>upgrade?.(request.result);
+    request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+  });
+}
+function seed(db:IDBDatabase,records:unknown[]) {
+  return new Promise<void>((resolve,reject)=>{
+    const tx=db.transaction('packets','readwrite');records.forEach(record=>tx.objectStore('packets').put(record));
+    tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error);
+  });
 }
 
-test('explicit removal and version changes retain the surviving days and reopen the connection', async () => {
-  const h = databaseHarness();
-  const cache = createBinaryCache({ databaseName: 'test-packets', indexedDB: h.indexedDB });
-  await cache.put('a', new ArrayBuffer(30));
-  await cache.put('b', new ArrayBuffer(40));
-  await cache.remove('b');
-  assert.deepEqual([...h.records.keys()], ['a']);
-  h.database.onversionchange!();
-  assert.equal((await cache.get('a'))!.byteLength, 30);
-  assert.equal(h.opens, 2);
+test('binary adapters use the injected common budget and preserve the most recently touched day',async t=>{
+  const indexedDB=new IDBFactory(),owner=createCalculationCache({indexedDB,maxBytes:11000});
+  const cache=createBinaryCache({cache:owner});t.after(()=>{cache.close();owner.close();});
+  await cache.put('a',new ArrayBuffer(2400));await cache.put('b',new ArrayBuffer(2400));
+  assert.equal((await cache.get('a'))?.byteLength,2400);
+  await cache.touch('a');await cache.put('c',new ArrayBuffer(2400));
+  assert.equal(await cache.get('b'),null);
+  assert.equal((await cache.get('a'))?.byteLength,2400);
+  assert.equal((await cache.get('c'))?.byteLength,2400);
 });
 
-test('blocked, denied or missing IndexedDB never fails the day-loading path', async t => {
-  for (const indexedDB of [null, { open() { throw new Error('Denied'); } }, { open() {
-    const request: OpenRequest = {}; queueMicrotask(() => request.onblocked?.()); return request;
-  } }] as const) {
-    const cache = createBinaryCache({ databaseName: 'test-packets', indexedDB });
-    assert.equal(await cache.get('a'), null);
-    await cache.put('a', new ArrayBuffer(10));
-    await cache.remove('a');
+test('reading or touching a binary day updates usage without rewriting its payload',async t=>{
+  const owner=createCalculationCache({indexedDB:new IDBFactory()}),cache=createBinaryCache({cache:owner});
+  t.after(()=>{cache.close();owner.close();});await cache.put('day',new ArrayBuffer(100));
+  const original=IDBObjectStore.prototype.put;let payloadWrites=0;
+  t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<IDBObjectStore['put']>){
+    const value=args[0] as Record<string,unknown>;
+    if(value?.value instanceof ArrayBuffer || value?.bytes instanceof ArrayBuffer)payloadWrites++;
+    return original.apply(this,args);
+  });
+  assert.equal((await cache.get('day'))?.byteLength,100);await cache.touch('day');
+  assert.equal(payloadWrites,0);
+});
+
+test('removal survives a new connection and closing one adapter does not close its injected owner',async t=>{
+  const indexedDB=new IDBFactory(),owner=createCalculationCache({indexedDB}),first=createBinaryCache({cache:owner});
+  await first.put('a',new ArrayBuffer(30));await first.put('b',new ArrayBuffer(40));await first.remove('b');first.close();
+  assert.equal((await owner.get<ArrayBuffer>('natal','a'))?.byteLength,30);owner.close();
+  const reload=createBinaryCache({indexedDB});t.after(()=>reload.close());
+  assert.equal((await reload.get('a'))?.byteLength,30);assert.equal(await reload.get('b'),null);
+});
+
+test('custom legacy packet databases migrate intact bytes without inventing expiry from old timestamps',async t=>{
+  const indexedDB=new IDBFactory(),legacy=await open(indexedDB,'custom-natal-days',2,db=>db.createObjectStore('packets',{keyPath:'key'}));
+  await seed(legacy,[{key:'old',bytes:new ArrayBuffer(15),createdAt:0,accessedAt:0},{key:'bad',bytes:'not binary'}]);legacy.close();
+  const cache=createBinaryCache({databaseName:'custom-natal-days',indexedDB});t.after(()=>cache.close());
+  assert.equal((await cache.get('old'))?.byteLength,15);assert.equal(await cache.get('bad'),null);
+  await assert.rejects(open(indexedDB,'custom-natal-days',2),{name:'VersionError'});
+  await cache.put('bad','not binary' as unknown as ArrayBuffer);assert.equal(await cache.get('bad'),null);
+});
+
+test('blocked migration stays optional and retries after the old connection releases its fence',async t=>{
+  const indexedDB=new IDBFactory(),legacy=await open(indexedDB,'bodygraph-chart-days',2,db=>db.createObjectStore('packets',{keyPath:'key'}));
+  await seed(legacy,[{key:'saved',bytes:new ArrayBuffer(20)}]);
+  const cache=createBinaryCache({indexedDB,timeoutMs:50});t.after(()=>{legacy.close();cache.close();});
+  assert.equal(await cache.get('saved'),null);legacy.close();
+  let ready=await cache.get('saved');
+  for(let i=0;i<30&&!ready;i++){await tick();ready=await cache.get('saved');}
+  assert.equal(ready?.byteLength,20);
+});
+
+test('denied or missing IndexedDB remains a miss and invalid binary values are never admitted',async t=>{
+  for(const indexedDB of [null,{open(){throw new Error('Denied');}} as unknown as IDBFactory]) {
+    const cache=createBinaryCache({indexedDB});t.after(()=>cache.close());
+    assert.equal(await cache.get('missing'),null);await cache.put('new',new ArrayBuffer(10));await cache.remove('new');
+    assert.equal(await cache.get('new'),null);
   }
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const stalled = createBinaryCache({ databaseName: 'test-packets', indexedDB: { open: () => ({}) }, timeoutMs: 100 });
-  const pending = stalled.get('a');
-  for (let i = 0; i < 4; i++) await Promise.resolve();
-  t.mock.timers.tick(100);
-  assert.equal(await pending, null);
-});
-
-
-test('cache hits do not rewrite payloads or legacy metadata', async () => {
-  const h = databaseHarness();
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
-  await cache.put('day', new ArrayBuffer(276906));
-  h.operations.length = 0;
-  assert.equal((await cache.get('day'))!.byteLength, 276906);
-  assert.deepEqual(h.operations, [['packets', 'get']]);
-});
-
-test('adding a day never scans or evicts existing packets', async () => {
-  const h = databaseHarness();
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
-  await cache.put('a', new ArrayBuffer(100));
-  await cache.put('b', new ArrayBuffer(100));
-  h.operations.length = 0;
-  await cache.put('c', new ArrayBuffer(100));
-  assert.equal(h.records.size, 3);
-  assert.deepEqual(h.operations, [['packets', 'put']]);
-});
-
-test('legacy timestamps and missing metadata never expire intact bytes; invalid values remain a miss', async () => {
-  const h = databaseHarness();
-  h.records.set('old', { key: 'old', bytes: new ArrayBuffer(15), createdAt: 0, accessedAt: 0 });
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: h.indexedDB });
-  assert.equal((await cache.get('old'))!.byteLength, 15);
-  assert.equal(h.records.has('old'), true);
-  assert.equal(h.metadata.size, 0);
-  h.records.set('bad', { key: 'bad', bytes: 'not binary' });
-  assert.equal(await cache.get('bad'), null);
-  assert.equal(await cache.get('missing'), null);
-  await cache.put('bad', 'still not binary' as unknown as ArrayBuffer);
-  assert.equal(await cache.get('bad'), null);
-});
-
-test('a stalled transaction is aborted at its deadline and does not become a late successful hit', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let aborted = false, transaction: MockTransaction;
-  const database = { close() {}, transaction() {
-    transaction = { objectStore: () => ({ get: () => ({}) }), abort() { aborted = true; transaction.onabort?.(); } };
-    return transaction;
-  } };
-  const indexedDB = { open() { const request: OpenRequest = { result: database }; queueMicrotask(() => request.onsuccess!()); return request; } };
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB, timeoutMs: 100 });
-  const result = cache.get('stalled');
-  for (let i = 0; i < 6; i++) await Promise.resolve();
-  t.mock.timers.tick(100);
-  assert.equal(await result, null);
-  assert.equal(aborted, true);
-  transaction!.oncomplete!();
-});
-
-test('blocked upgrades return promptly and close a late connection', async () => {
-  let closed = 0, request: OpenRequest;
-  const cache = createBinaryCache({ databaseName: 'packets', indexedDB: { open() {
-    request = { result: { close() { closed++; } } };
-    queueMicrotask(() => request.onblocked!()); return request;
-  } } });
-  assert.equal(await cache.get('a'), null);
-  request!.onsuccess!();
-  assert.equal(closed, 1);
-});
-
-for (const blocked of [true, false] as const) test(`${blocked ? 'blocked' : 'timed-out'} open stays singular until the browser settles it, then can recover`, async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const healthy = databaseHarness();
-  let opens = 0, request: OpenRequest, closed = 0;
-  const cache = createBinaryCache({ databaseName: 'packets', timeoutMs: 100, indexedDB: { open(...args) {
-    if (++opens > 1) return healthy.indexedDB.open(...args);
-    request = { result: { close() { closed++; } } };
-    if (blocked) queueMicrotask(() => request.onblocked!());
-    return request;
-  } } });
-  const first = cache.get('a');
-  for (let i = 0; i < 4; i++) await Promise.resolve();
-  if (!blocked) t.mock.timers.tick(100);
-  assert.equal(await first, null);
-  for (let i = 0; i < 10; i++) assert.equal(await cache.get('a'), null);
-  assert.equal(opens, 1, 'no additional physical open while the first is unresolved');
-  if (blocked) request!.onerror!();
-  else { request!.onsuccess!(); assert.equal(closed, 1, 'late connection is closed'); }
-  await cache.put('a', new ArrayBuffer(12));
-  assert.equal((await cache.get('a'))!.byteLength, 12);
-  assert.equal(opens, 2, 'retry only after the original open has actually settled');
+  const owner=createCalculationCache({indexedDB:new IDBFactory()}),cache=createBinaryCache({cache:owner});
+  t.after(()=>{cache.close();owner.close();});
+  await owner.put('natal','wrong','not an ArrayBuffer');assert.equal(await cache.get('wrong'),null);
 });

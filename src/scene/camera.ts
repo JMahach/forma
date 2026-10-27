@@ -147,6 +147,12 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   const controls = {
     // Startup hands its existing camera to gestures; no reset or second state.
     setOnChange(listener: CameraOptions['onChange']) { onChange = listener; publish(); },
+    // Early loading and the ready app save the same Home-relative position.
+    // Storage timing and lifetime stay with the caller.
+    getSavedView(): SavedCameraPosition {
+      return { x: (view.x - fittedView.x) / fittedView.k, y: (view.y - fittedView.y) / fittedView.k,
+        k: view.k / fittedView.k, maxK: maximumScale / fittedView.k };
+    },
     // One saved-view recipe serves early startup and full view restoration.
     restoreView(position: SavedCameraPosition | null | undefined) {
       fit();

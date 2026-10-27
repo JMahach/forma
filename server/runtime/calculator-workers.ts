@@ -3,6 +3,7 @@ import type { ComputeQueue } from './compute-queue.ts';
 import type { CalculationRequest } from '../../shared/chart-types.ts';
 interface WorkerOptions {
   root: string;
+  onFailure?: JsonWorkerOptions['onFailure'];
   capacity: number;
   timeoutMs: number;
   maxOutput: number;
@@ -20,7 +21,7 @@ import { runJsonWorker } from './json-worker.ts';
 
 // One scalar request owns each process slot until the process and stdio close.
 export function createCalculatorWorkers({ root, capacity, timeoutMs, maxOutput,
-  spawnWorker = spawn, unavailable, timeoutError, busy, computeQueue = createComputeQueue({ concurrency: capacity, maxQueued: 0 }) }: WorkerOptions) {
+  spawnWorker = spawn, unavailable, timeoutError, busy, onFailure, computeQueue = createComputeQueue({ concurrency: capacity, maxQueued: 0 }) }: WorkerOptions) {
   const active = new Set<ActiveWork>();
   let accepting = true, closing: Promise<void> | null = null;
   return {
@@ -35,7 +36,7 @@ export function createCalculatorWorkers({ root, capacity, timeoutMs, maxOutput,
       active.add(job);
       job.task = runJsonWorker({ root, script: 'calculator.py', input, timeoutMs, maxOutput,
         outputUnit: 'characters', unavailable, timeoutError, computeQueue, signal: job.controller.signal,
-        spawnWorker,
+        spawnWorker, onFailure,
       }).catch(error => { throw !accepting ? unavailable() : error?.code === 'busy' ? busy() : error; }).finally(() => { signal?.removeEventListener('abort', cancel); active.delete(job); });
       return job.task;
     },

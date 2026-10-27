@@ -32,7 +32,7 @@ function scene(definitions = [
   }
   const svg = {
     closest: () => null,
-    querySelectorAll(selector: unknown) { assert.equal(selector, '.activation-planet-filter-hit'); queries++; return hits; },
+    querySelectorAll(selector: unknown) { if (selector === '.bg-gate-hit') return []; assert.equal(selector, '.activation-planet-filter-hit'); queries++; return hits; },
   };
   return { svg, columns,
     at(x: number, y: number, pointerType = 'touch', target = svg, surface: Element|null|undefined) { return pointerTarget(svg, { target, clientX: x, clientY: y, pointerType }, surface); },
@@ -157,5 +157,38 @@ test('direct touch on a transparent hit still requires visible checkbox paint', 
     assert.equal(h.at(387, 100, 'touch', hit, surface), left === 389 ? control : null);
     assert.equal(h.queries, 0, 'a direct hit does not scan other controls');
     assert.equal(h.measurements, 1, 'only the direct checkbox frame is measured');
+  }
+});
+
+test('mouse stays on the center outside the visible gate, while touch keeps its round margin at every scale', () => {
+  for (const scale of [.5, 1, 4]) {
+    const center = { dataset: { type: 'center', id: 'g' } };
+    const gate = { dataset: { type: 'gate', id: '13' } };
+    const radius = 8.975 * scale;
+    const hit = { parentElement: gate, getBoundingClientRect: () =>
+      ({left:100-radius,right:100+radius,top:100-radius,bottom:100+radius,width:radius*2,height:radius*2}) };
+    const svg = { querySelectorAll: (selector: string) => selector === '.bg-gate-hit' ? [hit] : [] };
+    const target = { closest: () => center };
+    const at = (x: number, y: number, pointerType: string) => pointerTarget(svg as unknown as SVGSVGElement,
+      {target,clientX:100+x*scale,clientY:100+y*scale,pointerType} as unknown as PointerEvent);
+    assert.equal(at(10,0,'mouse'),center,'the invisible touch margin cannot steal mouse hover or click');
+    assert.equal(at(10,0,'pen'),center);
+    assert.equal(at(10,0,'touch'),gate,'touch inside the former 12.5 radius still selects the gate');
+    assert.equal(at(12.49,0,'touch'),gate);
+    assert.equal(at(12.51,0,'touch'),center);
+    assert.equal(at(9,9,'touch'),center,'the reserve is circular, not a bounding square');
+  }
+});
+
+import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
+test('both highlight styles render mouse hit circles at the visible ring edge without an implicit hit stroke', () => {
+  for (const highlightStyle of ['glow','outline'] as const) {
+    const markup = renderBodygraph({}, null, {highlightStyle});
+    const hits = [...markup.matchAll(/<circle class="bg-gate-hit"[^>]*>/g)].map(match=>match[0]);
+    assert.equal(hits.length,64);
+    for (const hit of hits) {
+      assert.match(hit,/r="8.975"/);
+      assert.match(hit,/pointer-events="fill"/);
+    }
   }
 });

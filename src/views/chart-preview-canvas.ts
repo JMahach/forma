@@ -1,4 +1,5 @@
 import type { ChartView } from '../domain/chart-composition.ts';
+import type { ChartData } from '../../shared/chart-types.ts';
 interface ChartPreviewOptions { width?: number; height?: number; onReady?: (success: boolean) => void; pixelRatio?: number; createImage?: () => HTMLImageElement }
 
 import { renderBodygraph } from '../scene/bodygraph-svg.ts';
@@ -11,6 +12,13 @@ const inset = CHART_SURFACE_RIM_WIDTH / 2 + 1;
 const { x, y, width: figureWidth, height: figureHeight } = LOTUS_BACKDROP_BOUNDS;
 const top = Math.min(y, ...CENTERS.flatMap(center => center.points.split(' ').map(point => Number(point.split(',')[1]))));
 const viewBox = [x - inset, top - inset, figureWidth + inset * 2, y + figureHeight - top + inset * 2].join(' ');
+
+// A saved single-chart thumbnail shows only these gates and their two colours.
+// Record metadata and activation-column details do not change its pixels.
+export function sameSavedChartPreview(a: ChartData, b: ChartData) {
+  return (['personality', 'design'] as const).every(side => a[side] === b[side]
+    || (a[side].length === b[side].length && a[side].every((gate, index) => gate === b[side][index])));
+}
 
 // Only visible list rows own pixels. The caller disposes a row as soon as it
 // leaves its visibility margin; neither the SVG nor the decoded Image is kept.

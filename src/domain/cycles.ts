@@ -1,9 +1,10 @@
+import {MAIN_RETURN_BODIES,mainReturnRange} from '../../shared/chart-return-contract.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { ChartInput } from './chart-composition.ts';
 import { LIFE_SPAN_YEARS, EPHEMERIS_LAST_YEAR, SUPPORTED_START, SUPPORTED_END_EXCLUSIVE, calendarAnniversaryUtc } from '../../shared/date-limits.ts';
 
-const DAY_MS = 86400000, ELAPSED_YEAR_MS = 365.2425 * DAY_MS;
+const DAY_MS = 86400000;
 const SUPPORTED_END = SUPPORTED_END_EXCLUSIVE - 1;
 const cycleSearchEnd = (chart: ChartInput | null | undefined) => Math.min(SUPPORTED_END, calendarAnniversaryUtc(Date.parse(chart?.utc!)));
 
@@ -15,7 +16,7 @@ export const CYCLE_BODIES = Object.freeze([
   ['uranus_opposition', 'Оппозиция Урана', 'Оппозиция Урана', '♅½'], ['chiron', 'Возврат Хирона', 'Хирон', '⚷'],
   ['uranus', 'Возврат Урана', 'Уран', '♅'], ['neptune', 'Возврат Нептуна', 'Нептун', '♆'], ['pluto', 'Возврат Плутона', 'Плутон', '♇'],
 ].map(([id, label, name, symbol]) => Object.freeze({ id, label, name, symbol })));
-export const DEFAULT_CYCLE_BODIES = Object.freeze(['north_node', 'saturn', 'uranus_opposition', 'chiron', 'uranus']);
+export const DEFAULT_CYCLE_BODIES: readonly string[] = MAIN_RETURN_BODIES;
 export const cycleLabel = (body: string | undefined) => CYCLE_BODIES.find(item => item.id === body)?.label || 'Возврат';
 export const cycleEventLabel = (event: Partial<CycleEvent> | null | undefined) => `${cycleLabel(event?.body)}${Number.isInteger(event?.cycle) && event!.cycle! > 0 ? ` ${event!.cycle}` : ''}`;
 export const eligibleCycleChart = (chart: Partial<ChartRecord> | null | undefined) => Boolean(chart?.source === 'calculated' && chart.id
@@ -23,9 +24,7 @@ export const eligibleCycleChart = (chart: Partial<ChartRecord> | null | undefine
   && chart.activations?.personality?.length === 13 && chart.activations?.design?.length === 13);
 
 export function cycleRangeForChart(chart: ChartInput | null | undefined) {
-  if (!chart) return null;
-  const span = (cycleSearchEnd(chart) - Date.parse(chart.utc!)) / ELAPSED_YEAR_MS;
-  return { fromAge: 0, toAge: Math.max(0, span) };
+  return chart?.utc ? mainReturnRange(chart.utc) : null;
 }
 
 const calendars = new Map<string, Intl.DateTimeFormat>();

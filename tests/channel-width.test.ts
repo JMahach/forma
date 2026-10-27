@@ -201,7 +201,7 @@ test('larger channel paint leaves gate/center dimensions and pointer hit areas u
   for (const { id, x, y } of GATES) {
     const body = target(markup, 'gate', id), circles = [...body.matchAll(/<circle\b[^>]*\/>/g)].map(match => match[0])
       .filter(tag => !hasClass(tag, 'bg-gate-glow'));
-    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [12.5, 8.4, 8.4], `gate ${id}: hit/disc radii and adjusted decorative core`);
+    assert.deepEqual(circles.map(tag => Number(attribute(tag, 'r'))), [8.975, 8.4, 8.4], `gate ${id}: hit/disc radii and adjusted decorative core`);
     assert.equal(attribute(circles[1], 'stroke'), 'none');
     assert.equal(attribute(circles[1], 'stroke-width'), undefined);
     assert.equal(attribute(circles[2], 'stroke'), 'none');
@@ -229,6 +229,8 @@ const originalGateFont = (markup: string) => markup.replace(/font-size="9\.9"/g,
 const originalGateMarkers = (markup: string) => markup.replace(
   /(<g data-type="gate"[^>]*>)([\s\S]*?)(<\/g>)/g,
   (_all, opening, body, ending) => opening + body
+    // The later mouse/touch split is independent of the channel-width oracle.
+    .replace('<circle class="bg-gate-hit" r="8.975" fill="transparent" pointer-events="fill"', '<circle r="12.5" fill="transparent" pointer-events="all"')
     .replace(/(<circle class="bg-gate-(?:disc|highlight)"[^>]* r=")8\.4(")/g, '$19.5$2')
     .replace(/<text[^>]*font-size="10\.4"[^>]*fill="([^"]+)"[^>]*>(\d+)<\/text>/g,
       (_text, fill, id) => `<text y=".5" text-anchor="middle" dominant-baseline="central" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="9.9" font-weight="${fill === '#ffffff' ? '650' : '500'}" fill="${fill}" pointer-events="none">${id}</text>`) + ending);
@@ -280,8 +282,8 @@ const originalHighlightGlow = (markup: string, legacyHaloWidth = 16.5) => origin
   markup.replaceAll('#83a9d2', '#c4d9f1').replaceAll('#91bce9', '#c4d9f1'), Number((legacyHaloWidth * .64).toFixed(3)))
   .replace(/    <filter id="[^"]+-(?:gate|highlight)-glow"[^>]*>[\s\S]*?<\/filter>\n/g, '')
   // Exterior-only bloom is decorative; keep the frozen physical oracle intact.
-  .replace(/    <mask id="[^"]+-highlight-exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
-  .replace(/ mask="url\(#[^)]*-highlight-exterior\)"/g, '')
+  .replace(/    <mask id="[^"]+-highlight-(?:center-|underpass-)?exterior"[^>]*>[\s\S]*?<\/mask>\n/g, '')
+  .replace(/ mask="url\(#[^)]*-highlight-(?:center-|underpass-)?exterior\)"/g, '')
   .replace(/      <circle class="bg-gate-glow"[^>]*\/>\n/g, '')
   .replace(/ filter="url\(#[^)]*-(?:gate|highlight)-glow\)"/g, '')
   .replace(/(<g class="bodygraph-integration-highlights") mask="url\(#[^)]*-integration-outline\)"/, '$1')
@@ -368,7 +370,9 @@ test('width scale 1.2 restores the preceding paint, lane, halo and mask widths',
     const cuts = colored(paths(mask), '#000000');
     if (!cuts.length) continue;
     for (const cut of cuts) {
-      const expected = attribute(cut, 'fill') === '#000000' ? 3.75 : 9.18;
+      const lowerCrossing = id.endsWith('-highlight-underpass-exterior')
+        && attribute(cut, 'd') !== CHANNELS.find(channel => channel.id === '26-44')!.path;
+      const expected = attribute(cut, 'fill') === '#000000' ? 3.75 : lowerCrossing ? 7.68 : 9.18;
       assert.equal(width(cut), expected, `${id}: scaled physical edge and fixed 0.75-unit gap`);
     }
   }

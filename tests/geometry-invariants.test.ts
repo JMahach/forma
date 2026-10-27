@@ -199,6 +199,24 @@ test('26–44 retains its approved curve controls with only gate 44 lowered alon
   assert.ok(channels[0].content.includes(`d="${PRESERVED_26_44_PATH}"`));
 });
 
+test('26–44 changes ownership exactly beneath the central 2–14 rail in both highlight styles', () => {
+  const [left, right] = channelHalves.get('26-44')!;
+  const seam = left.at(-1)!;
+  assert.deepEqual(seam, right[0], 'both gate halves share the same seam');
+  assert.ok(Math.abs(seam[0] - getGate(2)!.x) < 1e-8, 'the seam is on the 2–14 centerline');
+  assert.ok(seam[1] > getGate(2)!.y && seam[1] < getGate(14)!.y, 'seam lies within the crossing rail');
+  assert.deepEqual(left[0], [getGate(44)!.x, getGate(44)!.y]);
+  assert.deepEqual(right.at(-1), [getGate(26)!.x, getGate(26)!.y]);
+  for (const highlightStyle of ['glow', 'outline'] as const) {
+    const markup = renderBodygraph({ personality: [26], design: [44] }, null, { highlightStyle });
+    const channel = groups(markup, 'channel').find(channel => channel.id === '26-44')!;
+    const red = polylinePoints(strokePaths(channel.content, '#c32d35')[0].path);
+    const black = polylinePoints(strokePaths(channel.content, '#202020')[0].path);
+    assert.deepEqual(red.at(-1), black[0], `${highlightStyle}: source colors meet without a gap`);
+    assert.equal(black[0][0], getGate(2)!.x, `${highlightStyle}: rendered paint splits under 2–14`);
+  }
+});
+
 test('50–27 and 6–59 are straight mirrored horizontal connections after lowering the side centers', () => {
   const left = getChannel('27-50'), right = getChannel('6-59');
   assert.equal(getGate(50)!.y, 588);
@@ -326,7 +344,7 @@ test('25–51 divides its visible curved opening equally, including the center o
 });
 
 test('visible G-channel division does not move the other ordinary channel seams', () => {
-  const changed = new Set<string>([...G_RAIL_VISIBLE_BOUNDS.map(([id]) => id), '25-51']);
+  const changed = new Set<string>([...G_RAIL_VISIBLE_BOUNDS.map(([id]) => id), '25-51', '26-44']);
   for (const channel of ordinaryChannels.filter(channel => !changed.has(channel.id))) {
     const points = channel.curves.flatMap((curve, index) => sampleBezier(curve).slice(index ? 1 : 0));
     assert.deepEqual(channelHalves.get(channel.id), splitAtHalfLength(points), channel.id);

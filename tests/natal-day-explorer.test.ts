@@ -1,3 +1,4 @@
+import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
 import type { NatalDayClient } from '../src/data/natal-day-client.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
 import type { NatalDayExplorer } from '../src/state/natal-day.ts';
@@ -276,8 +277,8 @@ test('opening the birth editor reads the saved birth time while the selected min
   }
   node('chartForm').elements = Object.fromEntries(['name', 'birthPlace', 'note'].map(key => [key, node(key)]));
   const form = attachBirthForm({
-    document: { getElementById: node, querySelectorAll: () => [] },
-    store: { charts: [original] }, session: { selectedId: original.id, record: original },
+    document: { getElementById: node, querySelectorAll: () => [], addEventListener() {} },
+    getChart: () => original, getConnectionMode, subscribeConnection, session: { selectedId: original.id, record: original },
     onSave() {}, toast() {}, beforeOpen() {},
   } as unknown as Parameters<typeof attachBirthForm>[0]);
   form.open(true, original.id);

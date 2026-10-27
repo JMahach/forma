@@ -65,6 +65,7 @@ test('JSON client distinguishes a broken response stream from invalid JSON', asy
 test('server internal details do not leak into a user-facing technical failure', async t => {
   t.mock.method(globalThis, 'fetch', async () => ({ status: 500, ok: false, json: async () => ({message:'Secret local engine path',error:'engine_failed'}) }));
   await assert.rejects(requestJSON('/api/calculate'), error => {
+    assert.ok(error instanceof Error && 'code' in error && 'status' in error);
     assert.equal(error.code, 'engine_failed');
     assert.equal(error.status, 500);
     assert.equal(failureMessage(error, error.message, 'chart-form'), UI_MESSAGES.serverError);

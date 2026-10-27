@@ -331,6 +331,51 @@ test('clock and selected-event updates reuse marker geometry, formatters and foc
   assert.equal(first.getAttribute('aria-pressed'), 'false'); assert.equal(second.getAttribute('aria-pressed'), 'true');
 });
 
+test('moving time compares marker fields without serializing the unchanged event list', t => {
+  const h = harness(), values = [event('saturn', 'saturn', fromUtc), event('node', 'north_node', toUtc)];
+  h.update({ events: values });
+  const buttons = h.buttons(), refreshes = h.refreshes;
+  let serializations = 0;
+  const stringify = JSON.stringify;
+  t.mock.method(JSON, 'stringify', (...args: Parameters<typeof JSON.stringify>) => {
+    serializations++; return stringify(...args);
+  });
+  for (let i = 0; i < 50; i++) h.update({ events: values.map(value => ({ ...value })), natal: { ...natal }, displayedUtc: values[i % 2].utc });
+  assert.equal(serializations, 0, 'time movement does not allocate a serialized copy of the marker list');
+  assert.equal(h.refreshes, refreshes);
+  assert.deepEqual(h.buttons(), buttons);
+  assert.deepEqual(buttons.map(button => button.getAttribute('aria-pressed')), ['false', 'true']);
+});
+
+test('in-place changes to marker fields and birth still refresh the existing layer', () => {
+  const h = harness(), value = event('saturn', 'saturn', fromUtc), events = [value], birth = { ...natal };
+  h.update({ events, natal: birth });
+  const changes = [
+    () => { value.id = 'corrected'; },
+    () => { value.body = 'north_node'; },
+    () => { value.utc = '2026-01-06T00:00:00Z'; },
+    () => { value.cycle = 2; },
+    () => { value.cycleId = 'north_node:2'; },
+    () => { value.pass = 2; },
+    () => { value.pass = 1; },
+    () => { value.direction = 'retrograde'; },
+    () => { birth.id = 'another'; },
+    () => { birth.utc = '2001-01-05T00:00:00Z'; },
+    () => { birth.timezone = 'Europe/Moscow'; },
+  ];
+  for (const change of changes) {
+    const refreshes = h.refreshes;
+    change(); h.update({ events, natal: birth });
+    assert.equal(h.refreshes, refreshes + 1, 'the previous rendered fields cannot be mutated through caller references');
+  }
+  const button = h.buttons()[0];
+  assert.equal(button.style.left, '50%');
+  assert.equal(textOf(button), '☊2');
+  assert.match(button.title, /25 лет/); assert.match(button.title, /Europe\/Moscow/);
+  assert.match(button.title, /ретроградный ход/);
+  button.dispatch('click'); assert.equal(h.chosen.at(-1), value);
+});
+
 test('resizing and inserting nearby events retain existing focused nodes and update label lanes', () => {
   const h = harness(), first = event('saturn', 'saturn', '2026-01-05T00:00:00Z');
   const later = event('node', 'north_node', '2026-01-05T12:00:00Z');

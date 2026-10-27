@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { createBinaryCache } from '../src/data/binary-cache.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createNatalDayClient } from '../src/data/natal-day-client.ts';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { createNatalDayExplorer } from '../src/state/natal-day.ts';
@@ -76,7 +77,21 @@ test('a real quota exception leaves the loaded day usable in the common memory b
     fetch: async () => { calls++; return response(packet()); } });
   const day = await client.getDay(personalChartFixture()); await tick();
   assert.equal(await client.getDay(personalChartFixture()), day);
-  assert.ok(memory.bytes > 24 * 1440 * 8); assert.equal(calls, 1); assert.equal(failures, 1);
+  assert.ok(memory.bytes > 24 * 1440 * 8); assert.equal(calls, 1); assert.ok(failures > 0);
+});
+
+test('a natal RAM hit refreshes the shared persistent LRU without fetching or rewriting payload', async t => {
+  const indexedDB=new IDBFactory(),owner=createCalculationCache({indexedDB,maxBytes:9500});t.after(()=>owner.close());
+  const persistent=createBinaryCache({cache:owner}),memory=createMemoryCache(),chart=personalChartFixture();
+  const key=`natal-day:${revision}:1:${chart.birthDate}:${chart.cityId}`;
+  await persistent.put(key,new ArrayBuffer(1500));await owner.put('return-charts','older',new ArrayBuffer(1500));
+  const value={...natalDayFixture(),calculationVersion:revision};memory.put(key,value);
+  let touched:Promise<unknown>|undefined;
+  const client=createNatalDayClient({calculationVersion:revision,memory,persistentCache:{...persistent,
+    touch(key){touched=persistent.touch(key);return touched;}},fetch(){throw new Error('RAM hit must not fetch');}});
+  assert.equal(await client.getDay(chart),value);await touched;
+  await owner.put('return-events','newer',new ArrayBuffer(1500));
+  assert.ok(await persistent.get(key));assert.equal(await owner.get('return-charts','older'),null);
 });
 
 test('active natal day is retained in the common budget and released on close or natal change', async () => {

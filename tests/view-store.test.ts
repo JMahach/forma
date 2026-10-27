@@ -1,3 +1,5 @@
+import {accountNatalChart} from './helpers/account-chart.ts';
+import {libraryRecordAtMinute,natalDayFixture,personalChartFixture} from './fixtures/natal-day.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartStore } from '../src/data/chart-store.ts';
@@ -281,4 +283,220 @@ test('invalid page snapshots cannot spoil the chart or revive unknown fields', (
     const restored = createViewStore({ getStorage: () => storage }).read()!;
     assert.deepEqual(restored, snapshot);
   }
+});
+
+
+test('saved library selection survives reload independently of the displayed card', () => {
+  const storage = memory(); const store = createViewStore({getStorage: () => storage});
+  store.write({...snapshot, librarySelection: ['first', 'saved-chart', 'third']});
+  assert.deepEqual(createViewStore({getStorage: () => storage}).read()?.librarySelection, ['first', 'saved-chart', 'third']);
+  store.write({...snapshot, librarySelection: []}); assert.deepEqual(store.read()?.librarySelection, []);
+  store.write({...snapshot, librarySelection: ['first', 42]}); assert.equal(store.read()?.librarySelection, undefined);
+});
+
+
+test('account restoration stores only the draft and public attempt pointer, never the code or session', () => {
+  const storage = memory(), store = createViewStore({ getStorage: () => storage });
+  const account = { email: 'a@example.org', attemptEmail: 'a@example.org', attemptId: 'a'.repeat(32), step: 'code', verificationPending: true };
+  store.write({ ...snapshot, account: { ...account, code: '123456', session: { secret: 'never-save' } } });
+  assert.deepEqual(store.read()?.account, account);
+  assert.equal(storage.records.get(VIEW_STORAGE_KEY)!.includes('123456'), false);
+  assert.equal(storage.records.get(VIEW_STORAGE_KEY)!.includes('never-save'), false);
+  store.write({ ...snapshot, account: null });
+  assert.equal(store.read()?.account, null);
+});
+
+test('unknown chart writes survive reload as account-bound IDs without command content', () => {
+  const storage = memory(), store = createViewStore({getStorage: () => storage});
+  const operationId = 'a'.repeat(32);
+  store.write({...snapshot, pendingChartWrites: [
+    {operationId, expectedAccountId: '12', command: {note: 'must not be stored'}},
+    {operationId, expectedAccountId: '12'}, {operationId: 'bad', expectedAccountId: '12'},
+  ]});
+  assert.deepEqual(createViewStore({getStorage: () => storage}).read()!.pendingChartWrites,
+    [{operationId, expectedAccountId: '12'}]);
+});
+
+test('Telegram restoration stores only its public attempt and phase, stripping SDK secrets and user claims',()=>{
+  const storage=memory(),store=createViewStore({getStorage:()=>storage});
+  const account={email:'typed@example.org',attemptEmail:'',attemptId:'a'.repeat(32),step:'telegram',verificationPending:true,telegramPending:true};
+  store.write({...snapshot,account:{...account,nonce:'private-nonce',id_token:'private-token',user:{id:'private-user'},session:{id:'private-session'}}});
+  assert.deepEqual(createViewStore({getStorage:()=>storage}).read()?.account,account);
+  assert.doesNotMatch(storage.records.get(VIEW_STORAGE_KEY)!,/private-|id_token|nonce/);
+});
+
+
+const birthDraft={editingId:null,accountId:null,calculationMode:'calculated',
+  fields:{chartName:'  Не закончено  ',birthDate:'12.0',birthTime:'1:',birthPlace:'Мос',chartNote:'Своя заметка\n'},
+  city:null,fold:null,base:null,focus:{field:'chartNote',start:2,end:7,direction:'backward'}};
+
+test('the tab snapshot preserves unfinished birth input and selection without retaining calculation or secret fields',()=>{
+  const storage=memory(),first=createViewStore({getStorage:()=>storage});
+  assert.equal(first.write({...snapshot,birthForm:{...birthDraft,code:'123456',activations:[1],history:['old'],
+    fields:{...birthDraft.fields,password:'private'}}}),true);
+  const restored=createViewStore({getStorage:()=>storage}).read();
+  assert.deepEqual(restored?.birthForm,birthDraft);
+  const raw=storage.records.get(VIEW_STORAGE_KEY)!;assert.doesNotMatch(raw,/123456|activations|history|password/);
+  assert.deepEqual([...storage.records.keys()],[VIEW_STORAGE_KEY]);
+});
+
+test('a malformed draft is discarded independently from the valid page state',()=>{
+  const storage=memory({...snapshot,birthForm:{...birthDraft,fields:{...birthDraft.fields,birthTime:42}}});
+  const restored=createViewStore({getStorage:()=>storage}).read();
+  assert.equal(restored?.birthForm,null);assert.equal(restored?.selectedId,snapshot.selectedId);
+});
+
+test('writing a closed birth form removes its private draft from the one saved record',()=>{
+  const storage=memory(),store=createViewStore({getStorage:()=>storage});
+  store.write({...snapshot,birthForm:birthDraft});store.write({...snapshot,birthForm:null});
+  assert.equal(createViewStore({getStorage:()=>storage}).read()?.birthForm,null);
+  assert.doesNotMatch(storage.records.get(VIEW_STORAGE_KEY)!,/Своя заметка|Не закончено/);
+});
+
+test('a rejected view write cannot discard the latest in-memory draft on a later read',()=>{
+  const storage=memory(snapshot);let fail=true;
+  const store=createViewStore({getStorage:()=>({...storage,setItem(key,value){if(fail)throw new Error('full');storage.setItem(key,value);}})});
+  store.read();assert.equal(store.write({...snapshot,birthForm:birthDraft}),false);
+  assert.deepEqual(store.read()?.birthForm,birthDraft);
+  fail=false;assert.equal(store.write({...snapshot,birthForm:birthDraft}),true);
+  assert.deepEqual(createViewStore({getStorage:()=>storage}).read()?.birthForm,birthDraft);
+});
+
+test('an unchanged write is durable only while the actual saved record is still present',()=>{
+  const storage=memory(),store=createViewStore({getStorage:()=>storage});
+  assert.equal(store.write(snapshot),true);storage.records.delete(VIEW_STORAGE_KEY);
+  assert.equal(store.write(snapshot),true);assert.deepEqual(createViewStore({getStorage:()=>storage}).read(),snapshot);
+});
+
+test('clear removes the whole tab record and reports a refused durable deletion honestly',()=>{
+  const storage=memory({...snapshot,birthForm:birthDraft});let fail=true;
+  const store=createViewStore({getStorage:()=>({...storage,removeItem(key:string){if(fail)throw new Error('denied');storage.records.delete(key);}})});
+  store.read();assert.equal(store.clear(),false);assert.equal(store.read(),null);
+  fail=false;assert.equal(store.clear(),true);assert.equal(storage.records.has(VIEW_STORAGE_KEY),false);
+  assert.equal(createViewStore({getStorage:()=>storage}).read(),null);
+});
+
+
+test('unfinished searches, account email caret and active date draft share the one tab record', () => {
+  const storage=memory(), store=createViewStore({getStorage:()=>storage});
+  const focus={start:1,end:3,direction:'backward'};
+  const account={email:'draft@',attemptEmail:'',attemptId:null,step:'email',verificationPending:false,focus};
+  const lifetimeDraft={fromDate:'04.1',toDate:'04.10.2027',focus:{field:'fromDate',...focus}};
+  store.write({...snapshot,charts:{query:'Анна',searchOpen:true,focus},account:{...account,code:'123456'},lifetimeDraft});
+  const restored=createViewStore({getStorage:()=>storage}).read();
+  assert.deepEqual(restored?.charts,{query:'Анна',searchOpen:true,focus});
+  assert.deepEqual(restored?.account,account);
+  assert.deepEqual(restored?.lifetimeDraft,lifetimeDraft);
+  assert.equal(storage.records.size,1);
+  assert.equal(JSON.stringify(restored).includes('123456'),false);
+  store.write({...restored,charts:{query:'',searchOpen:true},account:null,lifetimeDraft:null});
+  assert.equal(store.read()?.charts?.focus,undefined);
+  assert.equal(store.read()?.lifetimeDraft,null);
+});
+
+test('input restoration bounds the caret and never retains a code-field selection or unknown date field', () => {
+  const storage=memory({...snapshot,charts:{query:'ab',searchOpen:true,focus:{start:1,end:99,direction:'backward'}},
+    account:{email:'draft@',attemptEmail:'',attemptId:null,step:'code',verificationPending:false,focus:{start:1,end:6,direction:'none'}},
+    lifetimeDraft:{fromDate:'04.1',toDate:'',focus:{field:'secret',start:0,end:1,direction:'none'}}});
+  const restored=createViewStore({getStorage:()=>storage}).read();
+  assert.deepEqual(restored?.charts?.focus,{start:1,end:2,direction:'backward'});
+  assert.equal(restored?.account?.focus,null);
+  assert.equal(restored?.lifetimeDraft,null);
+});
+
+
+test('invalid unfinished email text remains a draft instead of being discarded by storage validation', () => {
+  const storage=memory(), store=createViewStore({getStorage:()=>storage});
+  const email='not yet an address '.repeat(20), focus={start:5,end:email.length,direction:'forward'};
+  const account={email,attemptEmail:'',attemptId:null,step:'email',verificationPending:false,focus};
+  store.write({...snapshot,account});
+  assert.deepEqual(createViewStore({getStorage:()=>storage}).read()?.account,account);
+});
+
+
+test('the ready temporary result and unfinished form survive reload as independent tab state', () => {
+  const chart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary'}));
+  const receipt='receipt.payload';
+  const storage=memory(),first=createViewStore({getStorage:()=>storage});
+  assert.equal(first.write({...snapshot,temporaryChart:{...chart,calculationReceipt:receipt},birthForm:null}),true);
+  const restored=createViewStore({getStorage:()=>storage}).read()!;
+  assert.equal(restored.temporaryChart?.id,chart.id);
+  assert.equal(restored.temporaryChart?.calculationReceipt,receipt);
+  assert.deepEqual(restored.temporaryChart?.activations,chart.activations);
+  assert.equal(restored.birthForm,null);
+  assert.deepEqual([...storage.records.keys()],[VIEW_STORAGE_KEY]);
+  first.write({...restored,workspace:'account',account:{email:'test@example.org',attemptEmail:'',attemptId:null,step:'email',verificationPending:false}});
+  assert.equal(first.read()?.temporaryChart?.id,chart.id);
+  first.write({...first.read(),temporaryChart:null});
+  assert.equal(createViewStore({getStorage:()=>storage}).read()?.temporaryChart,null);
+});
+
+test('fresh tabs have no guest collection and duplicated tab snapshots diverge independently', () => {
+  const chart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary',name:'First'}));
+  const firstStorage=memory(),first=createViewStore({getStorage:()=>firstStorage});
+  first.write({...snapshot,temporaryChart:chart});
+  const duplicateStorage=memory(JSON.parse(firstStorage.records.get(VIEW_STORAGE_KEY)!));
+  const duplicate=createViewStore({getStorage:()=>duplicateStorage});
+  const other=createViewStore({getStorage:()=>memory()});
+  assert.equal(other.read(),null);
+  assert.equal(duplicate.read()?.temporaryChart?.name,'First');
+  first.write({...first.read(),temporaryChart:{...chart,name:'First edited'}});
+  duplicate.write({...duplicate.read(),temporaryChart:{...chart,name:'Duplicate edited'}});
+  assert.equal(first.read()?.temporaryChart?.name,'First edited');
+  assert.equal(duplicate.read()?.temporaryChart?.name,'Duplicate edited');
+});
+
+test('malformed or account-owned snapshot data cannot masquerade as a temporary result', () => {
+  const chart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary'}));
+  const invalidStorage=memory(),store=createViewStore({getStorage:()=>invalidStorage});
+  for(const temporaryChart of [{...chart,personality:[65]}, {...chart,id:'current-transit'}, {...chart,source:'manual'}]) {
+    store.write({...snapshot,temporaryChart});
+    assert.equal(store.read()?.temporaryChart,null);
+  }
+  const storage=memory(),ready=createViewStore({getStorage:()=>storage});
+  ready.write({...snapshot,temporaryChart:{...chart,accountId:'123',revision:4,noteRevision:2}});
+  const restored=ready.read()?.temporaryChart;
+  assert.ok(restored);
+  assert.equal('accountId' in restored,false);assert.equal('revision' in restored,false);
+});
+
+
+test('temporary save recovery keeps only the operation linked to the current tab source',()=>{
+  const chart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary'}));
+  const storage=memory(),store=createViewStore({getStorage:()=>storage});
+  const binding={operationId:'a'.repeat(32),expectedAccountId:'12',sourceId:'temporary'};
+  store.write({...snapshot,temporaryChart:chart,temporaryChartSave:{...binding,command:{note:'not a queued command'}}});
+  assert.deepEqual(createViewStore({getStorage:()=>storage}).read()?.temporaryChartSave,binding);
+  assert.equal(storage.records.get(VIEW_STORAGE_KEY)!.includes('not a queued command'),false);
+  for(const temporaryChartSave of [{...binding,sourceId:'another'}, {...binding,operationId:'bad'}, {...binding,expectedAccountId:'bad'}, null]) {
+    store.write({...snapshot,temporaryChart:chart,temporaryChartSave});assert.equal(store.read()?.temporaryChartSave,null);
+  }
+  store.write({...snapshot,temporaryChart:null,temporaryChartSave:binding});assert.equal(store.read()?.temporaryChartSave,null);
+  store.write({...snapshot,temporaryChart:chart});assert.equal(store.read()?.temporaryChartSave,undefined);
+});
+
+
+test('the tab snapshot keeps one validated public chart without private fields or previous views',()=>{
+  const record=accountNatalChart(112,'2'),{accountId,note,noteRevision,publicRevision,...publicFields}=record;
+  const storage=memory(),store=createViewStore({getStorage:()=>storage});
+  store.write({...snapshot,publicChart:{...publicFields,secret:'never persist'}});
+  assert.deepEqual(createViewStore({getStorage:()=>storage}).read()?.publicChart,publicFields);
+  assert.equal(storage.records.get(VIEW_STORAGE_KEY)!.includes('never persist'),false);
+  for(const publicChart of [{...publicFields,note:'private'},record,{...publicFields,revision:0},{...publicFields,activations:null}]) {
+    store.write({...snapshot,publicChart});assert.equal(store.read()?.publicChart,null);
+  }
+  const next={...publicFields,id:'b'.repeat(32),name:'Last public'};store.write({...snapshot,publicChart:next});
+  assert.equal(store.read()?.publicChart?.id,next.id);assert.equal(storage.records.get(VIEW_STORAGE_KEY)!.includes(record.id),false);
+  store.write({...snapshot,publicChart:null});assert.equal(store.read()?.publicChart,null);
+  store.write(snapshot);assert.equal(store.read()?.publicChart,undefined);
+});
+
+test('short chart IDs preserve the restored selection and editing draft without changing operation IDs',()=>{
+ const id='191015375284462255641074847741010754715',operationId='1'.repeat(32);
+ const birthForm={editingId:id,accountId:'1',calculationMode:'calculated',fields:{chartName:'Unfinished name',birthDate:'2000-01-01',birthTime:'12:00',birthPlace:'City',chartNote:'Private draft'},city:null,fold:null,base:{note:'Original note',revision:1,noteRevision:1},focus:null};
+ const state=createViewStore({getStorage:()=>memory({...snapshot,selectedId:id,librarySelection:[id],birthForm,
+   pendingChartWrites:[{operationId,expectedAccountId:'1'}]})}).read();
+ assert.equal(state?.selectedId,id.slice(0,10));assert.deepEqual(state?.librarySelection,[id.slice(0,10)]);
+ assert.deepEqual(state?.birthForm,{...birthForm,editingId:id.slice(0,10)});
+ assert.equal(state?.pendingChartWrites?.[0].operationId,operationId);
 });

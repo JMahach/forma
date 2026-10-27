@@ -4,6 +4,11 @@ import type { TimelinePointer, TimelineGeometry, TimelineTarget } from './timeli
 type MarkerUtc = string | number | null | undefined;
 interface ReturnMarkerGroup { events: CycleEvent[]; position: number; labelLane?: 'below' | 'above'; labelHidden?: boolean; labelOffset?: number }
 interface MarkerInputs { events?: readonly CycleEvent[] | null; natal?: Partial<ChartRecord> | null; fromUtc?: MarkerUtc; toUtc?: MarkerUtc; displayedUtc?: MarkerUtc; visible?: boolean }
+interface MarkerLayout {
+  visible: boolean; fromUtc: MarkerUtc; toUtc: MarkerUtc;
+  natalId: ChartRecord['id'] | undefined; natalUtc: ChartRecord['utc']; natalTimezone: ChartRecord['timezone'];
+  events: Pick<CycleEvent, 'id' | 'body' | 'utc' | 'cycle' | 'cycleId' | 'pass' | 'direction'>[];
+}
 interface ReturnMarkerNode {
   button: HTMLButtonElement; dot: HTMLElement; symbol: HTMLElement; glyph: HTMLElement; ordinal: HTMLElement;
   event: CycleEvent; utc: number; hover: (active: boolean) => void; press: (active: boolean) => void;
@@ -84,7 +89,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   const document = container.ownerDocument;
   const layer = document.createElement('div');
   layer.className = 'returns-markers'; layer.hidden = true; container.append(layer);
-  let inputs: (MarkerInputs & { events: readonly CycleEvent[] }) | null = null, key: string | null = null, width: number | null = null, labelKey: string | null = null;
+  let inputs: (MarkerInputs & { events: readonly CycleEvent[] }) | null = null, layout: MarkerLayout | null = null, width: number | null = null, labelKey: string | null = null;
   let label: ReturnType<typeof labelsFor> | null = null, targets: ReturnMarkerNode[] = [], hovered: HTMLButtonElement | null = null;
   let hitMetrics: TimelineGeometry | null | undefined = null, hitBoxes: { target: ReturnMarkerNode; rect: DOMRect }[] | null = null;
   const records = new Map<string, ReturnMarkerNode>();
@@ -156,10 +161,26 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   function update(next: MarkerInputs) {
     inputs = { ...next, events: Array.isArray(next.events) ? next.events : [] };
     // Clock changes update only changed indicators; labels and layout stay intact.
-    const nextKey = JSON.stringify([Boolean(next.visible), next.fromUtc, next.toUtc, next.natal?.id, next.natal?.utc, next.natal?.timezone,
-      inputs.events.map(event => [event?.id, event?.body, event?.utc, event?.cycle, event?.cycleId, event?.pass, event?.direction])]);
-    if (nextKey === key) { updateActive(); return; }
-    key = nextKey; render();
+    if (sameLayout(inputs)) { updateActive(); return; }
+    // Copy only fields of the shown layout. A caller may replace or mutate its
+    // events; time movement must neither miss such edits nor serialize the list.
+    layout = { visible: Boolean(next.visible), fromUtc: next.fromUtc, toUtc: next.toUtc,
+      natalId: next.natal?.id, natalUtc: next.natal?.utc, natalTimezone: next.natal?.timezone,
+      events: inputs.events.map(event => ({ id: event?.id, body: event?.body, utc: event?.utc,
+        cycle: event?.cycle, cycleId: event?.cycleId, pass: event?.pass, direction: event?.direction })) };
+    render();
+  }
+  function sameLayout(next: MarkerInputs & { events: readonly CycleEvent[] }) {
+    if (!layout || Boolean(next.visible) !== layout.visible || next.fromUtc !== layout.fromUtc || next.toUtc !== layout.toUtc
+      || next.natal?.id !== layout.natalId || next.natal?.utc !== layout.natalUtc || next.natal?.timezone !== layout.natalTimezone
+      || next.events.length !== layout.events.length) return false;
+    for (let i = 0; i < next.events.length; i++) {
+      const event = next.events[i], shown = layout.events[i];
+      if (event?.id !== shown?.id || event?.body !== shown?.body || event?.utc !== shown?.utc
+        || event?.cycle !== shown?.cycle || event?.cycleId !== shown?.cycleId || event?.pass !== shown?.pass
+        || event?.direction !== shown?.direction) return false;
+    }
+    return true;
   }
   const Observer = document.defaultView?.ResizeObserver || globalThis.ResizeObserver;
   if (Observer) new Observer(entries => {

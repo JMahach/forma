@@ -1,30 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, forceCloseDatabase } from 'fake-indexeddb';
-import { createBinaryCache } from '../src/data/binary-cache.ts';
-import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
-import { createMemoryCache } from '../src/data/memory-cache.ts';
+import { createIndexedDatabase } from '../src/data/indexed-db.ts';
 
-const version = 'a'.repeat(64), date = '2026-10-09';
-const day = { calculationVersion: version, version: '2', date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
-  engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
-  columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) =>
-    column < 22 ? 1 : column === 22 ? Date.parse(date) / 1000 - 88 * 86400 + minute * 60 : 1e-10)) };
-const kinds = {
-  binary(options: { databaseName?: string; indexedDB?: IDBFactory|null; timeoutMs?: number; }|undefined) {
-    const cache = createBinaryCache({ databaseName: 'binary', ...options });
-    return { read: () => cache.get('key'), write: () => cache.put('key', new ArrayBuffer(12)) };
-  },
-  days(options) {
-    const cache = createTransitDayCache({ databaseName: 'days', memory: createMemoryCache({ maxBytes: 0 }), ...options });
-    return { read: () => cache.getDay(date, version), write: async () => { cache.putDay(day); await cache.flush(); }, close: () => cache.close() };
-  },
-};
+// Connection lifetime belongs to this helper. Calculation adapters now open a
+// common database plus fenced migration sources, so their open count is not its
+// connection contract.
+type DatabaseOptions = Parameters<typeof createIndexedDatabase>[0];
+type TestOptions = Omit<Partial<DatabaseOptions>, 'indexedDB'> & { indexedDB: Pick<IDBFactory, 'open'> };
+type PendingOpen = { result: { close(): void }; onblocked?: () => void; onsuccess?: () => void };
 
-for (const [kind, create] of Object.entries(kinds)) {
-  test(`${kind}: a denied open can recover on the next attempt`, async t => {
+function create(options: TestOptions) {
+  const database=createIndexedDatabase({databaseName:'connection-test',version:1,stores:['packets'],
+    // The connection helper only calls open on the supplied factory.
+    upgrade(db){db.createObjectStore('packets');},...options as Partial<DatabaseOptions>});
+  return {
+    read:()=>database.transaction('readonly',(tx,result)=>{const request=tx.objectStore('packets').get('key');request.onsuccess=()=>result(request.result??null);}),
+    write:()=>database.transaction('readwrite',(tx,result)=>{tx.objectStore('packets').put(new ArrayBuffer(12),'key');result(true);}),
+    close:()=>database.close(),
+  };
+}
+
+  test('a denied open can recover on the next attempt', async t => {
     const healthy = new IDBFactory(); let attempts = 0;
-    const cache = create({ indexedDB: { open(...args) {
+    const cache = create({ indexedDB: { open(...args: Parameters<IDBFactory['open']>) {
       if (++attempts === 1) throw new Error('Temporarily denied');
       return healthy.open(...args);
     } } });
@@ -34,13 +33,14 @@ for (const [kind, create] of Object.entries(kinds)) {
     assert.ok(await cache.read()); assert.equal(attempts, 2);
   });
 
-  for (const blocked of [true, false] as const) test(`${kind}: ${blocked ? 'blocked' : 'timed-out'} open retries only after the native request settles`, async t => {
-    const healthy = new IDBFactory(); let attempts = 0, request: IDBOpenDBRequest, closed = 0;
-    const cache = create({ timeoutMs: 50, indexedDB: { open(...args) {
+  for (const blocked of [true, false] as const) test(`${blocked ? 'blocked' : 'timed-out'} open retries only after the native request settles`, async t => {
+    const healthy = new IDBFactory(); let attempts = 0, request: PendingOpen, closed = 0;
+    const cache = create({ timeoutMs: 50, indexedDB: { open(...args: Parameters<IDBFactory['open']>) {
       if (++attempts > 1) return healthy.open(...args);
       request = { result: { close() { closed++; } } };
       if (blocked) queueMicrotask(() => request.onblocked!());
-      return request;
+      // Model only the late completion and close operations exercised here.
+      return request as unknown as IDBOpenDBRequest;
     } } });
     t.after(() => cache.close?.());
     assert.equal(await cache.read(), null);
@@ -50,12 +50,9 @@ for (const [kind, create] of Object.entries(kinds)) {
     await cache.write();
     assert.ok(await cache.read()); assert.equal(attempts, 2);
   });
-}
-
-
-for (const [kind, create] of Object.entries(kinds)) test(`${kind}: a connection closed by the browser is reopened on the next operation`, async t => {
-  const indexedDB = new IDBFactory(); let database, opens = 0;
-  const cache = create({ indexedDB: { open(...args) {
+test('a connection closed by the browser is reopened on the next operation', async t => {
+  const indexedDB = new IDBFactory(); let database: IDBDatabase | undefined, opens = 0;
+  const cache = create({ indexedDB: { open(...args: Parameters<IDBFactory['open']>) {
     opens++;
     const request = indexedDB.open(...args);
     request.addEventListener('success', () => { database = request.result; });
@@ -63,9 +60,42 @@ for (const [kind, create] of Object.entries(kinds)) test(`${kind}: a connection 
   } } });
   t.after(() => cache.close?.());
   await cache.write(); assert.ok(await cache.read());
-  forceCloseDatabase(database!);
+  // fake-indexeddb declares a constructor here, but closes an existing connection.
+  forceCloseDatabase(database! as unknown as Parameters<typeof forceCloseDatabase>[0]);
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(await cache.read(), 'saved values survive reconnect');
   await cache.write(); assert.ok(await cache.read());
   assert.equal(opens, 2);
+});
+
+for (const stage of ['open', 'request', 'upgrade'] as const) test(`quota during ${stage} stays distinguishable and a later opening can recover`, async t => {
+  const native = new IDBFactory(); let full = true, aborted = 0;
+  const factory = {open(...args: Parameters<IDBFactory['open']>) {
+    if (full && stage === 'open') throw new DOMException('Full', 'QuotaExceededError');
+    if (full && stage === 'request') {
+      const failed = {error: new DOMException('Full', 'QuotaExceededError'), onerror: null as (() => void) | null};
+      queueMicrotask(() => failed.onerror?.());
+      return failed as unknown as IDBOpenDBRequest;
+    }
+    return native.open(...args);
+  }} as IDBFactory;
+  const database = createIndexedDatabase({indexedDB: factory, databaseName: `quota-${stage}`, version: 1, stores: ['packets'],
+    upgrade(db, tx) {
+      db.createObjectStore('packets');
+      if (full && stage === 'upgrade') {
+        tx.addEventListener('abort', () => { aborted++; });
+        throw new DOMException('Full', 'QuotaExceededError');
+      }
+    }});
+  t.after(() => database.close());
+  const write = () => database.transactionResult('readwrite', (tx, result) => {
+    tx.objectStore('packets').put('saved', 'key'); result(true);
+  });
+  assert.deepEqual(await write(), {status: 'quota'});
+  if (stage === 'upgrade') assert.equal(aborted, 1, 'only report quota after the schema transaction rolls back');
+  full = false;
+  assert.deepEqual(await write(), {status: 'complete', value: true});
+  assert.equal(await database.transaction('readonly', (tx, result) => {
+    const request = tx.objectStore('packets').get('key'); request.onsuccess = () => result(request.result);
+  }), 'saved');
 });

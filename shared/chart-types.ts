@@ -53,6 +53,8 @@ export interface City {
   longitude: number;
 }
 export interface ChartRecord extends ChartData {
+  /** Server proof kept with a temporary result; grants no account access. */
+  calculationReceipt?: string;
   id: string | null;
   name: string;
   birthDate: string;

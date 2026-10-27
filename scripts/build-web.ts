@@ -6,10 +6,15 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gzip, brotliCompress, constants } from 'node:zlib';
 import { build } from 'esbuild';
+import { buildOfflineWorker } from './offline-manifest.ts';
+import boundaries from './architecture/architecture-boundaries.json' with { type: 'json' };
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const gzipAsync = promisify(gzip), brotli = promisify(brotliCompress);
 const publicPath = (relative: string) => relative.split(path.sep).join('/');
+const developmentOwners = boundaries.modules.filter(module => module.id === 'browser-dev');
+if (developmentOwners.length !== 1 || !developmentOwners[0].files.length) throw new Error('Missing or ambiguous browser-dev declaration');
+const developmentFiles = new Set(developmentOwners[0].files);
 
 // Source remains readable and runs directly in development. Only release HTML
 // refers to these content-versioned assets; the server reads one explicit map.
@@ -20,8 +25,11 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     entryPoints: { startup: 'src/entry.ts', love: 'src/stories/vessel-of-love.ts', styles: 'public/styles.css', 'love-style': 'public/love.css' },
     outdir, entryNames: 'assets/[name]-[hash]', chunkNames: 'assets/shared-[hash]',
     bundle: true, splitting: true, format: 'esm', platform: 'browser', target: ['safari15', 'chrome100'],
+    define: { __FORMA_RELEASE__: 'true' },
     minify: true, metafile: true, write: false, logLevel: 'silent',
   });
+  const development = Object.keys(result.metafile.inputs).find(input => developmentFiles.has(publicPath(input)));
+  if (development) throw new Error(`Development module in release: ${publicPath(development)}`);
   const manifest: Record<string, ReleaseEntry> = {}, outputs = new Map(result.outputFiles.map(file => [publicPath(path.relative(outdir, file.path)), file.contents]));
   const entryOutput = (input: string) => {
     const output = Object.entries(result.metafile.outputs).find(([, meta]) => meta.entryPoint === input)?.[0];
@@ -69,6 +77,9 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
       .replace('</head>', `  ${preloadFor(script)}\n</head>`);
     outputs.set(page, Buffer.from(html));
   }
+  const offline = await buildOfflineWorker(outputs);
+  outputs.set('index.html', offline.html);
+  outputs.set('service-worker.js', offline.bytes);
   for (const [file, contents] of outputs) {
     const bytes = Buffer.from(contents), filename = path.join(outdir, file);
     await fs.mkdir(path.dirname(filename), { recursive: true });

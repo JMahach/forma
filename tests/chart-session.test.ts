@@ -616,3 +616,34 @@ test('initial saved selection exists before subscriptions without issuing naviga
     assert.equal(session.record, expected === 'saved' ? chart : null);
   }
 });
+
+
+test('adopting a saved identity preserves the selected Day minute and its prepared packet',async()=>{
+  const day=natalDayFixture(),original=libraryRecordAtMinute(day,754,personalChartFixture({id:'temporary'}));
+  const saved={...original,id:'saved',name:'Confirmed',note:'Own note'};
+  const records=new Map([[original.id,original],[saved.id,saved]]);let loads=0,paints=0;
+  let natalDay:ReturnType<typeof createNatalDayExplorer>;
+  const session=createChartSession({store:{get:id=>records.get(id),has:id=>records.has(id)},
+    getNatalDay:()=>natalDay,onChange:()=>{paints++;}});
+  natalDay=createNatalDayExplorer({dayClient:{async getDay(){loads++;return day;}},
+    onRender:()=>session.publish('natal-day',natalDay.current)});
+  session.select(original.id);await natalDay.open();session.expect('natal-day');natalDay.scrub(500);
+  const shown=session.current.primary,packet=natalDay.state.day,base=session.baseChart;paints=0;
+  assert.equal(session.adopt(saved.id,original.id),true);
+  assert.equal(session.selectedId,saved.id);assert.equal(session.record,saved);
+  assert.equal(session.current.primary,shown);assert.equal(session.baseChart,base);
+  assert.equal(natalDay.state.original,saved);assert.equal(natalDay.state.day,packet);
+  assert.equal(natalDay.state.index,500);assert.equal(natalDay.state.opened,true);
+  assert.equal(session.current.primaryLabel,'Confirmed');assert.equal(loads,1);assert.equal(paints,1);
+});
+
+test('adoption refuses a changed calculation or an obsolete selected source without touching its view',()=>{
+  const day=natalDayFixture(),original=libraryRecordAtMinute(day,754,personalChartFixture({id:'temporary'}));
+  const changed={...libraryRecordAtMinute(day,755,original),id:'other'};
+  const records=new Map([[original.id,original],[changed.id,changed]]);
+  const session=createChartSession({store:{get:id=>records.get(id),has:id=>records.has(id)}});
+  session.select(original.id);const shown=session.current;
+  assert.equal(session.adopt(changed.id,original.id),false);assert.equal(session.current,shown);
+  assert.equal(session.adopt(original.id,'old-selection'),false);assert.equal(session.current,shown);
+  assert.equal(session.selectedId,original.id);
+});

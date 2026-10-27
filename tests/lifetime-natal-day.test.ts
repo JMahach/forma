@@ -10,6 +10,7 @@ import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import { IDBFactory } from 'fake-indexeddb';
 import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 
 const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
@@ -66,7 +67,7 @@ for (const [name, make, indices] of [['ordinary', () => natalDayFixture(), [700]
     for (const index of indices) {
       const utc = Date.parse(natalDayMinute(h.day, index).utc), expected = chartAtMinute(h.day, index, h.chart());
       assert.equal(h.client.hasMinute(utc), true);
-      const actual = await h.client.getMoment(utc);
+      const actual = await h.client.readMinute(utc);
       assert.equal(actual.utc, expected.utc);
       assert.deepEqual(actual.activations, expected.activations);
       assert.equal(actual.designUtc, expected.designUtc);
@@ -128,7 +129,7 @@ test('natal reuse does not lend a rounded instant, another original chart, or a 
   assert.equal(h.client.peekMinute(Math.floor(exact / 60000) * 60000), null);
   h.setChart({ ...h.chart(), birthDate: '1900-01-02' });
   assert.equal(h.client.peekMinute(exact), null);
-  await h.client.getMoment(exact); assert.equal(h.requests.length, 1); assert.match(h.requests[0], /23%3A51%3A39Z/);
+  assert.equal(await h.client.readMinute(exact), null); assert.deepEqual(h.requests, []);
 });
 
 test('a missing prepared natal day falls back to lifetime without calculating the whole natal day', async () => {
@@ -142,7 +143,7 @@ test('a different numerical revision cannot lend a natal day to lifetime', async
   await h.client.getMeta();
   const utc = Date.parse(natalDayMinute(h.day, 700).utc);
   assert.equal(h.client.hasMinute(utc), false); assert.equal(h.client.peekMinute(utc), null);
-  await h.client.getMoment(utc); assert.equal(h.requests.length, 1);
+  assert.equal(await h.client.readMinute(utc), null); assert.deepEqual(h.requests, []);
 });
 
 test('two cache-only natal readers cancel independently and do not wait for pending calculation', async () => {
@@ -168,7 +169,8 @@ test('two cache-only natal readers cancel independently and do not wait for pend
 test('a ready natal packet from disk is used even when the shared reuse budget cannot retain it', async () => {
   const h = harness(historical(), { memoryLimit: 0 }); await h.prepare();
   const expected = natalDayMinute(h.day, 1).utc;
-  const chart = await h.client.getMoment(Date.parse(expected));
+  await h.client.getMeta();
+  const chart = await h.client.readMinute(Date.parse(expected));
   assert.equal(chart.utc, expected);
   assert.deepEqual(h.requests, []);
   assert.equal(h.memory.size, 0);
@@ -227,7 +229,9 @@ test('evicting natal numbers retains only the active timeline and preserves the 
 });
 
 test('a missing historical natal minute still reads the ready transit day for its grid fallback', async t => {
-  const days = createTransitDayCache({ indexedDB: new IDBFactory(), memory: createMemoryCache({ maxBytes: 0 }) });
+  const owner=createCalculationCache({indexedDB:new IDBFactory(),now:()=>Date.parse('1899-12-31T12:00:00Z')});t.after(()=>owner.close());
+  await owner.setTransitWindow({version:revision,dates:['1899-12-31'],expiresAt:Date.parse('1900-01-01T00:00:00Z')});
+  const days = createTransitDayCache({ cache:owner, memory: createMemoryCache({ maxBytes: 0 }) });
   t.after(() => days.close());
   const h = harness(historical(), { days }); await h.prepare();
   days.putDay({ ...h.day, version: '2', date: '1899-12-31', startUtc: '1899-12-31T00:00:00Z' }); await days.flush();
@@ -257,7 +261,7 @@ for (const command of ['open', 'restore'] as const) test(`explicit ${command} di
   await show();
   assert.equal(h.reads, before + 1, 'one cache-only lookup belongs to the explicit opening');
   assert.equal(h.client.hasMinute(minute), true);
-  assert.equal((await h.client.getMoment(minute)).utc, natalDayMinute(h.day, 1).utc);
+  assert.equal((await h.client.readMinute(minute)).utc, natalDayMinute(h.day, 1).utc);
   assert.deepEqual(h.requests, []);
   for (const index of [150, 151, 152] as const) await h.client.getPoint(index);
   assert.equal(h.reads, before + 1, 'scrubbing does not repeat the opening lookup');

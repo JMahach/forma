@@ -1,9 +1,7 @@
-import { actionAvailability } from '../ui/action-state.ts';
 import { createActionNotice, type ActionNoticeHandle } from '../ui/feedback.ts';
 import { UI_MESSAGES } from '../ui/messages.ts';
 import { PALETTE } from '../ui/chart-palette.ts';
 import { chartHighlight } from '../state/chart-highlight.ts';
-import { standConnection } from './stand-connection.ts';
 import { isDevelopmentPort } from '../../shared/development.ts';
 
 type Connection = 'online' | 'offline' | 'server';
@@ -83,17 +81,13 @@ export function createSharedChartMessages(surface: ReturnType<typeof createActio
   return {render,copy,close:()=>{adding?.close();copying?.close();}};
 }
 
-// Stand-only visual study: no saving, sharing, account writes or URL changes.
+// Stand-only copy feedback and colour choices. The real add control and its
+// state belong to app.ts; the stand never creates or simulates another add.
 if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
-  const panelCaption = document.querySelector('#summaryChartCaption .summary-moment-heading');
-  if (panelCaption) {
+  const actions = document.querySelector<HTMLElement>('#summaryChartCaption .summary-chart-actions');
+  if (actions) {
     const style = document.createElement('style');
     style.textContent = `
-      .shared-chart-study { display: flex; align-items: center; gap: var(--chart-control-gap); position: static; margin: 0; pointer-events: auto; }
-      .shared-chart-study[hidden] { display: flex !important; visibility: hidden; pointer-events: none; }
-      .summary-chart-actions { position: relative; display: flex; flex: none; align-items: center; gap: var(--chart-control-gap); }
-      .summary-title:has(.summary-comparison:not([hidden])) .summary-chart-actions { display: none; }
-      .summary-chart-actions button:disabled { opacity: .45; cursor: default; }
       .shared-chart-study-options { position: relative; display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin: 0 0 2px; border-bottom: 1px solid var(--panel-border); gap: 8px; }
       body:has(.studio[data-workspace-screen='chart']) .shared-chart-study-options { position: relative; display: grid; }
       .shared-chart-study-options > .chart-highlight-switch {
@@ -116,53 +110,15 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
       .chart-highlight-switch[aria-checked="true"] .chart-highlight-thumb { transform: translateX(14px); }
       .chart-highlight-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       @media (prefers-reduced-motion: reduce) { .chart-highlight-thumb { transition: none; } }
-      .shared-study-choices { display: flex; gap: 5px; flex-wrap: wrap; }
-      .shared-study-choices button { min-height: 32px; padding: 5px 8px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: 11px/16px var(--sans); }
-      .shared-study-choices button[aria-pressed='true'] { border-color: #89654a; background: #efe5da; color: #68472f; box-shadow: inset 0 0 0 1px #89654a; }
-      .shared-study-choices button:focus-visible { outline: 1px dashed #68472f; outline-offset: 2px; }
-      .summary-title:has(.summary-comparison:not([hidden])) .shared-chart-send { display: none; }
-      .app-shell[data-page-state='loading'] :is(.shared-chart-study, .shared-chart-send) { visibility: hidden; pointer-events: none; }
-    `;
-    style.textContent += `
-      .shared-chart-add-wrap { display: inline-flex; position: relative; }
-      .shared-chart-add-wrap[data-unavailable='true'] .shared-chart-add { pointer-events: none; }
-      .shared-chart-add-wrap:focus-visible { outline: 1px dashed var(--control-focus); outline-offset: 3px; border-radius: var(--floating-control-radius); }
     `;
     document.head.append(style);
-    for (const host of [panelCaption]) {
-      const group = document.createElement('div');
-      group.className = 'shared-chart-study';
-      group.innerHTML = `
-        <button type="button" class="shared-chart-add" aria-label="Добавить карту" title="Добавить карту">
-          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-        </button>
-        <button type="button" class="shared-chart-send" aria-label="Скопировать ссылку" title="Скопировать ссылку">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>`;
-      const add = group.querySelector<HTMLButtonElement>('.shared-chart-add')!;
-      const wrap = document.createElement('span');
-      wrap.className = 'shared-chart-add-wrap';
-      const description = document.createElement('span');
-      description.className = 'visually-hidden'; description.id = 'sharedOfflineDescription';
-      description.textContent = 'Нет соединения';
-      add.before(wrap); wrap.append(add, description);
-      const send = group.querySelector('.shared-chart-send')!;
-      const actions = document.createElement('div');
-      actions.className = 'summary-chart-actions';
-      group.hidden = true;
-      actions.append(send, group); host.append(actions);
-
-    }
-
-    const groups = Array.from(document.querySelectorAll<HTMLElement>('.shared-chart-study'));
+    const send=document.createElement('button');send.type='button';send.className='shared-chart-send';
+    send.setAttribute('aria-label','Скопировать ссылку');send.title='Скопировать ссылку';
+    send.innerHTML='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    actions.prepend(send);
     const palettes = document.getElementById('controlColorPreviews');
     if (palettes) {
-      const options = document.createElement('div');
-      options.className = 'shared-chart-study-options';
-      options.innerHTML = `<div class="shared-study-choices" role="group" aria-label="Карта">
-        <button type="button" data-kind="temporary">Временная карта</button>
-        <button type="button" data-kind="saved">В картотеке</button>
-      </div>`;
+      const options = document.createElement('div');options.className = 'shared-chart-study-options';
       const highlightSwitch = document.createElement('button');
       highlightSwitch.type = 'button';
       highlightSwitch.className = 'chart-highlight-switch';
@@ -201,91 +157,11 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
       copySetting.append(copyChoices); options.append(copySetting);
       palettes.prepend(options);
       const surface = createActionNotice(document.querySelector<HTMLElement>('.app-shell')!);
-      const study = createSharedChartStudy(render);
-      const group = groups[0];
-      const messages = createSharedChartMessages(surface, {
-        add:group.querySelector<HTMLElement>('.shared-chart-add')!,
-        copy:document.querySelector<HTMLElement>('.shared-chart-send')!,
-        boundary:group.closest<HTMLElement>('.chart-summary') || undefined,
-        getState:()=>study.state,copyOutcome:()=>copyOutcome,
-        cancel:()=>study.cancel(),dismiss:()=>study.dismiss(),
-        returnAddFocus:()=>addFocusTarget(group),
+      send.addEventListener('click',()=>{
+        const error=copyOutcome==='error';
+        surface.show(send,{message:error?UI_MESSAGES.linkCopyFailed:UI_MESSAGES.linkCopied,tone:error?'error':'success'},
+          {boundary:send.closest<HTMLElement>('.chart-summary') || undefined,durationMs:2000,compact:true,placement:'above'});
       });
-      document.querySelectorAll<HTMLButtonElement>('.shared-chart-send').forEach(button => {
-        button.addEventListener('click', messages.copy);
-      });
-
-      function addFocusTarget(group: HTMLElement) {
-        const add = group.querySelector<HTMLButtonElement>('.shared-chart-add')!;
-        const target = add.disabled ? group.querySelector<HTMLElement>('.shared-chart-add-wrap')! : add;
-        return target;
-      }
-
-      function render(state: StudyState, action?: 'add') {
-        options.querySelectorAll<HTMLElement>('[data-kind]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.kind === state.kind)));
-        for (const group of groups) {
-          group.hidden = state.kind === 'saved';
-          const add = group.querySelector<HTMLButtonElement>('.shared-chart-add')!;
-          const availability = actionAvailability({ connection: state.connection, requiresConnection: true, pending: state.pending });
-          add.disabled = availability.disabled;
-          const wrap = group.querySelector<HTMLElement>('.shared-chart-add-wrap')!;
-          const unavailable = Boolean(availability.reason);
-          wrap.dataset.unavailable = String(unavailable);
-          wrap.querySelector<HTMLElement>('.visually-hidden')!.hidden = !unavailable;
-          wrap.title = availability.reason;
-          add.title = unavailable ? '' : 'Добавить карту';
-          if (unavailable) {
-            wrap.tabIndex = 0; wrap.setAttribute('role', 'group'); wrap.setAttribute('aria-label', 'Добавить карту');
-            wrap.setAttribute('aria-describedby', wrap.querySelector('.visually-hidden')!.id);
-
-          } else {
-            wrap.removeAttribute('tabindex'); wrap.removeAttribute('role'); wrap.removeAttribute('aria-label'); wrap.removeAttribute('aria-describedby');
-
-          }
-          const hintId = wrap.querySelector('.visually-hidden')!.id;
-          const descriptions = new Set((add.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
-          descriptions.delete(hintId); if (unavailable) descriptions.add(hintId);
-          if (descriptions.size) add.setAttribute('aria-describedby',[...descriptions].join(' '));
-          else add.removeAttribute('aria-describedby');
-          add.setAttribute('aria-busy', String(availability.busy));
-        }
-        messages.render(state,action);
-      }
-      options.addEventListener('click', event => {
-        const button = (event.target as Element).closest<HTMLButtonElement>('button');
-        if (button?.dataset.kind) { messages.close(); study.setKind(button.dataset.kind as CardKind); }
-      });
-      groups.forEach(group => group.querySelector('.shared-chart-add')!.addEventListener('click', () => study.add()));
-      document.addEventListener('click', event => {
-        const target = event.target as Element;
-        // Stand switches remain usable to rehearse recovery of a pending action.
-        if (target.closest('.summary-chart-actions, #controlColorPreviews') || surface.contains(target)) return;
-        if (study.state.pending) study.cancel();
-        else if (study.state.notice) study.dismiss();
-        messages.close();
-        const focused = document.activeElement as HTMLElement | null;
-        if (focused?.matches('.shared-chart-add-wrap')) focused.blur();
-      }, { capture: true });
-      standConnection.subscribe(mode => study.setConnection(mode));
-      const transitButton = document.getElementById('nowButton');
-      const isTransit = () => transitButton?.getAttribute('aria-pressed') === 'true';
-      let previousTransit = isTransit();
-      if (previousTransit) study.setKind('temporary');
-      if (transitButton) new MutationObserver(() => {
-        const transit = isTransit();
-        if (transit === previousTransit) return;
-        previousTransit = transit;
-        messages.close(); study.setKind(transit ? 'temporary' : 'saved');
-      }).observe(transitButton, { attributes: true, attributeFilter: ['aria-pressed'] });
-      const title = document.getElementById('chartTitle');
-      if (title) {
-        let previousTitle = title.textContent;
-        new MutationObserver(() => {
-          if (title.textContent === previousTitle) return;
-          previousTitle = title.textContent;
-          messages.close(); study.setKind(isTransit() ? 'temporary' : 'saved');
-        }).observe(title, { childList: true, characterData: true, subtree: true });
-      }
     }
   }
 }

@@ -1,8 +1,10 @@
+import type { createReturnReceipts } from '../services/return-receipt.ts';
+import { reportServerFailure, type ServerFailureReport } from '../journal/report.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Cycles } from '../services/cycles.ts';
 import { CycleError, validateCycleRequest } from '../services/cycles.ts';
 
-export function createCyclesHandler(service: Pick<Cycles, 'cacheVersion' | 'events' | 'chart'>) {
+export function createCyclesHandler(service: Pick<Cycles, 'cacheVersion' | 'events' | 'chart'>, {report,issueReceipt}: {report?:ServerFailureReport;issueReceipt?:ReturnType<typeof createReturnReceipts>['issue']} = {}) {
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
     if (req.method !== 'POST') { res.writeHead(405, { ...headers, Allow: 'POST' }); res.end(); return; }
@@ -37,10 +39,12 @@ export function createCyclesHandler(service: Pick<Cycles, 'cacheVersion' | 'even
       const result = await service[action](request, { signal: controller.signal });
       if (controller.signal.aborted) return;
       res.writeHead(200, { ...headers, 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify(result));
+      const proof=issueReceipt?.(action,request,result);
+      res.end(JSON.stringify(proof?{...result,proof}:result));
     } catch (error) {
       if (controller.signal.aborted) return;
       const known = error instanceof CycleError;
+      if (!known) reportServerFailure(report,{event:'http_request_failed',component:'cycles',reason:'unexpected'});
       res.writeHead(known ? error.status : 503, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
         ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 3) }) });
       res.end(JSON.stringify({ error: known ? error.code : 'cycles_unavailable', message: known ? error.message : 'Не удалось подготовить циклы. Повторите попытку.', ...(known ? error.details : {}) }));

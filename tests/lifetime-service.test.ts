@@ -1,11 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { FileHandle } from 'node:fs/promises';
-import type { Calculator } from '../server/services/calculate.ts';
 import type { CapturedResponse } from './helpers/http-response.ts';
-type MomentOptions = NonNullable<Parameters<typeof createMoments>[0]>;
-const createLifetimeMoments = (options: Omit<MomentOptions, 'calculate'> & {
-  calculate?: (...args: Parameters<Calculator>) => Promise<unknown>;
-}) => createMoments(options as MomentOptions);
+type MomentOptions = NonNullable<Parameters<typeof createLifetimeMoments>[0]>;
 import { captureResponse } from './helpers/http-response.ts';
 import { deferred } from './helpers/deferred.ts';
 import test from 'node:test';
@@ -16,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { createLifetimeFile, createLifetimeMoments as createMoments } from '../server/services/lifetime.ts';
+import { createLifetimeFile, createLifetimeMoments } from '../server/services/lifetime.ts';
 import * as lifetimeService from '../server/services/lifetime.ts';
 import { calculationVersion } from '../server/runtime/calculation-version.ts';
 import { createLifetimeHandler } from '../server/http/lifetime.ts';
@@ -74,30 +70,17 @@ test('concurrent point requests use independent positional reads', async t => {
   points.forEach((point, request) => assert.deepEqual(point.longitudes, input.columns.slice(0, LIFETIME_PLANETS.length).map(column => column[indices[request]])));
 });
 
-test('one hundred ready file moments complete while all exact calculation slots are occupied', async t => {
-  const input = await fixture(t, 144), file = await openLifetime(t, input), calculations: (ReturnType<typeof deferred> & { utc: string | undefined })[] = [];
-  const service = createLifetimeMoments({ lifetimeFile: file, calculate: ({ utc }) => {
-    const task = deferred(); calculations.push({ utc, ...task }); return task.promise;
-  } });
-  const exact = [1, 2, 3, 4].map(minute => service!.getUtcMoment(`1900-01-01T00:0${minute}:00Z`));
-  try {
-    await new Promise(setImmediate);
-    assert.equal(calculations.length, 4);
-    await assert.rejects(service!.getUtcMoment('1900-01-01T00:05:00Z'), { code: 'busy' });
-    const started = performance.now();
-    const points = await Promise.all(Array.from({ length: 100 }, (_, index) => service!.getMoment(index)));
-    const diskMs = performance.now() - started;
-    assert.deepEqual(points.map(point => point.index), Array.from({ length: 100 }, (_, index) => index));
-    const cachedAt = performance.now();
-    const cached = await Promise.all(Array.from({ length: 100 }, (_, index) => service!.getMoment(index)));
-    const cacheMs = performance.now() - cachedAt;
-    cached.forEach((point, index) => assert.equal(point, points[index]));
-    assert.equal(calculations.length, 4, 'prepared points never enter scalar calculation');
-    t.diagnostic(`100 distinct ready disk reads: ${diskMs.toFixed(2)} ms; 100 RAM hits: ${cacheMs.toFixed(2)} ms (temporary real file, verification excluded)`);
-  } finally {
-    for (const task of calculations) task.resolve!({ error: 'busy' });
-    await Promise.allSettled(exact);
-  }
+test('one hundred prepared points are read again instead of retained after completion', async t => {
+  const input = await fixture(t, 144), file = await openLifetime(t, input);
+  let reads = 0;
+  const service = createLifetimeMoments({ lifetimeFile: { ...file,
+    getPoint(index) { reads++; return file.getPoint(index); },
+  } })!;
+  const first = await Promise.all(Array.from({ length: 100 }, (_, index) => service.getMoment(index)));
+  assert.equal(reads, 100);
+  const second = await Promise.all(Array.from({ length: 100 }, (_, index) => service.getMoment(index)));
+  assert.equal(reads, 200);
+  second.forEach((point, index) => { assert.deepEqual(point, first[index]); assert.notEqual(point, first[index]); });
 });
 
 test('invalid point indices never become file offsets', async t => {
@@ -174,7 +157,7 @@ test('close waits for all pending positional reads and prevents new requests', a
 
 async function request(service: Partial<NonNullable<MomentOptions['lifetimeFile']>> | null, url: string, method = 'GET') {
   const res = captureResponse();
-  const moments = createLifetimeMoments({ lifetimeFile: service as MomentOptions['lifetimeFile'], calculate() { throw Error('Grid must never calculate'); } })!;
+  const moments = createLifetimeMoments({ lifetimeFile: service as MomentOptions['lifetimeFile'] })!;
   await createLifetimeHandler(moments && { ...moments, getMetadata: async () => moments.metadata })({ method, url } as IncomingMessage, res, new URL(url, 'http://localhost'));
   return res;
 }
@@ -210,9 +193,11 @@ test('HTTP validates one canonical bounded index and sanitizes unavailable error
 
 async function versionedHandler(t: test.TestContext, input: { file: string; metadataFile: string; metadata: { version: string; format: string; columns: string[]; startUtc: string; endExclusiveUtc: string; stepSeconds: number; sampleCount: number; bytes: number; flags: number; engine: string; sha256: string; provenance: { version: string; calculationFingerprint: string; }; }; columns: number[][]; bytes: Buffer<ArrayBuffer>; }, fingerprint = 'a'.repeat(64)) {
   const source = await openLifetime(t, input), reads: number[] = [];
-  const moments = createLifetimeMoments({ lifetimeFile: { ...source,
-    getPoint(index) { reads.push(index); return source.getPoint(index); } }, calculationFingerprint: fingerprint,
-    calculate() { throw Error('Grid must never calculate'); } })!;
+  // Retain the negative-control calculator even though it is no longer a consumed port.
+  const options = { lifetimeFile: { ...source,
+    getPoint(index:number) { reads.push(index); return source.getPoint(index); } }, calculationFingerprint: fingerprint,
+    calculate() { throw Error('Grid must never calculate'); } };
+  const moments = createLifetimeMoments(options)!;
   const handler = createRequestHandler({ root: '/unused', lifetime: { ...moments, getMetadata: async () => moments!.metadata },
     publicFiles() { throw Error('unexpected static'); } } as unknown as Parameters<typeof createRequestHandler>[0]);
   const send = async (url: string) => {
@@ -231,14 +216,14 @@ test('complete-moment versions validate numerical identity without HTTP caching'
   const first = await send(`/api/lifetime?index=2&v=${version}`), repeat = await send(`/api/lifetime?index=2&v=${version}`);
   assert.equal(first.status, 200); assert.equal(repeat.body, first.body);
   assert.equal(first.headers['Cache-Control'], 'no-store');
-  assert.deepEqual(reads, [2]);
+  assert.deepEqual(reads, [2, 2]);
   assert.equal((await send('/api/lifetime?index=2')).headers['Cache-Control'], 'no-store');
   for (const query of [`index=3&v=${'b'.repeat(64)}`, 'index=3&v=', 'index=3&v=bad',
     `index=3&v=${version.toUpperCase()}`, `index=3&v=${version}&v=${version}`, `index=3&v=${version}&extra=1`] as const) {
     const result = await send(`/api/lifetime?${query}`);
     assert.equal(result.status, 400, query); assert.equal(result.headers['Cache-Control'], 'no-store');
   }
-  assert.deepEqual(reads, [2], 'stale and malformed versions do not read or publish a point');
+  assert.deepEqual(reads, [2, 2, 2], 'stale and malformed versions do not read or publish a point');
   const invalid = await send(`/api/lifetime?index=17&v=${version}`);
   assert.equal(invalid.status, 400); assert.equal(invalid.headers['Cache-Control'], 'no-store');
   await fs.truncate(input.file, 0);
@@ -357,7 +342,7 @@ test('optional ephemeris input presence and bytes invalidate file provenance and
 test('a completed lifetime file becomes available on the next request without recreating the service', async t => {
   const input = await fixture(t);
   await fs.unlink(input.metadataFile);
-  const service = lifetimeService.createLifetimeService({ file: input.file, calculate() { assert.fail('Preparation must not calculate through HTTP'); } } as unknown as Parameters<typeof lifetimeService.createLifetimeService>[0]);
+  const service = lifetimeService.createLifetimeService({ file: input.file } as unknown as Parameters<typeof lifetimeService.createLifetimeService>[0]);
   t.after(() => service.close());
   const send = async (url: string|URL) => {
     const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body: string) { this.body = JSON.parse(body); } } as Omit<CapturedResponse<Record<string, unknown>>, 'end'> & { end(body: string): void };
@@ -417,4 +402,24 @@ test('closing the service during its first file check closes that handle and rej
   await assert.rejects(service.getMetadata(), unavailable);
   await assert.rejects(service.getMoment(0), unavailable);
   assert.equal(opens, 1, 'closed services cannot reopen files');
+});
+
+// The disk reader owns these facts before HTTP turns them into a public error.
+test('lifetime journal distinguishes actual damaged data from preparation, bad input and close', async t => {
+  const input = await fixture(t), facts: unknown[] = [], report = (fact: unknown) => {facts.push(fact);};
+  const reader = (await createLifetimeFile({...input, report}))!;
+  await reader.getPoint(0);await assert.rejects(reader.getPoint(-1));
+  assert.deepEqual(facts,[]);
+  await fs.truncate(input.file,0);
+  await assert.rejects(reader.getPoint(0));
+  assert.equal(facts.length,1);
+  assert.deepEqual({...facts[0] as object,occurredAt:undefined},
+    {event:'prepared_data_failed',component:'lifetime',reason:'read',occurredAt:undefined});
+  await reader.close();await assert.rejects(reader.getPoint(0));assert.equal(facts.length,1);
+  await fs.writeFile(input.metadataFile,'PRIVATE invalid metadata');
+  await assert.rejects(createLifetimeFile({...input,report}));assert.equal(facts.length,2);
+  assert.equal((facts[1] as {reason:string}).reason,'open');
+  await fs.unlink(input.metadataFile);
+  await assert.rejects(createLifetimeFile({...input,report}),{code:'lifetime_preparing'});assert.equal(facts.length,2);
+  assert.equal(JSON.stringify(facts).includes('PRIVATE'),false);
 });

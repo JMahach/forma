@@ -1,4 +1,5 @@
 import test from 'node:test';
+// Invalid scalar inputs and edited headers intentionally cross runtime validation unchanged.
 import assert from 'node:assert/strict';
 import { encodeNatalDay } from '../server/packets/encode.ts';
 import { decodeNatalDay } from '../shared/day-packets/decode.ts';
@@ -12,10 +13,11 @@ export function makeDay(date = '1990-06-15', timezone = 'UTC', samples = 1440) {
     columns: Array.from({ length: 24 }, (_, column) => Array.from({ length: samples }, (_, minute) => column < 22 ? (10 + column * 15 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 61 : (minute % 100) * 1e-12)),
     engine: 'Swiss Ephemeris test', ephemeris: 'Test ephemerides', timezoneDatabase: 'IANA test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
 }
-const bits = values => Buffer.from(new Float64Array(values).buffer).toString('hex');
-function rewriteHeader(packet, update) {
+const bits = (values:ArrayLike<number>) => Buffer.from(new Float64Array(values).buffer).toString('hex');
+type PacketHeader = ReturnType<typeof makeDay> & {version:string;orders:number[];calculationVersion:string|number};
+function rewriteHeader(packet:Uint8Array, update:(header:PacketHeader)=>void) {
   const length = new DataView(packet.buffer, packet.byteOffset).getUint32(4, true);
-  const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length)));
+  const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length))) as PacketHeader;
   update(header);
   const next = new TextEncoder().encode(JSON.stringify(header)), result = new Uint8Array(packet.length - length + next.length);
   result.set(packet.subarray(0, 4)); new DataView(result.buffer).setUint32(4, next.length, true);
@@ -30,7 +32,7 @@ test('stored natal packets retain the full ephemeris range beyond new-chart admi
   }
   const packet = encodeNatalDay(makeDay('2000-01-01', 'UTC', 1));
   for (const date of ['1800-12-31', '2400-01-01'] as const) {
-    const outside = rewriteHeader(packet, header => {
+    const outside = rewriteHeader(packet, (header:Pick<ReturnType<typeof makeDay>,'date'|'startUtc'|'segments'>) => {
       header.date = date;
       header.startUtc = `${date}T00:00:00Z`;
       header.segments[0].startUtc = header.startUtc;
@@ -88,9 +90,9 @@ test('minute lookup keeps exact second boundaries, gaps and endpoint clamping', 
     assert.equal(natalDayIndexAt(decoded, utc), index, utc);
     assert.equal(natalDayIndexAt(decoded, Date.parse(utc)), index, `numeric ${utc}`);
   }
-  for (const invalid of [undefined, null, '', 'invalid', NaN, Infinity] as const) assert.equal(natalDayIndexAt(decoded, invalid), 0);
+  for (const invalid of [undefined, null, '', 'invalid', NaN, Infinity] as const) assert.equal(natalDayIndexAt(decoded, invalid as string|number), 0);
   for (const invalid of [-1, 4, 0.5, '1', NaN, Infinity] as const) {
-    assert.throws(() => natalDayMinute(decoded, invalid), /Некорректный пакет дня рождения/);
+    assert.throws(() => natalDayMinute(decoded, invalid as number), /Некорректный пакет дня рождения/);
   }
 });
 
@@ -102,19 +104,19 @@ test('materialization contains only chart data and an explicit saved record reta
   assert.equal(chart.localDate, day.date); assert.equal(chart.localTime, '00:41');
   assert.equal(chart.activations.personality.length, 13); assert.equal(chart.activations.design.length, 13);
   assert.equal(chart.designArcResidualDegrees, day.columns[23][41]);
-  const record = libraryRecordAtMinute(day, 41, original);
+  const record = libraryRecordAtMinute(day, 41, original as unknown as Parameters<typeof libraryRecordAtMinute>[2]);
   assert.equal(record.id, original.id); assert.equal(record.name, original.name); assert.equal(record.note, original.note);
   assert.equal(record.createdAt, original.createdAt); assert.equal(record.updatedAt, original.updatedAt);
   assert.equal(record.birthTime, chart.localTime); assert.deepEqual(record.activations, chart.activations);
   assert.equal(validateLibraryChart(record).utc, chart.utc);
-  assert.equal(original.birthTime, undefined);
-  for (const bad of [-1, 1440, 0.5, '1', NaN] as const) assert.throws(() => chartAtMinute(day, bad));
+  assert.equal(Reflect.get(original,'birthTime'), undefined);
+  for (const bad of [-1, 1440, 0.5, '1', NaN] as const) assert.throws(() => chartAtMinute(day, bad as number));
 });
 
 test('bounded shapes, timeline validation and value ranges reject corrupt packets', () => {
   const packet = encodeNatalDay(makeDay());
   for (const bad of [null, {}, packet.subarray(0, -1), new Uint8Array(1_000_000)] as const) assert.throws(() => decodeNatalDay(bad));
-  for (const update of [(h: { version: string; }) => h.version = '2', (h: { calculationVersion: string; }) => h.calculationVersion = '', (h: { calculationVersion: number; }) => h.calculationVersion = 123, (h: { calculationVersion: string; }) => h.calculationVersion = 'g'.repeat(64), (h: { samples: number; }) => h.samples = 2881, (h: { samples: number; }) => h.samples = 0, h => h.orders.pop(), (h: { orders: number[]; }) => h.orders[0] = 9,
+  for (const update of [(h: { version: string; }) => h.version = '2', (h:PacketHeader) => h.calculationVersion = '', (h:PacketHeader) => h.calculationVersion = 123, (h:PacketHeader) => h.calculationVersion = 'g'.repeat(64), (h: { samples: number; }) => h.samples = 2881, (h: { samples: number; }) => h.samples = 0, (h:{orders:number[]}) => h.orders.pop(), (h: { orders: number[]; }) => h.orders[0] = 9,
     (    h: { segments: { index: number; }[]; }) => h.segments[0].index = 1, (h: { segments: { offsetSeconds: number; }[]; }) => h.segments[0].offsetSeconds = 1, (h: { segments: { fold: number; }[]; }) => h.segments[0].fold = 2,
     (    h: { segments: { startUtc: string; }[]; }) => h.segments[0].startUtc = '2000-01-01T00:00:00Z', (h: { date: string; }) => h.date = '1990-02-30', (h: { timezone: string; }) => h.timezone = 'x'.repeat(161)] as const) {
     assert.throws(() => decodeNatalDay(rewriteHeader(packet, update)));

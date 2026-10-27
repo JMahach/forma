@@ -1,10 +1,12 @@
 import type { TransitDay } from '../../shared/day-packets/transit-format.ts';
 import type { MemoryCache } from './memory-cache.ts';
-interface TransitCacheOptions { indexedDB?: IDBFactory | null; databaseName?: string; memory?: MemoryCache; timeoutMs?: number }
+import type { CalculationCache } from './calculation-cache.ts';
+interface TransitCacheOptions { indexedDB?: IDBFactory | null; databaseName?: string; memory?: MemoryCache; timeoutMs?: number; cache?: CalculationCache }
 interface StoredTransitDay { key: string; day: Float64Array; meta: Pick<TransitDay, 'engine' | 'ephemeris' | 'timezoneDatabase' | 'nodeModel' | 'zodiac'> }
 export type TransitDayCache = ReturnType<typeof createTransitDayCache>;
 
-import { createIndexedDatabase } from './indexed-db.ts';
+import { createCalculationCache } from './calculation-cache.ts';
+import { LEGACY_CALCULATION_SOURCES } from './calculation-migration.ts';
 import { createMemoryCache } from './memory-cache.ts';
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.ts';
 import { MOMENT_COLUMN_COUNT, validMomentValue } from '../../shared/day-packets/moment-columns.ts';
@@ -17,50 +19,47 @@ const validVersion = (value: unknown): value is string => typeof value === 'stri
 const metadataKeys = ['engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac'] as const;
 const dayIndex = (milliseconds: number) => Math.floor((milliseconds - SUPPORTED_START) / DAY_MS);
 
-// Reuse the existing database's full days. Sparse legacy rows are never read
-// into the new cache. The small coverage bitmap describes full days only.
+// The common owner admits only the confirmed current dates to persistent storage.
+// Other usable days may remain in bounded RAM; coverage describes saved full days.
 export function createTransitDayCache({ indexedDB, databaseName = 'forma-moments',
-  memory = createMemoryCache(), timeoutMs = 1000 }: TransitCacheOptions = {}) {
-  const database = createIndexedDatabase({ indexedDB, databaseName, timeoutMs, version: 1,
-    stores: ['packets', 'catalogue'],
-    upgrade(db) {
-      db.createObjectStore('packets', { keyPath: 'key' });
-      const catalogue = db.createObjectStore('catalogue', { keyPath: 'key' });
-      catalogue.createIndex('accessedAt', 'accessedAt'); catalogue.createIndex('full', 'full');
-      db.createObjectStore('settings');
-    },
-  });
+  memory = createMemoryCache(), timeoutMs = 1000, cache }: TransitCacheOptions = {}) {
+  const owner=cache??createCalculationCache({indexedDB,timeoutMs,
+    legacySources:LEGACY_CALCULATION_SOURCES.map(source=>source.family==='transit'?{...source,databaseName}:source)});
   const reads = new Map<string, { latest: TransitDay | null; promise: Promise<TransitDay | null> }>();
   const writes = new Map<string, { day: TransitDay; promise: Promise<boolean | null> }>();
+  const touches = new Map<string, Promise<boolean|null>>();
   const coverage = new Uint8Array(Math.ceil((SUPPORTED_END_EXCLUSIVE - SUPPORTED_START) / DAY_MS));
-  let coverageVersion: string | null = null, preparing: Promise<void> | null = null, prepared = false, closed = false;
+  let coverageVersion: string | null = null, preparing: Promise<void> | null = null, prepared = false, closed = false, generation=0;
   function mark(date: string, version: string, present: boolean) {
     const index = dayIndex(Date.parse(date));
     if (version === coverageVersion && index >= 0 && index < coverage.length) coverage[index] = present ? 1 : 0;
   }
   function prepare(version: string | undefined) {
-    if (!validVersion(version)) return Promise.resolve();
-    if (coverageVersion === version && (preparing || prepared)) return preparing || Promise.resolve();
-    if (coverageVersion !== version) { coverageVersion = version; coverage.fill(0); }
-    prepared = false;
-    const scanned = new Uint8Array(coverage.length);
-    const work = database.transaction('readonly', (tx, result) => {
-      const request = tx.objectStore('catalogue').index('full').openCursor(1);
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor) { result(true); return; }
-        const index = dayIndex(Date.parse(cursor.value.date));
-        if (cursor.value.version === version && index >= 0 && index < scanned.length) scanned[index] = 1;
-        cursor.continue();
-      };
-    }).then(committed => {
-      if (committed && preparing === work && coverageVersion === version) {
-        prepared = true;
-        for (let i = 0; i < coverage.length; i++) coverage[i] |= scanned[i];
+    if(closed || !validVersion(version))return Promise.resolve();
+    if(coverageVersion!==version){coverageVersion=version;coverage.fill(0);prepared=false;generation++;}
+    if(preparing || prepared)return preparing??Promise.resolve();
+    const work=(async()=>{
+      while(!closed) {
+        const snapshot=generation;
+        const rows=await owner.catalogue('transit');
+        if(closed)return;
+        if(snapshot!==generation)continue;
+        coverage.fill(0);
+        if(rows)for(const row of rows)if(row.date && row.version)mark(row.date,row.version,true);
+        prepared=rows!==null;return;
       }
-    }).finally(() => { if (preparing === work) preparing = null; });
+    })().catch(()=>{prepared=false;}).finally(()=>{if(preparing===work)preparing=null;});
     preparing = work;
     return work;
+  }
+  const unsubscribe=owner.subscribe(()=>{
+    generation++;coverage.fill(0);prepared=false;
+    if(coverageVersion && !closed)void prepare(coverageVersion);
+  });
+  function touch(key:string) {
+    if(closed || touches.has(key))return;
+    const work=owner.touch('transit',key).catch(()=>null).finally(()=>{if(touches.get(key)===work)touches.delete(key);});
+    touches.set(key,work);
   }
   function validDay(day: TransitDay | null | undefined, date: string | undefined, version: string | undefined): day is TransitDay & { calculationVersion: string } {
     return !!day && day.date === date && day.calculationVersion === version && validVersion(version)
@@ -77,19 +76,23 @@ export function createTransitDayCache({ indexedDB, databaseName = 'forma-moments
       columns: Array.from({ length: MOMENT_COLUMN_COUNT }, (_, c) => packet.day.subarray(c * SAMPLES, (c + 1) * SAMPLES)) };
     return validDay(day, date, version) ? day : null;
   }
-  function peekDay(date: string, version: string) { return memory.get<TransitDay>(memoryKey(keyOf(date, version))); }
+  function peekDay(date: string, version: string) {
+    if(closed)return null;
+    const key=keyOf(date,version),day=memory.get<TransitDay>(memoryKey(key));
+    if(day)touch(key);return day;
+  }
   async function getDay(date: string, version: string) {
+    if(closed)return null;
     const hot = peekDay(date, version); if (hot) return hot;
     const key = keyOf(date, version);
     if (writes.has(key)) return writes.get(key)!.day;
     if (!reads.has(key)) {
       const entry: { latest: TransitDay | null; promise: Promise<TransitDay | null> } = { latest: null, promise: null as unknown as Promise<TransitDay | null> };
-      entry.promise = database.transaction<TransitDay | null>('readonly', (tx, result) => {
-        const request = tx.objectStore('packets').get(key);
-        request.onsuccess = () => result(fromPacket(request.result, date, version));
-      }).then(day => {
+      const snapshot=generation;
+      entry.promise = owner.get<StoredTransitDay>('transit',key).then(packet=>fromPacket(packet,date,version)).catch(()=>null).then(day => {
+        if(closed)return null;
         const current = peekDay(date, version) || entry.latest; if (current) return current;
-        mark(date, version, Boolean(day));
+        if(snapshot===generation)mark(date, version, Boolean(day));
         return day ? memory.put(memoryKey(key), day) : null;
       }).finally(() => reads.delete(key));
       reads.set(key, entry);
@@ -102,15 +105,11 @@ export function createTransitDayCache({ indexedDB, databaseName = 'forma-moments
     memory.put(memoryKey(key), day);
     if (reads.has(key)) reads.get(key)!.latest = day;
     // A write is optional. Quota failure never removes the usable RAM result.
-    const work = database.transaction<boolean>('readwrite', (tx, result) => {
-      const numbers = new Float64Array(MOMENT_COLUMN_COUNT * SAMPLES);
-      day.columns.forEach((column, c) => numbers.set(column, c * SAMPLES));
-      tx.objectStore('packets').put({ key, date, version, day: numbers,
-        offsets: new Uint32Array(), values: new Float64Array(),
-        meta: Object.fromEntries(metadataKeys.map(name => [name, day[name]])) });
-      tx.objectStore('catalogue').put({ key, date, version, full: 1 });
-      result(true);
-    }).then(saved => { if (saved) mark(date, version, true); return saved; })
+    const numbers = new Float64Array(MOMENT_COLUMN_COUNT * SAMPLES);
+    day.columns.forEach((column, c) => numbers.set(column, c * SAMPLES));
+    const work = owner.put('transit',key,{key,day:numbers,
+      meta:Object.fromEntries(metadataKeys.map(name=>[name,day[name]]))},{version,date})
+      .then(async saved=>{if(saved && coverageVersion===version)await prepare(version);return saved;}).catch(()=>null)
       .finally(() => { if (writes.get(key)?.promise === work) writes.delete(key); });
     writes.set(key, { day, promise: work });
     return true;
@@ -122,8 +121,15 @@ export function createTransitDayCache({ indexedDB, databaseName = 'forma-moments
       const date = new Date(milliseconds).toISOString().slice(0, 10);
       return Boolean(peekDay(date, version) || version === coverageVersion && coverage[dayIndex(milliseconds)]);
     },
-    retainDay(day: TransitDay & { calculationVersion: string }) { return memory.retain(memoryKey(keyOf(day.date, day.calculationVersion)), day); },
+    retainDay(day: TransitDay & { calculationVersion: string }) {
+      if(closed)return ()=>{};
+      const key=keyOf(day.date,day.calculationVersion);touch(key);return memory.retain(memoryKey(key),day);
+    },
     async flush() { await Promise.all([...writes.values()].map(entry => entry.promise)); },
-    async close() { closed = true; await Promise.all([...writes.values()].map(entry => entry.promise)); database.close(); },
+    async close() {
+      closed=true;unsubscribe();coverage.fill(0);
+      await Promise.all([...writes.values()].map(entry=>entry.promise));
+      await Promise.all(touches.values());if(!cache)owner.close();
+    },
   };
 }

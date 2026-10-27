@@ -33,7 +33,7 @@
         <div class="sidebar-footer">
           <button type="button" class="sidebar-tool performance-toggle" id="togglePerformance" aria-label="Счётчик FPS" title="Счётчик FPS" aria-pressed="false" aria-expanded="false" aria-controls="performancePanel">FPS</button>
           <button type="button" class="sidebar-tool" id="toggleLoadingPreview" aria-pressed="false" hidden>Превью</button>
-          <button type="button" class="sidebar-tool" id="randomChartButton" data-development hidden>Случайная карта</button>
+          <button type="button" class="sidebar-tool" id="randomChartButton" hidden>Случайная карта</button>
         </div>
       </aside>
       <main class="studio">
@@ -63,7 +63,18 @@
           <header class="summary-heading"><h2 id="chartSummaryTitle">О карте</h2>
           <div class="summary-title" id="summaryChartCaption">
             <div class="summary-moment summary-moment-primary">
-            <div class="summary-moment-heading"><span class="summary-chart-title" id="summaryChartTitle" role="heading" aria-level="1"></span></div>
+            <div class="summary-moment-heading"><span class="summary-chart-title" id="summaryChartTitle" role="heading" aria-level="1"></span>
+              <div class="summary-chart-actions">
+                <div class="shared-chart-save" id="saveShownChartGroup" hidden>
+                  <span class="shared-chart-add-wrap" id="saveShownChartWrap">
+                    <button type="button" id="saveShownChart" class="shared-chart-add" aria-label="Добавить карту" title="Добавить карту">
+                      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    <span class="visually-hidden" id="sharedOfflineDescription" hidden>Нет соединения</span>
+                  </span>
+                </div>
+              </div>
+            </div>
             <div class="summary-chart-moment"><span class="summary-moment-clock" id="summaryChartClock"></span><span id="summaryChartDate"></span><span id="summaryChartDetails"></span><span id="summaryChartUtc"></span></div>
             </div>
             <div class="summary-comparison" id="summaryComparison" hidden>
@@ -174,7 +185,7 @@
           <p class="city-status" id="cityStatus" role="status">Выберите город из списка — часовой пояс определится автоматически.</p>
         </div>
         <div class="field fold-field" id="foldField" hidden><label for="foldChoice">Уточните время после перевода часов</label><p class="field-hint" id="foldMessage"></p><select id="foldChoice" name="fold" aria-describedby="foldMessage foldChoiceError"><option value="">Выберите вариант</option></select><div class="field-error" id="foldChoiceError"></div></div>
-        <div class="field note-field"><label for="chartNote">Заметка</label><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div>
+        <div class="field note-field"><label for="chartNote">Заметка</label><div id="savedChartNote" class="form-note saved-note-comparison" hidden></div><textarea id="chartNote" name="note" rows="2" maxlength="2000" placeholder="Что хочется исследовать…"></textarea></div>
         <div class="form-error" id="formError"></div>
         <div class="dialog-actions"><button class="secondary-button" type="button" id="cancelDialog">Отмена</button><button class="primary-button" id="saveChartButton" type="submit">Рассчитать и сохранить</button></div>
       </form>

@@ -19,6 +19,30 @@ function chartResult(selected = event): CycleChartResult {
   return { chart: { ...chartAtMinute(natalDayFixture({ date: '2028-07-21' }), 0), utc: selected.utc } as CycleChartResult['chart'] };
 }
 
+test('basic return RAM reuse touches persistent LRU without rewriting the payload',async()=>{
+  const touches:string[]=[],writes:string[]=[];let calls=0;
+  const storage={getEvents:async()=>null,getChart:async()=>null,
+    putEvents(){writes.push('events');},putChart(){writes.push('chart');},
+    touchEvents(){touches.push('events');},touchChart(){touches.push('chart');}};
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:storage,
+    request:async url=>{calls++;return url.endsWith('/events')?events():chartResult();}});
+  const dates=await client.events(input),chart=await client.chart(chartInput);
+  await new Promise(setImmediate);assert.deepEqual(touches,[]);
+  assert.equal(await client.events(input),dates);assert.equal(await client.chart(chartInput),chart);
+  await new Promise(setImmediate);
+  assert.deepEqual(touches,['events','chart']);assert.deepEqual(writes,['events','chart']);assert.equal(calls,2);
+});
+
+test('extra return charts use RAM without consulting or writing persistent storage',async()=>{
+  let accesses=0,calls=0;
+  const storage={getChart(){accesses++;return null;},putChart(){accesses++;},touchChart(){accesses++;}};
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:storage,
+    request:async()=>{calls++;return chartResult();}});
+  const query={...chartInput,body:'moon'},ready=await client.chart(query);
+  assert.equal(await client.chart(query),ready);await new Promise(setImmediate);
+  assert.equal(accesses,0);assert.equal(calls,1);
+});
+
 test('personal inputs travel in POST JSON only; exact chart RAM is bounded and isolated by natal', async () => {
   const calls: { url?: string; options?: RequestInit }[] = [];
   const client = createCyclesClient({ memory: createMemoryCache({ maxBytes: estimateBytes(chartResult()) }), request: async (url, options) => { calls.push({ url, options }); return chartResult(); } });
@@ -202,7 +226,7 @@ test('persistent chart identity separates revision, birth, body, exact UTC and d
   const returnStorage = deviceCache(), calls: CycleInput[] = [];
   const request = async (_url: string, options: RequestInit) => { const input = JSON.parse(options.body as string); calls.push(input); return { chart: { ...chartResult().chart, utc: input.eventUtc, timezone: input.timezone } }; };
   const options: TestCyclesOptions = { cacheVersion: revision, returnStorage, request };
-  for (const input of [chartInput, { ...chartInput, birthUtc: '1999-01-01T00:00:00Z' }, { ...chartInput, body: 'jupiter' },
+  for (const input of [chartInput, { ...chartInput, birthUtc: '1999-01-01T00:00:00Z' }, { ...chartInput, body: 'chiron' },
     { ...chartInput, eventUtc: event.utc.replace('740Z', '741Z') }, { ...chartInput, timezone: 'Europe/Moscow' }] as const) {
     await createCyclesClient(options).chart(input);
     await createCyclesClient(options).chart(input);
@@ -258,4 +282,96 @@ test('retained return charts share the tab budget and release their exact cache 
   release(); release();
   assert.equal(memory.size, 0);
   await client.chart(chartInput); assert.equal(calls, 1);
+});
+
+
+test('owned major returns use the authenticated chart route without changing the numerical request', async () => {
+  const calls: { url: string; options: RequestInit }[] = [];
+  const client = createCyclesClient({ cacheVersion: 'a'.repeat(64), returnStorage: null,
+    request: async (url, options) => { calls.push({url, options}); return url.endsWith('/events') ? events() : chartResult(); } });
+  const owner = {chartId: '123', expectedAccountId: '7'};
+  await client.events(input, undefined, {owner});
+  await client.chart(chartInput, undefined, {owner, event});
+  assert.deepEqual(calls.map(call => call.url), ['/api/charts/123/returns/events', '/api/charts/123/returns/chart']);
+  assert.deepEqual(JSON.parse(calls[0].options.body as string), {...input, timezone:'UTC', expectedAccountId: '7'});
+  assert.deepEqual(JSON.parse(calls[1].options.body as string), {...chartInput, expectedAccountId: '7'});
+  assert.equal((calls[0].options.headers as Record<string, string>)['X-Forma-Cycles-Version'], 'a'.repeat(64));
+});
+
+test('extra bodies keep the general calculation route even for an owned natal', async () => {
+  const calls: string[] = [];
+  const client = createCyclesClient({request: async url => { calls.push(url); return chartResult(); }});
+  await client.chart({...chartInput, body: 'moon'}, undefined, {owner: {chartId: '123', expectedAccountId: '7'}});
+  assert.deepEqual(calls, ['/api/cycles/chart']);
+});
+
+test('pending equal returns of distinct owned cards cannot share a persistence request', async () => {
+  const hold = deferred(), urls: string[] = [];
+  const client = createCyclesClient({returnStorage: null, request: async url => { urls.push(url); return hold.promise; }});
+  const a = client.events(input, undefined, {owner: {chartId: '123', expectedAccountId: '7'}});
+  const b = client.events(input, undefined, {owner: {chartId: '456', expectedAccountId: '7'}});
+  await new Promise(setImmediate);
+  hold.resolve!(events());
+  await Promise.all([a,b]);
+  assert.deepEqual(urls.sort(), ['/api/charts/123/returns/events', '/api/charts/456/returns/events']);
+});
+
+
+test('ready signed return is visible while its separate owned attachment waits', async () => {
+  const hold=deferred(), calls:{url:string;body:Record<string,unknown>}[]=[];
+  const ready={...events(),proof:'v1.'+'a'.repeat(64)+'.'+'b'.repeat(43)};
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:null,request:async(url,options)=>{
+    calls.push({url,body:JSON.parse(String(options.body))});return url.endsWith('/accept')?hold.promise:ready;
+  }});
+  await client.events(input);
+  const first=await client.events(input,undefined,{owner:{chartId:'123',expectedAccountId:'7'}});
+  const second=await client.events(input,undefined,{owner:{chartId:'456',expectedAccountId:'7'}});
+  await client.events(input,undefined,{owner:{chartId:'123',expectedAccountId:'7'}});
+  await new Promise(setImmediate);
+  assert.equal(first,ready);assert.equal(second,ready);
+  assert.deepEqual(calls.map(call=>call.url),['/api/cycles/events','/api/charts/123/returns/accept','/api/charts/456/returns/accept']);
+  assert.equal(calls[1].body.proof,ready.proof);assert.equal(calls[1].body.expectedAccountId,'7');
+  hold.resolve!({accepted:true});
+});
+
+test('failed attachment neither hides ready numbers nor starts an automatic retry', async () => {
+  let accepts=0;
+  const ready={...events(),proof:'v1.'+'a'.repeat(64)+'.'+'b'.repeat(43)};
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:null,request:async(url)=>{
+    if(url.endsWith('/accept')){accepts++;throw Object.assign(new Error('offline'),{code:'offline'});}return ready;
+  }});
+  await client.events(input);
+  assert.equal(await client.events(input,undefined,{owner:{chartId:'123',expectedAccountId:'7'}}),ready);
+  await new Promise(setImmediate);await new Promise(setImmediate);
+  assert.equal(accepts,1);
+});
+
+test('adopting a prepared natal attaches only cached signed dates and opened exact returns', async () => {
+  const calls:string[]=[],proof='v1.'+'a'.repeat(64)+'.'+'b'.repeat(43);
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:null,request:async url=>{
+    calls.push(url);return url.endsWith('/accept')?{accepted:true}:url.endsWith('/events')?{...events(),proof}:{...chartResult(),proof};
+  }});
+  await client.events(input);await client.chart(chartInput,undefined,{event});
+  await client.syncPrepared(input,{chartId:'123',expectedAccountId:'7'});
+  await new Promise(setImmediate);await new Promise(setImmediate);
+  assert.deepEqual(calls,['/api/cycles/events','/api/cycles/chart','/api/charts/123/returns/accept','/api/charts/123/returns/accept']);
+});
+
+
+test('closing the calculation client aborts pending attachments and forbids new work', async () => {
+  const ready={...events(),proof:'v1.'+'a'.repeat(64)+'.'+'b'.repeat(43)};
+  let attachmentSignal:AbortSignal|undefined,accepts=0;
+  const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:null,request:async(url,{signal})=>{
+    if(!url.endsWith('/accept'))return ready;
+    accepts++;attachmentSignal=signal!;
+    return new Promise((_,reject)=>signal!.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+  }});
+  await client.events(input);
+  await client.events(input,undefined,{owner:{chartId:'123',expectedAccountId:'7'}});
+  await new Promise(setImmediate);
+  assert.ok(attachmentSignal);assert.equal(attachmentSignal.aborted,false);
+  client.close();assert.equal(attachmentSignal.aborted,true);
+  await assert.rejects(client.syncPrepared(input,{chartId:'456',expectedAccountId:'8'}),{name:'AbortError'});
+  await assert.rejects(client.events(input),{name:'AbortError'});
+  await new Promise(setImmediate);assert.equal(accepts,1);
 });

@@ -1,3 +1,5 @@
+import { GATE_MARKER, GATE_POINTER_RADIUS } from './geometry/drawing-presentation.ts';
+
 const TOUCH_WIDTH = 44;
 const TOUCH_HEIGHT = 44;
 
@@ -5,12 +7,31 @@ const TOUCH_HEIGHT = 44;
 // camera stay unchanged; direct hits on planets, numbers and the chart win.
 export function pointerTarget(svg: SVGSVGElement, event: PointerEvent, surface?: Element | null) {
   const direct = (event.target as Element).closest<HTMLElement | SVGElement>('[data-type]');
-  if (event.pointerType !== 'touch' || direct && direct.dataset.type !== 'planet-filter') return direct;
+  if (event.pointerType !== 'touch'
+    || direct && !['center', 'channel', 'integration', 'planet-filter'].includes(direct.dataset.type!)) return direct;
   const visible = surface?.getBoundingClientRect();
   if (visible && (event.clientX < visible.left || event.clientX > visible.right
     || event.clientY < visible.top || event.clientY > visible.bottom)) return null;
   const shown = (rect: DOMRect) => !visible || rect.right > visible.left && rect.left < visible.right
     && rect.bottom > visible.top && rect.top < visible.bottom;
+  // Native mouse/pen hits match the visible gate circle. Only a finger may
+  // reach its former larger circle; this is independent of highlight style.
+  if (!direct || direct.dataset.type !== 'planet-filter') {
+    let gate: HTMLElement | SVGElement | null = null, nearest = Infinity;
+    const expansion = GATE_MARKER.hitRadius / GATE_POINTER_RADIUS;
+    for (const hit of svg.querySelectorAll<SVGCircleElement>('.bg-gate-hit')) {
+      const rect = hit.getBoundingClientRect();
+      if (!rect.width || !rect.height || !shown(rect)) continue;
+      const dx = (event.clientX - (rect.left + rect.right) / 2) / (rect.width / 2 * expansion);
+      const dy = (event.clientY - (rect.top + rect.bottom) / 2) / (rect.height / 2 * expansion);
+      const distance = dx * dx + dy * dy;
+      if (distance <= 1 && distance < nearest) {
+        gate = hit.parentElement; nearest = distance;
+      }
+    }
+    if (gate) return gate;
+    if (direct) return direct;
+  }
   if (direct) {
     if (!visible) return direct;
     const frame = direct.querySelector('.activation-planet-filter-frame')?.getBoundingClientRect();

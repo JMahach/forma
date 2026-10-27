@@ -300,6 +300,35 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(chart['nodeModel'], 'true')
         self.assertEqual(chart['zodiac'], 'tropical-geocentric-apparent')
 
+    def test_natal_reports_ambiguous_time_separately_from_the_chart(self):
+        for fold, utc in [(0, '2024-11-03T05:30:00Z'), (1, '2024-11-03T06:30:00Z')]:
+            with self.subTest(fold=fold):
+                result = calc.calculate(dict(mode='natal', name='Fold', date='2024-11-03', time='01:30',
+                    city=dict(id='new-york', name='New York', timezone='America/New_York'), fold=fold))
+                self.assertEqual(result.get('timeResolution'), {'ambiguous': True})
+                self.assertEqual(result['chart']['utc'], utc)
+                self.assertEqual(result['chart']['fold'], fold)
+                self.assertNotIn('timeResolution', result['chart'])
+
+    def test_unambiguous_natal_normalizes_fold_one_without_marking_ambiguity(self):
+        request = dict(mode='natal', name='Ordinary', date='2024-11-03', time='01:30',
+                       city=dict(id='utc', name='UTC', timezone='UTC'))
+        ordinary = calc.calculate(request)
+        supplied_fold = calc.calculate({**request, 'fold': 1})
+        self.assertEqual(supplied_fold.get('timeResolution'), {'ambiguous': False})
+        self.assertEqual(supplied_fold['chart']['fold'], 0)
+        self.assertEqual(supplied_fold['chart']['utc'], '2024-11-03T01:30:00Z')
+        self.assertEqual(supplied_fold['chart']['activations'], ordinary['chart']['activations'])
+        self.assertNotIn('timeResolution', supplied_fold['chart'])
+
+    def test_full_transit_reports_no_local_time_ambiguity(self):
+        for request in [dict(mode='transit'), dict(mode='transit', utc='2024-11-03T06:30:00.123Z')]:
+            with self.subTest(request=request):
+                result = calc.calculate(request)
+                self.assertEqual(result.get('timeResolution'), {'ambiguous': False})
+                self.assertEqual(result['chart']['fold'], 0)
+                self.assertNotIn('timeResolution', result['chart'])
+
     def test_supplemental_bangkok_solar_gates(self):
         # Supplemental fixture from a different engine, not independent chart certification:
         # https://github.com/adamblvck/free-human-design/blob/main/test/profile.test.js
@@ -355,6 +384,43 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(chart['design'], sorted({entry['gate'] for entry in chart['activations']['design']}))
         self.assertEqual(chart['designUtc'], civil.iso(astro.tt_to_datetime(design_jd)))
         self.assertEqual(chart['designArcResidualDegrees'].hex(), residual.hex())
+
+    def test_full_transit_preserves_the_requested_moment_and_exact_numbers(self):
+        for utc in ('1801-01-01T00:00:00Z', '2026-09-30T12:34:56.789Z', '2026-09-30T12:34:56.000Z',
+                    '2399-12-31T23:59:59.999Z'):
+            with self.subTest(utc=utc):
+                chart = calc.calculate(dict(mode='transit', utc=utc))['chart']
+                # The existing exact-moment protocol is an independent entry path.
+                point = calc.calculate(dict(mode='transit_moment', utc=utc))
+                self.assertEqual(chart['utc'], utc)
+                self.assertEqual(chart['birthDate'], utc[:10])
+                self.assertEqual(chart['birthTime'], utc[11:16])
+                self.assertEqual(chart['source'], 'transit')
+                self.assertEqual(chart['timezone'], 'UTC')
+                self.assertEqual(chart['utcOffset'], 'UTC+00:00')
+                planets = ('sun', 'moon', 'north_node', 'mercury', 'venus', 'mars',
+                           'jupiter', 'saturn', 'uranus', 'neptune', 'pluto')
+                for side, exact in [('personality', point), ('design', point['design'])]:
+                    self.check_stream(chart['activations'][side])
+                    by_planet = {item['planet']: item['longitude'] for item in chart['activations'][side]}
+                    self.assertEqual([by_planet[planet].hex() for planet in planets],
+                                     [value.hex() for value in exact['longitudes']])
+                self.assertEqual(chart['designUtc'], point['design']['designUtc'])
+                self.assertEqual(chart['designArcResidualDegrees'].hex(),
+                                 point['design']['designArcResidualDegrees'].hex())
+
+    def test_full_transit_rejects_an_explicit_invalid_utc_instead_of_using_now(self):
+        for utc, code in [
+            (None, 'invalid_utc'), ([], 'invalid_utc'), ('', 'invalid_utc'),
+            ('2026-09-30', 'invalid_utc'), ('2026-09-30T12:34:56+00:00', 'invalid_utc'),
+            ('2026-02-30T12:34:56Z', 'invalid_utc'), ('2026-09-30T24:00:00Z', 'invalid_utc'),
+            ('2026-09-30T12:34:60Z', 'invalid_utc'), ('2026-09-30T12:34:56.1234Z', 'invalid_utc'),
+            ('1800-12-31T23:59:59Z', 'unsupported_date'), ('2400-01-01T00:00:00Z', 'unsupported_date'),
+        ]:
+            with self.subTest(utc=utc):
+                with self.assertRaises(ChartError) as error:
+                    calc.calculate(dict(mode='transit', utc=utc))
+                self.assertEqual(error.exception.payload['error'], code)
 
     def test_design_only_matches_natal_exactly_without_unused_personality_work(self):
         for date in ('1801-01-01', '1998-08-11', '2024-02-29', '2299-12-31'):

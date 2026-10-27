@@ -28,8 +28,11 @@ export const HIGHLIGHT_OUTLINE = Object.freeze({ channelGap: .75, centerGap: 1.2
 export const CHANNEL_HIGHLIGHT_INNER_WIDTH = Number((CHANNEL_WIDTH.outline + HIGHLIGHT_OUTLINE.channelGap * 2).toFixed(3));
 export const CHANNEL_HIGHLIGHT_WIDTH = Number((CHANNEL_HIGHLIGHT_INNER_WIDTH + HIGHLIGHT_OUTLINE.width * 2).toFixed(3));
 
-// Approved precise-circle gate marker; hit area stays independent.
+// Mouse uses the visible circle; the larger radius is reserved for touch.
 export const GATE_MARKER = Object.freeze({
   radius: 8.4, hitRadius: 12.5, highlightWidth: 1.15, fontSize: 10.4, fontWeight: 560,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
 });
+
+// The crisp ring is part of the visible marker; its outer edge owns mouse hits.
+export const GATE_POINTER_RADIUS = GATE_MARKER.radius + GATE_MARKER.highlightWidth / 2;

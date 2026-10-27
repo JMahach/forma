@@ -129,25 +129,45 @@ test('a stale device calculation version is rejected before work and all cycle r
   const valid = await request(service, { headers: { 'x-forma-cycles-version': cacheVersion } });
   assert.equal(valid.status, 200); assert.equal(valid.headers['Cache-Control'], 'private, no-store');
   assert.equal((await request(service)).status, 200, 'unversioned callers remain supported without device persistence');
-  assert.equal(calls, 1); await service.close();
+  assert.equal(calls, 2); await service.close();
 });
 
-test('bounded singleflight queue and cache expire without persisting birth data', async () => {
-  let instant = 0, calls = 0, active = 0, maximum = 0;
+test('bounded pending work shares normalized inputs and releases admission after completion', async t => {
+  let calls = 0, active = 0, maximum = 0;
   const release = deferred();
-  const service = createCycles({ root, now: () => instant, limits: { concurrency: 1, maxQueued: 1, capacity: 1, ttlMs: 10 }, generate: async input => {
+  const service = createCycles({ root, limits: { concurrency: 1, maxQueued: 1 }, generate: async input => {
     calls++; active++; maximum = Math.max(active, maximum); if (calls === 1) await release.promise; active--; return emptyEvents(input);
   } });
-  const first = service.events(requestInput); assert.equal(service.events(requestInput), first);
+  t.after(async () => { release.resolve!(); await service.close(); });
+  const first = service.events(requestInput);
+  assert.equal(service.events({ birthUtc: requestInput.birthUtc, body: requestInput.body }), first,
+    'omitting default ages must join the same physical work');
   const second = service.events({ ...requestInput, body: 'saturn' });
   await assert.rejects(service.events({ ...requestInput, body: 'jupiter' }), (error: cyclesService.CycleError) => error.code === 'cycles_busy');
+  assert.equal(service.events({ ...requestInput, body: 'saturn' }), second, 'a waiting duplicate needs no new queue slot');
   assert.equal(service.queued, 1); release.resolve!(); await Promise.all([first, second]);
-  assert.equal(maximum, 1); assert.equal(service.size, 1); assert.equal(calls, 2);
-  await service.events({ ...requestInput, body: 'saturn' }); assert.equal(calls, 2);
-  instant = 11; assert.equal(service.size, 0);
-  await service.events({ ...requestInput, body: 'saturn' }); assert.equal(calls, 3);
-  const replacement = createCycles({ root, generate: async input => { calls++; return emptyEvents(input); } });
-  await replacement.events({ ...requestInput, body: 'saturn' }); assert.equal(calls, 4);
+  assert.equal(maximum, 1); assert.equal(calls, 2);
+  assert.equal(service.active, 0); assert.equal(service.queued, 0);
+  await service.events({ ...requestInput, body: 'jupiter' });
+  assert.equal(calls, 3, 'completed work releases admission for another request');
+});
+
+test('completed event lists are computed again while simultaneous consumers share pending work', async t => {
+  const release = deferred(); let calls = 0;
+  const service = createCycles({ generate: async input => {
+    calls++; await release.promise; return emptyEvents(input);
+  } });
+  t.after(async () => { release.resolve!(); await service.close(); });
+  const first = service.events(requestInput), shared = service.events(requestInput);
+  release.resolve!();
+  const [one, two] = await Promise.all([first, shared]);
+  assert.equal(calls, 1); assert.equal(two, one);
+  const repeated = await service.events(requestInput);
+  assert.equal(calls, 2, 'a completed response must not be retained for another visit');
+  assert.notEqual(repeated, one); assert.deepEqual(repeated, one);
+  await service.events(requestInput);
+  assert.equal(calls, 3, 'each later independent request performs new work');
+  assert.equal(service.active, 0); assert.equal(service.queued, 0);
 });
 
 test('one cancelled consumer leaves shared queued work for the other consumer', async () => {
@@ -187,11 +207,11 @@ test('abandoned running work retains its slot until close and a new consumer sta
   await expectCancellation(first, cancel);
   assert.equal(service.active, 1);
   const resumed = service.events(requestInput); hold.resolve!(); await resumed;
-  assert.equal(calls, 2); assert.equal(service.active, 0); assert.equal(service.size, 1);
+  assert.equal(calls, 2); assert.equal(service.active, 0);
   await service.close();
 });
 
-test('an already aborted consumer cannot start, join or read completed work', async () => {
+test('an already aborted consumer cannot start or join work, including after a prior completion', async () => {
   let calls = 0;
   const hold = deferred(), service = createCycles({ generate: async input => { calls++; await hold.promise; return emptyEvents(input); } });
   const cancelled = new AbortController(); cancelled.abort();
@@ -227,7 +247,7 @@ test('HTTP disconnection removes an abandoned queued request and shutdown still 
   assert.equal(service.queued, 0); await handled; assert.deepEqual(inputs.map(input => input.body), ['sun']);
   let closed = false; const closing = service.close().then(() => { closed = true; });
   await tick(); assert.equal(closed, false); hold.resolve!(); await running; await closing;
-  assert.equal(service.active, 0); assert.equal(service.size, 0);
+  assert.equal(service.active, 0);
 });
 
 test('worker failure releases admission; invalid results and approximate fallbacks cannot reach clients', async () => {
@@ -239,9 +259,8 @@ test('worker failure releases admission; invalid results and approximate fallbac
   } });
   const result = await request(service, { value: { ...requestInput, body: 'chiron' } });
   assert.equal(result.status, 422); assert.equal(JSON.parse(result.body).error, 'ephemeris_unavailable'); assert.equal(JSON.parse(result.body).body, 'chiron');
-  assert.equal(service.size, 0);
   await assert.rejects(service.events(requestInput), (error: cyclesService.CycleError) => error.code === 'cycles_unavailable');
-  await service.events(requestInput); assert.equal(service.size, 1);
+  await service.events(requestInput);
 });
 
 test('worker timeout waits for actual close; stdin is limited to calculation fields and stderr is ignored', async () => {
@@ -273,7 +292,7 @@ test('real worker returns exact reference events and chart without minute trunca
   await service.close();
 });
 
-test('closing cycles rejects queued and new work, waits for the active worker and drops cached personal results', async () => {
+test('closing cycles rejects queued and new work and waits for the active worker', async () => {
   const waiting = deferred();
   const service = createCycles({ root, limits: { concurrency: 1 }, generate: async input => { await waiting.promise; return emptyEvents(input); } });
   const active = service.events(requestInput);
@@ -285,7 +304,7 @@ test('closing cycles rejects queued and new work, waits for the active worker an
   await assert.rejects(service.events(requestInput), (error: cyclesService.CycleError) => error.code === 'cycles_unavailable');
   assert.equal(closed, false); assert.equal(service.queued, 0);
   waiting.resolve!(); await active; await closing;
-  assert.equal(closed, true); assert.equal(service.active, 0); assert.equal(service.size, 0);
+  assert.equal(closed, true); assert.equal(service.active, 0);
 });
 
 test('native HTTP routes forward cycle events and charts while cross-origin calls never reach their service', async () => {
@@ -341,7 +360,7 @@ function cycleWorker(encoded: string|{ maxOutputBytes?: undefined; }|{ maxOutput
   };
 }
 
-test('the worker and service composition semantically validates every event once before caching', async t => {
+test('the publication boundary validates once per physical computation, shared by all consumers', async t => {
   const input = { ...requestInput, body: 'moon' }, parse = Date.parse, birth = parse(input.birthUtc);
   const output = { ...emptyEvents(input), events: Array.from({ length: 1000 }, (_, index) => {
     const time = birth + (index + 1) * 27 * 86400000, utc = new Date(time).toISOString().replace('.000Z', 'Z');
@@ -359,16 +378,17 @@ test('the worker and service composition semantically validates every event once
     return generateCycles({ root, input, spawnWorker: cycleWorker(JSON.stringify(output)) });
   } });
   t.after(() => service.close());
-  const result = await service.events(input);
-  assert.deepEqual(result, output); assert.equal(service.size, 1);
-  assert.equal(reads.birth, output.events.length, 'one age check per event at the publication boundary');
-  const acceptedReads = { ...reads };
-  assert.equal(await service.events(input), result);
-  assert.deepEqual(reads, acceptedReads, 'the accepted RAM entry requires no further semantic walk');
+  const first = service.events(input), shared = service.events(input);
+  const [result, joined] = await Promise.all([first, shared]);
+  assert.deepEqual(result, output); assert.equal(joined, result);
+  assert.equal(reads.birth, 1000, 'one age check per event, not per waiting consumer');
   assert.equal(workers, 1);
+  assert.deepEqual(await service.events(input), output);
+  assert.equal(workers, 2, 'an independent visit performs a new calculation');
+  assert.equal(reads.birth, 2000, 'the new physical result must also be validated');
 });
 
-test('the publication boundary validates worker and injected results, maps errors and never caches failures', async () => {
+test('the publication boundary rejects invalid worker and injected results and releases admission', async () => {
   const invalidResults = [null, [], {}, { ...emptyEvents(requestInput), events: [{ body: 'wrong' }] },
     { ...emptyEvents(requestInput), events: Array(2001).fill({}) },
     { error: 'unknown_error', message: 'untrusted detail' }];
@@ -377,7 +397,7 @@ test('the publication boundary validates worker and injected results, maps error
       const service = createCycles({ root, generate: input => transport === 'injected' ? Promise.resolve(result)
         : generateCycles({ root, input, spawnWorker: cycleWorker(JSON.stringify(result)) }) });
       await assert.rejects(service.events(requestInput), (error: cyclesService.CycleError) => error.code === 'cycles_unavailable' && error.status === 503);
-      assert.equal(service.size, 0); assert.equal(service.active, 0); await service.close();
+      assert.equal(service.active, 0); await service.close();
     }
     for (const body of ['sun', 'wrong'] as const) {
       const result = { error: 'ephemeris_unavailable', message: 'Точные данные отсутствуют.', body };
@@ -385,13 +405,13 @@ test('the publication boundary validates worker and injected results, maps error
         : generateCycles({ root, input, spawnWorker: cycleWorker(JSON.stringify(result)) }) });
       await assert.rejects(service.events(requestInput), (error: cyclesService.CycleError) => error.code === result.error && error.status === 422
         && error.message === result.message && error.details.body === (body === 'sun' ? body : undefined));
-      assert.equal(service.size, 0); await service.close();
+      await service.close();
     }
   }
   for (const [encoded, options] of [['{', {}], [JSON.stringify(emptyEvents(requestInput)), { maxOutputBytes: 5 }]] as const) {
     const service = createCycles({ root, generate: input => generateCycles({ root, input, spawnWorker: cycleWorker(encoded), ...options }) });
     await assert.rejects(service.events(requestInput), (error: cyclesService.CycleError) => error.code === 'cycles_unavailable');
-    assert.equal(service.active, 0); assert.equal(service.size, 0); await service.close();
+    assert.equal(service.active, 0); await service.close();
   }
 });
 
@@ -410,4 +430,14 @@ test('a missing return index remains a retryable 503 with its own error code', a
   assert.equal(failed.headers['Cache-Control'], 'private, no-store');
   assert.equal((await request(service)).status, 200);
   assert.equal(calls, 2, 'failed preparation is not cached as an empty completed list');
+});
+
+
+test('general calculation route can issue proof without creating a saved card', async () => {
+  const input={birthUtc:requestInput.birthUtc,body:'saturn',fromAge:0,toAge:100};let issues=0;
+  const handler=cyclesHandler({events:async()=>emptyEvents(input),chart:async()=>{throw new Error('unused');},cacheVersion:'a'.repeat(64)},
+    {issueReceipt(action,received,result){assert.equal(action,'events');assert.equal(received.birthUtc,input.birthUtc);assert.deepEqual(result,emptyEvents(input));issues++;return 'proof';}});
+  const req=Object.assign(Readable.from([Buffer.from(JSON.stringify(input))]),{method:'POST',headers:{'content-type':'application/json'}}) as unknown as IncomingMessage;
+  const res=captureResponse();await handler(req,res,new URL('http://localhost/api/cycles/events'));
+  assert.equal(res.status,200);assert.deepEqual(JSON.parse(res.body),{...emptyEvents(input),proof:'proof'});assert.equal(issues,1);
 });

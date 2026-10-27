@@ -1,14 +1,7 @@
 import type { ChartInput, ChartView } from '../domain/chart-composition.ts';
 import type { SelectionTarget } from '../selection/selection-targets.ts';
 import type { ColumnSide } from './geometry/activation-layout.ts';
-export interface ColumnSelectionOptions {
-  pressedGates?: ReadonlySet<number>;
-  pressedSelection?: SelectionTarget | null;
-  selections?: readonly SelectionTarget[];
-  pressedSelections?: readonly SelectionTarget[];
-  previewGates?: ReadonlySet<number>;
-  showMandala?: boolean;
-}
+import type { ColumnSelectionOptions } from './activation-targets.ts';
 export type ActivationColumn = ReturnType<typeof describeActivationColumns>[number];
 export type ActivationRow = ActivationColumn['rows'][number];
 

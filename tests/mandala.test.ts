@@ -192,7 +192,7 @@ test('shared studio content enlarges around chart y=410 while its focus targets 
     // every vertex plus the focus stroke therefore bounds the entire shape.
     center.points.split(' ').forEach(point => inside(point.split(',').map(Number), focusWidths[index] / 2, center.id));
   });
-  const gateHits = [...markup.matchAll(/<circle r="([^"]+)" fill="transparent" pointer-events="all"/g)].map(match => Number(match[1]));
+  const gateHits = [...markup.matchAll(/<circle class="bg-gate-hit" r="([^"]+)" fill="transparent" pointer-events="fill"/g)].map(match => Number(match[1]));
   assert.equal(gateHits.length, GATES.length);
   GATES.forEach((gate, index) => inside([gate.x, gate.y], gateHits[index], `gate ${gate.id}`));
 });

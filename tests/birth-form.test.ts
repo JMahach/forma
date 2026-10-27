@@ -1,22 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type {BirthSubmission} from '../src/views/birth-form.ts';
 import { attachBirthForm } from '../src/views/birth-form.ts';
+import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
+import { createBirthClient } from '../src/data/birth-client.ts';
 import { RANDOM_CHART_NAMES } from '../src/views/random-chart.ts';
-import { createChartStore } from '../src/data/chart-store.ts';
+import { createChartStore, saveChartRecord } from '../src/data/chart-store.ts';
+import { createViewStore } from '../src/data/view-store.ts';
 import { STORAGE_KEY, CHART_RECORD_PREFIX, readCharts } from '../src/data/storage.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import type { SavedChart, Activation } from '../shared/chart-types.ts';
 import type { ChartStore } from '../src/data/chart-store.ts';
-type TestRecord = Omit<Partial<SavedChart>, 'activations'> & { id: string; name: string; calculation?: unknown; activations?: { personality: readonly Partial<Activation>[]; design: readonly Partial<Activation>[] } };
+type TestRecord = Omit<Partial<SavedChart>, 'activations'> & { id: string; name: string; revision?: number; noteRevision?: number; calculation?: unknown; activations?: { personality: readonly Partial<Activation>[]; design: readonly Partial<Activation>[] } };
 type BirthOptions = Parameters<typeof attachBirthForm>[0];
 interface FormNode {
+  ownerDocument: {createElement(name: string): FormNode}; className: string;
+  replaceChildren(...nodes: FormNode[]): void; append(node: FormNode): void; style: {whiteSpace?: string};
   id: string; value: string; textContent: string; hidden: boolean; open: boolean; disabled: boolean;
-  dataset: DOMStringMap; selectionStart: number; selectionEnd: number; innerHTML: string;
+  dataset: DOMStringMap; selectionStart: number; selectionEnd: number; selectionDirection?:'forward'|'backward'|'none'; innerHTML: string;
   elements?: Record<string, FormNode>;
   classList: { add(value: unknown): void; remove(value: unknown): void; contains(value: unknown): boolean; toggle(value: unknown, force?: boolean): boolean };
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null; removeAttribute(name: string): void;
-  focus(): void; setSelectionRange(start: number, end: number): void; scrollIntoView(): void;
+  focus(): void; setSelectionRange(start: number, end: number,direction?:'forward'|'backward'|'none'): void; scrollIntoView(): void;
   showModal(): void; close(): void; reset(): void; requestSubmit(): void;
   addEventListener(type: string, handler: (event: FormEvent) => unknown): void;
   emit(type: string, options?: Record<string, unknown>): Promise<void>;
@@ -28,15 +34,18 @@ interface RequestRecord { url: string; options: RequestInit; resolve(value: unkn
 
 
 const city = (id: string|number, name: string) => ({ id, name, country: 'DE', region: '', timezone: 'Europe/Berlin' });
-const manualChart = () => ({ id: 'manual-1', name: 'Исходная карта', source: 'manual' as const, birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин', personality: [20], design: [57], note: 'Заметка', createdAt: '2020-01-01T00:00:00.000Z' });
+const manualChart = () => ({ id: 'manual-1', name: 'Исходная карта', source: 'manual' as const, birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин', personality: [20], design: [57], note: 'Заметка', createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z' });
 const natalChart = () => ({ ...manualChart(), id: 'natal-1', source: 'calculated' as const, birthDate: '2025-10-26', birthTime: '02:30', city: city(1, 'Берлин') });
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
 
-test('stand random example uses the real city and natal calculation before saving a new record', async t => {
+for (const [port, accountId] of [['36', null], ['3636', null], ['', null], ['', 'signed-in-account']] as const)
+test(`random example calculates a local record on ${port || 'production'} for ${accountId ? 'an account' : 'a guest'}`, async t => {
   t.mock.method(Math, 'random', () => 0);
   const original = manualChart();
-  const h = formHarness(t, { charts: [original], port: '36' });
+  let accountWrites = 0;
+  const h = formHarness(t, { charts: [original], port, getAccountId: () => accountId,
+    submitChart: async () => { accountWrites++; return {id:'unexpected-account-write',persisted:true}; } });
   const creating = h.element('randomChartButton').emit('click');
   assert.equal(h.form.opened, false, 'one click never opens or modifies the birth dialog');
   assert.equal(h.requests.length, 1);
@@ -61,6 +70,7 @@ test('stand random example uses the real city and natal calculation before savin
   assert.equal(h.store.charts[1].source, 'calculated');
   assert.equal(h.store.charts[1].name, payload.name);
   assert.equal(h.calls.saved.length, 1); assert.equal(h.form.opened, false);
+  assert.equal(accountWrites, 0, 'a random example never creates a record in the account');
   assert.equal(h.element('randomChartButton').disabled, false);
 });
 
@@ -88,16 +98,31 @@ test('random lookup errors are a toast with no dialog and allow a fresh one-clic
   h.form.open(); h.requests[1].resolve({ cities: [] }); await retry;
 });
 
-test('random example is unavailable off the stand and respects the 500-record limit', async t => {
-  const h = formHarness(t);
-  await h.element('randomChartButton').emit('click');
-  assert.equal(h.requests.length, 0);
-  t.mock.timers.reset();
-  const full = formHarness(t, { port: '36', charts: Array.from({ length: 500 }, (_, i) => ({ ...manualChart(), id: `saved-${i}` })) });
-  await full.element('randomChartButton').emit('click');
-  assert.equal(full.requests.length, 0);
-  assert.equal(full.store.charts.length, 500);
-  assert.ok(full.calls.toasts.some(text => text.includes('500')));
+test('a random temporary example replaces one ready tab result even beside 500 legacy records', async t => {
+  t.mock.method(Math,'random',()=>0);
+  const original=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'old-temporary'}));
+  const legacy=Array.from({length:500},(_,i)=>({...manualChart(),id:`saved-${i}`}));
+  const disk=persistentStore(legacy), originalBytes=[...disk.values];
+  const store=createChartStore({getStorage:()=>disk.storage,initialTemporaryChart:original});
+  const tabValues=new Map<string,string>();
+  const tab=createViewStore({getStorage:()=>({getItem:key=>tabValues.get(key)??null,setItem:(key,value)=>{tabValues.set(key,value);}})});
+  const h=formHarness(t,{chartStore:store,getChart:id=>id?store.get(id):undefined,saveChart:chart=>{
+    store.setTemporary(chart);return tab.write({version:1,selectedId:chart.id,temporaryChart:store.temporaryChart});
+  }});
+  const creating=h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length,1);
+  assert.equal(store.temporaryChart?.id,original.id,'the ready chart stays while the city is loading');
+  h.requests[0].resolve({cities:[{...city('524901','Москва'),country:'RU',timezone:'Europe/Moscow'}]});
+  await settle();
+  assert.equal(store.temporaryChart?.id,original.id,'the ready chart stays while calculation is pending');
+  h.requests[1].resolve({chart:libraryRecordAtMinute(natalDayFixture({date:'1950-01-01'}),0)});
+  await creating;
+  assert.notEqual(store.temporaryChart?.id,original.id);
+  assert.equal(store.has(original.id),false);
+  assert.equal(store.charts.length,500);
+  assert.deepEqual([...disk.values],originalBytes);
+  assert.equal(tab.read()?.temporaryChart?.id,store.temporaryChart?.id);
+  assert.deepEqual(h.calls.toasts,[]);
 });
 
 test('a mismatched server UTC is never saved and a late random calculation cannot replace an opened form', async t => {
@@ -119,6 +144,34 @@ test('a mismatched server UTC is never saved and a late random calculation canno
   assert.equal(h.calls.toasts.length, 1, 'only the current operation can report a UTC mismatch');
 });
 
+test('random generation cancels offline without saving a late result and permits a server retry', async t => {
+  const {createStandConnection} = await import('../src/dev/stand-connection.ts');
+  const {configureTransportSimulation} = await import('../src/data/http-transport.ts');
+  const connection = createStandConnection();
+  configureTransportSimulation(connection); t.after(() => configureTransportSimulation(null));
+  connection.set('offline');
+  const h = formHarness(t);
+  await h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.element('randomChartButton').disabled, true);
+  connection.set('online');
+  const creating = h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 1);
+  connection.set('offline');
+  assert.equal(h.requests[0].options.signal!.aborted, true);
+  h.requests[0].resolve({cities:[{...city('524901','Москва'),country:'RU',timezone:'Europe/Moscow'}]});
+  await creating;
+  assert.equal(h.requests.length, 1); assert.equal(h.store.charts.length, 0);
+  assert.deepEqual(h.calls.saved, []);
+  connection.set('server');
+  const retry = h.element('randomChartButton').emit('click');
+  assert.equal(h.requests.length, 2, 'server failure permits an explicit retry');
+  h.requests[1].reject(Object.assign(new Error('server unavailable'), {code:'server_unavailable'}));
+  await retry;
+  assert.equal(h.element('randomChartButton').disabled, false);
+  assert.equal(h.calls.toasts.length, 1); assert.equal(h.store.charts.length, 0);
+});
+
 function persistentStore(charts: readonly TestRecord[]) {
   const values = new Map([[STORAGE_KEY, JSON.stringify(charts)]]);
   const storage = { get length() { return values.size; }, key: (index: number) => [...values.keys()][index],
@@ -126,14 +179,16 @@ function persistentStore(charts: readonly TestRecord[]) {
   return { values, storage, chartStore: createChartStore({ getStorage: () => storage }) };
 }
 
-function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '' }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string } = {}) {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, reuseTimers=false }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; reuseTimers?:boolean } = {}) {
+  if(!reuseTimers)t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map<string, FormNode>(), requests: RequestRecord[] = [];
+  const documentHandlers=new Map<string,(()=>void)[]>();
   const calls = { beforeOpen: 0, saved: [] as string[], saveOptions: [] as Parameters<BirthOptions['onSave']>[1][], persisted: [] as (readonly TestRecord[])[], replaced: [] as (readonly TestRecord[])[], toasts: [] as string[] };
   const fields = { name: 'chartName', birthDate: 'birthDate', birthTime: 'birthTime', birthPlace: 'birthPlace', note: 'chartNote', personality: 'personalityGates', design: 'designGates' };
   const document = {
     defaultView: { location: { port } },
     activeElement: null as FormNode | null,
+    addEventListener(type:string,callback:()=>void) {documentHandlers.set(type,[...documentHandlers.get(type)??[],callback]);},
     createElement: () => element('generated-' + elements.size),
     getElementById(id: string) { return element(id); },
     querySelectorAll(selector: unknown) { assert.equal(selector, '[data-calculation-mode]'); return modes; },
@@ -143,7 +198,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
     const attributes = new Map<string, string>(), classes = new Set<unknown>(), handlers = new Map<string, ((event: FormEvent) => unknown)[]>();
     let markup = '', ownText = ''; let children: FormNode[] = [];
     const node: FormNode = {
-      id, value: '', ownerDocument:document, className:'',
+      id, value: '', ownerDocument:document, className:'', style:{},
       get textContent(){return ownText + children.map(child=>child.textContent).join('');},
       set textContent(value){ownText=value;children=[];},
       replaceChildren(...nodes:FormNode[]){ownText='';children=nodes;},append(node:FormNode){children.push(node);},
@@ -158,7 +213,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
       getAttribute(name) { return attributes.get(name) ?? null; },
       removeAttribute(name) { attributes.delete(name); },
       focus() { document.activeElement = this; },
-      setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; },
+      setSelectionRange(start: number, end: number,direction:'forward'|'backward'|'none'='none') { this.selectionStart = start; this.selectionEnd = end; this.selectionDirection=direction; },
       scrollIntoView() {},
       showModal() { this.open = true; }, close() { this.open = false; }, requestSubmit() { void this.emit('submit'); },
       addEventListener(type, handler) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type)!.push(handler); },
@@ -190,19 +245,23 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
     replace(next: readonly TestRecord[]) { calls.replaced.push(next); records = next; },
   };
   const form = attachBirthForm({
-    document: document as unknown as Document, store: store as ChartStore, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
+    document: document as unknown as Document,
+    getChart: getChart ?? (id => store.charts.find(chart => chart.id === id) as SavedChart | undefined),
+    saveChart: saveChart ?? ((chart, id) => saveChartRecord(store as ChartStore, chart, id)),
+    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode, subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
     onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])) as unknown as FormData,
-    requestJSON<T = unknown>(url: string, options: RequestInit = {}) {
+    ...createBirthClient(function requestJSON<T = unknown>(url: string, options: RequestInit = {}) {
       let resolve!: (value: unknown) => void, reject!: (error: unknown) => void;
       const promise = new Promise<T>((yes, no) => { resolve = yes as (value: unknown) => void; reject = no; });
       requests.push({ url, options, resolve, reject });
       return promise;
-    },
+    }),
   });
   t.after(() => form.close());
   return {
     form, document, element, store, calls, requests,
+    selectionChanged(){for(const callback of documentHandlers.get('selectionchange')??[])callback();},
     submit: () => element('chartForm').emit('submit'),
     mode: (mode: string) => element(`mode-${mode}`).emit('click'),
     async search(query: string) {
@@ -659,20 +718,35 @@ test('offline while city search waits invalidates late options; server mode expl
 });
 
 
-test('a completed busy response remains a neutral fact, not a false active wait or a server failure', async t => {
+test('queue admission keeps the same form waiting and completes after capacity returns without another click', async t => {
  const h=formHarness(t,{charts:[natalChart()]});
  h.form.open(true,'natal-1');h.element('chartName').value='Черновик';
- const submitting=h.submit();
- h.requests.at(-1)!.reject(Object.assign(new Error('Server is busy'),{code:'busy',status:503}));
- await submitting;
- assert.equal(h.element('formError').textContent,'Сервер занят');
- assert.equal(h.element('formError').dataset.tone,'neutral');
- assert.equal(h.element('formError').getAttribute('aria-busy'),'false','completed rejection cannot pretend to be an active queue');
- assert.equal(h.element('chartForm').getAttribute('aria-busy'),'false');
+ const submitting=h.submit(),first=h.requests.at(-1)!;
+ first.reject(Object.assign(new Error('Server is busy'),{code:'busy',status:503}));
+ await settle();
+ assert.equal(h.element('formError').textContent,'Готовим карту…');
+ assert.equal(h.element('formError').getAttribute('aria-busy'),'true');
+ assert.equal(h.element('chartForm').getAttribute('aria-busy'),'true');
+ assert.equal(h.element('cancelDialog').disabled,false);
  assert.equal(h.element('chartName').value,'Черновик');
- assert.equal(h.form.opened,true);
- assert.equal(h.requests.length,1,'no new request or automatic save is started');
+ await h.submit(); assert.equal(h.requests.length,1);
  assert.deepEqual(h.calls.persisted,[]);
+ t.mock.timers.tick(500);await settle();
+ assert.equal(h.requests.length,2);
+ assert.equal(h.requests[1].options.body,first.options.body);
+ h.requests[1].resolve({chart:{personality:[25],design:[10],birthDate:'2025-10-26',birthTime:'02:30'}});
+ await submitting;
+ assert.equal(h.calls.saved.length,1);assert.equal(h.form.opened,false);
+});
+test('closing the form during admission cancels its continuation and preserves the existing chart', async t => {
+ const original=natalChart(),h=formHarness(t,{charts:[original]});
+ h.form.open(true,original.id);
+ const submitting=h.submit();
+ h.requests[0].reject(Object.assign(new Error('Server is busy'),{code:'busy',status:503}));
+ await settle();await h.element('cancelDialog').emit('click');await submitting;
+ t.mock.timers.tick(60_000);await settle();
+ assert.equal(h.requests.length,1);
+ assert.deepEqual(h.store.charts,[original]);assert.deepEqual(h.calls.persisted,[]);
  assert.deepEqual(h.calls.saved,[]);
 });
 
@@ -693,4 +767,264 @@ test('an actually held calculation shows preparing and cancel keeps the existing
  assert.deepEqual(h.calls.persisted,[]);
  assert.deepEqual(h.calls.saved,[]);
  assert.equal(h.element('formError').textContent,'');
+});
+
+test('the server submission port owns the result without an earlier calculation or local save', async t => {
+  let calls = 0;
+  const h = formHarness(t, {charts: [natalChart()], submitChart: async () => { calls++; return {id: 'server-card', persisted: true}; }});
+  h.form.open(true, 'natal-1');
+  const saving = h.submit(); await settle();
+  assert.equal(calls, 1); await saving;
+  assert.deepEqual(h.calls.saved, ['server-card']); assert.equal(h.requests.length, 0);
+  assert.equal(h.store.charts[0]!.name, 'Исходная карта');
+});
+
+
+test('a newer confirmed record refreshes open birth fields while preserving the private note draft', async t => {
+  const original = {...natalChart(), revision: 1, noteRevision: 1, note: 'Initial note'};
+  let submitted: Parameters<NonNullable<BirthOptions['submitChart']>>[0] | undefined;
+  const h = formHarness(t, {charts: [original], submitChart: input => {
+    submitted = input; return Promise.resolve({id: original.id, persisted: true});
+  }});
+  h.form.open(true, original.id);
+  h.element('chartName').value = 'Unfinished name'; h.element('chartNote').value = 'My private draft';
+  const updated = {...original, name: 'Confirmed name', birthDate: '2001-02-03', birthTime: '14:15', revision: 2, noteRevision: 2, note: 'Other saved note'};
+  h.store.replace([updated]); h.form.refresh();
+  assert.equal(h.element('chartName').value, updated.name);
+  assert.equal(h.element('birthDate').value, '03.02.2001'); assert.equal(h.element('birthTime').value, '14:15');
+  assert.equal(h.element('chartNote').value, 'My private draft'); assert.equal(h.form.opened, true);
+  h.element('chartName').value = 'Continued typing'; h.form.refresh();
+  assert.equal(h.element('chartName').value, 'Continued typing', 'the same revision cannot repeatedly reset a new draft');
+  await h.submit();
+  assert.equal(submitted?.name, 'Continued typing'); assert.equal(submitted?.note, 'My private draft');
+  assert.equal((submitted?.previous as SavedChart & {noteRevision: number}).noteRevision, 2, 'only the saved note now rendered beside the draft authorizes this revision');
+  assert.match(h.element('savedChartNote').textContent, /Other saved note/);
+});
+
+
+for (const checking of [false, true]) test(`server submission describes its actual ${checking ? 'lookup' : 'saving'} phase`, async t => {
+  const original = natalChart(); let finish!: (value: {id: string; persisted: boolean}) => void;
+  const result = new Promise<{id: string; persisted: boolean}>(resolve => {finish = resolve;});
+  const h = formHarness(t, {charts: [original], submitChart: () => result, isCheckingSubmission: () => checking});
+  h.form.open(true, original.id); const pending = h.submit();
+  const label = checking ? 'Проверяем сохранение…' : 'Сохраняем карту…';
+  assert.equal(h.element('formError').textContent, label);
+  assert.equal(h.element('saveChartButton').textContent, label);
+  finish({id: original.id, persisted: true}); await pending;
+});
+
+
+test('shown saved note updates comparison revision but never overwrites the draft or cursor', async t => {
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Original'};
+  let submitted: Parameters<NonNullable<BirthOptions['submitChart']>>[0] | undefined;
+  const h=formHarness(t,{charts:[original],noteComparisonLabel:'Saved note',submitChart:input=>{
+    submitted=input;return Promise.resolve({id:original.id,persisted:true});
+  }});
+  h.form.open(true,original.id);
+  const draft=h.element('chartNote');draft.value='Own draft';draft.setSelectionRange(3,5);draft.focus();
+  const updated={...original,name:'New name',revision:2,noteRevision:2,note:'Remote <script>plain text</script>\nSecond line'};
+  h.store.replace([updated]);h.form.refresh();
+  const panel=h.element('savedChartNote');
+  assert.equal(panel.hidden,false);assert.match(panel.textContent,/Remote <script>plain text<\/script>/);
+  assert.equal(draft.value,'Own draft');assert.equal(draft.selectionStart,3);assert.equal(draft.selectionEnd,5);
+  assert.equal(h.document.activeElement,draft);assert.equal(h.calls.saved.length,0);
+  await h.submit();
+  assert.equal((submitted?.previous as SavedChart & {noteRevision: number}).noteRevision,2);
+  assert.equal(submitted?.previous?.name,'New name');assert.equal(submitted?.note,'Own draft');
+});
+
+test('newer note conflict refreshes the displayed version and keeps the editor open without another write', async t => {
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Original'};
+  let writes=0;
+  const h=formHarness(t,{charts:[original],noteComparisonLabel:'Saved note',submitChart:async()=>{
+    writes++;h.store.replace([{...original,revision:3,noteRevision:3,note:'Latest saved'} as typeof original]);
+    throw Object.assign(new Error('Do not display an extra conflict warning'),{code:'note_conflict'});
+  }});
+  h.form.open(true,original.id);h.element('chartNote').value='Keep this draft';
+  await h.submit();
+  assert.equal(h.form.opened,true);assert.equal(writes,1);assert.equal(h.element('chartNote').value,'Keep this draft');
+  assert.match(h.element('savedChartNote').textContent,/Latest saved/);assert.equal(h.element('formError').textContent,'');
+  h.store.replace([{...original,revision:2,noteRevision:2,note:'Older'} as typeof original]);h.form.refresh();
+  assert.match(h.element('savedChartNote').textContent,/Latest saved/);
+  h.form.close();h.form.open(false);
+  assert.equal(h.element('savedChartNote').hidden,true);assert.equal(h.element('savedChartNote').textContent,'');
+});
+
+
+test('matching the shown note hides comparison and retyping does not lose its saved revision',async t=>{
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Original'};
+  let submitted: Parameters<NonNullable<BirthOptions['submitChart']>>[0] | undefined;
+  const h=formHarness(t,{charts:[original],noteComparisonLabel:'Saved note',submitChart:input=>{
+    submitted=input;return Promise.resolve({id:original.id,persisted:true});
+  }});
+  h.form.open(true,original.id);h.element('chartNote').value='Own draft';
+  const next={...original,revision:2,noteRevision:2,note:'Latest'};h.store.replace([next]);h.form.refresh();
+  h.element('chartNote').value='Latest';await h.element('chartNote').emit('input');
+  assert.equal(h.element('savedChartNote').hidden,true);
+  h.element('chartNote').value='Continued';await h.element('chartNote').emit('input');
+  assert.equal(h.element('savedChartNote').hidden,false);assert.match(h.element('savedChartNote').textContent,/Latest/);
+  await h.submit();assert.equal((submitted?.previous as SavedChart & {noteRevision:number}).noteRevision,2);
+});
+
+
+test('closing the editor clears private input and saved-note comparison without changing the stored card',async t=>{
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Stored private text'};
+  const h=formHarness(t,{charts:[original],noteComparisonLabel:'Saved note'});
+  h.form.open(true,original.id);h.element('chartNote').value='Private draft';
+  h.form.close();
+  assert.equal(h.element('chartName').value,'');assert.equal(h.element('birthDate').value,'');
+  assert.equal(h.element('chartNote').value,'');assert.equal(h.element('savedChartNote').textContent,'');
+  assert.equal(h.store.charts[0].note,'Stored private text');assert.equal(h.calls.saved.length,0);
+});
+
+test('a native dialog close rejects a late save before its close event is delivered',async t=>{
+  let finish!:(value:{id:string;persisted:boolean})=>void;
+  const h=formHarness(t,{charts:[natalChart()],submitChart:()=>new Promise(resolve=>{finish=resolve;})});
+  h.form.open(true);const submit=h.submit();h.element('chartDialog').close();
+  finish({id:'server-card',persisted:true});await submit;
+  assert.deepEqual(h.calls.saved,[]);
+  await h.element('chartDialog').emit('close');assert.equal(h.element('chartNote').value,'');
+});
+
+
+test('an older comparison is not presented as the fresh conflicting note when its read failed',async t=>{
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Original'};
+  const h=formHarness(t,{charts:[original],noteComparisonLabel:'Saved note',submitChart:async()=>{
+    throw Object.assign(new Error('read failed'),{code:'note_conflict'});
+  }});
+  h.form.open(true,original.id);h.element('chartNote').value='Keep draft';
+  h.store.replace([{...original,revision:2,noteRevision:2,note:'Previously shown'} as typeof original]);h.form.refresh();
+  await h.submit();
+  assert.equal(h.element('formError').textContent,'Не удалось сохранить карту');
+  assert.equal(h.element('chartNote').value,'Keep draft');assert.equal(h.form.opened,true);
+});
+
+test('an untouched note follows the confirmed note before saving another field',async t=>{
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Original'};
+  let submitted: BirthSubmission | undefined;
+  const h=formHarness(t,{charts:[original],submitChart:input=>{
+    submitted=input;return Promise.resolve({id:original.id,persisted:true,metadataOnly:true});
+  }});
+  h.form.open(true,original.id);
+  const updated={...original,revision:2,noteRevision:2,note:'New from another tab'};
+  h.store.replace([updated]);
+  h.form.refresh();
+  assert.equal(h.element('chartNote').value,'New from another tab');
+  assert.equal(h.element('savedChartNote').hidden,true);
+  h.element('chartName').value='Only name changed';await h.submit();
+  assert.equal(submitted?.note,'New from another tab');
+  assert.equal(submitted?.previous?.note,'New from another tab');
+});
+test('confirmed disappearance of the edited card closes and clears the private draft',async t=>{
+  const original={...natalChart(),revision:1,noteRevision:1,note:'Private'};
+  const h=formHarness(t,{charts:[original]});h.form.open(true,original.id);
+  h.element('chartNote').value='Unsent';h.store.replace([]);h.form.refresh();
+  assert.equal(h.element('chartDialog').open,false);assert.equal(h.element('chartNote').value,'');
+});
+
+
+test('ordinary reload restores unfinished birth fields and the active text selection without a request',async t=>{
+  const h=formHarness(t);h.form.open();
+  h.element('chartName').value='  Черновик  ';h.element('birthDate').value='12.0';h.element('birthTime').value='1:';
+  h.element('birthPlace').value='Мос';h.element('chartNote').value='Моя заметка\n';
+  h.element('chartNote').focus();h.element('chartNote').setSelectionRange(2,7,'backward');
+  const records=new Map<string,string>(),storage={getItem:(key:string)=>records.get(key)??null,setItem:(key:string,value:string)=>{records.set(key,value);}};
+  const view=createViewStore({getStorage:()=>storage});assert.equal(view.write({version:1,birthForm:h.form.snapshot}),true);
+  const next=formHarness(t,{reuseTimers:true});
+  assert.equal(next.form.restore(createViewStore({getStorage:()=>storage}).read()!.birthForm),true);
+  for(const id of ['chartName','birthDate','birthTime','birthPlace','chartNote'])assert.equal(next.element(id).value,h.element(id).value);
+  assert.equal(next.form.opened,true);assert.equal(next.document.activeElement,next.element('chartNote'));
+  assert.deepEqual([next.element('chartNote').selectionStart,next.element('chartNote').selectionEnd,next.element('chartNote').selectionDirection],[2,7,'backward']);
+  assert.equal(next.requests.length,0);assert.deepEqual(next.calls.saved,[]);
+});
+
+test('closing the form forgets its draft and reopening starts with confirmed values',async t=>{
+  let changes=0;const record=natalChart(),h=formHarness(t,{charts:[record],onDraftChange:()=>{changes++;}});
+  h.form.open(true);h.element('chartNote').value='Private draft';h.element('chartNote').focus();await h.element('chartNote').emit('input');
+  assert.equal(h.form.snapshot?.fields.chartNote,'Private draft');const before=changes;
+  h.form.clearDraft();assert.equal(h.form.snapshot,null);assert.equal(h.form.opened,false);assert.ok(changes>before);
+  h.form.open(true);assert.equal(h.element('chartNote').value,record.note);
+});
+
+test('birth drafts cannot restore private editing into another account but independent temporary input can',t=>{
+  let owner:string|null='1';const record={...natalChart(),accountId:'1',revision:1,noteRevision:1};
+  const h=formHarness(t,{charts:[record],getAccountId:()=>owner});h.form.open(true);h.element('chartNote').value='Private';
+  const personal=h.form.snapshot!;h.form.clearDraft();owner='2';
+  assert.equal(h.form.restore(personal),false);assert.equal(h.form.opened,false);assert.equal(h.form.snapshot,null);
+  owner=null;h.form.open();h.element('chartName').value='Temporary';const temporary=h.form.snapshot!;
+  h.form.clearDraft();owner='2';assert.equal(h.form.restore(temporary),true);assert.equal(h.element('chartName').value,'Temporary');
+});
+
+test('restoring an edited chart follows a newer confirmed birth record and preserves only its own changed note',t=>{
+  const record={...natalChart(),revision:1,noteRevision:1},h=formHarness(t,{charts:[record]});
+  h.form.open(true);h.element('chartName').value='Old unfinished name';h.element('chartNote').value='Own unfinished note';const draft=h.form.snapshot;
+  const fresh={...record,revision:2,noteRevision:2,name:'Confirmed new name',note:'Confirmed new note',birthTime:'03:45'};
+  const next=formHarness(t,{charts:[fresh],reuseTimers:true});assert.equal(next.form.restore(draft),true);
+  assert.equal(next.element('chartName').value,fresh.name);assert.equal(next.element('birthTime').value,'03:45');
+  assert.equal(next.element('chartNote').value,'Own unfinished note');assert.equal(next.element('savedChartNote').hidden,false);
+  assert.equal(next.element('savedChartNote').textContent,fresh.note);assert.equal(next.requests.length,0);
+});
+
+
+test('pending exposes an active server write and becomes false when that form is explicitly cancelled',async t=>{
+  let finish!:(value:{id:string;persisted:boolean})=>void;
+  const record=manualChart(),h=formHarness(t,{charts:[record],submitChart:()=>new Promise(resolve=>{finish=resolve;})});
+  h.form.open(true);assert.equal(h.form.pending,false);
+  const work=h.submit();assert.equal(h.form.pending,true);
+  h.form.clearDraft();assert.equal(h.form.pending,false);assert.equal(h.form.snapshot,null);
+  finish({id:record.id,persisted:true});await work;assert.deepEqual(h.calls.saved,[]);
+});
+
+test('focus and selection changes publish the actual current caret to the tab snapshot owner',async t=>{
+  let changed=0;const h=formHarness(t,{onDraftChange:()=>{changed++;}});h.form.open();
+  const note=h.element('chartNote');note.value='abcdefgh';note.focus();const before=changed;await note.emit('focus');
+  assert.ok(changed>before);assert.equal(h.form.snapshot?.focus?.field,'chartNote');
+  note.setSelectionRange(2,5,'backward');const focused=changed;h.selectionChanged();assert.ok(changed>focused);
+  assert.deepEqual(h.form.snapshot?.focus,{field:'chartNote',start:2,end:5,direction:'backward'});
+});
+
+test('a reloaded DST choice keeps its selected catalog city and requires a fresh explicit submission',async t=>{
+  const record=natalChart(),h=formHarness(t,{charts:[record]});h.form.open(true);
+  const first=h.submit();h.requests.at(-1)!.reject(Object.assign(new Error('Choose time'),{code:'ambiguous_time',
+    choices:[{fold:0,label:'Летнее <UTC+02>'},{fold:1,label:'Зимнее UTC+01'}]}));await first;
+  h.element('foldChoice').value='1';const draft=h.form.snapshot;
+  const next=formHarness(t,{charts:[record],reuseTimers:true});assert.equal(next.form.restore(draft),true);
+  assert.equal(next.element('foldField').hidden,false);assert.equal(next.element('foldChoice').value,'1');
+  assert.match(next.element('foldChoice').innerHTML,/&lt;UTC\+02&gt;/);assert.equal(next.requests.length,0);
+  assert.equal(next.form.pending,false);const submit=next.submit(),request=next.requests.at(-1)!;
+  assert.equal(JSON.parse(request.options.body as string).fold,1);assert.equal(JSON.parse(request.options.body as string).cityId,'1');
+  next.form.clearDraft();request.reject(abortError());await submit;
+});
+
+test('late restoration cannot replace a form that the person has already opened',t=>{
+  const h=formHarness(t);h.form.open();h.element('chartName').value='First';const previous=h.form.snapshot;
+  h.form.clearDraft();h.form.open();h.element('chartName').value='Current input';
+  assert.equal(h.form.restore(previous),false);assert.equal(h.element('chartName').value,'Current input');
+});
+
+
+test('new temporary form keeps the ready chart on failure and cancellation and replaces it only on success',async t=>{
+  const original=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'ready-temporary'}));
+  const disk=persistentStore([manualChart()]),bytes=[...disk.values];
+  const store=createChartStore({getStorage:()=>disk.storage,initialTemporaryChart:original});
+  const h=formHarness(t,{chartStore:store,getChart:id=>id?store.get(id):undefined,
+    saveChart:chart=>{store.setTemporary(chart);return true;}});
+  async function fill(){
+    h.form.open();h.element('chartName').value='Новая карта';
+    h.element('birthDate').value='24.09.2026';h.element('birthTime').value='12:34';
+    const search=await h.search('Берлин');search!.resolve({cities:[city('2950159','Берлин')]});await settle();await h.chooseCity();
+  }
+  await fill();
+  const failed=h.submit();h.requests.at(-1)!.reject(new Error('Нет соединения'));await failed;
+  assert.equal(store.temporaryChart?.id,original.id);assert.equal(h.form.opened,true);
+  const cancelled=h.submit(),late=h.requests.at(-1)!;
+  h.form.close();late.resolve({chart:original});await cancelled;
+  assert.equal(store.temporaryChart?.id,original.id);assert.equal(h.form.snapshot,null);
+  await fill();const successful=h.submit();
+  assert.equal(store.temporaryChart?.id,original.id);
+  h.requests.at(-1)!.resolve({chart:original});await successful;
+  assert.notEqual(store.temporaryChart?.id,original.id);
+  assert.equal(store.temporaryChart?.name,'Новая карта');
+  assert.equal(h.form.opened,false);
+  assert.deepEqual([...disk.values],bytes);
 });

@@ -1,3 +1,4 @@
+import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
@@ -378,8 +379,8 @@ test('library and summary use one independent panel state and DOM synchronizatio
   nowButton!.parentElement = libraryPanel!;
   ids.get('chartList')!.getBoundingClientRect = () => ({ top: 0, bottom: 300 });
   h.document.getElementById = id => ids.get(id);
-  const library = attachChartLibrary({ document: h.document, panels: h.panels,
-    store: { charts: [] }, session: { selectedId: 'current-transit' } } as unknown as Parameters<typeof attachChartLibrary>[0]);
+  const library = attachChartLibrary({getConnectionMode, subscribeConnection,  document: h.document, panels: h.panels,
+    getCharts: () => [], removeChart() {}, session: { selectedId: 'current-transit' } } as unknown as Parameters<typeof attachChartLibrary>[0]);
   h.controller.open(); library.open();
   assert.deepEqual(h.panels.snapshot, { left: true, right: true });
   assert.equal(library.opened, true);

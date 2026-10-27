@@ -2,10 +2,11 @@
 import { isDevelopmentPort } from '../../shared/development.ts';
 import { standConnection } from './stand-connection.ts';
 import { createCalculationPreview } from './calculation-preview.ts';
-import { configureTransportSimulation } from '../data/http-transport.ts';
 export { createStandConnection, standConnection } from './stand-connection.ts';
 export type { StandConnection } from './stand-connection.ts';
 import type { StandConnection } from './stand-connection.ts';
+
+export let standTransport: {connection: typeof standConnection; fetch: typeof globalThis.fetch} | null = null;
 
 if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
   // Keep the stand mode across reloads, alongside the existing menu expansion.
@@ -19,7 +20,7 @@ if (typeof location !== 'undefined' && isDevelopmentPort(location.port)) {
     const requested = saved?.connection ?? new URL(location.href).searchParams.get('connection');
     if (requested === 'offline' || requested === 'server') standConnection.set(requested);
   } catch {}
-  configureTransportSimulation(standConnection, calculation.fetch);
+  standTransport = {connection: standConnection, fetch: calculation.fetch};
   const style = document.createElement('style');
   style.textContent = `
     .control-color-previews { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 100%; margin: 4px 0 8px; }

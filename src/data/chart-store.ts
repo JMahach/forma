@@ -1,14 +1,28 @@
+import { validatePublicAccountChart } from '../domain/account-chart.ts';
+import type { AccountChart, PublicAccountChart } from '../../shared/chart-record-contract.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type { StorageError, ChartStorage } from './storage.ts';
 export type ChartStore = ReturnType<typeof createChartStore>;
 
-import { readCharts, writeChartChanges, changedChartRecords, deleteChart, STORAGE_KEY } from './storage.ts';
+import { readCharts, writeChartChanges, changedChartRecords, deleteChart, STORAGE_KEY, normalizeTemporaryChart } from './storage.ts';
 
-// Own the working library, including drafts kept after a failed save.
+// Own the working library and the separate ready temporary result of this tab.
 // The private saved snapshot tracks confirmed storage; the chart session owns navigation.
 // A denied storage access still permits a calculated chart to remain in memory.
-export function createChartStore({ getStorage = () => globalThis.localStorage, onStorageError = () => {} }: { getStorage?: () => ChartStorage; onStorageError?: (message: string) => void } = {}) {
+export function createChartStore({ getStorage = () => globalThis.localStorage, onStorageError = () => {}, initialTemporaryChart = null, initialPublicChart = null, calculationVersion = '' }: { initialPublicChart?: unknown; calculationVersion?: string; initialTemporaryChart?: unknown; getStorage?: () => ChartStorage; onStorageError?: (message: string) => void } = {}) {
   let charts: SavedChart[] = [], storageAvailable = true;
+  const readPublic=(value:unknown):PublicAccountChart|null=>{try{return validatePublicAccountChart(value);}catch{return null;}};
+  const displayPublic=(value:PublicAccountChart):SavedChart=>({...value,note:'',createdAt:'',updatedAt:''});
+  // One public source belongs to this tab. The working projection may separately
+  // pin an accepted save source; that transient pin is never persisted here.
+  let lastPublicChart=readPublic(initialPublicChart);
+  let publicChart: SavedChart | null = lastPublicChart?.calculationVersion===calculationVersion ? displayPublic(lastPublicChart) : null;
+  let temporaryChart = normalizeTemporaryChart(initialTemporaryChart);
+  let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} | null = null;
+  const working = () => projection?.charts ?? charts;
+  let navigationSource: readonly SavedChart[] | null = null, navigationTemporary: SavedChart | null = null;
+  let navigationCharts: readonly SavedChart[] = [];
+  const readOnly = () => Object.assign(new Error('Не удалось сохранить карту'), {code: 'auth_required'});
   let saveError: { code: string; message: string; canKeepInMemory: boolean } | null = null;
   const reported = new Set<string>();
   const reportInvalid = (key: string) => {
@@ -34,13 +48,65 @@ export function createChartStore({ getStorage = () => globalThis.localStorage, o
   }
 
   return {
-    get charts() { return charts; },
-    get storageAvailable() { return storageAvailable; },
+    get charts() { return working(); },
+    get displayCharts() {
+      const source = working();
+      if (navigationSource !== source || navigationTemporary !== temporaryChart) {
+        navigationSource = source; navigationTemporary = temporaryChart;
+        navigationCharts = temporaryChart ? [temporaryChart, ...source] : source;
+      }
+      return navigationCharts;
+    },
+    get temporaryChart() { return temporaryChart; },
+    setTemporary(chart: SavedChart) {
+      const next = normalizeTemporaryChart(chart);
+      if (!next) throw Object.assign(new Error('Не удалось сохранить карту'), {code:'invalid'});
+      temporaryChart = next;
+      return temporaryChart;
+    },
+    clearTemporary(expectedId: string) {
+      if (temporaryChart?.id !== expectedId) return false;
+      temporaryChart = null;
+      return true;
+    },
+    get storageAvailable() { return projection?.storageAvailable ?? storageAvailable; },
     get saveError() { return saveError; },
-    has(id: string) { return charts.some(chart => chart.id === id); },
-    get(id: string) { return charts.find(chart => chart.id === id); },
-    replace(next: SavedChart[]) { charts = next; },
+    get publicChart() { return lastPublicChart; },
+    acceptPublic(chart: PublicAccountChart) {
+      lastPublicChart=validatePublicAccountChart(chart);
+      publicChart=displayPublic(lastPublicChart);
+      return publicChart;
+    },
+    clearPublic(expectedId:string) {
+      if(lastPublicChart?.id!==expectedId)return false;
+      lastPublicChart=null;
+      if(publicChart?.id===expectedId)publicChart=null;
+      return true;
+    },
+    showPublic(chart: SavedChart | null) { publicChart = chart; },
+    has(id: string) { if (temporaryChart?.id === id) return true; return working().some(chart => chart.id === id) ? !projection || projection.ready.has(id) : publicChart?.id === id; },
+    get(id: string) { if (temporaryChart?.id === id) return temporaryChart; return working().find(chart => chart.id === id) ?? (publicChart?.id === id ? publicChart : undefined); },
+    // Account-library owns these values. Local persistence must never write them.
+    projectLibrary(records: readonly (SavedChart | AccountChart)[], available: boolean, readyIds: readonly string[] = records.map(chart => chart.id)) {
+      const previous = projection;
+      const unchanged = previous && records.length === previous.sources.length
+        && records.every((record, index) => record === previous.sources[index]);
+      // Keep only the current display projection; unchanged source records
+      // keep their rows and miniatures across storage/status notifications.
+      const retained = unchanged ? null : new Map(previous?.sources.map((source, index) => [source, previous.charts[index]!]));
+      projection = {
+        sources: unchanged ? previous.sources : [...records],
+        charts: unchanged ? previous.charts : records.map(record => retained?.get(record)
+          ?? ('accountId' in record ? {...record, createdAt: '', updatedAt: ''} : record)),
+        storageAvailable: available, ready: new Set(readyIds),
+      };
+    },
+    replace(next: SavedChart[]) { if (projection) throw readOnly(); charts = next; },
     persist(next = charts) {
+      if (projection) {
+        saveError = {code: 'auth_required', message: readOnly().message, canKeepInMemory: false};
+        return false;
+      }
       try {
         persist(next);
         saveError = null;
@@ -54,6 +120,7 @@ export function createChartStore({ getStorage = () => globalThis.localStorage, o
       }
     },
     remove(id: string) {
+      if (projection) throw readOnly();
       const before = new Set(saved.map(chart => chart.id));
       const pending = new Map(changedChartRecords(charts.filter(chart => chart.id !== id), saved).map(chart => [chart.id, chart]));
       const storage = getStorage();
@@ -73,4 +140,16 @@ export function createChartStore({ getStorage = () => globalThis.localStorage, o
       for (const [key, chart] of pending) if (!before.has(key) && !present.has(key)) charts.push(chart);
     },
   };
+}
+
+// Saving from either the form or the stand uses the same accepted storage outcome.
+// Navigation and the warning about an in-memory result belong to the caller.
+export function saveChartRecord(store: Pick<ChartStore, 'charts' | 'persist' | 'replace' | 'saveError'>,
+  chart: SavedChart, replacingId: string | null = null) {
+  const next = replacingId ? store.charts.map(item => item.id === replacingId ? chart : item) : [...store.charts, chart];
+  if (next.length > 500) throw new Error('В библиотеке уже 500 карт.');
+  const persisted = store.persist(next);
+  if (!persisted && store.saveError?.canKeepInMemory === false) throw new Error(store.saveError.message);
+  if (!persisted) store.replace(next);
+  return persisted;
 }

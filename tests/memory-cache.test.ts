@@ -28,3 +28,33 @@ test('replacement, deletion and shared buffers preserve correct byte accounting'
   assert.equal(estimateBytes([new Uint8Array(buffer), new Uint8Array(buffer)]), 216);
   cache.put('too large', 'value', 13); assert.equal(cache.size, 0);
 });
+
+test('clearExcept preserves only matching string entries and their active ownership',()=>{
+  const cache=createMemoryCache({maxBytes:32}),releaseTransit=cache.retain('transit-day:today','today',4);
+  const releaseNatal=cache.retain('natal:birth','birth',4);
+  cache.put('transit-days:other','other',4);cache.put(Symbol('transit-day:symbol'),'symbol',4);cache.put(7,'number',4);
+  cache.clearExcept('transit-day:');
+  assert.equal(cache.size,1);assert.equal(cache.bytes,4);assert.equal(cache.get('transit-day:today'),'today');
+  assert.equal(cache.get('natal:birth'),null);assert.equal(cache.get(7),null);
+  releaseNatal();cache.put('pressure','pressure',32);
+  assert.equal(cache.get('transit-day:today'),'today');assert.equal(cache.get('pressure'),null);
+  releaseTransit();cache.put('pressure','pressure',32);
+  assert.equal(cache.get('transit-day:today'),null);assert.equal(cache.bytes,32);
+});
+
+test('a late release before clear cannot release new ownership of the same key',()=>{
+  const cache=createMemoryCache({maxBytes:5}),oldRelease=cache.retain('natal:birth','old',4);
+  cache.clearExcept('transit-day:');assert.equal(cache.bytes,0);
+  const newRelease=cache.retain('natal:birth','new',4);
+  oldRelease();oldRelease();cache.put('pressure','pressure',4);
+  assert.equal(cache.get('natal:birth'),'new');assert.equal(cache.get('pressure'),null);
+  newRelease();cache.put('pressure','pressure',4);
+  assert.equal(cache.get('natal:birth'),null);assert.equal(cache.get('pressure'),'pressure');assert.equal(cache.bytes,4);
+});
+
+test('clearExcept also forgets retention tokens whose payload was already deleted',()=>{
+  const cache=createMemoryCache({maxBytes:5}),oldRelease=cache.retain('natal:birth','old',4);
+  cache.delete('natal:birth');cache.clearExcept('transit-day:');
+  cache.put('natal:birth','replacement',4);oldRelease();cache.put('pressure','pressure',4);
+  assert.equal(cache.get('natal:birth'),null);assert.equal(cache.get('pressure'),'pressure');assert.equal(cache.bytes,4);
+});

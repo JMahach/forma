@@ -1,3 +1,4 @@
+import type { ObserveClientAction, ClientObservation } from '../../shared/client-report-contract.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { LifetimeMetadata } from '../../shared/lifetime-format.ts';
 import type { ChartInput } from '../domain/chart-composition.ts';
@@ -16,6 +17,7 @@ type LifetimeStatus = 'idle' | 'loading' | 'ready' | 'error' | 'preparing';
 export type LifetimeExplorer = ReturnType<typeof createLifetimeExplorer>;
 export type LifetimeState = LifetimeExplorer['state'];
 interface LifetimeOptions {
+  observe?:ObserveClientAction;
   dayClient?: TransitDayClient | null;
   natalDayClient?: NatalDayClient | null;
   getPersonalRecord?: () => Partial<ChartRecord> | null;
@@ -44,12 +46,13 @@ function dateStart(value: unknown) {
 // Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
 export function createLifetimeExplorer({
-  dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
+  observe, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
   client = createLifetimeClient({ dayClient, natalDayClient, getPersonalRecord }), getDayState = () => null, now = () => Date.now(),
   getMomentState = () => null,
   planetFilter = createTransitPlanetFilter(),
   onStateChange = () => {}, onRender = () => {}, onModeAccepted = () => {},
 }: LifetimeOptions = {}) {
+  let observation:ClientObservation|undefined;
   let metadata: LifetimeMetadata | null = null, fullChart: ChartInput | null = null, exploredChart: ChartInput | null = null;
   let requestedUtc: number | null = null, restoring = false, pendingRestore: LifetimeRestoration | null = null;
   const current = () => planetFilter.filter(fullChart);
@@ -86,6 +89,7 @@ export function createLifetimeExplorer({
     ...planetFilter.state });
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
   function cancel() {
+    observation?.finishSuccess();observation=undefined;
     clearTimeout(retryTimer!); retryTimer = null; retryCount = 0;
     sequence++; active?.controller.abort(); active = null; restoring = false; pendingRestore = null; selectionBounds = null; selectionRound = Math.round;
   }
@@ -152,6 +156,8 @@ export function createLifetimeExplorer({
     if (!opened) return Promise.resolve(false);
     if (active) return active.promise;
     clearTimeout(retryTimer!); retryTimer = null;
+    observation??=observe?.({action:'data_read',component:'lifetime'});
+    const currentObservation=observation;
     const request = { controller: new AbortController(), promise: null as unknown as Promise<boolean> }, generation = ++sequence;
     active = request; restoring = Boolean(restoration); status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = ''; errorCode = '';
     request.promise = Promise.resolve().then(async () => {
@@ -223,15 +229,16 @@ export function createLifetimeExplorer({
             // A disk miss has no ready progress to show. Recheck ownership and
             // the selected UTC before starting another request for this target.
             if (!chart && (getMomentState() || target !== requestedUtc)) continue;
-            if (!chart && restoration?.requestedUtc !== undefined && !Number.isInteger(indexAt(target))) {
-              chart = await client.getMoment(target, { signal: request.controller.signal });
-            } else if (!chart) {
-              // A catalogue can outlive a disk entry. A scrub may only read
-              // prepared data; only explicit restoration permits exact work.
+            if (!chart) {
+              // A catalogue can outlive a disk entry. Restoration and scrubbing
+              // share the same bounded fallback to a prepared grid point.
               if (!Number.isInteger(indexAt(target))) {
                 const fallback = gridUtc(target, round, bounds);
-                if (fallback === null) {
+                // A narrow range can contain an exact birth boundary but no
+                // prepared slot. Its boundary is not a valid file index.
+                if (fallback === null || !Number.isInteger(indexAt(fallback))) {
                   if (target !== requestedUtc) continue;
+                  pendingRestore = null; retryCount = 0;
                   requestedUtc = shownUtc(); status = fullChart ? 'ready' : 'idle'; notify();
                   return false;
                 }
@@ -269,6 +276,7 @@ export function createLifetimeExplorer({
       } catch (failure) {
         const problem = failure as Error & { code?: string };
         if (generation !== sequence || request.controller.signal.aborted) return false;
+        if(problem?.code!=='lifetime_preparing')void currentObservation?.reportError(failure,{stage:'request'});
         if (problem?.code === 'unsupported_version') {
           // A new file can move indexes. Keep the user's UTC and range while
           // the data owner discards the rejected revision and loads its successor.
@@ -295,7 +303,10 @@ export function createLifetimeExplorer({
         }
         notify();
         return false;
-      } finally { if (active === request) { active = null; restoring = false; } }
+      } finally { if (active === request) {
+        active = null; restoring = false;
+        if(retryTimer===null){currentObservation?.finishSuccess();if(observation===currentObservation)observation=undefined;}
+      } }
     });
     notify();
     return request.promise;

@@ -1,3 +1,5 @@
+import { appMetadataAttributes } from '../../shared/app-metadata.ts';
+import { readAppRoute } from '../../shared/app-routes.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { StaticEntry, ReleaseEntry } from './static-assets.ts';
 export type PublicFiles = Map<string, string | StaticEntry>;
@@ -7,11 +9,15 @@ interface PublicFileOptions {
   precompressed?: boolean;
   cyclesVersion?: string | null;
   calculationVersion?: string | null;
+  environment?: 'stand' | 'production';
+  appVersion?: string | null;
 }
 
 import fs from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import path from 'node:path';
+import { isIP } from 'node:net';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { createStaticAssets } from './static-assets.ts';
 import { negotiateEncoding } from './content-encoding.ts';
 import { prepareLoadingPage } from '../../src/scene/loading-placeholder.ts';
@@ -31,6 +37,13 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/dev/account-adapter.ts',
     'src/dev/calculation-preview.ts',
     'src/dev/stand-connection.ts',
+    'src/account.ts',
+    'src/data/account-client.ts',
+    'src/data/telegram-login.ts',
+    'src/data/account-logout-store.ts',
+    'src/state/account-session.ts',
+    'src/state/navigation.ts',
+    'shared/app-routes.ts',
     'src/state/account-flow.ts',
     'src/views/account.ts',
     'src/ui/messages.ts',
@@ -41,6 +54,11 @@ export const PUBLIC_FILES = new Map<string, string>([
     'shared/lifetime-format.ts',
     'shared/lifetime-exact-format.ts',
     'shared/cycles-format.ts',
+    'shared/chart-activations.ts',
+    'shared/calculation-result.ts',
+    'shared/chart-record-contract.ts',
+    'shared/chart-return-contract.ts',
+    'shared/utc-format.ts',
     'shared/date-limits.ts',
     'shared/development.ts',
     'shared/day-packets/decode.ts',
@@ -49,11 +67,26 @@ export const PUBLIC_FILES = new Map<string, string>([
     'shared/day-packets/natal-format.ts',
     'shared/day-packets/transit-format.ts',
     'src/app.ts',
+    'src/journal.ts',
+    'src/offline/page-coordinator.ts',
+    'shared/offline-contract.ts',
+    'shared/client-report-contract.ts',
+    'shared/account-contract.ts',
+    'src/diagnostics/client-reports.ts',
+    'src/diagnostics/browser-source.ts',
+    'src/data/diagnostic-queue.ts',
+    'src/data/diagnostic-delivery.ts',
+    'src/data/diagnostic-client.ts',
+    'src/data/birth-client.ts',
+    'src/domain/chart-record.ts',
+    'src/domain/birth-form-draft.ts',
+    'src/domain/input-draft.ts',
     'src/views/returns-markers.ts',
     'src/views/returns-panel.ts',
     'src/views/returns-clock.ts',
     'src/state/returns.ts',
     'src/state/panels.ts',
+    'src/state/library-selection.ts',
     'src/state/workspace.ts',
     'src/data/cycles-client.ts',
     'src/data/return-storage.ts',
@@ -70,7 +103,15 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/views/chart-loading.ts',
     'src/data/api-client.ts',
     'src/data/chart-store.ts',
+    'src/data/chart-client.ts',
+    'src/data/account-library-store.ts',
+    'src/data/storage-pressure.ts',
+    'src/domain/account-chart.ts',
+    'src/state/account-library.ts',
+    'src/state/chart-actions.ts',
     'src/data/binary-cache.ts', 'src/data/indexed-db.ts',
+    'src/data/calculation-migration.ts',
+    'src/data/calculation-updates.ts', 'src/data/calculation-clients.ts', 'src/data/calculation-cache.ts',
     'src/data/natal-day-client.ts',
     'src/data/shared-request.ts',
     'src/data/storage.ts',
@@ -167,6 +208,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/views/chart-summary-panel.ts',
     'src/views/side-panel-controls.ts',
     'src/views/date-input.ts',
+    'src/views/input-selection.ts',
     'src/views/date-picker.ts',
     'src/views/timeline-range.ts',
     'src/views/timeline-marks.ts',
@@ -195,9 +237,10 @@ export async function readReleaseManifest(directory: string): Promise<Map<string
   const asset = /^assets\/[a-zA-Z0-9_-]+-[a-zA-Z0-9_-]{8,}\.(?:js|css|svg)$/;
   for (const [url, entry] of Object.entries(entries)) {
     const page = ['index.html', 'love.html', 'love'].includes(url);
-    if (!entry || !(page ? entry.file === (url === 'love' ? 'love.html' : url) : asset.test(url) && entry.file === url)
+    const worker = url === 'service-worker.js';
+    if (!entry || !(page ? entry.file === (url === 'love' ? 'love.html' : url) : (worker || asset.test(url)) && entry.file === url)
       || entry.br !== `${entry.file}.br` || entry.gzip !== `${entry.file}.gz`
-      || entry.immutable !== !page) throw new Error(`Invalid public release entry: ${url}`);
+      || entry.immutable !== !(page || worker)) throw new Error(`Invalid public release entry: ${url}`);
     files.set(url, entry);
   }
   for (const page of ['index.html', 'love.html', 'love']) {
@@ -208,22 +251,40 @@ export async function readReleaseManifest(directory: string): Promise<Map<string
   return files;
 }
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null }: PublicFileOptions) {
-  const cycleAttribute = typeof cyclesVersion === 'string' && /^[a-f0-9]{64}$/.test(cyclesVersion) ? ` data-cycles-version="${cyclesVersion}"` : '';
-  const numericAttribute = typeof calculationVersion === 'string' && /^[a-f0-9]{64}$/.test(calculationVersion)
-    ? ` data-calculation-version="${calculationVersion}"` : '';
+// The source stand can replace a previously installed release worker at its
+// original URL. No fetch handler, storage cleanup or forced page navigation.
+const RETIRE_LOCAL_WORKER = `self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', event => event.waitUntil(self.registration.unregister()));
+`;
+
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null, environment = 'stand', appVersion = null }: PublicFileOptions) {
+  const metadataAttributes = appMetadataAttributes({environment, appVersion, cyclesVersion, calculationVersion});
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!precompressed && entry.file.endsWith('.ts')) {
       return Buffer.from(stripTypeScriptTypes(bytes.toString('utf8'), { mode: 'strip' }));
     }
     if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
     let html = prepareLoadingPage(bytes.toString('utf8'));
-    html = html.replace('<body>', `<body${cycleAttribute}${numericAttribute}>`);
+    html = html.replace(/<body\b/, `<body${metadataAttributes}`);
     return Buffer.from(html);
   } });
   return async function servePublicFile(req: IncomingMessage, res: ServerResponse, pathname: string) {
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
-    const filename = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
+    const filename = readAppRoute(pathname) ? 'index.html' : decodeURIComponent(pathname.slice(1));
+    if (filename === 'service-worker.js' && !precompressed && environment === 'stand') {
+      const address = req.socket?.remoteAddress?.replace(/^::ffff:/, '');
+      const loopback = address === '::1' || !!address && isIP(address) === 4 && address.startsWith('127.');
+      if (loopback && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$/i.test(req.headers.host ?? '')) {
+        const encoding = negotiateEncoding(req.headers['accept-encoding']);
+        if (!encoding) { res.writeHead(406, { Vary: 'Accept-Encoding' }); res.end(); return; }
+        const source = Buffer.from(RETIRE_LOCAL_WORKER);
+        const body = encoding === 'br' ? brotliCompressSync(source) : encoding === 'gzip' ? gzipSync(source) : source;
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Content-Length': body.length,
+          'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', Vary: 'Accept-Encoding',
+          ...(encoding === 'identity' ? {} : { 'Content-Encoding': encoding }) });
+        res.end(req.method === 'HEAD' ? undefined : body); return;
+      }
+    }
     const entry = files.get(filename);
     if (!entry) { res.writeHead(404); res.end('Not found'); return; }
     const encoding = negotiateEncoding(req.headers['accept-encoding']);

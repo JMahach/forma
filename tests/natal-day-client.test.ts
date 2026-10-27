@@ -260,3 +260,19 @@ test('a cancelled incompatible subscriber does not invalidate a cached packet st
   assert.equal((await ready).timezone, chart.timezone);
   assert.equal(requests, 0); assert.equal(removed, 0);
 });
+
+
+test('natal failures preserve controlled technical reasons without changing visible messages',async()=>{
+ const chart=personalChartFixture();
+ for(const [fetch,code,message] of [
+  [async()=>({ok:false,status:503,json:async()=>({error:'engine_unavailable',message:'Прежний текст'}),arrayBuffer:async()=>new ArrayBuffer(0)}),'engine_unavailable','Прежний текст'],
+  [async()=>{throw new TypeError('private URL');},'connection_failed','Не удалось загрузить день рождения. Проверьте соединение.'],
+  [async()=>({...response('2026-09-23'),json:async()=>({})}),'invalid_response','Сервер вернул расчёт другого дня.'],
+ ] as const){
+  const client=createNatalDayClient({calculationVersion:revision,persistentCache:null,fetch});
+  await assert.rejects(client.getDay(chart),{code,message});
+ }
+ const client=createNatalDayClient({calculationVersion:revision,persistentCache:null,timeoutMs:5,
+  fetch:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Cancelled','AbortError'))))});
+ await assert.rejects(client.getDay(chart),{code:'timeout',message:'День рождения не успел загрузиться. Повторите попытку.'});
+});

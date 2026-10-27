@@ -1,3 +1,4 @@
+import { reportServerFailure, type ServerFailureReport } from '../journal/report.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { TransitDays } from '../services/transit-days.ts';
 import { requestSignal } from './request-signal.ts';
@@ -15,7 +16,7 @@ export function validateTransitDayQuery(searchParams: URLSearchParams, now = new
   return { date: date!, allowCalculate: Math.abs(value - today) <= 2 * DAY_MS };
 }
 
-export function createTransitDayHandler({ get, calculationVersion = null }: Pick<TransitDays, 'get'> & { calculationVersion?: string | null }, { now = () => new Date() } = {}) {
+export function createTransitDayHandler({ get, calculationVersion = null }: Pick<TransitDays, 'get'> & { calculationVersion?: string | null }, { now = () => new Date(), report }: {now?:()=>Date;report?:ServerFailureReport} = {}) {
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (!['GET', 'HEAD'].includes(req.method!)) { res.writeHead(405, { Allow: 'GET, HEAD', 'Cache-Control': 'no-store' }); res.end(); return; }
     const consumer = requestSignal(req, res);
@@ -37,6 +38,7 @@ export function createTransitDayHandler({ get, calculationVersion = null }: Pick
     } catch (error) {
       if (consumer.signal.aborted) return;
       const known = error instanceof TransitDayError;
+      if (!known) reportServerFailure(report,{event:'http_request_failed',component:'transit_day',reason:'unexpected'});
       res.writeHead(known ? error.status : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
         ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 5) }) });
       res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ error: known ? error.code : 'transit_unavailable', message: known ? error.message : 'Не удалось подготовить дневной транзит. Повторите попытку.' }));

@@ -1,7 +1,8 @@
+import type { ObserveClientAction, ClientObservation } from '../../shared/client-report-contract.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { CycleEvent, CycleInput } from '../../shared/cycles-format.ts';
 import type { ChartInput } from '../domain/chart-composition.ts';
-import type { CachedCycleChart, CyclesClient } from '../data/cycles-client.ts';
+import type { CachedCycleChart, CyclesClient, CycleOwner } from '../data/cycles-client.ts';
 import type { SavedReturnView } from '../data/view-store.ts';
 interface ReturnJob<T> { controller: AbortController; promise: Promise<T> }
 interface BodyReturns {
@@ -13,7 +14,9 @@ interface BodyReturns {
 export type ReturnsController = ReturnType<typeof createReturnsController>;
 export type ReturnsState = ReturnsController['state'];
 interface ReturnsOptions {
+  observe?:ObserveClientAction;
   client?: CyclesClient;
+  getOwner?: (chart: ChartRecord) => CycleOwner | null;
   onStateChange?: (state: ReturnsState) => void;
   onRender?: (chart: ChartInput | null, event: CycleEvent | null) => void;
   onRequest?: (event: CycleEvent) => void;
@@ -32,8 +35,11 @@ const normalizeBodies = (value: unknown): string[] | null => Array.isArray(value
 
 // The selected saved natal prepares its default dates. Extra bodies load on
 // demand; all prepared lists remain reusable while exact chart selection is independent.
-export function createReturnsController({ client = createCyclesClient(), onStateChange = () => {}, onRender = () => {}, onRequest = () => {} }: ReturnsOptions = {}) {
+export function createReturnsController({ observe, client = createCyclesClient(), getOwner = () => null, onStateChange = () => {}, onRender = () => {}, onRequest = () => {} }: ReturnsOptions = {}) {
   let natal: ChartRecord | null = null, opened = false, markersEnabled = false;
+  let natalOwner: CycleOwner | null = null;
+  const ownerSnapshot = (chart: ChartRecord | null) => { const owner=chart && getOwner(chart);return owner?{...owner}:null; };
+  const sameOwner = (left:CycleOwner|null,right:CycleOwner|null) => left?.chartId===right?.chartId && left?.expectedAccountId===right?.expectedAccountId;
   let year: number | null = null, bodies = [...DEFAULT_CYCLE_BODIES];
   let current: ChartInput | null = null, selectedEvent: CycleEvent | null = null, pendingEvent: CycleEvent | null = null, chartError = '', chartErrorCode = '', loadingChart = false;
   let generation = 0, chartGeneration = 0;
@@ -87,28 +93,36 @@ export function createReturnsController({ client = createCyclesClient(), onState
     if (!available()) return Promise.resolve(false);
     const owner = natal, version = generation, range = cycleRangeForChart(owner)!;
     if (range.toAge <= range.fromAge) return Promise.resolve(false);
-    let added = false;
+    let added = false,remaining=0,observation:ClientObservation|undefined;
     const required = new Set([...DEFAULT_CYCLE_BODIES, ...bodies, ...waitBodies]);
     for (const body of BODY_IDS.filter(body => required.has(body))) {
       let record = records.get(body);
       if (!record) { record = { events: null, error: null, job: null, release: null }; records.set(body, record); }
       if (record.events !== null || record.job || record.error) continue;
+      observation??=observe?.({action:'calculate',component:'cycles'});remaining++;
       const job = start(async signal => {
         const owns = () => version === generation && !signal.aborted && record.job === job;
-        if (!owns()) return false;
         try {
+          if (!owns()) return false;
           const input = { birthUtc: owner!.utc!, timezone: owner!.timezone || 'UTC', body, ...range };
-          const data = await client.events(input, signal);
+          const requestedOwner = getOwner(owner!);
+          const data = await client.events(input, signal, {owner: requestedOwner});
           if (!owns()) return false;
           record.release = client.retainEvents?.(input, data);
-          record.events = data.events; return true;
+          record.events = data.events;
+          const destination=natal && getOwner(natal);
+          if(destination && (destination.chartId!==requestedOwner?.chartId || destination.expectedAccountId!==requestedOwner?.expectedAccountId))
+            void client.syncPrepared?.(input,destination,signal).catch(()=>{});
+          return true;
         } catch (failure) {
           const error = failure as Error & { code?: string };
           if (!owns() || error?.name === 'AbortError') return false;
+          void observation?.reportError(failure,{stage:'request'});
           record.error = { body, code: error.code || 'cycles_unavailable', message: error.message || 'Не удалось рассчитать возвраты.' };
           return false;
         } finally {
-          if (owns()) { record.job = null; emit(); }
+          try { if (owns()) { record.job = null; emit(); } }
+          finally { if(--remaining===0)observation?.finishSuccess(); }
         }
       });
       record.job = job; added = true;
@@ -116,13 +130,30 @@ export function createReturnsController({ client = createCyclesClient(), onState
     if (added) emit();
     return Promise.all(pendingJobs(waitBodies).map(job => job.promise));
   }
+  /** Confirmation changes library identity, never the prepared numerical input. */
+  function adopt(chart:ChartRecord) {
+    if(!available() || !eligibleCycleChart(chart) || chart.utc!==natal!.utc || chart.timezone!==natal!.timezone)return false;
+    const previous=natal as ChartRecord & {calculationVersion?:unknown},next=chart as ChartRecord & {calculationVersion?:unknown};
+    if(previous.calculationVersion!==undefined && next.calculationVersion!==undefined && previous.calculationVersion!==next.calculationVersion)return false;
+    const destination=ownerSnapshot(chart),range=cycleRangeForChart(chart);
+    const changed=natal!.id!==chart.id || !sameOwner(natalOwner,destination);
+    natal=chart;natalOwner=destination;
+    if(changed && destination && range) {
+      for(const [body,record] of records)if(record.events!==null && DEFAULT_CYCLE_BODIES.includes(body))
+        void client.syncPrepared?.({birthUtc:chart.utc!,timezone:chart.timezone||'UTC',body,...range},destination).catch(()=>{});
+      // A restored full chart can outlive its optional list of dates in device storage.
+      if(current && selectedEvent && !records.get(selectedEvent.body)?.events?.some(event=>event.utc===selectedEvent!.utc))
+        void client.syncPrepared?.({birthUtc:chart.utc!,timezone:chart.timezone||'UTC',body:selectedEvent.body,eventUtc:selectedEvent.utc},destination).catch(()=>{});
+    }
+    emit(Boolean(current));return true;
+  }
   function select(chart: ChartRecord | null) {
-    if (chart === natal) return;
+    if (chart === natal && sameOwner(natalOwner,ownerSnapshot(chart))) return;
     const same = available() && eligibleCycleChart(chart) && chart!.id === natal!.id && chart!.utc === natal!.utc && chart!.timezone === natal!.timezone;
-    if (same) { natal = chart; emit(Boolean(current)); return; }
+    if (same && adopt(chart!)) return;
     const hadPreview = Boolean(current);
     generation++; cancelChart(); cancelSearches(); records.clear();
-    natal = chart; opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
+    natal = chart; natalOwner=ownerSnapshot(chart); opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
     dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; chartErrorCode = ''; calendarZone = 'UTC';
     if (available()) {
       ({ minYear, maxYear } = cycleYearBoundsForChart(natal!));
@@ -174,22 +205,28 @@ export function createReturnsController({ client = createCyclesClient(), onState
     cancelChart(); const version = chartGeneration, owner = natal;
     onRequest(selected);
     loadingChart = true; pendingEvent = selected; failedEvent = null; chartError = ''; chartErrorCode = ''; emit();
+    const observation=observe?.({action:'calculate',component:'cycles'});
     const job = start(async signal => {
       if (version !== chartGeneration || signal.aborted) return false;
       try {
         const input = { birthUtc: owner!.utc!, body: selected.body, eventUtc: selected.utc, timezone: owner!.timezone || 'UTC' };
-        const data = await client.chart(input, signal, { event: selected });
+        const requestedOwner=getOwner(owner!);
+        const data = await client.chart(input, signal, { event: selected, owner: requestedOwner });
         if (version !== chartGeneration || signal.aborted) return false;
         if (!valid()) { cancelChart(); emit(); return false; }
+        const destination=natal && getOwner(natal);
+        if(destination && (destination.chartId!==requestedOwner?.chartId || destination.expectedAccountId!==requestedOwner?.expectedAccountId))
+          void client.syncPrepared?.(input,destination,signal).catch(()=>{});
         acceptChart(input, data, selected); return true;
       } catch (failure) {
           const error = failure as Error & { code?: string };
         if (version !== chartGeneration || signal.aborted || error?.name === 'AbortError') return false;
         if (!valid()) { cancelChart(); emit(); return false; }
+        void observation?.reportError(failure,{stage:'request'});
         chartError = error.message || 'Не удалось загрузить карту возврата.'; chartErrorCode = error.code || ''; failedEvent = selected; loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false;
       }
     });
-    chartJob = job; return job.promise;
+    chartJob = job; return job.promise.finally(()=>observation?.finishSuccess());
   }
   async function restore(saved: SavedReturnView | null | undefined, { valid = () => true }: { valid?: () => boolean } = {}) {
     if (!available() || !saved || !valid()) return false;
@@ -247,7 +284,7 @@ export function createReturnsController({ client = createCyclesClient(), onState
     for (const body of bodies) { const record = records.get(body); if (record) record.error = null; }
     return ensure();
   }
-  return { select, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore,
+  return { select, adopt, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore,
     get available() { return available(); }, get natal() { return natal; }, get opened() { return opened; },
     get year() { return year; }, get selectedEvent() { return selectedEvent; },
     get state() { return state(); }, get current() { return current; } };

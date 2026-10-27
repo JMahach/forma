@@ -1,37 +1,35 @@
 export type BinaryCache = ReturnType<typeof createBinaryCache>;
-import { createIndexedDatabase } from './indexed-db.ts';
+import { createCalculationCache, type CalculationCache } from './calculation-cache.ts';
+import { describeLegacyCalculation, LEGACY_CALCULATION_SOURCES } from './calculation-migration.ts';
 
-// Completed days remain on this device until the browser or user removes them.
-// Keep the existing schema, including legacy metadata, without scanning or
-// rewriting old packets when a day is read or a new one is added.
-export function createBinaryCache({ databaseName, indexedDB: databaseFactory, timeoutMs = 500 }: { databaseName?: string; indexedDB?: IDBFactory | null; timeoutMs?: number } = {}) {
-  const database = createIndexedDatabase({ indexedDB: databaseFactory, databaseName: databaseName!, timeoutMs,
-    version: 2, stores: ['packets', 'metadata'],
-    upgrade(db) {
-      for (const name of ['packets', 'metadata']) {
-        if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'key' });
-      }
-    },
-  });
+// Completed days have no expiry; the common calculation owner handles migration,
+// byte accounting and LRU together with transit days and basic returns.
+export function createBinaryCache({ databaseName = 'bodygraph-chart-days', indexedDB: databaseFactory, timeoutMs = 500, cache }: {
+  databaseName?: string; indexedDB?: IDBFactory | null; timeoutMs?: number; cache?: CalculationCache;
+} = {}) {
+  const sources=LEGACY_CALCULATION_SOURCES.map(source=>source.family==='natal'?{...source,databaseName}:source);
+  const source=sources.find(source=>source.family==='natal')!;
+  const owner=cache??createCalculationCache({indexedDB:databaseFactory,timeoutMs,legacySources:sources});
+  let closed=false;
   return {
-    get(key: string) {
-      return database.transaction<ArrayBuffer>('readonly', (tx, result) => {
-        const request = tx.objectStore('packets').get(key);
-        request.onsuccess = () => {
-          const bytes = request.result?.bytes;
-          if (bytes instanceof ArrayBuffer) result(bytes);
-        };
-      });
+    async get(key: string):Promise<ArrayBuffer|null> {
+      if(closed)return null;
+      const bytes=await owner.get<unknown>('natal',key);
+      return bytes instanceof ArrayBuffer?bytes:null;
     },
     put(key: string, bytes: ArrayBuffer) {
-      if (!(bytes instanceof ArrayBuffer)) return Promise.resolve(null);
-      return database.transaction('readwrite', tx => tx.objectStore('packets').put({ key, bytes }));
+      if(closed || !(bytes instanceof ArrayBuffer))return Promise.resolve(null);
+      const description=describeLegacyCalculation(source,'packets',key,{key,bytes})!;
+      return owner.put('natal',key,bytes,description);
     },
     remove(key: string) {
-      return database.transaction('readwrite', tx => {
-        tx.objectStore('packets').delete(key);
-        tx.objectStore('metadata').delete(key);
-      });
+      return closed?Promise.resolve(null):owner.remove('natal',key);
+    },
+    touch(key:string) {
+      return closed?Promise.resolve(null):owner.touch('natal',key);
+    },
+    close() {
+      closed=true;if(!cache)owner.close();
     },
   };
 }

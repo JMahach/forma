@@ -1,3 +1,5 @@
+import { normalizeLifetimeDraft, type SavedLifetimeDraft } from '../domain/input-draft.ts';
+import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { LifetimeExplorer, LifetimeState, LifetimeBounds, MomentState } from '../state/lifetime.ts';
@@ -8,6 +10,7 @@ import type { DatePicker } from './date-picker.ts';
 interface VisibleWindow extends LifetimeBounds { calendar?: boolean; timeZone?: string }
 interface DateSubmission { from: string | null; to: string | null; fromText: string; toText: string; allowOpenEnd: boolean; allowOpenStart: boolean }
 interface LifetimeControlsOptions {
+  onDraftChange?: () => void;
   explorer: LifetimeExplorer; panel: HTMLElement; range: HTMLInputElement; fromDate: HTMLInputElement; toDate: HTMLInputElement; status: HTMLElement;
   fromError?: HTMLElement | null; toError?: HTMLElement | null; hourMarks?: HTMLElement | null;
   fromCalendar?: HTMLButtonElement | null; toCalendar?: HTMLButtonElement | null; marker?: HTMLButtonElement | null;
@@ -41,7 +44,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
   hourMarks = null, fromCalendar = null, toCalendar = null, marker = null, viewportLayout,
   getDayState = () => null, getMomentState = () => null, getPersonalRecord = () => null,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
-  formatEndpoints = () => null, onMomentInput = () => {}, resolveTap }: LifetimeControlsOptions) {
+  formatEndpoints = () => null, onMomentInput = () => {}, onDraftChange = () => {}, resolveTap }: LifetimeControlsOptions) {
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
   const inputs = [fromDate, toDate], dirty = new Set<HTMLInputElement>();
@@ -123,7 +126,11 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
   }
 
   function update(state: LifetimeState, momentState = getMomentState()) {
-    if (wasOpened && !state.opened) { calendars.forEach(calendar => calendar.close()); dirty.clear(); clearInputError(); submitted = null; waitingForMetadata = false; }
+    if (wasOpened && !state.opened) {
+      calendars.forEach(calendar => calendar.close()); submitted = null; waitingForMetadata = false;
+      inputs.forEach(restoreDate);
+      inputs.find(input => input.ownerDocument.activeElement === input)?.blur();
+    }
     wasOpened = state.opened;
     panel.hidden = !state.opened;
     const preparing = state.status === 'preparing';
@@ -379,6 +386,26 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       },
     }));
   }
+  function snapshot(): SavedLifetimeDraft | null {
+    if (!explorer.state.opened) return null;
+    const field=inputs.find(input=>input.ownerDocument.activeElement === input);
+    const focus=captureTextSelection(field);
+    return focus || dirty.size ? {fromDate:fromDate.value,toDate:toDate.value,
+      focus:focus ? {field:field === fromDate ? 'fromDate' : 'toDate',...focus} : null} : null;
+  }
+  function restoreDraft(value: unknown, {restoreFocus = true} = {}) {
+    const draft=normalizeLifetimeDraft(value);
+    if (!draft || !explorer.state.opened || fromDate.disabled || toDate.disabled) return false;
+    for (const [input,text] of [[fromDate,draft.fromDate],[toDate,draft.toDate]] as const) {
+      if (input.value !== text) dirty.add(input);
+      input.value=text;
+    }
+    clearInputError(); submitted=null; waitingForMetadata=false;
+    const restored=!restoreFocus || !draft.focus || restoreTextSelection(draft.focus.field === 'fromDate' ? fromDate : toDate,draft.focus);
+    onDraftChange();
+    return restored;
+  }
+  watchTextSelection(inputs,onDraftChange);
   update(explorer.state);
-  return { update, refreshMoment, setVisibleWindow, refreshTargets: dayRange.refreshTargets };
+  return { update, refreshMoment, setVisibleWindow, refreshTargets: dayRange.refreshTargets, restoreDraft, get snapshot() { return snapshot(); } };
 }

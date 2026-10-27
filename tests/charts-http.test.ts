@@ -1,0 +1,325 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
+import { createChartCalculation, ChartCalculationError } from '../server/services/chart-calculation.ts';
+import { createCalculator } from '../server/services/calculate.ts';
+import { createCityCatalog } from '../server/services/cities.ts';
+import type { IncomingMessage } from 'node:http';
+import { captureResponse } from './helpers/http-response.ts';
+import { openDatabase } from '../server/storage/database.ts';
+import { createAccounts, type AccountCredentials } from '../server/services/accounts.ts';
+import type { CodeMail } from '../server/mail/code-mail.ts';
+import { createChartRecords } from '../server/services/chart-records.ts';
+import { createChartHandler } from '../server/http/charts.ts';
+import type { AccountChartBirth } from '../shared/chart-record-contract.ts';
+
+const op = (n:number) => n.toString(16).padStart(32,'0');
+const birth: AccountChartBirth = {source:'transit', birthDate:'2000-01-01', birthTime:'12:00', birthPlace:'',
+  utc:'2000-01-01T12:00:32.789Z', activations:{personality:[],design:[]},
+  personality:[], design:[], calculationVersion:'current'};
+async function fixture(t:{after(fn:()=>void):void}, prepareBirth?: ReturnType<typeof createChartCalculation>, extra: Partial<Parameters<typeof createChartHandler>[0]> = {}) {
+  const database=openDatabase(':memory:'); t.after(()=>database.close());
+  let time=1_000_000, calls=0, beforePrepare=async()=>{};
+  const mail:CodeMail[]=[];
+  const accounts=createAccounts({database,key:Buffer.alloc(32,3),now:()=>time,
+    mail:{async enqueue(value){mail.push(value);},async cancel(){}}});
+  const proof:AccountCredentials={bindings:{},sessions:{}};
+  const start=await accounts.start({email:'person@example.test',ip:'192.0.2.1',credentials:proof});
+  proof.bindings[start.attempt.id]=start.binding.secret;
+  const grant=accounts.verify(start.attempt.id,mail[0]!.code,proof);
+  proof.sessions[start.attempt.id]=grant.secret;
+  const login=accounts.confirm(start.attempt.id,proof);
+  const records=createChartRecords({database,authorize:()=>null,now:()=>time});
+  let handler=createChartHandler({records,accounts,origins:['https://forma.example.test'],now:()=>time,calculationVersion:'current',...extra,
+    prepareBirth:async (input, options)=>{calls++; await beforePrepare(); if(options.signal.aborted) throw new Error('aborted'); return prepareBirth ? prepareBirth(input,options) : {...birth};}});
+  async function request(path:string, method='GET', body?:unknown, options:{cookie?:boolean;origin?:string|null;headers?:Record<string,string>}={}) {
+    const req=Object.assign(Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]),{method,url:path,
+      headers:{host:'forma.example.test','content-type':'application/json',
+        ...(options.origin===null?{}:{origin:options.origin??'https://forma.example.test'}),
+        cookie:options.cookie===false?'':Object.entries(proof.sessions).map(([id,token])=>`__Host-forma_s_${id}=${token}`).join('; '),...options.headers},
+      socket:{remoteAddress:'192.0.2.1'}}) as unknown as IncomingMessage;
+    const res=captureResponse(); await handler(req,res,new URL(path,'https://forma.example.test'));
+    return {status:res.status,body:JSON.parse(res.body),headers:res.headers};
+  }
+  const intent=(n=1)=>({operationId:op(n),expectedAccountId:login.account.id});
+  const create=(n=1)=>request('/api/charts','POST',{...intent(n),name:'Транзит',note:'private',birth:{source:'transit',utc:birth.utc}});
+  return {request,intent,create,records,accounts,proof,database,useHandler(next:typeof handler){handler=next;},id:login.session.id,accountId:login.account.id,
+    calls:()=>calls,beforePrepare(fn:()=>Promise<void>){beforePrepare=fn;},advance(ms:number){time+=ms;}};
+}
+test('HTTP separates public card data, private library and read-only operation recovery',async t=>{
+  const f=await fixture(t),created=await f.create(); assert.equal(created.status,200);
+  const id=created.body.chartId;
+  const own=await f.request(`/api/charts/${id}?accountId=${f.accountId}`);
+  assert.equal(own.body.chart.note,'private');
+  const shared=await f.request(`/api/shared-charts/${id}`,'GET',undefined,{cookie:false});
+  assert.equal(shared.status,200); assert.equal(shared.body.chart.note,undefined);
+  assert.equal(shared.body.chart.accountId,undefined);
+  const page=await f.request(`/api/charts?accountId=${f.accountId}&limit=1`);
+  assert.equal(page.body.charts.length,1); assert.equal(page.body.nextCursor,null);
+  assert.equal((await f.request(`/api/charts?accountId=${f.accountId}`,'GET',undefined,{cookie:false})).status,401);
+  const deleted=await f.request(`/api/charts/${id}`,'DELETE',f.intent(2)); assert.equal(deleted.body.kind,'deleted');
+  const receipt=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
+  assert.deepEqual(receipt.body,created.body); assert.equal(f.calls(),1);
+  f.advance(48*60*60*1000);
+  assert.deepEqual((await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`)).body,{kind:'unknown'});
+});
+test('known operation outcome skips recalculation, and text-only updates preserve the exact birth block',async t=>{
+  const f=await fixture(t), first=await f.create();
+  assert.deepEqual((await f.create()).body,first.body); assert.equal(f.calls(),1);
+  const updated=await f.request('/api/charts/'+first.body.chartId,'PATCH',{...f.intent(2),name:'Новое имя',note:{value:'new',seenRevision:1}});
+  assert.equal(updated.status,200); assert.equal(f.calls(),1);
+  const own=await f.request(`/api/charts/${first.body.chartId}?accountId=${f.accountId}`);
+  assert.equal(own.body.chart.utc,birth.utc); assert.equal(own.body.chart.note,'new');
+});
+test('origin and account identity are checked before calculation, and logout during calculation prevents the write',async t=>{
+  const f=await fixture(t),body={...f.intent(),name:'Транзит',note:'',birth:{source:'transit',utc:birth.utc}};
+  for(const origin of [null,'http://forma.example.test']) assert.equal((await f.request('/api/charts','POST',body,{origin})).status,403);
+  assert.equal((await f.request('/api/charts','POST',body,{cookie:false})).status,401);
+  assert.equal((await f.request('/api/charts','POST',{...body,expectedAccountId:'999'})).status,409);
+  assert.equal(f.calls(),0);
+  f.beforePrepare(()=>f.accounts.logout(f.id,f.proof));
+  assert.equal((await f.create()).status,401);
+  assert.equal(f.records.getPublic('missing'),null);
+});
+test('HTTP rejects supplied computed fields and invalid pagination without writing',async t=>{
+  const f=await fixture(t);
+  for(const extra of [{activations:{}},{revision:2},{id:'chosen'},{accountId:'999'}]) {
+    assert.equal((await f.request('/api/charts','POST',{...f.intent(),name:'A',note:'',birth:{source:'transit',utc:birth.utc},...extra})).status,400);
+  }
+  for(const query of ['limit=0','limit=1000','limit=2.5','after='+('x'.repeat(90))])
+    assert.equal((await f.request('/api/charts?accountId='+f.accountId+'&'+query)).status,400);
+  assert.equal(f.calls(),0);
+});
+
+test('real Python calculation passes through HTTP into SQLite and exact transit survives a read',async t=>{
+  const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});
+  t.after(()=>calculate.close());
+  const cities=createCityCatalog([{id:'1',name:'Test City',aliases:['Test City'],country:'Test',region:'',
+    timezone:'UTC',latitude:0,longitude:0}]);
+  const f=await fixture(t,createChartCalculation({calculate,cities,calculationVersion:'current'}));
+  const created=await f.request('/api/charts','POST',{...f.intent(),name:'Person',note:'private',
+    birth:{source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'}});
+  assert.equal(created.status,200,JSON.stringify(created.body));
+  const own=await f.request('/api/charts/'+created.body.chartId+'?accountId='+f.accountId);
+  assert.equal(own.body.chart.activations.personality.length,13);
+  assert.equal(own.body.chart.activations.design.length,13);
+  assert.equal(own.body.chart.name,'Person');assert.equal(own.body.chart.calculationVersion,'current');
+  const transit=await f.create(2); assert.equal(transit.status,200,JSON.stringify(transit.body));
+  const shared=await f.request('/api/shared-charts/'+transit.body.chartId,'GET',undefined,{cookie:false});
+  assert.equal(shared.body.chart.utc,birth.utc);assert.equal(shared.body.chart.activations.design.length,13);
+});
+
+test('a late preparation refusal returns an outcome already committed by the same operation',async t=>{
+  const f=await fixture(t);let count=0,release!:()=>void;
+  const delayed=new Promise<void>(resolve=>{release=resolve;});
+  f.beforePrepare(async()=>{if(++count===2){await delayed;throw new ChartCalculationError('invalid_time');}});
+  const first=f.create(),second=f.create();
+  const success=await first;assert.equal(success.status,200);
+  release();
+  const late=await second;assert.equal(late.status,200);assert.deepEqual(late.body,success.body);
+});
+
+test('the main router forwards chart paths and never falls back to HTML when storage is absent',async()=>{
+  const {createRequestHandler}=await import('../server/http/app.ts');
+  const base={root:'/unused',cities:createCityCatalog([]),calculate:async()=>{throw new Error('unused');},
+    publicFiles:()=>{throw new Error('Chart route must not serve HTML');}};
+  const handle=createRequestHandler({...base,chartHandler:async(_req,res,url)=>{
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({path:url.pathname}));
+  }});
+  for(const path of ['/api/charts','/api/charts/'+op(1),'/api/charts/operations/'+op(1),'/api/shared-charts/'+op(1)]) {
+    const req={method:'GET',url:path,headers:{}} as IncomingMessage,res=captureResponse();
+    await handle(req,res);assert.equal(res.status,200);assert.equal(JSON.parse(res.body).path,path);
+    const absent=captureResponse();await createRequestHandler(base)(req,absent);
+    assert.equal(absent.status,503);assert.equal(JSON.parse(absent.body).error,'chart_unavailable');
+  }
+});
+
+
+test('real calculate response can be saved with its signature without a second Python computation',async t=>{
+  const {createCalculationReceipts}=await import('../server/services/calculation-receipt.ts');
+  const {createRequestHandler}=await import('../server/http/app.ts');
+  const root=fileURLToPath(new URL('../',import.meta.url)),calculator=createCalculator({root});t.after(()=>calculator.close());
+  const cities=createCityCatalog([]),receipts=createCalculationReceipts({key:Buffer.alloc(32,5),calculationVersion:'current'});
+  let calculations=0;
+  const calculate:typeof calculator=Object.assign((...args:Parameters<typeof calculator>)=>{calculations++;return calculator(...args);},{close:calculator.close});
+  const prepare=createChartCalculation({cities,calculate,calculationVersion:'current',receipts});
+  const f=await fixture(t,prepare);
+  const router=createRequestHandler({root,cities,calculate,issueCalculationReceipt:receipts.issue});
+  const req=Object.assign(Readable.from([Buffer.from(JSON.stringify({mode:'transit',utc:birth.utc}))]),{
+    method:'POST',url:'/api/calculate',headers:{host:'forma.example.test',origin:'https://forma.example.test','content-type':'application/json'},
+    socket:{remoteAddress:'192.0.2.1'},
+  }) as unknown as IncomingMessage;
+  const res=captureResponse();await router(req,res);assert.equal(res.status,200);
+  const ready=JSON.parse(res.body).chart;assert.ok(ready.calculationReceipt);assert.equal(calculations,1);
+  const saved=await f.request('/api/charts','POST',{...f.intent(90),name:'Ready result',note:'Private',
+    birth:{source:'transit',utc:birth.utc},calculationReceipt:ready.calculationReceipt});
+  assert.equal(saved.status,200);assert.equal(saved.body.kind,'created');assert.equal(calculations,1);
+  const own=await f.request('/api/charts/'+saved.body.chartId+'?accountId='+f.accountId);
+  assert.equal(own.body.chart.utc,ready.utc);assert.deepEqual(own.body.chart.personality,ready.personality);
+  assert.equal(Object.hasOwn(own.body.chart,'calculationReceipt'),false);
+});
+
+test('concurrent private and public HTTP reads share one unfinished refresh without sharing personal fields',async t=>{
+  const f=await fixture(t),created=await f.create(),id=created.body.chartId as string;
+  const old=f.records.getPublic(id)!;
+  f.records.refreshBirth(id,old,{...birth,calculationVersion:'old'});
+  const before=f.calls();let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});f.beforePrepare(()=>gate);
+  const pending=Array.from({length:8},(_,index)=>f.request(index%2
+    ? `/api/charts/${id}?accountId=${f.accountId}` : `/api/shared-charts/${id}`,'GET',undefined,{cookie:index%2===1}));
+  try {
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    assert.equal(f.calls()-before,1,'one physical preparation for eight authorised readers');
+  } finally {release();await Promise.all(pending);}
+  const results=await Promise.all(pending);
+  for(let index=0;index<results.length;index++) {
+    assert.equal(results[index]!.status,200);
+    assert.equal(results[index]!.body.chart.calculationVersion,'current');
+    assert.equal(results[index]!.body.chart.note,index%2?'private':undefined);
+  }
+  await f.request(`/api/shared-charts/${id}`,'GET',undefined,{cookie:false});
+  assert.equal(f.calls()-before,1,'a current stored card requires no new calculation');
+});
+
+
+test('owned returns HTTP uses chart authorization and the common origin boundary', async t => {
+  let calls=0;
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={events:async (access, id, expectedAccountId, input, {signal})=>{
+    const chart=access.getOwn(id,expectedAccountId);
+    assert.ok(chart);assert.equal(signal.aborted,false);calls++;
+    return {events:[],range:{fromAge:input.fromAge ?? 0,toAge:input.toAge ?? 100}};
+  },chart:async()=>{throw new Error('unused');},accept:async()=>{throw new Error('unused');}};
+  const f=await fixture(t,undefined,{returns,cyclesVersion:'a'.repeat(64)});
+  const saved=await f.create(),path='/api/charts/'+saved.body.chartId+'/returns/events';
+  const input={expectedAccountId:f.accountId,birthUtc:birth.utc,timezone:'UTC',body:'saturn',fromAge:0,toAge:100};
+  const response=await f.request(path,'POST',input);
+  assert.equal(response.status,200,JSON.stringify(response.body));
+  assert.deepEqual(response.body,{events:[],range:{fromAge:0,toAge:100}});
+  assert.equal((await f.request(path,'GET')).status,405);
+  assert.equal((await f.request(path,'POST',input,{cookie:false})).status,401);
+  assert.equal((await f.request(path,'POST',{...input,expectedAccountId:'999'})).status,409);
+  assert.equal((await f.request(path,'POST',input,{origin:null})).status,403);
+  assert.equal((await f.request(path,'POST',{...input,activations:{}})).status,400);
+  assert.equal(calls,1);
+});
+
+
+test('runtime joins private HTTP and durable main return records across reconstruction', async t => {
+  const [{createChartRuntime},{accountNatalChart},{mainReturnRange},{cycleAge},{chartAtMinute},{natalDayFixture}] = await Promise.all([
+    import('../server/charts.ts'), import('./helpers/account-chart.ts'), import('../shared/chart-return-contract.ts'),
+    import('../shared/cycles-format.ts'), import('../src/domain/natal-day.ts'), import('./fixtures/natal-day.ts')]);
+  const f=await fixture(t),content=accountNatalChart(),version='b'.repeat(64);
+  const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
+  assert.equal(saved.kind,'created');
+  const range=mainReturnRange(content.utc!)!,utc='2028-07-21T12:36:00.000Z';
+  const event={id:'saturn:'+utc,body:'saturn',utc,age:cycleAge(utc,content.utc),cycle:1,pass:1,cycleId:'saturn:1',direction:'direct' as const};
+  const result={chart:{...chartAtMinute(natalDayFixture({date:'2028-07-21'}),756),utc}};
+  let dateCalls=0,chartCalls=0;
+  const cycles={cacheVersion:version,events:async()=>{dateCalls++;return {events:[event],range};},
+    chart:async()=>{chartCalls++;return result;}};
+  const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});t.after(()=>calculate.close());
+  const connect=()=>f.useHandler(createChartRuntime({database:f.database,accounts:f.accounts,cities:createCityCatalog([]),
+    calculate,cycles,calculationVersion:'current',origins:['https://forma.example.test']}).handler);
+  const path='/api/charts/'+saved.chartId+'/returns/',base={expectedAccountId:f.accountId,birthUtc:content.utc,timezone:content.timezone,body:'saturn'};
+  connect();
+  const dates=await f.request(path+'events','POST',{...base,...range});assert.equal(dates.status,200,JSON.stringify(dates.body));
+  const exact=await f.request(path+'chart','POST',{...base,eventUtc:utc});assert.equal(exact.status,200,JSON.stringify(exact.body));
+  connect();
+  assert.deepEqual((await f.request(path+'events','POST',{...base,...range})).body,dates.body);
+  assert.deepEqual((await f.request(path+'chart','POST',{...base,eventUtc:utc})).body,exact.body);
+  assert.equal(dateCalls,1);assert.equal(chartCalls,1);
+  assert.equal((await f.request(path+'chart','POST',{...base,eventUtc:utc},{cookie:false})).status,401);
+});
+
+
+test('owned return transport rejects a stale version before work and preserves queue refusal', async t => {
+  const {CycleError}=await import('../server/services/cycles.ts');
+  let calls=0;
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={
+    async events(){calls++;throw new CycleError('busy','Busy',503,2);},
+    async chart(){throw new Error('unused');},async accept(){throw new Error('unused');},
+  };
+  const f=await fixture(t,undefined,{returns,cyclesVersion:'a'.repeat(64)}),saved=await f.create();
+  const path='/api/charts/'+saved.body.chartId+'/returns/events';
+  const input={expectedAccountId:f.accountId,birthUtc:birth.utc,body:'saturn',fromAge:0,toAge:100};
+  const stale=await f.request(path,'POST',input,{headers:{'x-forma-cycles-version':'b'.repeat(64)}});
+  assert.equal(stale.status,400);assert.equal(stale.body.error,'unsupported_version');assert.equal(calls,0);
+  const busy=await f.request(path,'POST',input,{headers:{'x-forma-cycles-version':'a'.repeat(64)}});
+  assert.equal(busy.status,503);assert.equal(busy.body.error,'busy');assert.equal(busy.headers['Retry-After'],'2');assert.equal(calls,1);
+});
+
+
+test('HTTP accepts a proven prepared return without calculating it again', async t => {
+  let accepted=0;
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={
+    async events(){throw new Error('must not calculate');},async chart(){throw new Error('must not calculate');},
+    async accept(access,id,expectedAccountId,packet,{signal}){
+      assert.ok(access.getOwn(id,expectedAccountId));assert.equal(signal.aborted,false);
+      assert.equal(packet.action,'events');assert.equal(packet.proof,'proof');accepted++;return {accepted:true};
+    },
+  };
+  const f=await fixture(t,undefined,{returns,cyclesVersion:'a'.repeat(64)}),saved=await f.create();
+  const path='/api/charts/'+saved.body.chartId+'/returns/accept';
+  const body={expectedAccountId:f.accountId,action:'events',input:{birthUtc:birth.utc,body:'saturn',fromAge:0,toAge:100},result:{events:[],range:{fromAge:0,toAge:100}},proof:'proof'};
+  const result=await f.request(path,'POST',body);assert.equal(result.status,200,JSON.stringify(result.body));assert.deepEqual(result.body,{accepted:true});
+  assert.equal((await f.request(path,'POST',body,{cookie:false})).status,401);
+  assert.equal((await f.request(path,'POST',{...body,extra:'unaccepted'})).status,400);
+  assert.equal(accepted,1);
+});
+
+
+test('prepared returns survive HTTP and device reload, attach to the saved card, and reopen without calculation', async t => {
+  const [{createChartRuntime},{createCyclesHandler},{createCyclesClient},{createReturnStorage},{IDBFactory},
+    {accountNatalChart},{mainReturnRange},{cycleAge},{chartAtMinute},{natalDayFixture}] = await Promise.all([
+    import('../server/charts.ts'),import('../server/http/cycles.ts'),import('../src/data/cycles-client.ts'),
+    import('../src/data/return-storage.ts'),import('fake-indexeddb'),import('./helpers/account-chart.ts'),
+    import('../shared/chart-return-contract.ts'),import('../shared/cycles-format.ts'),
+    import('../src/domain/natal-day.ts'),import('./fixtures/natal-day.ts')]);
+  const f=await fixture(t),content=accountNatalChart(),version='b'.repeat(64),key=new Uint8Array(32).fill(19);
+  const range=mainReturnRange(content.utc!)!,utc='2028-07-21T12:36:00.000Z';
+  const event={id:'saturn:'+utc,body:'saturn',utc,age:cycleAge(utc,content.utc),cycle:1,pass:1,cycleId:'saturn:1',direction:'direct' as const};
+  const exact={chart:{...chartAtMinute(natalDayFixture({date:'2028-07-21'}),756),utc}};
+  let dateCalls=0,chartCalls=0;
+  const cycles={cacheVersion:version,events:async()=>{dateCalls++;return {events:[event],range};},
+    chart:async()=>{chartCalls++;return exact;}};
+  const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});t.after(()=>calculate.close());
+  const connect=()=>{
+    const runtime=createChartRuntime({database:f.database,accounts:f.accounts,cities:createCityCatalog([]),
+      calculate,cycles,calculationVersion:'current',origins:['https://forma.example.test'],key});
+    const general=createCyclesHandler(cycles,{issueReceipt:runtime.issueReturnReceipt});
+    f.useHandler((req,res,url)=>url.pathname.startsWith('/api/cycles/')?general(req,res,url):runtime.handler(req,res,url));
+  };
+  connect();
+  const requests:string[]=[],request=async(url:string,options:RequestInit)=>{
+    requests.push(url);
+    const reply=await f.request(url,'POST',JSON.parse(String(options.body)),{headers:{'x-forma-cycles-version':version}});
+    assert.equal(reply.status,200,JSON.stringify(reply.body));return reply.body;
+  };
+  const indexedDB=new IDBFactory(),device=createReturnStorage({indexedDB});t.after(()=>device.close());
+  const pendingWrites:Promise<unknown>[]=[];
+  const storage={...device,putEvents:(...args:Parameters<typeof device.putEvents>)=>{
+    const promise=device.putEvents(...args);pendingWrites.push(promise);return promise;
+  },putChart:(...args:Parameters<typeof device.putChart>)=>{
+    const promise=device.putChart(...args);pendingWrites.push(promise);return promise;
+  }};
+  const input={birthUtc:content.utc,body:'saturn',timezone:content.timezone,...range};
+  const chartInput={birthUtc:content.utc,body:'saturn',timezone:content.timezone,eventUtc:utc};
+  const first=createCyclesClient({cacheVersion:version,returnStorage:storage,request});t.after(()=>first.close());
+  await first.events(input);await first.chart(chartInput,undefined,{event});
+  await new Promise(setImmediate);await Promise.all(pendingWrites);first.close();device.close();
+  const restoredDevice=createReturnStorage({indexedDB});t.after(()=>restoredDevice.close());
+  const restored=createCyclesClient({cacheVersion:version,returnStorage:restoredDevice,request});t.after(()=>restored.close());
+  const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
+  assert.equal(saved.kind,'created');assert.ok('chartId' in saved);
+  const owner={chartId:saved.chartId,expectedAccountId:f.accountId};
+  await restored.syncPrepared(input,owner);
+  assert.deepEqual(requests,['/api/cycles/events','/api/cycles/chart',
+    `/api/charts/${saved.chartId}/returns/accept`,`/api/charts/${saved.chartId}/returns/accept`]);
+  assert.equal(f.database.connection.prepare('SELECT COUNT(*) AS count FROM account_chart_returns').get()!.count,2);
+  connect();
+  const fresh=createCyclesClient({cacheVersion:version,returnStorage:null,request});t.after(()=>fresh.close());
+  assert.equal((await fresh.events(input,undefined,{owner})).events[0]!.utc,utc);
+  assert.equal((await fresh.chart(chartInput,undefined,{owner,event})).chart.utc,utc);
+  assert.equal(dateCalls,1);assert.equal(chartCalls,1);
+});

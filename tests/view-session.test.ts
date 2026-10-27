@@ -9,11 +9,17 @@ import type { SavedView } from '../src/data/view-store.ts';
 type ViewOptions = Parameters<typeof createViewSession>[0];
 type LiveOptions = NonNullable<Parameters<typeof createLiveTransit>[0]>;
 interface HarnessOptions {
+  onPersisted?: () => void;
+  getBirthForm?: ViewOptions['getBirthForm'];
+  getLifetimeDraft?: () => SavedView['lifetimeDraft'];
+  denyWrites?: () => boolean;
   size?: number; transitDay?: NonNullable<LiveOptions['dayClient']>['getDay'];
   loadLifetime?: ViewOptions['loadLifetime'] | null; canRestoreLifetime?: ViewOptions['canRestoreLifetime'] | null;
   returnsClient?: TestReturnsOptions['client'] | null; panelView?: boolean; openReturnsTimeline?: ViewOptions['openReturnsTimeline'];
   getNow?: () => number; zone?: string; cameraRestored?: boolean;
-  getKnowledgeView?: ViewOptions['getKnowledgeView']; getChartsView?: ViewOptions['getChartsView'];
+  getAccountView?: ViewOptions['getAccountView'];
+  getPendingChartWrites?: ViewOptions['getPendingChartWrites'];
+  getKnowledgeView?: ViewOptions['getKnowledgeView']; getChartsView?: ViewOptions['getChartsView']; getLibrarySelection?: ViewOptions['getLibrarySelection'];
   normalizeSavedView?: (saved: ReturnType<ReturnType<typeof createViewStore>['read']>) => Partial<SavedView> | null;
   lifetimeClient?: TestLifetimeOptions['client'];
 }
@@ -28,7 +34,7 @@ import assert from 'node:assert/strict';
 import { createReturnsController } from './fixtures/returns.ts';
 import { DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
 import { chartCaption } from '../src/views/chart-display.ts';
-import { createViewSession } from '../src/state/view-session.ts';
+import { createViewSession, viewForRoute } from '../src/state/view-session.ts';
 import { createPanelState } from '../src/state/panels.ts';
 import { createWorkspaceState } from '../src/state/workspace.ts';
 import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
@@ -38,6 +44,9 @@ import { createChartSession } from '../src/state/chart-session.ts';
 import { createChartExploration } from '../src/state/chart-exploration.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
 import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createLifetimeClient } from '../src/data/lifetime-client.ts';
+import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
+import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import { createLiveTransit } from '../src/state/live-transit.ts';
 import { createNatalDayExplorer } from '../src/state/natal-day.ts';
@@ -69,16 +78,16 @@ const point = (index: number, source = metadata) => {
     design: { utc, designUtc: new Date(Date.parse(utc) - 88 * 86400000).toISOString(),
       designArcResidualDegrees: 0, longitudes: [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] } };
 };
-function harness(storage = new Map<string, string>(), { size = 1000, transitDay = async (date: string) => day(date), loadLifetime = null, canRestoreLifetime = null,
+function harness(storage = new Map<string, string>(), { denyWrites = () => false, size = 1000, transitDay = async (date: string) => day(date), loadLifetime = null, canRestoreLifetime = null,
     returnsClient = null, panelView = false, openReturnsTimeline = undefined, getNow = () => Date.parse('2026-10-04T12:00:00Z'),
-    zone = 'UTC', cameraRestored = false, getKnowledgeView, getChartsView, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
+    zone = 'UTC', cameraRestored = false, getBirthForm, getLifetimeDraft, getAccountView, getPendingChartWrites, getKnowledgeView, getChartsView, getLibrarySelection, onPersisted, normalizeSavedView = value => value, lifetimeClient = { getMeta: async () => metadata, getPoint: async (index: number) => point(index) } }: HarnessOptions = {}) {
   const frames: (string|undefined)[] = [], writes: [string, string][] = [], pending = new Map<number, () => void>(), attributes: Record<string, string> = {}, styles = new Map<string, string>();
   const storagePort = { getItem: (key: string) => storage.get(key) ?? null,
-    setItem(key: string, value: string) { storage.set(key, value); writes.push([key, value]); } };
+    setItem(key: string, value: string) { if(denyWrites())throw new Error("QuotaExceededError"); storage.set(key, value); writes.push([key, value]); } };
   const saved = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   if (!storage.has('liniya.charts.v1')) storage.set('liniya.charts.v1', JSON.stringify([saved, { ...saved, id: 'second' }]));
-  const chartStore = createChartStore({ getStorage: () => storagePort as ChartStorage });
   const viewStore = createViewStore({ getStorage: () => storagePort });
+  const chartStore = createChartStore({ getStorage: () => storagePort as ChartStorage,initialTemporaryChart:viewStore.read()?.temporaryChart });
   let view: ReturnType<typeof createViewSession>, transit: ReturnType<typeof createLiveTransit>, natalDay: ReturnType<typeof createNatalDayExplorer>, mandala: ReturnType<typeof attachMandalaMode>, lifetime: LifetimeExplorer | null = null, returns: ReturnType<typeof createReturnsController>, exploration: ReturnType<typeof createChartExploration>, summary: ReturnType<typeof attachChartSummary> | null = null;
   const planets = createTransitPlanetFilter(), panels = createPanelState(), workspace = createWorkspaceState();
   const changed = () => { summary?.setReturnsVisible(Boolean(returns?.opened)); view?.schedule(); };
@@ -118,8 +127,10 @@ function harness(storage = new Map<string, string>(), { size = 1000, transitDay 
   const eventTarget = events(), interactionTarget = events(), cameraSurface = events();
   let counter = 0;
   const savedView = normalizeSavedView(viewStore.read());
-  view = createViewSession({ panels, workspace, store: { read: () => savedView, write: viewStore.write }, chartStore, session, mandala, camera, cameraRestored, transit, natalDay,
-    ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline, getKnowledgeView, getChartsView,
+  view = createViewSession({ panels, workspace, store: { read: () => savedView, write: viewStore.write }, chartStore, session,
+    mandala: { get enabled() { return mandala.enabled; }, restore: enabled => mandala.setEnabled(enabled, { animate: false }) },
+    camera, cameraRestored, transit, natalDay,
+    ...(canRestoreLifetime ? { canRestoreLifetime } : {}), openReturnsTimeline, onPersisted, getBirthForm, getLifetimeDraft, getAccountView, getPendingChartWrites, getKnowledgeView, getChartsView, getLibrarySelection,
     planetFilter: planets, getReturns: () => returns, getLifetime: () => lifetime, loadLifetime: loadLifetime || (async () => ensureLifetime()), eventTarget: eventTarget as unknown as EventTarget, interactionTarget: interactionTarget as unknown as EventTarget & { hidden: boolean },
     acceptLifetimeMode: exploration.acceptLifetimeMode,
     getPersonalLive: () => exploration.live, restorePersonalLive: exploration.restoreLive,
@@ -825,24 +836,58 @@ test('a legacy lifetime index becomes UTC after metadata loads and never returns
 });
 
 
-test('a saved lifetime minute restores its exact UTC before writing a fresh snapshot', async t => {
-  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
-  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03',
-    requestedUtc: Date.parse('2020-01-02T09:21:00Z') };
-  first.storage.set('liniya.view.v1', JSON.stringify(saved));
-  const minutes: unknown[] = [], points: unknown[] = [];
-  const second = harness(first.storage, { lifetimeClient: { getMeta: async () => metadata,
-    getPoint: async index => { points.push(index); return point(index); },
-    getMoment: async utc => { minutes.push(utc); return transitChartAt(day('2020-01-02'), 561); },
-  } });
-  t.after(() => second.transit.stop());
-  assert.equal(await second.view.restore(), true);
-  assert.deepEqual(minutes, [Date.parse('2020-01-02T09:21:00Z')]); assert.deepEqual(points, []);
-  assert.equal(second.session.current.utc, '2020-01-02T09:21:00Z');
-  const persisted = JSON.parse(first.storage.get('liniya.view.v1')!).lifetime;
-  assert.equal(persisted.requestedUtc, Date.parse('2020-01-02T09:21:00Z')); assert.equal('index' in persisted, false);
-});
+for (const source of ['compatible day', 'absent day', 'outdated day'] as const) {
+  test(`a saved lifetime minute restores using ${source} and snapshots the displayed UTC`, async t => {
+    const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+    const requestedUtc = Date.parse('2020-01-02T09:21:00Z');
+    const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
+    saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc };
+    first.storage.set('liniya.view.v1', JSON.stringify(saved));
+    const meta = { ...metadata, calculationVersion: 'a'.repeat(64), engine: 'Swiss Ephemeris 2.10.03' };
+    const storedDay: TransitDay = { ...day('2020-01-02'), version: TRANSIT_DAY_VERSION,
+      calculationVersion: (source === 'outdated day' ? 'b' : 'a').repeat(64), engine: meta.engine,
+      nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
+    const days = createTransitDayCache({ indexedDB: null }); t.after(() => days.close());
+    const requests: string[] = [], reads: [string, string][] = [];
+    let releaseDay!: (day: TransitDay | null) => void;
+    const readingDay = new Promise<TransitDay | null>(resolve => { releaseDay = resolve; });
+    // Supply a delayed stored packet; the real client checks its compatibility
+    // and chooses between readMinute and the prepared file without a scalar API.
+    const client = createLifetimeClient({ days: { ...days,
+      getDay(date, version) { reads.push([date, version]); return readingDay; },
+    }, fetch: async url => {
+      requests.push(url);
+      if (url === '/api/lifetime/meta') return { ok: true, json: async () => meta };
+      assert.equal(url, '/api/lifetime?index=200', 'only the prepared 09:20 point may be requested');
+      return { ok: true, json: async () => point(200, meta) };
+    } });
+    assert.equal('getMoment' in client, false);
+    const second = harness(first.storage, { lifetimeClient: client }); t.after(() => second.transit.stop());
+    const restoring = second.view.restore(); await new Promise(setImmediate);
+    assert.deepEqual(reads, [['2020-01-02', meta.calculationVersion]]);
+    second.view.flush();
+    assert.equal(JSON.parse(first.storage.get('liniya.view.v1')!).lifetime.requestedUtc, requestedUtc,
+      'the pending cache read must not overwrite the saved target');
+    releaseDay(source === 'absent day' ? null : storedDay);
+    assert.equal(await restoring, true);
+    const expectedUtc = source === 'compatible day' ? '2020-01-02T09:21:00Z' : '2020-01-02T09:20:00Z';
+    assert.equal(second.session.current.utc, expectedUtc);
+    assert.equal(second.ensureLifetime().state.requestedUtc, Date.parse(expectedUtc));
+    assert.equal(second.ensureLifetime().state.displayedUtc, Date.parse(expectedUtc));
+    assert.equal(second.view.pendingLifetime, null);
+    assert.deepEqual(requests, source === 'compatible day' ? ['/api/lifetime/meta']
+      : ['/api/lifetime/meta', '/api/lifetime?index=200']);
+    assert.equal(reads.length, 1, 'the fallback must not reread the same missing or incompatible day');
+    if (source === 'compatible day') {
+      const displayed = second.ensureLifetime().current!, expected = transitChartAt(storedDay, 561);
+      assert.deepEqual(displayed.planetFilter!.activations, expected.activations!.personality);
+      assert.deepEqual(displayed.planetFilter!.designActivations, expected.activations!.design);
+    }
+    const persisted = JSON.parse(first.storage.get('liniya.view.v1')!).lifetime;
+    assert.equal(persisted.requestedUtc, Date.parse(expectedUtc));
+    assert.equal('index' in persisted, false);
+  });
+}
 
 
 for (const personalPreview of [undefined, true] as const) test(`metadata retry consumes the legacy birth target for ${personalPreview ? 'an explicit lifetime sample' : 'the exact original'}`, async t => {
@@ -1365,4 +1410,118 @@ test('search and article survive chart restoration, pagehide and a still-unloade
   const next = harness(storage, { getKnowledgeView: () => nextKnowledge, getChartsView: () => charts });
   t.after(() => next.transit.stop()); await next.view.restore(); next.view.flush();
   assert.deepEqual(JSON.parse(storage.get('liniya.view.v1')!).knowledge, nextKnowledge);
+});
+
+
+test('view session saves the current library group even when only membership changes', async t => {
+  let selected = ['second'];
+  const h = harness(new Map(), {getLibrarySelection: () => selected});
+  t.after(() => h.transit.stop());
+  await h.view.restore(); h.view.flush();
+  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).librarySelection, ['second']);
+  selected = []; h.view.schedule(); h.view.flush();
+  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).librarySelection, []);
+  h.transit.stop();
+});
+
+test('the restored view delegates its camera snapshot without changing its position or limit', async t => {
+  const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
+  const home = first.camera.getFittedView();
+  first.camera.setView({ ...home, k: 6 }, { maxScale: 7 });
+  const position = first.camera.getView(), expected = first.camera.getSavedView();
+  const snapshot = first.camera.getSavedView.bind(first.camera);
+  let reads = 0;
+  first.camera.getSavedView = () => { reads++; return snapshot(); };
+  first.view.flush();
+  assert.equal(reads, 1, 'the session uses the supplied snapshot capability');
+  assert.deepEqual(JSON.parse(first.storage.get('liniya.view.v1')!).camera, expected);
+  assert.deepEqual(first.camera.getView(), position);
+  assert.equal(first.camera.maximumScale(), 7);
+  const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
+  assert.deepEqual(second.camera.getView(), position);
+  assert.equal(second.camera.maximumScale(), 7);
+});
+
+
+test('account state shares the tab snapshot and explicit closure does not resurrect the saved attempt', async t => {
+  let account: SavedView['account'] = { email: 'a@example.org', attemptEmail: 'a@example.org', attemptId: 'a'.repeat(32), step: 'code', verificationPending: true };
+  const first = harness(undefined, { getAccountView: () => account });
+  t.after(() => first.transit.stop()); await first.view.restore(); first.view.flush();
+  assert.deepEqual(JSON.parse(first.storage.get('liniya.view.v1')!).account, account);
+  const second = harness(first.storage, { getAccountView: () => account });
+  t.after(() => second.transit.stop()); await second.view.restore();
+  account = null; second.view.flush();
+  assert.equal(JSON.parse(second.storage.get('liniya.view.v1')!).account, null);
+});
+
+
+test('view flush keeps pending write IDs and removes the pointer after a confirmed result', async t => {
+  let pending: NonNullable<SavedView['pendingChartWrites']> = [{operationId: 'a'.repeat(32), expectedAccountId: '1'}];
+  const h = harness(undefined, {getPendingChartWrites: () => pending});
+  t.after(() => h.transit.stop()); await h.view.restore(); h.view.flush();
+  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).pendingChartWrites, pending);
+  pending = []; h.view.flush();
+  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).pendingChartWrites, []);
+});
+
+test('update snapshot reports durable success only after restoration, and refuses RAM-only fallback',async t=>{
+ let denied=false;const h=harness(new Map(),{denyWrites:()=>denied});t.after(()=>h.transit.stop());
+ assert.equal(h.view.flush(),false,'Early shell is not a restored page');
+ await h.view.restore();assert.equal(h.view.flush(),true);
+ denied=true;h.workspace.setScreen("library");assert.equal(h.view.flush(),false,'Memory fallback cannot authorize reload');
+ denied=false;assert.equal(h.view.flush(),true);
+});
+
+test('the form owner supplies and clears the draft in the same tab snapshot without library writes',async t=>{
+ let birthForm:SavedView['birthForm']={editingId:null,accountId:null,calculationMode:'calculated',
+  fields:{chartName:'Незаконченная',birthDate:'12.',birthTime:'1',birthPlace:'Мос',chartNote:'Заметка'},
+  city:null,fold:null,base:null,focus:{field:'chartNote',start:3,end:3,direction:'none'}};
+ const h=harness(new Map(),{getBirthForm:()=>birthForm});t.after(()=>h.transit.stop());
+ await h.view.restore();h.view.flush();
+ assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).birthForm,birthForm);
+ const library=h.storage.get('liniya.charts.v1');birthForm=null;h.view.flush();
+ assert.equal(JSON.parse(h.storage.get('liniya.view.v1')!).birthForm,null);
+ assert.equal(h.storage.get('liniya.charts.v1'),library);
+});
+
+test('only a durable restored snapshot wakes a deferred update',async t=>{
+ let denied=false,wakes=0;const h=harness(new Map(),{denyWrites:()=>denied,onPersisted:()=>wakes++});
+ t.after(()=>h.transit.stop());h.view.flush();assert.equal(wakes,0);
+ await h.view.restore();const ready=wakes;assert.ok(ready>0);
+ denied=true;h.workspace.setScreen('library');h.view.flush();assert.equal(wakes,ready);
+ denied=false;h.view.flush();assert.equal(wakes,ready+1);
+});
+
+
+test('unfinished timeline text belongs to the tab snapshot and clears when its owner closes', async t => {
+  let draft: SavedView['lifetimeDraft'] = {fromDate:'04.1',toDate:'06.10.2026',focus:{field:'fromDate',start:1,end:3,direction:'backward'}};
+  const h=harness(new Map(),{getLifetimeDraft:()=>draft}); t.after(()=>h.transit.stop());
+  await h.view.restore(); h.view.flush();
+  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).lifetimeDraft,draft);
+  draft=null; h.view.flush();
+  assert.equal(JSON.parse(h.storage.get('liniya.view.v1')!).lifetimeDraft,null);
+});
+
+
+test('the temporary route selects its ready result while retaining a separately viewed public card', () => {
+  const temporaryChart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'own-temporary'}));
+  const saved={version:1 as const,selectedId:'foreign-card',temporaryChart,camera:{x:1,y:2,k:3},natalDay:{opened:true,exactOriginal:false,index:20}};
+  const target=viewForRoute({kind:'temporary-chart'},saved);
+  assert.equal(target?.selectedId,temporaryChart.id);
+  assert.equal(target?.temporaryChart?.id,temporaryChart.id);
+  assert.equal(target?.camera,null);
+  assert.equal(target?.natalDay,null);
+  assert.equal(viewForRoute({kind:'transit'},saved)?.temporaryChart?.id,temporaryChart.id);
+});
+
+test('tab restoration and later snapshots retain exactly one temporary chart outside the library',async t=>{
+  const temporaryChart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'own-temporary'}));
+  const storage=new Map([['liniya.view.v1',JSON.stringify({version:1,selectedId:temporaryChart.id,temporaryChart})]]);
+  const h=harness(storage);t.after(()=>h.transit.stop());
+  await h.view.restore();
+  assert.equal(h.session.selectedId,temporaryChart.id);
+  h.view.flush();
+  const ready=JSON.parse(storage.get('liniya.view.v1')!);
+  assert.equal(ready.temporaryChart.id,temporaryChart.id);
+  assert.equal(JSON.parse(storage.get('liniya.charts.v1')!).some((chart:{id:string})=>chart.id===temporaryChart.id),false);
 });

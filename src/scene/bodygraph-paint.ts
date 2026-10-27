@@ -3,7 +3,7 @@ import type { CENTERS } from './geometry/chart-geometry.ts';
 import { CHANNELS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
-import { pointString, offsetPoints, channelHalves, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
+import { pointString, offsetPoints, channelHalves, UNDERPASS_CHANNEL_ID, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
 import { gatesForSelection } from '../selection/selection-targets.ts';
 import { PALETTE, SELECTED_HIGHLIGHT_COLOR } from '../ui/chart-palette.ts';
 export { PALETTE } from '../ui/chart-palette.ts';
@@ -67,13 +67,16 @@ export function paintGateActivation(points: number[][], state: RenderState, gate
 
 // The static SVG and persistent painter use the same visual decisions.
 const highlightColor = (committed: boolean) => committed ? SELECTED_HIGHLIGHT_COLOR : PALETTE.halo;
+// The physical paint order also owns which outline may cross above another.
+export const channelHighlightMaskId = (prefix: string, channelId: string) =>
+  `${prefix}-${channelId === UNDERPASS_CHANNEL_ID ? 'highlight-underpass-exterior' : 'highlight-exterior'}`;
 export function channelPaint(channel: typeof CHANNELS[number], state: RenderState, options: RenderOptions = {}) {
   const selected = state.selectedChannels.has(channel.id), related = state.relatedChannels.has(channel.id);
   const active = channel.gates.some(gate => state.personality.has(gate) || state.design.has(gate));
   return { selected, related, highlightColor: highlightColor(Boolean(state.committedIdsByType.get('channel')?.has(channel.id))), defined: state.definedChannels.has(channel.id),
     opacity: options.dimInactive && !active && !related ? .2 : 1,
     highlight: selected ? '' : channelHalves.get(channel.id)!.map((points, index) => state.halfGates.has(channel.gates[index])
-      ? `<g data-highlight-gate="${channel.gates[index]}" ${options.highlightStyle === 'glow' ? `filter="url(#${state.prefix}-highlight-glow)"` : `mask="url(#${state.prefix}-highlight-exterior)"`}>${stroke(points, highlightColor(state.committedGates.has(channel.gates[index])), channelHighlightWidth(options.highlightStyle))}</g>` : '').join(''),
+      ? `<g data-highlight-gate="${channel.gates[index]}" ${options.highlightStyle === 'glow' ? `filter="url(#${state.prefix}-highlight-glow)"` : `mask="url(#${channelHighlightMaskId(state.prefix, channel.id)})"`}>${stroke(points, highlightColor(state.committedGates.has(channel.gates[index])), channelHighlightWidth(options.highlightStyle))}</g>` : '').join(''),
     lanes: channelHalves.get(channel.id)!.map((points, index) => paintGateActivation(points, state, channel.gates[index])).join(''),
   };
 }

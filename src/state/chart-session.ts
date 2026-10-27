@@ -13,7 +13,7 @@ interface ChartSessionOptions {
   getTransit?: () => Pick<LiveTransit, 'current' | 'setWanted'> | null;
   getNatalDay?: () => (Pick<NatalDayExplorer, 'select' | 'close' | 'updateMetadata'> & { state: Pick<NatalDayExplorer['state'], 'current'> }) | null;
   getLifetime?: () => Pick<LifetimeExplorer, 'close'> | null;
-  getReturns?: () => Pick<ReturnsController, 'select' | 'exit'> | null;
+  getReturns?: () => (Pick<ReturnsController, 'select' | 'exit'> & Partial<Pick<ReturnsController,'adopt'>>) | null;
   filterTransit?: (chart: ChartInput) => ChartInput;
   resetTransitFilter?: () => void;
   onSelect?: (record: SavedChart | null) => void;
@@ -81,6 +81,25 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
     get owner() { return owner; },
     expect, publish, showOriginal, refresh,
     refilter() { return accept(acceptedKind, acceptedKind === 'lifetime' ? filterTransit(acceptedSource) : acceptedSource, accepted.event); },
+    /** Adopt a confirmed identity without reselecting tools or allocating cache copies. */
+    adopt(id:string,expectedId=selectedId) {
+      const next=store.get(id);
+      if(selectedId!==expectedId || !record || !next || !store.has(id))return false;
+      const previousVersion='calculationVersion' in record?record.calculationVersion:undefined;
+      const nextVersion='calculationVersion' in next?next.calculationVersion:undefined;
+      if(previousVersion!==undefined && nextVersion!==undefined && previousVersion!==nextVersion
+        || String(record.cityId??record.city?.id??'')!==String(next.cityId??next.city?.id??'')
+        || record.birthDate!==next.birthDate || record.birthTime!==next.birthTime
+        || JSON.stringify(extractChartData(record))!==JSON.stringify(extractChartData(next)))return false;
+      selecting=true;
+      try {
+        const returns=getReturns();
+        if(record.source==='calculated' && returns?.adopt && !returns.adopt(next))return false;
+        selectedId=id;record=next;getNatalDay()?.updateMetadata(next);
+        accept(acceptedKind,acceptedKind==='original'?baseChart:acceptedSource,accepted.event);
+      }finally{selecting=false;}
+      refresh();return true;
+    },
     refreshRecord() {
       const next = store.get(selectedId);
       if (!next) return false;

@@ -230,7 +230,7 @@ test('fresh font metrics and replacement charts are measured again instead of re
 test('persistent scene aligns the retained heading before changed-chart popover refresh without measuring unchanged renders', () => {
   const charts = [12, 1].map((gate, index) => ({ id: String(index), source: 'calculated' as const, personality: [gate], design: [],
     activations: { personality: [{ planet: 'sun', gate, line: index ? 1 : 2 }], design: [] } } as unknown as ChartInput & { id: string }));
-  let current = charts[0], measurements = 0;
+  let current = charts[0], measurements = 0, headingMeasurements = 0, digitMeasurements = 0;
   const viewport = svgDocument().createElementNS(SVG_NS, 'svg');
   const query = viewport.querySelector.bind(viewport), calls: (string | null | undefined)[] = [];
   viewport.querySelector = (selector: string) => {
@@ -239,9 +239,17 @@ test('persistent scene aligns the retained heading before changed-chart popover 
       const heading = result.querySelector('.activation-heading');
       const value = result.querySelector('[data-activation="personality-sun"] > text');
       heading!.getCTM = () => new Matrix() as unknown as DOMMatrix;
-      heading!.getBBox = () => ({ x: Number(heading!.getAttribute('x')) - (heading!.getAttribute('text-anchor') === 'end' ? 74 : 0), y: 64, width: 74, height: 14 } as DOMRect);
+      heading!.getBBox = () => {
+        headingMeasurements++;
+        return { x: Number(heading!.getAttribute('x')) - (heading!.getAttribute('text-anchor') === 'end' ? 74 : 0), y: 64, width: 74, height: 14 } as DOMRect;
+      };
       value!.getCTM = () => new Matrix(1, 0, 0, 1, 600, 118) as unknown as DOMMatrix;
       value!.getBBox = () => { measurements++; return { x: 35, y: -9, width: value!.textContent === '12.2' ? 43.25 : 28.75, height: 18 } as DOMRect; };
+      (value as unknown as SVGTextElement).getSubStringLength = (start, length) => {
+        assert.deepEqual([start, length], [0, 1]);
+        digitMeasurements++;
+        return 14.5; // The missing tabular digit in the 43.25 / 28.75 text fixture.
+      };
     }
     return result;
   };
@@ -256,14 +264,18 @@ test('persistent scene aligns the retained heading before changed-chart popover 
   });
   controller.render();
   const heading = query('.activation-column[data-source="personality"] .activation-heading');
-  assert.equal(measurements, 1);
+  assert.deepEqual([measurements, headingMeasurements, digitMeasurements], [1, 1, 0]);
   controller.render();
-  assert.equal(measurements, 1, 'unchanged chart does not repeat SVG geometry reads');
+  assert.deepEqual([measurements, headingMeasurements, digitMeasurements], [1, 1, 0], 'unchanged chart does not repeat SVG geometry reads');
   current = charts[1];
   controller.render();
   assert.equal(query('.activation-column[data-source="personality"] .activation-heading'), heading);
   assert.equal(query('[data-activation="personality-sun"] > text')!.textContent, '1.1');
-  assert.equal(measurements, 2, 'new Sun width updates the existing heading');
+  assert.equal(headingMeasurements, 2, 'new Sun width updates the existing heading once');
+  assert.equal(measurements, 3, 'changed text is measured once for the number highlight and once for heading alignment');
+  assert.equal(digitMeasurements, 1, 'one-digit value reserves the missing tabular digit');
+  controller.render();
+  assert.deepEqual([measurements, headingMeasurements, digitMeasurements], [3, 2, 1], 'unchanged short value does not repeat SVG geometry reads');
   assert.equal(viewport.innerHTMLWrites, 1, 'chart changes do not remount the scene');
   assert.deepEqual(calls, ['0', '1']);
 });

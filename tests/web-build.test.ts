@@ -27,6 +27,7 @@ async function fileDigests(root: string) {
 }
 
 function moduleReferences(source: string) {
+  assert.doesNotMatch(source, /\bimport\s*\(\s*[^"'\s]/, 'emitted dynamic imports have literal release dependencies');
   return [
     ...source.matchAll(/\b(?:from|import)\s*["']([^"']+)["']/g),
     ...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
@@ -40,30 +41,81 @@ function stylesheetReferences(source: string) {
   ].map(match => match[1]);
 }
 
-test('real release build preserves sources and produces complete deterministic compressed browser entries', async t => {
+async function syntheticBuildRoot(t: test.TestContext) {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-web-build-fixture-'));
+  t.after(() => fs.rm(temporary, {recursive: true, force: true}));
+  const root = path.join(temporary, 'fixture');
+  const files = {
+    'package.json': '{"type":"module"}',
+    'src/entry.ts': `if (typeof __FORMA_RELEASE__ === 'undefined' || !__FORMA_RELEASE__) {
+      await import('./dev/control-colors.ts');
+    }
+    await import('./startup.ts');`,
+    'src/startup.ts': 'globalThis.syntheticStartup = "ready";',
+    'src/dev/control-colors.ts': 'import "./transitive.ts"; globalThis.syntheticDev = true;',
+    'src/dev/transitive.ts': 'import "stand-only-unavailable-module";',
+    'src/stories/vessel-of-love.ts': 'export const story = "synthetic story";',
+    'src/scene/loading-placeholder.ts': `export function prepareLoadingPage(html) {
+      return html.replace('<!-- chart-loading-placeholder -->', '<svg id="chartLoadingArt" class="synthetic-loading-art"></svg>');
+    }`,
+    'public/index.html': '<html><head><title>Stand title</title>\r\n  <link rel="icon" href="/favicon.svg">\r\n  <link rel="stylesheet" href="/styles.css">\r\n</head><body>\r\n<!-- chart-loading-placeholder -->\r\n  <button data-development id="syntheticDevButton">Stand</button>\r\n  <script type="module" data-development src="/src/dev/control-colors.ts"></script>\r\n  <script type="module" src="/src/entry.ts"></script>\r\n</body></html>',
+    'public/love.html': '<html><head><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/love.css"></head><body>\r\n  <script type="module" src="/src/stories/vessel-of-love.ts"></script>\r\n</body></html>',
+    'public/styles.css': 'body {color: #123456}',
+    'public/love.css': 'body {color: #654321}',
+    'public/favicon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>',
+  };
+  for (const [name, source] of Object.entries(files)) {
+    const filename = path.join(root, name);
+    await fs.mkdir(path.dirname(filename), {recursive: true});
+    await fs.writeFile(filename, source);
+  }
+  return {root, temporary};
+}
+
+test('release compilation removes the entire stand graph before resolving its dependencies', async t => {
+  const {root, temporary} = await syntheticBuildRoot(t);
+  const before = await fileDigests(root), outdir = path.join(temporary, 'first'), repeat = path.join(temporary, 'repeat');
+  const manifest = await buildWeb({root, outdir});
+  const html = await fs.readFile(path.join(outdir, 'index.html'), 'utf8');
+  assert.match(html, /class="synthetic-loading-art"/, 'loading art belongs to the requested root');
+  assert.match(html, /<title>Форма<\/title>/);
+  assert.doesNotMatch(html, /data-development|syntheticDevButton|control-colors/, 'CRLF pages remove stand elements');
+  for (const entry of Object.values(manifest)) {
+    if (!entry.file.endsWith('.js')) continue;
+    const output = await fs.readFile(path.join(outdir, entry.file), 'utf8');
+    assert.doesNotMatch(output, /__FORMA_RELEASE__|syntheticDev|stand-only-unavailable-module|control-colors|transitive/);
+    moduleReferences(output);
+  }
+  assert.deepEqual(await fileDigests(root), before, 'the build never rewrites its source root');
+  await buildWeb({root, outdir: repeat});
+  assert.deepEqual(await fileDigests(repeat), await fileDigests(outdir), 'same sources produce identical compressed artifacts and manifests');
+  assert.deepEqual(await fileDigests(root), before);
+});
+
+test('release compilation rejects a development module reached outside the conditional stand entry', async t => {
+  const {root, temporary} = await syntheticBuildRoot(t);
+  await fs.writeFile(path.join(root, 'src/startup.ts'), 'import "./dev/stand-connection.ts"; globalThis.syntheticStartup = "ready";');
+  await fs.writeFile(path.join(root, 'src/dev/stand-connection.ts'), 'globalThis.syntheticDev = true;');
+  await assert.rejects(buildWeb({root, outdir: path.join(temporary, 'release')}), /Development module in release: src\/dev\/stand-connection\.ts/);
+});
+
+test('release compilation includes the accepted random generator without a stand entry', async t => {
+  const {root, temporary} = await syntheticBuildRoot(t), outdir = path.join(temporary, 'release');
+  await fs.mkdir(path.join(root, 'src/views'));
+  await fs.writeFile(path.join(root, 'src/views/random-chart.ts'), 'globalThis.syntheticRandomChart = true;');
+  await fs.writeFile(path.join(root, 'src/startup.ts'), 'import "./views/random-chart.ts"; globalThis.syntheticStartup = "ready";');
+  const manifest = await buildWeb({root, outdir});
+  const modules = await Promise.all(Object.values(manifest).filter(entry => entry.file.endsWith('.js')).map(entry => fs.readFile(path.join(outdir,entry.file),'utf8')));
+  assert.ok(modules.some(source => source.includes('syntheticRandomChart')), 'the regular startup reaches its random generator');
+});
+
+test('real release build produces complete compressed browser entries without development imports', async t => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-web-build-'));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
-  const root = path.join(temporary, 'source');
-  await fs.mkdir(root);
-  // Use the real browser graph while isolating this test from concurrent work
-  // and ensuring the build never edits or publishes the working project.
-  for (const directory of ['src', 'shared', 'public'] as const) {
-    await fs.cp(path.join(project, directory), path.join(root, directory), { recursive: true });
-  }
-  await fs.copyFile(path.join(project, 'package.json'), path.join(root, 'package.json'));
-  // A Windows checkout must produce the same public routes and exclude dev entries.
-  for (const page of ['index.html', 'love.html']) {
-    const file = path.join(root, 'public', page);
-    await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace(/\r?\n/g, '\r\n'));
-  }
-  // An independent snapshot must provide both its chart and its loading art.
-  const placeholder = path.join(root, 'src/scene/loading-placeholder.ts');
-  await fs.writeFile(placeholder, (await fs.readFile(placeholder, 'utf8')).replace('loading-centers', 'loading-centers-from-root'));
-  const before = await fileDigests(root);
-  const outdir = path.join(temporary, 'first'), repeat = path.join(temporary, 'repeat');
+  // Read the canonical sources directly; only generated artifacts leave this root.
+  const root = project, outdir = path.join(temporary, 'release');
   const manifest = await buildWeb({ root, outdir });
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(outdir, 'manifest.json'), 'utf8')), manifest);
-  assert.deepEqual(await fileDigests(root), before, 'building preserves every source, stylesheet, icon and source HTML byte');
   assert.deepEqual(manifest.love, manifest['love.html'], 'the friendly story route resolves to its real HTML');
 
   const contents = new Map();
@@ -71,15 +123,19 @@ test('real release build preserves sources and produces complete deterministic c
     assert.ok(!path.isAbsolute(entry.file) && !entry.file.split(/[\\/]/).includes('..'), route);
     const bytes = await fs.readFile(path.join(outdir, entry.file));
     contents.set(entry.file, bytes.toString());
+    if (entry.file.endsWith('.js')) {
+      moduleReferences(bytes.toString());
+      assert.doesNotMatch(bytes.toString(), /__FORMA_RELEASE__|data-development|forma\.control-colors|stand-connection-options/);
+    }
     assert.deepEqual(gunzipSync(await fs.readFile(path.join(outdir, entry.gzip))), bytes, `${route}: gzip bytes`);
     assert.deepEqual(brotliDecompressSync(await fs.readFile(path.join(outdir, entry.br))), bytes, `${route}: Brotli bytes`);
     assert.equal(entry.immutable, entry.file.startsWith('assets/'), `${route}: only versioned assets have immutable caching`);
   }
 
   assert.deepEqual([...contents.get('index.html').matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма'], 'release title excludes the local version label');
-  assert.doesNotMatch(contents.get('index.html'), /data-development|randomChartButton|control-colors|account-preview|shared-chart-preview/, 'stand studies stay out of the release');
+  assert.doesNotMatch(contents.get('index.html'), /data-development|control-colors|account-preview|shared-chart-preview/, 'stand studies stay out of the release');
+  assert.match(contents.get('index.html'), /<button\b[^>]*id="randomChartButton"/, 'the regular random-card action survives release compilation');
   assert.match(contents.get('index.html'), /<svg id="chartLoadingArt"/, 'release contains the silhouette before JavaScript starts');
-  assert.match(contents.get('index.html'), /class="loading-centers-from-root"/, 'loading art comes from the requested source root');
   assert.doesNotMatch(contents.get('index.html'), /<!-- chart-loading-placeholder -->/, 'the build resolves the loading illustration');
   const lifetimeChunk = [...contents].find(([name, source]) => name.endsWith('.js') && source.includes('/api/lifetime/meta'))?.[0];
   assert.ok(lifetimeChunk, 'the optional century view can be loaded on demand');
@@ -171,14 +227,11 @@ test('real release build preserves sources and produces complete deterministic c
     if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
     if (previousLocation === undefined) delete globalThis.location; else globalThis.location = previousLocation;
   }
-  const startupChunk = moduleReferences(recoveryEntry).map(reference => resolve(reference, entries.get('index.html')))[0];
+  const startupChunk = moduleReferences(recoveryEntry).map(reference => resolve(reference, entries.get('index.html')))
+    .find(filename => /\bconnectJournal\b/.test(contents.get(filename)));
   assert.ok(contents.get('index.html').includes(`href="/${startupChunk}"`), 'the new boundary does not defer downloading startup');
   const iconFile = [...reached].find(filename => filename.endsWith('.svg'));
   assert.deepEqual(await fs.readFile(path.join(outdir, iconFile)), await fs.readFile(path.join(root, 'public/favicon.svg')));
-
-  await buildWeb({ root, outdir: repeat });
-  assert.deepEqual(await fileDigests(repeat), await fileDigests(outdir), 'a second build in another directory has identical names, imports, manifest and compressed bytes');
-  assert.deepEqual(await fileDigests(root), before);
 
   // Execute an actual entry and its extracted shared module, rather than merely
   // checking that minified text parses or that a synthetic function survived.
@@ -186,4 +239,42 @@ test('real release build preserves sources and produces complete deterministic c
   const story = await import(pathToFileURL(path.join(outdir, entries.get('love.html'))));
   assert.deepEqual(story.LOVE_GATES, LOVE_GATES);
   assert.equal(story.renderLoveDiagram(), renderLoveDiagram(), 'the compiled chart renderer retains exact SVG geometry, gate labels, paint and selections');
+});
+
+
+test('release builds a root worker containing the exact public file hashes and no source URLs', async t => {
+ const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'forma-offline-build-'));
+ t.after(()=>fs.rm(temporary,{recursive:true,force:true}));
+ const manifest=await buildWeb({root:project,outdir:temporary});
+ assert.ok(manifest['service-worker.js'],'worker is an explicit public artifact');
+ assert.equal(manifest['service-worker.js'].immutable,false);
+ const source=await fs.readFile(path.join(temporary,'service-worker.js'),'utf8');
+ assert.doesNotMatch(source,/__FORMA_OFFLINE_MANIFEST__|\.ts["']/);
+ const html=await fs.readFile(path.join(temporary,'index.html'),'utf8');
+ const version=/<body\b[^>]* data-offline-version="([a-f0-9]{64})"/.exec(html)?.[1];
+ assert.ok(version,'HTML identifies its actual built files, not the currently active worker');
+ assert.ok(source.includes(version),'HTML and offline manifest have the same version');
+ for(const entry of new Map(Object.values(manifest).map(entry=>[entry.file,entry])).values()){
+  if(entry.file==='service-worker.js')continue;
+  const bytes=await fs.readFile(path.join(temporary,entry.file));
+  assert.ok(source.includes(digest(bytes)),entry.file+' content is checked by the worker');
+ }
+});
+
+
+test('offline identity is deterministic and its stamped HTML stays inside integrity verification',async()=>{
+ const {buildOfflineWorker}=await import('../scripts/offline-manifest.ts');
+ const {normalizeAppMetadata}=await import('../shared/app-metadata.ts');
+ const outputs=new Map([['index.html',Buffer.from('<html><body><main>Forma</main></body></html>')]]);
+ const first=await buildOfflineWorker(outputs),again=await buildOfflineWorker(outputs);
+ const html=Buffer.from(first.html).toString();
+ assert.equal(first.manifest.version,again.manifest.version);
+ assert.deepEqual(first.html,again.html);
+ assert.equal(outputs.get('index.html')!.toString().includes('data-offline-version'),false);
+ assert.match(html,new RegExp('data-offline-version="'+first.manifest.version+'"'));
+ const shell=first.manifest.files.find(file=>file.url==='/index.html')!;
+ assert.equal(shell.sha256,digest(first.html));assert.equal(shell.bytes,first.html.byteLength);
+ assert.equal(normalizeAppMetadata(html),html,'Build identity cannot be stripped as runtime HTTP metadata');
+ const changed=new Map(outputs);changed.set('index.html',Buffer.from('<html><body><main>Other</main></body></html>'));
+ assert.notEqual((await buildOfflineWorker(changed)).manifest.version,first.manifest.version);
 });

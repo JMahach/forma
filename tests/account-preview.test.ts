@@ -1,3 +1,4 @@
+import { registerAccountPreview, connectAccountPreview, type AccountPreviewPort } from '../src/views/account.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccountAdapter, accountPreviewIdentity, type AccountScenario } from '../src/dev/account-adapter.ts';
@@ -52,4 +53,31 @@ test('only the stand adapter supplies sample account identities and keeps explic
  assert.deepEqual(verified.identity,{email,telegramHandle:null});
  const restored=await adapter({...request,operation:'retry'},signal());
  assert.deepEqual(restored.identity,accountPreviewIdentity('linked'));
+});
+
+for (const order of ['stand-first', 'account-first'] as const) test(`account preview port connects in ${order} order without replacing the real flow`, () => {
+ const calls: string[] = [];
+ const port: AccountPreviewPort = { preview(adapter) { calls.push(adapter ? adapter.screen : 'real'); return null; }, cancelPreview() { calls.push('cancel'); } };
+ let selected: AccountPreviewPort | null = null;
+ const setup = (value: AccountPreviewPort) => { selected = value; };
+ let disconnect: () => void, unregister: () => void;
+ if (order === 'stand-first') { unregister = registerAccountPreview(setup); disconnect = connectAccountPreview(port); }
+ else { disconnect = connectAccountPreview(port); unregister = registerAccountPreview(setup); }
+ try {
+  assert.equal(selected, port);
+  assert.deepEqual(calls, [], 'mounting the port cannot select a fake account or run a request');
+  selected!.preview(null); selected!.cancelPreview();
+  assert.deepEqual(calls, ['real', 'cancel']);
+ } finally { disconnect(); unregister(); }
+});
+test('retiring an older account preview port cannot disconnect its replacement', () => {
+ const seen: AccountPreviewPort[] = [];
+ const first: AccountPreviewPort = { preview() { return null; }, cancelPreview() {} };
+ const second: AccountPreviewPort = { preview() { return null; }, cancelPreview() {} };
+ const stopFirst = connectAccountPreview(first), stopSecond = connectAccountPreview(second);
+ stopFirst();
+ const unregister = registerAccountPreview(port => seen.push(port));
+ try { assert.deepEqual(seen, [second]); } finally { unregister(); stopSecond(); }
+ const stop = registerAccountPreview(() => assert.fail('destroyed account must not remain reachable'));
+ stop();
 });

@@ -186,7 +186,7 @@ test('expanded touch target selects on a tap and never toggles after drag, pinch
         return { left: 320, right: 332, top: 401.5, bottom: 418.5, width: 12, height: 17 };
       },
     };
-    const svg = { querySelectorAll: () => [hit] };
+    const svg = { querySelectorAll: (selector: string) => selector === '.activation-planet-filter-hit' ? [hit] : [] };
     const h = harness({ resolvePointerTarget: (event: PointerEvent) => pointerTarget(svg, event) });
     h.resize(390, 844); h.controls.zoom(2);
     const start = h.controls.getView();
@@ -544,4 +544,21 @@ test('a continuous drag only updates the cursor at its start and end', () => {
   assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
   h.controls.reset();
   assert.deepEqual(h.cursorChanges.at(-1), ['is-pannable', false]);
+});
+
+test('a finger can tap the gate margin but dragging or pinching there never selects it', () => {
+  for (const action of ['tap','drag','pinch','pointercancel']) {
+    const gate = {dataset:{type:'gate',id:'13'}};
+    const hit = {parentElement:gate,getBoundingClientRect:()=>({left:311.025,right:328.975,top:401.025,bottom:418.975,width:17.95,height:17.95})};
+    const svg = {querySelectorAll:(selector:string)=>selector==='.bg-gate-hit'?[hit]:[]};
+    const h=harness({resolvePointerTarget:(event:PointerEvent)=>pointerTarget(svg as unknown as SVGSVGElement,event)});
+    h.send('pointerdown',{clientX:330,clientY:410});
+    if(action==='drag') h.send('pointermove',{clientX:350,clientY:410});
+    else if(action==='pinch') {
+      h.send('pointerdown',{pointerId:2,clientX:400,clientY:410});
+      h.send('pointerup',{pointerId:2,clientX:400,clientY:410});
+    } else if(action==='pointercancel') h.send('pointercancel');
+    h.send('pointerup',{clientX:330,clientY:410});
+    assert.deepEqual(h.selections,action==='tap'?[{type:'gate',id:'13',pointerType:'touch'}]:[],action);
+  }
 });

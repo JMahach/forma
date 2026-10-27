@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createComputeQueue } from '../server/runtime/compute-queue.ts';
 import { realCycleWorker } from './helpers/real-cycle-worker.ts';
+import { deferred } from './helpers/deferred.ts';
 import { createCycles } from '../server/services/cycles.ts';
 import { createCyclesClient } from '../src/data/cycles-client.ts';
 import { chartAtMinute } from '../src/domain/natal-day.ts';
@@ -29,7 +30,7 @@ test('worker refinement within one second reaches the client and keeps the exact
   } finally { await service.close(); }
 });
 
-test('server and client reject the same corrupt successful chart before it enters either cache', async () => {
+test('server and client reject the same corrupt successful chart before publication', async () => {
   const changes = [
     ['invalid UTC', (data: { chart: { utc: string; }; }) => { data.chart.utc = '2028-02-30T12:00:00Z'; }],
     ['wrong timezone', (data: { chart: { timezone: string; }; }) => { data.chart.timezone = 'Europe/Moscow'; }],
@@ -114,24 +115,45 @@ test('opened exact charts reuse shared memory then device storage after reload',
   assert.equal(reads, 2); assert.equal(writes, 1);
 });
 
-test('ready charts bypass saturated work and an uncached selected chart precedes waiting date searches', async () => {
+test('completed charts are computed again while simultaneous consumers share pending work', async t => {
+  const release = deferred(); let calls = 0;
+  const service = createCycles({ generate: async () => {
+    calls++; await release.promise; return result();
+  } });
+  t.after(async () => { release.resolve!(); await service.close(); });
+  const first = service.chart(input), shared = service.chart(input);
+  release.resolve!();
+  const [one, two] = await Promise.all([first, shared]);
+  assert.equal(calls, 1); assert.equal(two, one);
+  const repeated = await service.chart(input);
+  assert.equal(calls, 2, 'a completed chart must not bypass a later calculation');
+  assert.notEqual(repeated, one); assert.deepEqual(repeated, one);
+  assert.equal(service.active, 0); assert.equal(service.queued, 0);
+});
+
+test('completed charts use admission while pending duplicates share a slot and selected charts keep priority', async () => {
   const queue = createComputeQueue({ concurrency: 1, maxQueued: 2 }), started: unknown[] = [];
   const service = createCycles({ computeQueue: queue, generate: async request => {
     started.push(request.action);
     return request.action === 'chart' ? { chart: { ...result().chart, timezone: request.timezone } }
       : { events: [], range: { fromAge: request.fromAge, toAge: request.toAge } };
   } });
-  const cached = await service.chart(input);
-  let release;
-  const occupied = queue.run(() => new Promise(resolve => { release = resolve; }));
+  await service.chart(input);
+  const release = deferred();
+  const occupied = queue.run(() => release.promise);
   const dates = service.events({ birthUtc: input.birthUtc, body: input.body });
-  const selected = service.chart({ ...input, timezone: 'Europe/Moscow' });
-  assert.equal(queue.active, 1); assert.equal(queue.queued, 2);
-  assert.equal(await service.chart(input), cached, 'ready memory never enters the compute queue');
-  assert.deepEqual(started, ['chart']);
-  release!(); await Promise.all([occupied, dates, selected]);
+  const selectedInput = { ...input, timezone: 'Europe/Moscow' };
+  const selected = service.chart(selectedInput), shared = service.chart(selectedInput);
+  try {
+    assert.equal(queue.active, 1); assert.equal(queue.queued, 2);
+    assert.equal(shared, selected, 'duplicate pending work joins even when admission is full');
+    await assert.rejects(service.chart(input), { code: 'cycles_busy' }, 'an earlier answer cannot bypass full admission');
+    assert.deepEqual(started, ['chart']);
+  } finally {
+    release.resolve!(); await Promise.all([occupied, dates, selected, shared]);
+    await service.close();
+  }
   assert.deepEqual(started, ['chart', 'chart', 'events']);
-  await service.close();
   assert.equal(await queue.run(() => 'other service still works'), 'other service still works');
   queue.close();
 });

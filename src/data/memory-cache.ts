@@ -21,7 +21,7 @@ export function estimateBytes(value: unknown, seen = new Set<object>()): number 
 
 export function createMemoryCache({ maxBytes = TAB_CACHE_BYTES } = {}) {
   if (!Number.isFinite(maxBytes) || maxBytes < 0) throw new RangeError('Invalid tab cache budget');
-  const entries = new Map<PropertyKey, { value: unknown; bytes: number }>(), retained = new Map<PropertyKey, number>();
+  const entries = new Map<PropertyKey, { value: unknown; bytes: number }>(), retained = new Map<PropertyKey, {count:number}>();
   let bytes = 0;
   function remove(key: PropertyKey) {
     const entry = entries.get(key);
@@ -47,15 +47,22 @@ export function createMemoryCache({ maxBytes = TAB_CACHE_BYTES } = {}) {
       return value;
     },
     delete: remove,
+    clearExcept(prefix:string) {
+      const keep=(key:PropertyKey)=>typeof key==='string' && key.startsWith(prefix);
+      for(const key of entries.keys())if(!keep(key))remove(key);
+      for(const key of retained.keys())if(!keep(key))retained.delete(key);
+    },
     retain<T>(key: PropertyKey, value: T, size?: number) {
-      retained.set(key, (retained.get(key) || 0) + 1);
+      const ownership=retained.get(key)??{count:0};ownership.count++;
+      retained.set(key,ownership);
       api.put(key, value, size);
       let released = false;
       return () => {
         if (released) return;
         released = true;
-        const count = retained.get(key)! - 1;
-        if (count) retained.set(key, count); else retained.delete(key);
+        // A clear can give the same key a new owner before this release arrives.
+        if(retained.get(key)!==ownership)return;
+        if(--ownership.count===0)retained.delete(key);
         evict();
       };
     },

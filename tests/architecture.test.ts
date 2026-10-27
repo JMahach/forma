@@ -2,6 +2,9 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import { collectImports } from '../scripts/architecture/collect-imports.mjs';
+import { checkContour, externalImportAllowed } from '../scripts/architecture/check-boundaries.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PUBLIC_FILES } from '../server/http/public-files.ts';
@@ -10,38 +13,50 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const source = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 const files = (directory: string, pattern = /\.ts$/) => fs.readdirSync(path.join(root, directory), { recursive: true })
   .filter(file => pattern.test(file)).map(file => `${directory}/${file.split(path.sep).join('/')}`);
+const policy = JSON.parse(source('scripts/architecture/architecture-boundaries.json'));
 const loadingGenerator = 'src/scene/loading-placeholder.ts';
 const sourceFiles = [...files('src'), ...files('shared')];
 const hasRuntime = (file: string) => stripTypeScriptTypes(source(file), { mode: 'strip' }).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').trim();
 const browserFiles = sourceFiles.filter(file => file !== loadingGenerator && hasRuntime(file));
-const dependencies = (file: string) => [...stripTypeScriptTypes(source(file), { mode: 'strip' }).matchAll(/(?:from\s+|import\s*(?:\(\s*)?)['"]([^'"]+)['"]/g)]
-  .map(([, specifier]) => specifier.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)) : specifier);
-const graph = new Map([...sourceFiles, ...files('server')].map(file => [file, dependencies(file)]));
+const graphDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'forma-test-architecture-'));
+let importEvidence;
+try { importEvidence = (await collectImports(root, graphDirectory)).report; }
+finally { fs.rmSync(graphDirectory, { recursive: true, force: true }); }
+const graph = new Map([...sourceFiles, ...files('server')].map(file => [file, [] as string[]]));
+for (const edge of importEvidence.imports) {
+  if (edge.runtime) graph.get(edge.from)?.push(edge.to);
+}
 for (const file of files('shared', /\.json$/)) { JSON.parse(source(file)); graph.set(file, []); }
 const pure = (file: string) => assert.doesNotMatch(source(file), /\b(?:document|window|localStorage|sessionStorage|indexedDB)\s*\.|\bfetch\s*\(/, `${file} must stay pure`);
 const only = (file: string, roots: string[], exact = []) => {
-  for (const dependency of graph.get(file)!) assert.ok(exact.includes(dependency) || roots.some((prefix: string) => dependency.startsWith(prefix)), `${file} must not import ${dependency}`);
+  for (const dependency of graph.get(file)!) {
+    const imported = importEvidence.imports.find(edge => edge.from === file && edge.to === dependency && edge.resolution === 'external');
+    const owner = policy.modules.find((module: { files: string[] }) => module.files.includes(file))?.id;
+    const declaredExternal = imported && externalImportAllowed(imported, owner, policy.externalPolicy);
+    assert.ok(exact.includes(dependency) || roots.some((prefix: string) => dependency.startsWith(prefix)) || declaredExternal,
+      `${file} must not import ${dependency}`);
+  }
 };
 
 // Tests inspect the public pages, not a hand-maintained list of module entry points.
-test('production imports resolve and contain no dependency cycles', () => {
-  const visited = new Set();
-  function visit(file: unknown, ancestors = []) {
-    assert.ok(!ancestors.includes(file), `Dependency cycle: ${[...ancestors, file].join(' → ')}`);
-    if (visited.has(file)) return;
-    visited.add(file);
-    for (const dependency of graph.get(file)!) {
-      if (dependency.startsWith('node:')) assert.ok(file.startsWith('server/'), `${file} must run in a browser`);
-      else {
-        assert.ok(graph.has(dependency), `${file} imports missing or non-production module ${dependency}`);
-        visit(dependency, [...ancestors, file]);
-      }
-    }
+test('product literal imports resolve and runtime/type file graphs have no cycles', () => {
+  assert.deepEqual(importEvidence.missingAst, [], 'all product files must be parsed');
+  assert.deepEqual(importEvidence.syntaxDiagnostics, []);
+  assert.deepEqual(importEvidence.changedDuringRead, [], 'checks must use a consistent source snapshot');
+  assert.deepEqual(importEvidence.unresolved, []);
+  assert.deepEqual(importEvidence.outOfScope, []);
+  assert.deepEqual(importEvidence.graphs.runtime.cyclicScc, [], 'runtime cycles');
+  assert.deepEqual(importEvidence.graphs.full.cyclicScc, [], 'cycles including type imports');
+  for (const [file, dependencies] of graph) for (const dependency of dependencies) {
+    if (graph.has(dependency)) continue;
+    const imported = importEvidence.imports.find(edge => edge.from === file && edge.to === dependency && edge.resolution === 'external');
+    const owner = policy.modules.find((module: { files: string[] }) => module.files.includes(file))?.id;
+    assert.ok(imported && externalImportAllowed(imported, owner, policy.externalPolicy),
+      `${file} imports missing or forbidden external module ${dependency}`);
   }
-  for (const file of graph.keys()) visit(file);
 });
 
-test('all browser modules are reachable from real page entries and explicitly public', () => {
+test('browser modules belong to real page entries or the generated worker, with separate publication boundaries', () => {
   const entries = ['public/index.html', 'public/love.html'].flatMap(file =>
     [...source(file).matchAll(/<script\b[^>]*src="\/(src\/[^"?]+)[^"]*"/g)].map(([, entry]) => entry));
   assert.deepEqual(entries.sort(), ['src/dev/account-preview.ts', 'src/dev/control-colors.ts', 'src/dev/shared-chart-preview.ts', 'src/entry.ts', 'src/stories/vessel-of-love.ts']);
@@ -50,20 +65,25 @@ test('all browser modules are reachable from real page entries and explicitly pu
   assert.match(source('public/index.html'), /<script[^>]*data-development[^>]*src="\/src\/dev\/account-preview\.ts"/,
     'the account mockup is an explicitly development-only page entry');
   const reachable = new Set();
-  function visit(file: unknown) {
+  function visit(file: string) {
     if (reachable.has(file)) return;
     assert.ok(file.startsWith('src/') || file.startsWith('shared/'), `browser imports private code: ${file}`);
     reachable.add(file);
     for (const dependency of graph.get(file) || []) visit(dependency);
   }
   entries.forEach(visit);
+  const pageReachable = new Set(reachable);
+  const workers = [...source('scripts/offline-manifest.ts').matchAll(/new URL\(['"]\.\.\/(src\/[^'"]+)['"]\s*,\s*import\.meta\.url\)/g)].map(([,entry]) => entry);
+  assert.deepEqual(workers, ['src/offline/service-worker.ts'], 'the compiled worker has a real build entry');
+  workers.forEach(visit);
   assert.ok(!reachable.has(loadingGenerator), 'the loading illustration is prepared before browser execution');
   assert.deepEqual([...reachable].sort(), [...browserFiles].sort(), 'orphaned browser files need an owner or removal');
-  for (const file of browserFiles) assert.equal(PUBLIC_FILES.get(file), file, `${file} must be served`);
+  for (const file of pageReachable) assert.equal(PUBLIC_FILES.get(file), file, `${file} must be served to source pages`);
+  for (const file of reachable) if (!pageReachable.has(file)) assert.ok(!PUBLIC_FILES.has(file), `${file} belongs only in the compiled worker`);
   for (const file of PUBLIC_FILES.values()) {
     assert.ok(file.startsWith('src/') || file.startsWith('public/') || file.startsWith('shared/'), `private path exposed: ${file}`);
     assert.ok(fs.existsSync(path.join(root, file)), `stale public path: ${file}`);
-    if (!file.startsWith('public/')) assert.ok(reachable.has(file), `unneeded public module: ${file}`);
+    if (!file.startsWith('public/')) assert.ok(pageReachable.has(file), `unneeded public module: ${file}`);
   }
 });
 
@@ -91,7 +111,7 @@ test('the loading illustration has explicit server and build owners and only pur
 
 test('domain rules and packet contracts are pure and do not import presentation, storage or Node', () => {
   for (const file of files('src/domain')) { only(file, ['src/domain/', 'shared/']); pure(file); }
-  for (const file of files('src/diagnostics')) { only(file, ['src/diagnostics/']); pure(file); }
+  for (const file of files('src/diagnostics')) { only(file, ['src/diagnostics/'], ['shared/client-report-contract.ts']); pure(file); }
   for (const file of files('shared')) { only(file, ['shared/']); pure(file); }
   const decoderDependencies = new Set();
   function visit(file: unknown) {
@@ -105,27 +125,37 @@ test('domain rules and packet contracts are pure and do not import presentation,
 });
 
 test('server separates HTTP, service policies, process adapters and private encoders', () => {
-  for (const file of files('server/services')) only(file, ['node:', 'shared/', 'server/services/', 'server/runtime/', 'server/packets/']);
-  for (const file of files('server/runtime')) only(file, ['node:', 'server/runtime/']);
-  for (const file of files('server/packets')) only(file, ['node:', 'shared/day-packets/', 'server/packets/']);
-  for (const file of files('server/http')) only(file, ['node:', 'shared/day-packets/', 'server/http/', 'server/services/'],
-    file === 'server/http/public-files.ts' ? [loadingGenerator] : file === 'server/http/lifetime.ts' ? ['shared/lifetime-exact-format.ts'] : []);
+  // One declaration owns permitted edges, including narrow shared-value and package contracts.
+  const boundary = checkContour({modules:policy.modules,files:importEvidence.nodes.map(node=>node.file),
+    imports:importEvidence.imports,exceptions:policy.exactExceptions,valueContracts:policy.stableValueContracts,
+    assets:policy.assets,externalPolicy:policy.externalPolicy});
+  assert.deepEqual(boundary.violations, [], 'the live graph must obey declared owners and public boundaries');
   assert.ok(!graph.get('server/services/natal-days.ts')!.includes('server/services/transit-days.ts'));
   assert.ok(!graph.get('server/services/transit-days.ts')!.includes('server/services/natal-days.ts'));
-  for (const file of [...files('server/services'), ...files('server/runtime'), ...files('server/packets')] as const) {
+  for (const file of [...files('server/services'), ...files('server/runtime'), ...files('server/packets'), ...files('server/storage'), ...files('server/mail')] as const) {
     assert.doesNotMatch(source(file), /\b(?:req|res)\s*\.|\bwriteHead\s*\(/, `${file} must not own an HTTP request`);
     assert.ok(![...PUBLIC_FILES.values()].includes(file), `${file} must remain private`);
   }
 });
 
-test('production cache is the only writable service directory and API timeout covers batch execution', () => {
+test('production isolates account, journal and cache storage and keeps enough time for API calculations', () => {
   const service = source('deploy/forma.service'), proxy = source('deploy/forma.nginx');
   assert.match(service, /^ProtectSystem=strict$/m);
-  assert.match(service, /^CacheDirectory=forma$/m);
+  for (const owner of ['StateDirectory', 'LogsDirectory', 'CacheDirectory']) {
+    assert.match(service, new RegExp('^' + owner + '=forma$', 'm'));
+    assert.match(service, new RegExp('^' + owner + 'Mode=0700$', 'm'));
+  }
   assert.match(service, /^CacheDirectoryMode=0700$/m);
   assert.match(service, /^Environment=TRANSIT_CACHE_DIR=\/var\/cache\/forma\/transit$/m);
-  assert.match(source('server/server.ts'), /cacheDir:\s*process\.env\.TRANSIT_CACHE_DIR/);
-  assert.match(proxy, /location \/api\/\s*\{[^}]*proxy_read_timeout 65s;/);
+  const server = source('server/server.ts');
+  assert.match(server, /env\s*=\s*process\.env/);
+  assert.match(server, /cacheDir:\s*env\.TRANSIT_CACHE_DIR/);
+  const https = proxy.slice(proxy.indexOf('listen 443 ssl;'));
+  const defaults = https.split(/\n    location /)[0]!;
+  assert.match(defaults, /proxy_read_timeout 65s;/);
+  for (const [, seconds] of https.matchAll(/proxy_read_timeout\s+(\d+)s;/g)) {
+    assert.ok(Number(seconds) >= 65, 'A location must not shorten the inherited calculation timeout');
+  }
 });
 
 test('layout and camera use measured inputs; geometry never imports rendering or gestures', () => {

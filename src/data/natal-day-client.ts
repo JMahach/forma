@@ -1,5 +1,5 @@
-import { fetchResource } from './http-transport.ts';
-type DayResponse = Pick<Response, 'ok' | 'json' | 'arrayBuffer'>;
+import { fetchResource, responseError } from './http-transport.ts';
+type DayResponse = Pick<Response, 'ok' | 'json' | 'arrayBuffer'> & Partial<Pick<Response,'status'>>;
 import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 import type { BinaryCache } from './binary-cache.ts';
@@ -32,9 +32,16 @@ export function createNatalDayClient({
   const revision = /^[a-f0-9]{64}$/.test(calculationVersion ?? '') ? calculationVersion : null;
   const pending = new Map<string, SharedRequest<NatalDay, { timezone: string | undefined }>>();
   const reads = new Map<string, SharedRequest<NatalDay | null>>(), dayKeys = new WeakMap<NatalDay, string | symbol>();
+  const touches = new Map<string, Promise<unknown>>();
+  function touch(key:string) {
+    if(!revision || touches.has(key))return;
+    const work=Promise.resolve().then(()=>persistentCache?.touch?.(key)).catch(()=>{})
+      .finally(()=>{if(touches.get(key)===work)touches.delete(key);});
+    touches.set(key,work);
+  }
   function remember(key: string, day: NatalDay) {
     dayKeys.set(day, revision ? key : Symbol('natal-day'));
-    if (revision) memory.put(key, day);
+    if (revision) {memory.put(key, day);touch(key);}
     return day;
   }
   function retainDay(day: NatalDay) {
@@ -45,7 +52,7 @@ export function createNatalDayClient({
   }
   function forget(key: string) {
     memory.delete(key);
-    Promise.resolve().then(() => revision && persistentCache?.remove(key)).catch(() => {});
+    Promise.resolve().then(() => revision ? persistentCache?.remove(key) : null).catch(() => {});
   }
 
   function identity(chart: BirthDayIdentity | null | undefined) {
@@ -54,15 +61,20 @@ export function createNatalDayClient({
     return { birthDate: birthDate!, cityId, timezone: chart?.timezone, key: `natal-day:${revision}:${NATAL_DAY_VERSION}:${birthDate}:${cityId}` };
   }
   function validate(bytes: ArrayBuffer, birthDate: string) {
-    const day = decode(bytes);
-    if (day.date !== birthDate) throw new Error('Сервер вернул расчёт другого дня.');
-    if (revision && day.calculationVersion !== revision) throw new Error('Версия расчёта дня рождения изменилась. Обновите страницу.');
+    let day:NatalDay;
+    try{day=decode(bytes);}catch(error){
+      if(error instanceof Error && !('code' in error))Object.assign(error,{code:'invalid_response'});
+      throw error;
+    }
+    if (day.date !== birthDate) throw Object.assign(new Error('Сервер вернул расчёт другого дня.'),{code:'invalid_response'});
+    if (revision && day.calculationVersion !== revision) throw Object.assign(new Error('Версия расчёта дня рождения изменилась. Обновите страницу.'),{code:'unsupported_version'});
     return day;
   }
   function peekDay(chart: BirthDayIdentity | null | undefined) {
     const input = identity(chart);
     const day = revision && input ? memory.get<NatalDay>(input.key) : null;
-    return day && compatibleTimezone(day, input!.timezone) ? day : null;
+    if(day && compatibleTimezone(day,input!.timezone)){touch(input!.key);return day;}
+    return null;
   }
   // Reading prepared birth-day numbers never joins a calculation request.
   // A lifetime view may reuse these bytes without opening the natal-day tool.
@@ -86,11 +98,11 @@ export function createNatalDayClient({
 
   async function getDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
     const input = identity(chart);
-    if (!input) throw new Error('Для просмотра дня нужны дата и город рождения.');
+    if (!input) throw Object.assign(new Error('Для просмотра дня нужны дата и город рождения.'),{code:'invalid_request'});
     const { birthDate, cityId, timezone, key } = input;
     if (signal?.aborted) throw createAbortError();
     const forChart = (day: NatalDay) => {
-      if (!compatibleTimezone(day, timezone)) throw new Error('Часовой пояс расчёта не совпадает с картой.');
+      if (!compatibleTimezone(day, timezone)) throw Object.assign(new Error('Часовой пояс расчёта не совпадает с картой.'),{code:'invalid_response'});
       return day;
     };
     const cached = revision && memory.get<NatalDay>(key), skipDisk = cached && !compatibleTimezone(cached, timezone);
@@ -121,7 +133,7 @@ export function createNatalDayClient({
         if (!response.ok) {
           let error;
           try { error = await response.json(); } catch { /* Proxies may return empty errors. */ }
-          throw new Error(error?.message || 'Не удалось загрузить день рождения. Попробуйте ещё раз.');
+          throw responseError(response.status,error,'Не удалось загрузить день рождения. Попробуйте ещё раз.');
         }
         bytes = await response.arrayBuffer();
         if (controller.signal.aborted) throw createAbortError();
@@ -130,14 +142,14 @@ export function createNatalDayClient({
         // Incompatible callers still fail independently below; without a
         // compatible consumer, the fresh packet is never retained.
         if ([...consumers].some(consumer => compatibleTimezone(day, consumer.timezone))) {
-          Promise.resolve().then(() => revision && persistentCache?.put(key, bytes!)).catch(() => {});
+          Promise.resolve().then(() => revision ? persistentCache?.put(key, bytes!) : null).catch(() => {});
           remember(key, day);
         }
         return day;
       } catch (error) {
-        if (timedOut) throw new Error('День рождения не успел загрузиться. Повторите попытку.');
+        if (timedOut) throw Object.assign(new Error('День рождения не успел загрузиться. Повторите попытку.'),{code:'timeout'});
         if (controller.signal.aborted || (error as Error).name === 'AbortError') throw createAbortError();
-        if (error instanceof TypeError) throw new Error('Не удалось загрузить день рождения. Проверьте соединение.');
+        if (error instanceof TypeError) throw Object.assign(new Error('Не удалось загрузить день рождения. Проверьте соединение.'),{code:'connection_failed'});
         throw error;
       } finally { clearTimeout(deadline); }
     }, { signal, consumer: { timezone } }));

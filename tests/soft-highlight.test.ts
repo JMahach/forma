@@ -101,7 +101,7 @@ test('a live reduced-motion change settles contour effects immediately and its l
   const outgoing = document.createElementNS(SVG_NS, 'path'); outgoing.setAttribute('data-soft-highlight-outgoing', 'paint'); root.appendChild(outgoing);
   let listener: (() => void) | undefined;
   const active = new Set(contours);
-  const media = { matches: false, addEventListener(_type, handler) { listener = handler; }, removeEventListener(_type, handler) { assert.equal(handler, listener); listener = undefined; } };
+  const media = { matches: false, addEventListener(_type:string, handler:()=>void) { listener = handler; }, removeEventListener(_type:string, handler:()=>void) { assert.equal(handler, listener); listener = undefined; } };
   Object.assign(document, { defaultView: { matchMedia: () => media } });
   root.getAnimations = () => contours.map(node => ({ effect: { target: node }, cancel() { active.delete(node); } })) as unknown as Animation[];
   const dispose = observeSoftHighlightMotion(root);

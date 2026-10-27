@@ -21,3 +21,6 @@ AGENTS.md
 # Generated lifetime files and their completion metadata.
 *.f64le
 *.f64le.*.tmp
+
+# Isolated development stands; canonical integration stays on main.
+.worktrees/

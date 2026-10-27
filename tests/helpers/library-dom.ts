@@ -2,10 +2,11 @@ interface LibraryAttributes {
   setAttribute(name: string, value: unknown): void;
   getAttribute(name: string): string | null;
 }
+interface LibraryActions { hidden: boolean; open: boolean }
 interface LibraryButton extends LibraryAttributes { dataset: Record<string, string | undefined> }
 interface LibraryRow {
   dataset: Record<string, string | undefined>; className: string; innerHTML: string;
-  querySelector(selector: string): LibraryButton | { src: string };
+  querySelector(selector: string): LibraryButton | LibraryActions | { src: string };
   getBoundingClientRect(): { top: number; bottom: number };
   nextSibling: LibraryRow | null; remove(): void;
 }
@@ -33,7 +34,7 @@ export function libraryDom() {
     createElement(tag: string) {
       created++;
       let markup = '';
-      const button: LibraryButton = { dataset: {}, ...attributes() }; const image = { src: '' };
+      const button: LibraryButton = { dataset: {}, ...attributes() }; const image = { src: '' }, actions: LibraryActions = { hidden: false, open: false };
       const row: LibraryRow = {
         dataset: {}, className: '',
         set innerHTML(value) {
@@ -47,7 +48,7 @@ export function libraryDom() {
           return markup.replace(/(<button class="chart-card"[^>]*data-active=")[^"]*/, `$1${button.dataset.active}`)
             .replace(/(<button class="chart-card"[^>]*aria-pressed=")[^"]*/, `$1${button.getAttribute('aria-pressed')}`);
         },
-        querySelector: selector => selector === 'img' ? image : button,
+        querySelector: selector => selector === 'img' ? image : selector === '.chart-actions' ? actions : button,
         getBoundingClientRect: () => ({ top: children.indexOf(row) * 76 - scrollTop, bottom: children.indexOf(row) * 76 + 76 - scrollTop }),
         get nextSibling() { return children[children.indexOf(row) + 1] || null; },
         remove() { const index = children.indexOf(row); if (index !== -1) children.splice(index, 1); },

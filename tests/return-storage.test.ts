@@ -5,21 +5,21 @@ import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { chartAtMinute } from '../src/domain/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { createReturnStorage } from '../src/data/return-storage.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createCyclesClient } from '../src/data/cycles-client.ts';
 const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
 const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'saturn', fromAge: 0, toAge: 100 };
 const event = { body: 'saturn', utc: '2028-07-21T12:36:05.920740Z', cycle: 1, pass: 1, direction: 'direct' };
 event.id = `${event.body}:${event.utc}`; event.cycleId = 'saturn:1'; event.age = (Date.parse(event.utc) - Date.parse(input.birthUtc) + 0.740) / (365.2425 * 86400000);
 const data = { range: { fromAge: 0, toAge: 100 }, events: [event] };
-function open(factory: IDBFactory) { return new Promise((resolve, reject) => { const req = factory.open('bodygraph-return-events', 2); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); }); }
+const chartKey=(index=0,body='saturn')=>JSON.stringify(['chart',revision,new Date(Date.parse(input.birthUtc)+index*86400000).toISOString(),body,event.utc,'UTC']);
 
 test('device dates retain microseconds and more than forty complete or empty datasets across a new connection', async t => {
-  const indexedDB = new IDBFactory(), first = createReturnStorage({ indexedDB }); t.after(() => first.close());
+  const indexedDB = new IDBFactory(),owner=createCalculationCache({indexedDB}), first = createReturnStorage({ cache:owner }); t.after(() => {first.close();owner.close();});
   for (let index = 0; index < 65; index++) await first.putEvents(`natal-${index}`, input, index % 2 ? { ...data, events: [] } : data);
   const reload = createReturnStorage({ indexedDB }); t.after(() => reload.close());
   for (let index = 0; index < 65; index++) assert.deepEqual(await reload.getEvents(`natal-${index}`), index % 2 ? { ...data, events: [] } : data);
-  const db = await open(indexedDB); t.after(() => db.close());
-  const record = await new Promise(resolve => { const request = db.transaction('events').objectStore('events').get('natal-0'); request.onsuccess = () => resolve(request.result); });
+  const record = await owner.get('return-events','natal-0');
   assert.deepEqual(Object.keys(record.events[0]).sort(), ['cycle', 'direction', 'pass', 'utc']);
   assert.equal(record.events[0].utc, event.utc); assert.equal(record.chart, undefined);
 });
@@ -88,26 +88,26 @@ test('upgrading existing date storage preserves its records and adds independent
   });
   const storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   assert.deepEqual(await storage.getEvents('legacy-dates'), data);
-  const chart = exactChart(); await storage.putChart('exact-return', chart);
-  assert.deepEqual(await storage.getChart('exact-return'), chart);
-  assert.equal(await storage.getEvents('exact-return'), null);
+  const chart = exactChart(),key=chartKey(); await storage.putChart(key, chart);
+  assert.deepEqual(await storage.getChart(key), chart);
+  assert.equal(await storage.getEvents(key), null);
   assert.equal(await storage.getChart('legacy-dates'), null);
   assert.deepEqual(await storage.getEvents('legacy-dates'), data);
 });
 
-test('more than forty opened full charts survive a new connection without time or count eviction', async t => {
+test('more than forty basic return charts survive a new connection while within the shared byte budget', async t => {
   const indexedDB = new IDBFactory(), first = createReturnStorage({ indexedDB }); t.after(() => first.close());
   const chart = exactChart();
-  for (let index = 0; index < 65; index++) await first.putChart(`chart-${index}`, chart);
+  for (let index = 0; index < 65; index++) await first.putChart(chartKey(index), chart);
   const reload = createReturnStorage({ indexedDB }); t.after(() => reload.close());
-  for (let index = 0; index < 65; index++) assert.deepEqual(await reload.getChart(`chart-${index}`), chart);
+  for (let index = 0; index < 65; index++) assert.deepEqual(await reload.getChart(chartKey(index)), chart);
 });
 
 test('an actual quota exception in the chart transaction does not prevent rendering or reuse in shared RAM', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   const originalPut = IDBObjectStore.prototype.put; let quotaFailures = 0;
   t.mock.method(IDBObjectStore.prototype, 'put', function (...args) {
-    if (this.name === 'charts') { quotaFailures++; throw new DOMException('Storage is full', 'QuotaExceededError'); }
+    if (JSON.stringify(args[0]).includes('"chart":')) { quotaFailures++; throw new DOMException('Storage is full', 'QuotaExceededError'); }
     return originalPut.apply(this, args);
   });
   let requests = 0; const ready = exactChart();
@@ -117,4 +117,34 @@ test('an actual quota exception in the chart transaction does not prevent render
   assert.equal(await storage.getChart('missing'), null);
   assert.equal(await client.chart(query), ready); assert.equal(requests, 1); assert.equal(quotaFailures, 1);
   await storage.putEvents('dates', input, data); assert.deepEqual(await storage.getEvents('dates'), data);
+});
+
+test('non-basic and unknown chart bodies are never persisted, including an inconsistent stored label',async t=>{
+  const indexedDB=new IDBFactory(),storage=createReturnStorage({indexedDB});t.after(()=>storage.close());
+  const chart=exactChart();
+  await storage.putChart(chartKey(0,'moon'),chart);assert.equal(await storage.getChart(chartKey(0,'moon')),null);
+  await storage.putChart('unknown-chart',chart);assert.equal(await storage.getChart('unknown-chart'),null);
+  await storage.putChart(chartKey(0),{...chart,event:{...event,body:'moon'}});assert.equal(await storage.getChart(chartKey(0)),null);
+  await storage.putChart(chartKey(0),chart);assert.deepEqual(await storage.getChart(chartKey(0)),chart);
+});
+
+test('a touched basic chart participates in the same byte LRU without closing the injected owner',async t=>{
+  const owner=createCalculationCache({indexedDB:new IDBFactory(),maxBytes:19000}),storage=createReturnStorage({cache:owner});
+  t.after(()=>owner.close());const chart=exactChart();
+  await storage.putChart(chartKey(0),chart);await storage.putChart(chartKey(1),chart);
+  await storage.touchChart(chartKey(0));await storage.putChart(chartKey(2),chart);
+  assert.equal(await storage.getChart(chartKey(1)),null);
+  assert.deepEqual(await storage.getChart(chartKey(0)),chart);assert.deepEqual(await storage.getChart(chartKey(2)),chart);
+  storage.close();assert.deepEqual(await owner.get('return-charts',chartKey(2)),chart);
+});
+
+
+test('compact event persistence retains bounded preparation proof across a new connection', async t => {
+  const indexedDB=new IDBFactory(),first=createReturnStorage({indexedDB});t.after(()=>first.close());
+  const proof='v1.'+revision+'.'+'b'.repeat(43);
+  await first.putEvents('proof',input,{...data,proof});
+  await first.putEvents('oversize-proof',input,{...data,proof:'x'.repeat(1000)});
+  const next=createReturnStorage({indexedDB});t.after(()=>next.close());
+  assert.deepEqual(await next.getEvents('proof'),{...data,proof});
+  assert.deepEqual(await next.getEvents('oversize-proof'),data);
 });

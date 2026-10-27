@@ -28,7 +28,7 @@ const lifetimeFile = { metadata, getPoint: async (index: number) => storedPoint(
 async function request({ index = indexAt('2026-09-30T12:30:00Z'), url, method = 'GET', headers = {}, lifetime = lifetimeFile,
   calculate = async ({ utc }) => calculatedPoint(utc) } = {}) {
   const res = { status: null, headers: {}, body: '', writeHead(status: null, headers: {}) { this.status = status; this.headers = headers; this.headersSent = true; }, end(body: string) { this.body = body || ''; } };
-  const moments = createLifetimeMoments({ lifetimeFile: lifetime, calculate });
+  const moments = createLifetimeMoments({ lifetimeFile: lifetime });
   const handler = createRequestHandler({ root, lifetime: moments && { ...moments, getMetadata: async () => moments.metadata }, calculate, cities: {}, publicFiles: async (_req, response) => { response.writeHead(404, {}); response.end(); } });
   await handler({ method, url: url || `/api/lifetime?${new URLSearchParams({ index })}`, headers: { host: 'localhost', ...headers } }, res);
   return res;
@@ -67,19 +67,26 @@ test('index validation rejects normalization, unknown/duplicate fields, bounds a
   assert.equal(calls, 0);
 });
 
-test('worker failure, capacity and malformed data stay retriable without exposing internal details', async () => {
-  const utc = '2026-09-30T12:31:00Z', url = `/api/lifetime/moment?utc=${utc}`;
-  for (const value of [undefined, { error: 'timeout', message: '/private/secret' }, { ...calculatedPoint(utc), utc: '2026-09-30T12:40:00Z' },
-    { ...calculatedPoint(utc), longitudes: [1] }, { ...calculatedPoint(utc), longitudes: Array(11).fill(NaN) },
-    { ...calculatedPoint(utc), engine: undefined }, { ...calculatedPoint(utc), engine: 'Swiss Ephemeris 2.9.0' },
-    { ...calculatedPoint(utc), designUtc: 'invalid' }, { ...calculatedPoint(utc), designArcResidualDegrees: 1e-6 }] as const) {
-    const response = await request({ url, calculate: async () => ({ utc, engine, longitudes: point(utc).longitudes, design: value }) });
+test('prepared read failures and malformed points stay retriable without exposing internal details', async () => {
+  const index = indexAt('2026-09-30T12:30:00Z'), stored = storedPoint(index);
+  let calculations = 0;
+  const calculate = async () => { calculations++; throw new Error('Prepared points must never calculate'); };
+  const invalidDesigns = [undefined, { error: 'timeout', message: '/private/secret' },
+    { ...stored.design, utc: '2026-09-30T12:40:00Z' }, { ...stored.design, longitudes: [1] },
+    { ...stored.design, longitudes: Array(11).fill(NaN) }, { ...stored.design, designUtc: 'invalid' },
+    { ...stored.design, designArcResidualDegrees: 1e-6 }];
+  const invalidPoints = [undefined, { error: 'timeout', message: '/private/secret' },
+    { ...stored, index: index + 1 }, { ...stored, utc: '2026-09-30T12:40:00Z' },
+    { ...stored, longitudes: [1] }, { ...stored, longitudes: Array(11).fill(NaN) },
+    ...invalidDesigns.map(design => ({ ...stored, design }))];
+  for (const value of invalidPoints) {
+    const response = await request({ index, calculate, lifetime: { metadata, getPoint: async () => value } });
     assert.equal(response.status, 503); assert.equal(response.headers['Cache-Control'], 'no-store');
     assert.equal(response.body.includes('/private/secret'), false);
   }
-  const busy = await request({ url, calculate: async () => ({ error: 'busy' }) });
-  assert.equal(busy.status, 503); assert.equal(JSON.parse(busy.body).error, 'busy');
-  assert.equal((await request({ url, calculate: async () => { throw new Error('/private/secret'); } })).body.includes('/private'), false);
+  const failure = await request({ index, calculate, lifetime: { metadata, getPoint: async () => { throw new Error('/private/secret'); } } });
+  assert.equal(failure.status, 503); assert.equal(failure.body.includes('/private'), false);
+  assert.equal(calculations, 0);
 });
 
 test('public Design-only calculation uses the scalar pool and preserves exact output', async t => {

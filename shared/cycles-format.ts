@@ -1,4 +1,5 @@
-import type { Activation, CalculatedChart } from './chart-types.ts';
+import type { CalculatedChart } from './chart-types.ts';
+import { validateChartSide } from './chart-activations.ts';
 
 export interface CycleEvent {
   id: string;
@@ -23,18 +24,13 @@ export interface CycleChartResult { chart: CalculatedChart }
 export type CycleResult = CycleEventsResult | CycleChartResult;
 
 import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE, LIFE_SPAN_YEARS } from './date-limits.ts';
+import { utcMilliseconds as cycleUtcMilliseconds } from './utc-format.ts';
 
 // Successful calculation results have the same contract at the worker boundary
 // and in device storage. Request admission and error mapping belong to transport.
 const YEAR_MS = 365.2425 * 86400000;
-// This is the chart protocol's complete set, independent of UI labels/order.
-const PLANETS = new Set(['sun', 'earth', 'moon', 'north_node', 'south_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']);
 
-export function cycleUtcMilliseconds(value: unknown) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value)) return NaN;
-  const time = Date.parse(value);
-  return Number.isFinite(time) && new Date(time).toISOString().slice(0, 19) === value.slice(0, 19) ? time : NaN;
-}
+export { utcMilliseconds as cycleUtcMilliseconds } from './utc-format.ts';
 
 export function validCycleEvent(event: CycleEvent | null | undefined, input: CycleInput) {
   const time = cycleUtcMilliseconds(event?.utc), age = cycleAge(event?.utc, input.birthUtc);
@@ -44,16 +40,6 @@ export function validCycleEvent(event: CycleEvent | null | undefined, input: Cyc
     && event.id === `${event.body}:${event.utc}` && event.cycleId === `${event.body}:${event.cycle}`
     && Number.isInteger(event.cycle) && event.cycle > 0 && Number.isInteger(event.pass) && event.pass > 0
     && ['direct', 'retrograde', 'stationary'].includes(event.direction);
-}
-
-function validChartSide(gates: readonly number[] | undefined, entries: readonly Activation[] | undefined) {
-  const validActivations = Array.isArray(entries) && entries.length === PLANETS.size && new Set(entries.map(entry => entry?.planet)).size === PLANETS.size
-    && Array.from(entries).every(entry => entry && PLANETS.has(entry.planet) && Number.isFinite(entry.longitude) && entry.longitude >= 0 && entry.longitude < 360
-      && Number.isInteger(entry.gate) && entry.gate >= 1 && entry.gate <= 64 && Number.isInteger(entry.line) && entry.line >= 1 && entry.line <= 6);
-  if (!validActivations || !Array.isArray(gates)) return false;
-  // Drawing and details must describe the same calculation, in any gate order.
-  const expectedGates = new Set(entries!.map(entry => entry.gate));
-  return gates.length === expectedGates.size && gates.every(gate => expectedGates.delete(gate)) && expectedGates.size === 0;
 }
 
 // Subtract integer milliseconds before adding the fractional tails. Absolute
@@ -87,5 +73,6 @@ export function validCycleResult(action: string, value: unknown, input: CycleInp
     && cycleUtcMilliseconds(chart.utc) >= SUPPORTED_START && cycleUtcMilliseconds(chart.utc) < SUPPORTED_END_EXCLUSIVE && resolvedEventMatches(chart.utc, input.eventUtc)
     && chart.timezone === (input.timezone ?? 'UTC')
     && Number.isFinite(chart.designArcResidualDegrees) && Math.abs(chart.designArcResidualDegrees) <= 1e-7
-    && validChartSide(chart.personality, chart.activations?.personality) && validChartSide(chart.design, chart.activations?.design);
+    && validateChartSide(chart.personality, chart.activations?.personality) === null
+    && validateChartSide(chart.design, chart.activations?.design) === null;
 }

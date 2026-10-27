@@ -1,4 +1,5 @@
 import test from 'node:test';
+// Invalid scalar inputs and edited headers intentionally cross runtime validation unchanged.
 import assert from 'node:assert/strict';
 import { encodeTransitDay, encodeNumericColumn } from '../server/packets/encode.ts';
 import { decodeTransitDay } from '../shared/day-packets/decode.ts';
@@ -7,6 +8,7 @@ import { TRANSIT_PLANETS, TRANSIT_DAY_COLUMNS } from '../shared/day-packets/tran
 import { validateLibraryChart } from '../src/data/storage.ts';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.ts';
 
+type TestDay = Omit<ReturnType<typeof fixture>,'columns'> & {columns:(Float64Array|number[])[]};
 function fixture() {
   return { date: '2026-09-24', startUtc: '2026-09-24T00:00:00Z', stepSeconds: 60, samples: 1440,
     engine: 'Swiss Ephemeris test', ephemeris: 'local test files', timezoneDatabase: 'IANA test',
@@ -14,10 +16,11 @@ function fixture() {
     columns: Array.from({ length: TRANSIT_DAY_COLUMNS }, (_, column) => Float64Array.from({ length: 1440 }, (_, row) => column < 22
       ? (column * 31.7 + row * 0.019731) % 360 : column === 22 ? Date.parse('2026-06-24T12:34:56Z') / 1000 + row * 61 : row % 100 * 1e-12)) };
 }
-function bits(values) { return Buffer.from(new Float64Array(values).buffer).toString('hex'); }
-function rewriteHeader(packet, update) {
+function bits(values:ArrayLike<number>) { return Buffer.from(new Float64Array(values).buffer).toString('hex'); }
+type PacketHeader = ReturnType<typeof fixture> & {version:string;orders:number[];calculationVersion:string|number};
+function rewriteHeader(packet:Uint8Array, update:(header:PacketHeader)=>void) {
   const length = new DataView(packet.buffer, packet.byteOffset).getUint32(4, true);
-  const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length)));
+  const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length))) as PacketHeader;
   update(header);
   const next = new TextEncoder().encode(JSON.stringify(header));
   const result = new Uint8Array(packet.length - length + next.length);
@@ -57,7 +60,7 @@ test('materialized minutes use exact two-sided positions and retain a valid lega
     const chart = transitChartAt(day, minute);
     assert.equal(chart.activations!.personality.length, 13);
     assert.equal(chart.activations!.design.length, 13);
-    assert.equal(Date.parse(chart.designUtc) / 1000, day.columns[22][minute]);
+    assert.equal(Date.parse(chart.designUtc!) / 1000, day.columns[22][minute]);
     assert.equal(chart.designArcResidualDegrees, day.columns[23][minute]);
     for (const key of ['id', 'name', 'note', 'createdAt', 'updatedAt', 'birthDate', 'birthTime'] as const) assert.equal(Object.hasOwn(chart, key), false);
     const { localDate, localTime, ...data } = chart;
@@ -76,7 +79,7 @@ test('materialized minutes use exact two-sided positions and retain a valid lega
     assert.equal(chart.activations!.personality.find(a => a.planet === 'south_node')!.longitude, (day.columns[2][minute] + 180) % 360);
   }
   assert.deepEqual(transitChartAt(day, 0).activations!.personality[0], { planet: 'sun', longitude: 307.62499999999994, gate: 41, line: 6 });
-  for (const invalid of [-1, 1440, 1.5, NaN, '1'] as const) assert.throws(() => transitChartAt(day, invalid));
+  for (const invalid of [-1, 1440, 1.5, NaN, '1'] as const) assert.throws(() => transitChartAt(day, invalid as number));
 });
 
 test('fixed shape and bounded metadata reject malformed and incompatible packets before allocation', () => {
@@ -85,7 +88,7 @@ test('fixed shape and bounded metadata reject malformed and incompatible packets
     assert.throws(() => decodeTransitDay(invalid));
   }
   for (const update of [(h: { version: string; }) => h.version = '1', (h: { samples: number; }) => h.samples = 1e12, (h: { stepSeconds: number; }) => h.stepSeconds = 1,
-    (    h: { orders: number[]; }) => h.orders[0] = 5, h => h.orders.pop(), (h: { startUtc: string; }) => h.startUtc = '2026-09-24T00:00:01Z',
+    (    h: { orders: number[]; }) => h.orders[0] = 5, (h:{orders:number[]}) => h.orders.pop(), (h: { startUtc: string; }) => h.startUtc = '2026-09-24T00:00:01Z',
     (    h: { date: string; startUtc: string; }) => { h.date = '2026-02-30'; h.startUtc = `${h.date}T00:00:00Z`; },
     (    h: { engine: string; }) => h.engine = 'x'.repeat(300), (h: { nodeModel: string; }) => h.nodeModel = 'mean'] as const) {
     assert.throws(() => decodeTransitDay(rewriteHeader(packet, update)));
@@ -99,7 +102,7 @@ test('encoder refuses incomplete days, nonfinite coordinates and invalid predict
     const day = fixture(); day.columns[0][0] = coordinate;
     assert.throws(() => encodeTransitDay(day));
   }
-  const short = fixture(); short.columns[0] = [1]; assert.throws(() => encodeTransitDay(short));
+  const short:TestDay = fixture(); short.columns[0] = [1]; assert.throws(() => encodeTransitDay(short));
   assert.throws(() => encodeTransitDay(fixture(), { orders: [3] }));
   assert.throws(() => encodeNumericColumn(new Float64Array(1440), -1));
   for (const [column, value] of [[11, -1], [21, 360], [22, 1.5], [22, 20_000_000_000], [23, -1e-12], [23, 1.00001e-7]] as const) {
@@ -110,14 +113,14 @@ test('encoder refuses incomplete days, nonfinite coordinates and invalid predict
 });
 
 test('full packets validate each indexed value once before encoding, including sparse input', () => {
-  const day = fixture(); let reads = 0;
+  const day:TestDay = fixture(); let reads = 0;
   day.columns[0] = new Proxy(Array.from(day.columns[0]), { get(target, key, receiver) {
     if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
     return Reflect.get(target, key, receiver);
   } });
   encodeTransitDay(day);
   assert.equal(reads, 1440 * 2, 'one range validation and one numerical encoding read');
-  const sparse = fixture(); sparse.columns[0] = Array.from(sparse.columns[0]); delete sparse.columns[0][12];
+  const sparse:TestDay = fixture(); sparse.columns[0] = Array.from(sparse.columns[0]); delete sparse.columns[0][12];
   assert.throws(() => encodeTransitDay(sparse));
   const missing = fixture(); delete missing.columns[0];
   assert.throws(() => encodeTransitDay(missing));

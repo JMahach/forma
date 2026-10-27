@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import { brotliCompressSync, brotliDecompressSync, constants, gzipSync, gunzipSync } from 'node:zlib';
 import { createStaticAssets } from '../server/http/static-assets.ts';
 import { createPublicFileHandler, readReleaseManifest } from '../server/http/public-files.ts';
@@ -28,11 +29,11 @@ async function write(root: string, filename: string, bytes: string|NodeJS.ArrayB
   await fs.mkdir(path.dirname(path.join(root, filename!)), { recursive: true });
   await fs.writeFile(path.join(root, filename), bytes);
 }
-async function request(handler: ReturnType<typeof createRequestHandler>, url: string, { method = 'GET', headers = {} }: { method?: string; headers?: IncomingHttpHeaders } = {}) {
+async function request(handler: ReturnType<typeof createRequestHandler>, url: string, { method = 'GET', headers = {}, remoteAddress }: { method?: string; headers?: IncomingHttpHeaders;remoteAddress?:string } = {}) {
   const res: AssetResponse = { status: 0, headers: {}, headersSent: false, body: undefined,
     writeHead(status: number, headers = {}) { this.status = status; this.headers = headers; this.headersSent = true; },
     end(body?: Buffer) { this.body = body; } };
-  await handler({ method, url, headers: { host: 'localhost', ...headers } } as IncomingMessage, res as unknown as ServerResponse);
+  await handler({ method, url, headers: { host: 'localhost', ...headers },socket:{remoteAddress} } as IncomingMessage, res as unknown as ServerResponse);
   return res;
 }
 function handler(root: string, options: Omit<Parameters<typeof createPublicFileHandler>[0], 'root'> = {}) {
@@ -265,4 +266,89 @@ test('the actual initial page exposes the timeline button without a file availab
   const tag = page.body!.toString().match(/<button\b[^>]*\bid="lifetimeToggle"[^>]*>/)?.[0];
   assert.ok(tag);
   assert.doesNotMatch(tag, /\s+hidden(?=\s|>)/);
+});
+
+
+test('release exposes only its explicit mutable offline worker and nonlocal source requests expose none', async t => {
+  const root = await directory(t);
+  const entries = {...manifest(), 'service-worker.js': releaseEntry('service-worker.js')};
+  const files = await release(root, entries);
+  const response = await request(handler(root, {files, precompressed: true}), '/service-worker.js',
+    {remoteAddress:'127.0.0.1',headers:{host:'localhost:3636'}});
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['Content-Type'], 'text/javascript; charset=utf-8');
+  assert.equal(response.headers['Cache-Control'], 'no-cache');
+  assert.deepEqual(response.body, content);
+  assert.equal((await request(handler(root), '/service-worker.js')).status, 404);
+  for (const entry of [releaseEntry('server/server.ts'), releaseEntry('service-worker.js', true)]) {
+    await write(root, 'manifest.json', JSON.stringify({...entries, 'service-worker.js': entry}));
+    await assert.rejects(readReleaseManifest(root), /Invalid public release entry/);
+  }
+});
+
+test('a versioned release shell still receives runtime metadata for diagnostics and calculations',async t=>{
+ const root=await directory(t),source='<html><body data-offline-version="'+'a'.repeat(64)+'">Форма</body></html>';
+ await write(root,'index.html',source);
+ const response=await request(handler(root,{files:new Map([['index.html','index.html']]),appVersion:'0.2-test',environment:'stand',calculationVersion:'b'.repeat(64)}),'/');
+ const html=response.body!.toString();
+ assert.match(html,/data-app-version="0.2-test"/);assert.match(html,/data-app-environment="stand"/);
+ assert.match(html,/data-calculation-version="b{64}"/);
+ const {normalizeAppMetadata}=await import('../shared/app-metadata.ts');assert.equal(normalizeAppMetadata(html),source);
+});
+
+
+test('source mode serves the shared storage-pressure and input-restoration dependencies',async()=>{
+  const app=handler(fileURLToPath(new URL('../',import.meta.url)));
+  for(const file of ['src/data/storage-pressure.ts','src/domain/input-draft.ts','src/views/input-selection.ts']){
+    const result=await request(app,'/'+file);
+    assert.equal(result.status,200,file);
+    assert.match(String(result.headers['Content-Type']),/javascript/,file);
+    assert.ok(result.body?.length,file);
+  }
+});
+
+
+test('loopback source retires the previous release worker without touching storage or navigating tabs',async t=>{
+  const root=await directory(t),serve=handler(root);
+  const response=await request(serve,'/service-worker.js',{headers:{host:'localhost:3636'},remoteAddress:'127.0.0.1'});
+  assert.equal(response.status,200);assert.equal(response.headers['Content-Type'],'text/javascript; charset=utf-8');
+  assert.equal(response.headers['Cache-Control'],'no-store');assert.equal(response.headers['Clear-Site-Data'],undefined);
+  assert.equal(response.headers['Content-Length'],response.body!.length);
+  type Event={waitUntil(promise:Promise<unknown>):void;respondWith?(value:unknown):void};
+  const listeners=new Map<string,(event:Event)=>void>();let registered=true,waiting=true,intercepted=false;
+  const self={addEventListener(name:string,listener:(event:Event)=>void){listeners.set(name,listener);},
+    async skipWaiting(){waiting=false;},registration:{async unregister(){registered=false;return true;}},
+    get clients(){return assert.fail('retirement must not claim or navigate tabs');},
+    get caches(){return assert.fail('retirement must not clear public files');},
+    get indexedDB(){return assert.fail('retirement must not touch personal data');}};
+  runInNewContext(response.body!.toString(),{self});
+  for(const name of ['install','activate']){
+    const work:Promise<unknown>[]=[];const listener=listeners.get(name);assert.ok(listener);
+    listener({waitUntil(promise){work.push(promise);}});await Promise.all(work);
+  }
+  assert.equal(waiting,false);assert.equal(registered,false);
+  listeners.get('fetch')?.({waitUntil(){},respondWith(){intercepted=true;}});assert.equal(intercepted,false);
+  const head=await request(serve,'/service-worker.js',{method:'HEAD',headers:{host:'127.0.0.1:3636'},remoteAddress:'::ffff:127.0.0.1'});
+  assert.equal(head.status,200);assert.equal(head.body,undefined);
+  assert.equal(head.headers['Content-Length'],response.body!.length);
+});
+
+test('source retirement is limited to local stand requests and preserves encoding negotiation',async t=>{
+  const root=await directory(t),serve=handler(root);
+  for(const remoteAddress of ['192.168.1.8',undefined])assert.equal((await request(serve,'/service-worker.js',{
+    remoteAddress,headers:{host:'localhost:3636','x-forwarded-for':'127.0.0.1'}})).status,404);
+  for(const host of ['forma.juxtaposition.ru','192.168.1.10:3636','localhost.evil:3636','user@localhost:3636']){
+    assert.equal((await request(serve,'/service-worker.js',{remoteAddress:'127.0.0.1',headers:{host}})).status,404);
+  }
+  assert.equal((await request(handler(root,{environment:'production'}),'/service-worker.js',{
+    remoteAddress:'127.0.0.1',headers:{host:'localhost:3636'}})).status,404);
+  const local={remoteAddress:'::1',headers:{host:'[::1]:3636'}};
+  const plain=await request(serve,'/service-worker.js',local);assert.equal(plain.status,200);
+  for(const encoding of ['br','gzip']){
+    const result=await request(serve,'/service-worker.js',{...local,headers:{...local.headers,'accept-encoding':encoding}});
+    assert.equal(result.status,200);assert.equal(result.headers['Content-Encoding'],encoding);
+    assert.deepEqual(encoding==='br'?brotliDecompressSync(result.body!):gunzipSync(result.body!),plain.body);
+  }
+  assert.equal((await request(serve,'/service-worker.js',{...local,headers:{...local.headers,'accept-encoding':'*;q=0'}})).status,406);
+  assert.equal((await request(serve,'/service-worker.js',{...local,method:'POST'})).status,405);
 });

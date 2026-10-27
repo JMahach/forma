@@ -24,7 +24,9 @@ function fixture(initialPhone = true) {
   const element = (name: string) => document.createElementNS(SVG_NS, name);
   const page = Object.assign(element('section'), { hidden: true });
   const index = element('nav'), article = element('article'), categories = element('nav');
-  const search = Object.assign(element('input'), { value: '' });
+  const inputEvents = new EventTarget();
+  const search = Object.assign(element('input'), { value: '',
+    addEventListener: inputEvents.addEventListener.bind(inputEvents), removeEventListener: inputEvents.removeEventListener.bind(inputEvents) });
   const section = Object.assign(element('select'), { value: '' });
   const count = element('p'), back = element('button');
   back.textContent = 'К разделам';
@@ -39,6 +41,12 @@ function fixture(initialPhone = true) {
     configurable: true,
     get: () => page.hidden || phone && page.dataset.view === 'catalog' ? 0 : readingOffset,
     set: (value: number) => { if (!page.hidden && (!phone || page.dataset.view !== 'catalog')) readingOffset = value; },
+  });
+  let catalogueOffset = 0;
+  Object.defineProperty(index, 'scrollTop', {
+    configurable: true,
+    get: () => page.hidden || phone && page.dataset.view === 'article' ? 0 : catalogueOffset,
+    set: (value: number) => { if (!page.hidden && (!phone || page.dataset.view !== 'article')) catalogueOffset = value; },
   });
   const articleHandlers = new Map<string, (event: { target: typeof article }) => void>();
   article.addEventListener = (name: string, callback: unknown) => {
@@ -177,4 +185,39 @@ test('desktop article scroll survives narrowing to phone and opening the same cu
   assert.equal(h.page.dataset.view, 'article');
   assert.equal(h.article.scrollTop, 210, 'scroll tracking must preserve the desktop offset before the pane becomes hidden');
   assert.equal(h.active(), h.article.querySelector('h3'));
+});
+
+
+for (const phone of [true, false]) test(`repeated workspace hides preserve the last visible article offset (${phone ? 'phone' : 'desktop'})`, () => {
+  const h = fixture(phone);
+  h.controller.show({ type: 'gate', id: 8 });
+  h.click(h.article.querySelector('[data-entry-id="channel.1-8"]'));
+  h.scrollArticle(240);
+  h.controller.hide();
+  assert.equal(h.article.scrollTop, 0, 'a hidden pane exposes no layout position');
+  h.controller.hide();
+  h.controller.hide();
+  h.controller.show({ type: 'gate', id: 8 });
+  assert.equal(h.controller.snapshot.entryId, 'channel.1-8');
+  assert.equal(h.article.scrollTop, 240, 'visiting other workspaces must not overwrite reading state with hidden zero');
+  h.click(h.article.querySelector('[data-reading-back]'));
+  assert.equal(h.controller.snapshot.entryId, 'gate.8', 'the existing reading chain remains usable');
+});
+
+test('repeated workspace hides preserve the filtered phone catalog and its return target', () => {
+  const h = fixture(); h.controller.show(); h.find('а');
+  const card = h.index.querySelector('[data-entry-id="gate.8"]');
+  h.index.scrollTop = 145;
+  h.click(card); h.click(h.back);
+  h.controller.hide();
+  assert.equal(h.index.scrollTop, 0, 'the hidden catalog has no layout position');
+  h.controller.hide();
+  h.controller.show();
+  assert.equal(h.controller.snapshot.view, 'catalog');
+  assert.equal(h.search.value, 'а');
+  assert.equal(h.index.scrollTop, 145);
+  assert.equal(h.index.querySelector('[data-entry-id="gate.8"]'), card);
+  h.click(card); h.click(h.back);
+  assert.equal(h.active(), card);
+  assert.equal(h.index.scrollTop, 145);
 });

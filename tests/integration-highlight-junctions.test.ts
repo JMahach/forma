@@ -270,7 +270,7 @@ test('single and connected highlights protect semantic interiors and active neig
   // Singles subtract the five figures plus their gaps (12.06). Connected
   // routes restore their 16.06 outer footprint, then subtract their own and
   // active neighbors' 12.06 inner footprints. The parent whole-node mask
-  // additionally protects every crossing physical figure and its gap.
+  // protects peer figures and their gaps, but does not cut the lower 26–44 crossing.
   for (const selection of selections) {
     const markup = renderBodygraph({}, selection);
     const integration = markup.slice(markup.indexOf('data-junction="integration"'), markup.indexOf('<g class="bodygraph-centers">'));

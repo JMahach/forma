@@ -1,0 +1,205 @@
+import { canonicalChartId } from '../../shared/chart-record-contract.ts';
+import type { StoragePressure, StorageRelief } from './storage-pressure.ts';
+import type { AccountChart } from '../../shared/chart-record-contract.ts';
+import { createChartId } from '../domain/chart-record.ts';
+import { validateAccountChart } from '../domain/account-chart.ts';
+import { createIndexedDatabase } from './indexed-db.ts';
+
+export interface LibraryLease { accountId: string; generation: string }
+export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
+export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true} | {status:'partial';lease:LibraryLease} | {status: 'stale' | 'unavailable'};
+interface Options { indexedDB?: IDBFactory | null; databaseName?: string;now?:()=>number;pressure?:StoragePressure }
+const ownerId = (value: unknown): value is string => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+function lease(value: unknown): LibraryLease | null {
+  if (!object(value) || !ownerId(value.accountId) || typeof value.generation !== 'string' || !value.generation) return null;
+  return {accountId: value.accountId, generation: value.generation};
+}
+const same = (current: unknown, seen: LibraryLease) => {
+  const value = lease(current); return !!value && value.accountId === seen.accountId && value.generation === seen.generation;
+};
+const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
+
+/** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
+export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
+  const database = createIndexedDatabase({databaseName, version: 3, stores: ['charts', 'context'], indexedDB,
+    upgrade(db,tx) {
+      const charts=db.objectStoreNames.contains('charts')?tx.objectStore('charts'):db.createObjectStore('charts',{keyPath:'id'});
+      if(!charts.indexNames.contains('accessed'))charts.createIndex('accessed','_accessedAt');
+      if(!db.objectStoreNames.contains('context'))db.createObjectStore('context',{keyPath:'key'});
+      const scan=charts.openCursor();scan.onsuccess=()=>{const cursor=scan.result;if(!cursor)return;
+        const id=typeof cursor.value.id==='string'?canonicalChartId(cursor.value.id):cursor.value.id;
+        if(id!==cursor.value.id){
+          const existing=charts.get(id);existing.onsuccess=()=>{
+            if(existing.result){tx.abort();return;}
+            charts.put({...cursor.value,id,_accessedAt:Number.isFinite(cursor.value._accessedAt)?cursor.value._accessedAt:0});
+            cursor.delete();cursor.continue();
+          };return;
+        }
+        if(!Number.isFinite(cursor.value._accessedAt))cursor.update({...cursor.value,_accessedAt:0});cursor.continue();};
+    }});
+  let admitted:LibraryLease|null|undefined;
+  return {
+    async read(): Promise<LibrarySnapshot | null> {
+      const snapshot=await database.transaction<LibrarySnapshot>('readonly', (tx, result) => {
+        const context = tx.objectStore('context').get('owner');
+        context.onsuccess = () => {
+          if (!context.result || context.result.accountId === null) { result({lease: null, charts: []}); return; }
+          const current = lease(context.result); if (!current) return;
+          const rows = tx.objectStore('charts').getAll();
+          rows.onsuccess = () => {
+            const charts: AccountChart[] = [];
+            for (const raw of rows.result) {
+              try { charts.push(validateAccountChart(raw, current.accountId)); }
+              catch { /* Do not publish or delete an invalid stored row. A server refresh may replace it. */ }
+            }
+            result({lease: current, charts});
+          };
+        };
+      });
+      if(snapshot && (admitted===undefined || admitted?.accountId===snapshot.lease?.accountId))admitted=snapshot.lease;
+      return snapshot;
+    },
+    async activate(accountId: string): Promise<LibraryStoreResult> {
+      if (!ownerId(accountId)) throw new TypeError('invalid_account');
+      const saved=await database.transaction<LibraryStoreResult>('readwrite', (tx, result) => {
+        const contexts = tx.objectStore('context'), request = contexts.get('owner');
+        request.onsuccess = () => {
+          const current = lease(request.result);
+          if (current?.accountId === accountId) { result({status: 'stored', lease: current}); return; }
+          if (request.result && request.result.accountId !== null && !current) return;
+          const next = {accountId, generation: createChartId()};
+          tx.objectStore('charts').clear();
+          contexts.put({key: 'owner', ...next});
+          result({status: 'stored', lease: next});
+        };
+      }) ?? unavailable();
+      if(saved.status==='stored')admitted=saved.lease;return saved;
+    },
+    async put(seen:LibraryLease,values:readonly AccountChart[]):Promise<LibraryStoreResult> {
+      // A late quota must not acquire cleanup permission from a new account.
+      const isCurrent=pressure?.capture();
+      const charts=values.map(value=>validateAccountChart(value,seen.accountId));
+      const write=(batch:readonly AccountChart[])=>database.transactionResult<LibraryStoreResult>('readwrite',(tx,result,fail)=>{
+        const request=tx.objectStore('context').get('owner');request.onsuccess=()=>{
+          if(!same(request.result,seen)){result({status:'stale'});return;}
+          const rows=tx.objectStore('charts');
+          for(const chart of batch){const prior=rows.get(chart.id);prior.onsuccess=()=>{
+            try{
+              let current:AccountChart|null=null;try{current=validateAccountChart(prior.result,seen.accountId);}catch{}
+              if(!current || current.revision<chart.revision)rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:now()});
+            }catch(error){fail(error);}
+          };}
+          result({status:'stored',lease:{...seen}});
+        };
+      });
+      const first=await write(charts);
+      if(first.status!=='quota')return first.status==='complete'?first.value??unavailable():unavailable();
+      if(isCurrent && !isCurrent())return {status:'stale'};
+      // One hundred cards need not fit atomically to preserve one usable card.
+      // Keep the leading saved subset; never cycle through the whole library
+      // evicting cards that this same background page just downloaded.
+      let stored=0;
+      for(const chart of charts){
+        let result=await write([chart]),recovered=false;
+        if(result.status==='quota'){
+          if(isCurrent && !isCurrent())return {status:'stale'};
+          if(stored)return {status:'partial',lease:{...seen}};
+          if(pressure){result=await pressure.write(()=>write([chart]),{chartIds:[chart.id]});recovered=true;}
+        }
+        if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen}}:unavailable();
+        if(result.value.status!=='stored')return result.value;
+        stored++;
+        if(recovered)return stored===charts.length?{...result.value,pressure:true}:{status:'partial',lease:{...seen}};
+      }
+      return {status:'stored',lease:{...seen},pressure:true};
+    },
+    // A working RAM record and an open database do not prove a reload can restore it.
+    async canRestore(seen:LibraryLease,expected:AccountChart):Promise<boolean> {
+      return await database.transaction<boolean>('readonly',(tx,result)=>{
+        const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
+          if(!same(owner.result,seen) || expected.accountId!==seen.accountId){result(false);return;}
+          const record=tx.objectStore('charts').get(expected.id);record.onsuccess=()=>{
+            try {
+              const saved=validateAccountChart(record.result,seen.accountId);
+              result(saved.revision>=expected.revision && saved.noteRevision>=expected.noteRevision
+                && saved.calculationVersion===expected.calculationVersion);
+            } catch {result(false);}
+          };
+        };
+      })===true;
+    },
+    async touch(seen:LibraryLease,chartId:string):Promise<boolean> {
+      return await database.transaction<boolean>('readwrite',(tx,result,fail)=>{
+        const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
+          if(!same(owner.result,seen)){result(false);return;}
+          const rows=tx.objectStore('charts'),read=rows.get(chartId);read.onsuccess=()=>{
+            if(!read.result){result(false);return;}
+            try{rows.put({...read.result,_accessedAt:now()});result(true);}catch(error){fail(error);}
+          };
+        };
+      })===true;
+    },
+    async evictForSpace(keep:number,exclude:readonly string[]=[],isCurrent:()=>boolean=()=>true):Promise<StorageRelief> {
+      if(!Number.isSafeInteger(keep)||keep<0)throw new RangeError('Invalid library minimum');
+      return await database.transaction<StorageRelief>('readwrite',(tx,result)=>{
+        const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
+          if(!isCurrent() || admitted===undefined || (admitted? !same(owner.result,admitted):lease(owner.result)!==null)){result('unavailable');return;}
+          const rows=tx.objectStore('charts'),count=rows.count();count.onsuccess=()=>{
+          if(count.result<=keep){result('empty');return;}
+          const request=rows.index('accessed').openCursor();request.onsuccess=()=>{
+            const cursor=request.result;if(!cursor){result('empty');return;}
+            if(exclude.includes(String(cursor.primaryKey))){cursor.continue();return;}
+            if(!isCurrent()){result('unavailable');return;}
+            cursor.delete();result('released');
+          };
+        };};
+      })??'unavailable';
+    },
+    async remove(seen: LibraryLease, chartId: string): Promise<LibraryStoreResult> {
+      const saved=await database.transaction<LibraryStoreResult>('readwrite', (tx, result) => {
+        const contexts = tx.objectStore('context'), request = contexts.get('owner');
+        request.onsuccess = () => {
+          if (!same(request.result, seen)) { result({status: 'stale'}); return; }
+          const next = {...seen, generation: createChartId()};
+          tx.objectStore('charts').delete(chartId);
+          contexts.put({key: 'owner', ...next});
+          result({status: 'stored', lease: next});
+        };
+      }) ?? unavailable();
+      if(saved.status==='stored' && admitted && same(admitted,seen))admitted=saved.lease;
+      return saved;
+    },
+    async clear(seen: LibraryLease): Promise<'cleared' | 'stale' | 'unavailable'> {
+      const cleared=await database.transaction<'cleared' | 'stale'>('readwrite', (tx, result) => {
+        const contexts = tx.objectStore('context'), request = contexts.get('owner');
+        request.onsuccess = () => {
+          if (!same(request.result, seen)) { result('stale'); return; }
+          tx.objectStore('charts').clear();
+          contexts.put({key: 'owner', accountId: null, generation: createChartId()});
+          result('cleared');
+        };
+      }) ?? 'unavailable';
+      if(cleared==='cleared' && admitted && same(admitted,seen))admitted=null;
+      return cleared;
+    },
+    // Explicit logout targets the account, including an activation still in
+    // flight or a generation advanced by a deletion in another tab.
+    async clearAccount(accountId: string): Promise<'cleared' | 'stale' | 'unavailable'> {
+      if (!ownerId(accountId)) throw new TypeError('invalid_account');
+      const cleared=await database.transaction<'cleared' | 'stale'>('readwrite', (tx, result) => {
+        const contexts = tx.objectStore('context'), request = contexts.get('owner');
+        request.onsuccess = () => {
+          if (request.result?.accountId !== accountId) {result('stale'); return;}
+          tx.objectStore('charts').clear();
+          contexts.put({key: 'owner', accountId: null, generation: createChartId()});
+          result('cleared');
+        };
+      }) ?? 'unavailable';
+      if(cleared==='cleared' && admitted?.accountId===accountId)admitted=null;
+      return cleared;
+    },
+    close: database.close,
+  };
+}
+export type AccountLibraryStore = ReturnType<typeof createAccountLibraryStore>;

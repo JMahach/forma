@@ -2,18 +2,18 @@ import { paintIntegrationLayers } from './integration-paint.ts';
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
-import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.ts';
+import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelHighlightMaskId, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { renderActivationColumns } from './activation-columns.ts';
 import { renderVariableArrows, visibleVariables } from './variable-arrows.ts';
 import { renderMandala } from './mandala.ts';
 import { MANDALA_SCENE_TRANSFORM } from './geometry/mandala-geometry.ts';
-import { DRAWING_TRANSFORM, HIGHLIGHT_OUTLINE, GATE_MARKER, CENTER_STROKE, channelHighlightWidth } from './geometry/drawing-presentation.ts';
+import { DRAWING_TRANSFORM, HIGHLIGHT_OUTLINE, GATE_MARKER, GATE_POINTER_RADIUS, CENTER_STROKE, channelHighlightWidth } from './geometry/drawing-presentation.ts';
 import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from './geometry/activation-layout.ts';
 import { renderChartBackdrop } from './backdrop.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import {
-  roundedCenter, paintOrder,
+  roundedCenter, paintOrder, UNDERPASS_CHANNEL_ID,
   STEM_PATH, INTEGRATION_PATH, INTEGRATION_INNER_SIDE,
   INTEGRATION_OUTER_SIDE, integrationOuterOwnership, integrationEndPlanes, integrationRoute,
 } from './geometry/drawing-geometry.ts';
@@ -88,7 +88,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     return `<g ${attrs('channel', channel.id, `Канал ${channel.id}: ${channel.name}`, selected)} data-defined="${defined}" data-related="${related}" opacity="${opacity}">
       <path class="bg-channel-outline" d="${channel.path}" fill="none" stroke="${PALETTE.outline}" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" pointer-events="none"/>
       ${highlight}
-      ${thumbnail ? '' : `<path class="bg-channel-highlight" d="${channel.path}" fill="none" stroke="${highlightColor}" stroke-width="${highlightWidth}" stroke-linecap="round" ${glow ? `filter="url(#${prefix}-highlight-glow)"` : `mask="url(#${prefix}-highlight-exterior)"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
+      ${thumbnail ? '' : `<path class="bg-channel-highlight" d="${channel.path}" fill="none" stroke="${highlightColor}" stroke-width="${highlightWidth}" stroke-linecap="round" ${glow ? `filter="url(#${prefix}-highlight-glow)"` : `mask="url(#${channelHighlightMaskId(prefix, channel.id)})"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
       <path d="${channel.path}" fill="none" stroke="${PALETTE.paper}" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" pointer-events="none"/>
       ${halves}
       ${thumbnail ? '' : `<path class="bg-focus-shape" d="${channel.path}" fill="none" stroke="transparent" stroke-width="19" stroke-linecap="round" pointer-events="${interactive ? 'stroke' : 'none'}"/>`}
@@ -142,7 +142,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     if (center.id === 'spleen') labels = ['Селезёночный'];
     return `<g ${attrs('center', center.id, label, selected)} data-defined="${defined}" opacity="${opacity}">
       <path class="bg-center-shape" data-center-points="${center.points}" d="${shape}" fill="${fill}" stroke="${stroke}" stroke-width="${CENTER_STROKE}" stroke-linejoin="round"/>
-      ${thumbnail ? '' : `<path class="bg-center-highlight" d="${shape}" fill="none" stroke="${highlightColor}" stroke-width="${glow ? CENTER_STROKE : CENTER_HIGHLIGHT_WIDTH}" stroke-linejoin="round" ${glow ? `filter="url(#${prefix}-highlight-glow)" mask="url(#${prefix}-center-glow-exterior)"` : `mask="url(#${prefix}-highlight-exterior)"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
+      ${thumbnail ? '' : `<path class="bg-center-highlight" d="${shape}" fill="none" stroke="${highlightColor}" stroke-width="${glow ? CENTER_STROKE : CENTER_HIGHLIGHT_WIDTH}" stroke-linejoin="round" ${glow ? `filter="url(#${prefix}-highlight-glow)" mask="url(#${prefix}-center-glow-exterior)"` : `mask="url(#${prefix}-highlight-center-exterior)"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
       ${options.showLabels === true ? `<text x="${center.labelX}" y="${center.labelY}" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="${['spleen', 'solar'].includes(center.id) ? 7.5 : 8.5}" font-weight="500" letter-spacing=".1" fill="#171513" pointer-events="none">${labels.map((label, index) => `<tspan x="${center.labelX}" dy="${index ? 9 : 0}">${escape(label)}</tspan>`).join('')}</text>` : ''}
     </g>`;
   }).join('');
@@ -153,7 +153,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     const paint = gatePaint(gate, state, options);
     const { active, selected, related, label, opacity, fill, stroke } = paint;
     return `<g ${attrs('gate', gate.id, label, selected)} data-active="${active}" data-related="${related}" opacity="${opacity}" transform="translate(${gate.x} ${gate.y})">
-      <circle r="${GATE_MARKER.hitRadius}" fill="transparent" pointer-events="${interactive ? 'all' : 'none'}"/>
+      <circle class="bg-gate-hit" r="${GATE_POINTER_RADIUS}" fill="transparent" pointer-events="${interactive ? 'fill' : 'none'}"/>
       ${glow ? `<circle class="bg-gate-glow" r="${GATE_MARKER.radius}" fill="${paint.highlightFill}" stroke="${paint.highlightColor}" stroke-width="${GATE_MARKER.highlightWidth}" filter="url(#${prefix}-gate-glow)" opacity="${paint.highlightOpacity}" pointer-events="none"/>
       <circle class="bg-gate-disc" r="${GATE_MARKER.radius}" fill="${fill}" stroke="${stroke}" pointer-events="none"/>
       <circle class="bg-gate-highlight" data-state="${paint.highlightState}" r="${GATE_MARKER.radius}" fill="${paint.highlightFill}" stroke="${paint.highlightColor}" stroke-width="${GATE_MARKER.highlightWidth}" opacity="${paint.highlightOpacity}" pointer-events="none"/>` : `<circle class="bg-gate-disc" r="${GATE_MARKER.radius}" fill="${fill}" stroke="${stroke}" pointer-events="none"/>
@@ -163,8 +163,8 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     </g>`;
   }).join('');
 
-  // One inner union clips every exterior ring. At a center/channel junction,
-  // neither ring can continue inside the other figure or its gap.
+  // Shared junction cutouts protect centers and channel interiors. Crossings
+  // also respect paint order: upper contours stay whole, the lower one meets the physical overpass edge without a gap.
   return `${thumbnail ? '' : `<defs>
     <g class="bg-integration-color-defs">${integrationHighlight.definitions}</g>
     <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${activationLaneColor(state, 0)}"/><stop offset="50%" stop-color="${activationLaneColor(state, 1)}"/></linearGradient>
@@ -174,11 +174,16 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
       <rect x="-16" y="-16" width="672" height="852" fill="#ffffff"/>
       ${[...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => channel.path), INTEGRATION_PATH].map(path => `<path d="${path}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
       ${CENTERS.map(center => `<path d="${roundedCenter(center.points)}" fill="#000000" stroke="#ffffff" stroke-width="${CENTER_STROKE}" stroke-linejoin="round"/>`).join('')}
-    </mask>` : `<mask id="${prefix}-highlight-exterior" maskUnits="userSpaceOnUse" x="-16" y="-16" width="672" height="852">
-      <rect x="-16" y="-16" width="672" height="852" fill="#ffffff"/>
-      ${[...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => channel.path), INTEGRATION_PATH].map(path => `<path d="${path}" fill="none" stroke="#000000" stroke-width="${CHANNEL_HIGHLIGHT_INNER_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
-      ${CENTERS.map(center => `<path d="${roundedCenter(center.points)}" fill="#000000" stroke="#000000" stroke-width="${CENTER_HIGHLIGHT_INNER_WIDTH}" stroke-linejoin="round"/>`).join('')}
-    </mask>`}
+    </mask>` : `${['highlight-exterior', 'highlight-center-exterior', 'highlight-underpass-exterior'].map(kind => {
+      const lower = kind === 'highlight-underpass-exterior';
+      const paths = [...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)
+        && (kind !== 'highlight-exterior' || channel.id !== UNDERPASS_CHANNEL_ID)), { id: 'integration', path: INTEGRATION_PATH }];
+      return `<mask id="${prefix}-${kind}" maskUnits="userSpaceOnUse" x="-16" y="-16" width="672" height="852">
+        <rect x="-16" y="-16" width="672" height="852" fill="#ffffff"/>
+        ${paths.map(({ id, path }) => `<path d="${path}" fill="none" stroke="#000000" stroke-width="${lower && id !== UNDERPASS_CHANNEL_ID ? CHANNEL_WIDTH.outline : CHANNEL_HIGHLIGHT_INNER_WIDTH}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
+        ${CENTERS.map(center => `<path d="${roundedCenter(center.points)}" fill="#000000" stroke="#000000" stroke-width="${CENTER_HIGHLIGHT_INNER_WIDTH}" stroke-linejoin="round"/>`).join('')}
+      </mask>`;
+    }).join('')}`}
     <clipPath id="${prefix}-integration-inner-side" clipPathUnits="userSpaceOnUse"><path d="${INTEGRATION_INNER_SIDE}"/></clipPath>
     ${integrationOuterOwnership.map(({ gate, path }) => `<clipPath id="${prefix}-integration-outer-owner-${gate}" clipPathUnits="userSpaceOnUse"><path class="bg-integration-outer-side" d="${INTEGRATION_OUTER_SIDE}"/><path class="bg-integration-fork-side" d="${path}"/></clipPath>`).join('')}
     ${integrationEndPlanes.map(({ gate, polygon }) => `<clipPath id="${prefix}-integration-end-${gate}" clipPathUnits="userSpaceOnUse"><polygon data-terminal-gate="${gate}" points="${polygon}"/></clipPath>`).join('')}

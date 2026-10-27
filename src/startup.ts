@@ -1,8 +1,18 @@
+import type { createJournal } from './journal.ts';
+import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
+import type {ClientActionContext,ClientContextStep,ClientObservation,ClientReportReason} from '../shared/client-report-contract.ts';
+import { createStoragePressure } from './data/storage-pressure.ts';
+import { createCalculationUpdates } from './data/calculation-updates.ts';
+import { createNavigation } from './state/navigation.ts';
+import { viewForRoute } from './state/view-session.ts';
+import { attachAccount } from './account.ts';
 import { isDevelopmentPort } from '../shared/development.ts';
 import { attachPanelKeyboard } from './views/side-panel-controls.ts';
 import type { SavedView } from './data/view-store.ts';
-import { createTransitDayClient } from './data/transit-day-client.ts';
+import { createCalculationClients } from './data/calculation-clients.ts';
 import { createViewStore } from './data/view-store.ts';
+import { getConnectionMode } from './data/http-transport.ts';
+import { actionAvailability } from './ui/action-state.ts';
 import { createChartStore } from './data/chart-store.ts';
 import { resolveSelectedChartId } from './state/chart-session.ts';
 import { holdLoadingContent, commitLoadingLayout } from './views/chart-loading.ts';
@@ -25,12 +35,68 @@ import { attachCameraControls } from './views/camera-controls.ts';
 import { attachLoadingPreview } from './views/loading-preview.ts';
 import { lifeTimelineForChart } from './domain/cycles.ts';
 
+type Journal=ReturnType<typeof createJournal>;
+let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
+let applicationFailed=false,connectedJournal:Journal|undefined,connection:Promise<void>|undefined;
+// One first startup fact, before the optional journal is available. No snapshot,
+// raw exception, private identity, queue or delivery state lives in this handoff.
+let earlyFailure:{action:ClientActionContext;step:ClientContextStep & {reason:ClientReportReason};occurredAt:number}|undefined;
+function earlyObservation(action:ClientActionContext) {
+  let delegate:ClientObservation|undefined,finished=false,failed=false;
+  const started=performance.now();
+  const observation:ClientObservation & {bind(value:Journal):void}={
+    bind(value){if(!finished && !failed)delegate=value.begin(action);},
+    async reportFailure(fact){
+      if(finished || failed)return;
+      if(delegate)return delegate.reportFailure(fact);
+      const step=parseClientContextStep(fact);
+      if(!step?.reason || !CLIENT_REPORT_REASONS.includes(step.reason as ClientReportReason))return;
+      failed=true;
+      earlyFailure??={action,step:{...step,reason:step.reason as ClientReportReason,durationMs:Math.max(0,performance.now()-started)},occurredAt:Date.now()};
+    },
+    reportError(error,step){return observation.reportFailure({...step,reason:clientFailureReason(error)});},
+    finishSuccess(){finished=true;delegate?.finishSuccess();},
+  };
+  return observation;
+}
+let earlyView:ReturnType<typeof earlyObservation>|undefined,earlyCalculation:ReturnType<typeof earlyObservation>|undefined;
+let viewObservation:ClientObservation|undefined,viewOwner:string|null|undefined;
+let getViewOwner:()=>string|null=()=>null;
+/** Entry hands one optional journal owner to the already prepared interface. */
+export function connectJournal(journal:Journal) {
+  return connection??=(async()=>{
+    // Early startup did not know an accepted account. Record it anonymously
+    // before the application's existing account boundary invalidates handles.
+    if(earlyFailure){const pending=earlyFailure;journal.setAccount(null);
+      await journal.begin(pending.action,pending.occurredAt).reportFailure(pending.step);
+      earlyFailure=undefined;
+    }
+    earlyView?.bind(journal);earlyCalculation?.bind(journal);connectedJournal=journal;
+    application?.attachJournal(journal);
+    if(applicationFailed){
+      journal.setAccount(account.getSession()?.accountId??null,account.getSession()?.sessionId,account.getSession()?.diagnosticProof);
+      void journal.begin({action:'startup',component:'startup'})
+        .reportFailure({stage:'render',reason:'unclassified_error'});
+    }
+  })();
+}
+
 attachPageGestures(document);
 
 const element = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 const toast = createToast(element('toast'));
 element('chartLoadingStatus').textContent = 'Загружаем карту…';
-const viewStore = createViewStore({ onStorageError: toast }), savedView = viewStore.read();
+const navigation = createNavigation({location, history, events: window});
+const viewStore = createViewStore({ onStorageError: toast,
+  onStorageFailure(fact){
+    const owner=getViewOwner();
+    if(viewOwner!==owner){viewObservation?.finishSuccess();viewObservation=undefined;viewOwner=owner;}
+    viewObservation??=connectedJournal?.begin({action:'restore',component:'storage'})
+      ??(earlyView??=earlyObservation({action:'restore',component:'storage'}));
+    return viewObservation.reportFailure(fact);
+  },
+  onStorageRecovery(){viewObservation?.finishSuccess();viewObservation=undefined;},
+}), savedView = viewForRoute(navigation.snapshot.route, viewStore.read());
 let saveBeforeNavigate = () => {}, flushLoadingView = () => {};
 const previewLoading = attachLoadingPreview({ button: element('toggleLoadingPreview'), location,
   beforeNavigate: () => saveBeforeNavigate() });
@@ -41,17 +107,28 @@ let loadingInteraction = false;
 const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-transit'
   ? savedView?.lifetime?.mode !== 'lifetime'
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
-const dayClient = createTransitDayClient({
+const storagePressure = createStoragePressure();
+const calculationClients = createCalculationClients({ cacheOptions: {pressure: storagePressure}, transit: {
   calculationVersion: document.body.dataset.calculationVersion,
   initialDate: !previewLoading && !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
-});
-const store = createChartStore({ onStorageError: toast });
+}, natal: {calculationVersion: document.body.dataset.calculationVersion},
+  cycles: {cacheVersion: document.body.dataset.cyclesVersion} });
+const dayClient = calculationClients.transit;
+const calculationUpdates = createCalculationUpdates({clients: calculationClients,
+  observe:action=>connectedJournal?.begin(action)??(earlyCalculation??=earlyObservation(action)),
+  expected: {calculationVersion: document.body.dataset.calculationVersion, cyclesVersion: document.body.dataset.cyclesVersion}});
+if (!previewLoading && getConnectionMode() === 'online') void calculationUpdates.refresh();
+const store = createChartStore({ onStorageError: toast, initialTemporaryChart: savedView?.temporaryChart,
+  initialPublicChart:savedView?.publicChart, calculationVersion:document.body.dataset.calculationVersion });
+// Account records are restored by their owner after startup. Legacy local
+// records remain untouched and never become a persistent guest collection.
+store.projectLibrary([], false);
 // The first preview and the application share these state owners. Project the
 // saved shells before importing the application, while boot transitions are off.
 const panels = createPanelState(), workspace = createWorkspaceState();
 attachPanelKeyboard(document, panels);
 const randomButton = document.getElementById('randomChartButton');
-if (randomButton) randomButton.hidden = !isDevelopmentPort(new URL(location.href).port);
+if (randomButton) randomButton.hidden = false;
 panels.restore(savedView?.panels); workspace.restore(savedView?.workspace);
 const studio = element('canvasWrap').parentElement!;
 studio.dataset.workspaceScreen = workspace.screen;
@@ -67,11 +144,12 @@ function syncLoadingPanels() {
   element('summaryBackdrop').hidden = !rightOpen;
 }
 syncLoadingPanels();
-// The local library is already available: render its actual rows once, then
-// let the application attach commands to this same view and store.
-const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document });
+// The tab result is already available. Prepare its existing row once; the
+// application attaches commands and the account library to this same view.
+const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document,
+  canEdit: () => !actionAvailability({ connection: getConnectionMode(), requiresConnection: true }).disabled });
 const selectedId = resolveSelectedChartId(store, savedView?.selectedId);
-libraryView.update(store.charts, workspace.screen === 'chart' ? selectedId : null);
+libraryView.update(store.temporaryChart ? [store.temporaryChart] : [], workspace.screen === 'chart' ? selectedId : null, savedView?.librarySelection);
 libraryView.setScreen(workspace.screen);
 if (panels.left) libraryView.show();
 // Project only the saved controls' geometry; the state owners still restore
@@ -87,7 +165,8 @@ function renderLoadingTools() {
   const initialLifetime = savedLifetime || (savedReturns ? { opened: true, mode: 'lifetime' } as const : null);
   const dayOpened = !initialLifetime && dayAvailable && sameChart
     && (pendingView?.natalDay?.opened === true || personalAvailable && pendingView?.natalDay?.opened !== false);
-  const view = studioPresentation({ isTransit, personalAvailable, dayOpened, lifetime: initialLifetime,
+  const view = studioPresentation({ isTransit, personalAvailable, dayOpened,
+    lifetime: initialLifetime ? { opened: initialLifetime.opened, mode: initialLifetime.mode } : null,
     returnsOpened: Boolean(savedReturns && pendingView?.returns?.opened), returnsEnabled: Boolean(initialLifetime && personalAvailable),
     transitEnabled: Boolean(initialLifetime && isTransit) });
   element('chartSummary').dataset.screen = view.returnsVisible ? 'returns' : 'summary';
@@ -139,13 +218,32 @@ camera.restoreView(savedView?.camera);
 const gestures = attachGestures(element('bodygraph'), { camera, cameraView, resolvePointerTarget: () => null,
   onChange(view, fitted) { cameraChanged(view, fitted); flushLoadingView(); } });
 attachCameraControls({ fitButton: element('fitButton') }, gestures);
-let loadingActive = true;
+let loadingActive = true, pendingAccountFocus = savedView?.account?.focus;
+function cancelLoadingFocus() {
+  pendingAccountFocus = null; loadingInteraction = true;
+}
+document.addEventListener('pointerdown', cancelLoadingFocus, true);
+document.addEventListener('keydown', cancelLoadingFocus, true);
+document.addEventListener('input', cancelLoadingFocus, true);
+function releaseLoadingFocus() {
+  document.removeEventListener('pointerdown', cancelLoadingFocus, true);
+  document.removeEventListener('keydown', cancelLoadingFocus, true);
+  document.removeEventListener('input', cancelLoadingFocus, true);
+}
+const account = attachAccount({ page: element('accountPage'), saved: savedView?.account, loadingOnly: previewLoading,
+  onChange: () => saveBeforeNavigate() });
+getViewOwner=()=>{const access=account.getSession?.();return access?.sessionId??access?.accountId??null;};
+element('accountPage').hidden = workspace.screen !== 'account';
+account.setVisible(workspace.screen === 'account');
 function loadingSnapshot(): Partial<SavedView> {
-  const view = camera.getView(), home = camera.getFittedView();
-  return { ...pendingView, version: 1, selectedId, workspace: workspace.snapshot, panels: panels.snapshot,
-    mandala: pendingView?.mandala === true,
-    camera: { x: (view.x - home.x) / home.k, y: (view.y - home.y) / home.k,
-      k: view.k / home.k, maxK: camera.maximumScale() / home.k } };
+  const current = account.snapshot;
+  const accountView = current && pendingAccountFocus && current.step === 'email'
+    && current.email === savedView?.account?.email && workspace.screen === 'account'
+    ? {...current, focus:pendingAccountFocus} : current;
+  // The shell fallback is not a new selection while the private library is still loading.
+  return { ...pendingView, version: 1, temporaryChart: store.temporaryChart, publicChart:store.publicChart, selectedId:pendingView?.selectedId ?? selectedId, workspace: workspace.snapshot, panels: panels.snapshot,
+    account: accountView, mandala: pendingView?.mandala === true,
+    camera: camera.getSavedView() };
 }
 flushLoadingView = () => {
   if (!loadingActive) return;
@@ -159,7 +257,7 @@ const page = document.defaultView;
 page?.addEventListener?.('pagehide', flushLoadingView);
 function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
   const view = renderLoadingTools();
-  pendingView = { ...pendingView, version: 1, selectedId };
+  pendingView = { ...pendingView, version: 1, selectedId:pendingView?.selectedId ?? selectedId };
   if (kind === 'mandala') pendingView.mandala = !pendingView.mandala;
   else {
     const day = pendingView.natalDay || { index: 0, exactOriginal: true };
@@ -213,21 +311,22 @@ if (!previewLoading) try {
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
   const latestView = loadingInteraction ? loadingSnapshot() : savedView;
-  loadingActive = false;
+  loadingActive = false; releaseLoadingFocus();
   document.removeEventListener('visibilitychange', flushOnHide);
   page?.removeEventListener?.('pagehide', flushLoadingView);
-  const application = app.startApp({ dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  application = app.startApp({ navigation, storagePressure, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
   saveBeforeNavigate = () => application?.flushView();
 } catch {
+  applicationFailed=true;
   const shell = document.querySelector<HTMLElement>('.app-shell')!;
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
   delete shell.dataset.shellReady;
-  loadingActive = false;
+  loadingActive = false; releaseLoadingFocus();
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
   document.removeEventListener('visibilitychange', flushOnHide);
   page?.removeEventListener?.('pagehide', flushLoadingView);
-  element('chartLoadingArt').hidden = false;
+  element('chartLoadingArt').setAttribute('hidden', '');
   element('chartLoadingMessage').hidden = false;
   studio.dataset.workspaceScreen = 'chart';
   const canvas = document.getElementById('canvasWrap')!;
@@ -238,3 +337,9 @@ if (!previewLoading) try {
   retry.hidden = false;
   retry.addEventListener('click', () => location.reload());
 }
+
+// The page updater cannot infer restoration from shell visibility or the worker.
+export function prepareOfflineUpdate(){return application?.prepareOfflineUpdate()??false;}
+export function offlineRestored(){return application?.offlineRestored()??false;}
+export function offlineReady(){return application?.restoration??Promise.resolve();}
+export function subscribeOfflineReady(listener:()=>void){return application?.subscribeOfflineReady(listener)??(()=>{});}

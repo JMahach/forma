@@ -1,7 +1,6 @@
-import type { LifetimeState } from '../state/lifetime.ts';
 interface StudioPresentationInput {
   isTransit?: boolean; personalAvailable?: boolean; dayOpened?: boolean;
-  lifetime?: Pick<LifetimeState, 'opened' | 'mode'> | null;
+  lifetime?: { readonly opened: boolean; readonly mode: 'day' | 'lifetime' } | null;
   returnsOpened?: boolean; returnsEnabled?: boolean; transitEnabled?: boolean; loadFailed?: boolean;
 }
 export type StudioPresentation = ReturnType<typeof studioPresentation>;

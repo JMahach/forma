@@ -78,12 +78,13 @@ function inspect(markup: string) {
 // Continuous integration baseline at the requested 1.65 width scale: red below black below dual,
 // and black above red within the dual pass. All physical paths remain frozen
 // across hover and selection; lane widths and joins have independent checks.
+// The approved 26–44 seam now sits under 2–14; geometry-invariants verifies that boundary.
 const physicalBaselines = {
   inactive: 'de8b8a745274b2e03928badfa064730b7647c2eff637c69cc10695529e3a1e08',
-  black: '8908bdb594ac3214bdaf2491b193db2350734a983a76216d039e84de3ba7fd88',
-  red: 'f101e83e9c15ac3027b13a8d9c817980f531e3c03666a1882a2ccc68e93c84b1',
-  dual: 'ff19728b0adbba4013a94db3218f6c08779beac21fba8aac572b652bc7749de1',
-  mixed: 'a8c2b37f2eb1eb3353f74bc46b3b366b7b56ef6a4c67e1945a46a41a5e7c4fe0',
+  black: 'ca725bba61704630cdf2032a04f42935061593bccb11d7028542a914316a09ff',
+  red: 'fb15bb2f645820d58915cce1571932e4b5131dc8903ed714d6257b77a8c864fd',
+  dual: '0a9208c770adf21ffb0feac142fd3e76754685fdefdec8ec569acbde53f8cd27',
+  mixed: '475e301874a9ac66dce9fd40e4f268a9f88f036cc57ac393368331bd9ed73062',
 };
 
 for (const mode of modes) {

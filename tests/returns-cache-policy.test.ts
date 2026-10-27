@@ -20,13 +20,23 @@ const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
 const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'moon', fromAge: 0, toAge: 100 };
 const packet = (value: CycleInput) => ({ range: { fromAge: value.fromAge ?? 0, toAge: value.toAge ?? 100 }, events: [] });
 const natal = () => libraryRecordAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal' }));
+// These doubles preserve raw reads and absent write receipts. The client validates
+// stored data and ignores receipts; only the fixture-to-port boundary is narrowed.
+type StorageDouble = Partial<{
+  [K in 'getEvents' | 'putEvents' | 'removeEvents' | 'getChart' | 'putChart' | 'removeChart']:
+    (...args: Parameters<ReturnStorage[K]>) => Promise<unknown>;
+}>;
+function storageDouble<T extends StorageDouble>(value: T) {
+  return value as unknown as Omit<T, keyof ReturnStorage> & Partial<ReturnStorage>;
+}
+
 function device() {
   const records = new Map<string, unknown>(), reads: string[] = [], writes: string[] = [];
-  return { records, reads, writes,
+  return storageDouble({ records, reads, writes,
     async getEvents(key: string) { reads.push(JSON.parse(key)[3]); return records.get(key); },
     async putEvents(key: string, value: CycleInput, data: CycleEventsResult) { writes.push(value.body); records.set(key, data); },
     async getChart(key: string) { return records.get(key); }, async putChart(key: string, data: unknown) { records.set(key, data); },
-  };
+  });
 }
 
 test('all body dates reuse RAM; only default body dates survive a fresh client memory', async () => {
@@ -67,7 +77,7 @@ test('extra body dates share the byte LRU across clients and lose reuse only aft
 });
 
 test('a pending device miss notices another client that populated common RAM during the read', async () => {
-  const disk = deferred(), memory = createMemoryCache(), value = { ...input, body: 'saturn' }; let calls = 0;
+  const disk = deferred<CycleEventsResult | null>(), memory = createMemoryCache(), value = { ...input, body: 'saturn' }; let calls = 0;
   const request = async () => { calls++; return packet(value); };
   const waiting = createCyclesClient({ cacheVersion: revision, memory, returnStorage: { getEvents: () => disk.promise }, request });
   const reading = waiting.events(value); await tick();
@@ -77,7 +87,7 @@ test('a pending device miss notices another client that populated common RAM dur
   assert.equal(calls, 1);
 });
 
-test('all full return charts, including extra bodies, persist independently of dates', async t => {
+test('all full return charts reuse RAM while only basic bodies survive fresh client memory', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   let calls = 0;
   const options: TestCyclesOptions = { cacheVersion: revision, returnStorage: storage, request: async (_url, { body }) => {
@@ -86,34 +96,47 @@ test('all full return charts, including extra bodies, persist independently of d
   } };
   const first = createCyclesClient(options);
   for (const { id: body } of CYCLE_BODIES) {
-    await first.chart({ birthUtc: input.birthUtc, body, eventUtc: '2030-01-01T00:00:00.123456Z', timezone: 'UTC' });
+    const query={birthUtc:input.birthUtc,body,eventUtc:'2030-01-01T00:00:00.123456Z',timezone:'UTC'};
+    const ready=await first.chart(query);assert.equal(await first.chart(query),ready);
   }
+  assert.equal(calls,CYCLE_BODIES.length);
   const reload = createCyclesClient(options);
   for (const { id: body } of CYCLE_BODIES) {
     await reload.chart({ birthUtc: input.birthUtc, body, eventUtc: '2030-01-01T00:00:00.123456Z', timezone: 'UTC' });
   }
-  assert.equal(calls, CYCLE_BODIES.length);
+  assert.equal(calls, CYCLE_BODIES.length*2-DEFAULT_CYCLE_BODIES.length);
 });
 
-test('date storage rejects extra-body writes and ignores their old records without deleting them', async t => {
-  const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
-  for (const { id: body } of CYCLE_BODIES) await storage.putEvents(body, { ...input, body }, packet(input));
-  for (const { id: body } of CYCLE_BODIES) assert.deepEqual(await storage.getEvents(body), DEFAULT_CYCLE_BODIES.includes(body) ? packet(input) : null);
+test('migration removes old extra-body dates and charts while preserving basic calculations', async t => {
+  const indexedDB = new IDBFactory(),eventUtc='2030-01-01T00:00:00.123456Z';
+  const chartKey=(body:string)=>JSON.stringify(['chart',revision,input.birthUtc,body,eventUtc,'UTC']);
+  const chart={chart:{...natal(),utc:eventUtc,timezone:'UTC'}};
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('bodygraph-return-events', 2);
+    request.onupgradeneeded=()=>{request.result.createObjectStore('events',{keyPath:'key'});request.result.createObjectStore('charts',{keyPath:'key'});};
     request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
   });
-  t.after(() => db.close());
   await new Promise((resolve, reject) => {
-    const tx = db.transaction('events', 'readwrite');
-    tx.objectStore('events').put({ key: 'old-moon', body: 'moon', birthUtc: input.birthUtc, ...packet(input) });
+    const tx = db.transaction(['events','charts'], 'readwrite');
+    for(const body of ['moon','saturn']) {
+      tx.objectStore('events').put({key:`old-${body}`,body,birthUtc:input.birthUtc,...packet(input)});
+      tx.objectStore('charts').put({key:chartKey(body),data:chart});
+    }
     tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
   });
-  assert.equal(await storage.getEvents('old-moon'), null);
-  const old = await new Promise<{ body: string }>(resolve => {
-    const request = db.transaction('events').objectStore('events').get('old-moon'); request.onsuccess = () => resolve(request.result);
+  db.close();
+  const storage=createReturnStorage({indexedDB});t.after(()=>storage.close());
+  assert.equal(await storage.getEvents('old-moon'),null);assert.equal(await storage.getChart(chartKey('moon')),null);
+  assert.deepEqual(await storage.getEvents('old-saturn'),packet(input));assert.deepEqual(await storage.getChart(chartKey('saturn')),chart);
+  for(const {id:body}of CYCLE_BODIES)await storage.putEvents(body,{...input,body},packet(input));
+  for(const {id:body}of CYCLE_BODIES)assert.deepEqual(await storage.getEvents(body),DEFAULT_CYCLE_BODIES.includes(body)?packet(input):null);
+  const migrated=await new Promise<IDBDatabase>((resolve,reject)=>{
+    const request=indexedDB.open('bodygraph-return-events',3);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
   });
-  assert.equal(old.body, 'moon', 'an old database is retained without destructive migration');
+  t.after(()=>migrated.close());
+  for(const [store,key]of [['events','old-moon'],['charts',chartKey('moon')]])assert.equal(await new Promise(resolve=>{
+    const request=migrated.transaction(store).objectStore(store).get(key);request.onsuccess=()=>resolve(request.result);
+  }),undefined,'obsolete extra-body payloads are physically removed');
 });
 
 test('active body lists are accounted and pinned until their natal changes, not until filters close', async () => {
@@ -152,8 +175,8 @@ test('switching saved natals releases active ownership while reusable extra-body
   assert.equal(calls, CYCLE_BODIES.length * 2, 'changing selection does not delete reusable lists');
 });
 
-const selectedEvent = { body: 'moon', utc: '2000-02-01T00:00:00.123456Z', cycle: 1, pass: 1, direction: 'direct' as const } as CycleEvent;
-selectedEvent.id = `${selectedEvent.body}:${selectedEvent.utc}`; selectedEvent.cycleId = 'moon:1';
+const selectedEvent = { body: 'saturn', utc: '2030-02-01T00:00:00.123456Z', cycle: 1, pass: 1, direction: 'direct' as const } as CycleEvent;
+selectedEvent.id = `${selectedEvent.body}:${selectedEvent.utc}`; selectedEvent.cycleId = 'saturn:1';
 selectedEvent.age = (Date.parse(selectedEvent.utc) - Date.parse(input.birthUtc) + 0.456) / (365.2425 * 86400000);
 const chartInput = { birthUtc: input.birthUtc, body: selectedEvent.body, eventUtc: selectedEvent.utc, timezone: 'UTC' };
 const chartPacket = () => ({ chart: { ...natal(), utc: selectedEvent.utc, timezone: 'UTC' } as CycleChartResult['chart'] });
@@ -165,7 +188,7 @@ test('cache-only chart restoration uses its validated event metadata and bypasse
   const reload = createCyclesClient({ ...options, request: async () => { const job = deferred(); jobs.push(job); return job.promise; } });
   const control = createReturnsController({ client: reload });
   control.select(natal()); await tick();
-  const saved = { opened: false, bodies: ['moon'], eventId: selectedEvent.id, event: { ...selectedEvent, cycle: 99, cycleId: 'moon:99' } };
+  const saved = { opened: false, bodies: [selectedEvent.body], eventId: selectedEvent.id, event: { ...selectedEvent, cycle: 99, cycleId: 'saturn:99' } };
   const restoring = control.restore(saved as unknown as SavedReturnView);
   const done = await Promise.race([restoring, tick().then(() => 'pending')]);
   const shown = control.state;
@@ -215,13 +238,13 @@ test('only default dates prepare initially; extra bodies start on demand and reu
 test('a cached chart clears an earlier chart failure and retry no longer recomputes it', async () => {
   let calls = 0;
   const control = createReturnsController({ client: {
-    events: async value => ({ ...packet(value), events: value.body === 'moon' ? [selectedEvent] : [] }),
+    events: async value => ({ ...packet(value), events: value.body === selectedEvent.body ? [selectedEvent] : [] }),
     chart: async () => { calls++; throw new Error('Earlier chart failed'); },
     readChart: async () => ({ ...chartPacket(), event: selectedEvent }),
   } });
-  await control.select(natal()); await control.setBodies(['moon']); await control.selectEvent(selectedEvent.id);
+  await control.select(natal()); await control.setBodies([selectedEvent.body]); await control.selectEvent(selectedEvent.id);
   assert.equal(control.state.chartError, 'Earlier chart failed');
-  assert.equal(await control.restore({ opened: false, bodies: ['moon'], eventId: selectedEvent.id } as unknown as SavedReturnView), true);
+  assert.equal(await control.restore({ opened: false, bodies: [selectedEvent.body], eventId: selectedEvent.id } as unknown as SavedReturnView), true);
   assert.equal(control.state.chartError, '');
   await control.retry(); assert.equal(calls, 1);
 });

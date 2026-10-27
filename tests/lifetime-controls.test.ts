@@ -26,6 +26,7 @@ import { dateDom } from './helpers/date-dom.ts';
 import { createViewportLayout } from './helpers/viewport-layout.ts';
 import { IDBFactory } from 'fake-indexeddb';
 import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createLifetimeClient } from '../src/data/lifetime-client.ts';
 
 const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
@@ -85,9 +86,11 @@ for (const { key, expected, saved = true, maximumUtc } of [
   { key: 'ArrowRight', expected: '2026-09-30T12:40:00Z', saved: false },
   { key: 'ArrowLeft', expected: '2026-09-30T12:20:00Z', saved: false },
 ] as const) {
-  test(`the first ${key} ${saved ? 'discovers a day saved by another tab' : 'uses the directional grid on a disk miss'}${maximumUtc ? ' at a clipped end' : ''}`, async t => {
-    const indexedDB = new IDBFactory(), writer = createTransitDayCache({ indexedDB }), days = createTransitDayCache({ indexedDB });
-    t.after(async () => { await writer.close(); await days.close(); });
+  test(`the first ${key} ${saved ? 'discovers a day saved by another tab' : 'uses the directional grid on a disk miss'}${maximumUtc ? ' at a clipped end' : ''}`, { timeout: 5000 }, async t => {
+    const indexedDB = new IDBFactory(), now = () => Date.parse('2026-09-30T12:37:00Z');
+    const writerCache = createCalculationCache({ indexedDB, now }), readerCache = createCalculationCache({ indexedDB, now });
+    const writer = createTransitDayCache({ cache: writerCache }), days = createTransitDayCache({ cache: readerCache });
+    t.after(async () => { await writer.close(); await days.close(); writerCache.close(); readerCache.close(); });
     const calls: string[] = [], version = 'a'.repeat(64), engine = 'Swiss Ephemeris 2.10.03';
     const client = createLifetimeClient({ days, fetch: (async (url: string) => {
       calls.push(url);
@@ -98,6 +101,7 @@ for (const { key, expected, saved = true, maximumUtc } of [
     let rendered: (() => void) | undefined; const commands: number[] = [];
     const h = harness({ client, beforeScrub: utc => { commands.push(utc); }, onRender: () => rendered?.() });
     t.after(() => h.explorer.close());
+    await writerCache.setTransitWindow({ version, dates: h.day.timeline!.packetDates, expiresAt: h.day.timeline!.endUtc });
     await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: maximumUtc ? '2026-09-30' : '2026-10-01',
       ...(maximumUtc ? { maximumUtc } : {}), requestedUtc: Date.parse('2026-09-30T12:30:00Z') });
     if (saved) writer.putDay({ calculationVersion: version, version: '2', date: '2026-09-30', startUtc: '2026-09-30T00:00:00Z', stepSeconds: 60, samples: 1440,
@@ -105,6 +109,9 @@ for (const { key, expected, saved = true, maximumUtc } of [
       columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
         ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse('2026-09-30') / 1000 - 88 * 86400 + minute * 60 : 1e-11)) } as TransitDay);
     await writer.flush();
+    await days.prepare(version);
+    assert.equal(days.hasMinute(Date.parse('2026-09-30T12:31:00Z'), version), saved,
+      'the fixture must establish the intended shared-disk state before awaiting a render');
     const before = calls.length, ready = new Promise<void>(resolve => { rendered = resolve; });
     h.range.dispatch('keydown', { key });
     const commandUtc = Date.parse(key === 'ArrowRight' ? '2026-09-30T12:31:00Z' : '2026-09-30T12:29:00Z');
@@ -1320,15 +1327,15 @@ test('metadata rejection after a changed revision remains a file error before a 
   h.explorer.close();
 });
 
-for (const failureSource of ['metadata-network', 'point', 'exact'] as const) test(`temporary ${failureSource} errors still retry the chosen moment automatically`, async t => {
+for (const failureSource of ['metadata-network', 'point', 'minute'] as const) test(`temporary ${failureSource} errors still retry the chosen moment automatically`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let attempts = 0;
-  const selected = Date.parse(failureSource === 'exact' ? '2000-01-01T12:37:00Z' : '2000-01-01T12:30:00Z');
+  const selected = Date.parse(failureSource === 'minute' ? '2000-01-01T12:37:00Z' : '2000-01-01T12:30:00Z');
   const failOnce = () => { if (++attempts === 1) throw Object.assign(new Error('Временно недоступно.'), failureSource === 'metadata-network' ? {} : { code: 'lifetime_unavailable' }); };
   const h = harness({ client: {
     async getMeta() { if (failureSource === 'metadata-network') failOnce(); return metadata; },
     async getPoint(index) { if (failureSource === 'point') failOnce(); return moment(index); },
-    async getMoment(value: number) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
+    async readMinute(value: number) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
   } });
   assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected }), false);
   assert.equal(h.explorer.state.status, 'loading'); assert.equal(h.explorer.state.retryCount, 1);
@@ -1550,4 +1557,47 @@ test('a connection failure keeps its cause through waiting and shows the shared 
  const h=harness({client:{getMeta:async()=>{throw Object.assign(new Error('transport internal'),{code:'offline'});}}});
  t.after(()=>h.explorer.close()); await h.explorer.open();
  assert.equal(h.explorer.state.errorCode,'offline'); assert.equal(h.status.textContent,'Нет соединения');
+});
+
+
+test('active incomplete range text and backward selection restore without applying a new range', async () => {
+  const h=harness(); await open(h); await dates(h,'04102020','04102027'); await complete(h);
+  const accepted=h.fromDate.value, requests=h.requests.length;
+  const draft={fromDate:'04.1',toDate:h.toDate.value,focus:{field:'fromDate',start:1,end:3,direction:'backward'}};
+  assert.equal(h.controls.restoreDraft(draft),true);
+  assert.equal(h.fromDate.value,'04.1');
+  assert.equal(h.document.activeElement,h.fromDate);
+  assert.equal(h.fromDate.selectionStart,1); assert.equal(h.fromDate.selectionEnd,3);
+  assert.deepEqual(h.controls.snapshot,draft);
+  h.controls.update(h.explorer.state);
+  assert.equal(h.fromDate.value,'04.1','normal painting must not overwrite restored typing');
+  assert.equal(h.requests.length,requests,'restoring text must not calculate a new range');
+  h.toDate.focus(); h.fromDate.dispatch('blur');
+  assert.equal(h.fromDate.value,accepted,'existing blur rollback remains authoritative');
+  h.explorer.close(); assert.equal(h.controls.snapshot,null);
+});
+
+
+test('unfinished date typing in day mode survives reload, while closing the panel discards that draft', async () => {
+  const h=harness(); await open(h);
+  const accepted=h.fromDate.value;
+  h.type(h.fromDate,'04.1'); h.fromDate.setSelectionRange(1,3,'backward');
+  const draft=h.controls.snapshot;
+  assert.ok(draft); assert.equal(draft.fromDate,'04.1');
+  const restored=harness(); await open(restored);
+  assert.equal(restored.controls.restoreDraft(draft),true);
+  assert.equal(restored.fromDate.value,'04.1');
+  assert.equal(restored.explorer.state.mode,'day'); assert.equal(restored.requests.length,0);
+  restored.explorer.close(); assert.equal(restored.controls.snapshot,null);
+  assert.equal(restored.fromDate.value,accepted,'closing removes the draft even when the field still had focus');
+});
+
+
+test('restoring unfinished date text may retain a newer focus elsewhere',async()=>{
+ const h=harness();await open(h);h.toggle.focus();
+ const draft={fromDate:'04.1',toDate:h.toDate.value,focus:{field:'fromDate',start:1,end:3,direction:'backward'}};
+ assert.equal(h.controls.restoreDraft(draft,{restoreFocus:false}),true);
+ assert.equal(h.fromDate.value,'04.1');assert.equal(h.document.activeElement,h.toggle);
+ assert.deepEqual(h.controls.snapshot,{...draft,focus:null});
+ h.explorer.close();assert.equal(h.controls.snapshot,null);
 });

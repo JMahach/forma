@@ -51,7 +51,7 @@ def _local_candidates(local, zone):
     return candidates
 
 
-def local_to_utc(date, time, timezone, fold=None):
+def resolve_local_time(date, time, timezone, fold=None):
     try:
         local = dt.datetime.strptime(f'{date} {time}', '%Y-%m-%d %H:%M')
         zone = zoneinfo.ZoneInfo(timezone)
@@ -69,7 +69,11 @@ def local_to_utc(date, time, timezone, fold=None):
         selected = next(candidate for candidate in candidates if candidate[0] == fold)
     else:
         selected = candidates[0]
-    return selected[1], offset_label(selected[2]), selected[0]
+    return selected[1], offset_label(selected[2]), selected[0], len(candidates) > 1
+
+
+def local_to_utc(date, time, timezone, fold=None):
+    return resolve_local_time(date, time, timezone, fold)[:3]
 
 
 def local_minutes(date, timezone):

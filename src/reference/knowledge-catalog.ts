@@ -58,8 +58,8 @@ export function knowledgeTopicLabel(entry: KnowledgeEntry): string { return nume
 
 const searchIndex = KNOWLEDGE_ENTRIES.map((entry, order) => ({
   entry, order,
-  text: normalize([entry.id, entry.title, ...entry.aliases, ...entry.keywords, entry.short].join(' ')),
-  exact: [entry.title, knowledgeTopicLabel(entry), ...entry.aliases].map(normalize),
+  text: normalize([entry.id, entry.title, knowledgeEntryTitle(entry), ...entry.aliases, ...entry.keywords, entry.short].join(' ')),
+  exact: [entry.title, knowledgeEntryTitle(entry), knowledgeTopicLabel(entry), ...entry.aliases].map(normalize),
 }));
 
 export function findKnowledgeEntries(query: string, collectionId: string): readonly KnowledgeEntry[] {

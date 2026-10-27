@@ -126,7 +126,7 @@ test('calculator keeps four-process admission, JSON protocol and releases slots 
   workers[2].emit('close', null);
   workers[3].emit('close', 1);
   const results = await Promise.all(pending);
-  assert.deepEqual(results[0], { chart: {} });
+  assert.equal(results[0].error, 'calculation_failed', 'a parsed but incomplete chart is not a successful calculation');
   assert.ok(results.slice(1).every(result => result.error === 'engine_unavailable'));
   const again = calculate({ mode: 'transit' });
   assert.equal(workers.length, 5);
@@ -174,6 +174,6 @@ test('calculator holds all four admission slots until failed live processes clos
     const next = calculate({ mode: 'transit' });
     assert.equal(workers.length, 5);
     workers[4].stdout.emit('data', '{}'); workers[4].emit('close', 0);
-    assert.deepEqual(await next, {});
+    assert.equal((await next).error, 'calculation_failed', 'the retry starts, but empty output is not a chart');
   }
 });

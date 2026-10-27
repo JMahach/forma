@@ -9,15 +9,18 @@ const brOptions = (quality: number) => ({ params: { [constants.BROTLI_PARAM_QUAL
 
 // Both formats preserve float64 exactly. Compare the same five reversible
 // predictors cheaply; final compression is done only once per representation.
-export async function encodePredictedDay<Day extends { columns: ArrayLike<number>[] }>(day: Day, encodeColumn: (values: ArrayLike<number>, order: number) => Uint8Array, encodePacket: (day: Day, options: { orders: number[] }) => Uint8Array) {
-  const orders = [];
+export async function encodePredictedDay<Day extends { columns: ArrayLike<number>[] }>(day: Day, encodeColumn: (values: ArrayLike<number>, order: number) => Uint8Array, encodePacket: (day: Day, options: { orders: number[]; shuffledColumns: Uint8Array[] }) => Uint8Array) {
+  const orders = [], shuffledColumns = [];
   for (const column of day.columns) {
-    const scores = await Promise.all([0, 1, 2, 3, 4].map(async order => ({
-      order, bytes: (await brotli(encodeColumn(column, order), brOptions(4))).length,
-    })));
-    orders.push(scores.reduce((best, score) => score.bytes < best.bytes ? score : best).order);
+    const scores = await Promise.all([0, 1, 2, 3, 4].map(async order => {
+      const encoded = encodeColumn(column, order);
+      return { order, encoded, bytes: (await brotli(encoded, brOptions(4))).length };
+    }));
+    const best = scores.reduce((best, score) => score.bytes < best.bytes ? score : best);
+    orders.push(best.order);
+    shuffledColumns.push(best.encoded);
   }
-  return Buffer.from(encodePacket(day, { orders }));
+  return Buffer.from(encodePacket(day, { orders, shuffledColumns }));
 }
 
 export async function compressDayPacket(raw: Buffer, { quality = 11, storedGzip }: { quality?: number; storedGzip?: Buffer } = {}): Promise<EncodedBytes> {

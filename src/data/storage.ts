@@ -1,3 +1,7 @@
+import { MAX_CALCULATION_RECEIPT_LENGTH } from '../../shared/chart-record-contract.ts';
+import { validateChartSide } from '../../shared/chart-activations.ts';
+import { normalizeChartName } from '../domain/chart-record.ts';
+export { normalizeChartName, createChartId } from '../domain/chart-record.ts';
 import type { ChartRecord, SavedChart, ChartActivations } from '../../shared/chart-types.ts';
 export type ChartStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
 export interface StorageError extends Error { code?: string }
@@ -6,23 +10,6 @@ export const STORAGE_KEY = 'liniya.charts.v1';
 export const TRASH_KEY = 'liniya.trash.v1';
 export const CHART_RECORD_PREFIX = 'liniya.charts.v2:';
 export const CHART_DELETED_PREFIX = 'liniya.deleted.v2:';
-
-export function normalizeChartName(value: unknown) {
-  return String(value ?? '').trim().replace(/\p{L}/u, letter => letter.toUpperCase());
-}
-
-export function createChartId(cryptoApi = globalThis.crypto) {
-  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
-  if (typeof cryptoApi?.getRandomValues !== 'function') {
-    throw new Error('Браузер не поддерживает создание идентификатора карты. Обновите браузер.');
-  }
-  // randomUUID requires HTTPS; random bytes also work on ordinary HTTP.
-  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 export function parseGates(value: unknown) {
   if (!String(value).trim()) return [];
@@ -55,14 +42,14 @@ export function validateLibraryChart(input: unknown): ChartRecord {
     source
   };
   if (source !== 'manual') {
-    const planets = new Set(['sun', 'earth', 'moon', 'north_node', 'south_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto']);
     if (!raw.activations || typeof raw.activations !== 'object') throw new Error('Нет подробностей расчёта карты.');
     result.activations = {} as ChartActivations;
     for (const key of ['personality', 'design'] as const) {
       const list = raw.activations[key], length = key === 'design' && source === 'transit' ? 0 : 13;
-      if (!Array.isArray(list) || list.length !== length || new Set(list.map(a => a?.planet)).size !== length || list.some(a => !a || !planets.has(a.planet) || !Number.isFinite(a.longitude) || a.longitude < 0 || a.longitude >= 360 || !Number.isInteger(a.gate) || a.gate < 1 || a.gate > 64 || !Number.isInteger(a.line) || a.line < 1 || a.line > 6)) throw new Error('Некорректные подробности активаций.');
+      const problem = validateChartSide(result[key], list, length);
+      if (problem === 'activations') throw new Error('Некорректные подробности активаций.');
+      if (problem === 'gates') throw new Error('Список ворот не совпадает с подробностями расчёта.');
       result.activations[key] = list.map(({ planet, longitude, gate, line }) => ({ planet, longitude, gate, line }));
-      if (JSON.stringify([...new Set(list.map(a => a.gate))].sort((a, b) => a - b)) !== JSON.stringify(result[key])) throw new Error('Список ворот не совпадает с подробностями расчёта.');
     }
     for (const key of ['timezone', 'utc', 'utcOffset', 'designUtc', 'engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac', 'verification'] as const) result[key] = cleanText(key, key === 'verification' ? 500 : 160);
     if (!result.utc || !Number.isFinite(Date.parse(result.utc))) throw new Error('В расчёте нет корректного момента UTC.');
@@ -78,6 +65,20 @@ export function validateLibraryChart(input: unknown): ChartRecord {
     }
   }
   return result;
+}
+
+// One ready result belongs to the tab, independently of the persistent library.
+// Reuse the record validator, but never restore account ownership from this slot.
+export function normalizeTemporaryChart(input: unknown): SavedChart | null {
+  try {
+    const raw = input as SavedChart;
+    if (!raw || raw.source !== 'calculated' && raw.source !== 'transit') return null;
+    const chart = validateLibraryChart(raw);
+    if (!chart.id || chart.id === 'current-transit') return null;
+    if (typeof raw.calculationReceipt === 'string' && raw.calculationReceipt.length <= MAX_CALCULATION_RECEIPT_LENGTH)
+      chart.calculationReceipt = raw.calculationReceipt;
+    return chart as SavedChart;
+  } catch { return null; }
 }
 
 function legacyCharts(storage: ChartStorage, key: string, onInvalid: (key: string) => void): SavedChart[] {

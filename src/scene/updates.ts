@@ -2,7 +2,6 @@ import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionModel } from '../selection/selection-model.ts';
 import type { attachHoverPreview } from '../selection/hover-preview.ts';
 import type { SceneRenderer } from './renderer.ts';
-import type { MandalaMode } from './modes/mandala.ts';
 import type { RenderOptions } from './render-state.ts';
 interface GraphControllerOptions {
   selectionState?: SelectionModel;
@@ -14,7 +13,7 @@ interface GraphControllerOptions {
   getShowActivations?: () => boolean;
   getHighlightStyle?: () => RenderOptions['highlightStyle'];
   getHoverPreview?: () => Pick<ReturnType<typeof attachHoverPreview>, 'clear' | 'currentSelection'> | null;
-  getMandala?: () => Pick<MandalaMode, 'enabled' | 'visible'> | null;
+  getMandala?: () => { readonly enabled: boolean; readonly visible: boolean } | null;
   scene?: { update: (...args: Parameters<SceneRenderer['update']>) => void; clear: () => void };
   onChartChange?: (id: string) => void;
 }

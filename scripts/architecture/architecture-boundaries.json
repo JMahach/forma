@@ -1,0 +1,2188 @@
+{
+  "schemaVersion": 1,
+  "status": "PROPOSED_TECHNICAL_BOUNDARIES_NOT_PRODUCT_APPROVAL",
+  "scope": {
+    "roots": [
+      "src",
+      "shared",
+      "server",
+      "deploy"
+    ],
+    "codeExtensions": [
+      ".ts",
+      ".tsx",
+      ".mts",
+      ".cts",
+      ".js",
+      ".jsx",
+      ".mjs",
+      ".cjs"
+    ],
+    "excludedDirectories": [
+      "tests",
+      "node_modules",
+      "dist",
+      ".git"
+    ],
+    "unknownFilePolicy": "error",
+    "typeImportsChecked": true
+  },
+  "basis": {
+    "source": "Кодекс архитектуры: meanings, actions, state, storage, data acquisition, composition, restoration; project instructions preserve pure geometry/camera and server separation.",
+    "notInferredFromObservedEdges": true,
+    "purpose": "Compare the existing foundation with a proposed target and expose deviations; do not manufacture green exceptions."
+  },
+  "groupingNotes": [
+    "Existing feature action code has no dedicated action module yet. It remains assigned to its current file owner; prohibited data dependencies expose this migration work. No empty implemented action/auth/journal module is invented.",
+    "Pure camera and physical chart input are different modules because DOM/gesture dependencies would invalidate the camera boundary.",
+    "Reusable calendar/timeline input files are assigned by responsibility, even though they currently live in views/.",
+    "Output escaping/text projection is one explicit presentation-primitives module; permitting it does not expose calendar/popup mechanics to renderers.",
+    "CSS/HTML are acknowledged assets; this import checker does not claim to validate their styles, selectors or inline behavior.",
+    "File SCC checks include type imports even inside one semantic owner; current ownership does not hide future renderer cycles.",
+    "Exact named type contracts pass values only. ChartStore, MandalaMode and other mutable controllers are deliberately not whitelisted.",
+    "The ordinary birth-form owner includes its accepted random-chart generator; broad feature access to transport remains forbidden."
+  ],
+  "modules": [
+    {
+      "id": "browser-composition",
+      "responsibility": "Connect browser owners and transfer the early startup instances to the running application.",
+      "files": [
+        "src/account.ts",
+        "src/app.ts",
+        "src/entry.ts",
+        "src/startup.ts"
+      ],
+      "publicEntries": [],
+      "allowRuntime": [
+        "account-flow",
+        "account-library",
+        "browser-composition",
+        "browser-dev",
+        "camera",
+        "chart-actions",
+        "chart-input",
+        "chart-view-mode",
+        "data-clients",
+        "data-storage",
+        "diagnostics",
+        "domain",
+        "exploration-state",
+        "feature-views",
+        "geometry",
+        "message-catalog",
+        "navigation",
+        "presentation-primitives",
+        "presentation-rules",
+        "reference",
+        "renderers",
+        "restore-coordinator",
+        "selection",
+        "shared-contracts",
+        "shell-state",
+        "ui-furniture",
+        "ui-layout",
+        "ui-styles",
+        "browser-journal",
+        "offline-page"
+      ],
+      "allowTypes": [
+        "account-flow",
+        "account-library",
+        "browser-composition",
+        "camera",
+        "chart-actions",
+        "chart-input",
+        "chart-view-mode",
+        "data-clients",
+        "data-storage",
+        "diagnostics",
+        "domain",
+        "exploration-state",
+        "feature-views",
+        "geometry",
+        "message-catalog",
+        "navigation",
+        "presentation-primitives",
+        "presentation-rules",
+        "reference",
+        "renderers",
+        "restore-coordinator",
+        "selection",
+        "shared-contracts",
+        "shell-state",
+        "ui-furniture",
+        "ui-layout",
+        "ui-styles",
+        "browser-journal",
+        "offline-page"
+      ],
+      "executionEntries": [
+        "src/entry.ts"
+      ]
+    },
+    {
+      "id": "shared-contracts",
+      "responsibility": "Environment-independent definitions and checked formats crossing browser/server calculation boundaries.",
+      "files": [
+        "shared/account-contract.ts",
+        "shared/app-routes.ts",
+        "shared/calculation-result.ts",
+        "shared/chart-activations.ts",
+        "shared/chart-record-contract.ts",
+        "shared/chart-types.ts",
+        "shared/cycles-format.ts",
+        "shared/date-limits.ts",
+        "shared/day-packets/decode.ts",
+        "shared/day-packets/float64-codec.ts",
+        "shared/day-packets/moment-columns.ts",
+        "shared/day-packets/natal-format.ts",
+        "shared/day-packets/transit-format.ts",
+        "shared/development.ts",
+        "shared/lifetime-exact-format.ts",
+        "shared/lifetime-format.ts",
+        "shared/utc-format.ts",
+        "shared/client-report-contract.ts",
+        "shared/app-metadata.ts",
+        "shared/offline-contract.ts",
+        "shared/chart-return-contract.ts"
+      ],
+      "publicEntries": [
+        "shared/account-contract.ts",
+        "shared/app-routes.ts",
+        "shared/calculation-result.ts",
+        "shared/chart-activations.ts",
+        "shared/chart-record-contract.ts",
+        "shared/chart-types.ts",
+        "shared/cycles-format.ts",
+        "shared/date-limits.ts",
+        "shared/day-packets/decode.ts",
+        "shared/day-packets/float64-codec.ts",
+        "shared/day-packets/moment-columns.ts",
+        "shared/day-packets/natal-format.ts",
+        "shared/day-packets/transit-format.ts",
+        "shared/development.ts",
+        "shared/lifetime-exact-format.ts",
+        "shared/lifetime-format.ts",
+        "shared/utc-format.ts",
+        "shared/client-report-contract.ts",
+        "shared/app-metadata.ts",
+        "shared/offline-contract.ts",
+        "shared/chart-return-contract.ts"
+      ],
+      "allowRuntime": [
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "domain",
+      "responsibility": "Pure meanings and rules of charts, moments, cycles, topology, time and astronomical projections.",
+      "files": [
+        "src/domain/account-chart.ts",
+        "src/domain/birth-form-draft.ts",
+        "src/domain/chart-composition.ts",
+        "src/domain/chart-data.ts",
+        "src/domain/chart-overlay.ts",
+        "src/domain/chart-record.ts",
+        "src/domain/cycles.ts",
+        "src/domain/day-timeline.ts",
+        "src/domain/gate-wheel.ts",
+        "src/domain/input-draft.ts",
+        "src/domain/lifetime.ts",
+        "src/domain/line-fixing-data.ts",
+        "src/domain/line-fixing.ts",
+        "src/domain/mandala-cross.ts",
+        "src/domain/moment-projection.ts",
+        "src/domain/natal-day.ts",
+        "src/domain/personal-age.ts",
+        "src/domain/planets.ts",
+        "src/domain/returns-window.ts",
+        "src/domain/substructure.ts",
+        "src/domain/topology.ts",
+        "src/domain/transit-day.ts",
+        "src/domain/variables.ts"
+      ],
+      "publicEntries": [
+        "src/domain/account-chart.ts",
+        "src/domain/birth-form-draft.ts",
+        "src/domain/chart-composition.ts",
+        "src/domain/chart-data.ts",
+        "src/domain/chart-overlay.ts",
+        "src/domain/chart-record.ts",
+        "src/domain/cycles.ts",
+        "src/domain/day-timeline.ts",
+        "src/domain/gate-wheel.ts",
+        "src/domain/input-draft.ts",
+        "src/domain/lifetime.ts",
+        "src/domain/line-fixing.ts",
+        "src/domain/mandala-cross.ts",
+        "src/domain/moment-projection.ts",
+        "src/domain/natal-day.ts",
+        "src/domain/personal-age.ts",
+        "src/domain/planets.ts",
+        "src/domain/returns-window.ts",
+        "src/domain/substructure.ts",
+        "src/domain/topology.ts",
+        "src/domain/transit-day.ts",
+        "src/domain/variables.ts"
+      ],
+      "allowRuntime": [
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "exploration-state",
+      "responsibility": "Selected record, requested moment, accepted result and chart-tool commands; no presentation ownership.",
+      "files": [
+        "src/state/chart-exploration.ts",
+        "src/state/chart-session.ts",
+        "src/state/lifetime.ts",
+        "src/state/live-transit.ts",
+        "src/state/natal-day.ts",
+        "src/state/returns.ts",
+        "src/state/transit-planets.ts"
+      ],
+      "publicEntries": [
+        "src/state/chart-exploration.ts",
+        "src/state/chart-session.ts",
+        "src/state/lifetime.ts",
+        "src/state/live-transit.ts",
+        "src/state/natal-day.ts",
+        "src/state/returns.ts",
+        "src/state/transit-planets.ts"
+      ],
+      "allowRuntime": [
+        "exploration-state",
+        "data-storage",
+        "data-clients",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "exploration-state",
+        "data-storage",
+        "data-clients",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "restore-coordinator",
+      "responsibility": "Collect and restore state through owner ports; supersede pending restoration on a newer explicit command.",
+      "files": [
+        "src/state/view-session.ts"
+      ],
+      "publicEntries": [
+        "src/state/view-session.ts"
+      ],
+      "allowRuntime": [
+        "restore-coordinator",
+        "exploration-state",
+        "shell-state",
+        "data-storage",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "restore-coordinator",
+        "exploration-state",
+        "shell-state",
+        "data-storage",
+        "domain",
+        "shared-contracts",
+        "camera"
+      ],
+      "notes": [
+        "Camera is permitted as a type-owned port because that pure owner defines view transforms. Concrete mandala UI/controller types are not allowed; use an explicit restoration port."
+      ]
+    },
+    {
+      "id": "shell-state",
+      "responsibility": "Tab-level open sides and central screen, independent of chart-tool commands and page geometry.",
+      "files": [
+        "src/state/chart-highlight.ts",
+        "src/state/library-selection.ts",
+        "src/state/panels.ts",
+        "src/state/workspace.ts"
+      ],
+      "publicEntries": [
+        "src/state/chart-highlight.ts",
+        "src/state/library-selection.ts",
+        "src/state/panels.ts",
+        "src/state/workspace.ts"
+      ],
+      "allowRuntime": [
+        "shell-state"
+      ],
+      "allowTypes": [
+        "shell-state"
+      ]
+    },
+    {
+      "id": "data-storage",
+      "responsibility": "Own persistence, validated stored records, confirmed snapshots and agreed result-cache adapters. Coordinate device-quota relief through supplied owner ports; never access journal internals or choose visible state.",
+      "files": [
+        "src/data/account-library-store.ts",
+        "src/data/account-logout-store.ts",
+        "src/data/binary-cache.ts",
+        "src/data/calculation-cache.ts",
+        "src/data/calculation-migration.ts",
+        "src/data/chart-store.ts",
+        "src/data/indexed-db.ts",
+        "src/data/memory-cache.ts",
+        "src/data/return-storage.ts",
+        "src/data/storage-pressure.ts",
+        "src/data/storage.ts",
+        "src/data/transit-day-cache.ts",
+        "src/data/view-store.ts"
+      ],
+      "publicEntries": [
+        "src/data/account-library-store.ts",
+        "src/data/account-logout-store.ts",
+        "src/data/binary-cache.ts",
+        "src/data/calculation-cache.ts",
+        "src/data/chart-store.ts",
+        "src/data/memory-cache.ts",
+        "src/data/return-storage.ts",
+        "src/data/storage-pressure.ts",
+        "src/data/transit-day-cache.ts",
+        "src/data/view-store.ts"
+      ],
+      "allowRuntime": [
+        "data-storage",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "data-storage",
+        "domain",
+        "shared-contracts"
+      ],
+      "privateEntryReasons": {
+        "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
+        "src/data/storage.ts": "Record mutation/validation internals are reached through chart-store, not feature views.",
+        "src/data/calculation-migration.ts": "Legacy source reading, version fencing and deletion are internal to the single calculation-cache budget owner."
+      }
+    },
+    {
+      "id": "data-clients",
+      "responsibility": "Acquire and validate requested data, share in-flight work and cancel independent waiters.",
+      "files": [
+        "src/data/account-client.ts",
+        "src/data/api-client.ts",
+        "src/data/birth-client.ts",
+        "src/data/chart-client.ts",
+        "src/data/cycles-client.ts",
+        "src/data/http-transport.ts",
+        "src/data/lifetime-client.ts",
+        "src/data/natal-day-client.ts",
+        "src/data/shared-request.ts",
+        "src/data/transit-day-client.ts",
+        "src/data/calculation-clients.ts",
+        "src/data/calculation-updates.ts",
+        "src/data/telegram-login.ts"
+      ],
+      "publicEntries": [
+        "src/data/account-client.ts",
+        "src/data/api-client.ts",
+        "src/data/birth-client.ts",
+        "src/data/chart-client.ts",
+        "src/data/cycles-client.ts",
+        "src/data/http-transport.ts",
+        "src/data/lifetime-client.ts",
+        "src/data/natal-day-client.ts",
+        "src/data/transit-day-client.ts",
+        "src/data/calculation-clients.ts",
+        "src/data/calculation-updates.ts",
+        "src/data/telegram-login.ts"
+      ],
+      "allowRuntime": [
+        "data-clients",
+        "data-storage",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "data-clients",
+        "data-storage",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "selection",
+      "responsibility": "Selection values, model, state and transient hover projection; no storage or feature-screen ownership.",
+      "files": [
+        "src/selection/hover-preview.ts",
+        "src/selection/selection-model.ts",
+        "src/selection/selection-state.ts",
+        "src/selection/selection-targets.ts"
+      ],
+      "publicEntries": [
+        "src/selection/hover-preview.ts",
+        "src/selection/selection-model.ts",
+        "src/selection/selection-targets.ts"
+      ],
+      "allowRuntime": [
+        "selection",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "selection",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "geometry",
+      "responsibility": "Pure drawing shapes, anchors, bounds and geometry descriptors; no UI, scene execution, state or content catalogue.",
+      "files": [
+        "src/scene/geometry/activation-layout.ts",
+        "src/scene/geometry/chart-geometry.ts",
+        "src/scene/geometry/drawing-geometry.ts",
+        "src/scene/geometry/drawing-presentation.ts",
+        "src/scene/geometry/frames.ts",
+        "src/scene/geometry/integration-geometry.ts",
+        "src/scene/geometry/lotus-backdrop.ts",
+        "src/scene/geometry/mandala-geometry.ts",
+        "src/scene/geometry/mandala-planets.ts"
+      ],
+      "publicEntries": [
+        "src/scene/geometry/activation-layout.ts",
+        "src/scene/geometry/chart-geometry.ts",
+        "src/scene/geometry/drawing-geometry.ts",
+        "src/scene/geometry/drawing-presentation.ts",
+        "src/scene/geometry/frames.ts",
+        "src/scene/geometry/lotus-backdrop.ts",
+        "src/scene/geometry/mandala-geometry.ts",
+        "src/scene/geometry/mandala-planets.ts",
+        "src/scene/geometry/integration-geometry.ts"
+      ],
+      "allowRuntime": [
+        "geometry",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "geometry",
+        "domain",
+        "shared-contracts"
+      ],
+      "notes": [
+        "Each explicit geometry entry exposes pure shape/anchor values; integration-geometry exposes STEM_POINTS and INTEGRATION_ARMS, not mutable renderer internals."
+      ]
+    },
+    {
+      "id": "camera",
+      "responsibility": "Pure camera transform, fit and movement boundaries; receives measurements and does not measure DOM.",
+      "files": [
+        "src/scene/camera.ts",
+        "src/scene/camera-fit.ts"
+      ],
+      "publicEntries": [
+        "src/scene/camera.ts",
+        "src/scene/camera-fit.ts"
+      ],
+      "allowRuntime": [
+        "camera",
+        "geometry"
+      ],
+      "allowTypes": [
+        "camera",
+        "geometry"
+      ]
+    },
+    {
+      "id": "chart-input",
+      "responsibility": "Translate pointer/DOM gesture coordinates into camera and selection commands; keep physical input outside pure camera.",
+      "files": [
+        "src/scene/camera-view.ts",
+        "src/scene/gestures.ts",
+        "src/scene/pointer-target.ts",
+        "src/scene/mandala-preview.ts"
+      ],
+      "publicEntries": [
+        "src/scene/camera-view.ts",
+        "src/scene/gestures.ts",
+        "src/scene/pointer-target.ts",
+        "src/scene/mandala-preview.ts"
+      ],
+      "allowRuntime": [
+        "chart-input",
+        "camera",
+        "geometry",
+        "selection",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "chart-input",
+        "camera",
+        "geometry",
+        "selection",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "chart-view-mode",
+      "responsibility": "Mandala view switching and its visual transition; state persistence is coordinated elsewhere.",
+      "files": [
+        "src/scene/modes/mandala.ts",
+        "src/scene/modes/mandala-motion.ts"
+      ],
+      "publicEntries": [
+        "src/scene/modes/mandala.ts",
+        "src/scene/modes/mandala-motion.ts"
+      ],
+      "allowRuntime": [
+        "chart-view-mode",
+        "camera",
+        "geometry",
+        "ui-styles"
+      ],
+      "allowTypes": [
+        "chart-view-mode",
+        "camera",
+        "geometry",
+        "ui-styles"
+      ]
+    },
+    {
+      "id": "renderers",
+      "responsibility": "Project accepted chart/selection values to drawing output; rendering internals are not general view contracts.",
+      "files": [
+        "src/scene/activation-columns.ts",
+        "src/scene/activation-hover.ts",
+        "src/scene/activation-painter.ts",
+        "src/scene/activation-targets.ts",
+        "src/scene/backdrop.ts",
+        "src/scene/bodygraph-paint.ts",
+        "src/scene/bodygraph-painter.ts",
+        "src/scene/bodygraph-svg.ts",
+        "src/scene/gate-label.ts",
+        "src/scene/integration-paint.ts",
+        "src/scene/mandala-paint-rules.ts",
+        "src/scene/mandala-painter.ts",
+        "src/scene/mandala-preview-painter.ts",
+        "src/scene/mandala.ts",
+        "src/scene/overlay-activation-columns.ts",
+        "src/scene/render-state.ts",
+        "src/scene/renderer.ts",
+        "src/scene/soft-highlight.ts",
+        "src/scene/svg-patches.ts",
+        "src/scene/updates.ts",
+        "src/scene/variable-arrows.ts"
+      ],
+      "publicEntries": [
+        "src/scene/activation-hover.ts",
+        "src/scene/backdrop.ts",
+        "src/scene/bodygraph-svg.ts",
+        "src/scene/gate-label.ts",
+        "src/scene/render-state.ts",
+        "src/scene/renderer.ts",
+        "src/scene/updates.ts"
+      ],
+      "allowRuntime": [
+        "renderers",
+        "geometry",
+        "domain",
+        "shared-contracts",
+        "selection",
+        "ui-styles",
+        "reference",
+        "presentation-primitives"
+      ],
+      "allowTypes": [
+        "renderers",
+        "geometry",
+        "domain",
+        "shared-contracts",
+        "selection",
+        "ui-styles",
+        "reference",
+        "presentation-primitives"
+      ]
+    },
+    {
+      "id": "loading-generator",
+      "responsibility": "Generate the initial drawing HTML before browser execution; not a browser module entry.",
+      "files": [
+        "src/scene/loading-placeholder.ts"
+      ],
+      "publicEntries": [],
+      "allowRuntime": [
+        "loading-generator",
+        "geometry",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "loading-generator",
+        "geometry",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "ui-furniture",
+      "responsibility": "Reusable input, calendar, timeline gesture, popup text and page-level gesture mechanics; no feature persistence.",
+      "files": [
+        "src/ui/feedback.ts",
+        "src/ui/page-gestures.ts",
+        "src/ui/telegram-gestures.ts",
+        "src/ui/toast.ts",
+        "src/views/date-input.ts",
+        "src/views/date-picker.ts",
+        "src/views/input-selection.ts",
+        "src/views/timeline-range.ts",
+        "src/views/workspace-header.ts"
+      ],
+      "publicEntries": [
+        "src/ui/feedback.ts",
+        "src/ui/page-gestures.ts",
+        "src/ui/telegram-gestures.ts",
+        "src/ui/toast.ts",
+        "src/views/date-input.ts",
+        "src/views/date-picker.ts",
+        "src/views/input-selection.ts",
+        "src/views/timeline-range.ts",
+        "src/views/workspace-header.ts"
+      ],
+      "allowRuntime": [
+        "ui-furniture",
+        "ui-layout",
+        "domain",
+        "shared-contracts",
+        "presentation-primitives"
+      ],
+      "allowTypes": [
+        "ui-furniture",
+        "ui-layout",
+        "domain",
+        "shared-contracts",
+        "presentation-primitives"
+      ]
+    },
+    {
+      "id": "ui-styles",
+      "responsibility": "Semantic drawing palettes; CSS/HTML are separate static assets outside this TS import scope.",
+      "files": [
+        "src/ui/chart-palette.ts",
+        "src/ui/overlay-palette.ts"
+      ],
+      "publicEntries": [
+        "src/ui/chart-palette.ts",
+        "src/ui/overlay-palette.ts"
+      ],
+      "allowRuntime": [
+        "ui-styles"
+      ],
+      "allowTypes": [
+        "ui-styles"
+      ]
+    },
+    {
+      "id": "ui-layout",
+      "responsibility": "Measure shell and place panels/headings/timeline using its own size contracts; never depend on scene/state/views.",
+      "files": [
+        "src/ui/layout/chart-heading.ts",
+        "src/ui/layout/metrics.ts",
+        "src/ui/layout/studio-controller.ts",
+        "src/ui/layout/studio.ts",
+        "src/ui/layout/viewport.ts"
+      ],
+      "publicEntries": [
+        "src/ui/layout/chart-heading.ts",
+        "src/ui/layout/metrics.ts",
+        "src/ui/layout/studio-controller.ts",
+        "src/ui/layout/viewport.ts"
+      ],
+      "allowRuntime": [
+        "ui-layout",
+        "ui-styles"
+      ],
+      "allowTypes": [
+        "ui-layout",
+        "ui-styles"
+      ]
+    },
+    {
+      "id": "presentation-rules",
+      "responsibility": "Pure availability/visibility and timeline mark rules from passed values; no controller-owned types.",
+      "files": [
+        "src/ui/action-state.ts",
+        "src/ui/studio-presentation.ts",
+        "src/ui/timeline-ticks.ts"
+      ],
+      "publicEntries": [
+        "src/ui/action-state.ts",
+        "src/ui/studio-presentation.ts",
+        "src/ui/timeline-ticks.ts"
+      ],
+      "allowRuntime": [
+        "presentation-rules",
+        "domain",
+        "shared-contracts",
+        "message-catalog"
+      ],
+      "allowTypes": [
+        "presentation-rules",
+        "domain",
+        "shared-contracts",
+        "message-catalog"
+      ]
+    },
+    {
+      "id": "reference",
+      "responsibility": "Authored explanatory content and names, separately from technical messages and drawing geometry.",
+      "files": [
+        "src/reference/catalog.ts",
+        "src/reference/knowledge-catalog.ts",
+        "src/reference/knowledge-content.ts",
+        "src/reference/knowledge-types.ts"
+      ],
+      "publicEntries": [
+        "src/reference/catalog.ts",
+        "src/reference/knowledge-catalog.ts",
+        "src/reference/knowledge-content.ts"
+      ],
+      "allowRuntime": [
+        "reference",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "reference",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "feature-views",
+      "responsibility": "Display feature state and emit user intentions; mutating storage and obtaining results belong to actions/clients.",
+      "files": [
+        "src/views/account.ts",
+        "src/views/activation-details.ts",
+        "src/views/activation-popover.ts",
+        "src/views/all-charts.ts",
+        "src/views/birth-form.ts",
+        "src/views/camera-controls.ts",
+        "src/views/chart-display.ts",
+        "src/views/chart-loading.ts",
+        "src/views/chart-preview-canvas.ts",
+        "src/views/chart-summary-panel.ts",
+        "src/views/knowledge-center-figure.ts",
+        "src/views/knowledge-entry.ts",
+        "src/views/knowledge.ts",
+        "src/views/library.ts",
+        "src/views/lifetime-controls.ts",
+        "src/views/live-transit.ts",
+        "src/views/loading-preview.ts",
+        "src/views/natal-day-controls.ts",
+        "src/views/performance-monitor.ts",
+        "src/views/random-chart.ts",
+        "src/views/returns-clock.ts",
+        "src/views/returns-markers.ts",
+        "src/views/returns-panel.ts",
+        "src/views/side-panel-controls.ts",
+        "src/views/timeline-marks.ts",
+        "src/views/transit-controls.ts"
+      ],
+      "publicEntries": [
+        "src/views/account.ts",
+        "src/views/activation-popover.ts",
+        "src/views/all-charts.ts",
+        "src/views/birth-form.ts",
+        "src/views/camera-controls.ts",
+        "src/views/chart-display.ts",
+        "src/views/chart-loading.ts",
+        "src/views/chart-summary-panel.ts",
+        "src/views/knowledge-entry.ts",
+        "src/views/library.ts",
+        "src/views/lifetime-controls.ts",
+        "src/views/live-transit.ts",
+        "src/views/loading-preview.ts",
+        "src/views/natal-day-controls.ts",
+        "src/views/performance-monitor.ts",
+        "src/views/returns-markers.ts",
+        "src/views/returns-panel.ts",
+        "src/views/side-panel-controls.ts",
+        "src/views/transit-controls.ts"
+      ],
+      "allowRuntime": [
+        "feature-views",
+        "exploration-state",
+        "shell-state",
+        "domain",
+        "shared-contracts",
+        "selection",
+        "geometry",
+        "camera",
+        "chart-input",
+        "renderers",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "presentation-rules",
+        "reference",
+        "diagnostics",
+        "presentation-primitives",
+        "account-flow",
+        "message-catalog"
+      ],
+      "allowTypes": [
+        "feature-views",
+        "exploration-state",
+        "shell-state",
+        "domain",
+        "shared-contracts",
+        "selection",
+        "geometry",
+        "camera",
+        "chart-input",
+        "renderers",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "presentation-rules",
+        "reference",
+        "diagnostics",
+        "presentation-primitives",
+        "account-flow",
+        "message-catalog"
+      ],
+      "notes": [
+        "No import of a data-storage owner is allowed, including its concrete type. Views should receive narrowly typed read models and action ports, not a writable store.",
+        "No direct client import: request/calculation orchestration is extracted to action owners. This is a proposed technical target, not a claim that current forms already comply."
+      ]
+    },
+    {
+      "id": "diagnostics",
+      "responsibility": "Frame measurement only; not the future persistent application journal.",
+      "files": [
+        "src/diagnostics/frame-monitor.ts"
+      ],
+      "publicEntries": [
+        "src/diagnostics/frame-monitor.ts"
+      ],
+      "allowRuntime": [
+        "diagnostics"
+      ],
+      "allowTypes": [
+        "diagnostics"
+      ]
+    },
+    {
+      "id": "browser-dev",
+      "responsibility": "Explicit development-only visual studies using actual public UI APIs; no persistence/authentication claims.",
+      "files": [
+        "src/dev/account-adapter.ts",
+        "src/dev/account-preview.ts",
+        "src/dev/calculation-preview.ts",
+        "src/dev/control-colors.ts",
+        "src/dev/shared-chart-preview.ts",
+        "src/dev/stand-connection.ts"
+      ],
+      "publicEntries": [
+        "src/dev/control-colors.ts"
+      ],
+      "allowRuntime": [
+        "browser-dev",
+        "feature-views",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "presentation-rules",
+        "domain",
+        "shared-contracts",
+        "renderers",
+        "reference",
+        "diagnostics",
+        "presentation-primitives",
+        "account-flow",
+        "message-catalog",
+        "shell-state"
+      ],
+      "allowTypes": [
+        "browser-dev",
+        "feature-views",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "presentation-rules",
+        "domain",
+        "shared-contracts",
+        "renderers",
+        "reference",
+        "diagnostics",
+        "presentation-primitives",
+        "account-flow",
+        "message-catalog",
+        "shell-state"
+      ],
+      "executionEntries": [
+        "src/dev/account-preview.ts",
+        "src/dev/control-colors.ts",
+        "src/dev/shared-chart-preview.ts"
+      ]
+    },
+    {
+      "id": "stories",
+      "responsibility": "Separate story page composition with the same drawing/domain facilities.",
+      "files": [
+        "src/stories/vessel-of-love.ts"
+      ],
+      "publicEntries": [],
+      "allowRuntime": [
+        "stories",
+        "feature-views",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "domain",
+        "shared-contracts",
+        "renderers",
+        "geometry",
+        "selection",
+        "chart-input",
+        "chart-view-mode",
+        "camera",
+        "reference",
+        "diagnostics",
+        "presentation-primitives"
+      ],
+      "allowTypes": [
+        "stories",
+        "feature-views",
+        "ui-furniture",
+        "ui-styles",
+        "ui-layout",
+        "domain",
+        "shared-contracts",
+        "renderers",
+        "geometry",
+        "selection",
+        "chart-input",
+        "chart-view-mode",
+        "camera",
+        "reference",
+        "diagnostics",
+        "presentation-primitives"
+      ],
+      "executionEntries": [
+        "src/stories/vessel-of-love.ts"
+      ]
+    },
+    {
+      "id": "server-composition",
+      "responsibility": "Connect configured services, one compute queue and the HTTP listener.",
+      "files": [
+        "deploy/prepare-accounts.ts",
+        "server/accounts.ts",
+        "server/charts.ts",
+        "server/server.ts"
+      ],
+      "publicEntries": [],
+      "allowRuntime": [
+        "mail-queue",
+        "mail-transport",
+        "server-accounts",
+        "server-chart-preparation",
+        "server-chart-records",
+        "server-composition",
+        "server-http",
+        "server-primary-storage",
+        "server-runtime",
+        "server-services",
+        "shared-contracts",
+        "server-journal",
+        "journal-events",
+        "journal-policy",
+        "telegram-provider",
+        "local-mailbox-http",
+        "journal-reporter"
+      ],
+      "allowTypes": [
+        "mail-contracts",
+        "mail-queue",
+        "mail-transport",
+        "server-accounts",
+        "server-chart-preparation",
+        "server-chart-records",
+        "server-composition",
+        "server-http",
+        "server-primary-storage",
+        "server-runtime",
+        "server-services",
+        "shared-contracts",
+        "server-journal",
+        "journal-events",
+        "journal-policy",
+        "telegram-provider",
+        "local-mailbox-http",
+        "journal-reporter"
+      ],
+      "executionEntries": [
+        "deploy/prepare-accounts.ts",
+        "server/server.ts"
+      ]
+    },
+    {
+      "id": "server-http",
+      "responsibility": "Transport validation, request lifetime and response/static-file delivery; feature policy belongs to services.",
+      "files": [
+        "server/http/account-security.ts",
+        "server/http/accounts.ts",
+        "server/http/app.ts",
+        "server/http/charts.ts",
+        "server/http/content-encoding.ts",
+        "server/http/cycles.ts",
+        "server/http/json.ts",
+        "server/http/lifetime.ts",
+        "server/http/natal-days.ts",
+        "server/http/public-files.ts",
+        "server/http/request-signal.ts",
+        "server/http/static-assets.ts",
+        "server/http/transit-days.ts",
+        "server/http/diagnostics.ts"
+      ],
+      "publicEntries": [
+        "server/http/accounts.ts",
+        "server/http/app.ts",
+        "server/http/charts.ts",
+        "server/http/public-files.ts",
+        "server/http/diagnostics.ts"
+      ],
+      "allowRuntime": [
+        "server-accounts",
+        "server-chart-preparation",
+        "server-chart-records",
+        "server-http",
+        "server-services",
+        "shared-contracts",
+        "journal-events",
+        "journal-reporter"
+      ],
+      "allowTypes": [
+        "server-accounts",
+        "server-chart-preparation",
+        "server-chart-records",
+        "server-http",
+        "server-services",
+        "shared-contracts",
+        "journal-policy",
+        "journal-reporter"
+      ]
+    },
+    {
+      "id": "server-services",
+      "responsibility": "Calculation/service policy, prepared data, request coalescing and agreed caches, independent of HTTP objects.",
+      "files": [
+        "server/services/calculate.ts",
+        "server/services/calculation-failure.ts",
+        "server/services/cities.ts",
+        "server/services/cycles.ts",
+        "server/services/lifetime-compatibility.ts",
+        "server/services/lifetime.ts",
+        "server/services/natal-days.ts",
+        "server/services/transit-days.ts"
+      ],
+      "publicEntries": [
+        "server/services/calculate.ts",
+        "server/services/calculation-failure.ts",
+        "server/services/cities.ts",
+        "server/services/cycles.ts",
+        "server/services/lifetime.ts",
+        "server/services/natal-days.ts",
+        "server/services/transit-days.ts"
+      ],
+      "allowRuntime": [
+        "server-services",
+        "server-runtime",
+        "server-packets",
+        "shared-contracts",
+        "journal-reporter",
+        "shared-job-consumers"
+      ],
+      "allowTypes": [
+        "server-services",
+        "server-runtime",
+        "server-packets",
+        "shared-contracts",
+        "journal-reporter",
+        "shared-job-consumers"
+      ]
+    },
+    {
+      "id": "shared-job-consumers",
+      "responsibility": "One cancellation and consumer-lifetime rule for unfinished shared jobs. Does not launch processes, own an admission queue or retain completed results.",
+      "files": [
+        "server/runtime/job-consumers.ts"
+      ],
+      "publicEntries": [
+        "server/runtime/job-consumers.ts"
+      ],
+      "allowRuntime": [],
+      "allowTypes": []
+    },
+    {
+      "id": "server-runtime",
+      "responsibility": "Physical process/queue/consumer lifecycle and file signatures; the specialized calculator IPC adapter may know its explicitly declared request wire type, while calculation rules remain in services.",
+      "files": [
+        "server/runtime/account-environment.ts",
+        "server/runtime/calculation-version.ts",
+        "server/runtime/calculator-workers.ts",
+        "server/runtime/compute-queue.ts",
+        "server/runtime/journal-environment.ts",
+        "server/runtime/json-worker.ts",
+        "server/runtime/python.ts",
+        "server/runtime/transit-cache-migration.ts"
+      ],
+      "publicEntries": [
+        "server/runtime/account-environment.ts",
+        "server/runtime/calculation-version.ts",
+        "server/runtime/calculator-workers.ts",
+        "server/runtime/compute-queue.ts",
+        "server/runtime/journal-environment.ts",
+        "server/runtime/json-worker.ts",
+        "server/runtime/python.ts",
+        "server/runtime/transit-cache-migration.ts"
+      ],
+      "allowRuntime": [
+        "server-runtime"
+      ],
+      "allowTypes": [
+        "server-runtime"
+      ]
+    },
+    {
+      "id": "server-packets",
+      "responsibility": "Encode and compress calculation packet formats; shared contracts define wire values.",
+      "files": [
+        "server/packets/compression.ts",
+        "server/packets/encode.ts"
+      ],
+      "publicEntries": [
+        "server/packets/compression.ts",
+        "server/packets/encode.ts"
+      ],
+      "allowRuntime": [
+        "server-packets",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "server-packets",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "presentation-primitives",
+      "responsibility": "Shared output escaping and economical text projection; no feature actions, state or popup lifecycle.",
+      "files": [
+        "src/ui/html.ts"
+      ],
+      "publicEntries": [
+        "src/ui/html.ts"
+      ],
+      "allowRuntime": [
+        "presentation-primitives"
+      ],
+      "allowTypes": [
+        "presentation-primitives"
+      ]
+    },
+    {
+      "id": "server-accounts",
+      "responsibility": "Действия входа и права; правила попыток и ограничений. Не расчётный сервис и не HTTP.",
+      "files": [
+        "server/services/account-limits.ts",
+        "server/services/account-policy.ts",
+        "server/services/accounts.ts"
+      ],
+      "publicEntries": [
+        "server/services/account-policy.ts",
+        "server/services/accounts.ts"
+      ],
+      "allowRuntime": [
+        "mail-policy",
+        "server-accounts",
+        "server-primary-storage",
+        "shared-contracts",
+        "telegram-provider",
+        "telegram-identity"
+      ],
+      "allowTypes": [
+        "mail-contracts",
+        "mail-policy",
+        "server-accounts",
+        "server-primary-storage",
+        "shared-contracts",
+        "telegram-provider",
+        "telegram-identity"
+      ]
+    },
+    {
+      "id": "server-primary-storage",
+      "responsibility": "Основная база: физическое соединение/транзакция и операции записей. Отдельно от расчётных кэшей.",
+      "files": [
+        "server/storage/account-counters.ts",
+        "server/storage/accounts.ts",
+        "server/storage/chart-records.ts",
+        "server/storage/database.ts",
+        "server/storage/mail-queue.ts"
+      ],
+      "publicEntries": [
+        "server/storage/account-counters.ts",
+        "server/storage/accounts.ts",
+        "server/storage/chart-records.ts",
+        "server/storage/database.ts",
+        "server/storage/mail-queue.ts"
+      ],
+      "allowRuntime": [
+        "journal-policy",
+        "server-primary-storage"
+      ],
+      "allowTypes": [
+        "journal-policy",
+        "server-primary-storage",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "mail-policy",
+      "responsibility": "Только нынешние чистые сроки и пределы письма. Очереди/отправителя здесь ещё нет.",
+      "files": [
+        "server/mail/policy.ts"
+      ],
+      "publicEntries": [
+        "server/mail/policy.ts"
+      ],
+      "allowRuntime": [
+        "mail-policy",
+        "journal-policy"
+      ],
+      "allowTypes": [
+        "mail-policy",
+        "journal-policy"
+      ]
+    },
+    {
+      "id": "account-flow",
+      "responsibility": "Client account lifecycle and login action: input, pending/accepted state, restoration, logout coordination and current replies. Server access authority remains separate.",
+      "files": [
+        "src/state/account-flow.ts",
+        "src/state/account-session.ts"
+      ],
+      "publicEntries": [
+        "src/state/account-flow.ts",
+        "src/state/account-session.ts"
+      ],
+      "allowRuntime": [
+        "account-flow",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "account-flow",
+        "data-clients",
+        "data-storage",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "message-catalog",
+      "responsibility": "Точные слова для известной причины; без DOM, запросов, прав, хранения и повторов.",
+      "files": [
+        "src/ui/messages.ts"
+      ],
+      "publicEntries": [
+        "src/ui/messages.ts"
+      ],
+      "allowRuntime": [
+        "message-catalog"
+      ],
+      "allowTypes": [
+        "message-catalog"
+      ]
+    },
+    {
+      "id": "mail-contracts",
+      "responsibility": "Delivery command and cancellation port shared by account and mail owners; no account policy or storage.",
+      "files": [
+        "server/mail/code-mail.ts"
+      ],
+      "publicEntries": [
+        "server/mail/code-mail.ts"
+      ],
+      "allowRuntime": [
+        "mail-contracts"
+      ],
+      "allowTypes": [
+        "mail-contracts"
+      ]
+    },
+    {
+      "id": "mail-delivery",
+      "responsibility": "Encode the accepted email using a standard MIME library; delivering and retaining messages are separate responsibilities.",
+      "files": [
+        "server/mail/code-message.ts"
+      ],
+      "publicEntries": [
+        "server/mail/code-message.ts"
+      ],
+      "allowRuntime": [
+        "mail-delivery"
+      ],
+      "allowTypes": [
+        "mail-delivery",
+        "mail-contracts"
+      ]
+    },
+    {
+      "id": "mail-queue",
+      "responsibility": "Own accepted queue limits, reconciliation, cancellation and permitted delivery attempts; storage and physical Postfix remain separate.",
+      "files": [
+        "server/mail/queue.ts"
+      ],
+      "publicEntries": [
+        "server/mail/queue.ts"
+      ],
+      "allowRuntime": [
+        "mail-queue",
+        "server-primary-storage",
+        "mail-delivery",
+        "mail-policy"
+      ],
+      "allowTypes": [
+        "mail-queue",
+        "server-primary-storage",
+        "mail-delivery",
+        "mail-policy",
+        "mail-contracts",
+        "mail-transport"
+      ],
+      "notes": [
+        "PostfixQueue is an explicitly declared command port with list/submit/remove/send/close, not a value-only contract or inferred ReturnType. Runtime construction of transport belongs to composition."
+      ]
+    },
+    {
+      "id": "mail-transport",
+      "responsibility": "Contact only configured local SMTP and private Unix control socket; validate transport results. No account decisions, retry policy or database ownership.",
+      "files": [
+        "server/mail/postfix.ts"
+      ],
+      "publicEntries": [
+        "server/mail/postfix.ts"
+      ],
+      "allowRuntime": [
+        "mail-transport"
+      ],
+      "allowTypes": [
+        "mail-transport",
+        "mail-contracts"
+      ]
+    },
+    {
+      "id": "server-chart-records",
+      "responsibility": "Account chart mutations and owned/public reads; one transaction guards access, duplicate identity, note revision and compact 48-hour outcome. Receives prepared calculations, not raw HTTP input.",
+      "files": [
+        "server/services/chart-library.ts",
+        "server/services/chart-policy.ts",
+        "server/services/chart-records.ts",
+        "server/services/chart-returns.ts",
+        "server/services/return-receipt.ts"
+      ],
+      "publicEntries": [
+        "server/services/chart-library.ts",
+        "server/services/chart-records.ts",
+        "server/services/chart-returns.ts",
+        "server/services/return-receipt.ts"
+      ],
+      "allowRuntime": [
+        "server-chart-records",
+        "server-primary-storage",
+        "shared-contracts",
+        "shared-job-consumers"
+      ],
+      "allowTypes": [
+        "server-chart-records",
+        "server-primary-storage",
+        "shared-contracts",
+        "shared-job-consumers"
+      ]
+    },
+    {
+      "id": "server-chart-preparation",
+      "responsibility": "Prepare full persistent chart data from source input through the existing city and calculation owners; validate complete server output before storage.",
+      "files": [
+        "server/services/calculation-receipt.ts",
+        "server/services/chart-calculation.ts"
+      ],
+      "publicEntries": [
+        "server/services/calculation-receipt.ts",
+        "server/services/chart-calculation.ts"
+      ],
+      "allowRuntime": [
+        "server-chart-preparation",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "server-chart-preparation",
+        "shared-contracts",
+        "server-services"
+      ]
+    },
+    {
+      "id": "postfix-setup",
+      "responsibility": "Prepare explicit platform configuration for the reviewed local mail instance from the one accepted mail policy. No installation or service startup.",
+      "files": [
+        "deploy/postfix/package-linux.ts",
+        "deploy/postfix/prepare.ts"
+      ],
+      "publicEntries": [
+        "deploy/postfix/prepare.ts"
+      ],
+      "executionEntries": [
+        "deploy/postfix/package-linux.ts",
+        "deploy/postfix/prepare.ts"
+      ],
+      "allowRuntime": [
+        "postfix-setup",
+        "mail-policy"
+      ],
+      "allowTypes": [
+        "postfix-setup",
+        "mail-policy"
+      ]
+    },
+    {
+      "id": "journal-policy",
+      "responsibility": "Own the accepted journal retention and total budget, and pure bounded bookkeeping helpers. No IO or product state.",
+      "files": [
+        "server/journal/policy.ts"
+      ],
+      "publicEntries": [
+        "server/journal/policy.ts"
+      ],
+      "allowRuntime": [
+        "journal-policy"
+      ],
+      "allowTypes": [
+        "journal-policy"
+      ]
+    },
+    {
+      "id": "journal-events",
+      "responsibility": "Define and validate exact permitted diagnostic facts; no raw requests, mail bodies, secrets or business mutations.",
+      "files": [
+        "server/journal/events.ts"
+      ],
+      "publicEntries": [
+        "server/journal/events.ts"
+      ],
+      "allowRuntime": [
+        "journal-events",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "journal-events",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "journal-reporter",
+      "responsibility": "Single server reporting facade: bound and validate facts, isolate reporting failures. No queue, persistence, business state or delivery ownership.",
+      "files": [
+        "server/journal/report.ts",
+        "server/journal/service-input.ts"
+      ],
+      "publicEntries": [
+        "server/journal/report.ts",
+        "server/journal/service-input.ts"
+      ],
+      "allowRuntime": [
+        "journal-events"
+      ],
+      "allowTypes": [
+        "journal-events"
+      ]
+    },
+    {
+      "id": "server-journal",
+      "responsibility": "Persist bounded JSONL facts, recover the derived index, acknowledge durable acceptance and discard records within the one policy. Receives facts, never owns account/card outcomes.",
+      "files": [
+        "server/journal/mail-buffer-client.ts",
+        "server/journal/mail-buffer-worker.ts",
+        "server/journal/mail-buffer.ts",
+        "server/journal/runtime.ts",
+        "server/journal/store.ts",
+        "server/journal/worker.ts",
+        "server/journal/writer.ts"
+      ],
+      "publicEntries": [
+        "server/journal/runtime.ts"
+      ],
+      "executionEntries": [
+        "server/journal/mail-buffer-worker.ts",
+        "server/journal/worker.ts"
+      ],
+      "allowRuntime": [
+        "server-journal",
+        "journal-events",
+        "journal-policy",
+        "journal-reporter"
+      ],
+      "allowTypes": [
+        "server-journal",
+        "journal-events",
+        "journal-policy",
+        "shared-contracts",
+        "journal-reporter"
+      ]
+    },
+    {
+      "id": "account-library",
+      "responsibility": "Own the loaded private library and its account generation; accept current reads into the persistent lease without choosing the visible chart.",
+      "files": [
+        "src/state/account-library.ts"
+      ],
+      "publicEntries": [
+        "src/state/account-library.ts"
+      ],
+      "allowRuntime": [
+        "account-library"
+      ],
+      "allowTypes": [
+        "account-library",
+        "data-clients",
+        "data-storage",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "chart-actions",
+      "responsibility": "Own explicit chart write intents, one submission and read-only outcome recovery; guest calculation remains a temporary chart.",
+      "files": [
+        "src/state/chart-actions.ts"
+      ],
+      "publicEntries": [
+        "src/state/chart-actions.ts"
+      ],
+      "allowRuntime": [
+        "chart-actions",
+        "domain"
+      ],
+      "allowTypes": [
+        "chart-actions",
+        "account-library",
+        "data-clients",
+        "domain",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "telegram-identity",
+      "responsibility": "Verify the official provider signature and claims against a trusted key set and a specific attempt. Does not create accounts, persist tokens or grant sessions.",
+      "files": [
+        "server/services/telegram-identity.ts"
+      ],
+      "publicEntries": [
+        "server/services/telegram-identity.ts"
+      ],
+      "allowRuntime": [
+        "telegram-identity"
+      ],
+      "allowTypes": [
+        "telegram-identity"
+      ]
+    },
+    {
+      "id": "navigation",
+      "responsibility": "Own the current browser route and history changes; page loading, access and view restoration remain with their respective owners.",
+      "files": [
+        "src/state/navigation.ts"
+      ],
+      "publicEntries": [
+        "src/state/navigation.ts"
+      ],
+      "allowRuntime": [
+        "navigation",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "navigation",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "telegram-provider",
+      "responsibility": "Fetch the bounded official Telegram key set for an active attempt and delegate cryptographic claims to its verifier; no account grants or persistent key archive.",
+      "files": [
+        "server/services/telegram-provider.ts"
+      ],
+      "publicEntries": [
+        "server/services/telegram-provider.ts"
+      ],
+      "allowRuntime": [
+        "telegram-provider",
+        "telegram-identity"
+      ],
+      "allowTypes": [
+        "telegram-provider",
+        "telegram-identity"
+      ]
+    },
+    {
+      "id": "browser-journal",
+      "responsibility": "Independent optional diagnostic subsystem. Exposes one browser facade; owns report format, attribution, queue, bounded delivery and cleanup, never product behavior or presentation.",
+      "files": [
+        "src/journal.ts",
+        "src/diagnostics/client-reports.ts",
+        "src/diagnostics/browser-source.ts",
+        "src/data/diagnostic-queue.ts",
+        "src/data/diagnostic-client.ts",
+        "src/data/diagnostic-delivery.ts"
+      ],
+      "publicEntries": [
+        "src/journal.ts"
+      ],
+      "allowRuntime": [
+        "browser-journal",
+        "data-clients",
+        "data-storage",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "browser-journal",
+        "data-clients",
+        "data-storage",
+        "shared-contracts"
+      ],
+      "privateEntryReasons": {
+        "src/diagnostics/browser-source.ts": "Journal-owned browser error subscriptions and coarse environment fields; no raw error or user agent persistence.",
+        "src/diagnostics/client-reports.ts": "Journal implementation: product owners report through src/journal.ts; queue, format and delivery stay private.",
+        "src/data/diagnostic-queue.ts": "Journal implementation: product owners report through src/journal.ts; queue, format and delivery stay private.",
+        "src/data/diagnostic-client.ts": "Journal implementation: product owners report through src/journal.ts; queue, format and delivery stay private.",
+        "src/data/diagnostic-delivery.ts": "Journal implementation: product owners report through src/journal.ts; queue, format and delivery stay private."
+      }
+    },
+    {
+      "id": "offline-bundle",
+      "responsibility": "Own the complete public application CacheStorage bundle, integrity checks and safe retirement; never store API or personal data.",
+      "files": [
+        "src/offline/app-bundle.ts"
+      ],
+      "publicEntries": [
+        "src/offline/app-bundle.ts"
+      ],
+      "allowRuntime": [
+        "offline-bundle",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "offline-bundle",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "offline-worker",
+      "responsibility": "Connect the browser service-worker lifecycle to the bundle owner; activation and retirement require explicit coordinator approval.",
+      "files": [
+        "src/offline/service-worker.ts"
+      ],
+      "publicEntries": [],
+      "allowRuntime": [
+        "offline-worker",
+        "offline-bundle",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "offline-worker",
+        "offline-bundle",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "offline-page",
+      "responsibility": "Coordinate durable tab preparation and restoration with service workers; keep actual loaded release identity separate from worker status.",
+      "files": [
+        "src/offline/page-coordinator.ts"
+      ],
+      "publicEntries": [
+        "src/offline/page-coordinator.ts"
+      ],
+      "allowRuntime": [
+        "offline-page",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "offline-page",
+        "shared-contracts"
+      ]
+    },
+    {
+      "id": "local-mailbox-http",
+      "responsibility": "Local development inbox transport to fixed loopback Mailpit; source-stand opt-in, socket/Host/Origin boundary and credential isolation. Owns no accounts or mail queue.",
+      "files": [
+        "server/dev/mailbox-proxy.ts"
+      ],
+      "publicEntries": [
+        "server/dev/mailbox-proxy.ts"
+      ],
+      "allowRuntime": [
+        "local-mailbox-http"
+      ],
+      "allowTypes": [
+        "local-mailbox-http"
+      ]
+    }
+  ],
+  "cyclePolicy": {
+    "runtime": "report-deviation",
+    "fullIncludingTypes": "report-deviation",
+    "interModule": "report-deviation",
+    "reason": "File cycles remain visible even within a semantic module."
+  },
+  "exactExceptions": [
+    {
+      "from": "server/http/public-files.ts",
+      "to": "src/scene/loading-placeholder.ts",
+      "modes": [
+        "runtime"
+      ],
+      "bypass": [
+        "allowlist",
+        "public-entry"
+      ],
+      "reason": "Подготовка настоящего загрузочного HTML до выполнения браузерного приложения; один генератор используется серверной выдачей и выпускной сборкой. Не делает генератор публичным браузерным входом."
+    },
+    {
+      "from": "src/scene/geometry/chart-geometry.ts",
+      "to": "src/reference/catalog.ts",
+      "modes": [
+        "runtime"
+      ],
+      "bypass": [
+        "allowlist"
+      ],
+      "reason": "Geometry reads immutable named topology from the exact catalogue file. No general access to authored reference modules, effects or state is granted. This exception checks files, not exported names."
+    },
+    {
+      "from": "src/data/diagnostic-queue.ts",
+      "to": "src/data/indexed-db.ts",
+      "modes": [
+        "runtime"
+      ],
+      "bypass": [
+        "public-entry"
+      ],
+      "reason": "The isolated journal storage adapter uses the common IndexedDB connection mechanism; this does not expose diagnostic records or grant product code direct queue access."
+    }
+  ],
+  "assets": [
+    {
+      "file": "shared/prepared-data-revisions.json",
+      "owner": "shared-contracts",
+      "public": true,
+      "reason": "Explicit manifest of allowed prepared-data revision transitions; separate from importable code."
+    }
+  ],
+  "externalPolicy": {
+    "nodeBuiltinsAllowedFrom": [
+      "server-composition",
+      "server-http",
+      "server-services",
+      "server-runtime",
+      "server-packets",
+      "server-accounts",
+      "server-primary-storage",
+      "mail-transport",
+      "server-chart-records",
+      "postfix-setup",
+      "server-journal",
+      "journal-events",
+      "server-chart-preparation",
+      "local-mailbox-http",
+      "journal-reporter"
+    ],
+    "otherExternal": "report-unclassified-as-error",
+    "packages": [
+      {
+        "owner": "mail-delivery",
+        "from": "server/mail/code-message.ts",
+        "specifier": "nodemailer",
+        "reason": "The approved MIME adapter uses Nodemailer without a framework; no browser or other file receives this permission."
+      },
+      {
+        "owner": "mail-transport",
+        "from": "server/mail/postfix.ts",
+        "specifier": "nodemailer",
+        "reason": "The local SMTP adapter uses the approved library; this grants no package access to the account policy, queue or browser."
+      },
+      {
+        "owner": "telegram-identity",
+        "from": "server/services/telegram-identity.ts",
+        "specifier": "jose",
+        "reason": "The isolated Telegram OIDC verifier uses a standard signature/JWT implementation. No account policy, browser, arbitrary remote-key URL or framework receives this permission."
+      },
+      {
+        "owner": "postfix-setup",
+        "from": "deploy/postfix/package-linux.ts",
+        "specifier": "esbuild",
+        "reason": "The mail-only packaging CLI uses the existing development bundler to prepare deployment artifacts; this permission does not extend to application runtime or other files."
+      }
+    ]
+  },
+  "uncertainPublicEntries": [],
+  "python": {
+    "separateContour": true,
+    "processInvocationIsImport": false,
+    "modules": [
+      {
+        "id": "python-domain",
+        "responsibility": "Astronomy, civil time, date bounds and calculation errors.",
+        "files": [
+          "server/python/astronomy.py",
+          "server/python/civil_time.py",
+          "server/python/date_limits.py",
+          "server/python/errors.py"
+        ],
+        "publicEntries": [
+          "server/python/astronomy.py",
+          "server/python/civil_time.py",
+          "server/python/date_limits.py",
+          "server/python/errors.py"
+        ],
+        "allowRuntime": [
+          "python-domain"
+        ],
+        "allowTypes": [
+          "python-domain"
+        ]
+      },
+      {
+        "id": "python-return-index",
+        "responsibility": "Prepared movement index and index query contract.",
+        "files": [
+          "server/python/return_index.py"
+        ],
+        "publicEntries": [
+          "server/python/return_index.py"
+        ],
+        "allowRuntime": [
+          "python-return-index",
+          "python-domain"
+        ],
+        "allowTypes": [
+          "python-return-index",
+          "python-domain"
+        ]
+      },
+      {
+        "id": "python-jobs",
+        "responsibility": "Executable JSON/CLI calculation scenarios, not module APIs to other layers.",
+        "files": [
+          "server/python/calculator.py",
+          "server/python/cycles.py",
+          "server/python/natal_day.py",
+          "server/python/transit_day.py",
+          "server/python/lifetime_file.py"
+        ],
+        "publicEntries": [],
+        "allowRuntime": [
+          "python-jobs",
+          "python-domain",
+          "python-return-index"
+        ],
+        "allowTypes": [
+          "python-jobs",
+          "python-domain",
+          "python-return-index"
+        ],
+        "executionEntries": [
+          "server/python/calculator.py",
+          "server/python/cycles.py",
+          "server/python/natal_day.py",
+          "server/python/transit_day.py",
+          "server/python/lifetime_file.py"
+        ]
+      },
+      {
+        "id": "postfix-control",
+        "responsibility": "Privileged local Postfix control and expiry cleanup. Queue policy and application state remain in their respective owners; Unix-socket commands are a separate runtime boundary.",
+        "files": [
+          "deploy/postfix/control.py"
+        ],
+        "publicEntries": [],
+        "allowRuntime": [
+          "postfix-control"
+        ],
+        "allowTypes": [
+          "postfix-control"
+        ],
+        "executionEntries": [
+          "deploy/postfix/control.py"
+        ]
+      },
+      {
+        "id": "postfix-receipts",
+        "responsibility": "Native local Postfix outcome adapter into the existing mail queue: checked terminal facts only, no second body store or raw mail log.",
+        "files": [
+          "deploy/postfix/receipt.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "deploy/postfix/receipt.py"
+        ],
+        "allowRuntime": [
+          "postfix-receipts"
+        ],
+        "allowTypes": [
+          "postfix-receipts"
+        ]
+      },
+      {
+        "id": "postfix-install",
+        "responsibility": "Validated privileged installation of the one local Postfix instance and its service helpers. Does not own account or mail-queue policy.",
+        "files": [
+          "deploy/postfix/install.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "deploy/postfix/install.py"
+        ],
+        "allowRuntime": [
+          "postfix-install"
+        ],
+        "allowTypes": [
+          "postfix-install"
+        ]
+      },
+      {
+        "id": "transit-cache-migration",
+        "responsibility": "One-time legacy transit cache removal anchored to no-follow directory descriptors. Accepts only server configuration; never calculates or owns application storage policy.",
+        "files": [
+          "server/python/transit_cache_cleanup.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "server/python/transit_cache_cleanup.py"
+        ],
+        "allowRuntime": [
+          "transit-cache-migration"
+        ],
+        "allowTypes": [
+          "transit-cache-migration"
+        ]
+      },
+      {
+        "id": "local-mailbox-setup",
+        "responsibility": "Explicit per-user macOS development receiver setup with verified Mailpit binary and private temporary inbox. No production deployment, DNS or application policy.",
+        "files": [
+          "deploy/local_mailbox.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "deploy/local_mailbox.py"
+        ],
+        "allowRuntime": [
+          "local-mailbox-setup"
+        ],
+        "allowTypes": [
+          "local-mailbox-setup"
+        ]
+      },
+      {
+        "id": "linux-storage-setup",
+        "responsibility": "Explicit offline Linux storage layout preparation: separate existing state, journal and cache zones, preserve prepared data across release replacement. Does not generate calculations, own retention or start services.",
+        "files": [
+          "deploy/prepare-storage.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "deploy/prepare-storage.py"
+        ],
+        "allowRuntime": [
+          "linux-storage-setup"
+        ],
+        "allowTypes": [
+          "linux-storage-setup"
+        ]
+      }
+    ]
+  },
+  "limits": [
+    "Import policy verifies static dependencies and file ownership only; injected writable ports/effects/callbacks require semantic or behavioral checks.",
+    "A passed file/module graph does not prove independent lifecycles or product safety.",
+    "Types follow semantic ownership; rendering/controller implementation types are not general domain contracts.",
+    "This policy is a proposed technical declaration. It does not change approved UI text, product behavior, cache or storage policy."
+  ],
+  "revision": "8-explicit-development-assembly-and-mail-setup",
+  "stableValueContracts": [
+    {
+      "id": "calculator-ipc-request",
+      "from": "server/runtime/calculator-workers.ts",
+      "to": "shared/chart-types.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "CalculationRequest"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Специализированный IPC-адаптер калькулятора знает форму передаваемого запроса. Предметные правила и расчётные решения остаются в сервисах; это не разрешение импортировать исполняемые функции."
+    },
+    {
+      "id": "http-encoded-bytes",
+      "from": "server/http/static-assets.ts",
+      "to": "server/packets/compression.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "EncodedBytes"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Три представления одного HTTP-тела: identity, br и gzip. Это договор байтов для доставки, без зависимости от алгоритма расчётного пакета."
+    },
+    {
+      "id": "saved-camera-value",
+      "from": "src/data/view-store.ts",
+      "to": "src/scene/camera.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "SavedCameraPosition"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Снимок сохраняет значения x/y/k/maxK, определённые владельцем камеры. Тип изменяемого контроллера Camera и функции камеры этим договором не разрешаются."
+    },
+    {
+      "id": "layout-camera-frame",
+      "from": "src/ui/layout/studio.ts",
+      "to": "src/scene/geometry/frames.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "CameraFrame"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Компоновка получает описание рамки рисунка как значение. Импорт геометрических расчётов, контроллеров сцены или состояния не разрешается."
+    },
+    {
+      "id": "knowledge-catalog--selection-targets",
+      "from": "src/reference/knowledge-catalog.ts",
+      "to": "src/selection/selection-targets.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "SelectionIdentity"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Идентификатор предмета для поиска статьи, без модели выбора/изменения состояния."
+    },
+    {
+      "id": "chart-highlight--drawing-presentation",
+      "from": "src/state/chart-highlight.ts",
+      "to": "src/scene/geometry/drawing-presentation.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "HighlightStyle"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Значение outline/glow; не вычисления геометрии и не контроллер рисунка."
+    },
+    {
+      "id": "action-state--http-transport",
+      "from": "src/ui/action-state.ts",
+      "to": "src/data/http-transport.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "ConnectionMode"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Переданное значение состояния связи, без fetch/подписки/переключения симуляции."
+    },
+    {
+      "id": "all-charts--view-store",
+      "from": "src/views/all-charts.ts",
+      "to": "src/data/view-store.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "SavedView"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Используется только SavedView[charts] для входного снимка и возвращаемого значения. Не разрешает ViewStore или исполняемые функции."
+    },
+    {
+      "id": "birth-form--api-client",
+      "from": "src/views/birth-form.ts",
+      "to": "src/data/api-client.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "ApiError"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Описание причины/статуса/вариантов ответа, без запуска запроса. Допустимо только import type указанного имени; не даёт requestJSON."
+    },
+    {
+      "id": "knowledge-entry--view-store",
+      "from": "src/views/knowledge-entry.ts",
+      "to": "src/data/view-store.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "SavedView"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Используется только SavedView[knowledge], значение для восстановления и снимка."
+    },
+    {
+      "id": "knowledge--view-store",
+      "from": "src/views/knowledge.ts",
+      "to": "src/data/view-store.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "SavedView"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Используется только SavedView[knowledge], значение для восстановления и снимка."
+    },
+    {
+      "id": "environment-postfix-options",
+      "from": "server/runtime/account-environment.ts",
+      "to": "server/mail/postfix.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "PostfixOptions"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Only local control socket and SMTP port configuration values; no PostfixQueue controller or transport functions are allowed by this grant."
+    },
+    {
+      "id": "mail-storage-policy-values",
+      "from": "server/storage/mail-queue.ts",
+      "to": "server/mail/policy.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "MAIL_POLICY"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Форма переданных сроков и пределов очереди. Хранилище принимает значения от владельца почтовой политики; импорт отправки, очереди и исполняемых функций не разрешается."
+    }
+  ],
+  "legacyExceptions": []
+}

@@ -4,7 +4,7 @@ import { readdirSync } from 'node:fs';
 import { readModuleSource } from './helpers/module-source.ts';
 
 // Explicit opt-in: the normal offline test suite must not require a running server.
-// Start the application separately, then run RUN_API_TESTS=1 npm test.
+// Use an already running source stand: RUN_API_TESTS=1 node --test tests/api.test.ts.
 const apiTest = process.env.RUN_API_TESTS === '1' ? test : test.skip;
 const base = process.env.API_TEST_BASE_URL || 'http://127.0.0.1:3636';
 const birth = {
@@ -12,31 +12,31 @@ const birth = {
   cityId: '524901', cityName: 'Москва'
 };
 
-async function request(path: string|URL|undefined, options = {}) {
-  const response = await fetch(new URL(path!, base), { ...options, signal: AbortSignal.timeout(20000) });
+async function request(path: string|URL, options: RequestInit = {}) {
+  const response = await fetch(new URL(path, base), { ...options, signal: AbortSignal.timeout(20000) });
   const body = await response.text();
   return { status: response.status, headers: response.headers, body, json: () => JSON.parse(body) };
 }
 
-const post = (value, headers = {}) => request('/api/calculate', {
+const post = (value: unknown, headers: Record<string,string> = {}) => request('/api/calculate', {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(value)
 });
 
 apiTest('the browser can load the selection state module and its dependency', async () => {
   const module = await request('/src/selection/selection-state.ts');
   assert.equal(module.status, 200);
-  assert.match(module.headers.get('content-type'), /javascript/);
+  assert.match(module.headers.get('content-type') ?? '', /javascript/);
   assert.match(module.body, /export function createSelectionState\(/);
   assert.match(module.body, /from '\.\.\/domain\/topology\.ts'/);
   const graph = await request('/src/domain/topology.ts');
   assert.equal(graph.status, 200);
-  assert.match(graph.headers.get('content-type'), /javascript/);
+  assert.match(graph.headers.get('content-type') ?? '', /javascript/);
 });
 
-apiTest('the page loads the complete frontend module graph through public source URLs', async () => {
+apiTest('the page loads the complete frontend module graph through public source URLs', async t => {
   const page = await request('/');
   assert.equal(page.status, 200);
-  assert.match(page.headers.get('content-type'), /html/);
+  assert.match(page.headers.get('content-type') ?? '', /html/);
   assert.match(page.body, /<svg id="chartLoadingArt"/, 'loading art is present before application JavaScript');
   assert.doesNotMatch(page.body, /<!-- chart-loading-placeholder -->/);
   const entryPoints = [...page.body.matchAll(/<script\b([^>]*)>/g)]
@@ -45,18 +45,19 @@ apiTest('the page loads the complete frontend module graph through public source
   assert.deepEqual(entryPoints, ['/src/dev/control-colors.ts', '/src/dev/account-preview.ts', '/src/dev/shared-chart-preview.ts', '/src/entry.ts']);
   const story = await request('/love');
   assert.equal(story.status, 200);
-  assert.match(story.headers.get('content-type'), /html/);
+  assert.match(story.headers.get('content-type') ?? '', /html/);
   assert.match(story.body, /src="\/src\/stories\/vessel-of-love.ts"/);
-  const pending = [...entryPoints, '/src/stories/vessel-of-love.ts'].map(path => new URL(path!, base)), visited = new Set();
+  const pending = [...entryPoints, '/src/stories/vessel-of-love.ts'].map(path => new URL(path, base)), visited = new Set<string>();
   while (pending.length) {
     const url = pending.pop();
-    assert.equal(url!.origin, new URL(base).origin, 'frontend modules stay on the application origin');
-    assert.ok(url!.pathname.startsWith('/src/') || url!.pathname.startsWith('/shared/'), `${url!.pathname} uses the public source boundary`);
-    if (visited.has(url!.pathname)) continue;
-    visited.add(url!.pathname);
+    assert.ok(url, 'a queued module has a URL');
+    assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');
+    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/'), `${url.pathname} uses the public source boundary`);
+    if (visited.has(url.pathname)) continue;
+    visited.add(url.pathname);
     const module = await request(url);
-    assert.equal(module.status, 200, url!.pathname);
-    assert.match(module.headers.get('content-type'), /javascript/, url!.pathname);
+    assert.equal(module.status, 200, url.pathname);
+    assert.match(module.headers.get('content-type') ?? '', /javascript/, url.pathname);
     const patterns = [
       /^\s*import\s+(?:[^'";]+?\s+from\s+)?['"]([^'"]+)['"]/gm,
       /^\s*export\s+(?:\*|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/gm,
@@ -66,17 +67,30 @@ apiTest('the page loads the complete frontend module graph through public source
       for (const [, dependency] of module.body.matchAll(pattern)) pending.push(new URL(dependency, url));
     }
   }
-  const sourceModules = (directory = new URL('../src/', import.meta.url), prefix = '/src/') =>
+  const sourceModules = (directory = new URL('../src/', import.meta.url), prefix = '/src/'): string[] =>
     readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
       ? sourceModules(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
       : entry.name.endsWith('.ts') && readModuleSource(new URL(entry.name, directory)).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '').trim() ? [`${prefix}${entry.name}`] : []);
-  const loadingGenerator = '/src/scene/loading-placeholder.ts';
-  assert.ok(!visited.has(loadingGenerator), 'the server/build generator is not browser-reachable');
-  assert.equal((await request(loadingGenerator)).status, 404, 'the loading generator remains private');
-  assert.deepEqual([...visited].sort(), [...sourceModules().filter((file: string) => file !== loadingGenerator), ...sourceModules(new URL('../shared/', import.meta.url), '/shared/')].sort(), 'every frontend module is reachable and publicly loadable');
+  // These executable sources have separate server/build/worker owners. The
+  // release builds its worker through scripts/offline-manifest.ts; the page
+  // does not import those sources, and the source stand must not expose them.
+  const privateSources = new Set([
+    '/src/scene/loading-placeholder.ts', // Server/build HTML generation.
+    '/shared/app-metadata.ts', // Server HTML metadata and worker integrity.
+    '/src/offline/service-worker.ts', // Separate generated worker entry.
+    '/src/offline/app-bundle.ts', // Worker dependency, not page coordination.
+  ]);
+  for (const file of privateSources) {
+    assert.ok(!visited.has(file), `${file} is outside the page module graph`);
+    assert.equal((await request(file)).status, 404, `${file} remains private`);
+  }
+  const pageSources = [...sourceModules(), ...sourceModules(new URL('../shared/', import.meta.url), '/shared/')]
+    .filter(file => !privateSources.has(file));
+  assert.deepEqual([...visited].sort(), pageSources.sort(), 'every page module is reachable and publicly loadable');
+  t.diagnostic(`${visited.size} page modules loaded over HTTP; ${privateSources.size} server/build/worker sources rejected`);
   const styles = await request('/styles.css');
   assert.equal(styles.status, 200);
-  assert.match(styles.headers.get('content-type'), /css/);
+  assert.match(styles.headers.get('content-type') ?? '', /css/);
 });
 
 apiTest('city API finds Moscow by Russian name and returns identity and timezone', async () => {
@@ -91,7 +105,7 @@ apiTest('city API finds Moscow by Russian name and returns identity and timezone
   assert.equal(moscow.timezone, 'Europe/Moscow');
   assert.equal(typeof moscow.latitude, 'number');
   assert.equal(typeof moscow.longitude, 'number');
-  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/);
 });
 
 apiTest('city API matches a Latin alias and does not return the whole database for a short query', async () => {
@@ -120,7 +134,7 @@ apiTest('natal calculation uses historical Moscow UTC+4 and produces 26 activati
   assert.ok(chart.designUtc);
   assert.ok(chart.designArcResidualDegrees < 1e-7);
   assert.match(chart.engine, /Swiss Ephemeris/);
-  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/);
 });
 
 apiTest('New York fall-back returns 422 and both offsets until a fold is chosen', async () => {
@@ -130,7 +144,7 @@ apiTest('New York fall-back returns 422 and both offsets until a fold is chosen'
   const details = ambiguous.json();
   assert.equal(details.error, 'ambiguous_time');
   assert.equal(details.choices.length, 2);
-  assert.deepEqual(details.choices.map(choice => choice.fold), [0, 1]);
+  assert.deepEqual(details.choices.map((choice: {fold:number}) => choice.fold), [0, 1]);
   const moments = [];
   for (const fold of [0, 1] as const) {
     const selected = await post({ ...input, fold });

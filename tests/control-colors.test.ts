@@ -50,9 +50,12 @@ function harness(href = 'http://localhost:3636/', storage = memory()) {
   const location = { href, port: new URL(href).port };
   const document = { documentElement: root, head, createElement: () => new TestElement(),
     querySelector(selector: string) { assert.equal(selector, '.sidebar-footer'); return footer; } };
-  const connection = new Function('location', 'document', 'sessionStorage', 'isDevelopmentPort', 'standConnection', 'configureTransportSimulation', 'createCalculationPreview', `${code}\nreturn standConnection;`)(location, document, storage, isDevelopmentPort, createStandConnection(), () => {}, createCalculationPreview) as ReturnType<typeof createStandConnection>;
+  const {connection, transport} = new Function('location', 'document', 'sessionStorage', 'isDevelopmentPort', 'standConnection', 'createCalculationPreview', `${code}\nreturn {connection: standConnection, transport: standTransport};`)(location, document, storage, isDevelopmentPort, createStandConnection(), createCalculationPreview) as {
+    connection: ReturnType<typeof createStandConnection>;
+    transport: {connection: ReturnType<typeof createStandConnection>; fetch: typeof globalThis.fetch} | null;
+  };
   const group = footer.children[0], toggle = footer.children[1], options = group?.children[0];
-  return { root, footer, head, location, storage, connection, group, toggle, options, buttons: options?.children };
+  return { root, footer, head, location, storage, connection, transport, group, toggle, options, buttons: options?.children };
 }
 
 function assertSelected(h: ReturnType<typeof harness>, mode: StandConnection) {
@@ -151,7 +154,17 @@ test('connection controls and styles are absent outside the stand', () => {
     assert.equal(h.head.children.length, 0);
     assert.equal(h.root.dataset.standConnection, undefined);
     assert.equal(h.storage.getItem(KEY), null);
+    assert.equal(h.transport, null);
   }
+});
+
+test('stand exposes its restored connection and calculation fetch to the entry owner', () => {
+  const h = harness('http://localhost:3636/?connection=offline');
+  assert.equal(h.transport?.connection, h.connection);
+  assert.equal(h.transport?.connection.current, 'offline');
+  assert.equal(typeof h.transport?.fetch, 'function');
+  h.buttons[2].click();
+  assert.equal(h.transport?.connection.current, 'server');
 });
 
 test('port 36 mounts Palettes and its working connection controls over the LAN', () => {

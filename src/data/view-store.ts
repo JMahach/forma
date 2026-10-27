@@ -1,3 +1,10 @@
+import { canonicalChartId } from '../../shared/chart-record-contract.ts';
+import { validatePublicAccountChart } from '../domain/account-chart.ts';
+import { normalizeTemporaryChart } from './storage.ts';
+import type { SavedChart } from '../../shared/chart-types.ts';
+import { normalizeLifetimeDraft, normalizeTextSelection, type SavedLifetimeDraft, type TextSelection } from '../domain/input-draft.ts';
+import { normalizeBirthFormDraft, type SavedBirthForm } from '../domain/birth-form-draft.ts';
+import type { ChartWriteIntent, PublicAccountChart } from '../../shared/chart-record-contract.ts';
 import type { SavedCameraPosition } from '../scene/camera.ts';
 export interface SavedReturnView { opened: boolean; year: number | null; bodies: string[]; eventId: string | null }
 export interface SavedLifetimeView {
@@ -12,15 +19,29 @@ export interface SavedLifetimeView {
   personalPreview?: boolean;
   personalLive?: boolean;
 }
+export interface SavedAccountView {
+  focus?: TextSelection | null;
+  email: string; attemptEmail: string; attemptId: string | null;
+  step: 'email' | 'code' | 'telegram'; verificationPending: boolean; telegramPending?: boolean;
+}
+export interface SavedTemporaryChartSave extends ChartWriteIntent { sourceId: string }
 export interface SavedView {
+  publicChart?: PublicAccountChart | null;
+  temporaryChartSave?: SavedTemporaryChartSave | null;
+  temporaryChart?: SavedChart | null;
+  birthForm?: SavedBirthForm | null;
+  lifetimeDraft?: SavedLifetimeDraft | null;
+  pendingChartWrites?: ChartWriteIntent[];
+  account?: SavedAccountView | null;
   version: 1;
   returns?: SavedReturnView | null;
   selectedId: string;
+  librarySelection?: string[];
   mandala: boolean;
   workspace?: 'chart' | 'library' | 'charts' | 'account';
   panels?: { left: boolean; right: boolean };
-  charts?: { query: string; searchOpen: boolean };
-  knowledge?: { query: string; searchOpen: boolean; collection: string; entryId: string; view: 'catalog' | 'article' };
+  charts?: { query: string; searchOpen: boolean; focus?: TextSelection | null };
+  knowledge?: { query: string; searchOpen: boolean; focus?: TextSelection | null; collection: string; entryId: string; view: 'catalog' | 'article' };
   camera: SavedCameraPosition | null;
   lifetime: SavedLifetimeView | null;
   transit: { live: boolean; date: string; timeZone: string; index: number } | null;
@@ -63,7 +84,7 @@ function normalizeReturns(input: unknown): SavedReturnView | null {
 function normalizeSearchView(input: unknown): SavedView['charts'] {
   const value = input as SavedView['charts'];
   return object(value) && typeof value!.query === 'string' && typeof value!.searchOpen === 'boolean'
-    ? { query: value!.query, searchOpen: value!.searchOpen } : undefined;
+    ? { query: value!.query, searchOpen: value!.searchOpen, ...('focus' in value! ? {focus:normalizeTextSelection(value!.focus,value!.query)} : {}) } : undefined;
 }
 function normalizeKnowledgeView(input: unknown): SavedView['knowledge'] {
   const value = input as SavedView['knowledge'], search = normalizeSearchView(input);
@@ -72,9 +93,40 @@ function normalizeKnowledgeView(input: unknown): SavedView['knowledge'] {
     && (value!.view === 'catalog' || value!.view === 'article')
     ? { ...search, collection: value!.collection, entryId: value!.entryId, view: value!.view } : undefined;
 }
+function normalizeAccount(input: unknown): SavedAccountView | null {
+  const value = input as SavedAccountView;
+  if (!object(value) || typeof value.email !== 'string'
+    || typeof value.attemptEmail !== 'string' || value.attemptEmail.length > 320
+    || !['email', 'code', 'telegram'].includes(value.step)
+    || !(value.attemptId === null || typeof value.attemptId === 'string' && /^[a-f0-9]{32}$/.test(value.attemptId))) return null;
+  return { email: value.email, attemptEmail: value.attemptEmail, attemptId: value.attemptId,
+    ...('focus' in value ? {focus:value.step === 'email' ? normalizeTextSelection(value.focus,value.email) : null} : {}),
+    step: value.step, verificationPending: value.verificationPending === true, ...(value.telegramPending === true ? {telegramPending: true} : {}) };
+}
+function normalizePendingWrites(input: unknown): ChartWriteIntent[] {
+  if (!Array.isArray(input)) return [];
+  const writes = new Map<string, ChartWriteIntent>();
+  for (const raw of input) {
+    if (!object(raw)) continue;
+    const {operationId, expectedAccountId} = raw as Partial<ChartWriteIntent>;
+    if (typeof operationId !== 'string' || !/^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.test(operationId)
+      || typeof expectedAccountId !== 'string' || !/^[1-9][0-9]{0,19}$/.test(expectedAccountId)) continue;
+    writes.set(expectedAccountId + ':' + operationId, {operationId, expectedAccountId});
+  }
+  return [...writes.values()];
+}
+function normalizePublicChart(value:unknown):PublicAccountChart|null {
+  try{return validatePublicAccountChart(value);}catch{return null;}
+}
+function normalizeTemporarySave(input: unknown, chart: SavedChart | null): SavedTemporaryChartSave | null {
+  const pointer=normalizePendingWrites([input])[0];
+  const sourceId=object(input) && 'sourceId' in input ? input.sourceId : null;
+  return pointer && chart && sourceId===chart.id ? {...pointer,sourceId:chart.id} : null;
+}
 function normalize(input: unknown): SavedView | null {
   const value = input as Omit<SavedView, 'lifetime'> & { lifetime: (Omit<SavedLifetimeView, 'mode'> & { mode: 'day' | 'lifetime' | 'archive' }) | null };
   if (!object(value) || value.version !== 1) return null;
+  const temporaryChart=normalizeTemporaryChart(value.temporaryChart);
   const returnView = normalizeReturns(value.returns);
   const charts = normalizeSearchView(value.charts), knowledge = normalizeKnowledgeView(value.knowledge);
   // Before shell visibility was saved separately, an open Returns screen
@@ -87,9 +139,18 @@ function normalize(input: unknown): SavedView | null {
     && list.every(id => PLANET_IDS.includes(id)) && new Set(list).size === list.length;
   return {
     version: 1,
+    ...('publicChart' in value ? {publicChart:normalizePublicChart(value.publicChart)} : {}),
+    ...('temporaryChart' in value ? {temporaryChart} : {}),
+    ...('temporaryChartSave' in value ? {temporaryChartSave:normalizeTemporarySave(value.temporaryChartSave,temporaryChart)} : {}),
+    ...('pendingChartWrites' in value ? {pendingChartWrites: normalizePendingWrites(value.pendingChartWrites)} : {}),
+    ...('lifetimeDraft' in value ? {lifetimeDraft:normalizeLifetimeDraft(value.lifetimeDraft)} : {}),
+    ...('birthForm' in value ? {birthForm:normalizeBirthFormDraft(value.birthForm)} : {}),
+    ...('account' in value ? { account: normalizeAccount(value.account) } : {}),
     ...(returnView ? { returns: returnView } : {}),
     ...(charts ? { charts } : {}), ...(knowledge ? { knowledge } : {}),
-    selectedId: typeof value.selectedId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.selectedId) ? value.selectedId : 'current-transit',
+    selectedId: typeof value.selectedId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.selectedId) ? canonicalChartId(value.selectedId) : 'current-transit',
+    ...(Array.isArray(value.librarySelection) && value.librarySelection.every(id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(id))
+      ? { librarySelection: [...new Set(value.librarySelection.map(canonicalChartId))] } : {}),
     mandala: value.mandala === true,
     ...(['chart', 'library', 'charts', 'account'].includes(value.workspace!) ? { workspace: value.workspace } : {}),
     ...(object(panels) && typeof panels.left === 'boolean' && typeof panels.right === 'boolean'
@@ -113,12 +174,33 @@ function normalize(input: unknown): SavedView | null {
   };
 }
 
-// Each tab keeps its presentation through reloads. New tabs start without a
-// view snapshot; the saved chart library remains in persistent storage.
-// Never store computed charts or
-// rewrite the library while restoring the visible page.
-export function createViewStore({ getStorage = () => globalThis.sessionStorage, onStorageError = () => {} }: { getStorage?: () => Pick<Storage, 'getItem' | 'setItem'>; onStorageError?: (message: string) => void } = {}) {
-  let memory: SavedView | null = null, encoded: string | null = null, warned = false;
+// The existing tab snapshot owns presentation, unfinished input and one ready
+// temporary chart. New tabs start empty; a duplicated snapshot diverges locally.
+// Restoring a tab never rewrites the persistent chart library.
+export interface ViewStorageFailure {
+  readonly stage: 'storage_read' | 'validate' | 'commit';
+  readonly reason: 'storage_unavailable' | 'corrupt_data';
+}
+interface ViewStoreOptions {
+  getStorage?: () => Pick<Storage, 'getItem' | 'setItem'> & Partial<Pick<Storage, 'removeItem'>>;
+  onStorageError?: (message: string) => void;
+  onStorageFailure?: (fact: ViewStorageFailure) => unknown;
+  onStorageRecovery?: () => unknown;
+}
+export function createViewStore({ getStorage = () => globalThis.sessionStorage, onStorageError = () => {}, onStorageFailure, onStorageRecovery }: ViewStoreOptions = {}) {
+  let memory: SavedView | null = null, encoded: string | null = null, warned = false, unsaved = false, failed = false;
+  // The external journal owns delivery. Only safe source facts leave this
+  // store; recipient failure must not alter restoration or memory fallback.
+  const report = (stage: ViewStorageFailure['stage'], reason: ViewStorageFailure['reason']) => {
+    failed=true;
+    try { if (onStorageFailure) void Promise.resolve(onStorageFailure({stage, reason})).catch(() => {}); }
+    catch {}
+  };
+  const recovered = () => {
+    if(!failed)return;failed=false;
+    try { if(onStorageRecovery)void Promise.resolve(onStorageRecovery()).catch(()=>{}); }
+    catch {}
+  };
   const warn = () => {
     if (warned) return;
     warned = true;
@@ -126,21 +208,38 @@ export function createViewStore({ getStorage = () => globalThis.sessionStorage, 
   };
   return {
     read() {
+      // Failed writes/deletions must not revive an older disk draft in this page.
+      if(unsaved)return memory;
       let raw;
-      try { raw = getStorage().getItem(VIEW_STORAGE_KEY); } catch { warn(); return memory; }
-      if (!raw) return null;
-      try { memory = normalize(JSON.parse(raw)); encoded = memory ? JSON.stringify(memory) : null; }
-      catch { memory = null; encoded = null; }
+      try { raw = getStorage().getItem(VIEW_STORAGE_KEY); } catch { report('storage_read', 'storage_unavailable'); warn(); return memory; }
+      if (!raw) {memory=null;encoded=null;recovered();return null;}
+      try { memory = normalize(JSON.parse(raw)); encoded = memory ? raw : null; recovered(); }
+      catch { memory = null; encoded = null; report('validate', 'corrupt_data'); }
       return memory;
     },
     write(value: unknown) {
       const next = normalize(value);
       if (!next) return false;
-      memory = next;
+      memory = next;unsaved=true;
       const serialized = JSON.stringify(next);
-      if (serialized === encoded) return true;
-      try { getStorage().setItem(VIEW_STORAGE_KEY, serialized); encoded = serialized; return true; }
-      catch { warn(); return false; }
+      let stage: ViewStorageFailure['stage'] = 'storage_read';
+      try {
+        const storage=getStorage();
+        if(serialized!==encoded || storage.getItem(VIEW_STORAGE_KEY)!==serialized) {
+          stage='commit';storage.setItem(VIEW_STORAGE_KEY,serialized);
+        }
+        encoded=serialized;unsaved=false;recovered();return true;
+      } catch { report(stage, 'storage_unavailable'); warn(); return false; }
+    },
+    clear() {
+      memory=null;encoded=null;unsaved=true;
+      let stage: ViewStorageFailure['stage'] = 'storage_read';
+      try {
+        const storage=getStorage();stage='commit';
+        if(storage.removeItem)storage.removeItem(VIEW_STORAGE_KEY);
+        else storage.setItem(VIEW_STORAGE_KEY,'null');
+        unsaved=false;recovered();return true;
+      }catch{report(stage, 'storage_unavailable');warn();return false;}
     },
   };
 }

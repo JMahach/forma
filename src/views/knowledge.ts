@@ -1,3 +1,4 @@
+import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import type { SelectionIdentity } from '../selection/selection-targets.ts';
 import type { SavedView } from '../data/view-store.ts';
 import { attachWorkspaceHeader } from './workspace-header.ts';
@@ -102,6 +103,9 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
   let current = restoredEntry || getKnowledgeEntry('gate.37')!;
   let collection = KNOWLEDGE_COLLECTIONS.find(item => item.id === initialView?.collection)?.id ?? knowledgeCollectionForEntry(current).id;
   if (search && initialView) search.value = initialView.query;
+  if (search) watchTextSelection([search], onChange);
+  const inputFocus = () => page.hidden ? null : captureTextSelection(search);
+  const restoreInputFocus = () => !page.hidden && restoreTextSelection(search, initialView?.focus);
   let query = search?.value.trim() ?? '', indexKey = '', renderedId = '';
   // The first diagram projection must not replace an explicitly remembered article.
   let lastSelection = restoredEntry && initialSelection ? `${initialSelection.type}:${initialSelection.id}` : '';
@@ -289,8 +293,10 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
   for (const name of ['pointerover', 'focusin']) article.addEventListener?.(name, event => highlight(event, true));
   for (const name of ['pointerout', 'focusout']) article.addEventListener?.(name, event => highlight(event, false));
   return {
+    restoreInputFocus,
     get snapshot(): NonNullable<SavedView['knowledge']> {
-      return { query: search?.value ?? query, searchOpen: header?.expanded ?? false, collection, entryId: current.id,
+      const focus=inputFocus();
+      return { query: search?.value ?? query, searchOpen: header?.expanded ?? false, ...(focus ? {focus} : {}), collection, entryId: current.id,
         view: page.dataset.view === 'article' ? 'article' : 'catalog' };
     },
     show(selection?: SelectionIdentity | null) {
@@ -308,6 +314,7 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
       if (page.dataset.view === 'catalog') index.scrollTop = catalogueScroll;
     },
     hide() {
+      if (page.hidden) return;
       if (page.dataset.view === 'article' || !isPhone()) readingPositions.set(current.id, article.scrollTop);
       if (page.dataset.view === 'catalog') catalogueScroll = index.scrollTop;
       page.hidden = true;

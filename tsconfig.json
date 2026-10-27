@@ -23,6 +23,7 @@
     "src/**/*.ts",
     "shared/**/*.ts",
     "server/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "deploy/**/*.ts"
   ]
 }

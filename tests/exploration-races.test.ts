@@ -319,8 +319,8 @@ function savedView(h: ReturnType<typeof harness>, saved: unknown = null) {
   const chartStore = { get: (id: string) => h.people.find(chart => chart.id === id), has: (id: string) => h.people.some(chart => chart.id === id) };
   const view = createViewSession({ store: { read: () => saved, write: (value: unknown) => writes.push(structuredClone(value) as SavedView) },
     chartStore, session: h.session, transit: h.transit, natalDay: h.natalDay, planetFilter: { snapshot: {}, restore() {} },
-    mandala: { enabled: false, setEnabled() {} },
-    camera: { restoreView() {}, reset() {}, setView() {}, getView: () => ({ x: 0, y: 0, k: 1 }), getFittedView: () => ({ x: 0, y: 0, k: 1 }) },
+    mandala: { enabled: false, restore() {} },
+    camera: { restoreView() {}, getSavedView: () => ({ x: 0, y: 0, k: 1 }) },
     getReturns: () => h.returns, getLifetime: () => h.lifetime, loadLifetime: async () => h.lifetime,
     canRestoreLifetime: () => h.session.selectedId === 'current-transit' || h.returns.state.available,
     getPersonalPreview: () => h.exploration.preview, getPersonalLive: () => h.exploration.live,

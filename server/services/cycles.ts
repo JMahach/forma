@@ -1,3 +1,4 @@
+import { createCalculationFailureReporter, type CalculationFailureReport } from './calculation-failure.ts';
 import type { CycleInput, CycleResult, CycleEventsResult, CycleChartResult } from '../../shared/cycles-format.ts';
 import type { ComputeQueue } from '../runtime/compute-queue.ts';
 import type { JsonWorkerOptions } from '../runtime/json-worker.ts';
@@ -14,6 +15,7 @@ interface CycleWork extends SharedJob<CycleResult> {
   work: Promise<void> | null;
 }
 interface GenerateCycleOptions {
+  report?: CalculationFailureReport;
   root: string;
   input: CycleRequest;
   spawnWorker?: JsonWorkerOptions['spawnWorker'];
@@ -23,10 +25,10 @@ interface GenerateCycleOptions {
   maxOutputBytes?: number;
 }
 interface CycleOptions {
+  report?: CalculationFailureReport;
   root?: string;
   computeQueue?: ComputeQueue;
   generate?: (input: CycleRequest, options: { signal?: AbortSignal }) => Promise<unknown>;
-  now?: () => number;
   limits?: Partial<Record<keyof typeof CYCLE_LIMITS, number>>;
   cacheVersion?: string | null;
 }
@@ -49,8 +51,7 @@ export function cyclesCalculationFingerprint(root: string) {
 }
 
 export const CYCLE_BODIES = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'uranus_opposition', 'neptune', 'pluto', 'chiron']);
-export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12,
-  capacity: 24, memoryBytes: 6_000_000, ttlMs: 600_000 });
+export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12 });
 const YEAR_MS = 365.2425 * 86400000;
 
 export class CycleError extends Error {
@@ -93,9 +94,9 @@ export function validateCycleRequest(value: unknown, action: string): CycleReque
   throw new CycleError('invalid_request', 'Неизвестный режим циклов.', 400, null);
 }
 
-function validateResult(value: unknown, input: CycleRequest): CycleResult {
+function validateResult(value: unknown, input: CycleRequest, onInvalidResult: () => void): CycleResult {
   const result = value as { error?: string; message?: string; body?: string; events?: unknown[] } | null;
-  const unavailable = () => new CycleError('cycles_unavailable', 'Не удалось подготовить циклы. Повторите попытку.');
+  const unavailable = () => { onInvalidResult(); return new CycleError('cycles_unavailable', 'Не удалось подготовить циклы. Повторите попытку.'); };
   if (!result || typeof result !== 'object') throw unavailable();
   if (result.error) {
     if (result.error === 'return_index_unavailable') throw new CycleError(result.error, result.message!);
@@ -107,27 +108,26 @@ function validateResult(value: unknown, input: CycleRequest): CycleResult {
   return result;
 }
 
-// Worker transport returns parsed JSON; drain owns semantic validation and error mapping
-// for both this worker and injected generators, before any result enters RAM or HTTP.
-export function generateCycles({ root, input, spawnWorker, computeQueue, signal, timeoutMs = 45_000, maxOutputBytes = 2_000_000 }: GenerateCycleOptions) {
+// Worker transport returns parsed JSON; the service owns validation and error mapping
+// for both this worker and injected generators, before any result reaches consumers.
+export function generateCycles({ root, input, spawnWorker, computeQueue, signal, report, timeoutMs = 45_000, maxOutputBytes = 2_000_000 }: GenerateCycleOptions) {
   const request = validateCycleRequest(input, input.action);
-  return runJsonWorker({ root, script: 'cycles.py', input: request, spawnWorker, computeQueue, signal, timeoutMs, maxOutput: maxOutputBytes,
+  return runJsonWorker({ onFailure: createCalculationFailureReporter('cycles', report), root, script: 'cycles.py', input: request, spawnWorker, computeQueue, signal, timeoutMs, maxOutput: maxOutputBytes,
     unavailable: () => new CycleError('cycles_unavailable', 'Локальный движок циклов недоступен. Повторите попытку.'),
     timeoutError: () => new CycleError('cycles_timeout', 'Циклы не успели рассчитаться. Попробуйте меньший диапазон.') });
 }
 
-// This service owns results and shared consumers. The server's one compute
-// queue owns admission; an exact chart takes priority over background dates.
-export function createCycles({ root, computeQueue, generate = (input, options) => generateCycles({ root: root!, input, ...options }), now = Date.now, limits = {}, cacheVersion = null }: CycleOptions = {}) {
+// This service shares unfinished work only; completed results belong to its consumers.
+// The server's compute queue owns admission; an exact chart precedes background dates.
+export function createCycles({ root, computeQueue, report, generate = (input, options) => generateCycles({ root: root!, input, report, ...options }), limits = {}, cacheVersion = null }: CycleOptions = {}) {
+  const failure = createCalculationFailureReporter('cycles', report);
   if (cacheVersion !== null && !/^[a-f0-9]{64}$/.test(cacheVersion)) throw new RangeError('Invalid cycles version');
-  const { concurrency, maxQueued, capacity, memoryBytes, ttlMs } = { ...CYCLE_LIMITS, ...limits };
-  const memory = new Map<string, { result: CycleResult; bytes: number; expires: number }>(), pending = new Map<string, CycleWork>(), jobs = new Set<CycleWork>();
+  const { concurrency, maxQueued } = { ...CYCLE_LIMITS, ...limits };
+  const pending = new Map<string, CycleWork>(), jobs = new Set<CycleWork>();
   const queue = computeQueue || createComputeQueue({ concurrency, maxQueued });
-  let bytes = 0, accepting = true, closing: Promise<void> | null = null;
+  let accepting = true, closing: Promise<void> | null = null;
   const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
   const stopped = () => new CycleError('cycles_unavailable', 'Расчёт циклов остановлен.');
-  function remove(key: string) { bytes -= memory.get(key)!.bytes; memory.delete(key); }
-  function prune() { for (const [key, entry] of memory) if (entry.expires <= now()) remove(key); }
   function consume(job: CycleWork, signal?: AbortSignal) {
     return consumeJob(job, signal, abandoned => {
       if (pending.get(abandoned.key) === abandoned) pending.delete(abandoned.key);
@@ -139,8 +139,7 @@ export function createCycles({ root, computeQueue, generate = (input, options) =
     if (!accepting) return Promise.reject(stopped());
     let request;
     try { request = validateCycleRequest(input, action); } catch (error) { return Promise.reject(error); }
-    const key = JSON.stringify(request); prune();
-    if (memory.has(key)) { const entry = memory.get(key)!; memory.delete(key); memory.set(key, entry); return Promise.resolve(entry.result); }
+    const key = JSON.stringify(request);
     if (pending.has(key)) return consume(pending.get(key)!, signal);
     let resolve!: (value: CycleResult) => void, reject!: (reason: unknown) => void;
     const promise = new Promise<CycleResult>((yes, no) => { resolve = yes; reject = no; });
@@ -149,15 +148,9 @@ export function createCycles({ root, computeQueue, generate = (input, options) =
     const result = consume(job, signal);
     job.work = queue.run(async () => {
       job.started = true;
-      const result = validateResult(await generate(request, { signal: job.controller.signal }), request);
+      const value = await generate(request, { signal: job.controller.signal });
       if (job.controller.signal.aborted) throw aborted();
-      const size = Buffer.byteLength(JSON.stringify(result));
-      prune();
-      if (accepting && size <= memoryBytes) {
-        memory.set(key, { result, bytes: size, expires: now() + ttlMs }); bytes += size;
-        while (memory.size > capacity || bytes > memoryBytes) remove(memory.keys().next().value!);
-      }
-      return result;
+      return validateResult(value, request, () => failure('invalid_result'));
     }, { signal: job.controller.signal, priority: action === 'chart' ? 1 : 0 }).finally(() => {
       if (pending.get(key) === job) pending.delete(key);
       jobs.delete(job);
@@ -171,13 +164,12 @@ export function createCycles({ root, computeQueue, generate = (input, options) =
     if (closing) return closing;
     accepting = false;
     for (const job of jobs) if (!job.started) job.controller.abort();
-    memory.clear(); bytes = 0;
     // Active workers finish or hit their existing timeout. Closing one service
     // never shuts down the server's queue used by other calculation services.
     closing = Promise.allSettled([...jobs].map(job => job.work)).then(() => { if (!computeQueue) queue.close(); });
     return closing;
   }
   return { close, cacheVersion, events: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'events', signal) as Promise<CycleEventsResult>, chart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'chart', signal) as Promise<CycleChartResult>,
-    get size() { prune(); return memory.size; }, get queued() { return [...jobs].filter(job => !job.started && !job.controller.signal.aborted).length; },
+    get queued() { return [...jobs].filter(job => !job.started && !job.controller.signal.aborted).length; },
     get active() { return [...jobs].filter(job => job.started).length; } };
 }
