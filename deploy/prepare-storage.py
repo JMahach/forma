@@ -88,7 +88,11 @@ def prepare_storage(release, uid, gid, *, apply=False):
         return actions
     for folder in (STATE, JOURNAL, CACHE):
         private_directory(folder, uid, gid)
-    cache_link_root.mkdir(exist_ok=True, mode=0o755)
+    cache_link_root.mkdir(exist_ok=True, mode=0o750)
+    # Root installs these links; the application group must traverse their
+    # parent even under umask 077 or when repairing an earlier private parent.
+    os.chown(cache_link_root, -1, gid)
+    cache_link_root.chmod(0o750)
     for row in actions:
         source, target = pathlib.Path(row['source']), pathlib.Path(row['target'])
         if row['action'] == 'move_directory':

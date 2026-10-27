@@ -58,6 +58,29 @@ class LinuxStoragePreparationTests(unittest.TestCase):
         self.prepare()
         self.assertEqual(target.stat().st_ino, inode)
 
+    def test_restrictive_umask_and_existing_link_directory_allow_application_group_access(self):
+        link_root = self.release / '.cache'
+        previous_umask = os.umask(0o077)
+        try:
+            for existing in (False, True):
+                with self.subTest(existing=existing):
+                    if existing:
+                        link_root.chmod(0o700)
+                    self.prepare()
+                    info = link_root.stat()
+                    self.assertEqual(info.st_gid, os.getgid())
+                    self.assertEqual(info.st_mode & 0o050, 0o050)
+                    self.assertEqual(info.st_mode & 0o007, 0)
+                    for folder in [*self.paths.values(),
+                                   self.paths['CACHE'] / 'lifetime',
+                                   self.paths['CACHE'] / 'returns']:
+                        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+                        self.assertEqual(folder.stat().st_uid, os.getuid())
+                    for name in ('lifetime', 'returns'):
+                        self.assertEqual((link_root / name).resolve(), self.paths['CACHE'] / name)
+        finally:
+            os.umask(previous_umask)
+
     def test_legacy_release_and_new_release_share_the_existing_prepared_data(self):
         (self.release / 'server/server.ts').rename(self.release / 'server/server.mjs')
         old = self.release / '.cache/returns'
