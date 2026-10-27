@@ -1,3 +1,4 @@
+import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
 import type {ClientActionContext,ClientContextStep,ClientObservation,ClientReportReason} from '../shared/client-report-contract.ts';
@@ -306,7 +307,7 @@ function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
   layout.refresh(); camera.resize({ preserveScale: true });
   flushLoadingView();
 }
-const loadingLayoutObserver = new ResizeObserver(() => { layout.refresh(); camera.resize(); });
+const loadingLayoutObserver = createLayoutObserver(() => { layout.refresh(); camera.resize(); });
 loadingLayoutObserver.observe(element('canvasWrap'));
 // Early buttons use the same panel state. They detach synchronously before
 // the application attaches its regular handlers, preserving commands made

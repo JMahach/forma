@@ -1,3 +1,4 @@
+import { createLayoutObserver } from './resize-observer.ts';
 interface CaptionMoment { title: string; subtitle: string }
 interface CaptionFields { clock?: HTMLElement | null; title: HTMLElement | null; date: HTMLElement | null; details: HTMLElement | null }
 export interface PanelCaption { utc?: HTMLElement | null; clock?: HTMLElement | null; comparison?: CaptionFields & { root: HTMLElement | null }; root: HTMLElement | null; title: HTMLElement | null; date: HTMLElement | null; details: HTMLElement | null; surface: HTMLElement | null }
@@ -7,6 +8,7 @@ interface HeadingLayoutOptions {
   leftControls: HTMLElement; rightControls: HTMLElement; canvas: HTMLElement; panelCaption?: PanelCaption | null;
   gap?: number; edgePadding?: number; belowGap?: number; getMandalaTop?: () => number; mandalaGap?: number;
   readStyle?: (element: Element) => CSSStyleDeclaration; ResizeObserver?: typeof globalThis.ResizeObserver;
+  requestFrame?: (callback: FrameRequestCallback) => number; cancelFrame?: (handle: number) => void;
 }
 
 // Caption placement and its panel mirror share the accepted chart text.
@@ -14,7 +16,8 @@ interface HeadingLayoutOptions {
 export function createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption = null,
   gap = 8, edgePadding = 16, belowGap = 7,
   getMandalaTop = () => Infinity, mandalaGap = 8,
-  readStyle = element => getComputedStyle(element), ResizeObserver = globalThis.ResizeObserver }: HeadingLayoutOptions) {
+  readStyle = element => getComputedStyle(element), ResizeObserver = globalThis.ResizeObserver,
+  requestFrame, cancelFrame }: HeadingLayoutOptions) {
   let current: { placement: 'top' | 'below'; width: number; belowTop: number } | undefined;
   const visibleRect = (element: HTMLElement | null | undefined, ignoreVisibility = false) => {
     if (!element || element.hidden || !element.getClientRects().length) return null;
@@ -66,7 +69,7 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
       && header.getBoundingClientRect().bottom + mandalaGap > getMandalaTop());
     return current;
   }
-  const observer = ResizeObserver ? new ResizeObserver(refresh) : null;
+  const observer = ResizeObserver ? createLayoutObserver(refresh, {Observer: ResizeObserver, requestFrame, cancelFrame}) : null;
   for (const element of new Set([header, title, subtitle, leftControls, rightControls, canvas].filter(Boolean))) {
     observer?.observe(element!);
   }

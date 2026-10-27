@@ -170,6 +170,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/ui/layout/studio-controller.ts',
     'src/ui/layout/viewport.ts',
     'src/ui/layout/metrics.ts',
+    'src/ui/layout/resize-observer.ts',
     'src/ui/timeline-ticks.ts',
     'src/ui/overlay-palette.ts',
     'src/ui/chart-palette.ts',

@@ -1,3 +1,4 @@
+import { createLayoutObserver } from '../src/ui/layout/resize-observer.ts';
 import { attachChartLink } from '../src/views/chart-link.ts';
 import { appRoutePath } from '../shared/app-routes.ts';
 import {createHash} from 'node:crypto';
@@ -85,7 +86,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -229,6 +230,8 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
   document.body.dataset.calculationVersion=calculationVersion;
   const inputRestores: string[] = [];
   const notices:string[]=[];
+  const resizeFrames = new Map<number, FrameRequestCallback>(); let resizeFrameId = 0;
+  const flushResizeFrames = () => { const pending = [...resizeFrames.values()]; resizeFrames.clear(); for (const callback of pending) callback(0); };
   if (fonts !== undefined) document.fonts = { ready: fonts };
   const dimensions = studioSize && { ...studioSize };
   const timelineKinds: TimelineKind[] = [];
@@ -333,6 +336,10 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
       interrupt() { restoreInterrupted = true; interruptions++; }, schedule: noop, flush: noop,
     }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
+    createLayoutObserver: refresh => createLayoutObserver(refresh, {
+      Observer: class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} disconnect() {} } as unknown as typeof ResizeObserver,
+      requestFrame: callback => {resizeFrames.set(++resizeFrameId, callback); return resizeFrameId;}, cancelFrame: id => {resizeFrames.delete(id);},
+    }),
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop }),
     attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
     attachLiveTransit: (options) => {
@@ -406,7 +413,7 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
       assert.ok(pending, 'the actual form has its server submission port connected');
       const result = await pending; birthOptions.onSave(result.id, {metadataOnly: result.metadataOnly}); return result;
     }, camera, workspace, panels, timelineKinds, performanceOptions,
-    get knowledgeLoads() { return knowledgeLoads; }, showKnowledgeSelection: (selection: Parameters<NonNullable<typeof knowledgeOptions.onSelect>>[0]) => knowledgeOptions.onSelect!(selection), resize(width: number, height: number) { Object.assign(dimensions!, { width, height }); resizeLayout(); }, select(id: string) {
+    get knowledgeLoads() { return knowledgeLoads; }, showKnowledgeSelection: (selection: Parameters<NonNullable<typeof knowledgeOptions.onSelect>>[0]) => knowledgeOptions.onSelect!(selection), resize(width: number, height: number) { Object.assign(dimensions!, { width, height }); resizeLayout(); flushResizeFrames(); }, notifyResize: () => resizeLayout(), flushResizeFrames, select(id: string) {
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: (selector: string) => selector === '[data-chart-id]' ? button : null } });
     }, get shown() { return graph.getChart() as ChartComposition; }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
@@ -2519,4 +2526,14 @@ test('the sidebar and Kartoteka display the same alphabetical saved rows', async
   const ids = (id: string) => h.element(id).children.map(row => row.innerHTML.match(/data-chart-id="([^"]+)"/)?.[1]);
   assert.deepEqual(ids('chartList'), [records[2].id, records[1].id, records[0].id]);
   assert.deepEqual(ids('allChartsList'), ids('chartList'));
+});
+
+
+test('studio resize notifications defer geometry writes and collapse repeated deliveries into one frame', async () => {
+  const h = harness({studioSize: {width: 1000, height: 800}}); await h.restoration;
+  let refreshes = 0; const refresh = h.layout.refresh;
+  h.layout.refresh = () => { refreshes++; return refresh(); };
+  h.notifyResize(); h.notifyResize(); h.notifyResize();
+  assert.equal(refreshes, 0, 'ResizeObserver must not synchronously resize the observed studio or heading');
+  h.flushResizeFrames(); assert.equal(refreshes, 1);
 });

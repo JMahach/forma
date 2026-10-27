@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 
 function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, origin = 0, mandalaTop = Infinity, fonts, withPanelCaption = false, withComparison = false, withClocks = false, withUtc = false } = {}) {
   const observed = new Map();
+  const frames = new Map<number, FrameRequestCallback>(); let frameId = 0;
+  const flushFrames = () => { const pending = [...frames.values()]; frames.clear(); for (const callback of pending) callback(0); };
   let resized, disconnected = false;
   const node = (left: number, top: number, width: number, height: number) => {
     const styles = new Map();
@@ -50,15 +52,17 @@ function harness({ width = 1002, textWidth = 240, titleWidth = 57, buttons = 3, 
     title: node(0, 0, 240, 30), date: node(0, 0, 240, 18), details: node(0, 0, 240, 30), clock: withClocks ? node(0, 0, 52, 20) : undefined, surface: node(0, 0, width, 817) } : undefined;
   const layout = createChartHeadingLayout({ header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption,
     getMandalaTop: () => mandalaTop,
-    readStyle: element => element.computed, ResizeObserver: Observer });
+    readStyle: element => element.computed, ResizeObserver: Observer,
+    requestFrame: callback => { frames.set(++frameId, callback); return frameId; }, cancelFrame: id => { frames.delete(id); } });
   return { layout, header, content, title, subtitle, leftControls, rightControls, canvas, panelCaption, setButtons, observed,
     setMandalaTop(value: number) { mandalaTop = value; },
     changePadding(left: string, right: string) {
       Object.assign(content.computed, { paddingLeft: left, paddingRight: right });
       // Padding changes the border box while fit-content text keeps its size.
-      if (observed.get(content)?.box === 'border-box') resized([{ target: content }]);
+      if (observed.get(content)?.box === 'border-box') { resized([{ target: content }]); flushFrames(); }
     },
-    resize() { resized(); }, get disconnected() { return disconnected; } };
+    notifyResize() { resized(); }, flushFrames, get pendingFrames() { return frames.size; },
+    resize() { resized(); flushFrames(); }, get disconnected() { return disconnected; } };
 }
 
 test('a transit caption with minute stays above at both reported desktop widths', () => {
@@ -495,4 +499,19 @@ test('full caption appears as a native hint only while its text is clipped', () 
   assert.equal(title.title,'');
   title.scrollWidth=500; h.resize(); assert.equal(title.title,'Длинное имя карты');
   title.rect.width=600; h.resize(); assert.equal(title.title,'');
+});
+
+
+test('resize delivery never mutates observed caption geometry and coalesces to the latest frame', () => {
+  const h = harness(); const before = h.header.style.getPropertyValue('--caption-width');
+  h.canvas.rect.width = 600; h.setButtons(3); h.notifyResize();
+  h.canvas.rect.width = 650; h.setButtons(3); h.notifyResize();
+  assert.equal(h.header.style.getPropertyValue('--caption-width'), before, 'no observed geometry write in ResizeObserver delivery');
+  assert.equal(h.pendingFrames, 1);
+  h.flushFrames(); assert.notEqual(h.header.style.getPropertyValue('--caption-width'), before);
+  assert.equal(h.pendingFrames, 0);
+  const after = h.header.style.getPropertyValue('--caption-width');
+  h.notifyResize(); h.flushFrames(); assert.equal(h.header.style.getPropertyValue('--caption-width'), after, 'stable measurements converge');
+  h.canvas.rect.width = 700; h.notifyResize(); h.layout.destroy(); h.flushFrames();
+  assert.equal(h.header.style.getPropertyValue('--caption-width'), after, 'destroy cancels queued measurements');
 });

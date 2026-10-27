@@ -1,3 +1,4 @@
+import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import type { StoragePressure } from './data/storage-pressure.ts';
 import type { createCalculationUpdates } from './data/calculation-updates.ts';
@@ -853,7 +854,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       refreshStudioLayout({ preserveScale: true });
     }
   });
-  const layoutObserver = new ResizeObserver(() => refreshStudioLayout());
+  const layoutObserver = createLayoutObserver(() => refreshStudioLayout());
   layoutObserver.observe($('canvasWrap'));
   const savedChart = store.get(savedView?.selectedId!);
   const savedLife = eligibleCycleChart(savedChart) && savedView?.lifetime?.opened ? lifeTimelineForChart(savedChart) : null;
