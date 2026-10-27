@@ -1,3 +1,4 @@
+import { getGate } from '../src/scene/geometry/chart-geometry.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.ts';
@@ -186,7 +187,7 @@ test('expanded touch target selects on a tap and never toggles after drag, pinch
         return { left: 320, right: 332, top: 401.5, bottom: 418.5, width: 12, height: 17 };
       },
     };
-    const svg = { querySelectorAll: (selector: string) => selector === '.activation-planet-filter-hit' ? [hit] : [] };
+    const svg = { querySelector: () => null, querySelectorAll: (selector: string) => selector === '.activation-planet-filter-hit' ? [hit] : [] };
     const h = harness({ resolvePointerTarget: (event: PointerEvent) => pointerTarget(svg, event) });
     h.resize(390, 844); h.controls.zoom(2);
     const start = h.controls.getView();
@@ -549,8 +550,10 @@ test('a continuous drag only updates the cursor at its start and end', () => {
 test('a finger can tap the gate margin but dragging or pinching there never selects it', () => {
   for (const action of ['tap','drag','pinch','pointercancel']) {
     const gate = {dataset:{type:'gate',id:'13'}};
-    const hit = {parentElement:gate,getBoundingClientRect:()=>({left:311.025,right:328.975,top:401.025,bottom:418.975,width:17.95,height:17.95})};
-    const svg = {querySelectorAll:(selector:string)=>selector==='.bg-gate-hit'?[hit]:[]};
+    const geometry = getGate(13)!;
+    const layer = {getScreenCTM:()=>({a:1,b:0,c:0,d:1,e:320-geometry.x,f:410-geometry.y}),
+      querySelector:(selector:string)=>selector.includes('"13"')?gate:null};
+    const svg = {querySelector:()=>layer,querySelectorAll:()=>[]};
     const h=harness({resolvePointerTarget:(event:PointerEvent)=>pointerTarget(svg as unknown as SVGSVGElement,event)});
     h.send('pointerdown',{clientX:330,clientY:410});
     if(action==='drag') h.send('pointermove',{clientX:350,clientY:410});

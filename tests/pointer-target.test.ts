@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getGate } from '../src/scene/geometry/chart-geometry.ts';
 import { pointerTarget } from '../src/scene/pointer-target.ts';
 
 // Authored screen rectangles model a phone's compressed rows independently of
@@ -32,6 +33,7 @@ function scene(definitions = [
   }
   const svg = {
     closest: () => null,
+    querySelector: () => null,
     querySelectorAll(selector: unknown) { if (selector === '.bg-gate-hit') return []; assert.equal(selector, '.activation-planet-filter-hit'); queries++; return hits; },
   };
   return { svg, columns,
@@ -164,10 +166,12 @@ test('mouse stays on the center outside the visible gate, while touch keeps its 
   for (const scale of [.5, 1, 4]) {
     const center = { dataset: { type: 'center', id: 'g' } };
     const gate = { dataset: { type: 'gate', id: '13' } };
-    const radius = 8.975 * scale;
-    const hit = { parentElement: gate, getBoundingClientRect: () =>
-      ({left:100-radius,right:100+radius,top:100-radius,bottom:100+radius,width:radius*2,height:radius*2}) };
-    const svg = { querySelectorAll: (selector: string) => selector === '.bg-gate-hit' ? [hit] : [] };
+    const geometry = getGate(13)!;
+    const layer = {
+      getScreenCTM: () => ({a:scale,b:0,c:0,d:scale,e:100-geometry.x*scale,f:100-geometry.y*scale}),
+      querySelector: (selector:string) => selector.includes('"13"') ? gate : null,
+    };
+    const svg = { querySelector: () => layer, querySelectorAll: () => [] };
     const target = { closest: () => center };
     const at = (x: number, y: number, pointerType: string) => pointerTarget(svg as unknown as SVGSVGElement,
       {target,clientX:100+x*scale,clientY:100+y*scale,pointerType} as unknown as PointerEvent);
@@ -191,4 +195,16 @@ test('both highlight styles render mouse hit circles at the visible ring edge wi
       assert.match(hit,/pointer-events="fill"/);
     }
   }
+});
+
+test('starting a touch measures the gate layer once instead of measuring all 64 gates', () => {
+  let measurements = 0;
+  const center = {dataset:{type:'center',id:'g'}};
+  const drawing = { getScreenCTM() { measurements++; return {a:1,b:0,c:0,d:1,e:0,f:0}; }, querySelector() { return null; } };
+  const svg = {
+    querySelector: () => drawing,
+    querySelectorAll: () => [{getBoundingClientRect() { assert.fail('touch start must not measure individual gates'); }}],
+  };
+  assert.equal(pointerTarget(svg as unknown as SVGSVGElement, {target:{closest:()=>center},pointerType:'touch',clientX:320,clientY:420} as unknown as PointerEvent),center);
+  assert.equal(measurements,1);
 });

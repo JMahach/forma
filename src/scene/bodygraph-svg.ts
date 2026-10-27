@@ -2,7 +2,7 @@ import { paintIntegrationLayers } from './integration-paint.ts';
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
-import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelHighlightMaskId, channelPaint, centerPaint, gatePaint } from './bodygraph-paint.ts';
+import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelHighlightMaskId, channelPaint, channelLanes, centerPaint, gatePaint } from './bodygraph-paint.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { renderActivationColumns } from './activation-columns.ts';
 import { renderVariableArrows, visibleVariables } from './variable-arrows.ts';
@@ -13,7 +13,7 @@ import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from './geometry/activation-layout.
 import { renderChartBackdrop } from './backdrop.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import {
-  roundedCenter, paintOrder, UNDERPASS_CHANNEL_ID,
+  roundedCenter, paintOrder, UNDERPASS_CHANNEL_ID, HIGHLIGHT_REGIONS,
   STEM_PATH, INTEGRATION_PATH, INTEGRATION_INNER_SIDE,
   INTEGRATION_OUTER_SIDE, integrationOuterOwnership, integrationEndPlanes, integrationRoute,
 } from './geometry/drawing-geometry.ts';
@@ -34,8 +34,8 @@ function highlightGlow(id: string, x: number, y: number, width: number, height: 
   return `<filter id="${id}" filterUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}" color-interpolation-filters="sRGB">
       <feMorphology in="SourceGraphic" operator="dilate" radius="${halo.spread}" result="halo-wide"/>
       <feGaussianBlur in="halo-wide" stdDeviation="${halo.blur}" result="halo-blur"/>
-      <feComponentTransfer in="halo-blur" result="halo"><feFuncA type="linear" slope="${halo.opacity}"/></feComponentTransfer>
-      <feMerge><feMergeNode in="halo"/><feMergeNode in="SourceGraphic"/></feMerge>
+      ${halo.opacity === 1 ? '' : `<feComponentTransfer in="halo-blur" result="halo"><feFuncA type="linear" slope="${halo.opacity}"/></feComponentTransfer>`}
+      <feMerge><feMergeNode in="${halo.opacity === 1 ? 'halo-blur' : 'halo'}"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>`;
 }
 
@@ -81,14 +81,17 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     return `data-type="${type}" data-id="${escape(id)}"`
       + (interactive ? ` class="bg-interactive" tabindex="0" role="button" aria-label="${escape(label)}" aria-pressed="${Boolean(pressed)}"` : '');
   };
+  const channelColors: string[] = [];
   const channels = paintOrder.map((channel) => {
     if (INTEGRATION_IDS.has(channel.id)) return '';
-    const { selected, related, defined, opacity, highlight: channelHighlight, highlightColor, lanes: halves } = channelPaint(channel, state, options);
+    const { selected, related, defined, opacity, highlight: channelHighlight, highlightColor, highlightDefinitions } = channelPaint(channel, state, options);
+    const halves = channelLanes(channel, state);
+    channelColors.push(highlightDefinitions);
     const highlight = thumbnail ? '' : channelHighlight;
     return `<g ${attrs('channel', channel.id, `Канал ${channel.id}: ${channel.name}`, selected)} data-defined="${defined}" data-related="${related}" opacity="${opacity}">
       <path class="bg-channel-outline" d="${channel.path}" fill="none" stroke="${PALETTE.outline}" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" pointer-events="none"/>
       ${highlight}
-      ${thumbnail ? '' : `<path class="bg-channel-highlight" d="${channel.path}" fill="none" stroke="${highlightColor}" stroke-width="${highlightWidth}" stroke-linecap="round" ${glow ? `filter="url(#${prefix}-highlight-glow)"` : `mask="url(#${channelHighlightMaskId(prefix, channel.id)})"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
+      ${thumbnail ? '' : `<path class="bg-channel-highlight" d="${channel.path}" fill="none" stroke="${highlightColor}" stroke-width="${highlightWidth}" stroke-linecap="round" ${glow ? `filter="url(#${prefix}-glow-channel-${channel.id})"` : `mask="url(#${channelHighlightMaskId(prefix, channel.id)})"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
       <path d="${channel.path}" fill="none" stroke="${PALETTE.paper}" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" pointer-events="none"/>
       ${halves}
       ${thumbnail ? '' : `<path class="bg-focus-shape" d="${channel.path}" fill="none" stroke="transparent" stroke-width="19" stroke-linecap="round" pointer-events="${interactive ? 'stroke' : 'none'}"/>`}
@@ -110,7 +113,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
 
   // Child ownership masks preserve the authored integration cuts. Their inner
   // subtraction now includes a gap; no blur or color covers the physical node.
-  const integrationHighlights = thumbnail ? '' : `<g class="bodygraph-integration-highlights" ${glow ? `filter="url(#${prefix}-highlight-glow)" mask="url(#${prefix}-integration-outline)"` : `mask="url(#${prefix}-highlight-exterior)"`} pointer-events="none">
+  const integrationHighlights = thumbnail ? '' : `<g class="bodygraph-integration-highlights" ${glow ? `filter="url(#${prefix}-glow-integration)" mask="url(#${prefix}-integration-outline)"` : `mask="url(#${prefix}-highlight-exterior)"`} pointer-events="none">
     <path class="bg-integration-hover" d="${INTEGRATION_PATH}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="butt" stroke-linejoin="round" mask="url(#${prefix}-integration-outline)" opacity="0" pointer-events="none"/>
     ${selectionPath ? `<path class="bg-integration-selection" d="${selectionPath}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="${integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})" pointer-events="none"/>` : ''}
     ${integrationChannels.map(channel => `<path class="bg-integration-focus" data-highlight-channel="${channel.id}" d="${integrationRoute(channel.gates)}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#${prefix}-integration-focus-${channel.id})" opacity="0" style="--integration-focus-opacity:${integrationFocusOpacity(channel)}" pointer-events="none"/>`).join('')}
@@ -142,7 +145,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     if (center.id === 'spleen') labels = ['Селезёночный'];
     return `<g ${attrs('center', center.id, label, selected)} data-defined="${defined}" opacity="${opacity}">
       <path class="bg-center-shape" data-center-points="${center.points}" d="${shape}" fill="${fill}" stroke="${stroke}" stroke-width="${CENTER_STROKE}" stroke-linejoin="round"/>
-      ${thumbnail ? '' : `<path class="bg-center-highlight" d="${shape}" fill="none" stroke="${highlightColor}" stroke-width="${glow ? CENTER_STROKE : CENTER_HIGHLIGHT_WIDTH}" stroke-linejoin="round" ${glow ? `filter="url(#${prefix}-highlight-glow)" mask="url(#${prefix}-center-glow-exterior)"` : `mask="url(#${prefix}-highlight-center-exterior)"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
+      ${thumbnail ? '' : `<path class="bg-center-highlight" d="${shape}" fill="none" stroke="${highlightColor}" stroke-width="${glow ? CENTER_STROKE : CENTER_HIGHLIGHT_WIDTH}" stroke-linejoin="round" ${glow ? `filter="url(#${prefix}-glow-center-${center.id})" mask="url(#${prefix}-center-glow-exterior-${center.id})"` : `mask="url(#${prefix}-highlight-center-exterior)"`} opacity="${selected ? 1 : 0}" pointer-events="none"/>`}
       ${options.showLabels === true ? `<text x="${center.labelX}" y="${center.labelY}" text-anchor="middle" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="${['spleen', 'solar'].includes(center.id) ? 7.5 : 8.5}" font-weight="500" letter-spacing=".1" fill="#171513" pointer-events="none">${labels.map((label, index) => `<tspan x="${center.labelX}" dy="${index ? 9 : 0}">${escape(label)}</tspan>`).join('')}</text>` : ''}
     </g>`;
   }).join('');
@@ -166,15 +169,16 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   // Shared junction cutouts protect centers and channel interiors. Crossings
   // also respect paint order: upper contours stay whole, the lower one meets the physical overpass edge without a gap.
   return `${thumbnail ? '' : `<defs>
+    <g class="bg-channel-color-defs">${channelColors.join('')}</g>
     <g class="bg-integration-color-defs">${integrationHighlight.definitions}</g>
     <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${activationLaneColor(state, 0)}"/><stop offset="50%" stop-color="${activationLaneColor(state, 1)}"/></linearGradient>
     ${glow ? `${highlightGlow(`${prefix}-gate-glow`, -16, -16, 32, 32, { spread: .8, blur: 1.6, opacity: .65 })}
-    ${highlightGlow(`${prefix}-highlight-glow`, -16, -16, 672, 852)}
-    <mask id="${prefix}-center-glow-exterior" maskUnits="userSpaceOnUse" x="-16" y="-16" width="672" height="852">
-      <rect x="-16" y="-16" width="672" height="852" fill="#ffffff"/>
+    ${HIGHLIGHT_REGIONS.map(({ id, x, y, width, height }) => highlightGlow(`${prefix}-glow-${id}`, x, y, width, height)).join('')}
+    <g id="${prefix}-center-glow-occlusion">
       ${[...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => channel.path), INTEGRATION_PATH].map(path => `<path d="${path}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}
       ${CENTERS.map(center => `<path d="${roundedCenter(center.points)}" fill="#000000" stroke="#ffffff" stroke-width="${CENTER_STROKE}" stroke-linejoin="round"/>`).join('')}
-    </mask>` : `${['highlight-exterior', 'highlight-center-exterior', 'highlight-underpass-exterior'].map(kind => {
+    </g>
+    ${HIGHLIGHT_REGIONS.filter(region => region.id.startsWith('center-')).map(({ id, x, y, width, height }) => `<mask id="${prefix}-center-glow-exterior-${id.slice(7)}" maskUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}"><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="#ffffff"/><use href="#${prefix}-center-glow-occlusion"/></mask>`).join('')}` : `${['highlight-exterior', 'highlight-center-exterior', 'highlight-underpass-exterior'].map(kind => {
       const lower = kind === 'highlight-underpass-exterior';
       const paths = [...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)
         && (kind !== 'highlight-exterior' || channel.id !== UNDERPASS_CHANNEL_ID)), { id: 'integration', path: INTEGRATION_PATH }];
@@ -200,7 +204,7 @@ ${thumbnail ? '' : `  <style>
     .bg-interactive:focus-visible .bg-center-highlight { opacity: 1; }
     .bg-interactive:focus-visible .bg-channel-highlight { opacity: 1; }
     .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
-    ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); transition-duration: ${SOFT_HIGHLIGHT_DURATION.enter}ms; }`).join('\n    ')}
+    ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); visibility: visible; transition-duration: ${SOFT_HIGHLIGHT_DURATION.enter}ms, 0s; transition-delay: 0s; }`).join('\n    ')}
     .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
     /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */
     .bg-activation tspan { dominant-baseline: inherit; }

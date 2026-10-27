@@ -239,7 +239,11 @@ const chartFixture = () => ({
 } as unknown as HoverChart);
 
 // Geometry and source paint stay identical; committed feedback alone is darker.
-const withoutPressed = (markup: string) => markup.replace(/ aria-pressed="(?:true|false)"/g, '')
+const withoutPressed = (markup: string) => markup
+  // Dormant two-color sources prepare native focus of a pinned half; visible geometry stays unchanged.
+  .replace(/<g class="bg-channel-color-defs">[\s\S]*?<\/g>/g, '')
+  .replace(/url\(#[^)]*-channel-colors-[^)]+\)/g, '#91bce9')
+  .replace(/ aria-pressed="(?:true|false)"/g, '')
   .replace(/<g class="bg-integration-color-defs">[\s\S]*?<\/g>(?=\n    <linearGradient)/g, '')
   .replace(/url\(#[^)]*-integration-highlight-colors\)/g, '#91bce9')
   .replaceAll('#83a9d2', '#91bce9');

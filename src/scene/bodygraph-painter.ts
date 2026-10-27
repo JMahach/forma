@@ -1,15 +1,18 @@
 import { paintIntegrationLayers } from './integration-paint.ts';
-import { canSoften, softHighlightOpacity, softHighlightFragment, observeSoftHighlightMotion, SOFT_HIGHLIGHT_DURATION } from './soft-highlight.ts';
+import { canSoften, softHighlightFragment, observeSoftHighlightMotion, SOFT_HIGHLIGHT_DURATION } from './soft-highlight.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
 import type { SelectionType } from '../selection/selection-targets.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { paintOrder } from './geometry/drawing-geometry.ts';
 import { channelHighlightWidth } from './geometry/drawing-presentation.ts';
-import { PALETTE, activationLaneColor, integrationPaint, integrationHighlightPaint, channelPaint, centerPaint, gatePaint,
+import { PALETTE, activationLaneColor, integrationPaint, integrationHighlightPaint, channelPaint, channelLanes, centerPaint, gatePaint,
   integrationOutlineMask, integrationChannels } from './bodygraph-paint.ts';
 import { isSelectionPressed } from './render-state.ts';
 import { setAttribute, setAttributes, fragmentSlot, svgNodes } from './svg-patches.ts';
+
+const physicalKey = (state: RenderState) => JSON.stringify([[...state.personality], [...state.design],
+  state.overlaySources ? [state.overlaySources.kind, state.overlaySources.sources.map(source => source.label), [...state.overlaySources.masks]] : null]);
 
 const coreKey = (state: RenderState, options: RenderOptions) => [state.personality, state.design, state.relatedChannels,
   state.relatedGates, state.halfGates, state.selectedGates, state.selectedCenters,
@@ -26,6 +29,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const initialIntegration = initialState ? integrationPaint(initialState, initialOptions) : null;
   const drawing = root.querySelector('.bodygraph-drawing')!;
   const byType = (type: SelectionType, id: string | number) => drawing.querySelector<SVGElement>(`.bodygraph-${type === 'gate' ? 'gates' : type === 'center' ? 'centers' : 'channels'} [data-type="${type}"][data-id="${id}"]`)!;
+  const initialChannelColors: string[] = [];
   const channels = paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => {
     const node = byType('channel', channel.id);
     const halo = node.querySelector('.bg-channel-highlight')!;
@@ -33,9 +37,10 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
     const hit = node.querySelector('.bg-focus-shape')!;
     const children = [...node.children], paper = children[children.indexOf(halo) + 1];
     const initialPaint = initialState ? channelPaint(channel, initialState, initialOptions) : null;
-    return { channel, node, halo,
+    initialChannelColors.push(initialPaint?.highlightDefinitions ?? '');
+    return { channel, node, halo, colors: initialPaint?.highlightDefinitions ?? '',
       highlight: softHighlightFragment(node, halo, children.slice(children.indexOf(outline) + 1, children.indexOf(halo)), initialPaint?.highlight),
-      lanes: fragmentSlot(node, hit, children.slice(children.indexOf(paper) + 1, children.indexOf(hit)), initialPaint?.lanes) };
+      lanes: fragmentSlot(node, hit, children.slice(children.indexOf(paper) + 1, children.indexOf(hit)), initialState ? channelLanes(channel, initialState) : undefined) };
   });
   const centers = CENTERS.map(center => { const node = byType('center', center.id); return { center, node,
     shape: node.querySelector('.bg-center-shape'), halo: node.querySelector('.bg-center-highlight') }; });
@@ -52,9 +57,10 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   let selectionHalo = highlights.querySelector('.bg-integration-selection');
   let selectionEnter: Animation | null = null;
   let outgoing: { path: Element; mask: Element | null; colors: Element | null; animation: Animation } | null = null;
+  let soften = false;
   function retireSelection() {
     outgoing?.animation.cancel(); outgoing?.path.remove(); outgoing?.mask?.remove(); outgoing?.colors?.remove(); outgoing = null;
-    if (!selectionHalo || !canSoften(selectionHalo)) return;
+    if (!selectionHalo || !soften) return;
     const path = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
     for (const name of selectionHalo.getAttributeNames()) path.setAttribute(name, selectionHalo.getAttribute(name)!);
     path.setAttribute('data-soft-highlight-outgoing', 'paint');
@@ -81,7 +87,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
       defs.appendChild(colors);
       path.setAttribute('stroke', `url(#${colorId}-outgoing)`);
     }
-    const opacity = root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity;
+    const opacity = selectionEnter ? root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity : '1';
     highlights.insertBefore(path, selectionHalo);
     const animation = path.animate([{ opacity }, { opacity: '0' }], { duration: SOFT_HIGHLIGHT_DURATION.exit, easing: 'ease-out' });
     const retired = { path, mask, colors, animation };
@@ -91,6 +97,8 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const focus = integrationChannels.map((channel, index) => ({ channel,
     target: byType('channel', channel.id), halo: focusHalos[index] }));
   const defs = root.querySelector('defs')!;
+  const channelColorDefs = defs.querySelector('.bg-channel-color-defs')!;
+  const paintChannelColors = fragmentSlot(channelColorDefs, null, [...channelColorDefs.childNodes], initialState ? initialChannelColors.join('') : undefined);
   const colorDefs = defs.querySelector('.bg-integration-color-defs')!;
   const paintHighlightColors = fragmentSlot(colorDefs, null, [...colorDefs.childNodes],
     initialState ? integrationHighlightPaint(initialState, initialOptions).definitions : undefined);
@@ -100,6 +108,8 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const focusMaskSignature = (paint: ReturnType<typeof integrationPaint>) => JSON.stringify(paint.activeIntegrationParts);
   let selectionMaskKey = initialIntegration ? selectionMaskSignature(initialIntegration) : null;
   let focusMaskKey = initialIntegration ? focusMaskSignature(initialIntegration) : null;
+  let paintedState = initialState, paintedDim = initialOptions.dimInactive;
+  let previousPhysical = initialState ? physicalKey(initialState) : null;
   let previous = initialState ? coreKey(initialState, initialOptions) : null;
   function patchMask(markup: string, id: string, before: Node | null = null) {
     const current = [...defs.children].find(node => node.id === id);
@@ -117,17 +127,37 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
       const key = coreKey(state, options);
       if (key === previous) return false;
       previous = key;
+      const physical = physicalKey(state), physicalChanged = physical !== previousPhysical;
+      const prior = paintedState, dimChanged = paintedDim !== options.dimInactive;
+      paintedState = state; paintedDim = options.dimInactive;
+      previousPhysical = physical;
+      soften = canSoften(root);
+      const channelColors: string[] = [];
       dualStops.forEach((stop, lane) => setAttribute(stop, 'stop-color', activationLaneColor(state, lane)));
       const { definedChannels, relatedChannels, selectedChannels, prefix } = state;
       for (const item of channels) {
-        const { channel, node, halo } = item, paint = channelPaint(channel, state, options);
+        const { channel, node, halo } = item;
+        if (!physicalChanged && !dimChanged && prior
+          && prior.selectedChannels.has(channel.id) === state.selectedChannels.has(channel.id)
+          && prior.relatedChannels.has(channel.id) === state.relatedChannels.has(channel.id)
+          && prior.committedIdsByType.get('channel')?.has(channel.id) === state.committedIdsByType.get('channel')?.has(channel.id)
+          && isSelectionPressed(prior, 'channel', channel.id, prior.selectedChannels.has(channel.id))
+            === isSelectionPressed(state, 'channel', channel.id, state.selectedChannels.has(channel.id))
+          && channel.gates.every(gate => prior.halfGates.has(gate) === state.halfGates.has(gate)
+            && prior.committedGates.has(gate) === state.committedGates.has(gate))) {
+          channelColors.push(item.colors); continue;
+        }
+        const paint = channelPaint(channel, state, options);
         setAttributes(node, { 'data-defined': paint.defined, 'data-related': paint.related, opacity: paint.opacity });
         pressed(node, 'channel', channel.id, paint.selected, state);
         setAttribute(halo, 'stroke', paint.highlightColor);
-        softHighlightOpacity(halo, paint.selected ? 1 : 0);
-        item.highlight(paint.highlight);
-        item.lanes(paint.lanes);
+        setAttribute(halo, 'opacity', paint.selected ? 1 : 0);
+        item.highlight(paint.highlight, soften);
+        if (physicalChanged) item.lanes(channelLanes(channel, state));
+        item.colors = paint.highlightDefinitions;
+        channelColors.push(item.colors);
       }
+      paintChannelColors(channelColors.join(''));
       for (const { center, node, shape, halo } of centers) {
         const paint = centerPaint(center, state, options);
         setAttributes(node, { 'data-defined': paint.defined, opacity: paint.opacity });
@@ -135,9 +165,15 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         pressed(node, 'center', center.id, paint.selected, state);
         setAttributes(shape, { fill: paint.fill, stroke: paint.stroke });
         setAttribute(halo, 'stroke', paint.highlightColor);
-        softHighlightOpacity(halo, paint.selected ? 1 : 0);
+        setAttribute(halo, 'opacity', paint.selected ? 1 : 0);
       }
       for (const { gate, node, disc, glow, halo, text } of gates) {
+        if (!physicalChanged && !dimChanged && prior
+          && prior.selectedGates.has(gate.id) === state.selectedGates.has(gate.id)
+          && prior.relatedGates.has(gate.id) === state.relatedGates.has(gate.id)
+          && prior.committedGates.has(gate.id) === state.committedGates.has(gate.id)
+          && isSelectionPressed(prior, 'gate', gate.id, prior.selectedGates.has(gate.id))
+            === isSelectionPressed(state, 'gate', gate.id, state.selectedGates.has(gate.id))) continue;
         const paint = gatePaint(gate, state, options);
         setAttributes(node, { 'data-active': paint.active, 'data-related': paint.related, opacity: paint.opacity });
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
@@ -146,9 +182,9 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         if (options.highlightStyle === 'glow') setAttribute(glow, 'fill', paint.highlightFill);
         setAttribute(glow, 'stroke', paint.highlightColor);
         if (options.highlightStyle === 'glow') setAttribute(halo, 'stroke', paint.highlightColor);
-        softHighlightOpacity(glow, paint.highlightOpacity);
+        setAttribute(glow, 'opacity', paint.highlightOpacity);
         setAttributes(halo, { 'data-state': paint.highlightState, fill: paint.highlightFill });
-        softHighlightOpacity(halo, paint.highlightOpacity);
+        setAttribute(halo, 'opacity', paint.highlightOpacity);
         setAttributes(text, { 'font-weight': paint.textWeight, fill: paint.textFill });
       }
       const paint = integrationPaint(state, options);
@@ -167,12 +203,12 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         const part = integrationArmState.find(part => part.gate === arm.gate)!;
         setAttributes(arm.node, { 'data-related': part.highlighted, opacity: part.opacity });
       }
-      paintColors(paintIntegrationLayers(state));
+      if (physicalChanged) paintColors(paintIntegrationLayers(state));
       const selectionChanged = selectionHalo?.getAttribute('d') !== selectionPath
         || selectionHalo?.getAttribute('mask') !== `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})`;
       let reclaimedOpacity: string | undefined;
       if (selectionChanged) {
-        if (!selectionHalo && outgoing && outgoing.path.getAttribute('d') === selectionPath && canSoften(outgoing.path)) {
+        if (!selectionHalo && outgoing && outgoing.path.getAttribute('d') === selectionPath && soften) {
           reclaimedOpacity = root.ownerDocument.defaultView!.getComputedStyle(outgoing.path).opacity;
           outgoing.animation.cancel(); outgoing.mask?.remove(); outgoing.colors?.remove();
           selectionHalo = outgoing.path;
@@ -196,7 +232,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
           mask: `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})` });
         // A geometry change cross-fades its previous masked paint; fixed half halos
         // elsewhere retain identity and never restart when their gate stays lit.
-        if (selectionChanged && canSoften(selectionHalo)) {
+        if (selectionChanged && soften) {
           const animation = selectionHalo.animate([{ opacity: reclaimedOpacity ?? (enteringSelection || outgoing ? '0' : root.ownerDocument.defaultView!.getComputedStyle(selectionHalo).opacity) }, { opacity: '1' }], { duration: SOFT_HIGHLIGHT_DURATION.enter, easing: 'ease-out' });
           selectionEnter = animation;
           animation.onfinish = () => { if (selectionEnter === animation) selectionEnter = null; animation.cancel(); };

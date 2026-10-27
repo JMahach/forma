@@ -1,45 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { svgDocument, SVG_NS } from './helpers/svg-dom.ts';
-import { softHighlightOpacity } from '../src/scene/soft-highlight.ts';
-
-test('interrupting a halo fade starts from its current visible opacity and releases the finished animation', () => {
-  const document = svgDocument();
-  const node = document.createElementNS(SVG_NS, 'path');
-  node.setAttribute('opacity', '0');
-  let visible = '0', cancelled = 0;
-  const calls: { frames: Keyframe[]; options: KeyframeAnimationOptions; animation: Animation }[] = [];
-  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: () => ({ opacity: visible }) } });
-  node.animate = (frames, options) => {
-    const animation = { cancel() { cancelled++; }, onfinish: null } as unknown as Animation;
-    calls.push({ frames: frames as Keyframe[], options: options as KeyframeAnimationOptions, animation });
-    return animation;
-  };
-  softHighlightOpacity(node, 1);
-  assert.equal(node.getAttribute('opacity'), '1', 'semantic paint updates immediately');
-  assert.equal(calls.length, 1, 'a visible transition starts');
-  assert.deepEqual(calls[0].frames, [{ opacity: '0' }, { opacity: '1' }]);
-  assert.equal(calls[0].options.duration, 92);
-  assert.equal(calls[0].options.delay ?? 0, 0, 'the longer fade adds no interaction delay');
-  visible = '0.4';
-  softHighlightOpacity(node, 0);
-  assert.equal(cancelled, 1);
-  assert.deepEqual(calls[1].frames, [{ opacity: '0.4' }, { opacity: '0' }]);
-  assert.equal(calls[1].options.duration, 69);
-  calls[1].animation.onfinish!({} as AnimationPlaybackEvent);
-  assert.equal(cancelled, 2);
-});
-
-test('reduced motion updates a halo immediately without starting animation', () => {
-  const document = svgDocument(), node = document.createElementNS(SVG_NS, 'path');
-  node.setAttribute('opacity', '0');
-  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: true }) } });
-  node.animate = () => { throw new Error('reduced motion cannot animate'); };
-  softHighlightOpacity(node, 1);
-  assert.equal(node.getAttribute('opacity'), '1');
-});
-
-
 test('an exiting ordinary half is reclaimed on rapid re-entry and removed only after its final exit', async () => {
   const { softHighlightFragment } = await import('../src/scene/soft-highlight.ts');
   const document = svgDocument(), parent = document.createElementNS(SVG_NS, 'g'), before = document.createElementNS(SVG_NS, 'path');
@@ -110,4 +71,22 @@ test('a live reduced-motion change settles contour effects immediately and its l
   assert.equal(root.querySelector('[data-soft-highlight-outgoing]'), null);
   dispose();
   assert.equal(listener, undefined);
+});
+
+test('a settled half fades out without forcing a style recalculation', async () => {
+  const { softHighlightFragment } = await import('../src/scene/soft-highlight.ts');
+  const document = svgDocument(), parent = document.createElementNS(SVG_NS, 'g'), before = document.createElementNS(SVG_NS, 'path');
+  parent.appendChild(before);
+  Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle() { assert.fail('settled opacity is already known'); } } });
+  let current: Animation;
+  const create = document.createElementNS.bind(document);
+  document.createElementNS = (ns, tag) => { const node = create(ns, tag); node.animate = () => current = { cancel() {}, onfinish: null } as unknown as Animation; return node; };
+  parent.animate = () => ({} as Animation);
+  const patch = softHighlightFragment(parent, before, [], '');
+  patch('<g data-highlight-gate="1"><path d="M0 0L1 1"/></g>');
+  current!.onfinish!({} as AnimationPlaybackEvent);
+  patch('');
+  assert.ok(parent.querySelector('[data-soft-highlight-outgoing]'));
+  current!.onfinish!({} as AnimationPlaybackEvent);
+  assert.equal(parent.querySelector('[data-highlight-gate]'), null);
 });

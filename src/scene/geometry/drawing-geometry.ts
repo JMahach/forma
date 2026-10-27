@@ -1,4 +1,4 @@
-import { CHANNELS, getGate, getChannel, getCenter } from './chart-geometry.ts';
+import { CENTERS, CHANNELS, getGate, getChannel, getCenter } from './chart-geometry.ts';
 import { CENTER_STROKE } from './drawing-presentation.ts';
 import { INTEGRATION_IDS } from '../../domain/topology.ts';
 import { INTEGRATION_ARMS as ARM_GEOMETRY, STEM_POINTS, sampleBezier } from './integration-geometry.ts';
@@ -186,3 +186,21 @@ export function integrationRoute(gates: readonly number[]) {
   // reversal join at a fork. Only routes crossing the node include its stem.
   return [first.path, second.path, ...(first.end !== second.end ? [STEM_PATH] : [])].join(' ');
 }
+
+// Local filter regions include the physical stroke, dilation and four blur sigmas.
+// Curves use their control hull; vertical halves keep a positive padded width.
+const glowRegion = (points: number[][]) => {
+  const xs = points.map(p => p[0]), ys = points.map(p => p[1]), pad = 18;
+  const x = Math.min(...xs) - pad, y = Math.min(...ys) - pad;
+  return { x, y, width: Math.max(...xs) + pad - x, height: Math.max(...ys) + pad - y };
+};
+export const HIGHLIGHT_REGIONS = [
+  ...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).flatMap(channel => [
+    { id: `channel-${channel.id}`, ...glowRegion(channel.curves.flat()) },
+    ...channelHalves.get(channel.id)!.map((points, index) =>
+      ({ id: `half-${channel.id}-${channel.gates[index]}`, ...glowRegion(points) })),
+  ]),
+  ...CENTERS.map(center =>
+    ({ id: `center-${center.id}`, ...glowRegion(center.points.split(' ').map(pair => pair.split(',').map(Number))) })),
+  { id: 'integration', ...glowRegion([...STEM_POINTS, ...ARM_GEOMETRY.flatMap(arm => arm.curve)]) },
+];

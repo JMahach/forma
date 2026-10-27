@@ -291,7 +291,7 @@ const originalHighlightGlow = (markup: string, legacyHaloWidth = 16.5) => origin
   .replace(/<path\b[^>]*stroke="#c4d9f1"[^>]*\/>/g, path => path.replace(/stroke-width="[^"]+"/,
     `stroke-width="${hasClass(path, 'bg-center-highlight') ? 2.5 : legacyHaloWidth}"`))
   .replace(/^ +\.bg-interactive:(?:hover|focus-visible) \.bg-gate-glow \{ opacity: 1; \}\n/gm, '')
-  .replaceAll('opacity: var(--integration-focus-opacity, 1); transition-duration: 92ms;', 'opacity: var(--integration-focus-opacity, 1);');
+  .replaceAll('opacity: var(--integration-focus-opacity, 1); visibility: visible; transition-duration: 92ms, 0s; transition-delay: 0s;', 'opacity: var(--integration-focus-opacity, 1);');
 test('non-channel SVG and terminal clipping remain byte-identical to the previous renderer', () => {
   const selections = [gate(54), { type: 'center' as const, id: 'throat' },
     { type: 'channel' as const, id: '37-40' }, { type: 'integration' as const, id: 'integration' }];

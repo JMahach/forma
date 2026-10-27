@@ -1,27 +1,10 @@
 import { setAttribute, svgNodes } from './svg-patches.ts';
 // SmoothUI FluidHoverHighlight, lengthened by the requested 15%, no overshoot.
 export const SOFT_HIGHLIGHT_DURATION = Object.freeze({ enter: 92, exit: 69 });
-// Only currently running paint is retained; finished effects release themselves.
-const running = new WeakMap<Element, Animation>();
 export function canSoften(node: Element) {
   return typeof node.animate === 'function' && Boolean(node.ownerDocument.defaultView)
     && !node.ownerDocument.defaultView!.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
-export function softHighlightOpacity(node: Element | null, opacity: number, from?: string) {
-  if (!node) return;
-  const target = String(opacity);
-  if (from === undefined && node.getAttribute('opacity') === target) return;
-  const enabled = canSoften(node);
-  const current = from ?? (enabled ? node.ownerDocument.defaultView!.getComputedStyle(node).opacity : target);
-  running.get(node)?.cancel();
-  running.delete(node);
-  setAttribute(node, 'opacity', target);
-  if (!enabled || current === target) return;
-  const animation = node.animate([{ opacity: current }, { opacity: target }], { duration: opacity ? SOFT_HIGHLIGHT_DURATION.enter : SOFT_HIGHLIGHT_DURATION.exit, easing: 'ease-out' });
-  running.set(node, animation);
-  animation.onfinish = () => { if (running.get(node) === animation) running.delete(node); animation.cancel(); };
-}
-
 // Ordinary channel halves have finite gate ownership. Only live/outgoing paint
 // occupies these slots; re-entry reclaims an exiting node rather than flashing.
 export function softHighlightFragment(parent: Element, before: Node, initial: ChildNode[], initialMarkup?: string) {
@@ -40,8 +23,8 @@ export function softHighlightFragment(parent: Element, before: Node, initial: Ch
       remove?.(); animation.cancel();
     };
   }
-  return (markup: string) => {
-    const enabled = canSoften(parent);
+  return (markup: string, soften?: boolean) => {
+    const enabled = soften ?? canSoften(parent);
     for (const [key, entry] of entries) if (entry.node.parentNode !== parent) { entry.animation?.cancel(); entries.delete(key); }
     if (markup === previous && enabled === softened) return false;
     previous = markup; softened = enabled;
@@ -56,7 +39,7 @@ export function softHighlightFragment(parent: Element, before: Node, initial: Ch
         entry = { node: candidate }; entries.set(key, entry);
         if (enabled) animate(entry, '0', '1');
       } else if (entry.exiting && enabled) {
-        const opacity = parent.ownerDocument.defaultView!.getComputedStyle(entry.node).opacity;
+        const opacity = entry.animation ? parent.ownerDocument.defaultView!.getComputedStyle(entry.node).opacity : '1';
         animate(entry, opacity, '1');
       }
       // The half keeps its geometry and animation while pinning changes blue.
@@ -74,7 +57,7 @@ export function softHighlightFragment(parent: Element, before: Node, initial: Ch
       if (!enabled) { entry.animation?.cancel(); entry.node.remove(); entries.delete(key); }
       else if (!entry.exiting) {
         entry.exiting = true; entry.node.setAttribute('data-soft-highlight-outgoing', 'half');
-        const opacity = parent.ownerDocument.defaultView!.getComputedStyle(entry.node).opacity;
+        const opacity = entry.animation ? parent.ownerDocument.defaultView!.getComputedStyle(entry.node).opacity : '1';
         animate(entry, opacity, '0', () => { entry.node.remove(); entries.delete(key); });
       }
     }
@@ -90,7 +73,7 @@ export function observeSoftHighlightMotion(root: Element) {
     for (const animation of root.getAnimations({ subtree: true })) {
       const target = (animation.effect as KeyframeEffect | null)?.target;
       if (target && 'matches' in target && target.matches(contours)) {
-        animation.cancel(); running.delete(target as Element);
+        animation.cancel();
       }
     }
     for (const node of root.querySelectorAll('[data-soft-highlight-outgoing]')) node.remove();

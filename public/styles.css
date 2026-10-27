@@ -1330,19 +1330,36 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
   .loading-index i { height: 112px; }
 }
 
-/* SmoothUI Fluid Hover Highlight: short, interruptible contour fades. */
-    .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus {
-      transition: opacity 69ms ease-out;
-    }
-    .bg-interactive:hover .bg-gate-highlight, .bg-interactive:hover .bg-gate-glow, .bg-interactive:hover .bg-center-highlight,
-    .bg-interactive:hover .bg-channel-highlight,
-    .bg-interactive:focus-visible .bg-gate-highlight, .bg-interactive:focus-visible .bg-gate-glow, .bg-interactive:focus-visible .bg-center-highlight,
-    .bg-interactive:focus-visible .bg-channel-highlight,
-    .bodygraph-channels:has(> .bg-interactive[data-type="integration"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover,
-    .bodygraph-channels:has(> .bg-interactive[data-type="integration"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { transition-duration: 92ms; }
-    @media (prefers-reduced-motion: reduce) {
-      .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus { transition: none !important; }
-    }
+/* Empty integration paint has no filter surface. Focus and hover are separate
+   from pinned state; outgoing nodes keep the group alive through their fade. */
+.bodygraph-integration-highlights { visibility: hidden; transition: visibility 0s linear 69ms; }
+.bodygraph-integration-highlights:has(.bg-integration-selection, [data-soft-highlight-outgoing]),
+.bodygraph-channels:has(> .bg-interactive:is([data-type="integration"], [data-integration="true"]):focus-visible) > .bodygraph-integration-highlights { visibility: visible; transition-delay: 0s; }
+@media (hover: hover) {
+  .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights { visibility: visible; transition-delay: 0s; }
+}
+@media (prefers-reduced-motion: reduce) { .bodygraph-integration-highlights { transition: none; } }
+
+/* Persistent contours use one native, interruptible opacity transition.
+   Hide settled effects; a touch browser must not revive them via synthetic hover. */
+.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus {
+  visibility: hidden;
+  transition: opacity 69ms ease-out, visibility 0s linear 69ms;
+}
+:is(.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight)[opacity="1"],
+.bg-interactive:focus-visible :is(.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight),
+.bodygraph-channels:has(> .bg-interactive[data-type="integration"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover {
+  visibility: visible; transition-duration: 92ms, 0s; transition-delay: 0s;
+}
+@media (hover: hover) {
+  .bg-interactive:hover :is(.bg-gate-highlight, .bg-gate-glow, .bg-channel-highlight),
+  .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover {
+    visibility: visible; transition-duration: 92ms, 0s; transition-delay: 0s;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus { transition: none !important; }
+}
 
 
 /* Shared field/action feedback: each message stays beside its owner. */

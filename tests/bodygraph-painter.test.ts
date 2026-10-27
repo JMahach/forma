@@ -191,6 +191,7 @@ test('integration outgoing paint keeps its old mask and remains bounded during r
   const { root, document } = render(chart, null, options);
   const animations: Animation[] = [];
   Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: node => ({ opacity: node.getAttribute('opacity') ?? '1' }) } });
+  root.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation);
   const create = document.createElementNS.bind(document);
   document.createElementNS = (ns, tag) => {
     const node = create(ns, tag);
@@ -224,6 +225,7 @@ test('rapid integration geometry changes cancel the previous enter effect on the
   const { root, document } = render(chart, null, options);
   let active = 0;
   Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: () => ({ opacity: '0.5' }) } });
+  root.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation);
   const create = document.createElementNS.bind(document);
   document.createElementNS = (ns, tag) => { const node = create(ns, tag); node.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation); return node; };
   const path = root.querySelector('.bg-integration-selection')!;
@@ -245,6 +247,7 @@ test('integration re-entry reclaims the exiting contour and its current opacity'
   const frames: Keyframe[][] = [];
   const durations: number[] = [];
   Object.assign(document, { defaultView: { matchMedia: () => ({ matches: false }), getComputedStyle: () => ({ opacity: '0.4' }) } });
+  root.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation);
   const create = document.createElementNS.bind(document);
   document.createElementNS = (ns, tag) => { const node = create(ns, tag); node.animate = (values, settings) => { frames.push(values as Keyframe[]); durations.push((settings as KeyframeAnimationOptions).duration as number); return { cancel() {}, onfinish: null } as unknown as Animation; }; return node; };
   root.querySelector('.bg-integration-selection')!.animate = () => ({ cancel() {}, onfinish: null } as unknown as Animation);

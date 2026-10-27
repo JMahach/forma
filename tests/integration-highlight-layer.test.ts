@@ -196,7 +196,7 @@ test('focus and hover CSS route interactive state to the matching lower highligh
     assert.ok(rule!.selector.includes(`[data-integration="true"][data-id="${id}"]:focus-visible)`));
     assert.ok(rule!.selector.includes(`> .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${id}"]`));
     assert.match(rule!.body, /opacity\s*:\s*var\(--integration-focus-opacity,\s*1\)\s*;/);
-    assert.match(rule!.body, /transition-duration\s*:\s*92ms\s*;/,
+    assert.match(rule!.body, /transition-duration\s*:\s*92ms,\s*0s\s*;/,
       'only this matched focus route enters for 92ms; a route losing focus returns to the 69ms base');
   }
   for (const state of ['hover', 'focus-visible'] as const) {

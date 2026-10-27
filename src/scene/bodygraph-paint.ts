@@ -3,7 +3,7 @@ import type { CENTERS } from './geometry/chart-geometry.ts';
 import { CHANNELS, GATES } from './geometry/chart-geometry.ts';
 import { INTEGRATION_IDS } from '../domain/topology.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
-import { pointString, offsetPoints, channelHalves, UNDERPASS_CHANNEL_ID, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
+import { pointString, offsetPoints, channelHalves, HIGHLIGHT_REGIONS, UNDERPASS_CHANNEL_ID, INTEGRATION_ARMS, STEM_PATH, INTEGRATION_PATH } from './geometry/drawing-geometry.ts';
 import { gatesForSelection } from '../selection/selection-targets.ts';
 import { PALETTE, SELECTED_HIGHLIGHT_COLOR } from '../ui/chart-palette.ts';
 export { PALETTE } from '../ui/chart-palette.ts';
@@ -13,6 +13,8 @@ import { GATE_MARKER, channelHighlightWidth, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WI
 export { CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH } from './geometry/drawing-presentation.ts';
 
 export function integrationOutlineMask(id: string, gates: readonly number[] = [20, 10, 34, 57], includeStem = true, prefix = 'bodygraph', connectedGates: readonly number[] = [], activeParts: readonly string[] = [], style: HighlightStyle = 'outline') {
+  const { x, y, width, height } = style === 'glow'
+    ? HIGHLIGHT_REGIONS.find(region => region.id === 'integration')! : { x: 0, y: 0, width: 640, height: 820 };
   const footprintWidth = style === 'glow' ? CHANNEL_WIDTH.halo : CHANNEL_HIGHLIGHT_WIDTH;
   const innerWidth = style === 'glow' ? CHANNEL_WIDTH.paint : CHANNEL_HIGHLIGHT_INNER_WIDTH;
   const occlusionWidth = style === 'glow' ? CHANNEL_WIDTH.outline : CHANNEL_HIGHLIGHT_INNER_WIDTH;
@@ -35,7 +37,7 @@ export function integrationOutlineMask(id: string, gates: readonly number[] = [2
     ? `<path class="bg-integration-connected-footprint" d="${connectedPath}" fill="none" stroke="#ffffff" stroke-width="${footprintWidth}" stroke-linecap="round" stroke-linejoin="round"/><path class="bg-integration-connected-interior" d="${connectedPath}" fill="none" stroke="#000000" stroke-width="${innerWidth}" stroke-linecap="round" stroke-linejoin="round"/>${occludedPath ? `<path class="bg-integration-connected-occlusion" d="${occludedPath}" fill="none" stroke="#000000" stroke-width="${occlusionWidth}" stroke-linecap="round" stroke-linejoin="round"/>` : ''}` : '';
   // Subtract the physical node plus its gap, leaving only the exterior blue ring.
   // Unselected active neighbors above retain protection through their full edge.
-  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="0" y="0" width="640" height="820"><rect x="0" y="0" width="640" height="820" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${innerWidth}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
+  return `<mask id="${id}" maskUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}"><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${whole ? '#ffffff' : '#000000'}"/>${owned}<path class="bg-integration-interior" d="${INTEGRATION_PATH}" fill="none" stroke="#000000" stroke-width="${innerWidth}" stroke-linecap="round" stroke-linejoin="round"/>${continuous}</mask>`;
 }
 
 
@@ -70,14 +72,27 @@ const highlightColor = (committed: boolean) => committed ? SELECTED_HIGHLIGHT_CO
 // The physical paint order also owns which outline may cross above another.
 export const channelHighlightMaskId = (prefix: string, channelId: string) =>
   `${prefix}-${channelId === UNDERPASS_CHANNEL_ID ? 'highlight-underpass-exterior' : 'highlight-exterior'}`;
+export function channelLanes(channel: typeof CHANNELS[number], state: RenderState) {
+  return channelHalves.get(channel.id)!.map((points, index) => paintGateActivation(points, state, channel.gates[index])).join('');
+}
+
 export function channelPaint(channel: typeof CHANNELS[number], state: RenderState, options: RenderOptions = {}) {
   const selected = state.selectedChannels.has(channel.id), related = state.relatedChannels.has(channel.id);
   const active = channel.gates.some(gate => state.personality.has(gate) || state.design.has(gate));
-  return { selected, related, highlightColor: highlightColor(Boolean(state.committedIdsByType.get('channel')?.has(channel.id))), defined: state.definedChannels.has(channel.id),
+  const pinnedChannel = Boolean(state.committedIdsByType.get('channel')?.has(channel.id));
+  const pinnedHalves = channel.gates.filter(gate => state.committedGates.has(gate));
+  const mixed = !pinnedChannel && pinnedHalves.length === 1;
+  const colorId = `${state.prefix}-channel-colors-${channel.id}`;
+  const region = mixed ? HIGHLIGHT_REGIONS.find(region => region.id === `channel-${channel.id}`)! : null;
+  // The real sampled half owns its color even while the full route is previewed.
+  // A paint source supplies both colors before the single contour is blurred.
+  const highlightDefinitions = region ? `<pattern id="${colorId}" viewBox="${region.x} ${region.y} ${region.width} ${region.height}" patternUnits="userSpaceOnUse" x="${region.x}" y="${region.y}" width="${region.width}" height="${region.height}"><rect x="${region.x}" y="${region.y}" width="${region.width}" height="${region.height}" fill="${PALETTE.halo}"/>${channelHalves.get(channel.id)!.map((points, index) => state.committedGates.has(channel.gates[index])
+    ? `<path data-color-gate="${channel.gates[index]}" d="${pointString(points)}" fill="none" stroke="${SELECTED_HIGHLIGHT_COLOR}" stroke-width="${channelHighlightWidth(options.highlightStyle) + 2}" stroke-linecap="butt" stroke-linejoin="round"/>` : '').join('')}</pattern>` : '';
+  return { selected, related, highlightDefinitions,
+    highlightColor: mixed ? `url(#${colorId})` : highlightColor(pinnedChannel || pinnedHalves.length === 2), defined: state.definedChannels.has(channel.id),
     opacity: options.dimInactive && !active && !related ? .2 : 1,
     highlight: selected ? '' : channelHalves.get(channel.id)!.map((points, index) => state.halfGates.has(channel.gates[index])
-      ? `<g data-highlight-gate="${channel.gates[index]}" ${options.highlightStyle === 'glow' ? `filter="url(#${state.prefix}-highlight-glow)"` : `mask="url(#${channelHighlightMaskId(state.prefix, channel.id)})"`}>${stroke(points, highlightColor(state.committedGates.has(channel.gates[index])), channelHighlightWidth(options.highlightStyle))}</g>` : '').join(''),
-    lanes: channelHalves.get(channel.id)!.map((points, index) => paintGateActivation(points, state, channel.gates[index])).join(''),
+      ? `<g data-highlight-gate="${channel.gates[index]}" ${options.highlightStyle === 'glow' ? `filter="url(#${state.prefix}-glow-half-${channel.id}-${channel.gates[index]})"` : `mask="url(#${channelHighlightMaskId(state.prefix, channel.id)})"`}>${stroke(points, highlightColor(state.committedGates.has(channel.gates[index])), channelHighlightWidth(options.highlightStyle))}</g>` : '').join(''),
   };
 }
 
@@ -155,10 +170,12 @@ export function integrationHighlightPaint(state: RenderState, options: RenderOpt
   const paint = integrationPaint(state, options, true);
   if (!paint.selectionPath) return { color: PALETTE.halo, definitions: '' };
   const { prefix } = state, id = `${prefix}-integration-highlight-colors`, maskId = `${id}-mask`;
+  const { x, y, width, height } = options.highlightStyle === 'glow'
+    ? HIGHLIGHT_REGIONS.find(region => region.id === 'integration')! : { x: -16, y: -16, width: 672, height: 852 };
   const mask = integrationOutlineMask(maskId, [...paint.highlightedArms], paint.stemHighlighted, prefix,
     paint.connectedIntegrationGates, paint.activeIntegrationParts, options.highlightStyle);
-  return { color: `url(#${id})`, definitions: `${mask}<pattern id="${id}" patternUnits="userSpaceOnUse" patternContentUnits="userSpaceOnUse" x="-16" y="-16" width="672" height="852">
-    <rect x="-16" y="-16" width="672" height="852" fill="${PALETTE.halo}"/>
+  return { color: `url(#${id})`, definitions: `${mask}<pattern id="${id}" viewBox="${x} ${y} ${width} ${height}" patternUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}">
+    <rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${PALETTE.halo}"/>
     <path d="${paint.selectionPath}" fill="none" stroke="${SELECTED_HIGHLIGHT_COLOR}" stroke-width="${channelHighlightWidth(options.highlightStyle)}" stroke-linecap="${paint.integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${maskId})"/>
   </pattern>` };
 }
