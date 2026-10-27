@@ -3,6 +3,16 @@ import type { createJournal } from './journal.ts';
 // must still leave a plain background and a working recovery action.
 declare const __FORMA_RELEASE__: boolean;
 
+// The HTTP owner supplies one name for both the tab and the visible shell.
+// Apply it before any optional import, including the real loading preview.
+const appName=document.body.dataset.appName;
+if(appName) {
+  document.title=appName;
+  const label=document.querySelector<HTMLElement>('.site-brand span');
+  if(label)label.textContent=appName;
+  document.querySelector('.site-brand')?.setAttribute('aria-label',appName);
+}
+
 type Journal=ReturnType<typeof createJournal>;
 let journalReady:Promise<Journal|undefined>|undefined;
 function prepareJournal():Promise<Journal|undefined> {

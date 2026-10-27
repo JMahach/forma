@@ -59,8 +59,8 @@ export async function buildWeb({ root = project, outdir = path.join(root, 'dist'
     ['love.html', 'src/stories/vessel-of-love.ts', '/love.css', 'public/love.css'],
   ]) {
     let html = await fs.readFile(path.join(root, 'public', page), 'utf8');
-    // The local tab has a version label; the published site keeps its name.
-    if (page === 'index.html') html = prepareLoadingPage(html).replace(/<title>[^<]*<\/title>/, '<title>Форма</title>');
+    // Runtime metadata names the environment; building does not select production.
+    if (page === 'index.html') html = prepareLoadingPage(html);
     // Explicitly development-only entries remain excluded; shared preview tools
     // are regular dependencies of the application entry.
     html = html.replace(/  <script\b[^>]*\bdata-development\b[^>]*><\/script>\r?\n/g, '');

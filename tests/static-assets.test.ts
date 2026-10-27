@@ -43,7 +43,7 @@ function handler(root: string, options: Omit<Parameters<typeof createPublicFileH
 test('HTML supplies the current cycle calculation revision without another request and changes its ETag', async t => {
   const root = await directory(t); await write(root, 'public/index.html', '<html><body>Форма</body></html>');
   const first = await request(handler(root, { cyclesVersion: 'a'.repeat(64) }), '/');
-  assert.match(first.body!.toString(), /<body data-cycles-version="a{64}">/);
+  assert.match(first.body!.toString(), /<body[^>]* data-cycles-version="a{64}"[^>]*>/);
   const next = await request(handler(root, { cyclesVersion: 'b'.repeat(64) }), '/');
   assert.match(next.body!.toString(), /data-cycles-version="b{64}"/); assert.notEqual(next.headers.ETag, first.headers.ETag);
   assert.equal(first.headers['Cache-Control'], 'no-cache');
@@ -149,7 +149,7 @@ test('development and release HTML keep the timeline entry visible in every enco
     }
     const cyclesVersion = 'a'.repeat(64);
     const serve = handler(root, { files, precompressed, cyclesVersion });
-    const expected = source.replace('<body>', `<body data-cycles-version="${cyclesVersion}">`);
+    const expected = source.replace('<body>', `<body data-app-name="Форма 1" data-cycles-version="${cyclesVersion}">`);
     for (const [encoding, unpack] of [['identity', (bytes: Buffer) => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]] as const) {
       const headers = { 'accept-encoding': encoding };
       const get = await request(serve, '/', { headers });
@@ -289,8 +289,9 @@ test('release exposes only its explicit mutable offline worker and nonlocal sour
 test('a versioned release shell still receives runtime metadata for diagnostics and calculations',async t=>{
  const root=await directory(t),source='<html><body data-offline-version="'+'a'.repeat(64)+'">Форма</body></html>';
  await write(root,'index.html',source);
- const response=await request(handler(root,{files:new Map([['index.html','index.html']]),appVersion:'0.2-test',environment:'stand',calculationVersion:'b'.repeat(64)}),'/');
+ const response=await request(handler(root,{files:new Map([['index.html','index.html']]),appVersion:'0.2-test',environment:'stand',standNumber:'4',calculationVersion:'b'.repeat(64)}),'/');
  const html=response.body!.toString();
+ assert.match(html,/data-app-name="Форма 4"/);
  assert.match(html,/data-app-version="0.2-test"/);assert.match(html,/data-app-environment="stand"/);
  assert.match(html,/data-calculation-version="b{64}"/);
  const {normalizeAppMetadata}=await import('../shared/app-metadata.ts');assert.equal(normalizeAppMetadata(html),source);

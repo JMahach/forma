@@ -78,7 +78,7 @@ test('release compilation removes the entire stand graph before resolving its de
   const manifest = await buildWeb({root, outdir});
   const html = await fs.readFile(path.join(outdir, 'index.html'), 'utf8');
   assert.match(html, /class="synthetic-loading-art"/, 'loading art belongs to the requested root');
-  assert.match(html, /<title>Форма<\/title>/);
+  assert.match(html, /<title>Stand title<\/title>/, 'building a release preserves the shell; runtime metadata names the environment');
   assert.doesNotMatch(html, /data-development|syntheticDevButton|control-colors/, 'CRLF pages remove stand elements');
   for (const entry of Object.values(manifest)) {
     if (!entry.file.endsWith('.js')) continue;
@@ -215,7 +215,7 @@ test('real release build produces complete compressed browser entries without de
   await fs.writeFile(recoveryFile, recoveryEntry);
   const recovered = { shell: { dataset: {} as DOMStringMap, hidden: false, setAttribute() {} },
     chartLoadingMessage: {}, chartLoadingStatus: {}, chartLoadingRetry: { addEventListener(type, action) { this[type] = action; } } };
-  const recoveryBody = { append(node) { node.parentElement = this; } };
+  const recoveryBody = { dataset: {}, append(node) { node.parentElement = this; } };
   const previousDocument = globalThis.document, previousLocation = globalThis.location;
   let recoveryReloads = 0;
   globalThis.document = { querySelector: () => recovered.shell, body: recoveryBody, getElementById: id => recovered[id] };

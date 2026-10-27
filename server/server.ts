@@ -62,7 +62,7 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     const cyclesVersion = await cyclesCalculationFingerprint(root);
     component='public_files';
     const releaseDir = release ? path.join(root, 'dist') : null;
-    const publicFiles = createPublicFileHandler({ cyclesVersion, calculationVersion: numericVersion, appVersion, environment:journalConfiguration.environment, ...(releaseDir
+    const publicFiles = createPublicFileHandler({ cyclesVersion, calculationVersion: numericVersion, appVersion, environment:journalConfiguration.environment, standNumber:env.FORMA_STAND_NUMBER, ...(releaseDir
       ? { root: releaseDir, files: await readReleaseManifest(releaseDir), precompressed: true } : { root }) });
     const computeQueue = createComputeQueue(); cleanup.push(() => computeQueue.close());
     component='calculator';

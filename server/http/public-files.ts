@@ -10,6 +10,7 @@ interface PublicFileOptions {
   cyclesVersion?: string | null;
   calculationVersion?: string | null;
   environment?: 'stand' | 'production';
+  standNumber?: string;
   appVersion?: string | null;
 }
 
@@ -251,8 +252,8 @@ const RETIRE_LOCAL_WORKER = `self.addEventListener('install', event => event.wai
 self.addEventListener('activate', event => event.waitUntil(self.registration.unregister()));
 `;
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null, environment = 'stand', appVersion = null }: PublicFileOptions) {
-  const metadataAttributes = appMetadataAttributes({environment, appVersion, cyclesVersion, calculationVersion});
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null, environment = 'stand', standNumber = '1', appVersion = null }: PublicFileOptions) {
+  const metadataAttributes = appMetadataAttributes({environment, standNumber, appVersion, cyclesVersion, calculationVersion});
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!precompressed && entry.file.endsWith('.ts')) {
       return Buffer.from(stripTypeScriptTypes(bytes.toString('utf8'), { mode: 'strip' }));
