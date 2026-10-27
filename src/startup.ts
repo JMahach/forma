@@ -21,6 +21,7 @@ import { createWorkspaceState } from './state/workspace.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 import { eligibleCycleChart } from './domain/cycles.ts';
 import { canExploreNatalDay } from './domain/chart-data.ts';
+import { originalNatalDayMoment } from './domain/natal-day.ts';
 import { createCameraChangeHandler } from './views/camera-controls.ts';
 import { createToast } from './ui/toast.ts';
 import { createStudioLayout } from './ui/layout/studio-controller.ts';
@@ -290,7 +291,7 @@ function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
   pendingView = { ...pendingView, version: 1, selectedId:pendingView?.selectedId ?? selectedId };
   if (kind === 'mandala') pendingView.mandala = !pendingView.mandala;
   else {
-    const day = pendingView.natalDay || { index: 0, exactOriginal: true };
+    const day = originalNatalDayMoment();
     const close = kind === 'day' ? view.timelinePanel === 'natal-day' : view.toggleEnabled;
     pendingView.returns = null;
     pendingView.natalDay = { ...day, opened: kind === 'day' && !close };

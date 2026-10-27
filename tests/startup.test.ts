@@ -46,6 +46,7 @@ import { holdLoadingContent, commitLoadingLayout } from '../src/views/chart-load
 import { studioPresentation } from '../src/ui/studio-presentation.ts';
 import { eligibleCycleChart } from '../src/domain/cycles.ts';
 import { canExploreNatalDay } from '../src/state/natal-day.ts';
+import { originalNatalDayMoment } from '../src/domain/natal-day.ts';
 import { createCameraChangeHandler } from '../src/views/camera-controls.ts';
 import { libraryRecordAtMinute, natalDayFixture } from './fixtures/natal-day.ts';
 import { ACTIVATION_COLUMN_REVEAL_DISTANCE } from '../src/scene/geometry/activation-layout.ts';
@@ -128,7 +129,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -155,7 +156,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = (options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}});
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate(clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -703,6 +704,35 @@ for (const preview of [false, true]) test(`reopening a saved closed panel keeps 
       } };
     }, { href: 'http://localhost:3636/', reload() {} }, storage);
   if (preview) reopen(); else assert.equal(handedOff, true, 'ordinary startup must reach the ready app');
+});
+
+for (const preview of [false, true]) test(`reopening Day discards the previous minute in ${preview ? 'Preview' : 'early loading'}`, async () => {
+  const { document, element } = startupDocument();
+  const personal = libraryRecordAtMinute(natalDayFixture(), 754);
+  const saved = { selectedId: personal.id, temporaryChart: personal,
+    natalDay: { opened: true, index: 600, exactOriginal: false } };
+  const storage = tabStorage(); if (preview) storage.setItem('forma.loading-preview.v1', '1');
+  const writes: Partial<SavedView>[] = [];
+  let received: StartupPorts | undefined, failure: unknown;
+  const reopen = () => {
+    element('natalDayToggle').click();
+    assert.equal(writes.at(-1)!.natalDay!.opened, false);
+    element('natalDayToggle').click();
+    assert.equal(writes.at(-1)!.natalDay!.opened, true);
+    assert.equal(writes.at(-1)!.natalDay!.exactOriginal, true,
+      'restoration must keep the birth moment instead of replaying minute 600');
+  };
+  await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), phoneStartupLayout,
+    () => () => {}, () => ({ read: () => saved, write(value) { writes.push(value); return true; } }), emptyStore,
+    async () => {
+      try { reopen(); } catch (error) { failure = error; }
+      return { startApp(ports) { received = ports; } };
+    }, { href: 'http://localhost:3636/', reload() {} }, storage);
+  if (preview) reopen();
+  else {
+    assert.ifError(failure);
+    assert.equal(received!.savedView!.natalDay!.exactOriginal, true);
+  }
 });
 
 for (const preview of [false, true]) test(`camera owns the saved position during ${preview ? 'held Preview' : 'application loading'}`, async () => {

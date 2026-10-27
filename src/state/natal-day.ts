@@ -17,7 +17,7 @@ export interface NatalExplorerOptions {
 export type NatalDayExplorer = ReturnType<typeof createNatalDayExplorer>;
 
 import { createNatalDayClient } from '../data/natal-day-client.ts';
-import { chartAtMinute, natalDayIndexAt } from '../domain/natal-day.ts';
+import { chartAtMinute, natalDayIndexAt, originalNatalDayMoment } from '../domain/natal-day.ts';
 import { extractChartData, canExploreNatalDay, withoutChartCalculation } from '../domain/chart-data.ts';
 export { canExploreNatalDay } from '../domain/chart-data.ts';
 
@@ -79,8 +79,8 @@ export function createNatalDayExplorer({
   function reset() {
     if (!original) return;
     const changed = current !== baseChart;
-    current = baseChart; exactOriginal = true;
-    if (day) index = referenceIndex!;
+    current = baseChart;
+    ({ index, exactOriginal } = originalNatalDayMoment(referenceIndex));
     notify();
     if (changed) onRender();
   }

@@ -4,6 +4,12 @@ import { projectLongitudes, snapshotLongitudes } from './moment-projection.ts';
 import { NATAL_DAY_PLANETS, failNatalDayPacket as fail } from '../../shared/day-packets/natal-format.ts';
 const iso = (value: number) => new Date(value).toISOString().replace('.000Z', 'Z');
 
+// Both a loading snapshot and the live explorer reset to the original birth.
+// The packet supplies its reference index later when it is not loaded yet.
+export function originalNatalDayMoment(referenceIndex: number | null = null) {
+  return { index: referenceIndex ?? 0, exactOriginal: true };
+}
+
 function minuteAt(day: NatalTimeline, index: number) {
   if (!Number.isInteger(index) || index < 0 || index >= day.samples) return fail();
   const segment = day.segments.findLast(segment => segment.index <= index)!;
