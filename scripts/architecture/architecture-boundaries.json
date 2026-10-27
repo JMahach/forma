@@ -986,6 +986,7 @@
       "id": "server-composition",
       "responsibility": "Connect configured services, one compute queue and the HTTP listener.",
       "files": [
+        "deploy/check-release.ts",
         "deploy/prepare-accounts.ts",
         "server/accounts.ts",
         "server/charts.ts",
@@ -1032,6 +1033,7 @@
         "journal-reporter"
       ],
       "executionEntries": [
+        "deploy/check-release.ts",
         "deploy/prepare-accounts.ts",
         "server/server.ts"
       ]
@@ -1056,6 +1058,7 @@
         "server/http/diagnostics.ts"
       ],
       "publicEntries": [
+        "server/http/account-security.ts",
         "server/http/accounts.ts",
         "server/http/app.ts",
         "server/http/charts.ts",
