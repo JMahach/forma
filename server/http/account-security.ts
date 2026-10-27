@@ -8,7 +8,8 @@ export function parseAccountOrigins(origins: string[]) {
   if (!origins.length) throw new TypeError('Account origins must be configured');
   const allowed = origins.map(value => {
     const url = new URL(value);
-    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+      || url.hostname.endsWith('.localhost');
     if (value !== url.origin || !['http:', 'https:'].includes(url.protocol)
       || (url.protocol !== 'https:' && !loopback)) throw new TypeError('Accounts require HTTPS except on local loopback');
     return url;

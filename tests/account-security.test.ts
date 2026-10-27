@@ -1,9 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
-import { createAccountSecurity } from '../server/http/account-security.ts';
+import { createAccountSecurity, parseAccountOrigins } from '../server/http/account-security.ts';
 
 const origins = ['https://forma.example.test'];
+test('HTTP account origins accept local subdomains but reject external lookalikes', () => {
+  for (const host of ['localhost', '127.0.0.1', '[::1]', 'forma-6b.localhost', 'nested.stand.localhost']) {
+    assert.doesNotThrow(() => parseAccountOrigins([`http://${host}:3637`]));
+  }
+  for (const host of ['evil-localhost', 'localhost.example', 'forma.localhost.example', '192.168.1.20']) {
+    assert.throws(() => parseAccountOrigins([`http://${host}:3637`]), /HTTPS/);
+    assert.doesNotThrow(() => parseAccountOrigins([`https://${host}:3637`]));
+  }
+  assert.throws(() => parseAccountOrigins(['http://forma-6b.localhost:3637', 'https://forma.example.test']), /mix/);
+  assert.throws(() => parseAccountOrigins(['http://forma-6b.localhost:3637/path']));
+});
+test('local subdomain stands keep exact origin checks and host-only local cookies', () => {
+  const origin = 'http://forma-6b.localhost:3637', host = 'forma-6b.localhost:3637';
+  const security = createAccountSecurity({ origins: [origin], now: () => 1000 });
+  assert.doesNotThrow(() => security.assertOrigin(request('POST', origin, host)));
+  for (const other of ['http://forma-7b.localhost:3637', 'http://forma-6b.localhost:3638']) {
+    assert.throws(() => security.assertOrigin(request('POST', other, host)), { code: 'origin' });
+  }
+  assert.throws(() => security.assertOrigin(request('POST', undefined, host)), { code: 'origin' });
+  assert.throws(() => security.assertOrigin(request('GET', undefined, 'forma-7b.localhost:3637')), { code: 'origin' });
+  assert.equal(security.cookie('session', 'a'.repeat(32), 'b'.repeat(43), 6000),
+    `forma_local_s_${'a'.repeat(32)}=${'b'.repeat(43)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=5`);
+});
 function request(method: string, origin?: string, host = 'forma.example.test') {
   return { method, headers: { host, ...(origin === undefined ? {} : { origin }) } } as IncomingMessage;
 }
