@@ -10,6 +10,7 @@ const id='a'.repeat(32),expiresAt=1801000;
 const account={id:'7',email:'owner@example.org',telegramLinked:true,telegramHandle:null};
 function fixture({needsEmail=false,saved=null as SavedAccountView|null,stage='telegram' as AuthAttemptProgress['stage']}={}){
   let activation=true,mode:'online'|'offline'='online',time=1000,phase=stage,current:ConfirmedAccount|null=null;
+  let holdStart=false,startFinish:(()=>void)|null=null;
   let token:((value:string)=>void)|null=null, verifyFinish:(()=>void)|null=null,holdVerify=false,loseConfirm=false;
   const events:string[]=[], starts:(string|undefined)[]=[],emails:(string|undefined)[]=[],proofs:string[]=[],closes:string[]=[];
   const attempt={id,expiresAt,codeExpiresAt:0,resendAt:0};
@@ -19,7 +20,9 @@ function fixture({needsEmail=false,saved=null as SavedAccountView|null,stage='te
       return new Promise((resolve,reject)=>{token=resolve;signal.addEventListener('abort',()=>reject(new DOMException('Cancelled','AbortError')),{once:true});});},close(){events.push('close-popup');}};
   },destroy(){}};
   const client={now:()=>time,current:async()=>{events.push('current');return current;},
-    startTelegram:async(replaceId:string|undefined)=>{events.push('start');starts.push(replaceId);return {attempt:{id,expiresAt},telegram:{clientId:'123',nonce:'n'.repeat(43),scope:['profile']}};},
+    startTelegram:async(replaceId:string|undefined)=>{events.push('start');starts.push(replaceId);
+      if(holdStart){holdStart=false;await new Promise<void>(resolve=>{startFinish=resolve;});}
+      return {attempt:{id,expiresAt},telegram:{clientId:'123',nonce:'n'.repeat(43),scope:['profile']}};},
     verifyTelegram:async(attemptId:string,value:string)=>{assert.equal(attemptId,id);events.push('verify-telegram');proofs.push(value);
       if(holdVerify)await new Promise<void>(resolve=>{verifyFinish=resolve;});
       phase=needsEmail?'email':'verified';return {attemptId:id,needsEmail,needsConfirmation:!needsEmail};},
@@ -35,7 +38,7 @@ function fixture({needsEmail=false,saved=null as SavedAccountView|null,stage='te
   const owner=createAccountSession({client,logoutStore,connection:()=>mode,saved,telegram});
   return {owner,flow:owner.flow,events,starts,emails,proofs,closes,
     token(value='signed.token.value'){assert.ok(token,'the SDK has been opened');token(value);},
-    endClick(){activation=false;},click(){activation=true;},holdVerify(){holdVerify=true;},finishVerify(){assert.ok(verifyFinish);verifyFinish();},
+    endClick(){activation=false;},click(){activation=true;},holdStart(){holdStart=true;},finishStart(){assert.ok(startFinish);startFinish();},holdVerify(){holdVerify=true;},finishVerify(){assert.ok(verifyFinish);verifyFinish();},
     loseConfirm(){loseConfirm=true;},setTime(value:number){time=value;},offline(){mode='offline';owner.flow.connectionChanged();},
     setCurrent(value:ConfirmedAccount){current=value;},
   };
@@ -100,4 +103,17 @@ test('starting again after the original attempt expired does not claim its previ
   const f=fixture({needsEmail:true}),work=f.flow.telegram();await tick();f.token();await work;
   assert.equal(f.flow.state.telegramPending,true);f.setTime(expiresAt);f.flow.tick();f.flow.back();
   assert.equal(f.flow.state.attempt,null);assert.equal(f.flow.state.telegramPending,false);
+});
+
+
+test('a late cancelled start cannot open a provider window or replace the next action',async()=>{
+  const f=fixture();f.holdStart();const first=f.flow.telegram();await tick();
+  assert.equal(f.events.includes('popup'),false);f.flow.cancel();
+  f.click();const second=f.flow.telegram();await tick();
+  assert.equal(f.events.filter(event=>event==='popup').length,1);
+  f.finishStart();await first;
+  assert.equal(f.events.filter(event=>event==='popup').length,1);
+  assert.equal(f.flow.state.busy,'telegram');assert.deepEqual(f.proofs,[]);
+  f.token();await second;assert.equal(f.flow.state.screen,'linked');
+  assert.equal(f.events.filter(event=>event==='confirm').length,1);
 });

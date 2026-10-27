@@ -42,7 +42,7 @@ test('Telegram configuration is optional, explicit, validated and unavailable wh
  const f=await fixture(t,false);const r=await f.query('/api/auth/telegram/start',{});
  assert.equal(r.status,503);assert.equal(r.body.error,'telegram_unavailable');
 });
-test('real signed token uses common HTTP attempt/confirm and persists a linked account without exposing secrets',async t=>{
+test('locally signed test token uses common HTTP attempt/confirm and persists a linked account without exposing secrets',async t=>{
  const f=await fixture(t),db=openDatabase(path.join(f.directory,'forma.sqlite'));
  const storage=createAccountStorage(db),account=storage.ensureAccount('a@example.test');storage.linkTelegram(account.id,'123',null);db.close();
  const start=await f.query('/api/auth/telegram/start',{});assert.equal(start.status,200);assert.equal(start.body.telegram!.clientId,'42');

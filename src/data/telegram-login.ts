@@ -11,23 +11,33 @@ const SDK_URL = 'https://oauth.telegram.org/js/telegram-login.js?6';
 
 /** Provider window only. This adapter never decodes identities, stores tokens or confirms an account. */
 export function createTelegramLogin({window, now = Date.now}:{window:Window;now?:()=>number}):TelegramLogin {
-  let loading:Promise<TelegramSDK>|null=null, active:TelegramPopup|null=null, destroyed=false;
+  let loading:{promise:Promise<TelegramSDK>;cancel():void}|null=null;
+  let active:TelegramPopup|null=null, destroyed=false;
   const sdk = () => (window as Window & {Telegram?:{Login?:TelegramSDK}}).Telegram?.Login;
   function load():Promise<TelegramSDK> {
     const current=sdk();
     if(typeof current?.auth==='function') return Promise.resolve(current);
-    if(loading) return loading;
+    if(loading) return loading.promise;
     const script=window.document.createElement('script');script.src=SDK_URL;script.async=true;
-    loading=new Promise<TelegramSDK>((resolve,reject)=>{
-      script.onload=()=>{
-        script.onload=script.onerror=null;
-        const ready=sdk();if(typeof ready?.auth==='function') resolve(ready);else reject(unavailable());
-      };
-      script.onerror=()=>{script.onload=script.onerror=null;script.remove();reject(unavailable());};
-      window.document.head.append(script);
-    });
-    void loading.catch(()=>{loading=null;});
-    return loading;
+    let settled=false,resolve!:(provider:TelegramSDK)=>void,reject!:(error:Error)=>void;
+    const request={
+      promise:new Promise<TelegramSDK>((yes,no)=>{resolve=yes;reject=no;}),
+      cancel:()=>finish(cancelled()),
+    };
+    function finish(error:Error|null,provider?:TelegramSDK) {
+      if(settled)return;settled=true;
+      script.onload=script.onerror=null;
+      if(loading===request)loading=null;
+      if(error){script.remove();reject(error);}else resolve(provider!);
+    }
+    script.onload=()=>{
+      const ready=sdk();
+      if(typeof ready?.auth==='function')finish(null,ready);else finish(unavailable());
+    };
+    script.onerror=()=>finish(unavailable());
+    loading=request;
+    try{window.document.head.append(script);}catch{finish(unavailable());}
+    return request.promise;
   }
   return {
     reserve(signal,onCancel) {
@@ -45,7 +55,10 @@ export function createTelegramLogin({window, now = Date.now}:{window:Window;now?
         if(ended) return;ended=true;
         window.clearInterval(watch);if(deadline!==undefined) window.clearTimeout(deadline);
         signal.removeEventListener('abort',close);
-        if(active===owner) {active=null;if(started) try{sdk()?.close?.();}catch{}}
+        if(active===owner) {
+          active=null;loading?.cancel();
+          if(started) try{sdk()?.close?.();}catch{}
+        }
         try{reserved.close();}catch{}
       }
       function close() {if(ended)return;const reject=settle;cleanup();reject?.(cancelled());}
