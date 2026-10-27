@@ -40,8 +40,10 @@ server {
         proxy_pass http://127.0.0.1:4173;
     }
     location ~ ^/api/(?:calculate|cycles/(?:events|chart)|chart/day)$ {
-        limit_req zone=forma_compute burst=6 nodelay;
-        limit_conn forma_compute_connections 4;
+        # One panel: 13 event lists + selected chart + birth day + form calculation.
+        # Admit waiting requests; Node still bounds actual compute work to 4 workers.
+        limit_req zone=forma_compute burst=15 nodelay;
+        limit_conn forma_compute_connections 16;
         proxy_pass http://127.0.0.1:4173;
     }
     # Prepared data, account actions, cards and write-outcome reads share no
