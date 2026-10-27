@@ -3,7 +3,7 @@
 FORMA_STATE_DIR=/var/lib/forma
 FORMA_JOURNAL_DIR=/var/log/forma
 FORMA_ENVIRONMENT=production
-FORMA_ACCOUNT_ORIGINS=https://forma.juxtaposition.ru
+FORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru
 FORMA_TRUST_PROXY=loopback
 # Optional, once the Telegram application is registered:
 # FORMA_TELEGRAM_CLIENT_ID=<numeric client ID>

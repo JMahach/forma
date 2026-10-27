@@ -132,7 +132,7 @@ systemctl is-active forma-dkim.service
 set -eu
 install -d -o forma -g forma -m 0700 /var/lib/forma
 runuser -u forma -- env -i PATH=/usr/bin:/bin FORMA_STATE_DIR=/var/lib/forma \
-  FORMA_ACCOUNT_ORIGINS=https://forma.juxtaposition.ru \
+  FORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru \
   /opt/forma/node/bin/node /var/tmp/forma-mail-linux/deploy/prepare-accounts.mjs
 runuser -u forma -- env -i PATH=/usr/bin:/bin FORMA_STATE_DIR=/var/lib/forma \
   /opt/forma/node/bin/node /var/tmp/forma-mail-linux/deploy/postfix/prepare.mjs \
@@ -169,7 +169,7 @@ ss -ltnp
 
 **Оставить:** все существующие NS, MX `10 mx1.timeweb.ru` / `10 mx2.timeweb.ru`, SPF-включение Timeweb и посторонние TXT/DKIM-записи. Не создавать вторую SPF-запись. Не добавлять AAAA, пока отдельный IPv6 не согласован. Адрес From `forma@juxtaposition.ru` уже задан кодом. Наличие этого From не создаёт ящик для ответов; входящие остаются у Timeweb, существование конкретного ящика отдельно не подтверждено.
 
-Для исходящего SMTP используется STARTTLS чужого почтового сервера. Собственный сертификат Let's Encrypt для этого не нужен. Текущая настройка `smtp_tls_security_level=encrypt` запрещает незашифрованную передачу, но не проверяет соответствие имени сертификата чужого сервера; это не режим `verify`. Менять принятую политику TLS данным пакетом не предлагается. A/HTTPS для **сайта** `forma.juxtaposition.ru` — отдельная публикация, к установке отправителя не относится.
+Для исходящего SMTP используется STARTTLS чужого почтового сервера. Собственный сертификат Let's Encrypt для этого не нужен. Текущая настройка `smtp_tls_security_level=encrypt` запрещает незашифрованную передачу, но не проверяет соответствие имени сертификата чужого сервера; это не режим `verify`. Менять принятую политику TLS данным пакетом не предлагается. A/HTTPS для **сайта** `juxtaposition.ru` — отдельная публикация, к установке отправителя не относится.
 
 ## 6. Приёмка до подключения и после него
 

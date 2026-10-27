@@ -25,7 +25,7 @@ async function fixture(t: test.TestContext) {
   }
   manifest.love=manifest['love.html'];await writeFile(path.join(release,'dist/manifest.json'),JSON.stringify(manifest));
   const environmentFile=path.join(root,'environment'),mailEnvironmentFile=path.join(mail,'environment'),mailControlFile=path.join(mail,'control.json');
-  await writeFile(environmentFile,`FORMA_APP_VERSION=${revision}\nFORMA_STATE_DIR=${state}\nFORMA_JOURNAL_DIR=${journal}\nFORMA_ENVIRONMENT=production\nFORMA_ACCOUNT_ORIGINS=https://forma.juxtaposition.ru\nFORMA_TRUST_PROXY=loopback\n`,{mode:0o600});
+  await writeFile(environmentFile,`FORMA_APP_VERSION=${revision}\nFORMA_STATE_DIR=${state}\nFORMA_JOURNAL_DIR=${journal}\nFORMA_ENVIRONMENT=production\nFORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru\nFORMA_TRUST_PROXY=loopback\n`,{mode:0o600});
   const socket=path.join(mail,'control.sock');
   await writeFile(mailEnvironmentFile,`FORMA_POSTFIX_SOCKET=${socket}\nFORMA_POSTFIX_PORT=2525\n`);
   const control={database:path.join(state,'forma.sqlite'),socketPath:socket,clientUid:process.getuid!(),journalSocketPath:path.join(journal,'run/services.sock')};
@@ -70,9 +70,9 @@ test('release preflight refuses missing compressed assets and missing update wor
   await assert.rejects(checkRelease(f.options),/worker/);
 });
 test('release preflight refuses insecure origins, dev mailbox and conflicting mail environment',async t=>{
-  const f=await fixture(t);await f.envChange('FORMA_ACCOUNT_ORIGINS=http://forma.juxtaposition.ru');
+  const f=await fixture(t);await f.envChange('FORMA_ACCOUNT_ORIGINS=http://juxtaposition.ru');
   await assert.rejects(checkRelease(f.options),/HTTPS/);
-  await f.envChange('FORMA_ACCOUNT_ORIGINS=https://forma.juxtaposition.ru\nFORMA_LOCAL_MAILBOX=1');
+  await f.envChange('FORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru\nFORMA_LOCAL_MAILBOX=1');
   await assert.rejects(checkRelease(f.options),/mailbox/);
   await f.envChange('FORMA_LOCAL_MAILBOX=0');await writeFile(f.options.mailEnvironmentFile,'FORMA_STATE_DIR=/other\n');
   await assert.rejects(checkRelease(f.options),/mail environment/);

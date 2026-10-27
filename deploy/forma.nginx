@@ -4,20 +4,20 @@ limit_conn_zone $binary_remote_addr zone=forma_compute_connections:1m;
 limit_conn_zone $binary_remote_addr zone=forma_connections:1m;
 server {
     listen 80;
-    server_name forma.juxtaposition.ru;
+    server_name juxtaposition.ru;
     access_log off;
     location /.well-known/acme-challenge/ {
         root /var/lib/letsencrypt;
     }
     location / {
-        return 308 https://forma.juxtaposition.ru$request_uri;
+        return 308 https://juxtaposition.ru$request_uri;
     }
 }
 server {
     listen 443 ssl;
-    server_name forma.juxtaposition.ru;
-    ssl_certificate /etc/letsencrypt/live/forma.juxtaposition.ru/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/forma.juxtaposition.ru/privkey.pem;
+    server_name juxtaposition.ru;
+    ssl_certificate /etc/letsencrypt/live/juxtaposition.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/juxtaposition.ru/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     client_max_body_size 20k;
     add_header X-Content-Type-Options nosniff always;
