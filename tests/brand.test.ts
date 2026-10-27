@@ -7,9 +7,9 @@ const page = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
 const favicon = readFileSync(new URL('../public/favicon.svg', import.meta.url), 'utf8');
 const paths = (svg: string) => [...svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/g)];
 
-test('the local browser tab uses the requested Forma 1 label and a versioned SVG favicon', () => {
-  // The real release build test separately verifies the canonical published name.
-  assert.deepEqual([...page.matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма 1']);
+test('the shared shell keeps the product name and a versioned SVG favicon', () => {
+  // Runtime metadata supplies the numbered stand name before startup.
+  assert.deepEqual([...page.matchAll(/<title>([^<]+)<\/title>/g)].map(match => match[1]), ['Форма']);
   const href = page.match(/<link rel="icon"[^>]*href="([^"]+)"/)?.[1];
   assert.ok(href);
   assert.match(href, /^\/favicon\.svg\?v=forma-lotus-\d+$/);
@@ -32,7 +32,7 @@ test('favicon uses the actual silhouette with a solid clay fill and darker rim',
     const stroke = svg.match(/stroke="#([a-f0-9]{6})"/)![1];
     for (const offset of [0, 2, 4] as const) assert.ok(parseInt(stroke.slice(offset, offset + 2), 16) < parseInt(fill.slice(offset, offset + 2), 16), 'every rim color channel is darker than the clay fill');
   }
-  assert.match(page, /<div class="site-brand" aria-label="Форма"><span>Форма<\/span><\/div>/, 'the accepted menu heading uses the plain product name');
+  assert.match(page, /<div class="site-brand" aria-label="Форма"><span>Форма<\/span><\/div>/, 'the static shell uses the plain product name before runtime metadata');
 });
 
 test('the tiny favicon has an even, unclipped stroke at sixteen and thirty-two pixels', () => {
