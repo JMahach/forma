@@ -59,6 +59,7 @@ export interface ActionNoticeHandle {
 }
 interface ActionNoticeEntry { anchor: HTMLElement; options: ActionNoticeOptions; token: number }
 interface ActionNotice {
+  readonly revision: number;
   show(anchor: HTMLElement, message: FeedbackMessage, options?: ActionNoticeOptions): ActionNoticeHandle;
   close(): void;
   contains(target: Node | null): boolean;
@@ -123,6 +124,7 @@ export function createActionNotice(root: HTMLElement): ActionNotice {
     if (focused >= 0) container.querySelectorAll<HTMLButtonElement>('button')[focused]?.focus({preventScroll:true});
   }
   const owner: ActionNotice = {
+    get revision() { return revision; },
     show(anchor, message, options = {}) {
       const focused = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).indexOf(document.activeElement as HTMLButtonElement);
       close();

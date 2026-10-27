@@ -1,3 +1,5 @@
+import { attachChartLink } from '../src/views/chart-link.ts';
+import { appRoutePath } from '../shared/app-routes.ts';
 import {createHash} from 'node:crypto';
 import {attachOfflinePage} from '../src/offline/page-coordinator.ts';
 import {attachOfflineWorker,type OfflineWorkerEvents,type OfflineWorkerScope} from '../src/offline/service-worker.ts';
@@ -65,6 +67,7 @@ import type { ChartView, ChartComposition, ChartInput } from '../src/domain/char
 import type { attachLifetimeControls } from '../src/views/lifetime-controls.ts';
 import type { attachReturnsPanel, ReturnsPanelState } from '../src/views/returns-panel.ts';
 interface HarnessOptions {
+  copyText?: (text: string) => Promise<void>;
   actualStore?: ReturnType<typeof createChartStore>;
   accountReady?: Promise<unknown>;
   calculationVersion?:string;
@@ -82,7 +85,9 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
+type AppPorts = Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+  & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
+  & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
   & Pick<typeof import('../src/data/chart-store.ts'), 'saveChartRecord'>
   & Pick<typeof import('../src/data/chart-client.ts'), 'createChartClient'>
@@ -219,7 +224,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,...overrides};
 }
-function harness({actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({copyText, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   document.body.dataset.calculationVersion=calculationVersion;
   const inputRestores: string[] = [];
@@ -270,7 +275,13 @@ function harness({actualStore, calculationVersion = '', accountReady = Promise.r
   let knowledgeOptions!: PortOptions<'attachKnowledgeEntry'>, knowledgeLoads = 0, restoreInterrupted = false;
   const module = new Promise<unknown>((resolve, reject) => { finishModule = resolve; failModule = reject; });
   const memory = {}, natalClient = {};
+  const copiedLinks: string[] = [];
+  // Clipboard is external; the real link view and composition determine its address and availability.
+  const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
+    show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
+    appRoutePath, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
+      writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, saveChartRecord, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
     createAccountLibraryStore: () => libraryStorage ?? createAccountLibraryStore({indexedDB: null}),
     createAccountLibrary, createChartActions, UI_MESSAGES, failureMessage, getConnectionMode, subscribeConnection, actionAvailability,
@@ -342,7 +353,7 @@ function harness({actualStore, calculationVersion = '', accountReady = Promise.r
     `${body.replace("import('./views/lifetime-controls.ts')", 'loadLifetimeView()')
       .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')
       .replace("import('./views/returns-panel.ts')", 'loadReturnsViewModule()')}\nreturn startApp;`)(
-    ...imports.map(name => ports[name as keyof AppPorts]), document, class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} }, { search },
+    ...imports.map(name => ports[name as keyof AppPorts]), document, class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} }, { search, href: 'https://forma.example.test/chart?obsolete=1#old' },
     { location: { reload() { reloads++; } }, BroadcastChannel: class {
       onmessage: ((event: {data: unknown}) => void | Promise<void>) | null = null;
       constructor(name: string) {assert.equal(name, 'forma-library'); libraryChannel = this;}
@@ -376,7 +387,7 @@ function harness({actualStore, calculationVersion = '', accountReady = Promise.r
   const calculationClients = onPersonalReset ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
     resetPersonal:async()=>{onPersonalReset();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null} : undefined;
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
-  return { element, layout, natalClient, inputRestores, notices, restoration:application.restoration,
+  return { copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration,
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
     invalidateCalculations:application.invalidateCalculations,offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
@@ -1676,7 +1687,7 @@ test('a superseded chart address remains silent when its rejected request arrive
 });
 
 
-for (const signedIn of [false,true]) test(`saving a temporary card removes its visible row immediately ${signedIn?'while signed in':'after login'}`,async()=>{
+for (const signedIn of [false,true]) test(`an explicitly saved temporary card first enters the visible list ${signedIn?'while signed in':'after login'}`,async()=>{
   const {accountId:_account,revision:_revision,noteRevision:_note,publicRevision:_public,...prepared}=accountNatalChart(40);
   const temporary={...prepared,id:'temporary-row',calculationReceipt:'signed-calculation',createdAt:'',updatedAt:''};
   const own={...prepared,id:chartId(41),accountId:'1',revision:1,noteRevision:1,publicRevision:1};
@@ -1692,7 +1703,8 @@ for (const signedIn of [false,true]) test(`saving a temporary card removes its v
   await h.restoration;
   await h.element('openLibrary').click();
   const visibleIds=()=>h.element('chartList').children.map(row=>row.innerHTML.match(/data-chart-id="([^"]+)"/)?.[1]);
-  assert.deepEqual(visibleIds(),[temporary.id]);
+  assert.deepEqual(visibleIds(),[]);
+  assert.equal(h.shown.id,temporary.id);
   await h.saveShown();
   if(!signedIn){assert.equal(h.workspace.screen,'account');assert.equal(writes,0);h.changeAccount(access);}
   await waitForOwnLink(()=>store.temporaryChart===null);
@@ -2435,4 +2447,76 @@ test('a confirmed mismatch does not authorize reload after a restoration excepti
   h.invalidateCalculations({calculation:true,returns:true});await h.restoration;
   assert.equal(h.offlineRestored(),false);
   assert.equal(await h.prepareOfflineUpdate(),false);
+});
+
+
+test('the permanent-link action stays hidden before a chart has a public address', async () => {
+  const h = harness(); await h.restoration;
+  assert.equal(h.element('copyChartLink').hidden, true);
+});
+
+
+test('copying the selected public original uses its decimal ID without a save or network dependency', async () => {
+  const original = {...accountNatalChart(107, '2'), id: '9876543210123456789'};
+  const {accountId, note, noteRevision, publicRevision, ...publicFields} = original;
+  const n = addressHarness('/chart/' + original.id);
+  const store = createChartStore({getStorage: () => {throw Error('no guest collection');}});
+  store.projectLibrary([], false);
+  const h = harness({actualStore: store, realViewSession: true, navigation: n.navigation, calculationVersion: original.calculationVersion,
+    chartClient: {async public() {return publicFields;}}});
+  await h.restoration;
+  assert.equal(h.element('copyChartLink').hidden, false);
+  const mode = {current: 'offline' as const, subscribe(listener: () => void) {listener(); return () => {};}};
+  configureTransportSimulation(mode);
+  try {
+    await h.element('copyChartLink').click();
+    assert.deepEqual(h.copiedLinks, ['https://forma.example.test/chart/9876543210123456789']);
+    assert.deepEqual(h.pendingWrites ?? [], []);
+    h.select('current-transit'); await tick();
+    assert.equal(h.element('copyChartLink').hidden, true);
+    await h.element('copyChartLink').click(); assert.equal(h.copiedLinks.length, 1);
+  } finally {configureTransportSimulation(null);}
+});
+
+test('a temporary card has no copy action until an explicit save adopts its permanent ID', async () => {
+  const saved = {...accountNatalChart(108), id: '1234567890'};
+  const temporary = {...saved, id: 'own-temporary', createdAt: '', updatedAt: ''};
+  const store = createChartStore({initialTemporaryChart: temporary, getStorage: () => {throw Error('no guest library');}});
+  store.projectLibrary([], false);
+  let writes = 0;
+  const n = addressHarness('/chart');
+  const h = harness({navigation: n.navigation, actualStore: store, realViewSession: true, calculationVersion: saved.calculationVersion,
+    savedView: {selectedId: temporary.id, temporaryChart: store.temporaryChart},
+    accountSession: {accountId: '1', sessionId: 'copy-link-test'}, chartClient: {
+      async create(input) {writes++; return {...input, outcome: {kind: 'created', chartId: saved.id, revision: 1}};},
+      async own() {return saved;}, async list() {return {charts: [], nextCursor: null, calculationVersion: saved.calculationVersion};},
+    }});
+  await h.restoration;
+  assert.equal(h.element('copyChartLink').hidden, true);
+  await h.element('copyChartLink').click(); assert.equal(writes, 0); assert.deepEqual(h.copiedLinks, []);
+  assert.deepEqual(store.displayCharts, []); assert.equal(h.shown.id, temporary.id);
+  h.select('current-transit'); await tick(); n.backTo('/chart'); await tick();
+  assert.equal(h.shown.id, temporary.id, 'browser Back restores the same tab slot without a menu row');
+  await h.saveShown();
+  assert.equal(writes, 1); assert.equal(h.element('copyChartLink').hidden, false);
+  await h.element('copyChartLink').click();
+  assert.deepEqual(h.copiedLinks, ['https://forma.example.test/chart/1234567890']);
+  assert.equal(writes, 1, 'copying the saved result cannot trigger another save');
+});
+
+
+test('the sidebar and Kartoteka display the same alphabetical saved rows', async t => {
+  const names = ['Яна', 'Борис', 'Анна'];
+  const records = names.map((name, index) => ({...accountNatalChart(120 + index), name}));
+  const storage = createAccountLibraryStore({indexedDB: new IDBFactory()}); t.after(() => storage.close());
+  const active = await storage.activate('1'); assert.equal(active.status, 'stored'); await storage.put(active.lease, records);
+  const store = createChartStore({getStorage: () => {throw Error('no guest collection');}}); store.projectLibrary([], false);
+  const h = harness({actualStore: store, libraryStorage: storage, realViewSession: true,
+    accountSession: {accountId: '1', sessionId: 'alphabetical'}, calculationVersion: records[0].calculationVersion,
+    chartClient: {async list() {return {charts: records, nextCursor: null, calculationVersion: records[0].calculationVersion};}}});
+  await h.restoration; await waitForOwnLink(() => h.cards.length === 3);
+  await h.element('openLibrary').click(); await h.element('openAllCharts').click();
+  const ids = (id: string) => h.element(id).children.map(row => row.innerHTML.match(/data-chart-id="([^"]+)"/)?.[1]);
+  assert.deepEqual(ids('chartList'), [records[2].id, records[1].id, records[0].id]);
+  assert.deepEqual(ids('allChartsList'), ids('chartList'));
 });

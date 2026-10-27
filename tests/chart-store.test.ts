@@ -530,20 +530,20 @@ test('account projection keeps unchanged display records and order without ignor
 });
 
 
-test('the navigation list retains its current temporary and library projection until either changes', () => {
+test('the navigation list excludes a temporary card without discarding the tab slot', () => {
   const store=createChartStore({getStorage:()=>storageHarness()});
   const first=accountChart(1);store.projectLibrary([first],true);
   const saved=store.charts;
-  assert.equal(store.displayCharts,saved);
+  assert.deepEqual(store.displayCharts,saved);
   const temporary=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-navigation'}));
   store.setTemporary(temporary);
   const menu=store.displayCharts;
-  assert.equal(menu[0],store.temporaryChart);assert.equal(menu[1],saved[0]);
+  assert.deepEqual(menu, saved);assert.equal(store.get(temporary.id),store.temporaryChart);
   for(let i=0;i<10;i++)assert.equal(store.displayCharts,menu);
   store.projectLibrary([first],false,[]);
   assert.equal(store.displayCharts,menu,'a readiness change does not rebuild navigation');
   store.clearTemporary(temporary.id);
-  assert.equal(store.displayCharts,saved);
+  assert.deepEqual(store.displayCharts,saved);
 });
 
 
@@ -553,10 +553,23 @@ test('one public source stays outside both the tab temporary and the account lib
   const temporary={...accountNatalChart(111),id:'own-temporary',createdAt:'',updatedAt:''};
   const store=createChartStore({initialTemporaryChart:temporary,initialPublicChart:publicPart(a),calculationVersion:a.calculationVersion,getStorage:()=>{throw Error('no guest library');}});store.projectLibrary([],false);
   assert.equal(store.has(a.id),true);assert.equal(store.get(a.id)?.note,'');assert.deepEqual(store.charts,[]);
-  assert.deepEqual(store.displayCharts.map(c=>c.id),[temporary.id]);
+  assert.deepEqual(store.displayCharts,[]);
   const input=publicPart(b);store.acceptPublic(input);input.name='Mutated outside';
   assert.equal(store.publicChart?.name,b.name);assert.equal(store.get(a.id),undefined);assert.equal(store.temporaryChart?.id,temporary.id);
   assert.throws(()=>store.acceptPublic({...publicPart(a),note:'private'} as unknown as ReturnType<typeof publicPart>));
   assert.equal(store.publicChart?.id,b.id);assert.equal(store.clearPublic(a.id),false);assert.equal(store.publicChart?.id,b.id);
   assert.equal(store.clearPublic(b.id),true);assert.equal(store.publicChart,null);assert.equal(store.temporaryChart?.id,temporary.id);
+});
+
+
+test('one alphabetical projection orders both library consumers and moves confirmed renamed cards', () => {
+  const store = createChartStore({getStorage: () => storageHarness()});
+  const z = {...accountChart(3), name: 'Яна'}, a = {...accountChart(1), name: 'Анна'}, b = {...accountChart(2), name: 'Борис'};
+  store.projectLibrary([z, b, a], true);
+  assert.deepEqual(store.displayCharts.map(chart => chart.name), ['Анна', 'Борис', 'Яна']);
+  const initial = store.displayCharts;
+  assert.equal(store.displayCharts, initial, 'unchanged rows keep their shared display projection');
+  store.projectLibrary([{...z, name: 'Алексей', revision: 2}, b, a], true);
+  assert.deepEqual(store.displayCharts.map(chart => chart.name), ['Алексей', 'Анна', 'Борис']);
+  assert.deepEqual(store.charts.map(chart => chart.id), [z.id, b.id, a.id], 'presentation does not reorder stored records');
 });

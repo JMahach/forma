@@ -174,12 +174,12 @@ function syncLoadingPanels() {
   element('summaryBackdrop').hidden = !rightOpen;
 }
 syncLoadingPanels();
-// The tab result is already available. Prepare its existing row once; the
-// application attaches commands and the account library to this same view.
+// The same library projection feeds early loading and the running application.
+// The independent temporary result never becomes a saved-library row.
 const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document,
   canEdit: () => !actionAvailability({ connection: getConnectionMode(), requiresConnection: true }).disabled });
 const selectedId = resolveSelectedChartId(store, savedView?.selectedId);
-libraryView.update(store.temporaryChart ? [store.temporaryChart] : [], workspace.screen === 'chart' ? selectedId : null, savedView?.librarySelection);
+libraryView.update(store.displayCharts, workspace.screen === 'chart' ? selectedId : null, savedView?.librarySelection);
 libraryView.setScreen(workspace.screen);
 if (panels.left) libraryView.show();
 // Project only the saved controls' geometry; the state owners still restore

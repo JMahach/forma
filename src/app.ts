@@ -4,6 +4,8 @@ import type { createCalculationUpdates } from './data/calculation-updates.ts';
 import { createLocalDayTimeline } from './domain/day-timeline.ts';
 import type { CalculationClients } from './data/calculation-clients.ts';
 import type { AppRoute } from '../shared/app-routes.ts';
+import { appRoutePath } from '../shared/app-routes.ts';
+import { attachChartLink } from './views/chart-link.ts';
 import type { Navigation, NavigationSnapshot } from './state/navigation.ts';
 import type { AccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
@@ -313,6 +315,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const accountLibrary = createAccountLibrary({client: chartClient, storage: libraryStorage,
     calculationVersion: document.body.dataset.calculationVersion ?? '', online: () => getConnectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
+  const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   let formIntent: ChartWriteIntent | null = null, privateLibraryShown = false, librarySelection = 0;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
@@ -381,6 +384,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   }
   function updateChartSaveControl() {
     const source=session.record,visible=Boolean(source && !accountLibrary.get(source.id));
+    const hasAddress = source && source !== store.temporaryChart
+      && (accountLibrary.get(source.id) || store.publicChart?.id === source.id);
+    chartLink.update(hasAddress && workspace.screen === 'chart'
+      ? new URL(appRoutePath({kind: 'chart', id: source.id}), location.href).href : null);
     const button=$<HTMLButtonElement>('saveShownChart'),wrap=$('saveShownChartWrap');
     $('saveShownChartGroup').hidden=!visible;
     const availability=actionAvailability({connection:getConnectionMode(),requiresConnection:true,
@@ -586,7 +593,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
   const allCharts = attachAllCharts({ button: $('openAllCharts'), dialog: $('allChartsDialog'),
-    list: $('allChartsList'), getCharts: () => store.charts, canEdit: canEditCharts, onRowsChange: () => library.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
+    list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => library.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
   });
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });

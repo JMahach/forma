@@ -346,22 +346,21 @@ test('saved panel space and visible shells are restored before the application i
 });
 
 
-test('loading navigation uses the single tab result, count and current section before the application loads', async () => {
+test('loading navigation keeps the tab result outside the saved list and retains the current section', async () => {
   const chart = {...libraryRecordAtMinute(natalDayFixture(),754),id:'saved',name:'Анна'};
   for (const [screen, selectedId, expected] of [['chart', 'saved', 'saved'], ['chart', 'missing', 'current-transit'],
     ['library', 'saved', null], ['charts', 'saved', null], ['account', 'saved', null]] as const) {
     const { document, element, rows } = startupDocument();
     let store:ReturnType<typeof createChartStore>;
-    let storeReads = 0, attached = false; let firstRow: typeof rows[number] | undefined, loadingError: unknown;
+    let storeReads = 0, attached = false; let loadingError: unknown;
     const savedView = { selectedId, temporaryChart:chart, workspace: screen, panels: { left: true, right: false } };
     await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
       () => () => {}, () => ({ read: () => savedView }), options => { storeReads++; store=emptyStore(options); return store; }, async () => {
         try {
-        assert.equal(element('libraryCount').textContent, '1');
-        assert.equal(rows.length, 1); firstRow = rows[0];
-        assert.match(element('chartList').innerHTML, /Анна/);
-        const card = firstRow!.querySelector('.chart-card'); assert.ok('getAttribute' in card);
-        assert.equal(card.getAttribute('aria-pressed'), String(expected === 'saved'));
+        assert.equal(element('libraryCount').textContent, '0');
+        assert.equal(rows.length, 0);
+        assert.doesNotMatch(element('chartList').innerHTML, /Анна/);
+        assert.equal(store.temporaryChart?.id, chart.id);
         assert.equal(element('nowButton').getAttribute('aria-pressed'), String(expected === 'current-transit'));
         for (const [id, section] of [['openKnowledge', 'library'], ['openAllCharts', 'charts'], ['openAccount', 'account']] as const) {
           assert.equal(element(id).getAttribute('aria-pressed'), String(screen === section));
@@ -372,13 +371,12 @@ test('loading navigation uses the single tab result, count and current section b
         return { startApp(ports) {
           assert.equal(ports.store, store, 'application receives the already-read library owner');
           try {
-            const libraryOptions = { getCharts: () => store.temporaryChart?[store.temporaryChart]:[], removeChart: undefined, getConnectionMode, subscribeConnection,
+            const libraryOptions = { getCharts: () => store.displayCharts, removeChart: undefined, getConnectionMode, subscribeConnection,
               panels: ports.panels, view: ports.libraryView, document: document as unknown as Document,
               session: { selectedId }, getSelectedId: () => expected } satisfies LibraryFixture;
             // Only command attachment is exercised; unused event callbacks are absent.
             attachChartLibrary(libraryOptions as unknown as LibraryOptions);
-            assert.equal(rows.length, 1);
-            assert.equal(rows[0], firstRow, 'attaching real library commands retains the exact prepared DOM row');
+            assert.equal(rows.length, 0, 'attaching real library commands keeps the temporary result outside the menu');
             attached = true;
           } catch (error) { loadingError = error; }
         } };
@@ -830,8 +828,8 @@ for (const preview of [false,true]) test(`one tab result survives early gestures
   assert.deepEqual(store.charts,[],'old local records are not the guest collection');
   assert.equal(store.has('old-local'),false);
   assert.equal(local.getItem(STORAGE_KEY),original);
-  assert.equal(rows.length,1);
-  assert.match(element('chartList').innerHTML,/Своя карта/);
+  assert.equal(rows.length,0);
+  assert.doesNotMatch(element('chartList').innerHTML,/Своя карта/);
   assert.doesNotMatch(element('chartList').innerHTML,/Прежняя запись/);
   assert.equal(element('studio').dataset.initialTimeline,'natal-day');
   if(preview)element('mandalaSwitch').click();

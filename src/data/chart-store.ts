@@ -20,8 +20,9 @@ export function createChartStore({ getStorage = () => globalThis.localStorage, o
   let temporaryChart = normalizeTemporaryChart(initialTemporaryChart);
   let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} | null = null;
   const working = () => projection?.charts ?? charts;
-  let navigationSource: readonly SavedChart[] | null = null, navigationTemporary: SavedChart | null = null;
-  let navigationCharts: readonly SavedChart[] = [];
+  const names = new Intl.Collator('ru', {sensitivity: 'base', numeric: true});
+  let navigationSource: readonly SavedChart[] | null = null, navigationCharts: readonly SavedChart[] = [];
+
   const readOnly = () => Object.assign(new Error('Не удалось сохранить карту'), {code: 'auth_required'});
   let saveError: { code: string; message: string; canKeepInMemory: boolean } | null = null;
   const reported = new Set<string>();
@@ -49,11 +50,13 @@ export function createChartStore({ getStorage = () => globalThis.localStorage, o
 
   return {
     get charts() { return working(); },
+    // The tab's unsaved result remains addressable through /chart, never a library row.
     get displayCharts() {
       const source = working();
-      if (navigationSource !== source || navigationTemporary !== temporaryChart) {
-        navigationSource = source; navigationTemporary = temporaryChart;
-        navigationCharts = temporaryChart ? [temporaryChart, ...source] : source;
+      if (navigationSource !== source) {
+        navigationSource = source;
+        navigationCharts = [...source].sort((a, b) => names.compare(a.name, b.name)
+          || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
       }
       return navigationCharts;
     },
