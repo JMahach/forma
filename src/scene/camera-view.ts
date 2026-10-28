@@ -43,7 +43,10 @@ export function createCameraView({ svg, surface, mirrors = [] }: { svg: SVGSVGEl
       const { sx, sy, ox, oy } = projection();
       // L maps SVG units to the fixed box; V is the logical camera. Applying
       // L*V*L^-1 to the whole SVG preserves L*V while avoiding SVG text relayout.
-      const transform = `matrix(${k}, 0, 0, ${k}, ${sx * x + (1 - k) * ox}, ${sy * y + (1 - k) * oy})`;
+      // Keep the exact flat projection in a 3D-compatible matrix. Whether this
+      // lets the browser reuse painted pixels needs device verification; the
+      // matrix alone does not guarantee a separate composited layer.
+      const transform = `matrix3d(${k}, 0, 0, 0, 0, ${k}, 0, 0, 0, 0, 1, 0, ${sx * x + (1 - k) * ox}, ${sy * y + (1 - k) * oy}, 0, 1)`;
       // CSSOM rounds serialized matrix numbers; compare authored values.
       if (lastTransform !== transform) {
         for (const drawing of drawings) drawing.style.transform = transform;

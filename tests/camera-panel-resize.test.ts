@@ -25,8 +25,10 @@ function harness() {
       const scale = Math.min(rect.width, rect.height) / 1000;
       const x = (rect.width - 1000 * scale) / 2 + point.x * scale;
       const y = (rect.height - 1000 * scale) / 2 + point.y * scale;
-      const matrix = svg.style.transform.slice(7, -1).split(',').map(Number);
-      return { x: rect.left + matrix[0] * x + matrix[4], y: rect.top + matrix[3] * y + matrix[5] };
+      assert.match(svg.style.transform, /^matrix3d\(/);
+      const matrix = svg.style.transform.slice(9, -1).split(',').map(Number);
+      return { x: rect.left + matrix[0] * x + matrix[4] * y + matrix[12],
+        y: rect.top + matrix[1] * x + matrix[5] * y + matrix[13] };
     },
   };
 }

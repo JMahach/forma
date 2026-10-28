@@ -103,11 +103,12 @@ test('loading and live use one full-surface projection across panel space, safe 
         const oy = (rect.height - box[3] * scale) / 2 - box[1] * scale;
         assert.equal(art.style.transform, drawing.style.transform);
         assert.equal(art.style.visibility, 'visible');
-        const matrix = art.style.transform.slice(7, -1).split(',').map(Number);
+        assert.match(art.style.transform, /^matrix3d\(/);
+        const matrix = art.style.transform.slice(9, -1).split(',').map(Number);
         for (const [x, y] of points) {
           const px = scale * x + ox, py = scale * y + oy;
-          close(matrix[0] * px + matrix[4], scale * (pose.x + pose.k * x) + ox, 'loading center x');
-          close(matrix[3] * py + matrix[5], scale * (pose.y + pose.k * y) + oy, 'loading center y');
+          close(matrix[0] * px + matrix[4] * py + matrix[12], scale * (pose.x + pose.k * x) + ox, 'loading center x');
+          close(matrix[1] * px + matrix[5] * py + matrix[13], scale * (pose.y + pose.k * y) + oy, 'loading center y');
         }
       }
       const transform = art.style.transform;

@@ -57,10 +57,10 @@ function harness(fixture: Fixture, { left = 37, top = -19, serializeTransform = 
 const local = (f: Fixture, point: Point) => ({ x: f.sx * point.x + f.ox, y: f.sy * point.y + f.oy });
 const screen = (f: Fixture, rect: Pick<DOMRect, 'left' | 'top'>, point: Point) => { const p = local(f, point); return { clientX: rect.left + p.x, clientY: rect.top + p.y }; };
 function cssMatrix(value: string) {
-  assert.match(value, /^matrix\(/, 'the root SVG uses a two-dimensional CSS matrix');
+  assert.match(value, /^matrix3d\(/, 'the root SVG uses a 3D-compatible matrix with a flat projection');
   const values = value.slice(value.indexOf('(') + 1, value.lastIndexOf(')')).trim().split(/[\s,]+/).map(Number);
-  assert.equal(values.length, 6); assert.ok(values.every(Number.isFinite));
-  return values;
+  assert.equal(values.length, 16); assert.ok(values.every(Number.isFinite));
+  return [values[0], values[1], values[4], values[5], values[12], values[13]];
 }
 const applyMatrix = (m: readonly number[], p: Point) => ({ x: m[0] * p.x + m[2] * p.y + m[4], y: m[1] * p.x + m[3] * p.y + m[5] });
 
@@ -177,7 +177,7 @@ test('the loading mirror receives the same projection before becoming visible, i
   for (const fixture of fixtures) {
     const h = harness(fixture), writes: unknown[] = [];
     const mirror = { style: new Proxy({} as Record<string, string>, { set(target, property, value) {
-      if (property === 'visibility') assert.ok(target.transform?.startsWith('matrix('), 'paint precedes reveal');
+      if (property === 'visibility') assert.ok(target.transform?.startsWith('matrix3d('), 'paint precedes reveal');
       writes.push([property, value]); target[property as string] = value; return true;
     } }) };
     const cameraView = createCameraView({ svg: h.svg, surface: h.surface as HTMLElement, mirrors: [mirror as unknown as SVGSVGElement] });
@@ -221,4 +221,22 @@ test('gesture attachment takes over the early camera without resetting its saved
   (listeners.get('wheel') as EventListener)({ clientX: 720, clientY: 450, deltaY: -50, preventDefault() {} } as WheelEvent);
   assert.ok(camera.getView().k > before.k, 'interaction continues from the saved scale');
   assert.equal(earlyPaints.length, earlyCount, 'the early paint callback has been handed off, not duplicated');
+});
+
+
+test('3D camera matrix remains an exact flat projection at maximum zoom', () => {
+  for (const fixture of fixtures) {
+    const h = harness(fixture), view = { x: -763.5, y: -400.125, k: 4.5 };
+    h.cameraView.paint(view);
+    assert.match(h.svg.style.transform, /^matrix3d\(/);
+    const m = h.svg.style.transform.slice(9, -1).split(',').map(Number);
+    assert.equal(m.length, 16);
+    for (const p of [{ x: 320, y: 410 }, { x: -350.25, y: 1250.5 }]) {
+      const input = local(fixture, p);
+      pointClose({ x: m[0] * input.x + m[4] * input.y + m[12], y: m[1] * input.x + m[5] * input.y + m[13] },
+        local(fixture, { x: p.x * view.k + view.x, y: p.y * view.k + view.y }));
+      assert.equal(m[2] * input.x + m[6] * input.y + m[14], 0, 'no depth shift');
+      assert.equal(m[3] * input.x + m[7] * input.y + m[15], 1, 'no perspective distortion');
+    }
+  }
 });

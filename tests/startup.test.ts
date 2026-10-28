@@ -296,7 +296,7 @@ for (const failure of ['import', 'initialization'] as const) {
     assert.equal(canvas.dataset.chartState, 'error');
     assert.equal(document.querySelector('.app-shell')!.dataset.shellReady, undefined, 'fatal startup cannot expose half-attached controls');
     assert.equal(document.getElementById('chartLoadingArt').getAttribute('hidden'), '', 'fatal application failure shows a plain background even after camera preparation');
-    assert.match(preparedTransform, /^matrix\(/, 'camera is already prepared before either failure');
+    assert.match(preparedTransform, /^matrix3d\(/, 'camera is already prepared before either failure');
     assert.equal(document.getElementById('chartLoadingArt').style.transform, preparedTransform,
       'failure keeps the prepared preview in place instead of reverting to the server position');
     assert.equal(document.getElementById('chartLoadingMessage').hidden, false);
