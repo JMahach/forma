@@ -4,7 +4,7 @@ import type { createCameraView } from './camera-view.ts';
 import type { FitInsets } from './camera-fit.ts';
 import type { SelectionAction, SelectionType } from '../selection/selection-targets.ts';
 type GestureSelection = SelectionAction | { type: 'planet-filter'; id: string; additive?: boolean; pointerType?: string };
-type PointerCoordinates = Pick<MouseEvent, 'clientX' | 'clientY'>;
+type PointerCoordinates = Pick<MouseEvent, 'clientX' | 'clientY'> & Partial<Pick<PointerEvent, 'pointerType'>>;
 interface SafariGestureEvent extends MouseEvent { scale: number }
 interface CameraPaint { view: CameraPosition; fitted: CameraPosition; metadata: { minScale: number } }
 export interface GestureOptions {
@@ -47,7 +47,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
   };
   const selectTarget = (target: HTMLElement | SVGElement, additive = false, event: PointerEvent | KeyboardEvent) => onSelect({ ...selectionFor(target, event), ...(additive ? { additive: true } : {}) });
   const surface = cameraView.surface;
-  const point = (event: PointerCoordinates) => ({ ...cameraView.point(event), clientX: event.clientX, clientY: event.clientY });
+  const point = (event: PointerCoordinates) => ({ ...cameraView.point(event), clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType });
   let camera: Camera;
   let gestureUpdate = false;
   let pendingPaint: CameraPaint | null = null, paintFrame: { handle: number | null } | null = null;
@@ -88,7 +88,12 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
   }
   function updateCursor(view = camera.getView(), minScale = camera.minimumScale()) {
     const pannable = view.k > minScale * (1 + 1e-9);
-    const dragging = pannable && pointers.size > 0;
+    // Touch has no cursor. Avoid restyling the filtered SVG on every finger
+    // press/release; pointer ownership still controls all gestures as before.
+    let dragging = false;
+    if (pannable) for (const pointer of pointers.values()) {
+      if (pointer.pointerType !== 'touch') { dragging = true; break; }
+    }
     if (pannable !== wasPannable) { svg.classList.toggle('is-pannable', pannable); wasPannable = pannable; }
     if (dragging !== wasDragging) { svg.classList.toggle('is-dragging', dragging); wasDragging = dragging; }
   }

@@ -101,7 +101,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
   const paintChannelColors = fragmentSlot(channelColorDefs, null, [...channelColorDefs.childNodes], initialState ? initialChannelColors.join('') : undefined);
   const colorDefs = defs.querySelector('.bg-integration-color-defs')!;
   const paintHighlightColors = fragmentSlot(colorDefs, null, [...colorDefs.childNodes],
-    initialState ? integrationHighlightPaint(initialState, initialOptions).definitions : undefined);
+    initialState ? integrationHighlightPaint(initialState, initialOptions, initialIntegration!).definitions : undefined);
   const dualStops = [...defs.querySelector('linearGradient')!.querySelectorAll('stop')];
   const selectionMaskSignature = (paint: ReturnType<typeof integrationPaint>) => JSON.stringify([paint.selectionPath, paint.integrationSelected,
     [...paint.highlightedArms], paint.stemHighlighted, paint.connectedIntegrationGates, paint.activeIntegrationParts]);
@@ -188,7 +188,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         setAttributes(text, { 'font-weight': paint.textWeight, fill: paint.textFill });
       }
       const paint = integrationPaint(state, options);
-      const integrationHighlight = integrationHighlightPaint(state, options);
+      const integrationHighlight = integrationHighlightPaint(state, options, paint);
       setAttribute(highlights.querySelector('.bg-integration-hover'), 'stroke', integrationHighlight.color);
       for (const halo of focusHalos) setAttribute(halo, 'stroke', integrationHighlight.color);
       const { integrationSelected, highlightedArms, integrationArmState, stemHighlighted,
@@ -228,7 +228,7 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
             'stroke-width': channelHighlightWidth(options.highlightStyle), 'stroke-linejoin': 'round', 'pointer-events': 'none' });
           highlights.insertBefore(selectionHalo, focusHalos[0]);
         }
-        setAttributes(selectionHalo, { d: selectionPath, stroke: integrationHighlight.color, 'stroke-linecap': integrationSelected ? 'butt' : 'round',
+        setAttributes(selectionHalo, { d: selectionPath, stroke: integrationHighlight.selectionColor, 'stroke-linecap': integrationSelected ? 'butt' : 'round',
           mask: `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})` });
         // A geometry change cross-fades its previous masked paint; fixed half halos
         // elsewhere retain identity and never restart when their gate stays lit.

@@ -512,7 +512,7 @@ test('integration selection outlines sit above ordinary channels and below their
     const integration = markup.slice(markup.indexOf('<g class="bodygraph-channels">'));
     const halo = integration.match(/<path class="bg-integration-selection"[^>]+\/>/);
     assert.ok(halo, `${selection.id} has a selection halo`);
-    assert.match(halo![0], /fill="none" stroke="url\(#bodygraph-integration-highlight-colors\)" stroke-width="16.06"/);
+    assert.match(halo![0], /fill="none" stroke="#83a9d2" stroke-width="16.06"/);
     assert.match(halo![0], new RegExp(`stroke-linecap="${selection.type === 'integration' ? 'butt' : 'round'}"`), 'partial candidates cover the exact terminal plane; ownership masks set their visible ends');
     const bundleStart = integration.indexOf('data-junction="integration"');
     assert.ok(integration.indexOf(halo![0]) > integration.indexOf('data-type="channel" data-id="26-44"'), 'selected outline is above the ordinary crossing');

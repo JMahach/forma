@@ -294,35 +294,35 @@ test('the Home button resets the same camera used by bounded keyboard and progra
   assert.deepEqual(harness.controls.getView(), home);
 });
 
-test('panning and dragging cursors are enabled only above 100% and are cleared on reset or pointer loss', t => {
+test('mouse panning and dragging cursors are enabled only above 100% and are cleared on reset or pointer loss', t => {
   const harness = cameraHarness(t);
   const check = (pannable: boolean, dragging: boolean) => {
     assert.equal(harness.classes.has('is-pannable'), pannable);
     assert.equal(harness.classes.has('is-dragging'), dragging);
   };
   check(false, false);
-  harness.send('pointerdown');
+  harness.send('pointerdown', { pointerType: 'mouse' });
   check(false, false);
-  harness.send('pointermove', { clientX: 600 });
+  harness.send('pointermove', { pointerType: 'mouse', clientX: 600 });
   check(false, false);
-  harness.send('pointerup', { clientX: 600 });
+  harness.send('pointerup', { pointerType: 'mouse', clientX: 600 });
   harness.controls.zoom(2);
   check(true, false);
-  harness.send('pointerdown');
+  harness.send('pointerdown', { pointerType: 'mouse' });
   check(true, true);
-  harness.send('pointermove', { clientX: 10000 });
+  harness.send('pointermove', { pointerType: 'mouse', clientX: 10000 });
   check(true, true);
-  harness.send('pointercancel', { clientX: 10000 });
+  harness.send('pointercancel', { pointerType: 'mouse', clientX: 10000 });
   check(true, false);
   harness.send('pointerdown', { pointerType: 'mouse', button: 2 });
   check(true, false);
-  harness.send('pointerdown');
+  harness.send('pointerdown', { pointerType: 'mouse' });
   harness.send('lostpointercapture');
   check(true, false);
-  harness.send('pointerdown');
+  harness.send('pointerdown', { pointerType: 'mouse' });
   harness.controls.reset();
   check(false, false);
-  harness.send('pointerup');
+  harness.send('pointerup', { pointerType: 'mouse' });
   check(false, false);
   const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
   assert.match(styles, /#bodygraph\s*\{[^}]*cursor:\s*default\s*;/);

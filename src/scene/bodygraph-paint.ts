@@ -166,15 +166,22 @@ export function integrationPaint(state: RenderState, options: RenderOptions, com
 // Integration shares one continuous contour. A color pattern changes only the
 // pinned footprints; simultaneous hover on another arm keeps its original blue.
 // Reuse the ownership mask so the color boundary follows the same terminal cuts.
-export function integrationHighlightPaint(state: RenderState, options: RenderOptions = {}) {
+export function integrationHighlightPaint(state: RenderState, options: RenderOptions = {}, visible = integrationPaint(state, options)) {
   const paint = integrationPaint(state, options, true);
-  if (!paint.selectionPath) return { color: PALETTE.halo, definitions: '' };
+  if (!paint.selectionPath) return { color: PALETTE.halo, selectionColor: PALETTE.halo, definitions: '' };
   const { prefix } = state, id = `${prefix}-integration-highlight-colors`, maskId = `${id}-mask`;
   const { x, y, width, height } = options.highlightStyle === 'glow'
     ? HIGHLIGHT_REGIONS.find(region => region.id === 'integration')! : { x: -16, y: -16, width: 672, height: 852 };
   const mask = integrationOutlineMask(maskId, [...paint.highlightedArms], paint.stemHighlighted, prefix,
     paint.connectedIntegrationGates, paint.activeIntegrationParts, options.highlightStyle);
-  return { color: `url(#${id})`, definitions: `${mask}<pattern id="${id}" viewBox="${x} ${y} ${width} ${height}" patternUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}">
+  // Native hover/focus can expose unpinned branches without a render. Keep
+  // their color tile, but use a solid stroke for a wholly pinned selection.
+  const sameContour = paint.selectionPath === visible.selectionPath
+    && paint.integrationSelected === visible.integrationSelected
+    && paint.connectedIntegrationGates.length === visible.connectedIntegrationGates.length
+    && paint.connectedIntegrationGates.every(gate => visible.connectedIntegrationGates.includes(gate));
+  const color = `url(#${id})`;
+  return { color, selectionColor: sameContour ? SELECTED_HIGHLIGHT_COLOR : color, definitions: `${mask}<pattern id="${id}" viewBox="${x} ${y} ${width} ${height}" patternUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}">
     <rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${PALETTE.halo}"/>
     <path d="${paint.selectionPath}" fill="none" stroke="${SELECTED_HIGHLIGHT_COLOR}" stroke-width="${channelHighlightWidth(options.highlightStyle)}" stroke-linecap="${paint.integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${maskId})"/>
   </pattern>` };

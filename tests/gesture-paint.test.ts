@@ -1,8 +1,9 @@
-import { getGate } from '../src/scene/geometry/chart-geometry.ts';
+import { GATES, getGate } from '../src/scene/geometry/chart-geometry.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.ts';
 import { pointerTarget } from '../src/scene/pointer-target.ts';
+import { GATE_POINTER_RADIUS } from '../src/scene/geometry/drawing-presentation.ts';
 import { COMPACT_TEST_FRAME } from './fixtures/camera-frames.ts';
 
 let originalDOMPoint: PropertyDescriptor|undefined;
@@ -531,28 +532,34 @@ test('fixed canvas owns pointer capture and blank presses preserve keyboard focu
 });
 
 
-test('a continuous drag only updates the cursor at its start and end', () => {
-  const h = harness();
-  h.controls.zoom(2);
-  assert.deepEqual(h.cursorChanges, [['is-pannable', true]]);
-  h.cursorChanges.length = 0;
-  h.send('pointerdown', { clientX: 320, clientY: 410 });
-  for (let step = 1; step <= 120; step++) {
-    h.send('pointermove', { clientX: 320 + step, clientY: 410 });
-    h.tick();
+test('mouse and pen drags only update the cursor at their start and end', () => {
+  for (const pointerType of ['mouse', 'pen']) {
+    const h = harness();
+    h.controls.zoom(2);
+    assert.deepEqual(h.cursorChanges, [['is-pannable', true]]);
+    h.cursorChanges.length = 0;
+    h.send('pointerdown', { pointerType, clientX: 320, clientY: 410 });
+    for (let step = 1; step <= 120; step++) {
+      h.send('pointermove', { pointerType, clientX: 320 + step, clientY: 410 });
+      h.tick();
+    }
+    h.send('pointerup', { pointerType, clientX: 440, clientY: 410 });
+    assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
+    h.controls.reset();
+    assert.deepEqual(h.cursorChanges.at(-1), ['is-pannable', false]);
   }
-  h.send('pointerup', { clientX: 440, clientY: 410 });
-  assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
-  h.controls.reset();
-  assert.deepEqual(h.cursorChanges.at(-1), ['is-pannable', false]);
 });
 
 test('a finger can tap the gate margin but dragging or pinching there never selects it', () => {
   for (const action of ['tap','drag','pinch','pointercancel']) {
     const gate = {dataset:{type:'gate',id:'13'}};
     const geometry = getGate(13)!;
-    const layer = {getScreenCTM:()=>({a:1,b:0,c:0,d:1,e:320-geometry.x,f:410-geometry.y}),
-      querySelector:(selector:string)=>selector.includes('"13"')?gate:null};
+    const layer = {querySelector:(selector:string)=>selector.endsWith('.bg-gate-hit') ? {
+      getBoundingClientRect() {
+        const r=GATE_POINTER_RADIUS, left=320+GATES[0].x-geometry.x-r, top=410+GATES[0].y-geometry.y-r;
+        return {left,top,right:left+2*r,bottom:top+2*r,width:2*r,height:2*r};
+      },
+    } : selector.includes('"13"')?gate:null};
     const svg = {querySelector:()=>layer,querySelectorAll:()=>[]};
     const h=harness({resolvePointerTarget:(event:PointerEvent)=>pointerTarget(svg as unknown as SVGSVGElement,event)});
     h.send('pointerdown',{clientX:330,clientY:410});
@@ -564,4 +571,30 @@ test('a finger can tap the gate margin but dragging or pinching there never sele
     h.send('pointerup',{clientX:330,clientY:410});
     assert.deepEqual(h.selections,action==='tap'?[{type:'gate',id:'13',pointerType:'touch'}]:[],action);
   }
+});
+
+
+test('a finger moves the maximally zoomed map without changing the cursor', () => {
+  const h = harness();
+  h.controls.zoom(20);
+  const before = h.controls.getView();
+  h.cursorChanges.length = 0;
+  h.send('pointerdown');
+  h.send('pointermove', { clientX: 360 });
+  h.tick();
+  h.send('pointerup', { clientX: 360 });
+  assert.notDeepEqual(h.controls.getView(), before, 'the same gesture still pans');
+  assert.deepEqual(h.cursorChanges, []);
+});
+
+test('the grabbing cursor ends with the mouse even if a finger remains pressed', () => {
+  const h = harness();
+  h.controls.zoom(20);
+  h.cursorChanges.length = 0;
+  h.send('pointerdown', { pointerType: 'touch', pointerId: 1 });
+  h.send('pointerdown', { pointerType: 'mouse', pointerId: 2 });
+  h.send('pointerup', { pointerType: 'mouse', pointerId: 2 });
+  assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
+  h.send('pointercancel', { pointerType: 'touch', pointerId: 1 });
+  assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
 });

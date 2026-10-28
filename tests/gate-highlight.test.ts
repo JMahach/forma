@@ -23,7 +23,7 @@ const sameVisiblePaint = (before: string|undefined, after: string|undefined, lab
   assert.equal(baseStroke, before!.includes('class="bg-gate-highlight"') ? 'none' : '#91bce9');
   assert.equal(attribute(after!, 'fill'), baseFill === '#91bce9' ? '#83a9d2' : baseFill);
   assert.equal(attribute(after!, 'stroke'), baseStroke === 'none' ? 'none'
-    : label === 'integration' ? 'url(#bodygraph-integration-highlight-colors)' : '#83a9d2');
+    : '#83a9d2');
 };
 
 test('outline masks preserve shared center junctions and compact physical gaps', () => {

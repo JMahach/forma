@@ -4,8 +4,8 @@ import { GATE_MARKER, GATE_POINTER_RADIUS } from './geometry/drawing-presentatio
 const TOUCH_WIDTH = 44;
 const TOUCH_HEIGHT = 44;
 
-// Read the shared gate projection once at the start of a touch. Visual SVG geometry and the
-// camera stay unchanged; direct hits on planets, numbers and the chart win.
+// Read one painted gate hit as the screen ruler for the shared, axis-aligned
+// drawing. Native hits on planets and numbers keep priority; no coordinate cache.
 export function pointerTarget(svg: SVGSVGElement, event: PointerEvent, surface?: Element | null) {
   const direct = (event.target as Element).closest<HTMLElement | SVGElement>('[data-type]');
   if (event.pointerType !== 'touch'
@@ -19,25 +19,28 @@ export function pointerTarget(svg: SVGSVGElement, event: PointerEvent, surface?:
   // reach its former larger circle; this is independent of highlight style.
   if (!direct || direct.dataset.type !== 'planet-filter') {
     const layer = svg.querySelector<SVGGElement>('.bodygraph-gates');
-    const matrix = layer?.getScreenCTM();
-    if (matrix) {
-      const { a, b, c, d, e, f } = matrix, determinant = a * d - b * c;
-      if (Number.isFinite(determinant) && determinant !== 0) {
-        // All gate circles share this one projection. Compare the finger with
-        // authored coordinates; no per-gate layout reads and no stale cache.
-        const x = (d * (event.clientX - e) - c * (event.clientY - f)) / determinant;
-        const y = (-b * (event.clientX - e) + a * (event.clientY - f)) / determinant;
-        const rx = GATE_POINTER_RADIUS * Math.hypot(a, c), ry = GATE_POINTER_RADIUS * Math.hypot(b, d);
-        let gateId: number | null = null, nearest = Infinity;
-        for (const gate of GATES) {
-          const cx = a * gate.x + c * gate.y + e, cy = b * gate.x + d * gate.y + f;
-          if (visible && (cx + rx <= visible.left || cx - rx >= visible.right || cy + ry <= visible.top || cy - ry >= visible.bottom)) continue;
-          const distance = (x - gate.x) ** 2 + (y - gate.y) ** 2;
-          if (distance <= GATE_MARKER.hitRadius ** 2 && distance < nearest) { gateId = gate.id; nearest = distance; }
-        }
-        const gate = gateId === null ? null : layer!.querySelector<SVGElement>(`[data-type="gate"][data-id="${gateId}"]`);
-        if (gate) return gate;
+    const reference = GATES[0];
+    const anchor = layer?.querySelector<SVGCircleElement>(`[data-type="gate"][data-id="${reference.id}"] .bg-gate-hit`);
+    const rect = anchor?.getBoundingClientRect();
+    if (rect && rect.width > 0 && rect.height > 0
+      && [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)) {
+      // Camera and body presentation use only translation and axis-aligned scale.
+      // The actual circle rectangle includes their CSS projection. An SVG CTM
+      // that disagrees with that projection must not redirect Ego to gate 20.
+      const rx = rect.width / 2, ry = rect.height / 2;
+      const sx = rx / GATE_POINTER_RADIUS, sy = ry / GATE_POINTER_RADIUS;
+      const x = reference.x + (event.clientX - rect.left - rx) / sx;
+      const y = reference.y + (event.clientY - rect.top - ry) / sy;
+      let gateId: number | null = null, nearest = Infinity;
+      for (const gate of GATES) {
+        const cx = rect.left + rx + (gate.x - reference.x) * sx;
+        const cy = rect.top + ry + (gate.y - reference.y) * sy;
+        if (visible && (cx + rx <= visible.left || cx - rx >= visible.right || cy + ry <= visible.top || cy - ry >= visible.bottom)) continue;
+        const distance = (x - gate.x) ** 2 + (y - gate.y) ** 2;
+        if (distance <= GATE_MARKER.hitRadius ** 2 && distance < nearest) { gateId = gate.id; nearest = distance; }
       }
+      const gate = gateId === null ? null : layer!.querySelector<SVGElement>(`[data-type="gate"][data-id="${gateId}"]`);
+      if (gate) return gate;
     }
     if (direct) return direct;
   }

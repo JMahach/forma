@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getGate } from '../src/scene/geometry/chart-geometry.ts';
+import { GATES, getGate } from '../src/scene/geometry/chart-geometry.ts';
 import { pointerTarget } from '../src/scene/pointer-target.ts';
+import { GATE_POINTER_RADIUS } from '../src/scene/geometry/drawing-presentation.ts';
 
 // Authored screen rectangles model a phone's compressed rows independently of
 // SVG geometry. Interleaved columns expose accidental cross-column clipping.
@@ -168,8 +169,15 @@ test('mouse stays on the center outside the visible gate, while touch keeps its 
     const gate = { dataset: { type: 'gate', id: '13' } };
     const geometry = getGate(13)!;
     const layer = {
-      getScreenCTM: () => ({a:scale,b:0,c:0,d:scale,e:100-geometry.x*scale,f:100-geometry.y*scale}),
-      querySelector: (selector:string) => selector.includes('"13"') ? gate : null,
+      getScreenCTM() { assert.fail('touch margin uses the painted circle, not an independent SVG matrix'); },
+      querySelector: (selector:string) => selector.endsWith('.bg-gate-hit') ? {
+        getBoundingClientRect() {
+          const size = 2 * GATE_POINTER_RADIUS * scale;
+          const left = 100 + (GATES[0].x - geometry.x - GATE_POINTER_RADIUS) * scale;
+          const top = 100 + (GATES[0].y - geometry.y - GATE_POINTER_RADIUS) * scale;
+          return { left, top, right: left + size, bottom: top + size, width: size, height: size };
+        },
+      } : selector.includes('"13"') ? gate : null,
     };
     const svg = { querySelector: () => layer, querySelectorAll: () => [] };
     const target = { closest: () => center };
@@ -197,14 +205,52 @@ test('both highlight styles render mouse hit circles at the visible ring edge wi
   }
 });
 
-test('starting a touch measures the gate layer once instead of measuring all 64 gates', () => {
+test('starting a touch measures one gate ruler instead of measuring all 64 gates', () => {
   let measurements = 0;
   const center = {dataset:{type:'center',id:'g'}};
-  const drawing = { getScreenCTM() { measurements++; return {a:1,b:0,c:0,d:1,e:0,f:0}; }, querySelector() { return null; } };
+  const drawing = { querySelector(selector: string) { return selector.endsWith('.bg-gate-hit') ? {
+    getBoundingClientRect() {
+      measurements++;
+      const r = GATE_POINTER_RADIUS, {x,y} = GATES[0];
+      return {left:x-r,top:y-r,right:x+r,bottom:y+r,width:2*r,height:2*r};
+    },
+  } : null; } };
   const svg = {
     querySelector: () => drawing,
     querySelectorAll: () => [{getBoundingClientRect() { assert.fail('touch start must not measure individual gates'); }}],
   };
   assert.equal(pointerTarget(svg as unknown as SVGSVGElement, {target:{closest:()=>center},pointerType:'touch',clientX:320,clientY:420} as unknown as PointerEvent),center);
   assert.equal(measurements,1);
+});
+
+
+test('repeated touches on the distant Ego center never select gate 20 from a mismatched SVG matrix', () => {
+  for (const scale of [.25, .5, 1, 4.5]) {
+    const direct = { dataset: { type: 'center', id: 'heart' } };
+    const gate20 = { dataset: { type: 'gate', id: '20' } };
+    const anchor = GATES[0], wrong = getGate(20)!;
+    const offset = { x: 12.5, y: 81.25 };
+    const point = { x: 434 * scale + offset.x, y: 447 * scale + offset.y };
+    let reads = 0;
+    const hit = { getBoundingClientRect() {
+      reads++;
+      const width = 2 * GATE_POINTER_RADIUS * scale;
+      const left = (anchor.x - GATE_POINTER_RADIUS) * scale + offset.x;
+      const top = (anchor.y - GATE_POINTER_RADIUS) * scale + offset.y;
+      return { left, top, right: left + width, bottom: top + width, width, height: width };
+    } };
+    const layer = {
+      // Model the dangerous mismatch, without claiming which browser causes it.
+      // Native target and painted hit rectangle agree on Ego; this matrix does not.
+      getScreenCTM: () => ({ a: scale, b: 0, c: 0, d: scale, e: point.x - wrong.x * scale, f: point.y - wrong.y * scale }),
+      querySelector: (selector: string) => selector.endsWith('.bg-gate-hit') ? hit : selector.includes('"20"') ? gate20 : null,
+    };
+    const svg = { querySelector: () => layer, querySelectorAll: () => [] };
+    for (let i = 0; i < 30; i++) {
+      assert.equal(pointerTarget(svg as unknown as SVGSVGElement, {
+        target: { closest: () => direct }, pointerType: 'touch', clientX: point.x, clientY: point.y,
+      } as unknown as PointerEvent), direct, 'the physical point belongs to Ego, far from gate 20');
+    }
+    assert.equal(reads, 30, 'one shared screen ruler per touch, no 64-gate measurement or stale coordinate cache');
+  }
 });

@@ -50,7 +50,9 @@ function integrationOutline(markup: string) {
   const mask = [...markup.matchAll(/<mask\b[^>]*>[\s\S]*?<\/mask>/g)]
     .find(match => attribute(match[0], 'id') === maskId)?.[0];
   assert.ok(mask, 'the referenced ownership mask exists');
-  return { element, path: attribute(element!, 'd'), mask };
+  // Compare geometry/ownership here; highlight-style.test.ts verifies solid
+  // pinned color versus the mixed preview tile independently.
+  return { element: element!.replace(/ stroke="[^"]*"/, ''), path: attribute(element!, 'd'), mask };
 }
 
 function permanentArtwork(markup: string) {

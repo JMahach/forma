@@ -99,7 +99,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   }).join('');
 
   const integrationState = integrationPaint(state, options);
-  const integrationHighlight = integrationHighlightPaint(state, options);
+  const integrationHighlight = integrationHighlightPaint(state, options, integrationState);
   const { integrationSelected, highlightedArms, integrationArmState, stemHighlighted,
     connectedIntegrationGates, activeIntegrationParts, stemOpacity, selectionPath, integrationFocusOpacity } = integrationState;
   const backgroundParts = [...integrationArmState, { path: STEM_PATH, opacity: stemOpacity }];
@@ -115,7 +115,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   // subtraction now includes a gap; no blur or color covers the physical node.
   const integrationHighlights = thumbnail ? '' : `<g class="bodygraph-integration-highlights" ${glow ? `filter="url(#${prefix}-glow-integration)" mask="url(#${prefix}-integration-outline)"` : `mask="url(#${prefix}-highlight-exterior)"`} pointer-events="none">
     <path class="bg-integration-hover" d="${INTEGRATION_PATH}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="butt" stroke-linejoin="round" mask="url(#${prefix}-integration-outline)" opacity="0" pointer-events="none"/>
-    ${selectionPath ? `<path class="bg-integration-selection" d="${selectionPath}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="${integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})" pointer-events="none"/>` : ''}
+    ${selectionPath ? `<path class="bg-integration-selection" d="${selectionPath}" fill="none" stroke="${integrationHighlight.selectionColor}" stroke-width="${highlightWidth}" stroke-linecap="${integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})" pointer-events="none"/>` : ''}
     ${integrationChannels.map(channel => `<path class="bg-integration-focus" data-highlight-channel="${channel.id}" d="${integrationRoute(channel.gates)}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#${prefix}-integration-focus-${channel.id})" opacity="0" style="--integration-focus-opacity:${integrationFocusOpacity(channel)}" pointer-events="none"/>`).join('')}
   </g>`;
   // The six channel buttons are siblings of the bundle, keyboard-only in the

@@ -210,3 +210,38 @@ test('mutating activation arrays still repaints physical channels without replac
     assert.deepEqual(root.querySelectorAll(selector).map(n => significantDOM(n)), fresh.querySelectorAll(selector).map(n => significantDOM(n)));
   assert.equal(root.querySelector('[data-type="gate"][data-id="10"]'), target);
 });
+
+
+test('uniform integration selection uses solid paint; native focus and mixed preview retain pinned color tiles', () => {
+  const choices = [
+    ...[10, 20, 34, 57].map(id => ({ type: 'gate' as const, id })),
+    ...['throat', 'g', 'sacral', 'spleen'].map(id => ({ type: 'center' as const, id })),
+    ...['10-20', '20-34', '34-57'].map(id => ({ type: 'channel' as const, id })),
+    { type: 'integration' as const, id: 'integration' },
+  ];
+  for (const highlightStyle of ['glow', 'outline'] as const) {
+    const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
+    const renderer = createSceneRenderer(root);
+    renderer.update(chart, null, { highlightStyle });
+    for (const selection of choices) {
+      const previews = selection.type === 'center' && selection.id === 'g'
+        ? [null, { type: 'gate', id: 10 }, { type: 'gate', id: 25 }, { type: 'gate', id: 34 },
+          { type: 'integration', id: 'integration' }, { type: 'center', id: 'throat' }, null] as const : [null];
+      for (const previewSelection of previews) {
+        const options = { highlightStyle, selections: [selection], previewSelection };
+        renderer.update(chart, selection, options);
+        const fresh = document.createElementNS(SVG_NS, 'svg');
+        fresh.innerHTML = renderBodygraph(chart, selection, options);
+        const mixed = previewSelection && [34, 'integration', 'throat'].includes(previewSelection.id);
+        for (const scene of [root, fresh]) {
+          const path = scene.querySelector('.bg-integration-selection')!;
+          assert.equal(path.getAttribute('stroke'), mixed ? 'url(#bodygraph-integration-highlight-colors)' : '#83a9d2');
+          assert.ok(path.getAttribute('mask'), 'the ownership cutout remains');
+          assert.match(scene.querySelector('.bg-integration-hover')!.getAttribute('stroke')!, /^url\(#.+-integration-highlight-colors\)$/, 'native focus can expose unpinned arms');
+        }
+        assert.deepEqual(significantDOM(root.querySelector('.bodygraph-integration-highlights')),
+          significantDOM(fresh.querySelector('.bodygraph-integration-highlights')));
+      }
+    }
+  }
+});
