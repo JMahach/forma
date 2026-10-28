@@ -1,8 +1,9 @@
 import type { Bounds, CameraFrame } from './geometry/frames.ts';
 export interface Point { x: number; y: number }
 export interface CameraPosition extends Point { k: number }
+// Legacy ceiling fields are accepted on input only; current layout owns the limit.
 export interface SavedCameraPosition extends CameraPosition { maxK?: number; zoomLimit?: number }
-export interface FitMeasurement { area: Bounds; min: number; viewport?: Bounds; screenScale?: number }
+export interface FitMeasurement { area: Bounds; min: number; viewport?: Bounds; screenScale?: number; zoomLimitScale?: number }
 interface CameraOptions {
   getFrame?: () => CameraFrame | null;
   getHomeFrame?: (() => CameraFrame | null) | null;
@@ -14,7 +15,7 @@ export type Camera = ReturnType<typeof createCamera>;
 import { DRAWING_BOUNDS, CHART_FRAME } from './geometry/frames.ts';
 
 // One authored ceiling; panel resizing only converts it between projections.
-export const MAX_ZOOM = 3.6;
+export const MAX_ZOOM = 3;
 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
@@ -97,6 +98,9 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   function measureHome() {
     const frame = homeFrame(), measured = measureFit(frame), next = defaultView(frame, measured);
     homeMeasurement = measured;
+    // The current unoccluded studio is the reference, never a saved or
+    // incrementally accumulated ceiling. Panels only change its projection.
+    maximumScale = MAX_ZOOM * (measured.zoomLimitScale ?? 1);
     if (studioHome) {
       const viewport = measured.viewport!;
       homeField = { x: (viewport.x - next.x) / next.k, y: (viewport.y - next.y) / next.k,
@@ -132,7 +136,6 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     const ratio = (previousMeasurement?.screenScale ?? 1) / (homeMeasurement!.screenScale ?? 1);
     // The zoom ceiling describes the same physical detail size across panels.
     // Keeping the old SVG-unit ceiling would shrink a maximally zoomed chart.
-    if (preserveScale && previousMeasurement) maximumScale = Math.max(next.k, maximumScale * ratio);
     if (preserveScale && previousMeasurement && !isHomeView(view, previous)) {
       // A panel changes available space, not the detail size being inspected.
       // Keep the map point under the old free-area center at the new center.
@@ -154,23 +157,20 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     // Storage timing and lifetime stay with the caller.
     getSavedView(): SavedCameraPosition {
       return { x: (view.x - fittedView.x) / fittedView.k, y: (view.y - fittedView.y) / fittedView.k,
-        k: view.k / fittedView.k, maxK: maximumScale / fittedView.k, zoomLimit: MAX_ZOOM };
+        k: view.k / fittedView.k };
     },
     // One saved-view recipe serves early startup and full view restoration.
     restoreView(position: SavedCameraPosition | null | undefined) {
       fit();
       if (!position) return;
-      // Older snapshots were written with a 4.5 ceiling. Record the authored
-      // limit so a later reduction is applied once, including panel-sized views.
-      const savedLimit = Number.isFinite(position.zoomLimit) && position.zoomLimit! > 0 ? position.zoomLimit! : 4.5;
-      const restoredLimit = position.maxK ? position.maxK * fittedView.k * MAX_ZOOM / savedLimit : maximumScale;
+      // Legacy maxK/zoomLimit describe an old layout, not today's limit.
       const restored = { x: fittedView.x + position.x * fittedView.k, y: fittedView.y + position.y * fittedView.k,
         k: position.k * fittedView.k };
       const area = homeMeasurement!.area;
       const anchor = { x: area.x + area.width / 2, y: area.y + area.height / 2 };
-      const limited = restored.k > restoredLimit
-        ? zoomAt(restored, anchor, restoredLimit / restored.k, { min: minimumScale(), max: restoredLimit }) : restored;
-      controls.setView(limited, { maxScale: restoredLimit });
+      const limited = restored.k > maximumScale
+        ? zoomAt(restored, anchor, maximumScale / restored.k, { min: minimumScale(), max: maximumScale }) : restored;
+      controls.setView(limited);
     },
     minimumScale, maximumScale: () => maximumScale,
     pan(dx: number, dy: number) { view.x += dx; view.y += dy; apply(); },
@@ -198,10 +198,9 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     },
     getView() { return { ...view }; },
     getFittedView() { return { ...fittedView }; },
-    setView(value: unknown, { maxScale = maximumScale } = {}) {
-      const validLimit = Number.isFinite(maxScale) && maxScale >= minimumScale() && maxScale <= 100;
-      if (validLimit && validView(value, { min: Math.min(navigationFrame.minScale, navigationFit.k), max: maxScale })) {
-        maximumScale = maxScale; view = { ...value }; apply();
+    setView(value: unknown) {
+      if (validView(value, { min: Math.min(navigationFrame.minScale, navigationFit.k), max: maximumScale })) {
+        view = { ...value }; apply();
       } else fit();
     }
   };

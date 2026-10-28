@@ -425,7 +425,6 @@ test('outer 20 and 57 terminal clipping matches the exact rendered source endpoi
 });
 
 test('outer branch ownership removes far-side islands while preserving the left halo up to its terminal cut', () => {
-  const outer = CHANNELS.find(channel => channel.id === '20-57');
   const physical = [...INTEGRATION_ARMS.map(arm => sampleCubic(arm.curve)), STEM_POINTS];
   for (const gate of [20, 57] as const) {
     const arm = INTEGRATION_ARMS.find(arm => arm.gate === gate);
@@ -439,11 +438,11 @@ test('outer branch ownership removes far-side islands while preserving the left 
     assert.equal(attribute(owned[0], 'data-owner-gate'), String(gate));
     const ownership = clipFor(markup, wrapper![0]);
     const paths = [...ownership!.matchAll(/<path[^>]*\/>/g)].map(match => attribute(match[0], 'd'));
-    assert.equal(paths.length, 2, 'ownership is the union of the outer side and the near side of the adjacent branch');
-    assert.ok(paths.some(path => path!.startsWith(`${outer!.path} L `)), 'the outer side retains the original uninterrupted sweep');
-    assert.ok(paths.some(path => path!.startsWith(`${neighbor!.path} L `)), 'the inner boundary follows the original neighboring cubic');
-    const polygons = paths.map(polygonFromPath);
-    const allowed = point => polygons.some(polygon => pointInPolygon(point, polygon));
+    assert.equal(paths.length, 1, 'outer ownership has one continuous boundary');
+    assert.ok(paths[0]!.includes(`C ${[...neighbor!.curve].reverse().slice(1).flat().join(' ')}`),
+      'the inner boundary retains the exact neighboring cubic');
+    const polygon = polygonFromPath(paths[0]!);
+    const allowed = point => pointInPolygon(point, polygon);
     const [before, end] = sampleCubic(arm!.curve, 48).slice(-2).map(point => point.map(value => Number(value.toFixed(2))));
     const dx = end[0] - before[0], dy = end[1] - before[1], length = Math.hypot(dx, dy);
     const along = [dx / length, dy / length];
@@ -459,6 +458,27 @@ test('outer branch ownership removes far-side islands while preserving the left 
       assert.ok(!allowed(ghost), `${gate} does not repaint beyond the adjacent branch near its junction`);
       assert.ok(allowed(left), `${gate} preserves the free left halo until the exact terminal plane`);
       assert.ok(pointInPolygon(left, terminalPolygon), 'the preserved left edge reaches the same terminal cut');
+    }
+  }
+});
+
+test('outer branch ownership uses one continuous clipping boundary and retains both gate-side edges', () => {
+  for (const gate of [20, 57]) {
+    const markup = renderBodygraph({}, { type: 'gate', id: gate }, { highlightStyle: 'glow' });
+    const clip = markup.match(new RegExp(`<clipPath id="bodygraph-integration-outer-owner-${gate}"[^>]*>([\\s\\S]*?)</clipPath>`))![1];
+    const paths = [...clip.matchAll(/<path[^>]*\/>/g)].map(match => attribute(match[0], 'd')!);
+    assert.equal(paths.length, 1, 'the clip has a single contour, with no overlapping child shapes to combine');
+    assert.equal((paths[0].match(/M/g) || []).length, 1, 'the boundary has no overlapping subpaths');
+    const polygon = polygonFromPath(paths[0]);
+    const arm = INTEGRATION_ARMS.find(arm => arm.gate === gate)!;
+    const samples = sampleCubic(arm.curve, 48);
+    for (const i of [6, 12, 24, 36]) {
+      const a = samples[i - 1]!, p = samples[i]!, b = samples[i + 1]!;
+      const dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+      for (const side of [-7.9, -5, 5, 7.9]) {
+        const edge = [p[0] + side * Math.abs(dy) / length, p[1] - side * Math.sign(dy) * dx / length];
+        assert.ok(pointInPolygon(edge, polygon), `${gate}: the gate-side branch retains its ${side < 0 ? 'left' : 'right'} edge at ${i}/48`);
+      }
     }
   }
 });

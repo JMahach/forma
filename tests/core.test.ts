@@ -6,7 +6,7 @@ import {
   parseGates, validateLibraryChart,
   readCharts, writeChartChanges, STORAGE_KEY, TRASH_KEY, CHART_DELETED_PREFIX, deleteChart
 } from './fixtures/storage.ts';
-import { zoomAt, validView, fitView } from '../src/scene/camera.ts';
+import { zoomAt, validView, fitView, MAX_ZOOM } from '../src/scene/camera.ts';
 import { attachGestures } from './fixtures/gesture-harness.ts';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.ts';
 import { CENTERS, GATES, CHANNELS, getGate, getCenter, getChannel } from '../src/scene/geometry/chart-geometry.ts';
@@ -147,9 +147,9 @@ test('zoom keeps the graph point beneath its anchor invariant', () => {
 
 test('zoom clamps its range and stays stationary when already at a limit', () => {
   const anchor = { x: 320, y: 410 };
-  assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 100).k, 3.6);
+  assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 100).k, MAX_ZOOM);
   assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 0.01).k, 0.65);
-  const maximum = { x: -800, y: -900, k: 3.6 };
+  const maximum = { x: -800, y: -900, k: MAX_ZOOM };
   const minimum = { x: 15, y: -20, k: 0.65 };
   assert.deepEqual(zoomAt(maximum, anchor, 2), maximum);
   assert.deepEqual(zoomAt(minimum, anchor, 0.5), minimum);
@@ -187,7 +187,7 @@ test('fit clamps extreme scales to the same supported zoom range', () => {
   const small = fitView(bounds, { x: 0, y: 0, width: 10, height: 10 });
   const large = fitView(bounds, { x: 0, y: 0, width: 2000, height: 2000 });
   assert.equal(small.k, 0.65);
-  assert.equal(large.k, 3.6);
+  assert.equal(large.k, MAX_ZOOM);
   assert.ok(validView(small));
   assert.ok(validView(large));
   assert.equal(small.x + 50 * small.k, 5);
@@ -197,8 +197,8 @@ test('fit clamps extreme scales to the same supported zoom range', () => {
 test('saved view validation accepts bounds and rejects non-finite or oversized coordinates', () => {
   assert.ok(validView({ x: 0, y: 0, k: 1 }));
   assert.ok(validView({ x: -5000, y: 6000, k: 0.65 }));
-  assert.ok(validView({ x: 5000, y: -6000, k: 3.6 }));
-  for (const view of [null, undefined, {}, { x: 0, y: 0 }, { x: NaN, y: 0, k: 1 }, { x: 0, y: Infinity, k: 1 }, { x: 0, y: 0, k: '1' }, { x: 0, y: 0, k: 0.64 }, { x: 0, y: 0, k: 3.61 }, { x: 5001, y: 0, k: 1 }, { x: 0, y: -6001, k: 1 }] as const) {
+  assert.ok(validView({ x: 5000, y: -6000, k: MAX_ZOOM }));
+  for (const view of [null, undefined, {}, { x: 0, y: 0 }, { x: NaN, y: 0, k: 1 }, { x: 0, y: Infinity, k: 1 }, { x: 0, y: 0, k: '1' }, { x: 0, y: 0, k: 0.64 }, { x: 0, y: 0, k: MAX_ZOOM + .01 }, { x: 5001, y: 0, k: 1 }, { x: 0, y: -6001, k: 1 }] as const) {
     assert.ok(!validView(view));
   }
 });

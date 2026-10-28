@@ -31,6 +31,7 @@ interface EventSurface {
   setAttribute?: (name: string, value: string) => void;
 }
 import test from 'node:test';
+import { MAX_ZOOM } from '../src/scene/camera.ts';
 import assert from 'node:assert/strict';
 import { createReturnsController } from './fixtures/returns.ts';
 import { DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
@@ -194,7 +195,7 @@ test('camera restoration rebases against the new screen Home and respects maximu
   const second = harness(first.storage, { size: 500 }); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.camera.getView().k / second.camera.getFittedView().k, 2);
   const third = harness(first.storage, { size: 5000, normalizeSavedView(value) { delete value!.camera!.maxK; return value; } }); t.after(() => third.transit.stop()); await third.view.restore();
-  assert.equal(third.camera.getView().k, 3.6);
+  assert.equal(third.camera.getView().k, MAX_ZOOM);
 });
 
 test('a deleted chart falls back to transit and malformed presentation never clears the saved library', async t => {
@@ -1166,14 +1167,15 @@ test('panel state survives chart selection and reload and is restored before the
   assert.equal(second.session.selectedId, 'second');
 });
 
-test('reload preserves an elevated camera limit needed after a panel has narrowed the view', async t => {
+test('reload cannot recover an obsolete zoom ceiling from the tab snapshot', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const home = first.camera.getFittedView();
-  first.camera.setView({ x: home.x, y: home.y, k: 6 }, { maxScale: 7 });
   first.view.flush();
+  const legacy = JSON.parse(first.storage.get('liniya.view.v1')!);
+  legacy.camera = { ...legacy.camera, k: 6, maxK: 7, zoomLimit: 3.6 };
+  first.storage.set('liniya.view.v1', JSON.stringify(legacy));
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
-  assert.equal(second.camera.getView().k, 6);
-  assert.equal(second.camera.maximumScale(), 7);
+  assert.ok(second.camera.getView().k <= MAX_ZOOM);
+  assert.equal(second.camera.maximumScale(), MAX_ZOOM);
 });
 
 
@@ -1457,7 +1459,7 @@ test('view session saves the current library group even when only membership cha
 test('the restored view delegates its camera snapshot without changing its position or limit', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const home = first.camera.getFittedView();
-  first.camera.setView({ ...home, k: 6 }, { maxScale: 7 });
+  first.camera.setView({ ...home, k: 2 });
   const position = first.camera.getView(), expected = first.camera.getSavedView();
   const snapshot = first.camera.getSavedView.bind(first.camera);
   let reads = 0;
@@ -1466,10 +1468,10 @@ test('the restored view delegates its camera snapshot without changing its posit
   assert.equal(reads, 1, 'the session uses the supplied snapshot capability');
   assert.deepEqual(JSON.parse(first.storage.get('liniya.view.v1')!).camera, expected);
   assert.deepEqual(first.camera.getView(), position);
-  assert.equal(first.camera.maximumScale(), 7);
+  assert.equal(first.camera.maximumScale(), MAX_ZOOM);
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
   assert.deepEqual(second.camera.getView(), position);
-  assert.equal(second.camera.maximumScale(), 7);
+  assert.equal(second.camera.maximumScale(), MAX_ZOOM);
 });
 
 

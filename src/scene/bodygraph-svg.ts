@@ -15,7 +15,7 @@ import { INTEGRATION_IDS } from '../domain/topology.ts';
 import {
   roundedCenter, paintOrder, UNDERPASS_CHANNEL_ID, HIGHLIGHT_REGIONS,
   STEM_PATH, INTEGRATION_PATH, INTEGRATION_INNER_SIDE,
-  INTEGRATION_OUTER_SIDE, integrationOuterOwnership, integrationEndPlanes, integrationRoute,
+  integrationOuterOwnership, integrationEndPlanes, integrationRoute,
 } from './geometry/drawing-geometry.ts';
 import { createRenderState, isSelectionPressed } from './render-state.ts';
 import { escapeHtml as escape } from '../ui/html.ts';
@@ -220,7 +220,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
       </mask>`;
     }).join('')}`}
     <clipPath id="${prefix}-integration-inner-side" clipPathUnits="userSpaceOnUse"><path d="${INTEGRATION_INNER_SIDE}"/></clipPath>
-    ${integrationOuterOwnership.map(({ gate, path }) => `<clipPath id="${prefix}-integration-outer-owner-${gate}" clipPathUnits="userSpaceOnUse"><path class="bg-integration-outer-side" d="${INTEGRATION_OUTER_SIDE}"/><path class="bg-integration-fork-side" d="${path}"/></clipPath>`).join('')}
+    ${integrationOuterOwnership.map(({ gate, path }) => `<clipPath id="${prefix}-integration-outer-owner-${gate}" clipPathUnits="userSpaceOnUse"><path class="bg-integration-outer-boundary" d="${path}"/></clipPath>`).join('')}
     ${integrationEndPlanes.map(({ gate, polygon }) => `<clipPath id="${prefix}-integration-end-${gate}" clipPathUnits="userSpaceOnUse"><polygon data-terminal-gate="${gate}" points="${polygon}"/></clipPath>`).join('')}
     <!-- Single-arm outlines exclude the physical node. Complete connections also
          own a continuous exterior ring, with active neighboring paint protected. -->

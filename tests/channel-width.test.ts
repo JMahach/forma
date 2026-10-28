@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { renderBodygraph } from '../src/scene/bodygraph-svg.ts';
 import { CHANNELS, GATES } from '../src/scene/geometry/chart-geometry.ts';
+import { INTEGRATION_ARMS } from '../src/scene/geometry/integration-geometry.ts';
 import { INTEGRATION_IDS } from '../src/domain/topology.ts';
 
 // Independent output requirements, deliberately not imported from the renderer:
@@ -299,7 +300,18 @@ test('non-channel SVG and terminal clipping remain byte-identical to the previou
     const markup = originalHighlightGlow(originalGateMarkers(renderBodygraph(chart, null, { selections, showLabels: true, dimInactive: true, idPrefix: 'width-check' })));
     const unchanged = {
       gatesAndCenters: originalGateFont(originalGateContour(markup.slice(markup.indexOf('<g class="bodygraph-centers">')))),
-      clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g),
+      // Ownership now uses a single boundary. Restore only its legacy clip
+      // representation for this width oracle; junction tests cover both edges,
+      // terminal cuts and the absence of far-side islands in the new boundary.
+      clips: markup.match(/<clipPath\b[\s\S]*?<\/clipPath>/g)?.map(clip => clip.replace(
+        /(<clipPath id="width-check-integration-outer-owner-(20|57)"[^>]*>)[\s\S]*?(<\/clipPath>)/,
+        (_clip, start, id, end) => {
+          const gate = Number(id), neighbor = INTEGRATION_ARMS.find(arm => arm.gate === (gate === 20 ? 10 : 34))!;
+          const boundary = gate === 20 ? 0 : 820;
+          const outer = `${CHANNELS.find(channel => channel.id === '20-57')!.path} L 141 820 L 0 820 L 0 0 L 284 0 Z`;
+          const fork = `${neighbor.path} L 0 ${neighbor.end[1]} L 0 ${boundary} L 640 ${boundary} L 640 ${neighbor.curve[0][1]} Z`;
+          return `${start}<path class="bg-integration-outer-side" d="${outer}"/><path class="bg-integration-fork-side" d="${fork}"/>${end}`;
+        })),
       style: originalActivationStyle(markup.match(/<style>[\s\S]*?<\/style>/)![0]),
       pointerTargets: paths(markup).filter(tag => attribute(tag, 'stroke') === 'transparent'
         && attribute(tag, 'pointer-events') === 'stroke'),

@@ -241,7 +241,7 @@ panels.subscribe(refreshPhoneNavigation);
 refreshPhoneNavigation();
 // One projection paints the ready chart and its loading illustration. The
 // application takes this camera over without changing the saved view.
-const cameraView = createCameraView({ svg: element('bodygraph'), surface: canvas, mirrors: [element('chartLoadingArt')] });
+const cameraView = createCameraView({ svg: element('bodygraph'), surface: canvas, referenceSurface: studio, mirrors: [element('chartLoadingArt')] });
 const cameraChanged = createCameraChangeHandler({ heading: element('chartHeader'), fitButton: element('fitButton'),
   activationPopover: { reposition() {} } });
 const camera = createCamera({ getHomeFrame: () => layout.frame(), getFrame: () => MANDALA_FRAME,

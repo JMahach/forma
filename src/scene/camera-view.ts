@@ -6,7 +6,7 @@ import { computeCameraFit } from './camera-fit.ts';
 
 // The fixed surface owns input coordinates and clipping; its SVG fills the box
 // without borders or padding. Moving the SVG never changes the camera's ruler.
-export function createCameraView({ svg, surface, mirrors = [] }: { svg: SVGSVGElement; surface: HTMLElement | SVGSVGElement; mirrors?: SVGSVGElement[] }) {
+export function createCameraView({ svg, surface, referenceSurface = surface, mirrors = [] }: { svg: SVGSVGElement; surface: HTMLElement | SVGSVGElement; referenceSurface?: HTMLElement | SVGSVGElement; mirrors?: SVGSVGElement[] }) {
   const drawings = [svg, ...mirrors];
   for (const drawing of drawings) {
     drawing.style.transformOrigin = '0 0';
@@ -14,8 +14,7 @@ export function createCameraView({ svg, surface, mirrors = [] }: { svg: SVGSVGEl
   }
   let lastTransform: string | null = null, revealed = false;
 
-  function projection() {
-    const rect = surface.getBoundingClientRect();
+  function projection(rect = surface.getBoundingClientRect()) {
     const box = svg.viewBox.baseVal;
     const aspect = svg.preserveAspectRatio.baseVal;
     let sx = rect.width / box.width, sy = rect.height / box.height;
@@ -37,7 +36,10 @@ export function createCameraView({ svg, surface, mirrors = [] }: { svg: SVGSVGEl
     measureFit(frame: CameraFrame, fitInsets?: FitInsets | (() => FitInsets) | null) {
       const measured = projection();
       const insets = typeof fitInsets === 'function' ? fitInsets() : fitInsets;
-      return computeCameraFit(frame, measured.rect, insets, (x, y) => project(measured, x, y));
+      const referenceScale = referenceSurface === surface ? measured.sx
+        : projection(referenceSurface.getBoundingClientRect()).sx;
+      return { ...computeCameraFit(frame, measured.rect, insets, (x, y) => project(measured, x, y)),
+        zoomLimitScale: referenceScale / measured.sx };
     },
     paint({ x, y, k }: CameraPosition) {
       const { sx, sy, ox, oy } = projection();

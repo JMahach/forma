@@ -16,7 +16,8 @@ export const sampleBezier = (curve: number[][]) => Array.from({ length: 49 }, (_
 // exactly mirrors 12–22, with no overlaid channels or changes in curvature.
 const [upper, remainder] = split(getChannel('20-57')!.curve, 0.60);
 const [stem, lower] = split(remainder, (0.77 - 0.60) / (1 - 0.60));
-export const STEM_POINTS = sampleBezier(stem);
+export const STEM_CURVE = stem;
+export const STEM_POINTS = sampleBezier(STEM_CURVE);
 
 function branch(gate: number, end: number[], stemTangent: number[], backwards = false) {
   const { x, y } = getGate(gate)!;

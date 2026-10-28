@@ -1,7 +1,7 @@
 import { CENTERS, CHANNELS, getGate, getChannel, getCenter } from './chart-geometry.ts';
 import { CENTER_STROKE } from './drawing-presentation.ts';
 import { INTEGRATION_IDS } from '../../domain/topology.ts';
-import { INTEGRATION_ARMS as ARM_GEOMETRY, STEM_POINTS, sampleBezier } from './integration-geometry.ts';
+import { INTEGRATION_ARMS as ARM_GEOMETRY, STEM_CURVE, STEM_POINTS, sampleBezier } from './integration-geometry.ts';
 
 // Geometry-only preparation: cached paths never depend on selection or paint.
 export const pointString = (points: number[][]) => points.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
@@ -161,13 +161,16 @@ export const INTEGRATION_PATH = [...INTEGRATION_ARMS.map(({ path }) => path), ST
 // Ownership is a side of the existing outer curve, not an expanded neighbor
 // stroke. Inner arms can meet the physical channel without leaking to its far side.
 export const INTEGRATION_INNER_SIDE = `${getChannel('20-57')!.path} L ${getGate(57)!.x} 820 L 640 820 L 640 0 L ${getGate(20)!.x} 0 Z`;
-export const INTEGRATION_OUTER_SIDE = `${getChannel('20-57')!.path} L ${getGate(57)!.x} 820 L 0 820 L 0 0 L ${getGate(20)!.x} 0 Z`;
+// A single continuous boundary follows the opposite outer arm, the shared
+// stem and the neighboring fork. No overlapping clip shapes need combining;
+// the selected outer arm stays entirely inside until its separate terminal cut.
 export const integrationOuterOwnership = [20, 57].map(gate => {
+  const outer = INTEGRATION_ARMS.find(arm => arm.gate === (gate === 20 ? 57 : 20))!;
   const neighbor = INTEGRATION_ARMS.find(arm => arm.gate === (gate === 20 ? 10 : 34))!;
+  const curves = [outer.curve, gate === 20 ? [...STEM_CURVE].reverse() : STEM_CURVE, [...neighbor.curve].reverse()];
   const boundary = gate === 20 ? 0 : 820;
-  // On the inner/right side, stop at the neighboring branch rather than
-  // reappearing beyond it. The outer/left side stays free until the paint cut.
-  return { gate, path: `${neighbor.path} L 0 ${neighbor.end[1]} L 0 ${boundary} L 640 ${boundary} L 640 ${neighbor.curve[0][1]} Z` };
+  const path = `M ${curves[0][0].join(' ')} ${curves.map(curve => `C ${curve.slice(1).flat().join(' ')}`).join(' ')} L 640 ${neighbor.curve[0][1]} L 640 ${boundary} L 0 ${boundary} L 0 ${820 - boundary} L ${outer.curve[0][0]} ${820 - boundary} Z`;
+  return { gate, path };
 });
 export const integrationEndPlanes = INTEGRATION_ARMS.filter(({ gate }) => gate === 20 || gate === 57).map(arm => {
   // Match the actual, two-decimal sampled black/red paint, including its last

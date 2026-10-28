@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { MAX_ZOOM } from '../src/scene/camera.ts';
 import assert from 'node:assert/strict';
 import { createCamera } from '../src/scene/camera.ts';
 import { createCameraView } from '../src/scene/camera-view.ts';
@@ -12,13 +13,14 @@ function harness() {
   const surface = { getBoundingClientRect: () => ({ ...rect, right: rect.left + rect.width, bottom: rect.top + rect.height }) };
   const svg = { style: {} as unknown as CSSStyleDeclaration, viewBox: { baseVal: { ...frame.bounds } },
     preserveAspectRatio: { baseVal: { align: 6, meetOrSlice: 1 } } };
-  const view = createCameraView({ svg, surface });
+  const referenceSurface = { getBoundingClientRect: () => ({ left: 0, top: 0, right: 1000, bottom: rect.height, width: 1000, height: rect.height }) };
+  const view = createCameraView({ svg, surface, referenceSurface });
   const measure = () => view.measureFit(frame, { side: 20, top: 100, bottom: 100 });
   const camera = createCamera({ getFrame: () => frame, getHomeFrame: () => frame,
     measureFit: measure, onChange: value => view.paint(value) });
   camera.reset();
   return { camera,
-    setSurface(width: number, left = 0) { rect = { ...rect, left, width }; },
+    setSurface(width: number, left = 0, height = rect.height) { rect = { ...rect, left, width, height }; },
     // Project the actual CSS matrix and known centered 1000 × 1000 viewBox.
     // A missing projection correction must visibly change the result below.
     screenPoint(point) {
@@ -89,49 +91,49 @@ test('a panel cannot shrink details at the previous maximum zoom', () => {
   const center = h.screenPoint({ x: 500, y: 500 });
   const adjacent = h.screenPoint({ x: 510, y: 510 });
   near(center.x, 600, 'the inspected center is retained at maximum zoom');
-  near(adjacent.x - center.x, 36, 'the previous maximum detail size is retained');
+  near(adjacent.x - center.x, 10 * MAX_ZOOM, 'the previous maximum detail size is retained');
   h.camera.zoomAt({ x: 500, y: 500 }, 1);
   h.camera.resize();
   const stable = h.screenPoint({ x: 510, y: 510 });
-  near(stable.x - center.x, 36, 'the next no-op gesture and observer cannot shrink the picture');
+  near(stable.x - center.x, 10 * MAX_ZOOM, 'the next no-op gesture and observer cannot shrink the picture');
   h.setSurface(1000); h.camera.resize({ preserveScale: true });
-  near(h.camera.getView().k, 3.6, 'closing the panel returns to the original maximum');
+  near(h.camera.getView().k, MAX_ZOOM, 'closing the panel returns to the original maximum');
 });
 
 test('restoring a panel-sized camera retains its elevated physical zoom ceiling', () => {
   const original = harness();
   original.camera.zoomAt({ x: 500, y: 500 }, 100);
   original.setSurface(600, 300); original.camera.resize({ preserveScale: true });
-  near(original.camera.maximumScale?.() ?? 0, 6, 'the transferred ceiling is exposed for the view snapshot');
-  const saved = original.camera.getView(), maxScale = original.camera.maximumScale();
+  near(original.camera.maximumScale?.() ?? 0, MAX_ZOOM / .6, 'the current projection supplies the panel-adjusted ceiling');
+  const position = original.camera.getView(), saved = original.camera.getSavedView();
   const restored = harness();
   restored.setSurface(600, 300); restored.camera.reset();
-  restored.camera.setView(saved, { maxScale });
-  assert.deepEqual(restored.camera.getView(), saved, 'reload does not reject a valid camera above the old SVG ceiling');
+  restored.camera.restoreView(saved);
+  for (const key of ['x', 'y', 'k'] as const) near(restored.camera.getView()[key], position[key], 'reload does not reject a valid camera above the old SVG ceiling');
   restored.camera.zoomAt({ x: 500, y: 500 }, 100);
-  assert.deepEqual(restored.camera.getView(), saved, 'the restored ceiling limits later zoom without shrinking details');
+  for (const key of ['x', 'y', 'k'] as const) near(restored.camera.getView()[key], position[key], 'the restored ceiling limits later zoom without shrinking details');
   restored.camera.resize();
-  assert.deepEqual(restored.camera.getView(), saved, 'an unchanged observer keeps the restored pose');
+  for (const key of ['x', 'y', 'k'] as const) near(restored.camera.getView()[key], position[key], 'an unchanged observer keeps the restored pose');
 });
 
-test('restored scale limits reject malformed values without poisoning the next camera gesture', () => {
+test('legacy scale limits cannot poison the next camera gesture', () => {
   const h = harness(); explore(h);
   for (const maxScale of [Infinity, NaN, 0, -1, 101] as const) {
-    h.camera.setView({ x: -300, y: -300, k: 1.6 }, { maxScale });
-    assert.deepEqual(h.camera.getView(), h.camera.getFittedView(), 'invalid saved limits fall back to Home');
+    h.camera.restoreView({ x: -300, y: -300, k: 1.6, maxK: maxScale });
     h.camera.zoomAt({ x: 500, y: 500 }, 100);
-    near(h.camera.getView().k, 3.6, 'an invalid limit cannot replace the working ceiling');
+    near(h.camera.getView().k, MAX_ZOOM, 'an invalid limit cannot replace the working ceiling');
   }
 });
 
 test('valid high-zoom restoration accepts the translated coordinates required by its scale', () => {
   const h = harness();
   h.setSurface(100); h.camera.reset();
-  h.camera.setView({ x: -17500, y: -17500, k: 36 }, { maxScale: 36 });
+  const k = MAX_ZOOM / .1;
+  h.camera.setView({ x: 500 - 500 * k, y: 500 - 500 * k, k });
   const center = h.screenPoint({ x: 500, y: 500 });
   const adjacent = h.screenPoint({ x: 510, y: 510 });
   near(center.x, 50, 'the same detail stays centered on the narrow surface');
-  near(adjacent.x - center.x, 36, 'the high SVG-unit scale remains a reasonable on-screen size');
+  near(adjacent.x - center.x, 10 * MAX_ZOOM, 'the high SVG-unit scale remains a reasonable on-screen size');
 });
 
 
@@ -140,7 +142,7 @@ test('legacy saved maximum is reduced once without losing the inspected point', 
   // Old Home (.8,100,100), centered 4.5x view and its old relative ceiling.
   const legacy = { x: -2312.5, y: -2312.5, k: 5.625, maxK: 5.625 };
   h.camera.restoreView(legacy);
-  near(h.camera.getView().k, 3.6, 'the old maximum cannot return after reload');
+  near(h.camera.getView().k, MAX_ZOOM, 'the old maximum cannot return after reload');
   near(h.screenPoint({ x: 500, y: 500 }).x, 500, 'the inspected point stays centered');
   const saved = h.camera.getSavedView(), before = h.camera.getView();
   for (let i = 0; i < 3; i++) {
@@ -148,5 +150,24 @@ test('legacy saved maximum is reduced once without losing the inspected point', 
     assert.deepEqual(h.camera.getView(), before, 'new snapshots do not shrink again on reload');
   }
   h.camera.zoomAt({ x: 500, y: 500 }, 100);
-  near(h.camera.getView().k, 3.6, 'further gestures retain the reduced ceiling');
+  near(h.camera.getView().k, MAX_ZOOM, 'further gestures retain the reduced ceiling');
+});
+
+
+test('reloading into a taller viewport cannot raise the authored zoom ceiling', () => {
+  const original = harness();
+  original.setSurface(1000, 0, 800); original.camera.reset();
+  original.camera.zoomAt({ x: 500, y: 500 }, 100);
+  const restored = harness();
+  restored.camera.restoreView(original.camera.getSavedView());
+  near(restored.camera.maximumScale(), MAX_ZOOM, 'a taller Home is not permission for stronger zoom');
+  restored.camera.zoomAt({ x: 500, y: 500 }, 100);
+  near(restored.camera.getView().k, MAX_ZOOM, 'gestures still stop at the current limit');
+});
+
+test('old saved ceiling metadata cannot override the current no-panel maximum', () => {
+  const h = harness();
+  h.camera.restoreView({ x: -2312.5, y: -2312.5, k: 5.625, maxK: 8, zoomLimit: 3.6 });
+  near(h.camera.getView().k, MAX_ZOOM, 'an old enlarged maximum is clamped around the inspected point');
+  near(h.screenPoint({ x: 500, y: 500 }).x, 500, 'clamping keeps the inspected point centered');
 });

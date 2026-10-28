@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { MAX_ZOOM } from '../src/scene/camera.ts';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.ts';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.ts';
@@ -73,7 +74,7 @@ test('optional fitting and validation limits leave the normal camera defaults un
   assert.equal(validView(wide, { min: 0.1 }), true);
   assert.equal(validView({ ...wide, k: NaN }, { min: 0.1 }), false);
   assert.equal(validView({ ...wide, k: 5 }, { min: 0.1 }), false);
-  assert.equal(fitView(DRAWING_BOUNDS, { x: 0, y: 0, width: 9000, height: 9000 }).k, 3.6);
+  assert.equal(fitView(DRAWING_BOUNDS, { x: 0, y: 0, width: 9000, height: 9000 }).k, MAX_ZOOM);
 });
 
 test('an unattached mode controller returning undefined falls back to the unchanged normal frame', t => {

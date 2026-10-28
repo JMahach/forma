@@ -1,5 +1,6 @@
 import type { CameraPosition } from '../src/scene/camera.ts';
 import test from 'node:test';
+import { MAX_ZOOM } from '../src/scene/camera.ts';
 import assert from 'node:assert/strict';
 import { attachGestures } from './fixtures/gesture-harness.ts';
 import { CHART_FRAME, MANDALA_FRAME } from '../src/scene/geometry/frames.ts';
@@ -128,10 +129,10 @@ test('pan edges remain valid through responsive Home rebases and absolute maximu
     h.toggle();
   }
   h.controls.zoom(100);
-  assert.equal(h.controls.getView().k, 3.6);
+  assert.equal(h.controls.getView().k, MAX_ZOOM);
   h.toggle(); h.toggle();
-  assert.ok(h.controls.getView().k <= 3.6);
+  assert.ok(h.controls.getView().k <= MAX_ZOOM);
   h.resize(1600, 1200, false);
-  assert.ok(h.controls.getView().k <= 3.6);
+  assert.ok(h.controls.getView().k <= MAX_ZOOM);
   assert.ok(h.controls.getView().k >= h.controls.getFittedView().k);
 });

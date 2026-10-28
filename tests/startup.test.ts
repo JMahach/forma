@@ -750,7 +750,7 @@ for (const preview of [false, true]) test(`camera owns the saved position during
   };
   function persist() {
     const home = camera.getFittedView();
-    camera.setView({ ...home, k: 6 }, { maxScale: 7 });
+    camera.setView({ ...home, k: 2 });
     const position = camera.getView(), expected = camera.getSavedView(), before = reads;
     document.defaultView.dispatchEvent(new Event('pagehide'));
     assert.equal(reads, before + 1, 'startup delegates the snapshot to its existing camera');
@@ -759,7 +759,7 @@ for (const preview of [false, true]) test(`camera owns the saved position during
     camera.restoreView(writes.at(-1)!.camera);
     const restored = camera.getView();
     for (const key of ['x', 'y', 'k'] as const) assert.ok(Math.abs(restored[key] - position[key]) < 1e-10);
-    assert.ok(Math.abs(camera.maximumScale() - 7) < 1e-10);
+    assert.ok(Math.abs(camera.maximumScale() - cameraModule.MAX_ZOOM) < 1e-10);
     exercised = true;
   }
   await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub,
