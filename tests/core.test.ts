@@ -147,9 +147,9 @@ test('zoom keeps the graph point beneath its anchor invariant', () => {
 
 test('zoom clamps its range and stays stationary when already at a limit', () => {
   const anchor = { x: 320, y: 410 };
-  assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 100).k, 4.5);
+  assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 100).k, 3.6);
   assert.equal(zoomAt({ x: 0, y: 0, k: 1 }, anchor, 0.01).k, 0.65);
-  const maximum = { x: -800, y: -900, k: 4.5 };
+  const maximum = { x: -800, y: -900, k: 3.6 };
   const minimum = { x: 15, y: -20, k: 0.65 };
   assert.deepEqual(zoomAt(maximum, anchor, 2), maximum);
   assert.deepEqual(zoomAt(minimum, anchor, 0.5), minimum);
@@ -187,7 +187,7 @@ test('fit clamps extreme scales to the same supported zoom range', () => {
   const small = fitView(bounds, { x: 0, y: 0, width: 10, height: 10 });
   const large = fitView(bounds, { x: 0, y: 0, width: 2000, height: 2000 });
   assert.equal(small.k, 0.65);
-  assert.equal(large.k, 4.5);
+  assert.equal(large.k, 3.6);
   assert.ok(validView(small));
   assert.ok(validView(large));
   assert.equal(small.x + 50 * small.k, 5);
@@ -197,8 +197,8 @@ test('fit clamps extreme scales to the same supported zoom range', () => {
 test('saved view validation accepts bounds and rejects non-finite or oversized coordinates', () => {
   assert.ok(validView({ x: 0, y: 0, k: 1 }));
   assert.ok(validView({ x: -5000, y: 6000, k: 0.65 }));
-  assert.ok(validView({ x: 5000, y: -6000, k: 4.5 }));
-  for (const view of [null, undefined, {}, { x: 0, y: 0 }, { x: NaN, y: 0, k: 1 }, { x: 0, y: Infinity, k: 1 }, { x: 0, y: 0, k: '1' }, { x: 0, y: 0, k: 0.64 }, { x: 0, y: 0, k: 4.51 }, { x: 5001, y: 0, k: 1 }, { x: 0, y: -6001, k: 1 }] as const) {
+  assert.ok(validView({ x: 5000, y: -6000, k: 3.6 }));
+  for (const view of [null, undefined, {}, { x: 0, y: 0 }, { x: NaN, y: 0, k: 1 }, { x: 0, y: Infinity, k: 1 }, { x: 0, y: 0, k: '1' }, { x: 0, y: 0, k: 0.64 }, { x: 0, y: 0, k: 3.61 }, { x: 5001, y: 0, k: 1 }, { x: 0, y: -6001, k: 1 }] as const) {
     assert.ok(!validView(view));
   }
 });
@@ -576,7 +576,7 @@ test('only a background tap clears selection; dragging, pinching and cancelled p
   });
   const gate = { dataset: { type: 'gate' as const, id: '37' } };
   const send = (type: string, extra = {}) => listeners.get(type)!({ type, pointerId: 1, pointerType: 'touch', button: 0,
-    clientX: 100, clientY: 100, target: { closest: () => null }, ...extra });
+    clientX: 100, clientY: 100, target: { closest: () => null }, preventDefault() {}, ...extra });
   send('pointerdown'); send('pointerup');
   assert.equal(cleared, 1);
   send('pointerdown', { target: { closest: () => gate } }); send('pointerup');
@@ -637,7 +637,7 @@ test('pointer and keyboard selections retain activation identity with per-press 
     for (const type of ['pointerdown', 'pointerup'] as const) {
       let prevented = false;
       listeners.get(type)!({ type, pointerId: 1, pointerType: 'touch', button: 0, clientX: 100, clientY: 100, target, preventDefault() { prevented = true; } });
-      assert.equal(prevented, type === 'pointerdown' && Boolean(dataset.activation), 'only activation presses suppress delayed native touch focus');
+      assert.equal(prevented, type === 'pointerdown', 'touch presses suppress compatibility mouse focus for every chart target');
     }
     assert.deepEqual(selected.at(-1), { ...dataset, pointerType: 'touch' }, `${dataset.activation || dataset.type} tap payload`);
     for (const key of ['Enter', ' '] as const) {

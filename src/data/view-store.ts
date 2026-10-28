@@ -158,7 +158,8 @@ function normalize(input: unknown): SavedView | null {
     camera: object(camera) && (['x', 'y', 'k'] as const).every(key => Number.isFinite(camera[key]))
       && Math.abs(camera.x) <= 20000 && Math.abs(camera.y) <= 20000 && camera.k >= 1 && camera.k <= 100
       ? { x: camera.x, y: camera.y, k: camera.k,
-        ...(Number.isFinite(camera.maxK) && camera.maxK! >= camera.k && camera.maxK! <= 100 ? { maxK: camera.maxK } : {}) } : null,
+        ...(Number.isFinite(camera.maxK) && camera.maxK! >= camera.k && camera.maxK! <= 100 ? { maxK: camera.maxK } : {}),
+        ...(Number.isFinite(camera.zoomLimit) && camera.zoomLimit! > 0 && camera.zoomLimit! <= 100 ? { zoomLimit: camera.zoomLimit } : {}) } : null,
     lifetime: object(lifetime) && lifetime.opened === true && ['day', 'lifetime'].includes(lifetimeMode!)
       && (lifetimeMode === 'day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
       ? { opened: true, mode: lifetimeMode!, fromDate: date(lifetime.fromDate) ? lifetime.fromDate : null,

@@ -1,7 +1,7 @@
 import type { Bounds, CameraFrame } from './geometry/frames.ts';
 export interface Point { x: number; y: number }
 export interface CameraPosition extends Point { k: number }
-export interface SavedCameraPosition extends CameraPosition { maxK?: number }
+export interface SavedCameraPosition extends CameraPosition { maxK?: number; zoomLimit?: number }
 export interface FitMeasurement { area: Bounds; min: number; viewport?: Bounds; screenScale?: number }
 interface CameraOptions {
   getFrame?: () => CameraFrame | null;
@@ -13,23 +13,26 @@ export type Camera = ReturnType<typeof createCamera>;
 
 import { DRAWING_BOUNDS, CHART_FRAME } from './geometry/frames.ts';
 
+// One authored ceiling; panel resizing only converts it between projections.
+export const MAX_ZOOM = 3.6;
+
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
-export function zoomAt(view: CameraPosition, point: Point, factor: number, { min = 0.65, max = 4.5 } = {}) {
+export function zoomAt(view: CameraPosition, point: Point, factor: number, { min = 0.65, max = MAX_ZOOM } = {}) {
   const k = clamp(view.k * factor, min, max);
   if (k === view.k) return { ...view };
   const ratio = k / view.k;
   return { x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio, k };
 }
 
-export function validView(input: unknown, { min = 0.65, max = 4.5 } = {}): input is CameraPosition {
+export function validView(input: unknown, { min = 0.65, max = MAX_ZOOM } = {}): input is CameraPosition {
   const value = input as CameraPosition | null | undefined;
-  const coordinateLimit = Math.max(1, max / 4.5);
+  const coordinateLimit = Math.max(1, max / MAX_ZOOM);
   return !!value && (['x', 'y', 'k'] as const).every(key => Number.isFinite(value[key])) && value.k >= min && value.k <= max
     && Math.abs(value.x) <= 5000 * coordinateLimit && Math.abs(value.y) <= 6000 * coordinateLimit;
 }
 
-export function fitView(bounds: Bounds, area: Bounds, { min = 0.65, max = 4.5 } = {}) {
+export function fitView(bounds: Bounds, area: Bounds, { min = 0.65, max = MAX_ZOOM } = {}) {
   const k = clamp(Math.min(area.width / bounds.width, area.height / bounds.height), min, max);
   return { k, x: area.x + area.width / 2 - (bounds.x + bounds.width / 2) * k, y: area.y + area.height / 2 - (bounds.y + bounds.height / 2) * k };
 }
@@ -41,7 +44,7 @@ export function isHomeView(view: CameraPosition, fitted: CameraPosition) {
 
 // The chosen Home field stays covered by its zoomed projection: at 100% each
 // interval collapses to its home coordinate, so the camera cannot drift.
-export function constrainView(view: CameraPosition, fitted: CameraPosition, bounds: Bounds = DRAWING_BOUNDS, { max = 4.5 } = {}) {
+export function constrainView(view: CameraPosition, fitted: CameraPosition, bounds: Bounds = DRAWING_BOUNDS, { max = MAX_ZOOM } = {}) {
   const k = clamp(view.k, fitted.k, max);
   if (k <= fitted.k * (1 + 1e-9)) return { ...fitted };
   const left = fitted.x + bounds.x * fitted.k;
@@ -59,7 +62,7 @@ export function constrainView(view: CameraPosition, fitted: CameraPosition, boun
 // Screen measurement and painting arrive through explicit callbacks.
 export function createCamera({ getFrame = () => null, getHomeFrame = null, measureFit, onChange }: CameraOptions) {
   let view = { x: 0, y: 0, k: 1 };
-  let fittedView = { ...view }, maximumScale = 4.5;
+  let fittedView = { ...view }, maximumScale = MAX_ZOOM;
   const activeFrame = () => getFrame() ?? CHART_FRAME;
   const homeFrame = () => getHomeFrame?.() ?? activeFrame();
   const studioHome = typeof getHomeFrame === 'function';
@@ -151,15 +154,23 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     // Storage timing and lifetime stay with the caller.
     getSavedView(): SavedCameraPosition {
       return { x: (view.x - fittedView.x) / fittedView.k, y: (view.y - fittedView.y) / fittedView.k,
-        k: view.k / fittedView.k, maxK: maximumScale / fittedView.k };
+        k: view.k / fittedView.k, maxK: maximumScale / fittedView.k, zoomLimit: MAX_ZOOM };
     },
     // One saved-view recipe serves early startup and full view restoration.
     restoreView(position: SavedCameraPosition | null | undefined) {
       fit();
       if (!position) return;
-      controls.setView({ x: fittedView.x + position.x * fittedView.k, y: fittedView.y + position.y * fittedView.k,
-        k: position.maxK ? position.k * fittedView.k : Math.min(4.5, position.k * fittedView.k) },
-      position.maxK ? { maxScale: position.maxK * fittedView.k } : undefined);
+      // Older snapshots were written with a 4.5 ceiling. Record the authored
+      // limit so a later reduction is applied once, including panel-sized views.
+      const savedLimit = Number.isFinite(position.zoomLimit) && position.zoomLimit! > 0 ? position.zoomLimit! : 4.5;
+      const restoredLimit = position.maxK ? position.maxK * fittedView.k * MAX_ZOOM / savedLimit : maximumScale;
+      const restored = { x: fittedView.x + position.x * fittedView.k, y: fittedView.y + position.y * fittedView.k,
+        k: position.k * fittedView.k };
+      const area = homeMeasurement!.area;
+      const anchor = { x: area.x + area.width / 2, y: area.y + area.height / 2 };
+      const limited = restored.k > restoredLimit
+        ? zoomAt(restored, anchor, restoredLimit / restored.k, { min: minimumScale(), max: restoredLimit }) : restored;
+      controls.setView(limited, { maxScale: restoredLimit });
     },
     minimumScale, maximumScale: () => maximumScale,
     pan(dx: number, dy: number) { view.x += dx; view.y += dy; apply(); },

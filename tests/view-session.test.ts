@@ -194,7 +194,7 @@ test('camera restoration rebases against the new screen Home and respects maximu
   const second = harness(first.storage, { size: 500 }); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.camera.getView().k / second.camera.getFittedView().k, 2);
   const third = harness(first.storage, { size: 5000, normalizeSavedView(value) { delete value!.camera!.maxK; return value; } }); t.after(() => third.transit.stop()); await third.view.restore();
-  assert.equal(third.camera.getView().k, 4.5);
+  assert.equal(third.camera.getView().k, 3.6);
 });
 
 test('a deleted chart falls back to transit and malformed presentation never clears the saved library', async t => {

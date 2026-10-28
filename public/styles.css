@@ -511,7 +511,7 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .activation-column[data-column-side='right'] { transform: translateX(var(--activation-column-offset, 0px)); }
 .mandala-drawing .activation-column[data-column-side='left'] { transform: translateX(calc(-1 * var(--activation-column-offset, var(--activation-column-expanded-offset)))); }
 .mandala-drawing .activation-column[data-column-side='right'] { transform: translateX(var(--activation-column-offset, var(--activation-column-expanded-offset))); }
-.mandala-scene > .bodygraph-mandala { transform-origin: 320px 398px; transform: scale(calc(.94 + .06 * var(--mandala-reveal, 1))); opacity: var(--mandala-reveal, 1); }
+.mandala-scene > .bodygraph-mandala { opacity: var(--mandala-reveal, 1); }
 
 /* Mandala view. */
 .mandala-switch { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 44px; height: 44px; min-height: 44px; padding: 0; gap: 0; border: 1px solid var(--panel-border); border-radius: 9px; background: var(--canvas-background); color: var(--panel-ink); }
@@ -1342,23 +1342,28 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 
 /* Persistent contours use one native, interruptible opacity transition.
    Hide settled effects; a touch browser must not revive them via synthetic hover. */
-.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus {
+.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bodygraph-integration-highlights > :is(.bg-integration-hover, .bg-integration-focus, [data-integration-effect="hover"], [data-integration-effect="focus"]) {
   visibility: hidden;
   transition: opacity 69ms ease-out, visibility 0s linear 69ms;
 }
+/* A released pin fades in its existing color. Reset its dormant paint only
+   after hiding, instead of recoloring the still-visible glow as a hover. */
+.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight {
+  transition: opacity 69ms ease-out, visibility 0s linear 69ms, stroke 0s linear 69ms, fill 0s linear 69ms;
+}
 :is(.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight)[opacity="1"],
 .bg-interactive:focus-visible :is(.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight),
-.bodygraph-channels:has(> .bg-interactive[data-type="integration"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover {
-  visibility: visible; transition-duration: 92ms, 0s; transition-delay: 0s;
+.bodygraph-channels:has(> .bg-interactive[data-type="integration"]:focus-visible) > .bodygraph-integration-highlights > :is(.bg-integration-hover, [data-integration-effect="hover"]) {
+  visibility: visible; transition-duration: 92ms, 0s, 0s, 0s; transition-delay: 0s;
 }
 @media (hover: hover) {
   .bg-interactive:hover :is(.bg-gate-highlight, .bg-gate-glow, .bg-channel-highlight),
-  .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover {
-    visibility: visible; transition-duration: 92ms, 0s; transition-delay: 0s;
+  .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > :is(.bg-integration-hover, [data-integration-effect="hover"]) {
+    visibility: visible; transition-duration: 92ms, 0s, 0s, 0s; transition-delay: 0s;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus { transition: none !important; }
+  .bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bodygraph-integration-highlights > :is(.bg-integration-hover, .bg-integration-focus, [data-integration-effect="hover"], [data-integration-effect="focus"]) { transition: none !important; }
 }
 
 

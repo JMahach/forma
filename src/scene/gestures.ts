@@ -120,9 +120,15 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
       // The first press owns both the target and modifier for this gesture.
       initialAdditive = Boolean(event.shiftKey);
     }
-    // Touch synthesizes mouse focus after pointerup, which could refocus an
-    // activation that this tap just deselected. Keyboard focus stays native.
-    if (initialTarget?.dataset.activation) {
+    // A touch commits on release; native mouse focus would add a separate
+    // highlight before that commit. Keep keyboard/mouse focus independent.
+    if (initialTarget && event.pointerType === 'touch') {
+      event.preventDefault();
+      if (!pointers.size) {
+        const focused = svg.ownerDocument?.activeElement;
+        if (focused && svg.contains(focused)) (focused as HTMLElement | SVGElement).blur?.();
+      }
+    } else if (initialTarget?.dataset.activation) {
       event.preventDefault();
       if (!pointers.size) initialTarget.focus?.({ preventScroll: true });
     }

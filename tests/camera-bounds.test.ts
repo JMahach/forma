@@ -33,7 +33,7 @@ const projected = (view: { readonly x: 60; readonly y: 25; readonly k: 0.65; }|{
 function assertCoversHome(view: { readonly x: 60; readonly y: 25; readonly k: 0.65; }|{ readonly x: -80; readonly y: 105; readonly k: 1.2; }, fitted: { readonly x: 60; readonly y: 25; readonly k: 0.65; }|{ readonly x: -80; readonly y: 105; readonly k: 1.2; }, bounds = DRAWING_BOUNDS) {
   const current = projected(view, bounds), home = projected(fitted, bounds);
   assert.ok(view.k >= fitted.k - 1e-10, 'zoom stays at or above the fitted 100% view');
-  assert.ok(view.k <= 4.5, 'zoom keeps the supported maximum');
+  assert.ok(view.k <= 3.6, 'zoom keeps the supported maximum');
   assert.ok(current.left <= home.left + 1e-8, 'the drawing covers the home frame on the left');
   assert.ok(current.right >= home.right - 1e-8, 'the drawing covers the home frame on the right');
   assert.ok(current.top <= home.top + 1e-8, 'the drawing covers the home frame at the top');
@@ -48,14 +48,14 @@ test('constrainView makes the fitted view an exact minimum and leaves its inputs
       assert.deepEqual(constrainView(view, fitted), fitted, '100% fixes both position and scale to Home');
       assert.equal(JSON.stringify({ fitted, view }), before);
     }
-    assert.equal(constrainView({ x: 100, y: -100, k: 20 }, fitted).k, 4.5);
+    assert.equal(constrainView({ x: 100, y: -100, k: 20 }, fitted).k, 3.6);
   }
 });
 
 test('constrainView clamps all four pan directions to the projected home frame for fixed or supplied bounds', () => {
   for (const bounds of [DRAWING_BOUNDS, { x: -20, y: 15, width: 500, height: 700 }] as const) {
     for (const fitted of [{ x: 60, y: 25, k: 0.65 }, { x: -80, y: 105, k: 1.2 }] as const) {
-      for (const k of [fitted.k * 1.25, fitted.k * 2, 4.5] as const) {
+      for (const k of [fitted.k * 1.25, fitted.k * 2, 3.6] as const) {
         const home = projected(fitted, bounds);
         for (const [x, y] of [[-5000, -6000], [-5000, 6000], [5000, -6000], [5000, 6000]] as const) {
           const view = constrainView({ x, y, k }, fitted, bounds), current = projected(view, bounds);
@@ -65,7 +65,7 @@ test('constrainView clamps all four pan directions to the projected home frame f
           assert.deepEqual(constrainView(view, fitted, bounds), view, 'the constraint is stable after reaching an edge');
         }
         const center = { x: (home.left + home.right) / 2, y: (home.top + home.bottom) / 2 };
-        const centered = zoomAt(fitted, center, k / fitted.k, { min: fitted.k, max: 4.5 });
+        const centered = zoomAt(fitted, center, k / fitted.k, { min: fitted.k, max: 3.6 });
         assert.deepEqual(constrainView(centered, fitted, bounds), centered, 'a valid pan position does not jump');
       }
     }
@@ -82,7 +82,7 @@ test('zoomAt accepts a fitted minimum while preserving its anchor and old defaul
     closeTo(next.y + point.y * next.k, anchor.y, 'vertical anchor is retained');
   }
   assert.equal(zoomAt(view, anchor, 0.001).k, 0.65, 'the optional argument preserves callers that use default limits');
-  assert.equal(zoomAt(view, anchor, 100).k, 4.5);
+  assert.equal(zoomAt(view, anchor, 100).k, 3.6);
 });
 
 function cameraHarness(t: test.TestContext, initialRect = { left: 0, top: 0, width: 640, height: 820 }) {
@@ -222,7 +222,7 @@ test('setView and reset enforce the home floor and keep returned camera snapshot
   const harness = cameraHarness(t), home = harness.fitted;
   harness.controls.setView({ x: 5000, y: -6000, k: 0.65 });
   assert.deepEqual(harness.controls.getView(), home, 'a formerly valid smaller saved view is raised to Home');
-  for (const value of [{ x: -5000, y: 6000, k: 2 }, { x: 5000, y: -6000, k: 4.5 }] as const) {
+  for (const value of [{ x: -5000, y: 6000, k: 2 }, { x: 5000, y: -6000, k: 3.6 }] as const) {
     harness.controls.setView(value);
     assertCoversHome(harness.controls.getView(), home);
   }
@@ -252,7 +252,7 @@ test('resizing recomputes the fitted floor, preserves relative zoom when possibl
   assertCoversHome(harness.controls.getView(), harness.fitted);
   harness.controls.zoom(100);
   harness.resize({ left: 0, top: 0, width: 1800, height: 1400 });
-  assert.equal(harness.controls.getView().k, 4.5, 'resizing a maximally zoomed view respects the absolute ceiling');
+  assert.equal(harness.controls.getView().k, 3.6, 'resizing a maximally zoomed view respects the absolute ceiling');
   assertCoversHome(harness.controls.getView(), harness.fitted);
   harness.resize({ left: 0, top: 0, width: 390, height: 844 });
   assertCoversHome(harness.controls.getView(), harness.fitted);

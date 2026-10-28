@@ -109,6 +109,7 @@ test('hovering an ordinary full channel preserves the pinned gate or center colo
 test('small glow contours do not ask the browser to filter an entire chart', () => {
   const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
   root.innerHTML = renderBodygraph(chart, null, { highlightStyle: 'glow' });
+  assert.equal(root.querySelectorAll('feMorphology').length, 0, 'glow does not search an expanding pixel neighborhood');
   for (const [selector, maxWidth, maxHeight] of [
     ['[data-type="center"][data-id="throat"] .bg-center-highlight', 200, 200],
     ['[data-type="channel"][data-id="1-8"] .bg-channel-highlight', 70, 400],
@@ -180,7 +181,7 @@ test('glow masks and pinned integration colors are bounded to their visible cont
   const mask = root.querySelector(center.getAttribute('mask')!.slice(4, -1))!;
   assert.ok(Number(mask.getAttribute('width')) < 200 && Number(mask.getAttribute('height')) < 200, 'center cutout must be as local as its blur');
   const integration = root.querySelector('.bodygraph-integration-highlights')!;
-  const filter = root.querySelector(integration.getAttribute('filter')!.slice(4, -1))!;
+  const filter = root.querySelector(integration.querySelector('[data-integration-effect]')!.getAttribute('filter')!.slice(4, -1))!;
   for (const node of [...root.querySelectorAll('mask').filter(n => n.id.includes('integration')), ...root.querySelectorAll('.bg-integration-color-defs pattern')]) {
     for (const dimension of ['x', 'y', 'width', 'height']) assert.equal(node.getAttribute(dimension), filter.getAttribute(dimension), `${node.id}: ${dimension}`);
   }
@@ -244,4 +245,40 @@ test('uniform integration selection uses solid paint; native focus and mixed pre
       }
     }
   }
+});
+
+test('integration cross-fades the finished glow instead of changing the filter input every frame', () => {
+  const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
+  const renderer = createSceneRenderer(root);
+  const options = { highlightStyle: 'glow' as const };
+  renderer.update(chart, { type: 'center', id: 'g' }, options);
+  const animated: { node: Element; animation: Animation }[] = [];
+  const prepare = (node: Element) => {
+    node.animate = () => {
+      const animation = { cancel() {}, onfinish: null } as unknown as Animation;
+      animated.push({ node, animation }); return animation;
+    };
+    return node;
+  };
+  prepare(root);
+  for (const node of root.querySelectorAll('*')) prepare(node);
+  const create = document.createElementNS.bind(document);
+  document.createElementNS = (ns, tag) => prepare(create(ns, tag));
+  Object.assign(document, { defaultView: {
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    getComputedStyle: () => ({ opacity: '0.4' }),
+  } });
+  renderer.update(chart, { type: 'center', id: 'sacral' }, options);
+  const layer = root.querySelector('.bodygraph-integration-highlights')!;
+  const effects = animated.filter(({ node }) => node.parentElement === layer);
+  assert.equal(effects.length, 2, 'the previous and new contours have one fade each');
+  assert.equal(layer.getAttribute('filter'), null, 'an ancestor must not re-filter the animated composition');
+  for (const { node } of effects) {
+    assert.match(node.getAttribute('filter')!, /^url\(#.+-glow-integration\)$/);
+    assert.ok(node.querySelector('path')?.getAttribute('mask'), 'ownership is cut before the halo is prepared');
+  }
+  assert.ok(layer.getAttribute('mask'), 'physical interiors remain protected after the halo');
+  for (const { animation } of animated) animation.onfinish?.({} as AnimationPlaybackEvent);
+  assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing]').length, 0);
+  assert.equal(layer.querySelectorAll('[data-integration-effect="selection"]').length, 1, 'only current paint remains');
 });

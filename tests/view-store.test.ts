@@ -210,6 +210,12 @@ test('camera maximum scale round-trips while malformed maxima cannot bypass zoom
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
   store.write({ ...snapshot, camera: { ...snapshot.camera, maxK: 8 } });
   assert.deepEqual(store.read()!.camera, { x: -320, y: -410, k: 2, maxK: 8 });
+  store.write({ ...snapshot, camera: { ...snapshot.camera, maxK: 8, zoomLimit: 4.05 } });
+  assert.deepEqual(store.read()!.camera, { x: -320, y: -410, k: 2, maxK: 8, zoomLimit: 4.05 });
+  for (const zoomLimit of [0, -1, 101, Infinity, '4.05'] as const) {
+    store.write({ ...snapshot, camera: { ...snapshot.camera, zoomLimit } });
+    assert.deepEqual(store.read()!.camera, snapshot.camera);
+  }
   for (const maxK of [1, 101, Infinity, '8'] as const) {
     store.write({ ...snapshot, camera: { ...snapshot.camera, maxK } });
     assert.deepEqual(store.read()!.camera, snapshot.camera);

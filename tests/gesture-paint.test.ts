@@ -48,7 +48,7 @@ function harness({ deferred = true, resolvePointerTarget } = {}) {
   controls.reset();
   transforms.length = changes.length = cursorChanges.length = 0;
   return {
-    controls, queued, changes, transforms, selections, cursorChanges,
+    controls, queued, changes, transforms, selections, cursorChanges, svg,
     send(type: string, extra = {}) {
       listeners.get(type)({ type, pointerId: 1, pointerType: 'touch', button: 0,
         clientX: width / 2, clientY: height / 2, target: svg, preventDefault() {}, ...extra });
@@ -597,4 +597,38 @@ test('the grabbing cursor ends with the mouse even if a finger remains pressed',
   assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
   h.send('pointercancel', { pointerType: 'touch', pointerId: 1 });
   assert.deepEqual(h.cursorChanges, [['is-dragging', true], ['is-dragging', false]]);
+});
+
+
+test('a touch selects once on release without staging native focus on the chart', () => {
+  for (const dataset of [
+    { type: 'center', id: 'head' }, { type: 'gate', id: '64' },
+    { type: 'channel', id: '64-47' }, { type: 'integration', id: 'integration' },
+    { type: 'gate', id: '64', activation: 'personality-sun' },
+  ]) {
+    const h = harness();
+    let prevented = 0, blurred = 0, focused = 0;
+    const oldTarget = { blur() { blurred++; } };
+    Object.assign(h.svg, { ownerDocument: { activeElement: oldTarget }, contains: node => node === oldTarget });
+    const target = { dataset, closest() { return this; }, focus() { focused++; } };
+    h.send('pointerdown', { target, preventDefault() { prevented++; } });
+    assert.equal(prevented, 1, 'touch cannot stage compatibility mouse focus before committing');
+    assert.equal(blurred, 1, 'previous chart focus cannot keep a deselected contour lit');
+    assert.equal(focused, 0, 'touch does not pretend to be keyboard navigation');
+    assert.deepEqual(h.selections, [], 'pressing may still become a pan or pinch');
+    h.send('pointerup', { target });
+    assert.deepEqual(h.selections, [{ ...dataset, pointerType: 'touch' }]);
+    h.send('keydown', { target, key: 'Enter' });
+    assert.deepEqual(h.selections.at(-1), dataset, 'keyboard activation remains available after touch');
+  }
+});
+
+test('touch focus cleanup does not blur controls outside the drawing', () => {
+  const h = harness();
+  const field = { blur() { assert.fail('form focus belongs to its own owner'); } };
+  Object.assign(h.svg, { ownerDocument: { activeElement: field }, contains: () => false });
+  const target = { dataset: { type: 'center', id: 'ajna' }, closest() { return this; } };
+  h.send('pointerdown', { target });
+  h.send('pointercancel', { target });
+  assert.deepEqual(h.selections, []);
 });

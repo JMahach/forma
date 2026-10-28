@@ -73,7 +73,7 @@ test('optional fitting and validation limits leave the normal camera defaults un
   assert.equal(validView(wide, { min: 0.1 }), true);
   assert.equal(validView({ ...wide, k: NaN }, { min: 0.1 }), false);
   assert.equal(validView({ ...wide, k: 5 }, { min: 0.1 }), false);
-  assert.equal(fitView(DRAWING_BOUNDS, { x: 0, y: 0, width: 9000, height: 9000 }).k, 4.5);
+  assert.equal(fitView(DRAWING_BOUNDS, { x: 0, y: 0, width: 9000, height: 9000 }).k, 3.6);
 });
 
 test('an unattached mode controller returning undefined falls back to the unchanged normal frame', t => {

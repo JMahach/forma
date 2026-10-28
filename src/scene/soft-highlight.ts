@@ -68,7 +68,7 @@ export function softHighlightFragment(parent: Element, before: Node, initial: Ch
 export function observeSoftHighlightMotion(root: Element) {
   const media = root.ownerDocument.defaultView?.matchMedia('(prefers-reduced-motion: reduce)');
   if (!media?.addEventListener) return () => {};
-  const contours = '.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus, .bg-integration-selection, [data-highlight-gate], [data-soft-highlight-outgoing]';
+  const contours = '.bg-gate-highlight, .bg-gate-glow, .bg-center-highlight, .bg-channel-highlight, .bg-integration-hover, .bg-integration-focus, .bg-integration-selection, [data-integration-effect], [data-highlight-gate], [data-soft-highlight-outgoing]';
   function settle() {
     for (const animation of root.getAnimations({ subtree: true })) {
       const target = (animation.effect as KeyframeEffect | null)?.target;

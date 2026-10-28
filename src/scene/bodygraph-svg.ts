@@ -27,12 +27,16 @@ const CENTER_HIGHLIGHT_INNER_WIDTH = CENTER_STROKE + HIGHLIGHT_OUTLINE.centerGap
 const CENTER_HIGHLIGHT_WIDTH = CENTER_HIGHLIGHT_INNER_WIDTH + HIGHLIGHT_OUTLINE.width * 2;
 
 // SmoothUI Border Beam's core/halo layering, frozen on our native contours.
-// Widen only the soft halo, keeping the requested thin SourceGraphic sharp.
-// Both layers retain Forma's exact blue rather than tinting it toward white.
+// Widen only the soft halo, keeping the thin SourceGraphic sharp. A small
+// blur plus an alpha ramp replaces the costly pixel-neighborhood dilation.
+// The ramp spreads a straight edge by about twice the small blur radius;
+// corners are softly rounded rather than expanded by a square kernel.
+// RGB stays untouched; opacity/fades belong to the referencing contour.
 function highlightGlow(id: string, x: number, y: number, width: number, height: number,
   halo = { spread: 1.6, blur: 2.4, opacity: 1 }) {
   return `<filter id="${id}" filterUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}" color-interpolation-filters="sRGB">
-      <feMorphology in="SourceGraphic" operator="dilate" radius="${halo.spread}" result="halo-wide"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="${halo.spread / 2}" result="halo-spread"/>
+      <feComponentTransfer in="halo-spread" result="halo-wide"><feFuncA type="linear" slope="17.3"/></feComponentTransfer>
       <feGaussianBlur in="halo-wide" stdDeviation="${halo.blur}" result="halo-blur"/>
       ${halo.opacity === 1 ? '' : `<feComponentTransfer in="halo-blur" result="halo"><feFuncA type="linear" slope="${halo.opacity}"/></feComponentTransfer>`}
       <feMerge><feMergeNode in="${halo.opacity === 1 ? 'halo-blur' : 'halo'}"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -68,6 +72,8 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   variables = renderVariableArrows(chart, visibleVariables(chart, options))) {
   const thumbnail = options.profile === 'thumbnail';
   const glow = options.highlightStyle === 'glow';
+  const integrationHoverSelector = glow ? '[data-integration-effect="hover"]' : '.bg-integration-hover';
+  const integrationFocusSelector = glow ? '[data-integration-effect="focus"]' : '.bg-integration-focus';
   const highlightWidth = channelHighlightWidth(options.highlightStyle);
   const maskForIntegration = (id: string, gates?: readonly number[], stem?: boolean, maskPrefix?: string, connected?: readonly number[], active?: readonly string[]) =>
     integrationOutlineMask(id, gates, stem, maskPrefix, connected, active, options.highlightStyle);
@@ -113,10 +119,14 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
 
   // Child ownership masks preserve the authored integration cuts. Their inner
   // subtraction now includes a gap; no blur or color covers the physical node.
-  const integrationHighlights = thumbnail ? '' : `<g class="bodygraph-integration-highlights" ${glow ? `filter="url(#${prefix}-glow-integration)" mask="url(#${prefix}-integration-outline)"` : `mask="url(#${prefix}-highlight-exterior)"`} pointer-events="none">
-    <path class="bg-integration-hover" d="${INTEGRATION_PATH}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="butt" stroke-linejoin="round" mask="url(#${prefix}-integration-outline)" opacity="0" pointer-events="none"/>
-    ${selectionPath ? `<path class="bg-integration-selection" d="${selectionPath}" fill="none" stroke="${integrationHighlight.selectionColor}" stroke-width="${highlightWidth}" stroke-linecap="${integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})" pointer-events="none"/>` : ''}
-    ${integrationChannels.map(channel => `<path class="bg-integration-focus" data-highlight-channel="${channel.id}" d="${integrationRoute(channel.gates)}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#${prefix}-integration-focus-${channel.id})" opacity="0" style="--integration-focus-opacity:${integrationFocusOpacity(channel)}" pointer-events="none"/>`).join('')}
+  // Glow is computed from a steady masked contour. Fade its result, not the
+  // filter input; the shared outer mask still protects the physical node.
+  const integrationEffect = (kind: string, path: string, extra = '') => glow
+    ? `<g data-integration-effect="${kind}" filter="url(#${prefix}-glow-integration)"${kind === 'selection' ? '' : ' opacity="0"'}${extra}>${path}</g>` : path;
+  const integrationHighlights = thumbnail ? '' : `<g class="bodygraph-integration-highlights" ${glow ? `mask="url(#${prefix}-integration-outline)"` : `mask="url(#${prefix}-highlight-exterior)"`} pointer-events="none">
+    ${integrationEffect('hover', `<path class="bg-integration-hover" d="${INTEGRATION_PATH}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="butt" stroke-linejoin="round" mask="url(#${prefix}-integration-outline)"${glow ? '' : ' opacity="0"'} pointer-events="none"/>`)}
+    ${selectionPath ? integrationEffect('selection', `<path class="bg-integration-selection" d="${selectionPath}" fill="none" stroke="${integrationHighlight.selectionColor}" stroke-width="${highlightWidth}" stroke-linecap="${integrationSelected ? 'butt' : 'round'}" stroke-linejoin="round" mask="url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})" pointer-events="none"/>`) : ''}
+    ${integrationChannels.map(channel => integrationEffect('focus', `<path class="bg-integration-focus" data-highlight-channel="${channel.id}" d="${integrationRoute(channel.gates)}" fill="none" stroke="${integrationHighlight.color}" stroke-width="${highlightWidth}" stroke-linecap="round" stroke-linejoin="round" mask="url(#${prefix}-integration-focus-${channel.id})"${glow ? '' : ` opacity="0" style="--integration-focus-opacity:${integrationFocusOpacity(channel)}"`} pointer-events="none"/>`, ` data-highlight-channel="${channel.id}" style="--integration-focus-opacity:${integrationFocusOpacity(channel)}"`)).join('')}
   </g>`;
   // The six channel buttons are siblings of the bundle, keyboard-only in the
   // graph. Transparent paths preserve their focus bounds; their halos live in
@@ -203,8 +213,8 @@ ${thumbnail ? '' : `  <style>
     .bg-interactive:focus-visible .bg-gate-glow { opacity: 1; }
     .bg-interactive:focus-visible .bg-center-highlight { opacity: 1; }
     .bg-interactive:focus-visible .bg-channel-highlight { opacity: 1; }
-    .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
-    ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > .bg-integration-focus[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); visibility: visible; transition-duration: ${SOFT_HIGHLIGHT_DURATION.enter}ms, 0s; transition-delay: 0s; }`).join('\n    ')}
+    .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:focus-visible) > .bodygraph-integration-highlights > ${integrationHoverSelector} { opacity: 1; }
+    ${integrationChannels.map(channel => `.bodygraph-channels:has(> .bg-interactive[data-integration="true"][data-id="${channel.id}"]:focus-visible) > .bodygraph-integration-highlights > ${integrationFocusSelector}[data-highlight-channel="${channel.id}"] { opacity: var(--integration-focus-opacity, 1); visibility: visible; transition-duration: ${SOFT_HIGHLIGHT_DURATION.enter}ms, 0s; transition-delay: 0s; }`).join('\n    ')}
     .bg-activation { cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
     /* Safari needs explicit inheritance to keep the line suffix on the gate baseline. */
     .bg-activation tspan { dominant-baseline: inherit; }
@@ -216,7 +226,7 @@ ${thumbnail ? '' : `  <style>
       .bg-interactive:hover .bg-gate-highlight { opacity: 1; }
       .bg-interactive:hover .bg-gate-glow { opacity: 1; }
       .bg-interactive[data-type="channel"]:hover > .bg-channel-highlight { opacity: 1; }
-      .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > .bg-integration-hover { opacity: 1; }
+      .bodygraph-channels:has(> .bg-interactive[data-type="integration"][data-visual-selected="false"]:hover) > .bodygraph-integration-highlights > ${integrationHoverSelector} { opacity: 1; }
     }
   </style>`}
   ${options.showMandala || options.showMandalaLayer ? `<g class="mandala-scene" transform="${MANDALA_SCENE_TRANSFORM}">${renderMandala(chart, { interactive: interactive && Boolean(options.showMandala), selectedGates: committedGates, relatedGates, pinnedCrosses: options.pinnedCrosses, previewCross: options.previewSelection?.type === 'mandala-cross' ? options.previewSelection.cross : null })}</g>\n  ` : ''}<g class="bodygraph-drawing${options.showMandala ? ' mandala-drawing' : ''}"${options.profile === 'studio' ? ` transform="${DRAWING_TRANSFORM}"` : ''} style="--activation-column-expanded-offset:${ACTIVATION_COLUMN_REVEAL_DISTANCE}px" ${interactive ? '' : 'pointer-events="none"'}>

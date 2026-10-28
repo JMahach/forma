@@ -128,10 +128,10 @@ test('pan edges remain valid through responsive Home rebases and absolute maximu
     h.toggle();
   }
   h.controls.zoom(100);
-  assert.equal(h.controls.getView().k, 4.5);
+  assert.equal(h.controls.getView().k, 3.6);
   h.toggle(); h.toggle();
-  assert.ok(h.controls.getView().k <= 4.5);
+  assert.ok(h.controls.getView().k <= 3.6);
   h.resize(1600, 1200, false);
-  assert.ok(h.controls.getView().k <= 4.5);
+  assert.ok(h.controls.getView().k <= 3.6);
   assert.ok(h.controls.getView().k >= h.controls.getFittedView().k);
 });
