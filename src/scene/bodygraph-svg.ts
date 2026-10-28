@@ -2,7 +2,7 @@ import { paintIntegrationLayers } from './integration-paint.ts';
 import type { ChartView } from '../domain/chart-composition.ts';
 import type { SelectionTarget, SelectionType } from '../selection/selection-targets.ts';
 import type { RenderState, RenderOptions } from './render-state.ts';
-import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelHighlightMaskId, channelPaint, channelLanes, centerPaint, gatePaint } from './bodygraph-paint.ts';
+import { PALETTE, CHANNEL_WIDTH, CHANNEL_HIGHLIGHT_INNER_WIDTH, activationLaneColor, paintGateActivation, integrationPaint, integrationHighlightPaint, integrationOutlineMask, integrationChannels, channelHighlightMaskId, channelPaint, channelLanes, centerPaint, gatePaint, gateGlowMaskId } from './bodygraph-paint.ts';
 import { CENTERS, GATES } from './geometry/chart-geometry.ts';
 import { renderActivationColumns } from './activation-columns.ts';
 import { renderVariableArrows, visibleVariables } from './variable-arrows.ts';
@@ -26,20 +26,41 @@ import { SOFT_HIGHLIGHT_DURATION } from './soft-highlight.ts';
 const CENTER_HIGHLIGHT_INNER_WIDTH = CENTER_STROKE + HIGHLIGHT_OUTLINE.centerGap * 2;
 const CENTER_HIGHLIGHT_WIDTH = CENTER_HIGHLIGHT_INNER_WIDTH + HIGHLIGHT_OUTLINE.width * 2;
 
+// Radial paint reproduces the fixed gate filter's alpha profile without a
+// blur for every circle. A mask keeps fill color transitions continuous,
+// unlike switching between colored gradient URLs. Distances use GATE_MARKER geometry;
+// repeated stops retain the sharp source ring merged above the soft halo.
+const GATE_GLOW_RADIUS = 16;
+const gateGlowOuter = GATE_MARKER.radius + GATE_MARKER.highlightWidth / 2;
+const gateGlowInner = GATE_MARKER.radius - GATE_MARKER.highlightWidth / 2;
+// Samples of blur(.4), alpha x17.3, blur(1.6), alpha x.65,
+// merged with the sharp source circle. These are drawing constants, not data.
+const gateGlowProfiles = {
+  disc: [[0, 1], [gateGlowOuter, 1], [gateGlowOuter, .4275], [9.5, .3462], [10, .2666], [10.5, .1923],
+    [11, .1293], [11.5, .0807], [12, .0465], [12.5, .0248], [13, .0121], [13.5, .0054], [14, .0022], [15, .0003], [16, 0]],
+  ring: [[0, 0], [4, .0274], [6, .191], [7, .3188], [gateGlowInner, .3888], [gateGlowInner, 1],
+    [gateGlowOuter, 1], [gateGlowOuter, .367], [9.5, .3138], [10, .2501], [10.5, .1847], [11, .126],
+    [11.5, .0794], [12, .0461], [12.5, .0246], [13, .0121], [13.5, .0054], [14, .0022], [15, .0003], [16, 0]],
+};
+function gateGlowDefinitions(prefix: string) {
+  return [false, true].map(active => {
+    const id = gateGlowMaskId(prefix, active);
+    return `<radialGradient id="${id}-alpha" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="${GATE_GLOW_RADIUS}">${gateGlowProfiles[active ? 'ring' : 'disc'].map(([r, alpha]) => `<stop offset="${r / GATE_GLOW_RADIUS}" stop-color="#ffffff" stop-opacity="${alpha}"/>`).join('')}</radialGradient><mask id="${id}" maskUnits="userSpaceOnUse" x="-16" y="-16" width="32" height="32" mask-type="alpha"><circle r="${GATE_GLOW_RADIUS}" fill="url(#${id}-alpha)"/></mask>`;
+  }).join('');
+}
+
 // SmoothUI Border Beam's core/halo layering, frozen on our native contours.
 // Widen only the soft halo, keeping the thin SourceGraphic sharp. A small
 // blur plus an alpha ramp replaces the costly pixel-neighborhood dilation.
 // The ramp spreads a straight edge by about twice the small blur radius;
 // corners are softly rounded rather than expanded by a square kernel.
 // RGB stays untouched; opacity/fades belong to the referencing contour.
-function highlightGlow(id: string, x: number, y: number, width: number, height: number,
-  halo = { spread: 1.6, blur: 2.4, opacity: 1 }) {
+function highlightGlow(id: string, x: number, y: number, width: number, height: number) {
   return `<filter id="${id}" filterUnits="userSpaceOnUse" x="${x}" y="${y}" width="${width}" height="${height}" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="${halo.spread / 2}" result="halo-spread"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.8" result="halo-spread"/>
       <feComponentTransfer in="halo-spread" result="halo-wide"><feFuncA type="linear" slope="17.3"/></feComponentTransfer>
-      <feGaussianBlur in="halo-wide" stdDeviation="${halo.blur}" result="halo-blur"/>
-      ${halo.opacity === 1 ? '' : `<feComponentTransfer in="halo-blur" result="halo"><feFuncA type="linear" slope="${halo.opacity}"/></feComponentTransfer>`}
-      <feMerge><feMergeNode in="${halo.opacity === 1 ? 'halo-blur' : 'halo'}"/><feMergeNode in="SourceGraphic"/></feMerge>
+      <feGaussianBlur in="halo-wide" stdDeviation="2.4" result="halo-blur"/>
+      <feMerge><feMergeNode in="halo-blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>`;
 }
 
@@ -167,7 +188,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     const { active, selected, related, label, opacity, fill, stroke } = paint;
     return `<g ${attrs('gate', gate.id, label, selected)} data-active="${active}" data-related="${related}" opacity="${opacity}" transform="translate(${gate.x} ${gate.y})">
       <circle class="bg-gate-hit" r="${GATE_POINTER_RADIUS}" fill="transparent" pointer-events="${interactive ? 'fill' : 'none'}"/>
-      ${glow ? `<circle class="bg-gate-glow" r="${GATE_MARKER.radius}" fill="${paint.highlightFill}" stroke="${paint.highlightColor}" stroke-width="${GATE_MARKER.highlightWidth}" filter="url(#${prefix}-gate-glow)" opacity="${paint.highlightOpacity}" pointer-events="none"/>
+      ${glow ? `<circle class="bg-gate-glow" r="${GATE_GLOW_RADIUS}" fill="${paint.highlightColor}" stroke="none" mask="${paint.glowMask}" opacity="${paint.highlightOpacity}" pointer-events="none"/>
       <circle class="bg-gate-disc" r="${GATE_MARKER.radius}" fill="${fill}" stroke="${stroke}" pointer-events="none"/>
       <circle class="bg-gate-highlight" data-state="${paint.highlightState}" r="${GATE_MARKER.radius}" fill="${paint.highlightFill}" stroke="${paint.highlightColor}" stroke-width="${GATE_MARKER.highlightWidth}" opacity="${paint.highlightOpacity}" pointer-events="none"/>` : `<circle class="bg-gate-disc" r="${GATE_MARKER.radius}" fill="${fill}" stroke="${stroke}" pointer-events="none"/>
       <circle class="bg-gate-glow" r="${GATE_MARKER.radius}" fill="none" stroke="${paint.highlightColor}" stroke-width="${GATE_MARKER.highlightWidth}" opacity="${paint.highlightOpacity}" pointer-events="none"/>
@@ -182,7 +203,7 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
     <g class="bg-channel-color-defs">${channelColors.join('')}</g>
     <g class="bg-integration-color-defs">${integrationHighlight.definitions}</g>
     <linearGradient id="${prefix}-dual" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="50%" stop-color="${activationLaneColor(state, 0)}"/><stop offset="50%" stop-color="${activationLaneColor(state, 1)}"/></linearGradient>
-    ${glow ? `${highlightGlow(`${prefix}-gate-glow`, -16, -16, 32, 32, { spread: .8, blur: 1.6, opacity: .65 })}
+    ${glow ? `${gateGlowDefinitions(prefix)}
     ${HIGHLIGHT_REGIONS.map(({ id, x, y, width, height }) => highlightGlow(`${prefix}-glow-${id}`, x, y, width, height)).join('')}
     <g id="${prefix}-center-glow-occlusion">
       ${[...paintOrder.filter(channel => !INTEGRATION_IDS.has(channel.id)).map(channel => channel.path), INTEGRATION_PATH].map(path => `<path d="${path}" fill="none" stroke="#000000" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round"/>`).join('')}

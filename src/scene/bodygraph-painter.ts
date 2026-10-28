@@ -189,8 +189,8 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         if (state.interactive) setAttribute(node, 'aria-label', paint.label);
         pressed(node, 'gate', gate.id, paint.selected, state);
         setAttributes(disc, { fill: paint.fill, stroke: paint.stroke });
-        if (options.highlightStyle === 'glow') setAttribute(glow, 'fill', paint.highlightFill);
-        setAttribute(glow, 'stroke', paint.highlightColor);
+        if (options.highlightStyle === 'glow') setAttributes(glow, { fill: paint.highlightColor, mask: paint.glowMask! });
+        else setAttribute(glow, 'stroke', paint.highlightColor);
         if (options.highlightStyle === 'glow') setAttribute(halo, 'stroke', paint.highlightColor);
         setAttribute(glow, 'opacity', paint.highlightOpacity);
         setAttributes(halo, { 'data-state': paint.highlightState, fill: paint.highlightFill });

@@ -63,10 +63,16 @@ test('pinned center darkens its whole blue family while simultaneous hover retai
     assert.equal(center.getAttribute('fill'), original, 'physical center color is untouched');
     assert.equal(root.querySelectorAll('.bg-center-selection').length, 0, 'no extra inner border or dark veil');
     assert.equal(root.querySelector('[data-type="center"][data-id="throat"] .bg-center-highlight')?.getAttribute('stroke'), '#83a9d2');
-    assert.equal(root.querySelector('[data-type="gate"][data-id="8"] .bg-gate-glow')?.getAttribute('stroke'), '#83a9d2');
+    const gateGlowColor = (id: number) => {
+      const glow = root.querySelector(`[data-type="gate"][data-id="${id}"] .bg-gate-glow`)!;
+      return highlightStyle === 'glow'
+        ? glow.getAttribute('fill')
+        : glow.getAttribute('stroke');
+    };
+    assert.equal(gateGlowColor(8), '#83a9d2');
     assert.equal(root.querySelector('[data-highlight-gate="8"] path')?.getAttribute('stroke'), '#83a9d2');
     assert.equal(root.querySelector('[data-type="center"][data-id="g"] .bg-center-highlight')?.getAttribute('stroke'), '#91bce9');
-    assert.equal(root.querySelector('[data-type="gate"][data-id="2"] .bg-gate-glow')?.getAttribute('stroke'), '#91bce9');
+    assert.equal(gateGlowColor(2), '#91bce9');
     const pattern = root.querySelector('.bg-integration-color-defs pattern')!;
     assert.equal(pattern.querySelector('rect')?.getAttribute('fill'), '#91bce9');
     assert.equal(pattern.querySelector('path')?.getAttribute('stroke'), '#83a9d2');
@@ -281,4 +287,38 @@ test('integration cross-fades the finished glow instead of changing the filter i
   for (const { animation } of animated) animation.onfinish?.({} as AnimationPlaybackEvent);
   assert.equal(root.querySelectorAll('[data-soft-highlight-outgoing]').length, 0);
   assert.equal(layer.querySelectorAll('[data-integration-effect="selection"]').length, 1, 'only current paint remains');
+});
+
+test('gate glow avoids blur filters and retains source colors through selection and activation changes', () => {
+  const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
+  const renderer = createSceneRenderer(root);
+  const gate = { type: 'gate', id: 5 } as const;
+  for (const active of [false, true, false]) {
+    const source = active ? { personality: [5] } : {};
+    for (const pinned of [false, true, false]) {
+      renderer.update(source, pinned ? gate : null, { highlightStyle: 'glow', previewSelection: gate });
+      const node = root.querySelector('[data-type="gate"][data-id="5"]')!;
+      const glow = node.querySelector('.bg-gate-glow')!;
+      assert.equal(glow.getAttribute('filter'), null, 'a circle must not run a blur filter');
+      assert.equal(glow.getAttribute('pointer-events'), 'none');
+      assert.equal(glow.getAttribute('opacity'), '1');
+      const id = glow.getAttribute('mask')!.match(/^url\(#(.+)\)$/)?.[1];
+      assert.ok(id, 'the soft edge is a shared radial alpha mask');
+      const mask = root.querySelector(`#${id}`)!;
+      assert.equal(mask.localName, 'mask');
+      const gradient = root.querySelector(mask.querySelector('circle')!.getAttribute('fill')!.slice(4, -1))!;
+      assert.equal(gradient.localName, 'radialGradient');
+      const stops = gradient.querySelectorAll('stop');
+      assert.ok(stops.length > 1);
+      for (const stop of stops) assert.equal(stop.getAttribute('stop-color'), '#ffffff');
+      assert.equal(glow.getAttribute('fill'), pinned ? '#83a9d2' : '#91bce9', 'color is animatable paint, not a discrete URL swap');
+      assert.equal(stops.at(-1)!.getAttribute('stop-opacity'), '0', 'the halo ends transparently');
+      assert.equal(node.querySelector('.bg-gate-disc')!.getAttribute('fill'), active ? '#202020' : 'transparent');
+      assert.equal(node.querySelector('.bg-gate-highlight')!.getAttribute('r'), '8.4');
+      assert.equal(node.querySelector('.bg-gate-highlight')!.getAttribute('stroke-width'), '1.15');
+      assert.equal(node.querySelector('text')!.getAttribute('fill'), active ? '#ffffff' : '#171513');
+    }
+  }
+  assert.equal(root.querySelectorAll('.bg-gate-glow[filter]').length, 0);
+  assert.equal(root.querySelectorAll('radialGradient').length, 2, 'two alpha shapes are shared by all gates, not copied per gate');
 });

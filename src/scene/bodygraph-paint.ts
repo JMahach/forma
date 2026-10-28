@@ -111,6 +111,10 @@ export function centerPaint(center: typeof CENTERS[number], state: RenderState, 
     fill: defined ? PALETTE[center.id as keyof typeof PALETTE] : PALETTE.paper, stroke: defined ? '#84715b' : '#b4b0a7' };
 }
 
+// Two fixed alpha shapes serve every circle; its color stays ordinary paint.
+export const gateGlowMaskId = (prefix: string, active: boolean) =>
+  `${prefix}-gate-glow-${active ? 'ring' : 'disc'}`;
+
 export function gatePaint(gate: typeof GATES[number], state: RenderState, options: RenderOptions = {}) {
   const mask = state.overlaySources?.masks.get(gate.id) || 0;
   const black = state.overlaySources ? Boolean(mask & 12) : state.personality.has(gate.id);
@@ -125,6 +129,7 @@ export function gatePaint(gate: typeof GATES[number], state: RenderState, option
     opacity: options.dimInactive && !active && !selected && !related ? .3 : 1,
     fill: active ? fill : 'transparent', stroke: 'none',
     highlightState: selected ? 'selected' : related ? 'related' : 'idle',
+    glowMask: options.highlightStyle === 'glow' ? `url(#${gateGlowMaskId(state.prefix, active)})` : undefined,
     highlightColor: color, highlightFill: active ? 'none' : color, highlightOpacity: selected || related ? 1 : 0,
     textWeight: String(GATE_MARKER.fontWeight), textFill: active ? '#ffffff' : '#171513' };
 }
