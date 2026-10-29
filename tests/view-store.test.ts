@@ -439,6 +439,31 @@ test('the ready temporary result and unfinished form survive reload as independe
   assert.equal(createViewStore({getStorage:()=>storage}).read()?.temporaryChart,null);
 });
 
+test('a complete transit survives tab storage with exact UTC and Design while a render placeholder is not ready', () => {
+  const chart = {...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({id:'temporary-transit'})),
+    source:'transit' as const, utc:'2026-09-24T12:34:17.123456Z', designUtc:'2026-06-28T12:34:56.654321Z',
+    cityId:null, city:null};
+  const storage = memory(), store = createViewStore({getStorage:()=>storage});
+  assert.equal(store.write({...snapshot, temporaryChart:chart}), true);
+  const restored = createViewStore({getStorage:()=>storage}).read()?.temporaryChart;
+  assert.ok(restored);
+  for (const key of ['utc','designUtc','designArcResidualDegrees','personality','design','activations'] as const)
+    assert.deepEqual(restored[key], chart[key], key);
+  for (const fold of [0, 1]) {
+    store.write({...snapshot, temporaryChart:{...chart, fold}});
+    assert.equal(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)!).temporaryChart.fold, fold);
+    assert.equal(createViewStore({getStorage:()=>storage}).read()?.temporaryChart?.fold, fold);
+  }
+  for (const incomplete of [
+    {...chart, design:[], activations:{...chart.activations, design:[]}},
+    {...chart, designUtc:null},
+    {...chart, designUtc:'not-a-date'},
+  ]) {
+    store.write({...snapshot, temporaryChart:incomplete});
+    assert.equal(store.read()?.temporaryChart, null);
+  }
+});
+
 test('fresh tabs have no guest collection and duplicated tab snapshots diverge independently', () => {
   const chart=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary',name:'First'}));
   const firstStorage=memory(),first=createViewStore({getStorage:()=>firstStorage});

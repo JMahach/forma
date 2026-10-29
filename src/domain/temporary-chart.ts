@@ -24,15 +24,15 @@ function validateTemporaryChartRecord(raw: ChartRecord & {source: 'calculated' |
   if (!raw.activations || typeof raw.activations !== 'object') throw new Error('Нет подробностей расчёта карты.');
   result.activations = {} as ChartActivations;
   for (const key of ['personality', 'design'] as const) {
-    const list = raw.activations[key], length = key === 'design' && source === 'transit' ? 0 : 13;
-    const problem = validateChartSide(result[key], list, length);
+    const list = raw.activations[key];
+    const problem = validateChartSide(result[key], list);
     if (problem === 'activations') throw new Error('Некорректные подробности активаций.');
     if (problem === 'gates') throw new Error('Список ворот не совпадает с подробностями расчёта.');
     result.activations[key] = list.map(({ planet, longitude, gate, line }) => ({ planet, longitude, gate, line }));
   }
   for (const key of ['timezone', 'utc', 'utcOffset', 'designUtc', 'engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac', 'verification'] as const) result[key] = cleanText(key, key === 'verification' ? 500 : 160);
   if (!result.utc || !Number.isFinite(Date.parse(result.utc))) throw new Error('В расчёте нет корректного момента UTC.');
-  result.designUtc = source === 'transit' ? null : result.designUtc;
+  if (!result.designUtc || !Number.isFinite(Date.parse(result.designUtc))) throw new Error('В расчёте нет корректного момента Дизайна.');
   result.fold = raw.fold === 1 ? 1 : 0;
   result.designArcResidualDegrees = Number.isFinite(raw.designArcResidualDegrees) ? raw.designArcResidualDegrees : null;
   result.cityId = raw.cityId == null ? null : String(raw.cityId).slice(0, 40);
