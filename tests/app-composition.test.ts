@@ -2471,7 +2471,7 @@ test('two real tab owners restore private and public cards before the worker ret
 });
 
 
-for(const boundary of ['navigation','login'] as const)test(`a delayed public recheck cannot publish after ${boundary}`,async t=>{
+for(const boundary of ['source','login','stop','workspace','workspace-click'] as const)test(`a delayed public recheck follows source ownership across ${boundary}`,async t=>{
   const c=await publicReload(),saved=c.view.read()!;
   let mode:'online'|'offline'='offline',release!:(value:PublicAccountChart)=>void,reads=0;const listeners=new Set<(mode:'online'|'offline')=>void>();
   configureTransportSimulation({get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}});t.after(()=>configureTransportSimulation(null));
@@ -2480,10 +2480,16 @@ for(const boundary of ['navigation','login'] as const)test(`a delayed public rec
   const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
     chartClient:{public(){reads++;return new Promise(resolve=>{release=resolve;});},async list(){return {charts:[],nextCursor:null,};}}});
   await h.restoration;mode='online';for(const listener of listeners)listener(mode);await waitForOwnLink(()=>reads===1);
-  if(boundary==='navigation')n.backTo('/account');else h.changeAccount({accountId:'3',sessionId:'new-login'});
+  if(boundary==='workspace')n.backTo('/account');
+  else if(boundary==='workspace-click')await h.element('openAccount').click();
+  else if(boundary==='source')n.backTo('/');
+  else if(boundary==='stop')await h.stopApplication();
+  else h.changeAccount({accountId:'3',sessionId:'new-login'});
   await tick();release({...c.publicFields,name:'Late original',revision:c.foreign.revision+1});await tick();h.flushView();
-  assert.equal(store.publicChart?.name,c.foreign.name);assert.equal(h.savedSnapshot?.publicChart?.name,c.foreign.name);
-  if(boundary==='navigation'){assert.equal(h.workspace.screen,'account');assert.equal(n.location.pathname,'/account');}
+  const expected=boundary.startsWith('workspace')?'Late original':c.foreign.name;
+  assert.equal(store.publicChart?.name,expected);assert.equal(h.savedSnapshot?.publicChart?.name,expected);
+  assert.equal(reads,1,'one refresh remains one request across a workspace change');
+  if(boundary.startsWith('workspace')){assert.equal(h.workspace.screen,'account');assert.equal(n.location.pathname,'/account');}
 });
 
 
@@ -2698,4 +2704,23 @@ test('transit storage follows the current local day once per boundary even while
   assert.deepEqual(writes[1],{dates:createLocalDayTimeline(now,'Europe/Moscow').packetDates,expiresAt:createLocalDayTimeline(now,'Europe/Moscow').endUtc});
   h.clockTick(createLocalDayTimeline(now,'America/New_York'));
   assert.equal(writes.length,3,'a timezone change changes the protected UTC packets');
+});
+
+for(const sample of [{error:{code:'not_found'},replaced:false},{error:{code:'offline'},replaced:false},
+  {error:undefined,replaced:false},{error:{code:'not_found'},replaced:true}])test(`public refresh failure respects current source: ${sample.error?.code}/${sample.replaced}`,async()=>{
+ const {accountId,note,noteRevision,publicRevision,...foreign}=accountNatalChart(97,'7');
+ const store=createChartStore({initialPublicChart:foreign});store.projectLibrary([],false);
+ let reads=0,reject!:(error:unknown)=>void;
+ const h=harness({actualStore:store,realViewSession:true,
+  navigation:addressHarness('/chart/'+foreign.id).navigation,savedView:{selectedId:foreign.id,publicChart:foreign},
+  chartClient:{async public(){reads++;if(reads===1)return foreign;return new Promise((_,fail)=>{reject=fail;});}}});
+ await h.restoration;await tick();h.userInput('visibilitychange');await tick();h.userInput('visibilitychange');
+ assert.equal(reads,2,'another trigger shares the running refresh');
+ if(sample.replaced)store.acceptPublic({...foreign,name:'New source',revision:foreign.revision+1});
+ reject(sample.error);await tick();await tick();
+ const removed=sample.error?.code==='not_found'&&!sample.replaced;
+ assert.equal(store.publicChart===null,removed);
+ assert.equal(h.shown.id,removed?'current-transit':foreign.id);
+ if(sample.replaced)assert.equal(store.publicChart?.name,'New source');
+ await h.stopApplication();
 });

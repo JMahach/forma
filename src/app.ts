@@ -103,7 +103,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   // An operation is linked to this accepted tab source, never inferred from its content.
   let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
     ? savedView?.temporaryChartSave ?? null : null;
-  let publicRefreshRequest:AbortController|null=null;
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   function cancelChartSave(){application?.send({type:'CancelWrite'});}
@@ -282,7 +281,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   }
   function publishRoute(route: AppRoute, replace = false) {
     if (!navigation) return;
-    publicRefreshRequest?.abort();
+    if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
     viewSession?.interrupt();
     initialPage.restored = true; initialPresentation = null;
     application?.send({type:'RoutePublished',route,replace});
@@ -482,7 +481,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     // These owners fence the old generation before any asynchronous continuation.
     const clearing=logout?accountLibrary.clear():null;
     const connecting=logout?Promise.resolve():accountLibrary.connect(access);
-    publicRefreshRequest?.abort();syncJournalAccount();
+    application?.send({type:'CancelPublicRefresh'});syncJournalAccount();
     chartLibrary?.closeDelete();
     const resetPersonal=!!logout || !!access && (previousAccount!==null && previousAccount!==access.accountId
       || chartActions.pending.some(intent=>intent.expectedAccountId!==access.accountId)
@@ -854,36 +853,26 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     getReturns: () => returns, getLifetime: () => lifetime, getLifetimeIntent: () => exploration!.pendingTimeline, loadLifetime,
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
-  async function refreshPublicChart() {
-    const previous=store.publicChart;
-    if(!previous || application?.write.source || !initialPage.restored || getConnectionMode()!=='online'
-      || accountLibrary.get(previous.id) || publicRefreshRequest && !publicRefreshRequest.signal.aborted)return;
-    const controller=publicRefreshRequest=new AbortController();
-    const access=account.getSession(),accountKey=access?access.accountId+':'+access.sessionId:'';
-    const current=()=>{
-      const access=account.getSession();
-      return publicRefreshRequest===controller && !controller.signal.aborted && store.publicChart===previous
-        && accountKey===(access?access.accountId+':'+access.sessionId:'');
-    };
-    try {
-      const next=await chartClient.public(previous.id,controller.signal);
-      if(!current())return;
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation, publicRefresh:{
+    source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
+    available:()=>!application?.write.source && initialPage.restored && getConnectionMode()==='online'
+      && !accountLibrary.get(store.publicChart!.id),
+    accept(previous,next){
       store.acceptPublic(next);
       if(session.selectedId===next.id && !accountLibrary.get(next.id)) {
         if(previous.utc!==next.utc || JSON.stringify(previous.activations)!==JSON.stringify(next.activations))graph.changeChart(next.id);
         else session.refreshRecord();
       }
       updatePage();viewSession?.flush();
-    } catch(error) {
-      if(!current() || (error as {code?:string})?.code!=='not_found')return;
+    },
+    missing(previous){
       store.clearPublic(previous.id);
       if(session.selectedId===previous.id && !accountLibrary.get(previous.id)) {
         if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
       }
       updatePage();viewSession?.flush();
-    } finally {if(publicRefreshRequest===controller)publicRefreshRequest=null;}
-  }
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation, write:{
+    },
+  }, write:{
     actions:chartActions,online:()=>getConnectionMode()!=='offline',getSession:account.getSession,
     async ready(){await libraryReady;if(account.getSession())await application!.requestSession(account.getSession());},
     source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
@@ -914,13 +903,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     subscribeSession(listener){return account.subscribeSession(()=>listener(account.getSession()));},
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
     begin:beginAccountBoundary,
-    stop(){publicRefreshRequest?.abort();void accountLibrary.connect(null).catch(()=>{});},
+    stop(){application?.send({type:'CancelPublicRefresh'});void accountLibrary.connect(null).catch(()=>{});},
   },route(request) {
       const route = request.snapshot.route!;
       const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
       return {
         enter() {
-          publicRefreshRequest?.abort();
+          if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
           if (!request.initial) {cancelChartSave();viewSession?.interrupt();}
           librarySelection++;
           navigateWorkspace(route.kind === 'chart' || route.kind === 'temporary-chart' || route.kind === 'transit' ? 'chart' : route.kind, {fromRoute:true});
@@ -980,7 +969,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       void accountLibrary.refreshLocal().catch(() => {});
       application!.send({type:'RecoverWrites'});
       syncTransitCacheWindow(transit?.state.timeline, true);
-      if (getConnectionMode() === 'online') void refreshPublicChart();
+      if (getConnectionMode() === 'online') application!.send({type:'RefreshPublicSource'});
     }
   });
   let previousConnection = getConnectionMode();
@@ -990,7 +979,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     void natalDay?.refreshAvailability();
     void returns?.refreshAvailability();
     lifetime?.refreshAvailability(); updateTimelineTools();
-    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();void refreshPublicChart();}
+    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();application!.send({type:'RefreshPublicSource'});}
     if (!libraryInitialized) return;
     if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
     application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});

@@ -1,6 +1,7 @@
 import { assign, fromPromise, sendTo, setup } from 'xstate';
 import { prepareRoute } from './route.ts';
 import { createAccountBoundaryMachine } from './account-boundary.ts';
+import { createPublicRefreshMachine } from './public-refresh.ts';
 import { createWriteContinuationMachine } from './write-continuation.ts';
 import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
 
@@ -15,8 +16,8 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
-    types: {children: {} as {account:'account'; route:'route'; write:'write'}, context: {} as {request: RouteRequest | null}, events: {} as Event},
-    actors: {account:createAccountBoundaryMachine(ports.account!,runtimeId),write:createWriteContinuationMachine(ports.write!),route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) => prepareRoute(ports, input, signal))},
+    types: {children: {} as {account:'account'; route:'route'; write:'write'; publicRefresh:'publicRefresh'}, context: {} as {request: RouteRequest | null}, events: {} as Event},
+    actors: {publicRefresh:createPublicRefreshMachine(ports.publicRefresh!),account:createAccountBoundaryMachine(ports.account!,runtimeId),write:createWriteContinuationMachine(ports.write!),route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) => prepareRoute(ports, input, signal))},
     guards: {
       changed: ({context,event})=>routeChanged(context.request,event,ports.navigation),
     },
@@ -39,9 +40,11 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       created: {on: {Start: 'running', Stop: 'stopping'}},
       running: {
         initial: 'destination',
-        invoke: [...(ports.account ? [{id:'account',src:'account'} as const] : []),...(ports.write?[{id:'write',src:'write'} as const]:[])],
+        invoke: [...(ports.account ? [{id:'account',src:'account'} as const] : []),...(ports.write?[{id:'write',src:'write'} as const]:[]),...(ports.publicRefresh?[{id:'publicRefresh',src:'publicRefresh'} as const]:[])],
         on: {
           Stop: '#application.stopping',
+          RefreshPublicSource:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
+          CancelPublicRefresh:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
           SessionChanged: {guard:()=>!!ports.account,actions:sendTo('account',({event})=>event)},
           LogoutObserved: {guard:()=>!!ports.account,actions:sendTo('account',({event})=>event)},
           RetryAccountBoundary: {guard:()=>!!ports.account,actions:sendTo('account',({event})=>event)},
