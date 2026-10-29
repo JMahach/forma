@@ -1762,7 +1762,8 @@
         "src/application/account-boundary.ts",
         "src/application/write-continuation.ts",
         "src/application/public-refresh.ts",
-        "src/application/startup.ts"
+        "src/application/startup.ts",
+        "src/application/update.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
@@ -1781,7 +1782,8 @@
         "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime.",
         "src/application/write-continuation.ts": "Own the page-local write continuation and outcome recovery as application child states.",
         "src/application/public-refresh.ts": "Cancellable public-source refresh belongs to the application lifetime, independent of workspace.",
-        "src/application/startup.ts": "Coordinate initial restore with the application lifetime, existing route and snapshot owners."
+        "src/application/startup.ts": "Coordinate initial restore with the application lifetime, existing route and snapshot owners.",
+        "src/application/update.ts": "Release preparation joins storage durability with the current application intent; browser worker remains outside."
       }
     }
   ],

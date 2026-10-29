@@ -1,4 +1,5 @@
 import type { AppRoute } from '../../shared/app-routes.ts';
+import type { UpdatePort } from './update.ts';
 import type { StartupPorts, StartupEvent } from './startup.ts';
 import type { PublicRefreshPorts, PublicRefreshEvent } from './public-refresh.ts';
 import type { WriteContinuationPorts, WriteEvent } from './write-continuation.ts';
@@ -49,7 +50,7 @@ export interface RoutePort {
   settled(): void;
   dispose(): void;
 }
-export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts }
+export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}

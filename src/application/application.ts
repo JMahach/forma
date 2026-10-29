@@ -1,5 +1,6 @@
 import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xstate';
 import { createApplicationMachine } from './application-machine.ts';
+import { prepareUpdate } from './update.ts';
 import { startupView } from './startup.ts';
 import { writeContinuationView } from './write-continuation.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
@@ -82,6 +83,16 @@ function stopRuntime(actor:ApplicationActor) {
   startup?.send({type:'Stop'});write?.send({type:'Stop'});actor.send({type:'Stop'});
 }
 
+function applicationRestored(actor:ApplicationActor,ports:ApplicationPorts) {
+  const startup=readStartup(actor),view=applicationView(actor.getSnapshot());
+  return view.lifecycle==='running' && startup.restored && !startup.failed
+    && view.destination!=='preparing' && view.destination!=='failed' && ports.update?.restored()===true;
+}
+function prepareRelease(actor:ApplicationActor,ports:ApplicationPorts) {
+  const port=ports.update;
+  return port?prepareUpdate(port,()=>applicationRestored(actor,ports) && !readWrite(actor).busy && port.ready()):false;
+}
+
 export function createApplication(ports: ApplicationPorts) {
   const subscriptions:(()=>void)[]=[];
   const machine = createApplicationMachine(ports, () => {
@@ -95,6 +106,8 @@ export function createApplication(ports: ApplicationPorts) {
     get view() { return readView(); },
     get write() {return readWrite(actor);},
     get startup() {return readStartup(actor);},
+    isRestored(){return applicationRestored(actor,ports);},
+    prepareUpdate(){return prepareRelease(actor,ports);},
     start() {
       if (!actor.getSnapshot().matches('created')) return;
       actor.send({type: 'Start'});

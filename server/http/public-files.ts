@@ -43,6 +43,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/application/write-continuation.ts',
     'src/application/public-refresh.ts',
     'src/application/startup.ts',
+    'src/application/update.ts',
     'src/application/route.ts',
     'src/application/ports.ts',
     'src/preview/control-colors.ts',

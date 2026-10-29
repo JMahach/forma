@@ -1746,6 +1746,7 @@ test('a committed reply after leaving the chart enters the library without late 
       async create(input){writes++;return new Promise(resolve=>{finish=()=>resolve({...input,outcome:{kind:'created',chartId:own.id,revision:1},chart:own});});},
     }});
   await h.restoration;const saving=h.saveShown();await tick();assert.equal(writes,1);
+  assert.equal(await h.prepareOfflineUpdate(),false,'an active write blocks a release transition');
   await h.element('openKnowledge').click();finish();await saving;await tick();
   assert.ok(store.get(own.id),'a valid committed reply still reaches the current account library');
   assert.equal(h.workspace.screen,'knowledge');assert.equal(h.shown.id,temporary.id);
@@ -2761,4 +2762,13 @@ for(const boundary of ['timeline','stop'] as const)test(`startup before account 
  release();await h.restoration;await tick();
  assert.equal(restores,0,'a superseded runtime cannot begin restoring old values');
  if(boundary==='timeline'){h.finishModule();await tick();assert.equal(h.lifetime.state.opened,true);}
+});
+
+test('an unfinished library refresh does not block a restorable release transition',async()=>{
+ let finish!:(value:{charts:never[];nextCursor:null})=>void,reads=0;
+ const h=harness({realViewSession:true,accountSession:{accountId:'1',sessionId:'catalog-pending'},
+  chartClient:{list(){reads++;return new Promise(resolve=>{finish=resolve;});}}});
+ await h.restoration;await tick();assert.equal(reads,1);
+ assert.equal(await h.prepareOfflineUpdate(),true,'the existing view is durable while the catalog is still arriving');
+ finish({charts:[],nextCursor:null});await tick();await h.stopApplication();
 });

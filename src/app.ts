@@ -861,7 +861,29 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
   const initialRoute=navigation?.snapshot;
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation,startup:{
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation,update:{
+    restored:()=>!initialPage.contentFailed && !initialPage.screenPending && !initialPage.screenFailed,
+    ready(){
+      if(birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending)return false;
+      // An unfinished field must have a supported checkpoint owner.
+      if(birthForm.opened && !birthForm.snapshot)return false;
+      const focused=document.activeElement;
+      const savedFocus = birthForm.snapshot?.focus
+        || workspace.screen === 'account' && focused?.id === 'accountEmail' && account.snapshot?.focus
+        || workspace.screen === 'charts' && focused?.id === 'allChartsSearch' && allCharts.snapshot.focus
+        || workspace.screen === 'knowledge' && focused?.id === 'knowledgeSearch' && knowledge.snapshot?.focus
+        || workspace.screen === 'chart' && ['lifetimeFromDate','lifetimeToDate'].includes(focused?.id ?? '') && lifetimeControls?.snapshot?.focus;
+      if(focused?.matches?.('input,textarea,[contenteditable="true"]') && !savedFocus)return false;
+      return true;
+
+    },
+    selection:()=>session.selectedId,
+    canRestore(selected){
+      return selected==='current-transit' || selected===store.temporaryChart?.id
+        || !accountLibrary.get(selected) && selected===store.publicChart?.id || accountLibrary.canRestore(selected);
+    },
+    checkpoint:()=>viewSession!.flush(),
+  },startup:{
     ready:()=>libraryReady,
     current:()=>!viewSession!.interrupted && (!initialRoute || navigation!.isCurrent(initialRoute)),
     async route(){
@@ -1201,36 +1223,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
-  const offlineRestored = () => startupRestored()
-    && !startupFailed()
-    && !initialPage.screenPending && !initialPage.screenFailed && !routePending() && !routeFailed();
+  const offlineRestored = () => application!.isRestored();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
-    prepareOfflineUpdate() {
-      const ready=()=>{
-      if(!offlineRestored() || application?.write.busy || birthForm.pending
-        || account.snapshot?.verificationPending || account.snapshot?.telegramPending)return false;
-      // Do not discard a RAM-only temporary/shared chart or unfinished field.
-      // Those owners join this transition only after their restore contract exists.
-      if(birthForm.opened && !birthForm.snapshot)return false;
-      const focused=document.activeElement;
-      const savedFocus = birthForm.snapshot?.focus
-        || workspace.screen === 'account' && focused?.id === 'accountEmail' && account.snapshot?.focus
-        || workspace.screen === 'charts' && focused?.id === 'allChartsSearch' && allCharts.snapshot.focus
-        || workspace.screen === 'knowledge' && focused?.id === 'knowledgeSearch' && knowledge.snapshot?.focus
-        || workspace.screen === 'chart' && ['lifetimeFromDate','lifetimeToDate'].includes(focused?.id ?? '') && lifetimeControls?.snapshot?.focus;
-      if(focused?.matches?.('input,textarea,[contenteditable="true"]') && !savedFocus)return false;
-      return true;
-      };
-      if(!ready())return false;
-      const selected=session.selectedId;
-      const finish=()=>selected===session.selectedId && ready() && viewSession!.flush()===true;
-      // Ask the durable owner again immediately before reload; quota relief in
-      // this or another tab may have removed a card still visible in RAM.
-      return selected==='current-transit' || selected===store.temporaryChart?.id
-        || !accountLibrary.get(selected) && selected===store.publicChart?.id ? finish()
-        : accountLibrary.canRestore(selected).then(durable=>durable && finish(),()=>false);
-    },
+    prepareOfflineUpdate:()=>application!.prepareUpdate(),
     // P17 extends the shared lifetime to the remaining owners; this stops all P02 resources.
     stopApplication: () => application?.stop() ?? Promise.resolve(),
     flushView: () => viewSession!.flush(),
