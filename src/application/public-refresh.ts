@@ -32,17 +32,35 @@ async function refresh(ports:PublicRefreshPorts,request:RefreshRequest,signal:Ab
 /** A workspace has no ownership over this read: only source, account and runtime do. */
 export function createPublicRefreshMachine(ports:PublicRefreshPorts) {
   return setup({
-    types:{context:{} as {request:RefreshRequest|null},events:{} as PublicRefreshEvent},
-    actors:{read:fromPromise(({input,signal}:{input:RefreshRequest;signal:AbortSignal})=>refresh(ports,input,signal))},
-    guards:{available:()=>!!ports.source() && ports.available()},
-    actions:{capture:assign({request:()=>({source:ports.source()!,access:ports.getSession()})}),clear:assign({request:null})},
+    types: {
+      context: {} as {request: RefreshRequest | null},
+      events: {} as PublicRefreshEvent,
+    },
+    actors: {
+      read: fromPromise(({input, signal}: {input: RefreshRequest; signal: AbortSignal}) =>
+        refresh(ports, input, signal)),
+    },
+    guards: {available: () => !!ports.source() && ports.available()},
+    actions: {
+      capture: assign({request: () => ({source: ports.source()!, access: ports.getSession()})}),
+      clear: assign({request: null}),
+    },
   }).createMachine({
-    id:'public-refresh',initial:'idle',context:{request:null},
-    states:{
-      idle:{on:{RefreshPublicSource:{guard:'available',target:'reading',actions:'capture'}}},
-      reading:{
-        on:{CancelPublicRefresh:{target:'idle',actions:'clear'}},
-        invoke:{src:'read',input:({context})=>context.request!,onDone:{target:'idle',actions:'clear'},onError:{target:'idle',actions:'clear'}},
+    id: 'public-refresh',
+    initial: 'idle',
+    context: {request: null},
+    states: {
+      idle: {
+        on: {RefreshPublicSource: {guard: 'available', target: 'reading', actions: 'capture'}},
+      },
+      reading: {
+        on: {CancelPublicRefresh: {target: 'idle', actions: 'clear'}},
+        invoke: {
+          src: 'read',
+          input: ({context}) => context.request!,
+          onDone: {target: 'idle', actions: 'clear'},
+          onError: {target: 'idle', actions: 'clear'},
+        },
       },
     },
   });

@@ -130,46 +130,106 @@ async function recover(ports:WriteContinuationPorts,signal:AbortSignal):Promise<
 /** One page-local continuation, alongside read-only recovery. No command queue or persisted payload. */
 export function createWriteContinuationMachine(ports:WriteContinuationPorts) {
   return setup({
-    types:{context:{} as {work:WriteWork|null},events:{} as WriteEvent},
-    actors:{save:fromPromise<SaveStatus,WriteWork>(({input,signal})=>save(ports,input,signal)),
-      recover:fromPromise<SavedChart[]>(({signal})=>recover(ports,signal))},
-    actions:{
-      choose:assign({work:({context,event})=>{
-        if(event.type!=='SaveRequested' || context.work?.source===event.source)return context.work;
-        context.work?.action.cancel();return prepare(ports,event.source);
-      }}),
-      clear:assign({work:({context})=>{context.work?.action.cancel();return null;}}),
-      reconciled:raise((_,params:{sources:SavedChart[]}):WriteEvent=>({type:'SourcesReconciled',sources:params.sources})),
+    types: {
+      context: {} as {work: WriteWork | null},
+      events: {} as WriteEvent,
+    },
+    actors: {
+      save: fromPromise<SaveStatus, WriteWork>(({input, signal}) => save(ports, input, signal)),
+      recover: fromPromise<SavedChart[]>(({signal}) => recover(ports, signal)),
+    },
+    actions: {
+      choose: assign({
+        work: ({context, event}) => {
+          if (event.type !== 'SaveRequested' || context.work?.source === event.source) return context.work;
+          context.work?.action.cancel();
+          return prepare(ports, event.source);
+        },
+      }),
+      clear: assign({
+        work: ({context}) => {
+          context.work?.action.cancel();
+          return null;
+        },
+      }),
+      reconciled: raise((_, params: {sources: SavedChart[]}): WriteEvent =>
+        ({type: 'SourcesReconciled', sources: params.sources})),
     },
   }).createMachine({
-    id:'write-continuation',context:{work:null},initial:'running',
-    states:{
-      running:{type:'parallel',on:{Stop:{target:'stopped',actions:'clear'}},states:{
-        save:{id:'write-save',initial:'idle',on:{
-          SaveRequested:{guard:({event})=>ports.online() && !ports.hasOwn(event.source.id),target:'.working',reenter:true,actions:'choose'},
-          CancelWrite:{target:'.idle',actions:'clear'},
-          SourcesReconciled:{guard:({context,event})=>!!context.work && event.sources.includes(context.work.source),target:'.idle',actions:'clear'},
-        },states:{
-          idle:{},
-          working:{
-            on:{SaveRequested:[
-              {guard:({context,event})=>context.work?.source!==event.source && ports.online() && !ports.hasOwn(event.source.id),
-                target:'working',reenter:true,actions:'choose'},{}]},
-            invoke:{src:'save',input:({context})=>context.work!,onDone:[
-              {guard:({event})=>event.output==='waiting',target:'waiting'},
-              {guard:({event})=>event.output==='unresolved',target:'unresolved'},
-              {target:'idle',actions:'clear'},
-            ],onError:{target:'unresolved'}},
+    id: 'write-continuation',
+    context: {work: null},
+    initial: 'running',
+    states: {
+      running: {
+        type: 'parallel',
+        on: {Stop: {target: 'stopped', actions: 'clear'}},
+        states: {
+          save: {
+            id: 'write-save',
+            initial: 'idle',
+            on: {
+              SaveRequested: {
+                guard: ({event}) => ports.online() && !ports.hasOwn(event.source.id),
+                target: '.working',
+                reenter: true,
+                actions: 'choose',
+              },
+              CancelWrite: {target: '.idle', actions: 'clear'},
+              SourcesReconciled: {
+                guard: ({context, event}) => !!context.work && event.sources.includes(context.work.source),
+                target: '.idle',
+                actions: 'clear',
+              },
+            },
+            states: {
+              idle: {},
+              working: {
+                on: {
+                  SaveRequested: [
+                    {
+                      guard: ({context, event}) => context.work?.source !== event.source
+                        && ports.online() && !ports.hasOwn(event.source.id),
+                      target: 'working',
+                      reenter: true,
+                      actions: 'choose',
+                    },
+                    {},
+                  ],
+                },
+                invoke: {
+                  src: 'save',
+                  input: ({context}) => context.work!,
+                  onDone: [
+                    {guard: ({event}) => event.output === 'waiting', target: 'waiting'},
+                    {guard: ({event}) => event.output === 'unresolved', target: 'unresolved'},
+                    {target: 'idle', actions: 'clear'},
+                  ],
+                  onError: {target: 'unresolved'},
+                },
+              },
+              waiting: {on: {ResumeWrite: 'working'}},
+              unresolved: {},
+            },
           },
-          waiting:{on:{ResumeWrite:'working'}},
-          unresolved:{},
-        }},
-        recovery:{initial:'idle',states:{
-          idle:{on:{RecoverWrites:'reading'}},
-          reading:{invoke:{src:'recover',onDone:{target:'idle',actions:{type:'reconciled',params:({event})=>({sources:event.output})}},onError:'idle'}},
-        }},
-      }},
-      stopped:{type:'final'},
+          recovery: {
+            initial: 'idle',
+            states: {
+              idle: {on: {RecoverWrites: 'reading'}},
+              reading: {
+                invoke: {
+                  src: 'recover',
+                  onDone: {
+                    target: 'idle',
+                    actions: {type: 'reconciled', params: ({event}) => ({sources: event.output})},
+                  },
+                  onError: 'idle',
+                },
+              },
+            },
+          },
+        },
+      },
+      stopped: {type: 'final'},
     },
   });
 }

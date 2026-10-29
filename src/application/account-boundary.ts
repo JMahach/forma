@@ -25,28 +25,48 @@ export function createAccountBoundaryMachine(port:AccountPort,runtimeId:string) 
       ownLogout:({context,event})=>ownLogout(context,event),
     },
     actions:{
-      begin:assign(({context,event})=>{
-        const access=event.type==='SessionChanged'?event.access:null;
-        const request:AccountBoundaryRequest={runtimeId,generation:++generation,access,previous:context.lastAccess,
-          logoutIds:event.type==='LogoutObserved'?event.ids:null};
-        return {access,lastAccess:access??context.lastAccess,request,work:port.begin(request)};
+      begin: assign(({context, event}) => {
+        const access = event.type === 'SessionChanged' ? event.access : null;
+        const request: AccountBoundaryRequest = {
+          runtimeId,
+          generation: ++generation,
+          access,
+          previous: context.lastAccess,
+          logoutIds: event.type === 'LogoutObserved' ? event.ids : null,
+        };
+        return {access, lastAccess: access ?? context.lastAccess, request, work: port.begin(request)};
       }),
       retry:assign({work:({context})=>({...context.work!,ready:context.work!.retry()})}),
       settled:({context})=>context.work!.settled(),
       release:assign({work:null}),
     },
   }).createMachine({
-    initial:'unconnected',context:{access:undefined,lastAccess:null,request:null,work:null},
-    on:{
-      SessionChanged:{guard:'changed',target:'.preparing',actions:['begin',sendParent({type:'AccountBoundaryStarted'})]},
-      LogoutObserved:{guard:'ownLogout',target:'.preparing',actions:['begin',sendParent({type:'AccountBoundaryStarted'})]},
+    initial: 'unconnected',
+    context: {access: undefined, lastAccess: null, request: null, work: null},
+    on: {
+      SessionChanged: {
+        guard: 'changed',
+        target: '.preparing',
+        actions: ['begin', sendParent({type: 'AccountBoundaryStarted'})],
+      },
+      LogoutObserved: {
+        guard: 'ownLogout',
+        target: '.preparing',
+        actions: ['begin', sendParent({type: 'AccountBoundaryStarted'})],
+      },
     },
-    states:{
-      unconnected:{},
-      preparing:{invoke:{src:'finish',input:({context})=>context.work!,
-        onDone:{target:'ready',actions:['settled','release']},onError:'failed'}},
-      ready:{},
-      failed:{on:{RetryAccountBoundary:{target:'preparing',actions:'retry'}}},
+    states: {
+      unconnected: {},
+      preparing: {
+        invoke: {
+          src: 'finish',
+          input: ({context}) => context.work!,
+          onDone: {target: 'ready', actions: ['settled', 'release']},
+          onError: 'failed',
+        },
+      },
+      ready: {},
+      failed: {on: {RetryAccountBoundary: {target: 'preparing', actions: 'retry'}}},
     },
   });
 }

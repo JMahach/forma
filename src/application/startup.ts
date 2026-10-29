@@ -37,15 +37,25 @@ export function createStartupMachine(ports:StartupPorts) {
     types:{events:{} as StartupEvent},
     actors:{restore:fromPromise(({signal})=>restore(ports,signal))},
   }).createMachine({
-    id:'startup',initial:'restoring',
-    on:{Stop:'.stopped',StartupInterrupted:'.interrupted'},
-    states:{
-      restoring:{invoke:{src:'restore',onDone:[
-        {guard:({event})=>event.output==='ready',target:'ready'},
-        {guard:({event})=>event.output==='failed',target:'failed'},
-        {target:'interrupted'},
-      ],onError:{target:'failed',actions:()=>ports.report()}}},
-      ready:{},failed:{},interrupted:{},stopped:{on:{StartupInterrupted:{}}},
+    id: 'startup',
+    initial: 'restoring',
+    on: {Stop: '.stopped', StartupInterrupted: '.interrupted'},
+    states: {
+      restoring: {
+        invoke: {
+          src: 'restore',
+          onDone: [
+            {guard: ({event}) => event.output === 'ready', target: 'ready'},
+            {guard: ({event}) => event.output === 'failed', target: 'failed'},
+            {target: 'interrupted'},
+          ],
+          onError: {target: 'failed', actions: () => ports.report()},
+        },
+      },
+      ready: {},
+      failed: {},
+      interrupted: {},
+      stopped: {on: {StartupInterrupted: {}}},
     },
   });
 }
