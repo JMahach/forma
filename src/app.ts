@@ -88,7 +88,7 @@ import { createReturnsController } from './state/returns.ts';
 import { createCyclesClient } from './data/cycles-client.ts';
 import { createNatalDayClient } from './data/natal-day-client.ts';
 import { ageText, completedAge } from './domain/personal-age.ts';
-import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from './domain/cycles.ts';
+import { eligibleCycleChart, personalTimelineTarget, cycleTimeZone } from './domain/cycles.ts';
 import { attachReturnMarkers } from './views/returns-markers.ts';
 import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
@@ -837,10 +837,9 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   const layoutObserver = createLayoutObserver(() => refreshStudioLayout());
   layoutObserver.observe($('canvasWrap'));
-  const savedChart = store.get(savedView?.selectedId!);
-  const savedLife = eligibleCycleChart(savedChart) && savedView?.lifetime?.opened ? lifeTimelineForChart(savedChart) : null;
-  const restoreView = savedLife ? { ...savedView, lifetime: { ...savedView!.lifetime!, ...savedLife,
-    minimumUtc: savedChart!.utc!, mode: 'lifetime' as const, openEnded: false } } : savedView;
+  const savedChart=store.get(savedView?.selectedId!);
+  const savedTarget=eligibleCycleChart(savedChart) && savedView?.lifetime?.opened?personalTimelineTarget(savedChart):null;
+  const restoreView=savedTarget?{...savedView,lifetime:{...savedView!.lifetime!,...savedTarget}}:savedView;
   viewSession = createViewSession({
     checkpoint, store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
     onInterrupt:()=>application?.send({type:'StartupInterrupted'}),

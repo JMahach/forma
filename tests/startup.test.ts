@@ -33,7 +33,7 @@ import { STUDIO_FOOTPRINT, MANDALA_FRAME } from '../src/scene/geometry/frames.ts
 import { attachGestures } from '../src/scene/gestures.ts';
 import { attachCameraControls } from '../src/views/camera-controls.ts';
 import { attachLoadingPreview } from '../src/views/loading-preview.ts';
-import { lifeTimelineForChart } from '../src/domain/cycles.ts';
+import { personalTimelineTarget } from '../src/domain/cycles.ts';
 import { createViewStore } from '../src/data/view-store.ts';
 import { attachPageGestures } from '../src/ui/page-gestures.ts';
 import { createPanelState } from '../src/state/panels.ts';
@@ -127,7 +127,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'personalTimelineTarget', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -154,7 +154,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = clientFactory ?? ((options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}}));
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, personalTimelineTarget, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -280,16 +280,17 @@ for (const failure of ['import', 'initialization'] as const) {
     const { document } = startupDocument(nodes);
     const error = new Error('Startup failed');
     const savedView = { selectedId: 'current-transit', camera: { x: -100, y: -100, k: 1.7 } };
-    let preparedTransform = '';
+    let preparedTransform = '', releases=0;
     const loadApp = async () => {
       preparedTransform = document.getElementById('chartLoadingArt').style.transform;
       assertPageZoomBlocked(document);
       if (failure === 'import') throw error;
       return { startApp() { throw error; } };
     };
-    await run(attachPageGestures, document, class { observe() {} disconnect() {} }, () => ({}), layoutStub, () => () => {},
+    await run(attachPageGestures, document, class { observe() {} disconnect() {releases++;} }, () => ({}), layoutStub, () => () => {},
       () => ({ read: () => savedView }), emptyStore, loadApp, { reload() { reloads++; } });
     assertPageZoomBlocked(document);
+    assert.equal(releases,1,'the early owner is released once even if app initialization fails');
     assert.equal(canvas.dataset.chartState, 'error');
     assert.equal(document.querySelector('.app-shell')!.dataset.shellReady, undefined, 'fatal startup cannot expose half-attached controls');
     assert.equal(document.getElementById('chartLoadingArt').getAttribute('hidden'), '', 'fatal application failure shows a plain background even after camera preparation');
@@ -1013,4 +1014,18 @@ test('early camera bursts write one latest snapshot and pagehide flushes before 
  assert.equal(writes.length,before+2);
  await new Promise(resolve=>setTimeout(resolve,180));
  assert.equal(writes.length,before+2,'the flushed timer cannot write again');
+});
+
+test('an early private timeline command hands off the exact personal boundary',async()=>{
+ const own=accountNatalChart(121),storage=tabStorage(),viewStore=createViewStore({getStorage:()=>storage});
+ viewStore.write({version:1,selectedId:own.id,chartHint:{id:own.id,kind:'natal',utc:own.utc,dayAvailable:true}});
+ const {document,element}=startupDocument();let received:StartupPorts|undefined;
+ await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,
+  ()=>()=>{},()=>viewStore,emptyStore,async()=>{element('lifetimeToggle').click();return {startApp(value){received=value;}};},
+  {href:'http://localhost:3636/chart/'+own.id,pathname:'/chart/'+own.id},storage);
+ const target=received?.savedView?.lifetime;
+ assert.equal(target?.mode,'lifetime');assert.equal(target?.requestedUtc,Date.parse(own.utc));
+ assert.equal(target?.minimumUtc,own.utc,'early intent already has the exact birth boundary');
+ assert.equal(target?.openEnded,false);
+ assert.equal(received?.store.has(own.id),false,'a presentation hint remains distinct from a ready record');
 });

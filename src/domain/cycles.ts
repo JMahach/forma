@@ -66,3 +66,10 @@ export function lifeTimelineForChart(chart: ChartInput | null | undefined) {
   const maximumUtc = new Date(cycleSearchEnd(chart)).toISOString();
   return { fromDate, toDate: maximumUtc.slice(0, 10), maximumUtc };
 }
+
+/** The same personal bounds apply to early intent, restored input and live commands. */
+export function personalTimelineTarget(chart:ChartInput|null|undefined,requestedUtc?:number) {
+  const span=lifeTimelineForChart(chart);
+  return span?{opened:true as const,mode:'lifetime' as const,...span,minimumUtc:chart!.utc!,openEnded:false,
+    ...(requestedUtc===undefined?{}:{requestedUtc})}:null;
+}

@@ -135,7 +135,7 @@ type AppPorts = Pick<typeof import('../src/domain/chart-presentation.ts'), 'char
   & Pick<typeof import('../src/data/cycles-client.ts'), 'createCyclesClient'>
   & Pick<typeof import('../src/data/natal-day-client.ts'), 'createNatalDayClient'>
   & Pick<typeof import('../src/domain/personal-age.ts'), 'ageText' | 'completedAge'>
-  & Pick<typeof import('../src/domain/cycles.ts'), 'eligibleCycleChart' | 'lifeTimelineForChart' | 'cycleTimeZone'>
+  & Pick<typeof import('../src/domain/cycles.ts'), 'eligibleCycleChart' | 'personalTimelineTarget' | 'cycleTimeZone'>
   & Pick<typeof import('../src/views/returns-markers.ts'), 'attachReturnMarkers'>
   & Pick<typeof import('../src/domain/returns-window.ts'), 'returnsVisibleWindow'>
   & Pick<typeof import('../src/ui/studio-presentation.ts'), 'studioPresentation'>;
@@ -156,7 +156,7 @@ import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
 import { createReturnsController } from '../src/state/returns.ts';
 import { createNatalDayExplorer, type NatalExplorerOptions } from '../src/state/natal-day.ts';
 import { createLifetimeExplorer } from '../src/state/lifetime.ts';
-import { eligibleCycleChart, lifeTimelineForChart, cycleTimeZone } from '../src/domain/cycles.ts';
+import { eligibleCycleChart, personalTimelineTarget, cycleTimeZone } from '../src/domain/cycles.ts';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.ts';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.ts';
 import { attachChartSummary } from '../src/views/chart-summary-panel.ts';
@@ -303,7 +303,7 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
     },
     createNatalDayClient: (options) => { assert.equal(options!.memory, memory); return natalClient; },
     createReturnsController: (options) => returns = createReturnsController(options),
-    eligibleCycleChart, lifeTimelineForChart, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
+    eligibleCycleChart, personalTimelineTarget, cycleTimeZone, returnsVisibleWindow, attachChartLibrary,
     attachKnowledgeEntry: (options) => {
       knowledgeOptions = options;
       return attachKnowledgeEntry({ ...options, load: async () => {

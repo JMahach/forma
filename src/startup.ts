@@ -32,7 +32,7 @@ import { attachPageGestures } from './ui/page-gestures.ts';
 import { attachGestures } from './scene/gestures.ts';
 import { attachCameraControls } from './views/camera-controls.ts';
 import { attachLoadingPreview } from './views/loading-preview.ts';
-import { lifeTimelineForChart } from './domain/cycles.ts';
+import { personalTimelineTarget } from './domain/cycles.ts';
 
 type Journal=ReturnType<typeof createJournal>;
 let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
@@ -262,7 +262,7 @@ function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
     pendingView.natalDay = { ...day, opened: kind === 'day' && !close };
     pendingView.lifetime = kind === 'lifetime' && !close
       ? personalAvailable
-        ? { opened: true, mode: 'lifetime', ...lifeTimelineForChart({utc:sourcePresentation.utc!})!, requestedUtc: Date.parse(sourcePresentation.utc!), personalPreview: false }
+        ? { ...personalTimelineTarget({utc:sourcePresentation.utc!},Date.parse(sourcePresentation.utc!))!, personalPreview: false }
         : { opened: true, mode: 'day', fromDate: null, toDate: null }
       : null;
   }
@@ -296,6 +296,15 @@ function handoffLoadingPanels() {
   for (const [id, command] of loadingPanelCommands) element(id).removeEventListener('click', command);
   stopLoadingPanelProjection();
 }
+// Snapshot, handlers and observer transfer in one synchronous operation.
+function handoffLoadingView() {
+  if(loadingActive){
+    if(viewCheckpoint.pending)flushLoadingView();
+    loadingActive=false;
+    releaseLoadingFocus();loadingLayoutObserver.disconnect();handoffLoadingPanels();
+  }
+  return loadingInteraction?loadingSnapshot():savedView;
+}
 const releaseLoadingContent = holdLoadingContent(document);
 document.querySelector<HTMLElement>('.app-shell')!.inert = false;
 canvas.inert = false; canvas.setAttribute('tabindex', '0');
@@ -304,23 +313,16 @@ element<SVGSVGElement & { inert: boolean }>('bodygraph').inert = true;
 commitLoadingLayout(document);
 if (!previewLoading) try {
   const app = await import('./app.ts');
-  loadingLayoutObserver.disconnect();
-  handoffLoadingPanels();
-  if (viewCheckpoint.pending) flushLoadingView();
-  const latestView = loadingInteraction ? loadingSnapshot() : savedView;
-  loadingActive = false; releaseLoadingFocus();
+  const latestView = handoffLoadingView();
   application = app.startApp({ navigation, storagePressure, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
   saveBeforeNavigate = () => application?.flushView();
 } catch {
-  if (viewCheckpoint.pending) flushLoadingView();
+  handoffLoadingView();
   viewCheckpoint.destroy();
   applicationFailed=true;
   const shell = document.querySelector<HTMLElement>('.app-shell')!;
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
   delete shell.dataset.shellReady;
-  loadingActive = false; releaseLoadingFocus();
-  loadingLayoutObserver.disconnect();
-  handoffLoadingPanels();
   element('chartLoadingArt').setAttribute('hidden', '');
   element('chartLoadingMessage').hidden = false;
   studio.dataset.workspaceScreen = 'chart';

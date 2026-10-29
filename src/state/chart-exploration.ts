@@ -19,7 +19,7 @@ interface ExplorationOptions {
   onChange?: () => void;
 }
 
-import { lifeTimelineForChart } from '../domain/cycles.ts';
+import { personalTimelineTarget } from '../domain/cycles.ts';
 import { getConnectionMode } from '../data/http-transport.ts';
 
 // One owner for chart navigation and moment commands. Tools retain their
@@ -202,11 +202,11 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   async function openTimeline() {
     if (!personal()) return false;
-    const natal = session.record, span = lifeTimelineForChart(natal);
-    if (!span) return false;
+    const natal = session.record, target = personalTimelineTarget(natal);
+    if (!target) return false;
     returnsPreferred = true;
     const shown = session.current;
-    const request: { target: LifetimeTarget } = { target: { opened: true, mode: 'lifetime', ...span, minimumUtc: natal!.utc!,
+    const request: { target: LifetimeTarget } = { target: { ...target,
       requestedUtc: live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc! : natal!.utc!),
       personalPreview: preview(), personalLive: live() } };
     const valid = () => timelineOpening === request;
@@ -219,7 +219,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       if (!controller || !valid()) return false;
       const shown = session.current;
       const start = live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc! : natal!.utc!);
-      const restored = await controller.restore({ opened: true, mode: 'lifetime', ...span, minimumUtc: natal!.utc!, requestedUtc: start });
+      const restored = await controller.restore(personalTimelineTarget(natal,start));
       if (!valid() || !restored) return false;
       onTimelineReady(); return true;
     } catch { return false; }
