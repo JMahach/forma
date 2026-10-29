@@ -10,7 +10,7 @@ export function accountChart(n = 1, accountId = '1', revision = 1): AccountChart
     designArcResidualDegrees: 1e-9, personality: side.map(a => a.gate), design: side.map(a => a.gate),
     activations: {personality: side, design: side}, city: null, cityId: null,
     engine: 'test', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'test',
-    verification: 'test', calculationVersion: 'current'};
+    verification: 'test'};
 }
 
 

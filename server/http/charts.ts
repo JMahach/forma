@@ -5,7 +5,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AccountChartBirth, ChartWriteIntent, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import type { createChartReturns } from '../services/chart-returns.ts';
 import { CycleError, validateCycleRequest } from '../services/cycles.ts';
-import { createChartLibrary } from '../services/chart-library.ts';
 import { ChartCalculationError } from '../services/chart-calculation.ts';
 import { AccountError, type Accounts } from '../services/accounts.ts';
 import { ChartRecordError, type createChartRecords } from '../services/chart-records.ts';
@@ -18,9 +17,7 @@ interface ChartHttpOptions {
   records: ReturnType<typeof createChartRecords>;
   accounts: Pick<Accounts, 'current'>;
   prepareBirth(input: unknown, options: {signal: AbortSignal;receipt?:unknown}): Promise<AccountChartBirth>;
-  calculationVersion: string;
   returns?: ReturnType<typeof createChartReturns>;
-  cyclesVersion?: string;
   issueReturnReceipt?:ReturnType<typeof createReturnReceipts>['issue'];
   origins: string[];
   now?: () => number;
@@ -54,9 +51,8 @@ function note(value: unknown) {
 }
 
 /** HTTP never accepts calculated activations or a client-selected record owner. */
-export function createChartHandler({ report, records, accounts, prepareBirth, calculationVersion, returns, cyclesVersion, issueReturnReceipt, origins, now = Date.now }: ChartHttpOptions) {
+export function createChartHandler({ report, records, accounts, prepareBirth, returns, issueReturnReceipt, origins, now = Date.now }: ChartHttpOptions) {
   const security = createAccountSecurity({origins, now});
-  const library = createChartLibrary({calculationVersion,prepareBirth});
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const consumer = requestSignal(req,res);
     let current: ReturnType<Accounts['current']> = null;
@@ -78,7 +74,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, ca
       const publicMatch = /^\/api\/shared-charts\/([^/]+)$/.exec(url.pathname);
       if (publicMatch) {
         if (req.method !== 'GET') { reply(405,{error:'method_not_allowed'}); return; }
-        const chart = await library.public(access,identifier(publicMatch[1]),consumer);
+        const chart = access.getPublic(identifier(publicMatch[1]));
         reply(chart ? 200 : 404, chart ? {chart} : {error:'not_found'}); return;
       }
       const outcomeMatch = /^\/api\/charts\/operations\/([^/]+)$/.exec(url.pathname);
@@ -92,16 +88,12 @@ export function createChartHandler({ report, records, accounts, prepareBirth, ca
         if (after) identifier(after);
         const limit = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : 100;
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw invalid();
-        reply(200, await library.page(access,{expectedAccountId, after, limit},consumer)); return;
+        reply(200, access.page({expectedAccountId, after, limit})); return;
       }
       const returnMatch = /^\/api\/charts\/([^/]+)\/returns\/(events|chart|accept)$/.exec(url.pathname);
       if (returnMatch) {
         if (req.method !== 'POST') { reply(405,{error:'method_not_allowed'},{Allow:'POST'}); return; }
         if (!returns) { reply(503,{error:'chart_unavailable'}); return; }
-        const version = req.headers['x-forma-cycles-version'];
-        if (version !== undefined && (typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version) || version !== cyclesVersion)) {
-          throw new HttpInputError('unsupported_version',400);
-        }
         if (returnMatch[2] === 'accept') {
           const packet=await readJSONObject(req,64*1024);
           fields(packet,['expectedAccountId','action','input','result','proof']);
@@ -128,7 +120,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, ca
       const adding = url.pathname === '/api/charts/add', creating = url.pathname === '/api/charts';
       const id = !adding && recordMatch ? identifier(recordMatch[1]) : null;
       if (id && req.method === 'GET') {
-        const chart = await library.own(access,id, accountId(url.searchParams.get('accountId')),consumer);
+        const chart = access.getOwn(id, accountId(url.searchParams.get('accountId')));
         reply(chart ? 200 : 404, chart ? {chart} : {error:'not_found'}); return;
       }
       if (!creating && !adding && !id) { reply(404,{error:'not_found'}); return; }
@@ -145,7 +137,6 @@ export function createChartHandler({ report, records, accounts, prepareBirth, ca
       if (prior.kind !== 'unknown') { reply(200,prior); return; }
       if (adding) {
         if (!Number.isSafeInteger(input.seenRevision) || (input.seenRevision as number) < 1) throw invalid();
-        await library.public(access,identifier(input.sourceId),consumer);
         reply(200, access.addFromSource({...intent,sourceId:identifier(input.sourceId),seenRevision:input.seenRevision as number})); return;
       }
       if (req.method === 'DELETE') { reply(200,access.remove({...intent,chartId:id!})); return; }

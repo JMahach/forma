@@ -25,15 +25,13 @@ function shortText(value: unknown, maximum: number) {
 }
 const cleanSide = (entries: readonly Activation[]) => entries.map(({planet,longitude,gate,line}) => ({planet,longitude,gate,line}));
 
-/** Input is source data; calculations and numerical revision always come from the server. */
-export function createChartCalculation({cities, calculate, calculationVersion, onInvalidResult, receipts}: {
+/** Input is source data; trusted calculated values come from the server. */
+export function createChartCalculation({cities, calculate, onInvalidResult, receipts}: {
   cities: Pick<CityCatalog,'find'>;
   calculate: (...args: Parameters<Calculator>) => ReturnType<Calculator>;
-  calculationVersion: string;
   receipts?: Pick<ReturnType<typeof createCalculationReceipts>,'read'>;
   onInvalidResult?: () => unknown;
 }) {
-  if (!calculationVersion) throw new TypeError('A calculation version is required');
   function invalidResult() {
     try { void Promise.resolve(onInvalidResult?.()).catch(() => {}); } catch { /* Diagnostics cannot replace the calculation result. */ }
     return new ChartCalculationError('invalid_calculation',503);
@@ -115,7 +113,7 @@ export function createChartCalculation({cities, calculate, calculationVersion, o
       activations:{personality:cleanSide(chart.activations!.personality),design:cleanSide(chart.activations!.design)},
       cityId:request.city?.id ?? null, city:request.city ? {...request.city} : null,
       engine:chart.engine, ephemeris:chart.ephemeris, timezoneDatabase:chart.timezoneDatabase,
-      nodeModel:chart.nodeModel, zodiac:chart.zodiac, verification:chart.verification, calculationVersion,
+      nodeModel:chart.nodeModel, zodiac:chart.zodiac, verification:chart.verification,
     };
   };
 }

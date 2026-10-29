@@ -86,7 +86,7 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     const invalidChartResult = createCalculationFailureReporter('calculator', journal.report);
     component='account';
     const account = await createAccountRuntime({ configuration: accountConfiguration,
-      charts: { cities, calculate, cycles, calculationVersion: numericVersion, onInvalidResult: () => invalidChartResult('invalid_result') },
+      charts: { cities, calculate, cycles, onInvalidResult: () => invalidChartResult('invalid_result') },
       report: journal.report, handoffMailReport: journal.handoffMailReport,
     }); cleanup.push(() => account.close());
     component='routing';

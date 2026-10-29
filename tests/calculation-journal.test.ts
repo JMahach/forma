@@ -226,7 +226,7 @@ test('legacy HTTP and account preparation share source validation without repeat
     const response = await respond(good);
     assert.equal(response.status, 200); assert.deepEqual(JSON.parse(response.body), good); assert.equal(facts.length, 3);
     const report = createCalculationFailureReporter('calculator', fact => facts.push(fact));
-    const prepare = createChartCalculation({cities, calculate, calculationVersion: 'a'.repeat(64), onInvalidResult: () => report('invalid_result')});
+    const prepare = createChartCalculation({cities, calculate, onInvalidResult: () => report('invalid_result')});
     const rejected = assert.rejects(prepare({source: 'transit', utc: '2000-01-01T12:00:00Z'}, {signal: new AbortController().signal}), {code: 'calculation_failed'});
     child!.process.stdout.emit('data', '{}'); child!.process.emit('close', 0); await rejected;
     assert.equal(facts.length, 4);

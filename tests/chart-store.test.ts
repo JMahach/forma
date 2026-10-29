@@ -22,7 +22,7 @@ test('account projection owns the library and clearing it never restores an aban
 });
 
 
-test('a downloaded outdated account chart remains listed but cannot become the restored drawing', () => {
+test('an account chart without restoration permission remains listed but cannot become the restored drawing', () => {
   const store = createChartStore();
   store.projectLibrary([personal], true, []);
   assert.equal(store.charts.length, 1);
@@ -124,7 +124,7 @@ test('one public source stays outside both the tab temporary and the account lib
   const a=accountNatalChart(109,'2'),b=accountNatalChart(110,'2');
   const publicPart=(value:typeof a)=>{const {accountId,note,noteRevision,publicRevision,...result}=value;return result;};
   const temporary={...accountNatalChart(111),id:'own-temporary',createdAt:'',updatedAt:''};
-  const store=createChartStore({initialTemporaryChart:temporary,initialPublicChart:publicPart(a),calculationVersion:a.calculationVersion});store.projectLibrary([],false);
+  const store=createChartStore({initialTemporaryChart:temporary,initialPublicChart:publicPart(a)});store.projectLibrary([],false);
   assert.equal(store.has(a.id),true);assert.equal(store.get(a.id)?.note,'');assert.deepEqual(store.charts,[]);
   assert.deepEqual(store.displayCharts,[]);
   const input=publicPart(b);store.acceptPublic(input);input.name='Mutated outside';

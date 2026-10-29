@@ -30,7 +30,7 @@ const revision = 'a'.repeat(64);
 const payload = (packet:Uint8Array) => packet.subarray(8 + new DataView(packet.buffer, packet.byteOffset).getUint32(4, true));
 
 test('removing calculation metadata preserves record numbers, ownership and format revisions without mutating the source', () => {
-  const source = {...accountChart(), engine:'Swiss Ephemeris 2.10.03', version:'3', cacheVersion:revision, cyclesVersion:revision};
+  const source = {...accountChart(), calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03', version:'3', cacheVersion:revision, cyclesVersion:revision};
   const before = structuredClone(source), result = migrateCalculationMetadata(source);
   const {calculationVersion, cyclesVersion, cacheVersion, ...expected} = before;
   assert.deepEqual(result, {...expected, engine:'Swiss Ephemeris'});
@@ -104,11 +104,24 @@ function storedLibrary() {
   const database = openDatabase(':memory:');
   database.connection.exec('CREATE TABLE accounts (id INTEGER PRIMARY KEY) STRICT; INSERT INTO accounts VALUES (1)');
   const storage = createChartRecordStorage(database);
-  const charts = [accountChart(1), accountChart(2)].map(chart => ({...chart, engine:'Swiss Ephemeris 2.10.03'}));
+  // The historical physical return table is explicit: current producers must
+  // no longer be able to create the obsolete format used by this fixture.
+  database.connection.exec(`DROP TABLE account_chart_returns;
+    CREATE TABLE account_chart_returns (
+      chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
+      action TEXT NOT NULL CHECK(action IN ('events','chart')),
+      body TEXT NOT NULL, eventUtc TEXT NOT NULL,
+      calculationVersion TEXT NOT NULL, cyclesVersion TEXT NOT NULL, content TEXT NOT NULL,
+      PRIMARY KEY(chartId,action,body,eventUtc),
+      CHECK((action='events' AND eventUtc='') OR (action='chart' AND length(eventUtc)>0))
+    ) STRICT;
+    CREATE INDEX account_chart_returns_versions ON account_chart_returns(calculationVersion,cyclesVersion);`);
+  const insertReturn=database.connection.prepare('INSERT INTO account_chart_returns VALUES (?,?,?,?,?,?,?)');
+  const charts = [accountChart(1), accountChart(2)].map(chart => ({...chart, calculationVersion:'current', engine:'Swiss Ephemeris 2.10.03'}));
   for (const chart of charts) {
     storage.insert(chart, chart.name, Date.parse(chart.utc) / 60000, chart);
-    storage.saveReturn(chart.id, 'chart', 'saturn', '2029-01-01T01:23:45.654321Z', revision, revision, {chart, proof:'retained-proof'});
-    storage.saveReturn(chart.id, 'events', 'saturn', '', revision, revision, {range:{fromAge:0, toAge:100}, events:[]});
+    insertReturn.run(chart.id, 'chart', 'saturn', '2029-01-01T01:23:45.654321Z', revision, revision, JSON.stringify({chart, proof:'retained-proof'}));
+    insertReturn.run(chart.id, 'events', 'saturn', '', revision, revision, JSON.stringify({range:{fromAge:0, toAge:100}, events:[]}));
   }
   return {database, charts};
 }
@@ -312,11 +325,16 @@ test('a metadata transition refuses concurrent changes to either source instead 
 const deviceName = 'transition-fixture';
 async function storedDevice() {
   const indexedDB = new IDBFactory();
-  const storage = createAccountLibraryStore({indexedDB, databaseName:deviceName});
-  const active = await storage.activate('1');
-  assert.equal(active.status, 'stored');
-  await storage.put(active.lease, [accountChart(1), accountChart(2)]);
-  storage.close();
+  const old = createIndexedDatabase({indexedDB, databaseName:deviceName, version:3, stores:['charts','context'],
+    upgrade(db) {
+      db.createObjectStore('charts',{keyPath:'id'}).createIndex('accessed','_accessedAt');
+      db.createObjectStore('context',{keyPath:'key'});
+    }});
+  await old.transaction('readwrite',(tx,done)=>{
+    tx.objectStore('context').put({key:'owner',accountId:'1',generation:'00112233-4455-6677-8899-aabbccddeeff'});
+    for(const chart of [accountChart(1),accountChart(2)])tx.objectStore('charts').put({...chart,calculationVersion:'current',_accessedAt:0});
+    done(true);
+  }); old.close();
   return indexedDB;
 }
 function deviceDatabase(indexedDB:IDBFactory, version:number) {
@@ -324,11 +342,42 @@ function deviceDatabase(indexedDB:IDBFactory, version:number) {
     upgrade:(_, tx) => migrateAccountCalculations(tx)});
 }
 function deviceRows(database:ReturnType<typeof createIndexedDatabase>) {
-  return database.transaction('readonly', (tx, result) => {
+  return database.transaction<{charts:(ReturnType<typeof accountChart>&{_accessedAt:number;calculationVersion?:string})[];context:Record<string,unknown>[]}>('readonly', (tx, result) => {
     const charts = tx.objectStore('charts').getAll(), context = tx.objectStore('context').getAll();
     context.onsuccess = () => result({charts:charts.result, context:context.result});
   });
 }
+
+test('real SQL and account IDB owners activate the transition and read ready cards without repeat writes', async () => {
+  const {database, charts} = storedLibrary();
+  try {
+    const measured = interruptWrites(database, Infinity), storage = createChartRecordStorage(measured.database);
+    const writes = measured.count();
+    for(const chart of charts) {
+      assert.deepEqual(storage.get(chart.accountId, chart.id), migrateCalculationMetadata(chart));
+      assert.deepEqual(storage.shared(chart.id), migrateCalculationMetadata(chart));
+    }
+    assert.equal(measured.count(), writes, 'ordinary reads never run the transition or rewrite records');
+    assert.equal(migrateStoredCalculations(database), false);
+  } finally {database.close();}
+  const indexedDB = await storedDevice(), library = createAccountLibraryStore({indexedDB, databaseName:deviceName});
+  const old = deviceDatabase(indexedDB, 3), before = (await deviceRows(old))!; old.close();
+  const openCursor=IDBObjectStore.prototype.openCursor;let scans=0;
+  IDBObjectStore.prototype.openCursor=function(...args){scans++;return openCursor.apply(this,args);};
+  try {
+    const read = await library.read();
+    assert.deepEqual(read!.charts, [accountChart(1), accountChart(2)]);
+    assert.equal(scans,1,'schema 3 already has canonical IDs and recency; only calculation metadata needs a pass');
+    const raw = deviceDatabase(indexedDB, 4);
+    try {
+      const after = (await deviceRows(raw))!;
+      assert.deepEqual(after.context, before.context);
+      assert.deepEqual(after.charts, before.charts.map(row => migrateCalculationMetadata(row)));
+    } finally {raw.close();}
+    const previousWriter = deviceDatabase(indexedDB, 3);
+    try {assert.equal(await deviceRows(previousWriter), null);} finally {previousWriter.close();}
+  } finally {IDBObjectStore.prototype.openCursor=openCursor;library.close();}
+});
 
 test('an IndexedDB schema transition retains card numbers, recency and account lease, and fences the old writer', async () => {
   const indexedDB = await storedDevice(), old = deviceDatabase(indexedDB, 3);

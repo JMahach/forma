@@ -145,7 +145,7 @@ test('unexpected chart access failure reaches the journal before the public erro
   const f=fixture();
   const records={withAuthorization:f.failure} as unknown as ReturnType<typeof createChartRecords>;
   const handle=createChartHandler({records,accounts:{current:()=>null},prepareBirth:f.failure,
-    calculationVersion:'current',origins:['http://localhost'],report:f.report});
+    origins:['http://localhost'],report:f.report});
   const res=captureResponse();
   await handle({method:'GET',headers:{host:'localhost'}} as IncomingMessage,res,new URL('http://localhost/api/charts?accountId=1'));
   assert.equal(res.status,503);assert.equal(JSON.parse(res.body).error,'chart_unavailable');

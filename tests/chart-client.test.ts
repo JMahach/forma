@@ -34,13 +34,12 @@ async function fixture(t: {after(fn: () => void): void}) {
   const first = await login('first@example.test');
   let current: typeof first | null = first;
   const records = createChartRecords({database, authorize: () => null, now: () => time});
-  let version = 'current';
   const side = planets.map((planet, i) => ({planet, longitude: i * 20, gate: i + 1, line: 1}));
   const cities = createCityCatalog([{id: '1', name: 'Test City', aliases: [], country: 'Test',
     region: '', timezone: 'UTC', latitude: 0, longitude: 0}]);
   let preparations = 0, calculationReceipt='';
   const receipts=()=>createCalculationReceipts({key:Buffer.alloc(32,9)});
-  const prepare = () => createChartCalculation({cities, calculationVersion: version, receipts:receipts(), calculate: async input => {
+  const prepare = () => createChartCalculation({cities, receipts:receipts(), calculate: async input => {
     preparations++;
     const result={chart: {id: null, name: '', note: '', createdAt: '', updatedAt: '',
       source: input.mode === 'transit' ? 'transit' as const : 'calculated' as const,
@@ -65,7 +64,7 @@ async function fixture(t: {after(fn: () => void): void}) {
     }) as unknown as IncomingMessage;
     const res = captureResponse();
     const handler = createChartHandler({records, accounts, origins: ['https://forma.example.test'], now: () => time,
-      calculationVersion: version, prepareBirth: prepare()});
+      prepareBirth: prepare()});
     await handler(req, res, new URL(path, 'https://forma.example.test'));
     return alter(new Response(res.body, {status: res.status, headers: {'Content-Type': 'application/json'}}));
   };
@@ -77,7 +76,6 @@ async function fixture(t: {after(fn: () => void): void}) {
   return {client, send, getSession, create, intent, calls, first, login,
     switchAccount(value: typeof first | null) { current = value; },
     advance(ms: number) { time += ms; },
-    setVersion(value: string) { version = value; },
     preparations: () => preparations, calculationReceipt:()=>calculationReceipt,
     alter(fn: typeof alter) { alter = fn; }};
 }
@@ -148,20 +146,19 @@ test('a lost response is recovered by a separate read, with no automatic repeate
   assert.equal(f.calls.filter(c => c.options.method === 'POST').length, 1);
 });
 
-test('pages preserve account, cursor and calculation freshness without recalculating the library', async t => {
+test('pages preserve account and cursor and all ready records remain readable without recalculation', async t => {
   const f = await fixture(t);
   await f.create(1, 'A'); await f.create(2, 'B'); await f.create(3, 'C');
-  f.setVersion('next');
   const first = await f.client.list({expectedAccountId: f.first.accountId, limit: 2});
   assert.equal(first.charts.length, 2); assert.ok(first.nextCursor);
-  assert.equal(first.calculationVersion, 'next');
-  assert.ok(first.charts.every(chart => !chart.calculationCurrent));
+  assert.equal(Object.hasOwn(first,'calculationVersion'),false);
+  assert.ok(first.charts.every(chart => !Object.hasOwn(chart,'calculationCurrent')));
   const last = await f.client.list({expectedAccountId: f.first.accountId, after: first.nextCursor, limit: 2});
   assert.equal(last.charts.length, 1); assert.equal(last.nextCursor, null);
   assert.equal(new Set([...first.charts, ...last.charts].map(c => c.id)).size, 3);
   assert.equal(f.preparations(), 3);
   const opened = await f.client.own({chartId: first.charts[0]!.id, expectedAccountId: f.first.accountId});
-  assert.equal(opened.calculationVersion, 'next'); assert.equal(f.preparations(), 4);
+  assert.deepEqual(opened,first.charts[0]); assert.equal(f.preparations(),3);
 });
 
 test('late private reads cannot return after logout, account change or a new session of the same account', async t => {
@@ -221,13 +218,11 @@ test('malformed payloads and foreign private rows are rejected before reaching s
     (v: any) => { v.chart.personality = [64]; },
     (v: any) => { v.chart.utc = '2000-02-30T12:00:00Z'; },
     (v: any) => { v.chart.designUtc = v.chart.utc; },
-    (v: any) => { v.chart.calculationVersion = ''; },
   ]) {
     f.alter(async response => { const v = await response.json(); mutate(v); return Response.json(v); });
     await assert.rejects(f.client.own({chartId, expectedAccountId: f.first.accountId}), {code: 'invalid_response'});
   }
   for (const mutate of [
-    (v: any) => { v.charts[0].calculationCurrent = false; },
     (v: any) => { v.nextCursor = op(98); },
     (v: any) => { v.charts.push(v.charts[0]); },
   ]) {

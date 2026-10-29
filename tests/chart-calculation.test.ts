@@ -19,14 +19,13 @@ function calculated(source:'calculated'|'transit'='calculated'):ChartRecord {
 const natal={source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'};
 function setup(output:{chart:ChartRecord;timeResolution?:{ambiguous:boolean}}|CalculationError={chart:calculated()}) {
   const requests:CalculationRequest[]=[];
-  const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'server-version',
-    calculate:async input=>{requests.push(input);return structuredClone('chart' in output && !Object.hasOwn(output,'timeResolution') ? {...output,timeResolution:{ambiguous:false}} : output);}});
+  const prepare=createChartCalculation({cities:createCityCatalog([city]),calculate:async input=>{requests.push(input);return structuredClone('chart' in output && !Object.hasOwn(output,'timeResolution') ? {...output,timeResolution:{ambiguous:false}} : output);}});
   return {prepare,requests,options:{signal:new AbortController().signal}};
 }
 test('prepared births use catalog and server metadata and drop unrelated worker fields',async()=>{
   const f=setup(),birth=await f.prepare(natal,f.options);
   assert.equal(f.requests[0]!.city!.timezone,'UTC'); assert.equal(f.requests[0]!.mode,'natal');
-  assert.equal(birth.calculationVersion,'server-version'); assert.equal(birth.cityId,'1');
+  assert.equal(Object.hasOwn(birth,'calculationVersion'),false); assert.equal(birth.cityId,'1');
   assert.equal(birth.birthPlace,'Test City'); assert.equal('name' in birth,false); assert.equal('note' in birth,false);
   assert.equal('createdAt' in birth,false); assert.equal('color' in birth.activations.personality[0]!,false);
 });
@@ -92,14 +91,11 @@ test('the civil owner permits unambiguous fold normalization and its proof is re
 
 test('one invalid result emits one safe failure while transport and input failures do not duplicate it',async()=>{
  let calls=0;
- const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'test',
-  calculate:async()=>({chart:calculated(),timeResolution:{ambiguous:false}}),
+ const prepare=createChartCalculation({cities:createCityCatalog([city]),calculate:async()=>({chart:calculated(),timeResolution:{ambiguous:false}}),
   onInvalidResult:()=>{calls++;}});
- const bad=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'test',
-  calculate:async()=>({chart:{...calculated(),personality:[]},timeResolution:{ambiguous:false}}),
+ const bad=createChartCalculation({cities:createCityCatalog([city]),calculate:async()=>({chart:{...calculated(),personality:[]},timeResolution:{ambiguous:false}}),
   onInvalidResult:()=>{calls++;}});
- const rejected=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'test',
-  calculate:async()=>{throw Error('process failed');},onInvalidResult:()=>{calls++;}});
+ const rejected=createChartCalculation({cities:createCityCatalog([city]),calculate:async()=>{throw Error('process failed');},onInvalidResult:()=>{calls++;}});
  const signal=new AbortController().signal;
  await prepare(natal,{signal});assert.equal(calls,0);
  await assert.rejects(bad(natal,{signal}),{code:'invalid_calculation'});assert.equal(calls,1);
@@ -107,8 +103,7 @@ test('one invalid result emits one safe failure while transport and input failur
  await assert.rejects(rejected(natal,{signal}),/process failed/);assert.equal(calls,1);
 });
 test('a failing diagnostic callback never replaces the invalid result failure',async()=>{
- const bad=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'test',
-  calculate:async()=>({chart:{...calculated(),personality:[]},timeResolution:{ambiguous:false}}),
+ const bad=createChartCalculation({cities:createCityCatalog([city]),calculate:async()=>({chart:{...calculated(),personality:[]},timeResolution:{ambiguous:false}}),
   onInvalidResult:()=>Promise.reject(Error('journal unavailable'))});
  await assert.rejects(bad(natal,{signal:new AbortController().signal}),{code:'invalid_calculation'});
 });
@@ -117,7 +112,7 @@ test('a failing diagnostic callback never replaces the invalid result failure',a
 test('saving a signed ready calculation validates the same birth without another worker call',async()=>{
   const receipts=createCalculationReceipts({key:Buffer.alloc(32,7)});
   let calls=0,token='';
-  const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'v1',receipts,
+  const prepare=createChartCalculation({cities:createCityCatalog([city]),receipts,
     calculate:async request=>{calls++;const result={chart:calculated(),timeResolution:{ambiguous:false}};
       token=receipts.issue(request,result)!;return result;}});
   const signal=new AbortController().signal;
@@ -142,7 +137,7 @@ test('calculation receipts bind the server key and exact input; a signed legacy 
   const payload=Buffer.from(JSON.stringify({...contents,version:'historical-calculation-marker'})).toString('base64url');
   const receipt=payload+'.'+createHmac('sha256',key).update('forma:calculation-receipt:v1\0').update(payload).digest('base64url');
   assert.deepEqual(current.read(receipt,request),current.read(issued,request));
-  const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'current',receipts:current,
+  const prepare=createChartCalculation({cities:createCityCatalog([city]),receipts:current,
     calculate:async()=>{throw Error('A ready signed calculation must not be calculated again');}});
   const restored=await prepare(natal,{signal:new AbortController().signal,receipt});
   assert.deepEqual(restored.activations,contents.result.chart.activations);

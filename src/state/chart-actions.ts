@@ -158,7 +158,7 @@ export function createChartActions({client, library, getSession, calculate, save
   function selectionKey(source:ChartSaveSource) {
     const chart=source.chart;
     return JSON.stringify([source.kind,chart.id,chart.name,chart.source,chart.utc,chart.timezone,
-      chart.birthDate,chart.birthTime,chart.cityId,chart.fold,'calculationVersion' in chart?chart.calculationVersion:null,
+      chart.birthDate,chart.birthTime,chart.cityId,chart.fold,
       source.kind==='shared'?source.chart.revision:source.chart.note]);
   }
   // One explicit page-local action. Only its recovery pointer is persisted;

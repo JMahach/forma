@@ -6,7 +6,7 @@ interface IndexedDatabaseOptions {
   databaseName: string;
   version: number;
   stores: string[];
-  upgrade: (database: IDBDatabase, transaction: IDBTransaction) => void;
+  upgrade: (database: IDBDatabase, transaction: IDBTransaction, oldVersion: number) => void;
   indexedDB?: IDBFactory | null;
   timeoutMs?: number;
 }
@@ -30,9 +30,9 @@ export function createIndexedDatabase({ databaseName, version, stores, upgrade,
       let done = false, failure:'quota'|'unavailable'|undefined;
       const finish = (value: OpenResult) => { if (!done) { done = true; clearTimeout(timer); resolve(value); } };
       const timer = setTimeout(() => finish({status:'unavailable'}), timeoutMs);
-      request.onupgradeneeded = () => {
+      request.onupgradeneeded = event => {
         if (done || closed) { request.transaction!.abort(); return; }
-        try { upgrade(request.result, request.transaction!); }
+        try { upgrade(request.result, request.transaction!, event.oldVersion); }
         catch (cause) {
           failure=storageFailure(cause);
           // Preserve the cause, but wait for rollback before allowing a retry.

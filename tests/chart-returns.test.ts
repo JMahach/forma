@@ -39,7 +39,7 @@ function fixture(t:test.TestContext,filename=':memory:') {
   const chart=records.getOwn(created.chartId)!;
   const cycles={events:async(input:CycleInput)=>{eventCalls++;return dates(input);},
     chart:async(input:CycleInput)=>{calls++;return calculation(input);}};
-  const service=createChartReturns({records,cycles,calculationVersion:'current',cyclesVersion:version});
+  const service=createChartReturns({cycles});
   const input={birthUtc:chart.utc,timezone:chart.timezone!,body:'saturn',...range,eventUtc};
   const options={signal:new AbortController().signal};
   const events=()=>service.events(records,chart.id,accountId,input,options);
@@ -68,7 +68,7 @@ test('a new server instance reads the saved return from the same database withou
   await f.selected();
   const database=openDatabase(filename);t.after(()=>database.close());
   const records=createChartRecords({database,authorize:()=>({accountId:f.accountId})});
-  const service=createChartReturns({records,calculationVersion:'current',cyclesVersion:version,
+  const service=createChartReturns({
     cycles:{events:async()=>{throw Error('must not run');},chart:async()=>{throw Error('must not run');}}});
   assert.equal((await service.chart(records,f.chart.id,f.accountId,f.input,f.options)).chart.utc,eventUtc);
 });
@@ -98,14 +98,19 @@ test('non-main bodies, arbitrary ranges and non-event moments are rejected befor
 
 test('the expected birth and timezone cannot silently change under an existing request',async t=>{
   const f=fixture(t);
-  for(const patch of [{birthUtc:'2001-01-01T12:00:00Z'},{timezone:'Europe/Moscow'}]) {
+  for(const patch of [{birthUtc:'2001-01-01T12:00:00Z'},{timezone:'Europe/Moscow'},{timezone:''}]) {
     await assert.rejects(f.service.events(f.records,f.chart.id,f.accountId,{...f.input,...patch},f.options),{code:'source_changed'});
   }
-  f.update({birth:{...f.chart,calculationVersion:'obsolete'}});
-  await assert.rejects(f.events(),{code:'source_changed'});assert.equal(f.calls().events,0);
+  assert.equal(f.calls().events,0);
+  f.update({birth:{...f.chart,timezone:'Europe/Moscow'}});
+  const input={...f.input,timezone:'Europe/Moscow'};
+  const result=await f.service.chart(f.records,f.chart.id,f.accountId,input,f.options);
+  assert.equal(result.chart.timezone,'Europe/Moscow');
+  assert.deepEqual(await f.service.chart(f.records,f.chart.id,f.accountId,input,f.options),result);
+  assert.deepEqual(f.calls(),{events:1,charts:1});
 });
 
-for(const change of ['logout','account','birth','delete','version','abort'] as const) {
+for(const change of ['logout','account','birth','delete','abort'] as const) {
   test(`a delayed calculation after ${change} cannot write or return its old result`,async t=>{
     const f=fixture(t);await f.events();
     const pending=deferred<CycleChartResult>(),entered=deferred<void>();
@@ -119,7 +124,6 @@ for(const change of ['logout','account','birth','delete','version','abort'] as c
     if(change==='account')f.auth(f.otherId);
     if(change==='birth')f.update({birth:{...f.chart,utc:'2000-01-01T12:01:00Z',birthTime:'12:01'}});
     if(change==='delete')f.remove();
-    if(change==='version')createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:nextVersion});
     if(change==='abort')controller.abort();
     pending.resolve(calculation(f.input));await rejected;
     const rows=f.database.connection.prepare("SELECT count(*) AS n FROM account_chart_returns WHERE action='chart'").get();
@@ -127,23 +131,22 @@ for(const change of ['logout','account','birth','delete','version','abort'] as c
   });
 }
 
-test('changing birth, refreshing numerical version and deleting a card remove its linked data; name alone does not',async t=>{
+test('changing birth and deleting a card remove its linked data; name alone does not',async t=>{
   const f=fixture(t);await f.selected();
   const count=()=>Number(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n);
   assert.equal(count(),2);
   f.update({birth:{...f.chart,utc:'2000-01-01T12:01:00Z',birthTime:'12:01'}});assert.equal(count(),0);
   f.update({birth:f.chart});await f.selected();
-  f.records.refreshBirth(f.chart.id,f.chart,{...f.chart,calculationVersion:'new'});assert.equal(count(),0);
-  f.update({birth:f.chart});await f.selected();f.remove();assert.equal(count(),0);
+  f.remove();assert.equal(count(),0);
 });
 
-test('changing the cycle version clears old returns and leaves the natal and user edits intact',async t=>{
+test('reconstructing the return owner keeps ready numbers and user edits without recalculating',async t=>{
   const f=fixture(t);await f.selected();
-  const next=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:nextVersion});
-  assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,0);
+  const next=createChartReturns({cycles:f.cycles});
+  assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,2);
   assert.equal(f.records.getOwn(f.chart.id)!.note,f.chart.note);
   await next.chart(f.records,f.chart.id,f.accountId,f.input,f.options);
-  assert.deepEqual(f.calls(),{events:2,charts:2});
+  assert.deepEqual(f.calls(),{events:1,charts:1});
 });
 
 test('bad generator results are rejected without poisoning persistent data; a later attempt succeeds',async t=>{
@@ -164,7 +167,7 @@ test('concurrent readers share unfinished calculation but keep independent acces
   const f=fixture(t),pending=deferred<CycleEventsResult>(),entered=deferred<void>();let calls=0,firstAllowed=true;
   const cycles=createCycles({cacheVersion:version,generate:async()=>{calls++;entered.resolve();return pending.promise;}});
   t.after(()=>cycles.close());
-  const service=createChartReturns({records:f.records,cycles,calculationVersion:'current',cyclesVersion:version});
+  const service=createChartReturns({cycles});
   const first=f.records.withAuthorization(()=>firstAllowed?{accountId:f.accountId}:null);
   const a=service.events(first,f.chart.id,f.accountId,f.input,f.options),b=service.events(f.records,f.chart.id,f.accountId,f.input,f.options);
   const denied=assert.rejects(a,{code:'auth_required'});await entered.promise;firstAllowed=false;
@@ -192,19 +195,9 @@ test('a late return preserves concurrent name/note edits',async t=>{
   assert.equal(f.records.getOwn(f.chart.id)!.name,'New name');assert.equal(f.records.getOwn(f.chart.id)!.note,'New note');
 });
 
-test('a numerical version change cleans returns of every card, including cards never reopened',async t=>{
-  const f=fixture(t);await f.events();
-  const added=f.records.create({operationId:chartId(500),expectedAccountId:f.accountId,content:accountNatalChart(2,f.accountId)});
-  await f.service.events(f.records,added.chartId,f.accountId,f.input,f.options);
-  assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,2);
-  createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'new-numbers',cyclesVersion:version});
-  assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,0);
-  assert.equal(f.records.list().length,2);
-});
-
 function signedFixture(t:test.TestContext) {
   const f=fixture(t),receipts=createReturnReceipts({key:new Uint8Array(32).fill(17)});
-  const service=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:version,receipts});
+  const service=createChartReturns({cycles:f.cycles,receipts});
   const result=calculation(f.input),proof=receipts.issue('chart',f.input,result)!;
   const packet={action:'chart' as const,input:f.input,result,proof};
   return {...f,service,receipts,packet,accept:()=>service.accept(f.records,f.chart.id,f.accountId,packet,f.options)};
@@ -238,7 +231,7 @@ test('altered and foreign proofs, missing verifier, foreign owners and changed b
   await assert.rejects(accept({result:bad}),{code:'invalid_chart'});
   const foreign=createReturnReceipts({key:new Uint8Array(32).fill(18)});
   await assert.rejects(accept({proof:foreign.issue('chart',f.input,f.packet.result)!}),{code:'invalid_chart'});
-  const noVerifier=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:version});
+  const noVerifier=createChartReturns({cycles:f.cycles});
   await assert.rejects(noVerifier.accept(f.records,f.chart.id,f.accountId,f.packet,f.options),{code:'invalid_chart'});
   f.auth(f.otherId);await assert.rejects(f.accept(),{code:'account_changed'});f.auth(f.accountId);
   f.update({birth:{...f.chart,utc:'2000-01-01T12:01:00Z'}});await assert.rejects(f.accept(),{code:'source_changed'});
@@ -248,7 +241,7 @@ test('altered and foreign proofs, missing verifier, foreign owners and changed b
 
 test('the owner is checked again at the write boundary of proof verification',async t=>{
   const f=signedFixture(t),receipts={read:(...args:Parameters<typeof f.receipts.read>)=>{const result=f.receipts.read(...args);f.auth(null);return result;}};
-  const service=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:version,receipts});
+  const service=createChartReturns({cycles:f.cycles,receipts});
   await assert.rejects(service.accept(f.records,f.chart.id,f.accountId,f.packet,f.options),{code:'auth_required'});
   assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,0);
 });

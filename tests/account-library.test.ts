@@ -11,7 +11,7 @@ const session = {accountId: '1', sessionId: 'first-session'};
 const noNetwork = async (): Promise<never> => { throw new Error('offline data must not request a server'); };
 function client(rows = [accountChart()]): Pick<ChartClient, 'list' | 'own'> {
   return {
-    async list() { return {charts: rows.map(chart => ({...chart, calculationCurrent: true})), nextCursor: null, calculationVersion: 'current'}; },
+    async list() { return {charts: rows.map(chart => ({...chart})), nextCursor: null }; },
     async own({chartId: id}) { const chart = rows.find(row => row.id === id); if (!chart) throw Object.assign(new Error(), {code: 'not_found'}); return chart; },
   };
 }
@@ -19,7 +19,7 @@ test('offline restore keeps the downloaded library after expiry without asking t
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const active = await storage.activate('1'); assert.equal(active.status, 'stored');
   await storage.put(active.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, calculationVersion: 'current', online: () => false});
+  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, online: () => false});
   try {
     await library.restore(); await library.connect(null);
     assert.equal(library.charts.length, 1);
@@ -29,7 +29,7 @@ test('offline restore keeps the downloaded library after expiry without asking t
 
 test('a new account replaces the working library and expiry alone retains its downloaded cards', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
-  const library = createAccountLibrary({storage, client: client([accountChart(2, '2')]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(2, '2')]), online: () => true});
   try {
     const first = await storage.activate('1'); assert.equal(first.status, 'stored'); await storage.put(first.lease, [accountChart()]);
     await library.restore();
@@ -46,7 +46,7 @@ test('a late page after logout cannot repopulate memory or IndexedDB', async () 
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const source = client(); const original = source.list;
   source.list = async (...args) => { await gate; return original(...args); };
-  const library = createAccountLibrary({storage, client: source, calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session);
     const pending = library.load(); const refused = assert.rejects(pending, {code: 'account_changed'});
@@ -60,7 +60,7 @@ test('a deletion from another tab invalidates a pending card response', async ()
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const source = client(), original = source.own;
   source.own = async (...args) => { await gate; return original(...args); };
-  const library = createAccountLibrary({storage, client: source, calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session); await library.load();
     const pending = library.open(chartId(1)), refused = assert.rejects(pending, {code: 'account_changed'});
@@ -80,7 +80,7 @@ test('cancelling one open aborts its request without cancelling another open or 
     await gate; // Also exercise a transport which delivers a response after abort.
     return id === chartId(1) ? accountChart(1) : accountChart(2);
   };
-  const library = createAccountLibrary({storage, client:source, calculationVersion:'current', online:()=>true});
+  const library = createAccountLibrary({storage, client:source, online:()=>true});
   try {
     await library.connect(session);
     const cancelled = new AbortController();
@@ -98,7 +98,7 @@ test('cancelling one open aborts its request without cancelling another open or 
 
 test('cancelled opens do no work and cannot apply a late deletion or cached fallback', async () => {
   const storage = createAccountLibraryStore({indexedDB:new IDBFactory()}), source = client();
-  const library = createAccountLibrary({storage, client:source, calculationVersion:'current', online:()=>true});
+  const library = createAccountLibrary({storage, client:source, online:()=>true});
   try {
     await library.connect(session); await library.load();
     let calls = 0;
@@ -116,19 +116,19 @@ test('cancelled opens do no work and cannot apply a late deletion or cached fall
 });
 
 test('a server card remains usable in memory if local storage is unavailable', async () => {
-  const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: client(), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: client(), online: () => true});
   try {
     await library.connect(session); const chart = await library.open(chartId(1));
     assert.equal(chart.id, chartId(1)); assert.equal(library.charts.length, 1); assert.equal(library.storageAvailable, false);
   } finally { library.close(); }
 });
 
-test('a stored stale calculation is retained but cannot be opened offline', async () => {
+test('a stored ready calculation remains usable offline without a calculation marker', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const active = await storage.activate('1'); assert.equal(active.status, 'stored'); await storage.put(active.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, calculationVersion: 'new', online: () => false});
+  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, online: () => false});
   try {
-    await library.restore(); await assert.rejects(library.open(chartId(1)), {code: 'offline'});
+    await library.restore(); assert.deepEqual(await library.open(chartId(1)), accountChart());
     assert.equal(library.charts[0]!.note, 'Личная заметка');
   } finally { library.close(); }
 });
@@ -138,7 +138,7 @@ test('an older late open cannot return numbers older than the working record', a
   let release!: () => void, count = 0; const gate = new Promise<void>(resolve => { release = resolve; });
   const source = client();
   source.own = async () => { if (++count === 1) { await gate; return accountChart(1, '1', 2); } return accountChart(1, '1', 3); };
-  const library = createAccountLibrary({storage, client: source, calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session);
     const old = library.open(chartId(1)); await library.open(chartId(1)); release();
@@ -149,7 +149,7 @@ test('an older late open cannot return numbers older than the working record', a
 test('a failed background download is not repeated in the same page lifetime', async () => {
   let calls = 0; const source = client(), list = source.list;
   source.list = async (...args) => { calls++; return list(...args); };
-  const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: source, calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: source, online: () => true});
   try {
     await library.connect(session); await library.load(); await library.load();
     assert.equal(calls, 1); assert.equal(library.charts.length, 1);
@@ -160,7 +160,7 @@ test('reading an older local copy cannot roll back a confirmed card kept in memo
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const first = await storage.activate('1'); assert.equal(first.status, 'stored');
   await storage.put(first.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: client([accountChart(1, '1', 2)]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(1, '1', 2)]), online: () => true});
   try {
     await library.connect(session);
     const put = storage.put;
@@ -175,7 +175,7 @@ test('reading an older local copy cannot roll back a confirmed card kept in memo
 test('logout clears the account even while its first activation has not returned a lease', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const old = await storage.activate('1'); assert.equal(old.status, 'stored'); await storage.put(old.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: client(), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client(), online: () => true});
   try {
     const connecting = library.connect(session), refused = assert.rejects(connecting, {code: 'account_changed'});
     await library.clear(); await refused;
@@ -186,7 +186,7 @@ test('logout clears the account even while its first activation has not returned
 
 test('logout clears the same account after another tab has advanced its generation', async () => {
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
-  const library = createAccountLibrary({storage, client: client([accountChart(), accountChart(2)]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(), accountChart(2)]), online: () => true});
   try {
     await library.connect(session); await library.load();
     const old = await other.read(); await other.remove(old!.lease!, chartId(1));
@@ -196,7 +196,7 @@ test('logout clears the same account after another tab has advanced its generati
 
 test('a stale account logout cannot erase the other account currently held by storage', async () => {
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
-  const library = createAccountLibrary({storage, client: client(), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client(), online: () => true});
   try {
     await library.connect(session); await library.load();
     const next = await other.activate('2'); assert.equal(next.status, 'stored'); await other.put(next.lease, [accountChart(2, '2')]);
@@ -208,7 +208,7 @@ test('a stale account logout cannot erase the other account currently held by st
 test('logout during initial cache reading also clears the account before any lease is restored', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const old = await storage.activate('1'); assert.equal(old.status, 'stored'); await storage.put(old.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: client(), calculationVersion: 'current', online: () => false});
+  const library = createAccountLibrary({storage, client: client(), online: () => false});
   try {
     const restoring = library.restore(), refused = assert.rejects(restoring, {code: 'account_changed'});
     await Promise.resolve(); await library.clear(); await refused;
@@ -219,7 +219,7 @@ test('logout during initial cache reading also clears the account before any lea
 
 test('concurrent confirmed deletions both leave memory and IndexedDB without dropping another chart', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
-  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), online: () => true});
   try {
     await library.connect(session); await library.load();
     const outcomes = await Promise.allSettled([library.forget(chartId(1)), library.forget(chartId(2))]);
@@ -231,7 +231,7 @@ test('concurrent confirmed deletions both leave memory and IndexedDB without dro
 
 test('a confirmed deletion renews a stale same-account lease and removes only its target', async () => {
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
-  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), online: () => true});
   try {
     await library.connect(session); await library.load();
     const before = await other.read(); await other.remove(before!.lease!, chartId(1));
@@ -243,7 +243,7 @@ test('a confirmed deletion renews a stale same-account lease and removes only it
 
 test('a confirmed deletion cannot adopt the different account now held by IndexedDB', async () => {
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
-  const library = createAccountLibrary({storage, client: client(), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client(), online: () => true});
   try {
     await library.connect(session); await library.load();
     const next = await other.activate('2'); assert.equal(next.status, 'stored');
@@ -256,7 +256,7 @@ test('a confirmed deletion cannot adopt the different account now held by Indexe
 
 test('a session change cancels queued deletions before they can acquire a new local lease', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
-  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2)]), calculationVersion: 'current', online: () => true});
+  const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2)]), online: () => true});
   let release!: () => void, entered!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
   const remove = storage.remove;
@@ -284,8 +284,8 @@ test('a background page saved after quota relief stops downloading until a new p
   let full=true,calls=0;
   pressure.setSources({diagnostics:async()=>{full=false;return 'released';}});
   const source=client();
-  source.list=async()=>({charts:[{...accountChart(++calls+1),calculationCurrent:true}],nextCursor:calls===1?'next':null,calculationVersion:'current'});
-  const library=createAccountLibrary({storage,client:source,calculationVersion:'current',online:()=>true});
+  source.list=async()=>({charts:[{...accountChart(++calls+1)}],nextCursor:calls===1?'next':null});
+  const library=createAccountLibrary({storage,client:source,online:()=>true});
   t.after(()=>library.close());await library.connect(session);
   const original=IDBObjectStore.prototype.put;
   IDBObjectStore.prototype.put=function(value:unknown,key?:IDBValidKey){
@@ -301,7 +301,7 @@ test('a background page saved after quota relief stops downloading until a new p
 test('only a displayed chart changes library LRU; refreshing the full list does not',async t=>{
   let clock=0;
   const storage=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>++clock});
-  const library=createAccountLibrary({storage,client:client([accountChart(1),accountChart(2)]),calculationVersion:'current',online:()=>true});
+  const library=createAccountLibrary({storage,client:client([accountChart(1),accountChart(2)]),online:()=>true});
   t.after(()=>library.close());await library.connect(session);await library.load();
   await library.markOpened(chartId(1));
   await library.load();
@@ -312,7 +312,7 @@ test('only a displayed chart changes library LRU; refreshing the full list does 
 
 test('reload permission checks durable ownership and revision, including another tab eviction',async()=>{
  const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});
- const row=accountChart(),library=createAccountLibrary({storage,client:client([row]),calculationVersion:'current',online:()=>true});
+ const row=accountChart(),library=createAccountLibrary({storage,client:client([row]),online:()=>true});
  try{
   await library.connect(session);await library.load();assert.equal(await library.canRestore(row.id),true);
   await other.read();await other.evictForSpace(0);
@@ -325,7 +325,7 @@ test('reload permission checks durable ownership and revision, including another
 });
 test('a newer RAM revision cannot use an older durable copy as reload evidence',async()=>{
  const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),newer=accountChart(1,'1',2);
- const library=createAccountLibrary({storage,client:client([newer]),calculationVersion:'current',online:()=>true});
+ const library=createAccountLibrary({storage,client:client([newer]),online:()=>true});
  try{
   const active=await storage.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
   await storage.put(active.lease,[accountChart()]);await library.connect(session);
@@ -337,7 +337,7 @@ test('a newer RAM revision cannot use an older durable copy as reload evidence',
 });
 test('logout during durable verification cannot authorize the previous account reload',async()=>{
  const storage=createAccountLibraryStore({indexedDB:new IDBFactory()});
- const library=createAccountLibrary({storage,client:client(),calculationVersion:'current',online:()=>true});
+ const library=createAccountLibrary({storage,client:client(),online:()=>true});
  try{
   await library.connect(session);await library.load();
   let finish!:(value:boolean)=>void;storage.canRestore=()=>new Promise(resolve=>{finish=resolve;});
@@ -346,30 +346,13 @@ test('logout during durable verification cannot authorize the previous account r
  }finally{library.close();}
 });
 
-test('late durability proof cannot approve a calculation version invalidated while checking',async()=>{
- const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),row=accountChart();
- let newer=false,release!:()=>void,started!:()=>void;
- const gate=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{started=resolve;});
- const client={async own(){return row;},async list(){return {charts:newer?[]:[{...row,calculationCurrent:true}],nextCursor:null,calculationVersion:newer?'new-version':'current'};}};
- const library=createAccountLibrary({storage,client,calculationVersion:'current',online:()=>true});
- try {
-  await library.connect({accountId:'1',sessionId:'first-session'});await library.load();
-  const read=storage.canRestore.bind(storage);
-  storage.canRestore=async(...args)=>{const result=await read(...args);started();await gate;return result;};
-  const pending=library.canRestore(row.id);await ready;newer=true;await library.load();release();
-  assert.equal(library.calculationVersion,'new-version');
-  assert.equal(await pending,false,'the old proof no longer matches the library calculation version');
- } finally {release?.();library.close();}
-});
-
-
 test('unchanged library reads retain records without notifications, while durable recovery still notifies', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const rows = [accountChart(1), accountChart(2)];
   let notices = 0, observations = 0;
   const source = client(rows), own = source.own;
   source.own = async (...args) => structuredClone(await own(...args));
-  const library = createAccountLibrary({storage, client: source, calculationVersion: 'current', online: () => true, notify: () => { notices++; }});
+  const library = createAccountLibrary({storage, client: source, online: () => true, notify: () => { notices++; }});
   library.subscribe(() => { observations++; });
   try {
     await library.connect(session); await library.load();

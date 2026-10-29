@@ -10,15 +10,14 @@ export interface ChartReturnCalculator {
 type ReadOptions={signal:AbortSignal};
 
 /** Linked main returns of an owned natal. Computation and unfinished sharing stay with cycles. */
-export function createChartReturns({records,cycles,calculationVersion,cyclesVersion,receipts}:{
-  records:ChartRecordAccess;cycles:ChartReturnCalculator;calculationVersion:string;cyclesVersion:string;receipts?:ReturnReceiptReader;
+export function createChartReturns({cycles,receipts}:{
+  cycles:ChartReturnCalculator;receipts?:ReturnReceiptReader;
 }) {
-  records.configureReturns({calculationVersion,cyclesVersion});
   function source(access:ChartRecordAccess,id:string,accountId:string,input:CycleInput,{signal}:ReadOptions) {
     signal.throwIfAborted();
     const chart=access.getOwn(id,accountId);
     if(!chart)throw new ChartRecordError('not_found');
-    if(chart.calculationVersion!==calculationVersion || input.birthUtc!==chart.utc
+    if(input.birthUtc!==chart.utc
       || (input.timezone??'UTC')!==(chart.timezone||'UTC'))throw new ChartRecordError('source_changed');
     if(chart.source!=='calculated' || !isMainReturnBody(input.body))throw new ChartRecordError('invalid_chart');
     const range=mainReturnRange(chart.utc);
@@ -27,7 +26,7 @@ export function createChartReturns({records,cycles,calculationVersion,cyclesVers
     return {chart,body:input.body,range};
   }
   function query(chart:AccountChart,input:CycleInput,action:ChartReturnQuery['action']):ChartReturnQuery {
-    return {chartId:chart.id,expectedAccountId:chart.accountId,birth:chart,cyclesVersion,action,input};
+    return {chartId:chart.id,expectedAccountId:chart.accountId,birth:chart,action,input};
   }
   async function dates(access:ChartRecordAccess,context:ReturnType<typeof source>,options:ReadOptions):Promise<CycleEventsResult> {
     options.signal.throwIfAborted();

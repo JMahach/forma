@@ -40,7 +40,7 @@ test('repeated library reads reuse SQL instructions while returning fresh, accou
   for (const [query, count] of f.compilations) assert.equal(count, 1, `SQL prepared again: ${query}`);
 });
 
-test('reused writes observe rollback, constraints, current return versions and cascade deletion', t => {
+test('reused writes observe rollback, constraints, current return data and cascade deletion', t => {
   const f = fixture(t), own = accountNatalChart(1, f.a);
   f.insert(own);
   assert.throws(() => f.insert(own), /UNIQUE/);
@@ -55,21 +55,19 @@ test('reused writes observe rollback, constraints, current return versions and c
   assert.deepEqual(f.storage.get(f.a, own.id), revised);
   assert.equal(f.storage.update({ ...revised, accountId: f.b }, own.name, 1, f.content(revised)), false);
 
-  for (const version of ['old', 'new']) {
-    const result = { events: [], version };
-    f.storage.saveReturn(own.id, 'events', 'saturn', '', 'numbers', version, result);
-    assert.deepEqual(f.storage.readReturn(own.id, 'events', 'saturn', '', 'numbers', version), result);
-    assert.equal(f.storage.readReturn(own.id, 'events', 'saturn', '', 'other-numbers', version), null);
+  for (const events of [[], [1]]) {
+    const result = {events};
+    f.storage.saveReturn(own.id, 'events', 'saturn', '', result);
+    assert.deepEqual(f.storage.readReturn(own.id, 'events', 'saturn', ''), result);
+    assert.equal(f.storage.readReturn(own.id, 'events', 'chiron', ''), null);
   }
-  assert.equal(f.storage.readReturn(own.id, 'events', 'saturn', '', 'numbers', 'old'), null);
-  f.storage.clearOldReturns('numbers', 'new');
-  assert.ok(f.storage.readReturn(own.id, 'events', 'saturn', '', 'numbers', 'new'));
+  assert.deepEqual(f.storage.readReturn(own.id, 'events', 'saturn', ''), {events:[1]});
   f.storage.clearReturns(own.id);
-  assert.equal(f.storage.readReturn(own.id, 'events', 'saturn', '', 'numbers', 'new'), null);
-  f.storage.saveReturn(second.id, 'events', 'saturn', '', 'numbers', 'new', { events: [] });
+  assert.equal(f.storage.readReturn(own.id, 'events', 'saturn', ''), null);
+  f.storage.saveReturn(second.id, 'events', 'saturn', '', { events: [] });
   assert.equal(f.storage.remove(f.b, second.id), false);
   assert.equal(f.storage.remove(f.a, second.id), true);
-  assert.equal(f.storage.readReturn(second.id, 'events', 'saturn', '', 'numbers', 'new'), null);
+  assert.equal(f.storage.readReturn(second.id, 'events', 'saturn', ''), null);
 
   const outcome = { kind: 'updated', chartId: own.id, revision: 2 } as const;
   for (const account of [f.a, f.b]) f.storage.saveOutcome(account, 'operation', 100, outcome);
@@ -85,12 +83,12 @@ test('reused writes observe rollback, constraints, current return versions and c
 test('39-digit IDs shorten atomically with owner, notes, returns and write outcomes preserved',t=>{
  const f=fixture(t),id='123456789012345678901234567890123456789',short=id.slice(0,10);
  const row={...accountNatalChart(1,f.a),id};f.insert(row);
- f.storage.saveReturn(id,'events','saturn','','numbers','cycles',{events:[]});
+ f.storage.saveReturn(id,'events','saturn','',{events:[]});
  f.storage.saveOutcome(f.a,'1'.repeat(32),100,{kind:'created',chartId:id,revision:1});
  const migrated=createChartRecordStorage(f.database,canonicalChartId);
  assert.deepEqual(migrated.get(f.a,short),{...row,id:short});assert.equal(migrated.get(f.b,short),null);
  assert.equal(migrated.get(f.a,id),null);
- assert.deepEqual(migrated.readReturn(short,'events','saturn','','numbers','cycles'),{events:[]});
+ assert.deepEqual(migrated.readReturn(short,'events','saturn',''),{events:[]});
  assert.equal(migrated.outcome(f.a,'1'.repeat(32))?.outcome.chartId,short);
  assert.deepEqual(f.database.connection.prepare('PRAGMA foreign_key_check').all(),[]);
  assert.deepEqual(createChartRecordStorage(f.database,canonicalChartId).list(f.a),[{...row,id:short}]);

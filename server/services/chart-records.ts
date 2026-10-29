@@ -17,7 +17,7 @@ export class ChartRecordError extends Error {
 }
 const contentFields = ['name','note','birthDate','birthTime','birthPlace','source','personality','design','activations',
   'utc','timezone','utcOffset','fold','designUtc','designArcResidualDegrees','engine','ephemeris','timezoneDatabase',
-  'nodeModel','zodiac','verification','cityId','city','calculationVersion'] as const;
+  'nodeModel','zodiac','verification','cityId','city'] as const;
 function contentOf(input: AccountChartContent): AccountChartContent {
   return structuredClone(Object.fromEntries(contentFields.filter(key => Object.hasOwn(input, key))
     .map(key => [key, input[key]]))) as AccountChartContent;
@@ -34,7 +34,7 @@ function identity(content: AccountChartContent) {
   const milliseconds = Date.parse(content.utc);
   if (typeof content.name !== 'string' || !content.name.replace(/\s/gu, '') || content.name.length > 80
     || typeof content.note !== 'string' || content.note.length > 2000
-    || !Number.isFinite(milliseconds) || typeof content.calculationVersion !== 'string' || !content.calculationVersion
+    || !Number.isFinite(milliseconds)
     || !['calculated','transit'].includes(content.source)) throw new ChartRecordError('invalid_chart');
   return {nameKey: content.name.replace(/\s/gu, '').toLowerCase(), birthMinute: Math.floor(milliseconds / 60_000)};
 }
@@ -52,7 +52,7 @@ function newChartId(digits = CHART_ID_MIN_DIGITS) {
 }
 
 export interface ChartReturnQuery {
-  chartId:string; expectedAccountId:string; birth:AccountChartBirth; cyclesVersion:string;
+  chartId:string; expectedAccountId:string; birth:AccountChartBirth;
   action:'events'|'chart'; input:CycleInput;
 }
 
@@ -72,14 +72,6 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     }
     throw new ChartRecordError('chart_unavailable');
   }
-  let returnVersions:{calculationVersion:string;cyclesVersion:string}|null=null;
-  // Runtime setup, never an HTTP operation. A later version also fences pending old writes.
-  function configureReturns(versions:{calculationVersion:string;cyclesVersion:string}) {
-    if(!versions.calculationVersion || !/^[a-f0-9]{64}$/.test(versions.cyclesVersion))throw new ChartRecordError('invalid_chart');
-    database.transaction(()=>storage.clearOldReturns(versions.calculationVersion,versions.cyclesVersion));
-    returnVersions={...versions};
-  }
-
   function withAuthorization(authorize: (serverTime: number) => { accountId: string } | null) {
   function account(time: number, expected?: string) {
     const current = authorize(time);
@@ -104,9 +96,7 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
   function returnContext(query:ChartReturnQuery) {
     const owner=account(now(),query.expectedAccountId), current=storage.get(owner,query.chartId);
     if(!current)throw new ChartRecordError('not_found');
-    if(!returnVersions || query.cyclesVersion!==returnVersions.cyclesVersion
-      || current.calculationVersion!==returnVersions.calculationVersion
-      || !isDeepStrictEqual(birthContent(current),birthContent(query.birth)))throw new ChartRecordError('source_changed');
+    if(!isDeepStrictEqual(birthContent(current),birthContent(query.birth)))throw new ChartRecordError('source_changed');
     if(current.source!=='calculated' || !isMainReturnBody(query.input.body))throw new ChartRecordError('invalid_chart');
   }
   function saveContent(owner: string, prepared: AccountChartContent): ChartWriteOutcome {
@@ -118,13 +108,11 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     return {kind:'created', chartId:row.id, revision:row.revision};
   }
   const api = {
-    configureReturns,
     assertReturnCurrent(query:ChartReturnQuery) { database.transaction(()=>returnContext(query)); },
     readReturn(query:ChartReturnQuery):unknown {
       return database.transaction(()=>{
         returnContext(query);
-        return storage.readReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'',
-          query.birth.calculationVersion,query.cyclesVersion);
+        return storage.readReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'');
       });
     },
     // Only trusted, validated computation owners may call this; not browser-supplied numbers.
@@ -132,8 +120,7 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
       if(!validCycleResult(query.action,result,query.input))throw new ChartRecordError('invalid_chart');
       database.transaction(()=>{
         returnContext(query);
-        storage.saveReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'',
-          query.birth.calculationVersion,query.cyclesVersion,result);
+        storage.saveReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'',result);
       });
     },
     create(intent: ChartWriteIntent & { content: AccountChartContent }): ChartWriteOutcome {
@@ -199,24 +186,6 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
       const row = storage.shared(id);
       if (!row) return null;
       return {...publicContent(row), id:row.id, revision:row.publicRevision};
-    },
-    // A derived calculation refresh is not a user write or a replayed command.
-    // The source birth must still be current; concurrent name/note edits are kept.
-    refreshBirth(id: string, seen: AccountChartBirth, prepared: AccountChartBirth): 'updated' | 'changed' | 'missing' {
-      return database.transaction(() => {
-        const current = storage.shared(id);
-        if (!current) return 'missing';
-        if (!isDeepStrictEqual(birthContent(current),birthContent(seen))) return 'changed';
-        const content = contentOf({...prepared,name:current.name,note:current.note}), key = identity(content);
-        const duplicate = storage.match(current.accountId,key.nameKey,key.birthMinute);
-        if (duplicate && duplicate.id !== id) return 'changed';
-        const row: AccountChart = {...content,id,accountId:current.accountId,revision:current.revision+1,
-          noteRevision:current.noteRevision,
-          publicRevision:current.publicRevision+(isDeepStrictEqual(publicContent(content),publicContent(current)) ? 0 : 1)};
-        if(!storage.update(row,key.nameKey,key.birthMinute,content))return 'missing';
-        if(!isDeepStrictEqual(birthContent(current),birthContent(content)))storage.clearReturns(id);
-        return 'updated';
-      });
     },
     cleanup() { database.transaction(() => storage.cleanup(now() - CHART_POLICY.outcomeLifetimeMs)); },
   };

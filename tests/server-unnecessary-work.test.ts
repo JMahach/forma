@@ -29,13 +29,13 @@ test('library pagination uses an account and ID index without sorting another ac
  assert.ok(plan.some(row=>String(row.detail).includes('account_charts_account_id')));
  assert.ok(plan.every(row=>!String(row.detail).includes('TEMP B-TREE')));
 });
-test('identical prepared returns change one row, while versions and changed content still replace it',t=>{
+test('identical prepared returns change one row and only changed content replaces it',t=>{
  const f=fixture(t),before=f.changes();
- for(let i=0;i<3;i++)f.storage.saveReturn(f.chart.id,'events','saturn','','numbers','cycles',{events:[]});
+ for(let i=0;i<3;i++)f.storage.saveReturn(f.chart.id,'events','saturn','',{events:[]});
  assert.equal(f.changes()-before,1);
- f.storage.saveReturn(f.chart.id,'events','saturn','','numbers','next',{events:[]});
- f.storage.saveReturn(f.chart.id,'events','saturn','','numbers','next',{events:[1]});
- assert.equal(f.changes()-before,3);
+ f.storage.saveReturn(f.chart.id,'events','saturn','',{events:[]});
+ f.storage.saveReturn(f.chart.id,'events','saturn','',{events:[1]});
+ assert.equal(f.changes()-before,2);
 });
 test('issued ID migration runs once and retains addresses reserved for deleted charts',t=>{
  const f=fixture(t);f.storage.remove(f.owner,f.chart.id);

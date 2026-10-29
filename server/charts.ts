@@ -12,24 +12,23 @@ import { createCalculationReceipts } from './services/calculation-receipt.ts';
 import { createChartHandler } from './http/charts.ts';
 
 /** Shares the account database and calculator; owns neither their lifetime nor a second copy. */
-export function createChartRuntime({report,database,accounts,cities,calculate,calculationVersion,cycles,origins,now=Date.now,onInvalidResult,key}: {
+export function createChartRuntime({report,database,accounts,cities,calculate,cycles,origins,now=Date.now,onInvalidResult,key}: {
   report?: ServerFailureReport;
   database: Database;
   key?:Uint8Array;
   accounts: Accounts;
   cities: CityCatalog;
   calculate: Calculator;
-  calculationVersion: string;
-  cycles?: Pick<Cycles,'events'|'chart'|'cacheVersion'>;
+  cycles?: Pick<Cycles,'events'|'chart'>;
   origins: string[];
   now?:()=>number;
   onInvalidResult?:()=>unknown;
 }) {
   const records=createChartRecords({database,authorize:()=>null,now});
   const receipts=key?createCalculationReceipts({key}):undefined;
-  const prepareBirth=createChartCalculation({cities,calculate,calculationVersion,onInvalidResult,receipts});
+  const prepareBirth=createChartCalculation({cities,calculate,onInvalidResult,receipts});
   const returnReceipts=key ? createReturnReceipts({key}) : undefined;
-  const returns = cycles?.cacheVersion ? createChartReturns({records,cycles,calculationVersion,cyclesVersion:cycles.cacheVersion,receipts:returnReceipts}) : undefined;
-  const handler=createChartHandler({report,records,accounts,prepareBirth,calculationVersion,returns,cyclesVersion:cycles?.cacheVersion ?? undefined,issueReturnReceipt:returnReceipts?.issue,origins,now});
+  const returns = cycles ? createChartReturns({cycles,receipts:returnReceipts}) : undefined;
+  const handler=createChartHandler({report,records,accounts,prepareBirth,returns,issueReturnReceipt:returnReceipts?.issue,origins,now});
   return {handler,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue};
 }

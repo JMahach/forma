@@ -7,7 +7,6 @@ export type AccountChartContent = Omit<ChartRecord, 'id' | 'createdAt' | 'update
   source: 'calculated' | 'transit';
   activations: ChartActivations;
   utc: string;
-  calculationVersion: string;
 };
 export type AccountChartBirth = Omit<AccountChartContent, 'name' | 'note'>;
 export type AccountChart = AccountChartContent & {
@@ -25,11 +24,10 @@ export interface ChartUpdate extends ChartWriteIntent {
   note?: { value: string; seenRevision: number };
 }
 
-/** Listing transfers records without recalculating them; stale values are not ready for drawing. */
+/** Listing transfers saved ready records without recalculating them. */
 export interface AccountChartPage {
-  charts: (AccountChart & {calculationCurrent:boolean})[];
+  charts: AccountChart[];
   nextCursor: string | null;
-  calculationVersion: string;
 }
 
 /** Write-operation IDs are independent of the public chart address. */

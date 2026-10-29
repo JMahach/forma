@@ -1,3 +1,4 @@
+import { migrateStoredCalculations } from './calculation-transition.ts';
 import type { Database } from './database.ts';
 import type { AccountChart, AccountChartContent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 
@@ -29,17 +30,17 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
     action TEXT NOT NULL CHECK(action IN ('events','chart')),
     body TEXT NOT NULL, eventUtc TEXT NOT NULL,
-    calculationVersion TEXT NOT NULL, cyclesVersion TEXT NOT NULL, content TEXT NOT NULL,
+    content TEXT NOT NULL,
     PRIMARY KEY(chartId, action, body, eventUtc),
     CHECK((action = 'events' AND eventUtc = '') OR (action = 'chart' AND length(eventUtc) > 0))
   ) STRICT;
-  CREATE INDEX IF NOT EXISTS account_chart_returns_versions ON account_chart_returns(calculationVersion, cyclesVersion);
   CREATE TABLE IF NOT EXISTS chart_operation_outcomes (
     accountId INTEGER NOT NULL REFERENCES accounts(id), operationId TEXT NOT NULL,
     createdAt INTEGER NOT NULL, outcome TEXT NOT NULL,
     PRIMARY KEY(accountId, operationId)
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chart_operation_expiry ON chart_operation_outcomes(createdAt);`);
+  migrateStoredCalculations(database);
   // Issued addresses are never recycled after deletion.
   sql.exec(`CREATE TABLE IF NOT EXISTS chart_identifiers (id TEXT PRIMARY KEY) STRICT;
     CREATE TABLE IF NOT EXISTS chart_storage_migrations (name TEXT PRIMARY KEY) STRICT;`);
@@ -87,15 +88,11 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
         WHERE accountId = ? AND id = ?`),
     remove: sql.prepare('DELETE FROM account_charts WHERE accountId = ? AND id = ?'),
     readReturn: sql.prepare(`SELECT content FROM account_chart_returns
-        WHERE chartId = ? AND action = ? AND body = ? AND eventUtc = ? AND calculationVersion = ? AND cyclesVersion = ?`),
-    saveReturn: sql.prepare(`INSERT INTO account_chart_returns VALUES (?,?,?,?,?,?,?)
-        ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET calculationVersion=excluded.calculationVersion,
-          cyclesVersion=excluded.cyclesVersion, content=excluded.content
-        WHERE account_chart_returns.calculationVersion IS NOT excluded.calculationVersion
-          OR account_chart_returns.cyclesVersion IS NOT excluded.cyclesVersion
-          OR account_chart_returns.content IS NOT excluded.content`),
+        WHERE chartId = ? AND action = ? AND body = ? AND eventUtc = ?`),
+    saveReturn: sql.prepare(`INSERT INTO account_chart_returns VALUES (?,?,?,?,?)
+        ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content
+        WHERE account_chart_returns.content IS NOT excluded.content`),
     clearReturns: sql.prepare('DELETE FROM account_chart_returns WHERE chartId = ?'),
-    clearOldReturns: sql.prepare('DELETE FROM account_chart_returns WHERE calculationVersion <> ? OR cyclesVersion <> ?'),
     outcome: sql.prepare('SELECT createdAt, outcome FROM chart_operation_outcomes WHERE accountId = ? AND operationId = ?'),
     saveOutcome: sql.prepare('INSERT INTO chart_operation_outcomes VALUES (?,?,?,?)'),
     removeOutcome: sql.prepare('DELETE FROM chart_operation_outcomes WHERE accountId = ? AND operationId = ?'),
@@ -130,17 +127,14 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     remove(accountId: string, id: string) {
       return statements.remove.run(accountId, id).changes === 1;
     },
-    readReturn(chartId: string, action: string, body: string, eventUtc: string, calculationVersion: string, cyclesVersion: string): unknown {
-      const row=statements.readReturn.get(chartId,action,body,eventUtc,calculationVersion,cyclesVersion) as {content:string}|undefined;
+    readReturn(chartId: string, action: string, body: string, eventUtc: string): unknown {
+      const row=statements.readReturn.get(chartId,action,body,eventUtc) as {content:string}|undefined;
       try { return row ? JSON.parse(row.content) : null; } catch { return null; }
     },
-    saveReturn(chartId: string, action: string, body: string, eventUtc: string, calculationVersion: string, cyclesVersion: string, value: unknown) {
-      statements.saveReturn.run(chartId,action,body,eventUtc,calculationVersion,cyclesVersion,JSON.stringify(value));
+    saveReturn(chartId: string, action: string, body: string, eventUtc: string, value: unknown) {
+      statements.saveReturn.run(chartId,action,body,eventUtc,JSON.stringify(value));
     },
     clearReturns(chartId: string) { statements.clearReturns.run(chartId); },
-    clearOldReturns(calculationVersion: string, cyclesVersion: string) {
-      statements.clearOldReturns.run(calculationVersion,cyclesVersion);
-    },
     outcome(accountId: string, operationId: string): ChartOutcomeRecord | null {
       const row = statements.outcome.get(accountId, operationId) as { createdAt: number; outcome: string } | undefined;
       return row ? {createdAt: row.createdAt, outcome: JSON.parse(row.outcome) as ChartWriteOutcome} : null;

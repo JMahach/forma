@@ -171,18 +171,13 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw badInput();
       if (after !== undefined) id(after);
       const value = await privateRead(seen, '/api/charts?accountId=' + seen.accountId + '&limit=' + limit + (after ? '&after=' + after : ''), signal);
-      if (!Array.isArray(value.charts) || value.charts.length > limit || !nonempty(value.calculationVersion)
+      if (!Array.isArray(value.charts) || value.charts.length > limit
         || value.nextCursor !== null && !identifier(value.nextCursor)) throw invalid();
-      const version = value.calculationVersion;
-      const charts = value.charts.map(raw => {
-        const result = validated(() => validateAccountChart(raw, seen.accountId));
-        if (!object(raw) || typeof raw.calculationCurrent !== 'boolean' || raw.calculationCurrent !== (result.calculationVersion === version)) throw invalid();
-        return {...result, calculationCurrent: raw.calculationCurrent};
-      });
+      const charts = value.charts.map(raw => validated(() => validateAccountChart(raw, seen.accountId)));
       let previous = after ?? '';
       for (const row of charts) { if (row.id <= previous) throw invalid(); previous = row.id; }
       if (value.nextCursor !== null && (charts.length !== limit || value.nextCursor !== charts.at(-1)?.id)) throw invalid();
-      return {charts, nextCursor: value.nextCursor as string | null, calculationVersion: version};
+      return {charts, nextCursor: value.nextCursor as string | null};
     },
   };
 }

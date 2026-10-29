@@ -34,7 +34,7 @@ export interface AccountRuntimeEvent { event: string; contextId?: string; accoun
 /** One composition root joins storage, account policy, the mail queue and HTTP. */
 export async function createAccountRuntime({ configuration, charts, now = Date.now, report = () => {}, handoffMailReport, telegramFetch }: {
   telegramFetch?: typeof fetch;
-  configuration: AccountEnvironment; handoffMailReport?: MailTerminalHandoff; charts?: Pick<Parameters<typeof createChartRuntime>[0], 'cities' | 'calculate' | 'calculationVersion' | 'onInvalidResult' | 'cycles'>; now?: () => number; report?: (event: AccountRuntimeEvent) => void | boolean | Promise<void | boolean>;
+  configuration: AccountEnvironment; handoffMailReport?: MailTerminalHandoff; charts?: Pick<Parameters<typeof createChartRuntime>[0], 'cities' | 'calculate' | 'onInvalidResult' | 'cycles'>; now?: () => number; report?: (event: AccountRuntimeEvent) => void | boolean | Promise<void | boolean>;
 }) {
   parseAccountOrigins(configuration.origins);
   await mkdir(configuration.stateDir, { recursive: true, mode: 0o700 });

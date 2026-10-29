@@ -101,10 +101,7 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
     adopt(id:string,expectedId=selectedId) {
       const next=store.get(id);
       if(selectedId!==expectedId || !record || !next || !store.has(id))return false;
-      const previousVersion='calculationVersion' in record?record.calculationVersion:undefined;
-      const nextVersion='calculationVersion' in next?next.calculationVersion:undefined;
-      if(previousVersion!==undefined && nextVersion!==undefined && previousVersion!==nextVersion
-        || String(record.cityId??record.city?.id??'')!==String(next.cityId??next.city?.id??'')
+      if(String(record.cityId??record.city?.id??'')!==String(next.cityId??next.city?.id??'')
         || record.birthDate!==next.birthDate || record.birthTime!==next.birthTime
         || JSON.stringify(extractChartData(record))!==JSON.stringify(extractChartData(next)))return false;
       selecting=true;

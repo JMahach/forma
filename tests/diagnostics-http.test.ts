@@ -154,7 +154,7 @@ test('signed report origin survives session expiry and cleanup without restoring
  const {createChartRuntime}=await import('../server/charts.ts');
  const charts=createChartRuntime({database:f.database,accounts:f.accounts,cities:createCityCatalog([]),
   calculate:Object.assign(async()=>{throw new Error('Diagnostic proof must not trigger a chart calculation');},{async close(){}}),
-  calculationVersion:'current',origins:['https://forma.example.test'],now:f.now});
+  origins:['https://forma.example.test'],now:f.now});
  const url=new URL('/api/charts?accountId='+f.login.account.id,'https://forma.example.test');
  const req=Object.assign(request(undefined,{method:'GET',diagnosticProof:signature}),{url:url.pathname+url.search});
  const res=captureResponse();await charts.handler(req,res,url);

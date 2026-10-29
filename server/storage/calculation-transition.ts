@@ -13,7 +13,7 @@ function content(text:string, nestedChart:boolean):string {
 
 /** One explicit schema transition, never called by normal reads. Rollback keeps
  * both old contracts and all records intact; restart safely repeats the work.
- * Wire it only with the coordinated reader/writer switch, not this preparation. */
+ * The storage owner runs it before compiling the unversioned reader/writer. */
 export function migrateStoredCalculations(database:Database) {
   return database.transaction(() => {
     const sql = database.connection;

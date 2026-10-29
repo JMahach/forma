@@ -18,7 +18,7 @@ function content(overrides: Partial<AccountChartContent> = {}): AccountChartCont
   return { name: 'Анна Иванова', note: 'Личная заметка', birthDate: '2000-01-01', birthTime: '12:00',
     birthPlace: 'UTC', source: 'calculated', personality: [1], design: [2],
     activations: { personality: [], design: [] }, utc: '2000-01-01T12:00:00Z',
-    calculationVersion: 'test-calculation-version', ...overrides };
+    ...overrides };
 }
 function fixture(t: {after(fn: () => void): void}) {
   const database = openDatabase(':memory:'); t.after(() => database.close());
@@ -63,6 +63,15 @@ test('deduplication compares normalized name and UTC minute, and preserves the e
   assert.equal(f.create(3, content({name: 'Другая Анна'})).kind, 'created');
   assert.equal(f.create(4, content({utc: '2000-01-01T12:01:00Z'})).kind, 'created');
   assert.equal(f.records.list().length, 3);
+});
+
+test('invalid record identity creates neither a chart nor a successful operation receipt', t => {
+  const f = fixture(t);
+  for (const patch of [{name:' \t '}, {note:'x'.repeat(2001)}, {utc:'invalid'}, {source:'unknown'}]) {
+    assert.throws(() => f.create(1, content(patch as Partial<AccountChartContent>)), {code:'invalid_chart'});
+    assert.deepEqual(f.records.outcome({operationId:operation(1),expectedAccountId:f.a}), {kind:'unknown'});
+  }
+  assert.equal(f.records.list().length, 0);
 });
 
 test('a note uses its shown revision without rolling back newer name and birth data', t => {
@@ -268,24 +277,6 @@ test('request access is isolated and pages remain bounded to their intended acco
   assert.throws(()=>b.page({expectedAccountId:f.a}),{code:'account_changed'});
   assert.throws(()=>b.getOwn(first.charts[0]!.id,f.a),{code:'account_changed'});
   assert.throws(()=>a.page({expectedAccountId:f.a,limit:1000}),{code:'invalid_operation'});
-});
-
-test('refreshing a calculation preserves concurrent private and name changes and cannot overwrite a newer birth', t => {
-  const f=fixture(t), created=f.create(), id=created.chartId!;
-  const old=f.records.getPublic(id)!;
-  f.records.update({operationId:operation(2),expectedAccountId:f.a,chartId:id,
-    name:'Latest name',note:{value:'Latest private note',seenRevision:1}});
-  const next={...content(),calculationVersion:'new-version'};
-  assert.equal(f.records.refreshBirth(id,old,next),'updated');
-  assert.equal(f.records.getOwn(id)!.name,'Latest name');
-  assert.equal(f.records.getOwn(id)!.note,'Latest private note');
-  assert.equal(f.records.getOwn(id)!.noteRevision,2);
-  assert.equal(f.records.getOwn(id)!.calculationVersion,'new-version');
-  assert.equal(f.records.refreshBirth(id,old,{...next,utc:'2001-01-01T00:00:00Z'}),'changed');
-  assert.equal(f.records.getOwn(id)!.utc,old.utc);
-  f.records.remove({operationId:operation(3),expectedAccountId:f.a,chartId:id});
-  assert.equal(f.records.refreshBirth(id,old,next),'missing');
-  assert.equal(f.records.getPublic(id),null);
 });
 
 test('default chart IDs are distinct 10-digit strings and operation UUIDs remain unchanged', t => {

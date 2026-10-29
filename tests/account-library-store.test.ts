@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { createAccountLibraryStore } from '../src/data/account-library-store.ts';
 import { accountChart, chartId } from './helpers/account-chart.ts';
 
 test('an unused account library is empty without importing legacy localStorage', async () => {
   const store = createAccountLibraryStore({indexedDB: new IDBFactory()});
-  try { assert.deepEqual(await store.read(), {lease: null, charts: []}); } finally { store.close(); }
+  const openCursor=IDBObjectStore.prototype.openCursor;let scans=0;
+  IDBObjectStore.prototype.openCursor=function(...args){scans++;return openCursor.apply(this,args);};
+  try {
+    assert.deepEqual(await store.read(), {lease: null, charts: []});
+    assert.equal(scans,0,'a fresh schema has no historical records to scan');
+  } finally {IDBObjectStore.prototype.openCursor=openCursor;store.close();}
 });
 
 test('a confirmed account library survives reopening and ignores older revisions', async () => {

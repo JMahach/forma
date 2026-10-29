@@ -27,7 +27,7 @@ function chart(value: unknown): PublicAccountChart {
     || !text(value.birthDate) || !/^\d{4}-\d{2}-\d{2}$/.test(value.birthDate)
     || !Number.isFinite(utcMilliseconds(value.birthDate + 'T00:00:00Z'))
     || !text(value.birthTime) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.birthTime)
-    || !text(value.birthPlace) || !nonempty(value.calculationVersion)
+    || !text(value.birthPlace)
     || !object(value.activations) || !validChartCalculationResult({chart:value})) throw invalid();
   const utc = utcMilliseconds(value.utc), design = utcMilliseconds(value.designUtc);
   if (!Number.isFinite(utc) || utc < SUPPORTED_START || utc >= SUPPORTED_END_EXCLUSIVE
@@ -50,7 +50,7 @@ function chart(value: unknown): PublicAccountChart {
     designUtc: value.designUtc as string, designArcResidualDegrees: value.designArcResidualDegrees,
     personality: [...value.personality as number[]], design: [...value.design as number[]],
     activations: {personality: side(value.activations.personality), design: side(value.activations.design)},
-    cityId: location?.id ?? null, city: location, calculationVersion: value.calculationVersion,
+    cityId: location?.id ?? null, city: location,
     engine: value.engine as string, ephemeris: value.ephemeris as string, timezoneDatabase: value.timezoneDatabase as string,
     nodeModel: value.nodeModel as string, zodiac: value.zodiac as string, verification: value.verification};
 }

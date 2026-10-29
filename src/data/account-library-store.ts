@@ -4,6 +4,7 @@ import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createChartId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
+import { migrateAccountCalculations } from './account-calculation-transition.ts';
 
 export interface LibraryLease { accountId: string; generation: string }
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
@@ -22,12 +23,14 @@ const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
 
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
 export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
-  const database = createIndexedDatabase({databaseName, version: 3, stores: ['charts', 'context'], indexedDB,
-    upgrade(db,tx) {
+  const database = createIndexedDatabase({databaseName, version: 4, stores: ['charts', 'context'], indexedDB,
+    upgrade(db,tx,oldVersion) {
       const charts=db.objectStoreNames.contains('charts')?tx.objectStore('charts'):db.createObjectStore('charts',{keyPath:'id'});
       if(!charts.indexNames.contains('accessed'))charts.createIndex('accessed','_accessedAt');
       if(!db.objectStoreNames.contains('context'))db.createObjectStore('context',{keyPath:'key'});
-      const scan=charts.openCursor();scan.onsuccess=()=>{const cursor=scan.result;if(!cursor)return;
+      if(oldVersion===0)return;
+      if(oldVersion>=3){migrateAccountCalculations(tx);return;}
+      const scan=charts.openCursor();scan.onsuccess=()=>{const cursor=scan.result;if(!cursor){migrateAccountCalculations(tx);return;}
         const id=typeof cursor.value.id==='string'?canonicalChartId(cursor.value.id):cursor.value.id;
         if(id!==cursor.value.id){
           const existing=charts.get(id);existing.onsuccess=()=>{
@@ -127,8 +130,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           const record=tx.objectStore('charts').get(expected.id);record.onsuccess=()=>{
             try {
               const saved=validateAccountChart(record.result,seen.accountId);
-              result(saved.revision>=expected.revision && saved.noteRevision>=expected.noteRevision
-                && saved.calculationVersion===expected.calculationVersion);
+              result(saved.revision>=expected.revision && saved.noteRevision>=expected.noteRevision);
             } catch {result(false);}
           };
         };
