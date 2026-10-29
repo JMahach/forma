@@ -118,7 +118,7 @@ function storedLibrary() {
   const storage = createChartRecordStorage(database);
   // The historical physical return table is explicit: current producers must
   // no longer be able to create the obsolete format used by this fixture.
-  database.connection.exec(`DROP TABLE account_chart_returns;
+  database.connection.exec(`DROP TABLE IF EXISTS account_chart_returns;
     CREATE TABLE account_chart_returns (
       chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
       action TEXT NOT NULL CHECK(action IN ('events','chart')),

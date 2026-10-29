@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {gzipSync} from 'node:zlib';
 import {openDatabase} from '../server/storage/database.ts';
+import {createReturnPackets} from '../server/storage/library-packages.ts';
 import {createAccountStorage} from '../server/storage/accounts.ts';
 import {createChartRecords} from '../server/services/chart-records.ts';
 import {createNatalDays,encodeNatalDayPacket} from '../server/services/natal-days.ts';
@@ -11,6 +13,7 @@ import {compressDayPacket} from '../server/packets/compression.ts';
 import {decodeNatalDay} from '../shared/day-packets/decode.ts';
 import {natalDayFixture} from './fixtures/natal-day.ts';
 import {accountNatalChart,chartId} from './helpers/account-chart.ts';
+import type {CycleChartResult} from '../shared/cycles-format.ts';
 
 function library(t:test.TestContext) {
   const dir=mkdtempSync(path.join(tmpdir(),'forma-packages-'));
@@ -118,6 +121,102 @@ test('a source mismatch or inconsistent wire representation cannot publish a sav
   }
   assert.equal(f.records.packages.putDay(source,good),'stored');
   assert.equal(f.records.packages.putDay(source,good),'no-op');
+});
+
+test('prepared primary return is compressed once and restores exact floating point values',t=>{
+  const f=library(t),id=f.add('A'),birth=f.records.getOwn(id)!;
+  const input={birthUtc:birth.utc,timezone:'UTC',body:'saturn',eventUtc:'2029-01-01T12:00:00Z'};
+  const result:CycleChartResult={chart:{...structuredClone(birth),source:'calculated',timezone:'UTC',
+    utc:input.eventUtc,designUtc:'2028-10-10T01:00:00Z',designArcResidualDegrees:1e-9}};
+  result.chart.activations.personality[0]!.longitude=-0;
+  result.chart.activations.personality[1]!.longitude=Number.MIN_VALUE;
+  result.chart.activations.personality[2]!.longitude=307.62499999999994;
+  const query={chartId:id,expectedAccountId:f.accountId,birth,action:'chart' as const,input};
+  f.records.saveReturn(query,result);
+  const stored=f.records.readReturn(query) as CycleChartResult;
+  assert.deepEqual(Buffer.from(new Float64Array(stored.chart.activations.personality.map(item=>item.longitude)).buffer),
+    Buffer.from(new Float64Array(result.chart.activations.personality.map(item=>item.longitude)).buffer));
+  assert.equal(f.db.connection.prepare('SELECT typeof(content) AS type FROM account_chart_returns').get()!.type,'blob');
+  const before=f.db.connection.prepare('SELECT total_changes() AS n').get()!.n;
+  f.records.saveReturn(query,result);f.records.readReturn(query);
+  assert.equal(f.db.connection.prepare('SELECT total_changes() AS n').get()!.n,before);
+});
+
+test('return reads and identical saves after reopening never recompress or write',t=>{
+  const f=library(t),chartId=f.add('A');let compressions=0;
+  const packets=createReturnPackets(f.db,{compress:raw=>{compressions++;return gzipSync(raw);}});
+  const address={chartId,action:'events' as const,body:'saturn',eventUtc:''};
+  const value={events:[],exact:[-0,Number.MIN_VALUE,307.62499999999994]};
+  assert.equal(packets.save(address,value),true);
+  const before=f.db.connection.prepare('SELECT total_changes() AS n').get()!.n;
+  for(let i=0;i<4;i++) {
+    assert.deepEqual(packets.read(address),value);
+    assert.equal(packets.save(address,value),false);
+  }
+  assert.equal(compressions,1);
+  assert.equal(f.db.connection.prepare('SELECT total_changes() AS n').get()!.n,before);
+  const reopened=openDatabase(f.filename);t.after(()=>reopened.close());
+  const next=createReturnPackets(reopened,{compress:()=>assert.fail('stored data needs no compression')});
+  assert.deepEqual(next.read(address),value);assert.equal(next.save(address,value),false);
+  assert.equal(reopened.connection.prepare('SELECT total_changes() AS n').get()!.n,0);
+});
+
+test('failed replacement leaves the previous return intact and corruption removes only its own part',t=>{
+  const f=library(t),chartId=f.add('A');
+  const packets=createReturnPackets(f.db),address={chartId,action:'events' as const,body:'saturn',eventUtc:''};
+  const other={...address,body:'moon'},value={events:[]};
+  packets.save(address,value);packets.save(other,value);
+  f.db.connection.exec("CREATE TRIGGER refuse_return BEFORE UPDATE ON account_chart_returns BEGIN SELECT RAISE(ABORT,'write failed'); END;");
+  assert.throws(()=>packets.save(address,{events:[{utc:'2029-01-01T12:00:00Z'}]}),/write failed/);
+  assert.deepEqual(packets.read(address),value);
+  f.db.connection.exec("DROP TRIGGER refuse_return; UPDATE account_chart_returns SET content=x'00' WHERE body='saturn'");
+  assert.equal(packets.read(address),null);assert.deepEqual(packets.read(other),value);
+  assert.equal(packets.save(address,value),true);
+});
+
+test('invalid packed representation or changed integrity metadata cannot become a ready return',t=>{
+  const f=library(t),chartId=f.add('A'),address={chartId,action:'events' as const,body:'saturn',eventUtc:''};
+  const packets=createReturnPackets(f.db),value={events:[]};
+  const invalid=createReturnPackets(f.db,{compress:()=>gzipSync('{}')});
+  assert.throws(()=>invalid.save(address,value),/Invalid compressed return/);
+  assert.equal(packets.read(address),null);
+  assert.throws(()=>packets.save(address,undefined),/Invalid prepared return/);
+  assert.throws(()=>packets.save(address,'x'.repeat(2_000_001)),/Invalid prepared return/);
+  packets.save(address,value);
+  f.db.connection.exec("UPDATE account_chart_returns SET rawDigest='broken'");
+  assert.equal(packets.read(address),null);
+  assert.equal(packets.save(address,value),true);
+});
+
+function legacyReturns(t:test.TestContext) {
+  const f=library(t),chartId=f.add('A'),sql=f.db.connection;
+  sql.exec(`DROP TABLE account_chart_returns;
+    CREATE TABLE account_chart_returns (
+      chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,body TEXT NOT NULL,eventUtc TEXT NOT NULL,content TEXT NOT NULL,
+      PRIMARY KEY(chartId,action,body,eventUtc)
+    ) STRICT;`);
+  const insert=sql.prepare('INSERT INTO account_chart_returns VALUES(?,?,?,?,?)');
+  const address={chartId,action:'events' as const,body:'saturn',eventUtc:''};
+  insert.run(chartId,'events','saturn','','{"events":[],"exact":[-0,5e-324,307.62499999999994]}');
+  insert.run(chartId,'events','moon','','{"events":[]}');
+  const rows=()=>sql.prepare('SELECT * FROM account_chart_returns ORDER BY body').all();
+  return {...f,address,rows};
+}
+
+test('interrupted legacy return migration rolls back every part and restarts without numeric changes',t=>{
+  const f=legacyReturns(t),before=f.rows();let compressions=0;
+  assert.throws(()=>createReturnPackets(f.db,{compress:raw=>{
+    if(++compressions===2)throw Error('interrupted');return gzipSync(raw);
+  }}),/interrupted/);
+  assert.deepEqual(f.rows(),before);
+  assert.equal(f.db.connection.prepare("SELECT name FROM sqlite_master WHERE name='account_chart_returns_next'").get(),undefined);
+  compressions=0;
+  const migrated=createReturnPackets(f.db,{compress:raw=>{compressions++;return gzipSync(raw);}});
+  assert.deepEqual(migrated.read(f.address),{events:[],exact:[-0,Number.MIN_VALUE,307.62499999999994]});
+  assert.equal(compressions,2);
+  assert.ok(f.rows().every(row=>row.content instanceof Uint8Array));
+  assert.deepEqual(createReturnPackets(f.db,{compress:()=>assert.fail('migration is once only')}).read(f.address),migrated.read(f.address));
 });
 
 for(const {date,samples,segments} of [

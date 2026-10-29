@@ -8,6 +8,7 @@ import path from 'node:path';
 import {openDatabase} from '../server/storage/database.ts';
 import {createAccountStorage} from '../server/storage/accounts.ts';
 import {createChartRecords} from '../server/services/chart-records.ts';
+import {createReturnPackets} from '../server/storage/library-packages.ts';
 import {createChartReturns} from '../server/services/chart-returns.ts';
 import {createCycles} from '../server/services/cycles.ts';
 import {createReturnReceipts} from '../server/services/return-receipt.ts';
@@ -205,9 +206,9 @@ test('concurrent readers share unfinished calculation but keep independent acces
 
 test('corrupt saved dates and full results are never returned as valid and are replaced on demand',async t=>{
   const f=fixture(t);await f.selected();
-  f.database.connection.prepare("UPDATE account_chart_returns SET content='broken' WHERE action='events'").run();
+  f.database.connection.prepare("UPDATE account_chart_returns SET content=x'00' WHERE action='events'").run();
   assert.equal((await f.events()).events[0]!.utc,eventUtc);
-  f.database.connection.prepare("UPDATE account_chart_returns SET content='{}' WHERE action='chart'").run();
+  createReturnPackets(f.database).save({chartId:f.chart.id,action:'chart',body:'saturn',eventUtc},{});
   assert.equal((await f.selected()).chart.utc,eventUtc);
   assert.deepEqual(f.calls(),{events:2,charts:2});
 });
@@ -246,8 +247,9 @@ test('a historically signed ready return is attached without a dates search and 
 test('the same signed numbers attach independently to two owner cards without exposing notes or growing duplicate rows',async t=>{
   const f=signedFixture(t),added=f.records.create({operationId:chartId(500),expectedAccountId:f.accountId,content:accountNatalChart(2,f.accountId)});
   await f.accept();await f.service.accept(f.records,added.chartId,f.accountId,f.packet,f.options);await f.accept();
-  const rows=f.database.connection.prepare('SELECT content FROM account_chart_returns').all();assert.equal(rows.length,2);
-  for(const row of rows)assert.equal('note' in JSON.parse(String(row.content)).chart,false);
+  const rows=f.database.connection.prepare('SELECT chartId,action,body,eventUtc FROM account_chart_returns').all();assert.equal(rows.length,2);
+  const packets=createReturnPackets(f.database);
+  for(const row of rows)assert.equal('note' in (packets.read(row as unknown as Parameters<typeof packets.read>[0]) as CycleChartResult).chart,false);
   assert.deepEqual(f.calls(),{events:0,charts:0});
 });
 

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {brotliDecompressSync,gunzipSync} from 'node:zlib';
+import {brotliDecompressSync,gunzipSync,gzipSync} from 'node:zlib';
 import type {Database} from './database.ts';
 import type {DayPacket} from '../packets/compression.ts';
 import {decodeNatalDay} from '../../shared/day-packets/decode.ts';
@@ -91,3 +91,84 @@ export function createLibraryPackages(database:Database) {
   };
 }
 export type LibraryPackages=ReturnType<typeof createLibraryPackages>;
+
+interface ReturnAddress {chartId:string;action:'events'|'chart';body:string;eventUtc:string}
+interface ReturnRow {content:Uint8Array;checksum:string;rawDigest:string}
+type CompressReturn=(raw:Buffer)=>Uint8Array;
+const MAX_RETURN_BYTES=2_000_000;
+const returnKey=({action,body,eventUtc}:ReturnAddress)=>JSON.stringify([action,body,eventUtc]);
+// Node24 supports rawJSON; the shared browser compilation deliberately targets ES2023.
+// The output is ordinary JSON. Native JSON.parse restores its legal -0 numeric literal.
+const rawJSON=(JSON as typeof JSON & {rawJSON(text:string):object}).rawJSON;
+function returnBytes(value:unknown):Buffer {
+  const text=JSON.stringify(value,(_key,item)=>Object.is(item,-0)?rawJSON('-0'):item);
+  if(typeof text!=='string' || Buffer.byteLength(text)>MAX_RETURN_BYTES)throw Error('Invalid prepared return');
+  return Buffer.from(text);
+}
+function packReturn(key:string,raw:Buffer,compress:CompressReturn,rawDigest=digest(key,raw)):ReturnRow {
+  const content=compress(raw);
+  if(content.length>MAX_RETURN_BYTES+1024 || !gunzipSync(content,{maxOutputLength:MAX_RETURN_BYTES}).equals(raw))
+    throw Error('Invalid compressed return');
+  return {content,checksum:digest(key,content),rawDigest};
+}
+function compressedReturnValid(key:string,row:ReturnRow) {
+  return row.content.length<=MAX_RETURN_BYTES+1024 && digest(key,row.content)===row.checksum;
+}
+function unpackReturn(key:string,row:ReturnRow):unknown {
+  if(!compressedReturnValid(key,row))throw Error('Invalid stored return');
+  const raw=gunzipSync(row.content,{maxOutputLength:MAX_RETURN_BYTES});
+  if(digest(key,raw)!==row.rawDigest)throw Error('Invalid stored return');
+  return JSON.parse(raw.toString('utf8'));
+}
+function returnTable(name:'account_chart_returns'|'account_chart_returns_next') {
+  return `CREATE TABLE ${name==='account_chart_returns'?'IF NOT EXISTS ':''}${name} (
+    chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    action TEXT NOT NULL CHECK(action IN ('events','chart')),body TEXT NOT NULL,eventUtc TEXT NOT NULL,
+    content BLOB NOT NULL,checksum TEXT NOT NULL,rawDigest TEXT NOT NULL,
+    PRIMARY KEY(chartId,action,body,eventUtc),
+    CHECK((action='events' AND eventUtc='') OR (action='chart' AND length(eventUtc)>0))
+  ) STRICT;`;
+}
+function migrateReturnPackets(database:Database,compress:CompressReturn) {
+  const sql=database.connection;
+  database.transaction(()=>{
+    const column=sql.prepare("SELECT type FROM pragma_table_info('account_chart_returns') WHERE name='content'").get() as {type:string}|undefined;
+    if(column?.type!=='TEXT')return;
+    sql.exec(returnTable('account_chart_returns_next'));
+    const insert=sql.prepare('INSERT INTO account_chart_returns_next VALUES(?,?,?,?,?,?,?)');
+    for(const row of sql.prepare('SELECT chartId,action,body,eventUtc,content FROM account_chart_returns').iterate() as unknown as Iterable<ReturnAddress & {content:string}>) {
+      const packet=packReturn(returnKey(row),returnBytes(JSON.parse(row.content)),compress);
+      insert.run(row.chartId,row.action,row.body,row.eventUtc,packet.content,packet.checksum,packet.rawDigest);
+    }
+    sql.exec('DROP TABLE account_chart_returns; ALTER TABLE account_chart_returns_next RENAME TO account_chart_returns;');
+  });
+}
+
+/** Prepared parts are written once; repeated reads only verify and decompress stored bytes. */
+export function createReturnPackets(database:Database,{compress=(raw:Buffer)=>gzipSync(raw,{level:9})}:{compress?:CompressReturn}={}) {
+  const sql=database.connection;
+  sql.exec(returnTable('account_chart_returns'));
+  migrateReturnPackets(database,compress);
+  const read=sql.prepare('SELECT content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
+  const remove=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
+  const insert=sql.prepare(`INSERT INTO account_chart_returns VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content,checksum=excluded.checksum,rawDigest=excluded.rawDigest`);
+  const clear=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=?');
+  const keyArgs=({chartId,action,body,eventUtc}:ReturnAddress)=>[chartId,action,body,eventUtc];
+  return {
+    read(address:ReturnAddress):unknown {
+      const args=keyArgs(address),row=read.get(...args) as unknown as ReturnRow|undefined;
+      if(!row)return null;
+      try {return unpackReturn(returnKey(address),row);}
+      catch {remove.run(...args);return null;}
+    },
+    save(address:ReturnAddress,value:unknown):boolean {
+      const args=keyArgs(address),key=returnKey(address),raw=returnBytes(value),hash=digest(key,raw);
+      const previous=read.get(...args) as unknown as ReturnRow|undefined;
+      if(previous?.rawDigest===hash && compressedReturnValid(key,previous))return false;
+      const packet=packReturn(key,raw,compress,hash);
+      insert.run(...args,packet.content,packet.checksum,packet.rawDigest);return true;
+    },
+    clear(chartId:string){clear.run(chartId);},
+  };
+}

@@ -1,5 +1,5 @@
 import { migrateStoredCalculations } from './calculation-transition.ts';
-import {createLibraryPackages} from './library-packages.ts';
+import {createLibraryPackages,createReturnPackets} from './library-packages.ts';
 import type { Database } from './database.ts';
 import type { AccountChart, AccountChartContent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 
@@ -27,14 +27,6 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     UNIQUE(accountId, nameKey, birthMinute)
   ) STRICT;
   CREATE INDEX IF NOT EXISTS account_charts_account_id ON account_charts(accountId,id);
-  CREATE TABLE IF NOT EXISTS account_chart_returns (
-    chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
-    action TEXT NOT NULL CHECK(action IN ('events','chart')),
-    body TEXT NOT NULL, eventUtc TEXT NOT NULL,
-    content TEXT NOT NULL,
-    PRIMARY KEY(chartId, action, body, eventUtc),
-    CHECK((action = 'events' AND eventUtc = '') OR (action = 'chart' AND length(eventUtc) > 0))
-  ) STRICT;
   CREATE TABLE IF NOT EXISTS chart_operation_outcomes (
     accountId INTEGER NOT NULL REFERENCES accounts(id), operationId TEXT NOT NULL,
     createdAt INTEGER NOT NULL, outcome TEXT NOT NULL,
@@ -42,6 +34,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chart_operation_expiry ON chart_operation_outcomes(createdAt);`);
   migrateStoredCalculations(database);
+  const returns=createReturnPackets(database);
   // Issued addresses are never recycled after deletion.
   sql.exec(`CREATE TABLE IF NOT EXISTS chart_identifiers (id TEXT PRIMARY KEY) STRICT;
     CREATE TABLE IF NOT EXISTS chart_storage_migrations (name TEXT PRIMARY KEY) STRICT;`);
@@ -67,10 +60,9 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     if(renamed.length) {
       sql.exec('PRAGMA defer_foreign_keys = ON');
       const chart=sql.prepare('UPDATE account_charts SET id = ? WHERE id = ?');
-      const returns=sql.prepare('UPDATE account_chart_returns SET chartId = ? WHERE chartId = ?');
       const outcomes=sql.prepare("UPDATE chart_operation_outcomes SET outcome = json_set(outcome,'$.chartId',?) WHERE json_extract(outcome,'$.chartId') = ?");
       const issued=sql.prepare('UPDATE chart_identifiers SET id = ? WHERE id = ?');
-      for(const {id,next} of renamed){chart.run(next,id);returns.run(next,id);outcomes.run(next,id);issued.run(next,id);}
+      for(const {id,next} of renamed){chart.run(next,id);outcomes.run(next,id);issued.run(next,id);}
     }
     // The marker commits with the renames; a collision/crash leaves the migration retryable.
     mark.run('short_identifiers_v1');
@@ -89,12 +81,6 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     update: sql.prepare(`UPDATE account_charts SET nameKey = ?, birthMinute = ?, revision = ?, noteRevision = ?, publicRevision = ?, content = ?
         WHERE accountId = ? AND id = ?`),
     remove: sql.prepare('DELETE FROM account_charts WHERE accountId = ? AND id = ?'),
-    readReturn: sql.prepare(`SELECT content FROM account_chart_returns
-        WHERE chartId = ? AND action = ? AND body = ? AND eventUtc = ?`),
-    saveReturn: sql.prepare(`INSERT INTO account_chart_returns VALUES (?,?,?,?,?)
-        ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content
-        WHERE account_chart_returns.content IS NOT excluded.content`),
-    clearReturns: sql.prepare('DELETE FROM account_chart_returns WHERE chartId = ?'),
     outcome: sql.prepare('SELECT createdAt, outcome FROM chart_operation_outcomes WHERE accountId = ? AND operationId = ?'),
     saveOutcome: sql.prepare('INSERT INTO chart_operation_outcomes VALUES (?,?,?,?)'),
     removeOutcome: sql.prepare('DELETE FROM chart_operation_outcomes WHERE accountId = ? AND operationId = ?'),
@@ -130,14 +116,13 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     remove(accountId: string, id: string) {
       return statements.remove.run(accountId, id).changes === 1;
     },
-    readReturn(chartId: string, action: string, body: string, eventUtc: string): unknown {
-      const row=statements.readReturn.get(chartId,action,body,eventUtc) as {content:string}|undefined;
-      try { return row ? JSON.parse(row.content) : null; } catch { return null; }
+    readReturn(chartId: string, action: 'events'|'chart', body: string, eventUtc: string): unknown {
+      return returns.read({chartId,action,body,eventUtc});
     },
-    saveReturn(chartId: string, action: string, body: string, eventUtc: string, value: unknown) {
-      statements.saveReturn.run(chartId,action,body,eventUtc,JSON.stringify(value));
+    saveReturn(chartId: string, action: 'events'|'chart', body: string, eventUtc: string, value: unknown) {
+      returns.save({chartId,action,body,eventUtc},value);
     },
-    clearReturns(chartId: string) { statements.clearReturns.run(chartId); },
+    clearReturns(chartId: string) { returns.clear(chartId); },
     outcome(accountId: string, operationId: string): ChartOutcomeRecord | null {
       const row = statements.outcome.get(accountId, operationId) as { createdAt: number; outcome: string } | undefined;
       return row ? {createdAt: row.createdAt, outcome: JSON.parse(row.outcome) as ChartWriteOutcome} : null;
