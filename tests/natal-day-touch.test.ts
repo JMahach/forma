@@ -10,10 +10,9 @@ import { encodeNatalDay } from '../server/packets/encode.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { deferred } from './helpers/deferred.ts';
 
-const revision = 'a'.repeat(64);
 const chart = personalChartFixture();
-const key = `natal-day:${revision}:${NATAL_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
-const day = { ...natalDayFixture(), calculationVersion: revision };
+const key = `natal-day:${NATAL_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
+const day = natalDayFixture();
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 function readyClient(touch: BinaryCache['touch'], memory = createMemoryCache()) {
@@ -24,7 +23,7 @@ function readyClient(touch: BinaryCache['touch'], memory = createMemoryCache()) 
     remove: async () => { throw new Error('ready day must not remove its payload'); },
     close() {}, touch,
   };
-  return createNatalDayClient({ memory, calculationVersion: revision, persistentCache,
+  return createNatalDayClient({ memory, persistentCache,
     fetch() { throw new Error('ready day must not fetch'); } });
 }
 
@@ -34,13 +33,13 @@ test('ready natal reads share pending LRU work per key and later use touches aga
   t.after(() => { persistent.close(); owner.close(); });
   const bytes = encodeNatalDay(day).buffer;
   const otherChart = { ...chart, cityId: 'other-city' };
-  const otherKey = `natal-day:${revision}:${NATAL_DAY_VERSION}:${chart.birthDate}:other-city`;
+  const otherKey = `natal-day:${NATAL_DAY_VERSION}:${chart.birthDate}:other-city`;
   await persistent.put(key, bytes); await persistent.put(otherKey, bytes);
   const memory = createMemoryCache(); memory.put(key, day); memory.put(otherKey, day);
   const held = deferred<void>(), calls: string[] = [], pending: Promise<boolean | null>[] = [];
   t.after(() => held.resolve());
   const original = persistent.touch.bind(persistent);
-  const client = createNatalDayClient({ calculationVersion: revision, memory,
+  const client = createNatalDayClient({ memory,
     persistentCache: { ...persistent, touch(value) {
       calls.push(value);
       const work = original(value).then(async result => { await held.promise; return result; });

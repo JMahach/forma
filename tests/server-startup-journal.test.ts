@@ -32,7 +32,7 @@ async function fixture(t:{after(fn:()=>Promise<void>):void}) {
 
 test('startup facts accept a known stage and reject raw exception, paths and user details',()=>{
  const defaults={environment:'stand' as const,occurredAt:1000,eventId:'startup'};
- for(const component of ['configuration','cities','versions','public_files','account','listener']) {
+ for(const component of ['configuration','cities','public_files','account','listener']) {
   const fact={event:'startup_failed',component,reason:'unexpected'};
   assert.ok(completeJournalEvent(fact,defaults));
   for(const extra of [{error:Error('PRIVATE')},{path:'/PRIVATE'},{message:'PRIVATE'},{recipient:'private@example.test'},
@@ -110,8 +110,8 @@ test('HTTP opens only after the prepared lifetime is verified, and first request
  try {
   const port=(server.address() as import('node:net').AddressInfo).port;
   const metadata=await fetch(`http://127.0.0.1:${port}/api/lifetime/meta`);assert.equal(metadata.status,200);
-  const body=await metadata.json() as {samples:number;cacheVersion:string};assert.equal(body.samples,17);
-  const point=await fetch(`http://127.0.0.1:${port}/api/lifetime?index=8&v=${body.cacheVersion}`);
+  const body=await metadata.json() as {samples:number};assert.equal(body.samples,17);
+  const point=await fetch(`http://127.0.0.1:${port}/api/lifetime?index=8`);
   assert.equal(point.status,200);assert.equal((await point.json() as {index:number}).index,8);
   assert.equal(opens,1);assert.equal(reads,2,'the first point needs only its small positional read');
  } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
@@ -137,7 +137,7 @@ test('startup without a completed lifetime keeps other routes open and adopts th
  const server=await startServer({root:f.root,env:{...f.env,PORT:'0'}});
  try {
   const port=(server.address() as import('node:net').AddressInfo).port,origin=`http://127.0.0.1:${port}`;
-  assert.equal((await fetch(origin+'/api/versions')).status,200);
+  assert.equal((await fetch(origin+'/api/cities?q=Moscow')).status,200);
   const preparing=await fetch(origin+'/api/lifetime/meta');assert.equal(preparing.status,503);
   assert.equal((await preparing.json() as {error:string}).error,'lifetime_preparing');
   const directory=path.join(f.root,'.cache/lifetime');await fs.mkdir(directory,{recursive:true});

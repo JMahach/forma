@@ -13,7 +13,7 @@ import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 
-const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
+const tick = () => new Promise(setImmediate);
 const historical = () => natalDayFixture({ date: '1900-01-01', timezone: 'Europe/Paris', segments: [
   { index: 0, startUtc: '1899-12-31T23:50:39Z', offsetSeconds: 561, utcOffset: 'UTC+00:09:21', fold: 0 },
 ] });
@@ -23,15 +23,15 @@ const folded = () => natalDayFixture({ date: '2024-11-03', timezone: 'America/Ne
   { index: 180, startUtc: '2024-11-03T07:00:00Z', offsetSeconds: -18000, utcOffset: 'UTC−05:00', fold: 0 },
 ] });
 function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = null } = {}) {
-  const day = { ...raw, calculationVersion: revision }, storage = new Map(), memory = createMemoryCache(memoryLimit === undefined ? {} : { maxBytes: memoryLimit });
+  const day = { ...raw }, storage = new Map(), memory = createMemoryCache(memoryLimit === undefined ? {} : { maxBytes: memoryLimit });
   let chart = personalChartFixture({ birthDate: day.date, timezone: day.timezone, utc: day.startUtc });
   const natalCalls: string[] = [], requests: string[] = []; let reads = 0;
   const persistentCache = { get: async key => { reads++; return storage.get(key); }, put: async (key, bytes) => storage.set(key, bytes), remove: async key => storage.delete(key) };
-  const makeNatal = () => createNatalDayClient({ memory, calculationVersion: revision, persistentCache,
+  const makeNatal = () => createNatalDayClient({ memory, persistentCache,
     fetch: async (url, options) => { natalCalls.push(url); return { ok: true, arrayBuffer: async () => encodeNatalDay(day).buffer }; } });
   const natal = makeNatal();
   const start = Date.parse(day.startUtc.slice(0, 10)), end = start + 3 * 86400000;
-  const meta = { calculationVersion: revision, cacheVersion: revision, startUtc: new Date(start).toISOString().replace('.000Z', 'Z'),
+  const meta = { startUtc: new Date(start).toISOString().replace('.000Z', 'Z'),
     endExclusiveUtc: new Date(end).toISOString().replace('.000Z', 'Z'), samples: 432, stepSeconds: 600,
     planets: LIFETIME_PLANETS, engine: day.engine, nodeModel: day.nodeModel, zodiac: day.zodiac };
   const client = createLifetimeClient({ natalDayClient: natal, getPersonalRecord: () => chart,
@@ -48,7 +48,7 @@ function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = nu
     } });
   return { natal, client, day, memory, storage, natalCalls, requests, meta, get reads() { return reads; }, chart: () => chart,
     setChart: (value: Omit<SavedChart,"utc"|"birthDate"|"timezone">&{ birthDate: string; timezone: string; utc: string; }) => { chart = value; },
-    async prepare() { await natal.getDay(chart); await tick(); if (cold) { memory.delete(`natal-day:${revision}:1:${chart.birthDate}:${chart.cityId}`); } } };
+    async prepare() { await natal.getDay(chart); await tick(); if (cold) { memory.delete(`natal-day:1:${chart.birthDate}:${chart.cityId}`); } } };
 }
 
 test('cache-only natal day reads share prepared numbers without starting a day request', async () => {
@@ -123,7 +123,7 @@ test('a backward historical step offers the exact birth boundary to its owner', 
   assert.deepEqual(h.requests, []);
 });
 
-test('natal reuse does not lend a rounded instant, another original chart, or a different numerical revision', async () => {
+test('natal reuse does not lend a rounded instant, another original chart', async () => {
   const h = harness(historical()); await h.prepare(); await h.client.getMeta();
   const exact = Date.parse(natalDayMinute(h.day, 1).utc);
   assert.equal(h.client.peekMinute(Math.floor(exact / 60000) * 60000), null);
@@ -138,20 +138,14 @@ test('a missing prepared natal day falls back to lifetime without calculating th
   assert.equal(h.requests.length, 1); assert.deepEqual(h.natalCalls, []);
 });
 
-test('a different numerical revision cannot lend a natal day to lifetime', async () => {
-  const h = harness(); await h.prepare(); h.meta.calculationVersion = 'b'.repeat(64);
-  await h.client.getMeta();
-  const utc = Date.parse(natalDayMinute(h.day, 700).utc);
-  assert.equal(h.client.hasMinute(utc), false); assert.equal(h.client.peekMinute(utc), null);
-  assert.equal(await h.client.readMinute(utc), null); assert.deepEqual(h.requests, []);
-});
+
 
 test('two cache-only natal readers cancel independently and do not wait for pending calculation', async () => {
   let resolveDisk, resolveNetwork, calls = 0;
   let bytes = null;
   const persistentCache = { get: async () => bytes, put() {} };
-  const chart = personalChartFixture(), raw = { ...natalDayFixture(), calculationVersion: revision };
-  const client = createNatalDayClient({ calculationVersion: revision, persistentCache,
+  const chart = personalChartFixture(), raw = { ...natalDayFixture() };
+  const client = createNatalDayClient({ persistentCache,
     fetch: () => { calls++; return new Promise(resolve => { resolveNetwork = resolve; }); } });
   const calculation = client.getDay(chart); await tick(); assert.equal(calls, 1);
   persistentCache.get = () => new Promise(resolve => { resolveDisk = resolve; });
@@ -178,10 +172,9 @@ test('a ready natal packet from disk is used even when the shared reuse budget c
 
 for (const firstMode of ['readDay', 'getDay'] as const) test(`a stale ${firstMode} disk miss rechecks numbers published to shared RAM`, async () => {
   let resolveFirst, reads = 0, calls = 0;
-  const raw = { ...natalDayFixture(), calculationVersion: revision }, bytes = encodeNatalDay(raw).buffer;
+  const raw = { ...natalDayFixture() }, bytes = encodeNatalDay(raw).buffer;
   const chart = personalChartFixture();
-  const client = createNatalDayClient({ calculationVersion: revision,
-    persistentCache: { get() { return ++reads === 1 ? new Promise(resolve => { resolveFirst = resolve; }) : firstMode === 'getDay' ? bytes : null; }, put() {} },
+  const client = createNatalDayClient({     persistentCache: { get() { return ++reads === 1 ? new Promise(resolve => { resolveFirst = resolve; }) : firstMode === 'getDay' ? bytes : null; }, put() {} },
     fetch: async () => { calls++; return { ok: true, arrayBuffer: async () => bytes }; } });
   const first = client[firstMode](chart); await tick();
   const ready = await client[firstMode === 'readDay' ? 'getDay' : 'readDay'](chart);
@@ -230,7 +223,7 @@ test('evicting natal numbers retains only the active timeline and preserves the 
 
 test('a missing historical natal minute still reads the ready transit day for its grid fallback', async t => {
   const owner=createCalculationCache({indexedDB:new IDBFactory(),now:()=>Date.parse('1899-12-31T12:00:00Z')});t.after(()=>owner.close());
-  await owner.setTransitWindow({version:revision,dates:['1899-12-31'],expiresAt:Date.parse('1900-01-01T00:00:00Z')});
+  await owner.setTransitWindow({dates:['1899-12-31'],expiresAt:Date.parse('1900-01-01T00:00:00Z')});
   const days = createTransitDayCache({ cache:owner, memory: createMemoryCache({ maxBytes: 0 }) });
   t.after(() => days.close());
   const h = harness(historical(), { days }); await h.prepare();

@@ -1,7 +1,9 @@
-"""Prepared trajectories must preserve exact roots and reject stale/corrupt files."""
+"""Prepared trajectories must preserve exact roots and reject malformed/corrupt files."""
 import datetime as dt
 import importlib
 import hashlib
+import json
+import os
 import math
 import pathlib
 import tempfile
@@ -96,44 +98,92 @@ class FileTests(unittest.TestCase):
     def build(self):
         return engine.prepare_index(self.path, start=self.start, end=self.end, bodies=('north_node',))
 
-    def test_typescript_attestation_accepts_only_the_reviewed_pair(self):
-        import json
-        revision = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
-        self.assertTrue(engine.provenance_matches(revision['from'], revision['to']))
-        self.assertTrue(engine.provenance_matches(revision['to'], revision['to']))
-        self.assertFalse(engine.provenance_matches(revision['from'], 'f'*64))
-        self.assertFalse(engine.provenance_matches('b'*64, revision['to']))
-
-    def test_portable_attestation_accepts_only_reviewed_sources_for_current_code(self):
-        import json
-        revision = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexPortable']
-        self.assertEqual(engine.provenance(), revision['to'])
-        for source in revision['from']:
-            self.assertTrue(engine.provenance_matches(source, revision['to']))
-            self.assertFalse(engine.provenance_matches(source, 'f'*64))
-        self.assertFalse(engine.provenance_matches('b'*64, revision['to']))
-        # A reviewed old file must still pass all ordinary loading checks.
-        for source in revision['from']:
-            with patch.object(engine, 'provenance', return_value=source):
-                self.build()
+    def test_prepared_index_has_no_calculation_provenance_and_reuses_ready_numbers(self):
+        header = self.build()
+        self.assertNotIn('provenance', header)
+        before = self.path.read_bytes()
+        with patch.object(engine, 'prepare_trajectory', side_effect=AssertionError('No recalculation')):
+            self.assertTrue(self.build()['reused'])
             with engine.load_index(self.path, full=True) as index:
                 self.assertIsNotNone(index.trajectory('north_node'))
-            self.path.unlink()
+        self.assertEqual(self.path.read_bytes(), before)
 
-    def test_provenance_uses_portable_logical_names_for_ephemeris_files(self):
-        digest = hashlib.sha256()
-        updates = []
-        class RecordingDigest:
-            def update(self, data):
-                updates.append(data)
-                digest.update(data)
-            def hexdigest(self):
-                return digest.hexdigest()
-        with patch.object(engine.hashlib, 'sha256', return_value=RecordingDigest()):
-            engine.provenance()
-        names = [header.split(b'\0', 1)[0].decode('utf-8') for header in updates[1::2]]
-        self.assertIn('data/ephe/sepl_18.se1', names)
-        self.assertTrue(all('\\' not in name for name in names), names)
+    def historical(self):
+        self.build()
+        raw = self.path.read_bytes()
+        _, size, _ = engine.PREFIX.unpack_from(raw)
+        header = json.loads(raw[engine.PREFIX.size:engine.PREFIX.size+size])
+        payload = raw[engine.PREFIX.size+size:]
+        header['provenance'] = 'a'*64
+        encoded = json.dumps(header, separators=(',', ':')).encode()
+        self.path.write_bytes(engine.PREFIX.pack(engine.MAGIC, len(encoded), hashlib.sha256(encoded).digest())+encoded+payload)
+        return payload
+
+    def test_explicit_transition_preserves_all_trajectory_bytes_without_calculation_and_repeats_without_payload_read(self):
+        payload = self.historical()
+        self.path.chmod(0o640)
+        with patch.object(engine, 'prepare_trajectory', side_effect=AssertionError('No recalculation')):
+            self.assertTrue(engine.migrate_index(self.path))
+        raw = self.path.read_bytes()
+        _, size, checksum = engine.PREFIX.unpack_from(raw)
+        header = raw[engine.PREFIX.size:engine.PREFIX.size+size]
+        self.assertNotIn('provenance', json.loads(header))
+        self.assertEqual(hashlib.sha256(header).digest(), checksum)
+        self.assertEqual(raw[engine.PREFIX.size+size:], payload)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
+        before = self.path.stat().st_mtime_ns
+        with patch.object(engine, 'load_index', side_effect=AssertionError('No repeat payload scan')):
+            self.assertFalse(engine.migrate_index(self.path))
+        self.assertEqual(self.path.stat().st_mtime_ns, before)
+        with engine.load_index(self.path, full=True) as index:
+            self.assertIsNotNone(index.trajectory('north_node'))
+
+    def test_interrupted_transition_leaves_a_complete_old_or_new_file_and_no_temporary_copy(self):
+        for boundary in ('file_sync', 'before_replace', 'after_replace', 'directory_sync'):
+            with self.subTest(boundary=boundary):
+                payload = self.historical()
+                original = self.path.read_bytes()
+                replace, sync = engine.os.replace, engine.os.fsync
+                syncs = 0
+                def interrupted_sync(fd):
+                    nonlocal syncs
+                    syncs += 1
+                    sync(fd)
+                    if boundary == 'file_sync' and syncs == 1 or boundary == 'directory_sync' and syncs == 2:
+                        raise OSError('interrupted')
+                def interrupted_replace(source, target):
+                    if boundary == 'before_replace':
+                        raise OSError('interrupted')
+                    replace(source, target)
+                    if boundary == 'after_replace':
+                        raise OSError('interrupted')
+                with patch.object(engine.os, 'replace', side_effect=interrupted_replace), patch.object(engine.os, 'fsync', side_effect=interrupted_sync):
+                    with self.assertRaisesRegex(OSError, 'interrupted'):
+                        engine.migrate_index(self.path)
+                with engine.load_index(self.path, full=True) as index:
+                    self.assertEqual(bytes(index.data[index.base:]), payload)
+                if boundary in ('file_sync', 'before_replace'):
+                    self.assertEqual(self.path.read_bytes(), original)
+                engine.migrate_index(self.path)
+                self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+    def test_transition_refuses_corrupt_or_concurrently_changed_sources(self):
+        self.historical()
+        original = self.path.read_bytes()
+        damaged = bytearray(original); damaged[-1] ^= 1; self.path.write_bytes(damaged)
+        with self.assertRaises(engine.InvalidIndex):
+            engine.migrate_index(self.path)
+        self.assertEqual(self.path.read_bytes(), damaged)
+        self.path.write_bytes(original)
+        sync = engine.os.fsync
+        def change_source(fd):
+            sync(fd)
+            self.path.write_bytes(damaged)
+        with patch.object(engine.os, 'fsync', side_effect=change_source):
+            with self.assertRaisesRegex(engine.InvalidIndex, 'changed'):
+                engine.migrate_index(self.path)
+        self.assertEqual(self.path.read_bytes(), damaged)
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
 
     def test_atomic_build_idempotent_load_and_read_only_arrays(self):
         self.build()
@@ -171,10 +221,8 @@ class FileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             engine.lunar_file_segments(self.path)
 
-    def test_changed_bytes_or_provenance_are_rejected(self):
+    def test_changed_bytes_are_rejected(self):
         self.build()
-        with self.assertRaises(engine.InvalidIndex):
-            engine.load_index(self.path, expected_provenance='0'*64)
         data=bytearray(self.path.read_bytes()); data[-1]^=1; self.path.write_bytes(data)
         with self.assertRaises(engine.InvalidIndex):
             engine.load_index(self.path)

@@ -30,7 +30,6 @@ interface CycleOptions {
   computeQueue?: ComputeQueue;
   generate?: (input: CycleRequest, options: { signal?: AbortSignal }) => Promise<unknown>;
   limits?: Partial<Record<keyof typeof CYCLE_LIMITS, number>>;
-  cacheVersion?: string | null;
 }
 export type Cycles = ReturnType<typeof createCycles>;
 
@@ -38,17 +37,7 @@ import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE, LIFE_SPAN_YEARS } from '../..
 import { createComputeQueue } from '../runtime/compute-queue.ts';
 import { consumeJob } from '../runtime/job-consumers.ts';
 import { runJsonWorker } from '../runtime/json-worker.ts';
-import { inputFingerprint } from '../runtime/calculation-version.ts';
 import { cycleUtcMilliseconds as parseCycleUtc, validCycleResult } from '../../shared/cycles-format.ts';
-
-// Device results are keyed by calculation inputs, independent of UI releases.
-export function cyclesCalculationFingerprint(root: string) {
-  // Recurse over all installed inputs, including optional time-conversion files.
-  // Missing Chiron data changes the revision without blocking other bodies.
-  return inputFingerprint(root, ['server/python/cycles.py', 'server/python/return_index.py', 'server/python/astronomy.py',
-    'server/python/civil_time.py', 'server/python/date_limits.py', 'server/python/errors.py',
-    'requirements.txt', 'shared/cycles-format.ts', 'shared/date-limits.ts', 'data/ephe']);
-}
 
 export const CYCLE_BODIES = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'uranus_opposition', 'neptune', 'pluto', 'chiron']);
 export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12 });
@@ -119,9 +108,8 @@ export function generateCycles({ root, input, spawnWorker, computeQueue, signal,
 
 // This service shares unfinished work only; completed results belong to its consumers.
 // The server's compute queue owns admission; an exact chart precedes background dates.
-export function createCycles({ root, computeQueue, report, generate = (input, options) => generateCycles({ root: root!, input, report, ...options }), limits = {}, cacheVersion = null }: CycleOptions = {}) {
+export function createCycles({ root, computeQueue, report, generate = (input, options) => generateCycles({ root: root!, input, report, ...options }), limits = {} }: CycleOptions = {}) {
   const failure = createCalculationFailureReporter('cycles', report);
-  if (cacheVersion !== null && !/^[a-f0-9]{64}$/.test(cacheVersion)) throw new RangeError('Invalid cycles version');
   const { concurrency, maxQueued } = { ...CYCLE_LIMITS, ...limits };
   const pending = new Map<string, CycleWork>(), jobs = new Set<CycleWork>();
   const queue = computeQueue || createComputeQueue({ concurrency, maxQueued });
@@ -169,7 +157,7 @@ export function createCycles({ root, computeQueue, report, generate = (input, op
     closing = Promise.allSettled([...jobs].map(job => job.work)).then(() => { if (!computeQueue) queue.close(); });
     return closing;
   }
-  return { close, cacheVersion, events: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'events', signal) as Promise<CycleEventsResult>, chart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'chart', signal) as Promise<CycleChartResult>,
+  return { close, events: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'events', signal) as Promise<CycleEventsResult>, chart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'chart', signal) as Promise<CycleChartResult>,
     get queued() { return [...jobs].filter(job => !job.started && !job.controller.signal.aborted).length; },
     get active() { return [...jobs].filter(job => job.started).length; } };
 }

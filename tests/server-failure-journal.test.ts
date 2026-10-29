@@ -22,7 +22,7 @@ function fixture() {
   const failure = () => {throw Error('PRIVATE chart/email/token/address details');};
   const handler = createRequestHandler({root:'/unused',cities,calculate:failure,report,
     publicFiles:failure,lifetime:{getMetadata:failure,getMoment:failure},
-    natalDays:{get:failure,calculationVersion:null},transitDays:{get:failure},cycles:{cacheVersion:null,events:failure,chart:failure}});
+    natalDays:{get:failure},transitDays:{get:failure},cycles:{events:failure,chart:failure}});
   async function request(url: string, body?: unknown, headers: Record<string,string> = {}) {
     const req=Object.assign(Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]),{
       method:body === undefined?'GET':'POST',url,headers:{host:'localhost','content-type':'application/json',...headers},
@@ -117,7 +117,7 @@ test('HTTP source facts survive journal shutdown in the existing archive',async 
 test('one failed day packing is recorded at its calculation source, not again for every HTTP consumer',async t=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'forma-http-day-journal-'));
   const f=fixture(), date='2000-01-01';
-  const transit=await createTransitDays({cacheDir:directory,calculationVersion:'a'.repeat(64),report:f.report,
+  const transit=await createTransitDays({cacheDir:directory,report:f.report,
     now:()=>new Date(date+'T12:00:00Z'),generateDay:async()=>({...natalDayFixture({date,timezone:'UTC'}),columns:[]})});
   t.after(async()=>{await transit.close();await fs.rm(directory,{recursive:true,force:true});});
   const handler=createRequestHandler({root:'/unused',cities:f.cities,calculate:f.failure,report:f.report,

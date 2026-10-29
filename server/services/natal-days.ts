@@ -27,7 +27,6 @@ interface NatalDayOptions {
   report?: CalculationFailureReport;
   root?: string;
   computeQueue?: ComputeQueue;
-  calculationVersion?: string | null;
   generateDay?: (date: string, timezone: string, options: QueueOptions) => Promise<NatalDay>;
   now?: () => number;
   capacity?: number;
@@ -88,10 +87,9 @@ export function encodeNatalDayPacket(day: NatalDay) {
 
 // Only bounded, short-lived RAM. No personal disk cache, persistent workers,
 // prewarming, request logging, or birth data in a public/cacheable URL.
-export function createNatalDays({ root, computeQueue, calculationVersion = null, report, generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
+export function createNatalDays({ root, computeQueue, report, generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
   now = Date.now, capacity = 10, ttlMs = 600_000, maxQueued = 3 }: NatalDayOptions = {}) {
   const failure = createCalculationFailureReporter('natal_day', report);
-  if (calculationVersion !== null && (typeof calculationVersion !== 'string' || !/^[a-f0-9]{64}$/.test(calculationVersion))) throw new TypeError('Invalid calculation version');
   const memory = new Map<string, { packet: DayPacket; expires: number }>(), pending = new Map<string, NatalWork>(), queue: NatalWork[] = [];
   let running = false;
   const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
@@ -121,7 +119,7 @@ export function createNatalDays({ root, computeQueue, calculationVersion = null,
       let raw: Buffer;
       try {
         if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
-        raw = await encodeNatalDayPacket(calculationVersion ? { ...day, calculationVersion } : day);
+        raw = await encodeNatalDayPacket(day);
       } catch (error) {
           if (job.controller.signal.aborted) throw error;
           failure('invalid_result'); throw new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
@@ -151,5 +149,5 @@ export function createNatalDays({ root, computeQueue, calculationVersion = null,
     const result = consume(job, signal); void drain();
     return result;
   }
-  return { get, calculationVersion, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
+  return { get, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
 }

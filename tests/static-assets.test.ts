@@ -40,14 +40,14 @@ function handler(root: string, options: Omit<Parameters<typeof createPublicFileH
   return createRequestHandler({ root, publicFiles: createPublicFileHandler({ root, ...options }) } as Parameters<typeof createRequestHandler>[0]);
 }
 
-test('HTML supplies the current cycle calculation revision without another request and changes its ETag', async t => {
+test('HTML carries application identity without a calculation-version bootstrap', async t => {
   const root = await directory(t); await write(root, 'public/index.html', '<html><body>Форма</body></html>');
-  const first = await request(handler(root, { cyclesVersion: 'a'.repeat(64) }), '/');
-  assert.match(first.body!.toString(), /<body[^>]* data-cycles-version="a{64}"[^>]*>/);
-  const next = await request(handler(root, { cyclesVersion: 'b'.repeat(64) }), '/');
-  assert.match(next.body!.toString(), /data-cycles-version="b{64}"/); assert.notEqual(next.headers.ETag, first.headers.ETag);
+  const first = await request(handler(root, { appVersion: 'app-one' }), '/');
+  const next = await request(handler(root, { appVersion: 'app-two' }), '/');
+  assert.match(next.body!.toString(), /data-app-version="app-two"/);
+  assert.notEqual(next.headers.ETag, first.headers.ETag);
   assert.equal(first.headers['Cache-Control'], 'no-cache');
-  const legacy = await request(handler(root), '/'); assert.doesNotMatch(legacy.body!.toString(), /data-cycles-version/);
+  assert.doesNotMatch(first.body!.toString(), /data-(calculation|cycles)-version/);
 });
 function releaseEntry(file: string, immutable = false) {
   return { file, br: `${file}.br`, gzip: `${file}.gz`, immutable };
@@ -147,9 +147,8 @@ test('development and release HTML keep the timeline entry visible in every enco
       await write(root, `${file}.br`, brotli(Buffer.from(source)));
       await write(root, `${file}.gz`, gzipSync(source));
     }
-    const cyclesVersion = 'a'.repeat(64);
-    const serve = handler(root, { files, precompressed, cyclesVersion });
-    const expected = source.replace('<body>', `<body data-app-name="Форма 1" data-cycles-version="${cyclesVersion}">`);
+    const serve = handler(root, { files, precompressed });
+    const expected = source.replace('<body>', `<body data-app-name="Форма 1">`);
     for (const [encoding, unpack] of [['identity', (bytes: Buffer) => bytes], ['gzip', gunzipSync], ['br', brotliDecompressSync]] as const) {
       const headers = { 'accept-encoding': encoding };
       const get = await request(serve, '/', { headers });
@@ -286,14 +285,14 @@ test('release exposes only its explicit mutable offline worker and nonlocal sour
   }
 });
 
-test('a versioned release shell still receives runtime metadata for diagnostics and calculations',async t=>{
+test('a versioned release shell still receives runtime metadata for diagnostics',async t=>{
  const root=await directory(t),source='<html><body data-offline-version="'+'a'.repeat(64)+'">Форма</body></html>';
  await write(root,'index.html',source);
- const response=await request(handler(root,{files:new Map([['index.html','index.html']]),appVersion:'0.2-test',environment:'stand',standNumber:'4',calculationVersion:'b'.repeat(64)}),'/');
+ const response=await request(handler(root,{files:new Map([['index.html','index.html']]),appVersion:'0.2-test',environment:'stand',standNumber:'4'}),'/');
  const html=response.body!.toString();
  assert.match(html,/data-app-name="Форма 4"/);
  assert.match(html,/data-app-version="0.2-test"/);assert.match(html,/data-app-environment="stand"/);
- assert.match(html,/data-calculation-version="b{64}"/);
+ assert.doesNotMatch(html,/data-(calculation|cycles)-version/);
  const {normalizeAppMetadata}=await import('../shared/app-metadata.ts');assert.equal(normalizeAppMetadata(html),source);
 });
 
@@ -352,4 +351,14 @@ test('source retirement is limited to local stand requests and preserves encodin
   }
   assert.equal((await request(serve,'/service-worker.js',{...local,headers:{...local.headers,'accept-encoding':'*;q=0'}})).status,406);
   assert.equal((await request(serve,'/service-worker.js',{...local,method:'POST'})).status,405);
+});
+
+
+test('source mode serves one-time storage transitions but no calculation-version owner',async()=>{
+ const app=handler(fileURLToPath(new URL('../',import.meta.url)));
+ for(const file of ['shared/calculation-storage-transition.ts','src/data/calculation-cache-transition.ts','src/data/account-calculation-transition.ts']){
+  assert.equal((await request(app,'/'+file)).status,200,file);
+ }
+ assert.equal((await request(app,'/src/data/calculation-updates.ts')).status,404);
+ assert.equal((await request(app,'/api/versions')).status,404);
 });

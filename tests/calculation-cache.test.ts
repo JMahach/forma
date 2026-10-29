@@ -1,3 +1,5 @@
+import {encodeNatalDay} from '../server/packets/encode.ts';
+import {natalDayFixture} from './fixtures/natal-day.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore, IDBCursor } from 'fake-indexeddb';
@@ -42,54 +44,38 @@ test('simultaneous tabs cannot each spend the same remaining capacity',async t=>
   for(const cache of tabs)assert.ok((await cache.status()).accountedBytes<=9000);
 });
 
-test('current transit days are protected and a stale same-version window cannot restore yesterday',async t=>{
+test('current transit days are protected and a stale window cannot restore yesterday',async t=>{
   const indexedDB=new IDBFactory(),version='a'.repeat(64),now=Date.parse('2026-10-26T12:00:00Z');
   const a=createCalculationCache({indexedDB,maxBytes:9000,now:()=>now});
   const b=createCalculationCache({indexedDB,maxBytes:9000,now:()=>now});t.after(()=>{a.close();b.close();});
-  const first=await a.setTransitWindow({version,dates:['2026-10-26'],expiresAt:now+86400000});
-  assert.equal(first.status,'applied');
-  assert.equal(await a.put('transit',`${version}:2026-10-26`,new ArrayBuffer(1500),{version,date:'2026-10-26'}),true);
+  const first=await a.setTransitWindow({dates:['2026-10-26'],expiresAt:now+86400000});
+  assert.ok(first?.status==='applied');
+  assert.equal(await a.put('transit',`${version}:2026-10-26`,new ArrayBuffer(1500),{date:'2026-10-26'}),true);
   await b.put('natal','a',new ArrayBuffer(1500));await b.put('return-charts','b',new ArrayBuffer(1500));
   assert.ok(await a.get('transit',`${version}:2026-10-26`));assert.equal(await a.get('natal','a'),null);
-  const next=await a.setTransitWindow({version,dates:['2026-10-27'],expiresAt:now+2*86400000},{expectedRevision:first.revision});
+  const next=await a.setTransitWindow({dates:['2026-10-27'],expiresAt:now+2*86400000},{expectedRevision:first.revision});
   assert.equal(next.status,'applied');
-  assert.equal((await b.setTransitWindow({version,dates:['2026-10-26'],expiresAt:now+86400000},
+  assert.equal((await b.setTransitWindow({dates:['2026-10-26'],expiresAt:now+86400000},
     {expectedRevision:first.revision})).status,'stale');
   assert.equal(await a.get('transit',`${version}:2026-10-26`),null);
 });
 
-test('only explicit confirmed-version transitions remove old data; a stale tab cannot reverse them',async t=>{
-  const indexedDB=new IDBFactory(),first='a'.repeat(64),second='b'.repeat(64);
-  const a=createCalculationCache({indexedDB}),b=createCalculationCache({indexedDB});t.after(()=>{a.close();b.close();});
-  await a.put('natal','old',new ArrayBuffer(100),{version:first});
-  await b.status();assert.ok(await b.get('natal','old'),'ordinary setup does not declare its hash current');
-  assert.equal((await a.confirmVersions({natal:first})).status,'applied');
-  assert.equal((await a.confirmVersions({natal:second},{previous:{natal:first}})).status,'applied');
-  assert.equal(await a.get('natal','old'),null);
-  assert.equal((await b.confirmVersions({natal:first})).status,'stale');
-  assert.equal((await b.confirmVersions({natal:first},{previous:{natal:first}})).status,'stale');
-  assert.equal(await b.put('natal','late-old',new ArrayBuffer(100),{version:first}),null);
-  assert.equal(await a.put('natal','new',new ArrayBuffer(100),{version:second}),true);
-});
-
-test('window version guards are checked atomically even for an otherwise identical window',async t=>{
-  const indexedDB=new IDBFactory(),old='a'.repeat(64),next='b'.repeat(64),now=Date.now();
-  const cache=createCalculationCache({indexedDB});t.after(()=>cache.close());
-  await cache.confirmVersions({natal:old,returns:old});
-  const window={version:old,dates:['2026-10-26'],expiresAt:now+86400000};
-  const first=await cache.setTransitWindow(window,{expectedVersions:{natal:old,returns:old}});
-  await cache.confirmVersions({natal:next,returns:next},{previous:{natal:old,returns:old}});
-  assert.equal((await cache.setTransitWindow(window,{expectedRevision:first.revision,expectedVersions:{natal:old,returns:old}})).status,'stale');
-  assert.equal((await cache.setTransitWindow({...window,version:next},
-    {expectedRevision:first.revision,previousVersion:old,expectedVersions:{natal:next,returns:next}})).status,'applied');
+test('ready personal results survive owner replacement without calculation-version confirmation',async t=>{
+  const indexedDB=new IDBFactory(),value=Uint8Array.of(1,3,7).buffer;
+  const first=createCalculationCache({indexedDB,legacySources:[]});
+  await first.put('natal','ready',value);first.close();
+  const next=createCalculationCache({indexedDB,legacySources:[]});t.after(()=>next.close());
+  assert.deepEqual(await next.get('natal','ready'),value);
+  assert.equal(Object.hasOwn(await next.status(),'versions'),false);
+  assert.equal('confirmVersions' in next,false);
 });
 
 test('clearing personal calculations leaves transit and fences an older writer',async t=>{
   const indexedDB=new IDBFactory(),version='a'.repeat(64),now=Date.parse('2026-10-26T12:00:00Z');
   const old=createCalculationCache({indexedDB,now:()=>now}),other=createCalculationCache({indexedDB,now:()=>now});
   t.after(()=>{old.close();other.close();});
-  await old.setTransitWindow({version,dates:['2026-10-26'],expiresAt:now+86400000});
-  await old.put('transit',`${version}:2026-10-26`,new ArrayBuffer(100),{version,date:'2026-10-26'});
+  await old.setTransitWindow({dates:['2026-10-26'],expiresAt:now+86400000});
+  await old.put('transit',`${version}:2026-10-26`,new ArrayBuffer(100),{date:'2026-10-26'});
   await old.put('natal','birth',new ArrayBuffer(100));await old.put('return-events','dates',{events:[]});
   await other.clearPersonal();
   assert.equal(await old.get('natal','birth'),null);assert.equal(await old.put('natal','late',new ArrayBuffer(100)),null);
@@ -98,16 +84,17 @@ test('clearing personal calculations leaves transit and fences an older writer',
 
 test('migration preserves usable legacy packets, counts copies until removal, and fences old schema writers',async t=>{
   const indexedDB=new IDBFactory(),key='natal-day:'+'a'.repeat(64)+':1:2000-01-01:city';
-  await seed(indexedDB,'bodygraph-chart-days',2,{packets:[{key,bytes:Uint8Array.of(11,22,33).buffer}],metadata:[]});
+  const bytes=encodeNatalDay(natalDayFixture({date:'2000-01-01'})).buffer;
+  await seed(indexedDB,'bodygraph-chart-days',2,{packets:[{key,bytes}],metadata:[]});
   const cache=createCalculationCache({indexedDB});t.after(()=>cache.close());
   assert.equal((await cache.status()).phase,'scanning');
-  assert.deepEqual(new Uint8Array((await cache.get<ArrayBuffer>('natal',key))!),Uint8Array.of(11,22,33));
+  assert.deepEqual(new Uint8Array((await cache.get<ArrayBuffer>('natal','natal-day:1:2000-01-01:city'))!),new Uint8Array(bytes));
   assert.deepEqual(await records(indexedDB,'bodygraph-chart-days',3,'packets'),[]);
   await assert.rejects(open(indexedDB,'bodygraph-chart-days',2),{name:'VersionError'});
   const status=await cache.status();assert.equal(status.phase,'ready');assert.equal(status.legacyBytes,0);
-  const metadata=await records(indexedDB,'forma-calculation-cache',2,'catalogue');
+  const metadata=await records(indexedDB,'forma-calculation-cache',3,'catalogue');
   assert.equal(metadata.length,1);assert.equal(Object.hasOwn(metadata[0],'value'),false);
-  assert.equal((await records(indexedDB,'forma-calculation-cache',2,'payloads')).length,1);
+  assert.equal((await records(indexedDB,'forma-calculation-cache',3,'payloads')).length,1);
 });
 
 for(const failure of ['before-source-delete','before-ledger-release'] as const)test(`migration resumes ${failure} without losing or double-counting the surviving payload`,async t=>{
@@ -128,7 +115,7 @@ for(const failure of ['before-source-delete','before-ledger-release'] as const)t
   cache=createCalculationCache({indexedDB,maxBytes:12000});t.after(()=>cache.close());
   assert.equal((await cache.get<ArrayBuffer>('natal',key))!.byteLength,1500);
   assert.equal((await cache.status()).legacyBytes,0);
-  assert.equal((await records(indexedDB,'forma-calculation-cache',2,'payloads')).length,1);
+  assert.equal((await records(indexedDB,'forma-calculation-cache',3,'payloads')).length,1);
 });
 
 test('concurrent migration of an already oversized legacy cache evicts the least recently used calculations',async t=>{
@@ -147,7 +134,7 @@ test('migration keeps a usable legacy packet when only its temporary duplicate w
   const cache=createCalculationCache({indexedDB,maxBytes:9000});t.after(()=>cache.close());
   assert.equal((await cache.get<ArrayBuffer>('natal','large'))?.byteLength,3000);
   const payloads=await records(indexedDB,'bodygraph-chart-days',3,'packets');
-  const moved=await records(indexedDB,'forma-calculation-cache',2,'payloads');
+  const moved=await records(indexedDB,'forma-calculation-cache',3,'payloads');
   assert.equal(payloads.length+moved.length,1,'a fitting final payload must not be discarded for temporary copy space');
   const status=await cache.status();assert.ok(status.accountedBytes!<=9000);
   assert.equal(status.phase,'migrating');assert.ok(status.legacyBytes!>0);
@@ -202,21 +189,22 @@ test('clearPersonal reports pending physical cleanup when legacy deletion fails'
 test('an earlier timer follows a window extended by a tab that then closes',async t=>{
   const indexedDB=new IDBFactory(),version='a'.repeat(64),start=Date.now();
   const a=createCalculationCache({indexedDB}),b=createCalculationCache({indexedDB});t.after(()=>{a.close();b.close();});
-  const first=await a.setTransitWindow({version,dates:['2026-10-26'],expiresAt:start+120});
-  await b.setTransitWindow({version,dates:['2026-10-26'],expiresAt:start+260},{expectedRevision:first!.revision});
-  await a.put('transit','today',new ArrayBuffer(100),{version,date:'2026-10-26'});b.close();
+  const first=await a.setTransitWindow({dates:['2026-10-26'],expiresAt:start+120});
+  assert.ok(first?.status==='applied');
+  await b.setTransitWindow({dates:['2026-10-26'],expiresAt:start+260},{expectedRevision:first.revision});
+  await a.put('transit','today',new ArrayBuffer(100),{date:'2026-10-26'});b.close();
   await new Promise(resolve=>setTimeout(resolve,340));
-  assert.deepEqual(await records(indexedDB,'forma-calculation-cache',2,'payloads'),[]);
+  assert.deepEqual(await records(indexedDB,'forma-calculation-cache',3,'payloads'),[]);
 });
 
 test('reopening after transit expiry removes saved numbers without requiring a new write',async t=>{
   const indexedDB=new IDBFactory(),version='a'.repeat(64);let now=Date.parse('2026-10-26T12:00:00Z');
   const before=createCalculationCache({indexedDB,now:()=>now});
-  await before.setTransitWindow({version,dates:['2026-10-26'],expiresAt:now+1000});
-  await before.put('transit','today',new ArrayBuffer(100),{version,date:'2026-10-26'});before.close();now+=2000;
+  await before.setTransitWindow({dates:['2026-10-26'],expiresAt:now+1000});
+  await before.put('transit','today',new ArrayBuffer(100),{date:'2026-10-26'});before.close();now+=2000;
   const after=createCalculationCache({indexedDB,now:()=>now});t.after(()=>after.close());await after.status();
   await new Promise(resolve=>setTimeout(resolve,20));
-  assert.deepEqual(await records(indexedDB,'forma-calculation-cache',2,'payloads'),[]);
+  assert.deepEqual(await records(indexedDB,'forma-calculation-cache',3,'payloads'),[]);
 });
 
 
@@ -245,7 +233,7 @@ test('legacy import visits metadata linearly instead of rescanning the catalogue
 test('version one cache upgrades its indexes without clearing payloads, budget or source checkpoints',async t=>{
   const sourceFactory=new IDBFactory(),source=createCalculationCache({indexedDB:sourceFactory,legacySources:[]});
   await source.put('natal','kept',Uint8Array.of(1,7,9));const before=await source.status();
-  const stores=['payloads','catalogue','control'],saved=await Promise.all(stores.map(store=>records(sourceFactory,'forma-calculation-cache',2,store)));
+  const stores=['payloads','catalogue','control'],saved=await Promise.all(stores.map(store=>records(sourceFactory,'forma-calculation-cache',3,store)));
   source.close();
   const indexedDB=new IDBFactory();
   const old=await new Promise<IDBDatabase>((resolve,reject)=>{
@@ -267,8 +255,8 @@ test('version one cache upgrades its indexes without clearing payloads, budget o
   const cache=createCalculationCache({indexedDB,legacySources:[]});t.after(()=>cache.close());
   assert.deepEqual(await cache.get('natal','kept'),Uint8Array.of(1,7,9));
   const after=await cache.status();assert.equal(after.accountedBytes,before.accountedBytes);assert.equal(after.legacyBytes,0);
-  assert.ok((await records(indexedDB,'forma-calculation-cache',2,'control')).some(row=>row.key==='upgrade-probe' && row.checkpoint==='preserved'));
-  const db=await open(indexedDB,'forma-calculation-cache',2);
+  assert.ok((await records(indexedDB,'forma-calculation-cache',3,'control')).some(row=>row.key==='upgrade-probe' && row.checkpoint==='preserved'));
+  const db=await open(indexedDB,'forma-calculation-cache',3);
   try {assert.deepEqual(Array.from(db.objectStoreNames),['catalogue','control','payloads']);
     assert.ok(db.transaction('catalogue').objectStore('catalogue').indexNames.contains('stage'));}
   finally {db.close();}
@@ -296,9 +284,9 @@ test('a transit window expiring during migration is pruned before the next copy'
   const indexedDB=new IDBFactory(),version='a'.repeat(64);let now=Date.parse('2026-10-26T12:00:00Z');const expires=now+100000;
   await seed(indexedDB,'bodygraph-chart-days',2,{packets:[{key:'a',bytes:new ArrayBuffer(32)},{key:'b',bytes:new ArrayBuffer(32)}],metadata:[]});
   const transitKey=version+':2026-10-26';
-  await seed(indexedDB,'forma-moments',2,{packets:[{key:transitKey,day:new Float64Array(24*1440)}],catalogue:[],settings:[]});
+  await seed(indexedDB,'forma-moments',2,{packets:[{key:transitKey,day:new Float64Array(24*1440),meta:{engine:'Swiss Ephemeris'}}],catalogue:[],settings:[]});
   const cache=createCalculationCache({indexedDB,now:()=>now});t.after(()=>cache.close());
-  await cache.setTransitWindow({version,dates:['2026-10-26'],expiresAt:expires});
+  await cache.setTransitWindow({dates:['2026-10-26'],expiresAt:expires});
   const events:string[]=[],remove=IDBObjectStore.prototype.delete,put=IDBObjectStore.prototype.put;
   IDBObjectStore.prototype.delete=function(key:IDBValidKey|IDBKeyRange){
     if(this.transaction.db.name==='bodygraph-chart-days' && this.name==='packets' && key==='a')now=expires;
@@ -356,10 +344,10 @@ test('a saved birth day opens through the real client without network when acces
   const indexedDB=new IDBFactory(),version='a'.repeat(64),chart=personalChartFixture();
   const cache=createCalculationCache({indexedDB,legacySources:[]}),binary=createBinaryCache({cache});
   t.after(()=>{binary.close();cache.close();});
-  const bytes=encodeNatalDay({...natalDayFixture(),calculationVersion:version}).buffer;
-  await binary.put(`natal-day:${version}:1:${chart.birthDate}:${chart.cityId}`,bytes);
+  const bytes=encodeNatalDay(natalDayFixture()).buffer;
+  await binary.put(`natal-day:1:${chart.birthDate}:${chart.cityId}`,bytes);
   let networkCalls=0;
-  const client=createNatalDayClient({calculationVersion:version,persistentCache:binary,
+  const client=createNatalDayClient({persistentCache:binary,
     fetch:async()=>{networkCalls++;throw new Error('Network unavailable');}});
   const original=IDBObjectStore.prototype.put;
   IDBObjectStore.prototype.put=function(value:unknown,key?:IDBValidKey){
@@ -368,6 +356,6 @@ test('a saved birth day opens through the real client without network when acces
   };
   try{
     const day=await client.getDay(chart);
-    assert.equal(day.calculationVersion,version);assert.equal(day.date,chart.birthDate);assert.equal(networkCalls,0);
+    assert.equal(Object.hasOwn(day,'calculationVersion'),false);assert.equal(day.date,chart.birthDate);assert.equal(networkCalls,0);
   }finally{IDBObjectStore.prototype.put=original;}
 });

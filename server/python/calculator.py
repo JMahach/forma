@@ -20,7 +20,7 @@ def calculate(request):
     if mode == 'transit_moment':
         moment = civil.transit_utc(request.get('utc'))
         point = dict(utc=request['utc'], longitudes=list(astro.longitudes(astro.julian_tt(moment)).values()),
-                     engine='Swiss Ephemeris ' + astro.swe.version)
+                     engine='Swiss Ephemeris')
         point['design'] = calculate(dict(mode='transit_design', utc=request['utc']))
         return point
     if mode == 'transit_design':
@@ -29,7 +29,7 @@ def calculate(request):
         values = astro.longitudes(design_jd)
         return dict(utc=request['utc'], designUtc=civil.iso(astro.tt_to_datetime(design_jd)),
                     designArcResidualDegrees=residual, longitudes=list(values.values()),
-                    engine='Swiss Ephemeris ' + astro.swe.version)
+                    engine='Swiss Ephemeris')
     city, offset, fold, ambiguous = None, 'UTC+00:00', 0, False
     if mode == 'transit':
         moment = (civil.transit_utc(request['utc']) if 'utc' in request
@@ -59,7 +59,7 @@ def calculate(request):
         id=None, name=name, personality=sorted(set(a['gate'] for a in personality)), design=sorted(set(a['gate'] for a in design)),
         source='transit' if mode == 'transit' else 'calculated', birthDate=date, birthTime=time, birthPlace=place, timezone=timezone,
         utc=utc, utcOffset=offset, fold=fold, designUtc=design_utc, cityId=city['id'] if city else None, city=city,
-        activations=dict(personality=personality, design=design), engine='Swiss Ephemeris ' + astro.swe.version, ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
+        activations=dict(personality=personality, design=design), engine='Swiss Ephemeris', ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
         timezoneDatabase='IANA tzdata ' + civil.tzdata.__version__, nodeModel='true', zodiac='tropical-geocentric-apparent',
         designArcResidualDegrees=residual, updatedAt=civil.iso(dt.datetime.now(civil.UTC)), createdAt=civil.iso(dt.datetime.now(civil.UTC)), note='',
         verification='Engine/timezone regression checks and 26 gate-line matches to a published DefinedSelf fixture; official Human Design reference-chart validation pending.'

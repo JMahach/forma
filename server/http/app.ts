@@ -9,7 +9,6 @@ import { sendJSON as json, readJSONObject, HttpInputError } from './json.ts';
 interface RequestHandlerOptions {
   root: string;
   report?: ServerFailureReport;
-  versions?: {calculationVersion:string;cyclesVersion:string};
   cities: CityCatalog;
   calculate: (...args: Parameters<Calculator>) => ReturnType<Calculator>;
   issueCalculationReceipt?:(input:Parameters<Calculator>[0],result:unknown)=>string|undefined;
@@ -35,7 +34,7 @@ import { createLifetimeHandler } from './lifetime.ts';
 const MAX_REQUEST_BYTES = 20000;
 // Transport validation lives here; the catalogue owns city identity and the
 // calculator owns process execution. Importing this module starts no server.
-export function createRequestHandler({ root, report, versions, cities, calculate, transitDays, natalDays, lifetime, cycles, now, accountHandler, chartHandler, issueCalculationReceipt, issueReturnReceipt, diagnosticHandler, publicFiles = createPublicFileHandler({ root }) }: RequestHandlerOptions) {
+export function createRequestHandler({ root, report, cities, calculate, transitDays, natalDays, lifetime, cycles, now, accountHandler, chartHandler, issueCalculationReceipt, issueReturnReceipt, diagnosticHandler, publicFiles = createPublicFileHandler({ root }) }: RequestHandlerOptions) {
   const transitDay = transitDays && createTransitDayHandler(transitDays, { now, report });
   const natalDay = natalDays && createNatalDayHandler(natalDays, { report });
   const cycleHandler = cycles && createCyclesHandler(cycles, { report, issueReceipt:issueReturnReceipt });
@@ -57,13 +56,6 @@ export function createRequestHandler({ root, report, versions, cities, calculate
       if (url.pathname === '/api/diagnostics') {
         if (!diagnosticHandler) { json(res,503,{error:'diagnostics_unavailable'});return; }
         await diagnosticHandler(req,res);return;
-      }
-      if (url.pathname === '/api/versions') {
-        if (req.method !== 'GET') { res.writeHead(405,{Allow:'GET'});res.end();return; }
-        if (!versions || !/^[a-f0-9]{64}$/.test(versions.calculationVersion) || !/^[a-f0-9]{64}$/.test(versions.cyclesVersion)) {
-          json(res,503,{error:'versions_unavailable'});return;
-        }
-        json(res,200,{calculationVersion:versions.calculationVersion,cyclesVersion:versions.cyclesVersion});return;
       }
       if (url.pathname === '/api/account' || url.pathname.startsWith('/api/auth/')) {
         if (!accountHandler) { json(res, 503, { error: 'account_unavailable' }); return; }

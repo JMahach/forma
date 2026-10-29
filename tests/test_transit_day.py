@@ -72,7 +72,7 @@ class TransitDayTests(unittest.TestCase):
                     self.assertEqual(day['columns'][side * 11 + index][minute].hex(), values[planet].hex())
             self.assertEqual(civil.iso(dt.datetime.fromtimestamp(day['columns'][22][minute], civil.UTC)), reference['designUtc'])
             self.assertEqual(day['columns'][23][minute].hex(), reference['designArcResidualDegrees'].hex())
-        self.assertEqual(day['engine'], 'Swiss Ephemeris ' + astro.swe.version)
+        self.assertEqual(day['engine'], 'Swiss Ephemeris')
         self.assertEqual(day['timezoneDatabase'], 'IANA tzdata ' + civil.tzdata.__version__)
         self.assertEqual(day['nodeModel'], 'true')
         self.assertEqual(day['zodiac'], 'tropical-geocentric-apparent')

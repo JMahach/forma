@@ -1,3 +1,4 @@
+import type * as cyclesService from '../server/services/cycles.ts';
 import type { TestWorker, TestSpawner } from './helpers/test-worker.ts';
 type Worker = TestWorker<Record<string, unknown>>;
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -16,11 +17,7 @@ import assert from 'node:assert/strict';
 import { Readable, PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { createCycles, generateCycles as generate, validateCycleRequest } from '../server/services/cycles.ts';
-import * as cyclesService from '../server/services/cycles.ts';
 import { createCyclesHandler as cyclesHandler } from '../server/http/cycles.ts';
 import type { CycleInput } from '../shared/cycles-format.ts';
 
@@ -34,57 +31,6 @@ async function expectCancellation(pending: Promise<unknown>, controller: AbortCo
   assert.equal(await Promise.race([outcome, Promise.resolve('still pending')]), 'AbortError');
 }
 
-test('cycle revisions bind exact calculation inputs including Chiron while interface releases preserve device data', async t => {
-  assert.equal(typeof cyclesService.cyclesCalculationFingerprint, 'function');
-  const copy = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-cycles-revision-'));
-  t.after(() => fs.rm(copy, { recursive: true, force: true }));
-  const names = ['server/python/cycles.py', 'server/python/return_index.py', 'server/python/astronomy.py', 'server/python/civil_time.py',
-    'server/python/date_limits.py', 'server/python/errors.py', 'requirements.txt', 'server/services/cycles.ts',
-    'shared/cycles-format.ts', 'shared/date-limits.ts', 'data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'];
-  for (const name of names) { await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true }); await fs.copyFile(path.join(root, name), path.join(copy, name)); }
-  const original = await cyclesService.cyclesCalculationFingerprint(root);
-  assert.match(original, /^[a-f0-9]{64}$/); assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
-  for (const name of names.filter(name => name !== 'server/services/cycles.ts')) {
-    const file = path.join(copy, name), before = await fs.readFile(file), stat = await fs.stat(file), changed = Buffer.from(before);
-    changed[0] ^= 1; await fs.writeFile(file, changed); await fs.utimes(file, stat.atime, stat.mtime);
-    assert.notEqual(await cyclesService.cyclesCalculationFingerprint(copy), original, name);
-    await fs.writeFile(file, before);
-  }
-  const serviceFile = path.join(copy, 'server/services/cycles.ts');
-  await fs.writeFile(serviceFile, (await fs.readFile(serviceFile, 'utf8')).replace('maxQueued: 12', 'maxQueued: 13'));
-  assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original, 'queue capacity does not change astronomical results');
-  await fs.mkdir(path.join(copy, 'src')); await fs.writeFile(path.join(copy, 'src/app.ts'), 'new interface');
-  assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
-  await fs.unlink(path.join(copy, 'data/ephe/seas_18.se1'));
-  const missingChiron = await cyclesService.cyclesCalculationFingerprint(copy);
-  assert.match(missingChiron, /^[a-f0-9]{64}$/); assert.notEqual(missingChiron, original,
-    'missing Chiron data keeps the other bodies available and invalidates previously complete device results');
-});
-
-
-test('optional ephemeris files and nested inputs invalidate cycle results', async t => {
-  const copy = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-cycles-optional-'));
-  t.after(() => fs.rm(copy, { recursive: true, force: true }));
-  for (const name of ['server/python', 'server/services/cycles.ts', 'shared/cycles-format.ts', 'shared/date-limits.ts', 'requirements.txt', 'data/ephe'] as const) {
-    await fs.mkdir(path.dirname(path.join(copy, name)), { recursive: true });
-    await fs.cp(path.join(root, name), path.join(copy, name), { recursive: true });
-  }
-  const original = await cyclesService.cyclesCalculationFingerprint(copy);
-  const optional = path.join(copy, 'data/ephe/seleapsec.txt');
-  let previous = original;
-  for (const content of ['20261231\n', '20271231\n'] as const) {
-    await fs.writeFile(optional, content);
-    const changed = await cyclesService.cyclesCalculationFingerprint(copy);
-    assert.notEqual(changed, previous, 'optional time-conversion inputs belong to the cycle revision');
-    previous = changed;
-  }
-  await fs.unlink(optional);
-  assert.equal(await cyclesService.cyclesCalculationFingerprint(copy), original);
-  await fs.mkdir(path.join(copy, 'data/ephe/extra'));
-  await fs.writeFile(path.join(copy, 'data/ephe/extra/data.se1'), 'nested ephemeris');
-  assert.notEqual(await cyclesService.cyclesCalculationFingerprint(copy), original);
-});
-
 async function request(service: Partial<CyclePort>, { path = '/api/cycles/events', method = 'POST', value = requestInput, body = JSON.stringify(value), headers = {} } = {}) {
   const req = Readable.from([Buffer.from(body)]) as IncomingMessage;
   Object.assign(req, { method, headers: { 'content-type': 'application/json', ...headers } });
@@ -92,6 +38,7 @@ async function request(service: Partial<CyclePort>, { path = '/api/cycles/events
   await createCyclesHandler(service)(req, res as unknown as ServerResponse, new URL(path, 'http://localhost'));
   return res;
 }
+
 
 test('cycle requests preserve exact seconds, strip unrelated input and reject invalid limits before a worker', () => {
   const exact = '2000-01-01T00:00:00.123456Z';
@@ -116,20 +63,14 @@ test('transport is POST JSON only, private, bounded and never launches invalid r
   assert.equal(calls.length, 1);
 });
 
-test('a stale device calculation version is rejected before work and all cycle responses stay private', async () => {
-  const cacheVersion = 'a'.repeat(64); let calls = 0;
-  const service = createCycles({ cacheVersion, generate: async input => { calls++; return emptyEvents(input); } });
-  assert.equal(service.cacheVersion, cacheVersion);
-  for (const version of ['', 'old', 'b'.repeat(64), cacheVersion.toUpperCase()] as const) {
-    const result = await request(service, { headers: { 'x-forma-cycles-version': version } });
-    assert.equal(result.status, 400); assert.equal(JSON.parse(result.body).error, 'unsupported_version');
-    assert.equal(result.headers['Cache-Control'], 'private, no-store');
-  }
-  assert.equal(calls, 0);
-  const valid = await request(service, { headers: { 'x-forma-cycles-version': cacheVersion } });
-  assert.equal(valid.status, 200); assert.equal(valid.headers['Cache-Control'], 'private, no-store');
-  assert.equal((await request(service)).status, 200, 'unversioned callers remain supported without device persistence');
-  assert.equal(calls, 2); await service.close();
+test('cycle transport needs no calculation version and keeps replies private', async () => {
+  let calls = 0;
+  const service = createCycles({ generate: async input => { calls++; return emptyEvents(input); } });
+  assert.equal(Object.hasOwn(service, 'cacheVersion'), false);
+  const result = await request(service);
+  assert.equal(result.status, 200); assert.equal(result.headers['Cache-Control'], 'private, no-store');
+  assert.equal(Object.hasOwn(JSON.parse(result.body), 'cacheVersion'), false);
+  assert.equal(calls, 1); await service.close();
 });
 
 test('bounded pending work shares normalized inputs and releases admission after completion', async t => {
@@ -435,7 +376,7 @@ test('a missing return index remains a retryable 503 with its own error code', a
 
 test('general calculation route can issue proof without creating a saved card', async () => {
   const input={birthUtc:requestInput.birthUtc,body:'saturn',fromAge:0,toAge:100};let issues=0;
-  const handler=cyclesHandler({events:async()=>emptyEvents(input),chart:async()=>{throw new Error('unused');},cacheVersion:'a'.repeat(64)},
+  const handler=cyclesHandler({events:async()=>emptyEvents(input),chart:async()=>{throw new Error('unused');}},
     {issueReceipt(action,received,result){assert.equal(action,'events');assert.equal(received.birthUtc,input.birthUtc);assert.deepEqual(result,emptyEvents(input));issues++;return 'proof';}});
   const req=Object.assign(Readable.from([Buffer.from(JSON.stringify(input))]),{method:'POST',headers:{'content-type':'application/json'}}) as unknown as IncomingMessage;
   const res=captureResponse();await handler(req,res,new URL('http://localhost/api/cycles/events'));

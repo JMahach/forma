@@ -8,7 +8,7 @@ import { getConnectionMode, type ConnectionMode } from './data/http-transport.ts
 import { parseClientContextStep, type ClientReportMetadata, type ClientContextStep, type ClientActionContext } from '../shared/client-report-contract.ts';
 
 interface Options {
-  appVersion:string;environment:ClientReportMetadata['environment'];calculationVersion?:string;accountId?:string|null;sessionId?:string|null;diagnosticProof?:string;
+  appVersion:string;environment:ClientReportMetadata['environment'];accountId?:string|null;sessionId?:string|null;diagnosticProof?:string;
   indexedDB?:IDBFactory|null;send?:DiagnosticTransport;connection?:()=>ConnectionMode;now?:()=>number;monotonicNow?:()=>number;
 }
 type Delivery=ReturnType<typeof createDiagnosticDelivery>;
@@ -18,7 +18,7 @@ interface Cleanup {owner:Owner;scopes:readonly (string|null)[]|undefined;attempt
 
 /** Browser composition only. Callers provide trusted build metadata and account
  * transitions; attachBrowser explicitly connects one replaceable browser source. */
-export function createJournal({appVersion,environment,calculationVersion,accountId=null,sessionId,diagnosticProof,indexedDB,
+export function createJournal({appVersion,environment,accountId=null,sessionId,diagnosticProof,indexedDB,
   send=createDiagnosticClient(),connection=getConnectionMode,now=Date.now,monotonicNow}:Options) {
   let currentAccount=accountId,lastAccount=accountId,generation=0,closed=false,unknownCleanup=false;
   let currentScope:string|null|undefined=accountId===null?null:sessionId??undefined;
@@ -28,8 +28,7 @@ export function createJournal({appVersion,environment,calculationVersion,account
   let failures=0,retryAt=0,timer:ReturnType<typeof setTimeout>|undefined;
   let environmentMetadata:Pick<ClientReportMetadata,'browser'|'os'|'device'>={},detachBrowser:(()=>void)|null=null;
   const current=(owner:Owner)=>!closed && active===owner && generation===owner.generation && !cleanup;
-  const reports=createClientReports({metadata:()=>({appVersion,environment,accountId:currentAccount,...environmentMetadata,
-    ...(calculationVersion===undefined?{}:{calculationVersion})}),now,monotonicNow,
+  const reports=createClientReports({metadata:()=>({appVersion,environment,accountId:currentAccount,...environmentMetadata}),now,monotonicNow,
     enqueue:async report=>{const owner=active;if(!owner || !current(owner))return false;
       // Await this owner only, never the runner's network pump or a replacement
       // account. Startup can report immediately without blocking the main UI.

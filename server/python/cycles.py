@@ -79,7 +79,7 @@ def events(request):
         raise ChartError('invalid_range', 'Выберите возраст от 0 до 300 лет, не больше 120 лет за один запрос.')
     found = search_events(birth, body, low, high)
     return dict(events=found, range=dict(fromAge=low, toAge=high), meta=dict(
-        engine='Swiss Ephemeris ' + astro.swe.version, nodeModel='true', zodiac='tropical-geocentric-apparent',
+        engine='Swiss Ephemeris', nodeModel='true', zodiac='tropical-geocentric-apparent',
         ephemeris='Swiss files: sepl_18.se1 + semo_18.se1' + (' + seas_18.se1' if body == 'chiron' else ''),
         primaryPass='first', cycleRule='unwrapped-longitude', ageYearDays=YEAR_DAYS))
 
@@ -133,7 +133,7 @@ def chart(request):
         activations=dict(personality=personality, design=design), utc=utc, designUtc=exact_iso(astro.tt_to_datetime(design_jd)),
         birthDate=local.strftime('%Y-%m-%d'), birthTime=local.strftime('%H:%M'), birthPlace='', timezone=timezone,
         utcOffset=civil.offset_label(local.utcoffset()), fold=local.fold, cityId=None, city=None,
-        engine='Swiss Ephemeris ' + astro.swe.version, ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
+        engine='Swiss Ephemeris', ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
         timezoneDatabase='IANA tzdata ' + civil.tzdata.__version__, nodeModel='true', zodiac='tropical-geocentric-apparent',
         designArcResidualDegrees=residual, updatedAt=now, createdAt=now, note='')
     return dict(chart=result)

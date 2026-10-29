@@ -53,7 +53,7 @@ test('removal survives a new connection and closing one adapter does not close i
 test('custom legacy packet databases migrate intact bytes without inventing expiry from old timestamps',async t=>{
   const indexedDB=new IDBFactory(),legacy=await open(indexedDB,'custom-natal-days',2,db=>db.createObjectStore('packets',{keyPath:'key'}));
   await seed(legacy,[{key:'old',bytes:new ArrayBuffer(15),createdAt:0,accessedAt:0},{key:'bad',bytes:'not binary'}]);legacy.close();
-  const cache=createBinaryCache({databaseName:'custom-natal-days',indexedDB});t.after(()=>cache.close());
+  const cache=createBinaryCache({legacyDatabaseName:'custom-natal-days',indexedDB});t.after(()=>cache.close());
   assert.equal((await cache.get('old'))?.byteLength,15);assert.equal(await cache.get('bad'),null);
   await assert.rejects(open(indexedDB,'custom-natal-days',2),{name:'VersionError'});
   await cache.put('bad','not binary' as unknown as ArrayBuffer);assert.equal(await cache.get('bad'),null);

@@ -56,7 +56,6 @@ export function createLifetimeExplorer({
 }: LifetimeOptions = {}) {
   let observation:ClientObservation|undefined;
   let metadata: LifetimeMetadata | null = null, fullChart: ChartInput | null = null, exploredChart: ChartInput | null = null;
-  let compatible = true;
   let requestedUtc: number | null = null, restoring = false, pendingRestore: LifetimeRestoration | null = null;
   const current = () => planetFilter.filter(fullChart);
   let interacting = false, selection = 0, selectionBounds: LifetimeBounds | null = null, selectionRound = Math.round;
@@ -88,9 +87,9 @@ export function createLifetimeExplorer({
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc! ? value : null;
   }
   const offline = () => connection() === 'offline';
-  const canScrub = () => compatible && (!offline() || mode === 'day' && Boolean(getDayState()?.current)
+  const canScrub = () => (!offline() || mode === 'day' && Boolean(getDayState()?.current)
     || Boolean(metadata && minUtc !== null && maxUtc !== null && Number.isFinite(client.nearestMinute?.(requestedUtc ?? minUtc, {min: minUtc, max: maxUtc}, Math.round))));
-  const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata: compatible ? metadata : null, offline: offline(), canScrub: canScrub(), current: compatible && opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
+  const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata, offline: offline(), canScrub: canScrub(), current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
     fromDate, toDate, openStart, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
     ...planetFilter.state });
   function notify() { const value = state(); notifiedReference = value.referenceUtc; onStateChange(value); }
@@ -159,7 +158,7 @@ export function createLifetimeExplorer({
     return utc === null ? null : { utc, chart: client.peekMinute?.(utc) || null };
   }
   function load(restoration = pendingRestore, refreshNatalDay = false) {
-    if (!compatible || !opened) return Promise.resolve(false);
+    if (!opened) return Promise.resolve(false);
     if (active) return active.promise;
     clearTimeout(retryTimer!); retryTimer = null;
     observation??=observe?.({action:'data_read',component:'lifetime'});
@@ -222,14 +221,14 @@ export function createLifetimeExplorer({
           }
           let target = requestedUtc!;
           const selected = selection, bounds = selectionBounds, round = selectionRound;
-          let chart: ChartInput | null | undefined, checkedDay: { date: string; version?: string } | null = null;
+          let chart: ChartInput | null | undefined, checkedDay: { date: string } | null = null;
           try {
             chart = client.peekMinute?.(target);
             if (!chart && client.readMinute && (offline() || client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
               chart = await client.readMinute(target, { signal: request.controller.signal });
               // Historical natal minutes can have UTC seconds; their miss
               // does not inspect the whole-minute transit day.
-              if (target % 60000 === 0) checkedDay = { date: new Date(target).toISOString().slice(0, 10), version: metadata.calculationVersion };
+              if (target % 60000 === 0) checkedDay = { date: new Date(target).toISOString().slice(0, 10) };
             }
             if (generation !== sequence || !opened || mode !== 'lifetime') return false;
             // A disk miss has no ready progress to show. Recheck ownership and
@@ -287,14 +286,6 @@ export function createLifetimeExplorer({
         const problem = failure as Error & { code?: string };
         if (generation !== sequence || request.controller.signal.aborted) return false;
         if(problem?.code!=='lifetime_preparing')void currentObservation?.reportError(failure,{stage:'request'});
-        if (problem?.code === 'unsupported_version') {
-          // A new file can move indexes. Keep the user's UTC and range while
-          // the data owner discards the rejected revision and loads its successor.
-          pendingRestore = mode === 'lifetime' ? { mode, fromDate, toDate, openStart, openEnded, requestedUtc,
-            ...(!openStart && minUtc !== null ? { minimumUtc: new Date(minUtc).toISOString() } : {}),
-            ...(rangeCeiling ? { maximumUtc: rangeCeiling } : {}) } : { mode };
-          client.invalidateMetadata?.(metadata); metadata = null; exploredChart = null;
-        }
         error = ''; errorCode = problem?.code || '';
         if (offline() || problem?.code === 'offline') { status = fullChart ? 'ready' : 'idle'; retryCount = 0; }
         else if (problem?.code === 'lifetime_preparing') { status = 'preparing'; retryCount = 0; }
@@ -375,7 +366,7 @@ export function createLifetimeExplorer({
     notify(); onRender();
   }
   function scrub(value: number, bounds: LifetimeBounds | null = null, round = Math.round) {
-    if (!compatible || !opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
+    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
         || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
     const next = chooseTarget(value, round, bounds);
     if (!next) return;
@@ -403,11 +394,11 @@ export function createLifetimeExplorer({
     return fallback === requestedUtc ? prepared! : forward ? Math.min(prepared!, fallback!) : Math.max(prepared!, fallback!);
   }
   return {
-    get current() { return compatible && opened ? current() : null; },
+    get current() { return opened ? current() : null; },
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
     refreshAvailability: notify,
-    invalidateCalculations() { compatible = false; cancel(); metadata = null; fullChart = exploredChart = null; notify(); },
+
     setInteracting(value: boolean) { interacting = Boolean(value); },
     adjacentUtc,
     step(direction: number, bounds: LifetimeBounds | null = null, beforeSelect: (utc: number) => boolean | void = () => {}) {

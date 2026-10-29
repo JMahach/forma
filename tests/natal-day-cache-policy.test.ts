@@ -11,10 +11,10 @@ import { decodeNatalDay } from '../shared/day-packets/decode.ts';
 import { natalDayMinute } from '../src/domain/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 
-const revision = 'a'.repeat(64), nextRevision = 'b'.repeat(64), tick = () => new Promise(setImmediate);
-const packet = (day = natalDayFixture(), calculationVersion = revision) => encodeNatalDay({ ...day, calculationVersion }).buffer;
+const tick = () => new Promise(setImmediate);
+const packet = (day = natalDayFixture()) => encodeNatalDay(day).buffer;
 const response = (bytes: ArrayBuffer) => ({ ok: true, arrayBuffer: async () => bytes });
-const disk = (indexedDB: IDBFactory) => createBinaryCache({ indexedDB, databaseName: 'bodygraph-chart-days' });
+const disk = (indexedDB: IDBFactory) => createBinaryCache({ indexedDB, legacyDatabaseName: 'bodygraph-chart-days' });
 
 test('natal device days survive count, byte and old timestamp limits across connections', async () => {
   const indexedDB = new IDBFactory(), first = disk(indexedDB);
@@ -25,10 +25,10 @@ test('natal device days survive count, byte and old timestamp limits across conn
   assert.equal((await reload.get('large-day'))?.byteLength, 9 * 1024 * 1024);
 });
 
-test('version-one migration preserves old bytes but a revised client requests attested data', async () => {
+test('version-one migration rekeys the original natal day and never recalculates its numbers', async () => {
   const indexedDB = new IDBFactory(), chart = personalChartFixture(), legacyKey = `1:${chart.birthDate}:${chart.cityId}`;
   const legacyBytes = encodeNatalDay(natalDayFixture()).buffer;
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const req = indexedDB.open('bodygraph-chart-days', 1);
     req.onupgradeneeded = () => req.result.createObjectStore('packets', { keyPath: 'key' });
     req.onerror = () => reject(req.error);
@@ -39,41 +39,21 @@ test('version-one migration preserves old bytes but a revised client requests at
     };
   });
   const persistentCache = disk(indexedDB); let calls = 0;
-  const fetch = async (_url, options) => { calls++; assert.equal(JSON.parse(options.body).r, revision); return response(packet()); };
-  const ready = await createNatalDayClient({ persistentCache, calculationVersion: revision, fetch }).getDay(chart);
-  assert.equal(ready.calculationVersion, revision); await tick();
-  assert.deepEqual(await persistentCache.get(legacyKey), legacyBytes);
-  const restored = await createNatalDayClient({ persistentCache: disk(indexedDB), calculationVersion: revision, fetch }).getDay(chart);
-  assert.deepEqual(restored, ready); assert.equal(calls, 1);
-  await createNatalDayClient({ persistentCache, calculationVersion: nextRevision, fetch: async () => { calls++; return response(packet(undefined, nextRevision)); } }).getDay(chart);
-  assert.equal(calls, 2);
-});
-
-test('wrong or absent response revision cannot enter RAM or device storage', async () => {
-  for (const oldVersion of [undefined, nextRevision] as const) {
-    let writes = 0;
-    const bytes = encodeNatalDay({ ...natalDayFixture(), calculationVersion: oldVersion }).buffer;
-    const memory = createMemoryCache();
-    const client = createNatalDayClient({ calculationVersion: revision, memory,
-      persistentCache: { get: async () => bytes, put: () => { writes++; }, remove() {} }, fetch: async () => response(bytes) });
-    await assert.rejects(client.getDay(personalChartFixture()), /[Вв]ерси/);
-    assert.equal(writes, 0); assert.equal(memory.size, 0);
-  }
-});
-
-test('without bootstrap revision neither legacy RAM nor disk is reused or accumulated', async () => {
-  let calls = 0, reads = 0, writes = 0; const memory = createMemoryCache();
-  const client = createNatalDayClient({ memory, persistentCache: { get() { reads++; return packet(); }, put() { writes++; } },
-    fetch: async () => { calls++; return response(packet()); } });
-  await client.getDay(personalChartFixture()); await client.getDay(personalChartFixture()); await tick();
-  assert.equal(calls, 2); assert.equal(reads, 0); assert.equal(writes, 0); assert.equal(memory.size, 0);
+  const fetch = async () => { calls++; return response(packet()); };
+  const ready = await createNatalDayClient({ persistentCache, fetch }).getDay(chart);
+  assert.deepEqual(ready.columns, decodeNatalDay(legacyBytes).columns); await tick();
+  assert.equal(Object.hasOwn(ready, 'calculationVersion'), false);
+  const restored = await createNatalDayClient({ persistentCache: disk(indexedDB), fetch }).getDay(chart);
+  assert.deepEqual(restored, ready); assert.equal(calls, 0);
+  assert.equal(await persistentCache.get(legacyKey), null);
+  assert.deepEqual(await persistentCache.get(`natal-day:${legacyKey}`), legacyBytes);
 });
 
 test('a real quota exception leaves the loaded day usable in the common memory budget', async t => {
   const indexedDB = new IDBFactory(), persistentCache = disk(indexedDB), memory = createMemoryCache();
   let failures = 0, calls = 0;
   t.mock.method(IDBObjectStore.prototype, 'put', function () { failures++; throw new DOMException('Full', 'QuotaExceededError'); });
-  const client = createNatalDayClient({ persistentCache, memory, calculationVersion: revision,
+  const client = createNatalDayClient({ persistentCache, memory,
     fetch: async () => { calls++; return response(packet()); } });
   const day = await client.getDay(personalChartFixture()); await tick();
   assert.equal(await client.getDay(personalChartFixture()), day);
@@ -83,11 +63,11 @@ test('a real quota exception leaves the loaded day usable in the common memory b
 test('a natal RAM hit refreshes the shared persistent LRU without fetching or rewriting payload', async t => {
   const indexedDB=new IDBFactory(),owner=createCalculationCache({indexedDB,maxBytes:9500});t.after(()=>owner.close());
   const persistent=createBinaryCache({cache:owner}),memory=createMemoryCache(),chart=personalChartFixture();
-  const key=`natal-day:${revision}:1:${chart.birthDate}:${chart.cityId}`;
+  const key=`natal-day:1:${chart.birthDate}:${chart.cityId}`;
   await persistent.put(key,new ArrayBuffer(1500));await owner.put('return-charts','older',new ArrayBuffer(1500));
-  const value={...natalDayFixture(),calculationVersion:revision};memory.put(key,value);
+  const value=natalDayFixture();memory.put(key,value);
   let touched:Promise<unknown>|undefined;
-  const client=createNatalDayClient({calculationVersion:revision,memory,persistentCache:{...persistent,
+  const client=createNatalDayClient({memory,persistentCache:{...persistent,
     touch(key){touched=persistent.touch(key);return touched;}},fetch(){throw new Error('RAM hit must not fetch');}});
   assert.equal(await client.getDay(chart),value);await touched;
   await owner.put('return-events','newer',new ArrayBuffer(1500));
@@ -96,7 +76,7 @@ test('a natal RAM hit refreshes the shared persistent LRU without fetching or re
 
 test('active natal day is retained in the common budget and released on close or natal change', async () => {
   const memory = createMemoryCache({ maxBytes: 1 }); let calls = 0;
-  const client = createNatalDayClient({ calculationVersion: revision, memory, persistentCache: null,
+  const client = createNatalDayClient({ memory, persistentCache: null,
     fetch: async () => { calls++; return response(packet()); } });
   const explorer = createNatalDayExplorer({ dayClient: client });
   explorer.select(personalChartFixture()); await explorer.open();
@@ -121,8 +101,8 @@ test('persisted local days preserve repeated folds and historical second offsets
   for (const input of inputs) {
     const indexedDB = new IDBFactory(), chart = personalChartFixture({ birthDate: input.date, timezone: input.timezone });
     const bytes = packet(natalDayFixture(input));
-    await createNatalDayClient({ calculationVersion: revision, persistentCache: disk(indexedDB), fetch: async () => response(bytes) }).getDay(chart); await tick();
-    const restored = await createNatalDayClient({ calculationVersion: revision, persistentCache: disk(indexedDB), fetch: () => { throw Error('Unexpected request'); } }).getDay(chart);
+    await createNatalDayClient({ persistentCache: disk(indexedDB), fetch: async () => response(bytes) }).getDay(chart); await tick();
+    const restored = await createNatalDayClient({ persistentCache: disk(indexedDB), fetch: () => { throw Error('Unexpected request'); } }).getDay(chart);
     assert.equal(natalDayMinute(restored, input.minute).utc, input.utc);
     assert.deepEqual(restored.columns, decodeNatalDay(bytes).columns);
   }

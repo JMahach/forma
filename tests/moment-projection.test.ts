@@ -212,11 +212,3 @@ test('a numeric day retains no history of previously materialized charts', () =>
   }
   assert.deepEqual(Object.keys(day), keys, 'projection does not attach UI history to the numeric packet');
 });
-
-test('lifetime cache versions accept only the complete lowercase content digest', () => {
-  const meta = metadata();
-  assert.equal(validateLifetimeMetadata({ ...meta, cacheVersion: 'a'.repeat(64) }).cacheVersion, 'a'.repeat(64));
-  for (const cacheVersion of ['', 'a'.repeat(63), 'A'.repeat(64), 'g'.repeat(64), 123, null] as const) {
-    assert.throws(() => validateLifetimeMetadata({ ...meta, cacheVersion }), /Некорректные/);
-  }
-});

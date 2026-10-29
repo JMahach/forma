@@ -1,4 +1,4 @@
-import { createCalculationCache, type CalculationCache } from './calculation-cache.ts';
+import { createCalculationCache, type CalculationCache, type TransitWindow } from './calculation-cache.ts';
 import { createMemoryCache, type MemoryCache } from './memory-cache.ts';
 import { createBinaryCache } from './binary-cache.ts';
 import { createReturnStorage } from './return-storage.ts';
@@ -7,15 +7,18 @@ import { createTransitDayClient } from './transit-day-client.ts';
 import { createNatalDayClient, type NatalDayClient } from './natal-day-client.ts';
 import { createCyclesClient, type CyclesClient } from './cycles-client.ts';
 import { createAbortError } from '../runtime/shared-request.ts';
+import type { ObserveClientAction } from '../../shared/client-report-contract.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 
 type Options = {
+  observe?:ObserveClientAction;
   cacheOptions?: Parameters<typeof createCalculationCache>[0];
   memory?: MemoryCache;
   transit?: Omit<NonNullable<Parameters<typeof createTransitDayClient>[0]>, 'memory'|'days'>;
   natal?: Omit<NonNullable<Parameters<typeof createNatalDayClient>[0]>, 'memory'|'persistentCache'>;
   cycles?: Omit<NonNullable<Parameters<typeof createCyclesClient>[0]>, 'memory'|'returnStorage'>;
 };
+export type TransitWindowUpdate={status:'applied';revision:number}|{status:'stale'|'unavailable'|'invalid'|'cancelled'};
 export interface PersonalCalculationCleanup {
   status:'cleared'|'pending'|'unavailable';
   generation:number;
@@ -39,13 +42,41 @@ function privateMemory(memory:MemoryCache) {
   return {port,close(){open=false;}};
 }
 
-/** One early composition owner; versions and current transit dates are confirmed externally. */
+/** One early owner of calculation clients, local transit storage and account cleanup. */
 export function createCalculationClients({cacheOptions,memory=createMemoryCache(),transit:transitOptions,
-  natal:natalOptions,cycles:cyclesOptions}:Options={}) {
+  natal:natalOptions,cycles:cyclesOptions,observe}:Options={}) {
   const cache=createCalculationCache(cacheOptions);
   const days=createTransitDayCache({cache,memory});
   const transit=createTransitDayClient({...transitOptions,days,memory});
   let closed=false,nextGeneration=0,cleanupTail:Promise<unknown>=Promise.resolve();
+
+  let windowSequence=0,windowTail:Promise<unknown>=Promise.resolve();
+  function syncTransitWindow(window:TransitWindow):Promise<TransitWindowUpdate> {
+    const target={dates:[...window.dates],expiresAt:window.expiresAt},sequence=++windowSequence;
+    const observation=observe?.({action:'data_read',component:'storage'});
+    const stopped=():TransitWindowUpdate|null=>closed?{status:'cancelled'}:sequence!==windowSequence?{status:'stale'}:null;
+    const unavailable=()=>{void observation?.reportFailure({stage:'commit',reason:'storage_unavailable'});return {status:'unavailable' as const};};
+    const work=windowTail.then(async():Promise<TransitWindowUpdate>=>{
+      const superseded=stopped();if(superseded)return superseded;
+      // Read inside the queue, after the preceding window committed.
+      const before=await cache.status(),interrupted=stopped();if(interrupted)return interrupted;
+      if(!('window' in before))return unavailable();
+      const result=await cache.setTransitWindow(target,{expectedRevision:before.window?.revision});
+      const afterWrite=stopped();if(afterWrite)return afterWrite;
+      if(!result)return unavailable();
+      if(result.status!=='applied'){
+        if(result.status==='invalid')void observation?.reportFailure({stage:'commit',reason:'invalid_request'});
+        return result;
+      }
+      // An early fetch can finish before the first local window is known.
+      for(const date of target.dates){const day=transit.peekDay(date);if(day)days.putDay(day,{ifMissing:true});}
+      await days.flush();return stopped()??result;
+    }).catch((error):TransitWindowUpdate=>{
+      const interrupted=stopped();if(interrupted)return interrupted;
+      void observation?.reportError(error,{stage:'commit'});return {status:'unavailable'};
+    }).finally(()=>observation?.finishSuccess());
+    windowTail=work;return work;
+  }
 
   function clients(port:MemoryCache,persistent:CalculationCache|null,ownsCache=false) {
     const binary=persistent?createBinaryCache({cache:persistent}):null;
@@ -150,8 +181,7 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
     transit,natal,cycles,memory,
     status:()=>cache.status(),
     evictForSpace:(kind:'natal'|'return-charts',keep:number,exclude?:string,isCurrent?:()=>boolean)=>current.clients.evictForSpace(kind,keep,exclude,isCurrent),
-    confirmVersions:cache.confirmVersions,
-    setTransitWindow:cache.setTransitWindow,
+    syncTransitWindow,
     resetPersonal(){
       cacheOptions?.pressure?.invalidate();
       if(closed)return Promise.resolve({status:'unavailable' as const,generation:current.id});

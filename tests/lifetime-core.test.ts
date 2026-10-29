@@ -21,7 +21,7 @@ import { transitChartAt } from '../src/domain/transit-day.ts';
 import { encodeTransitDay } from '../server/packets/encode.ts';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.ts';
 
-const meta = { calculationVersion: 'a'.repeat(64), startUtc: '1900-01-01T00:00:00Z', endExclusiveUtc: '1900-01-04T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
+const meta = { startUtc: '1900-01-01T00:00:00Z', endExclusiveUtc: '1900-01-04T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
 const point = (index: number, metadata = meta) => ({ index, utc: new Date(Date.parse(metadata.startUtc) + index * 600000).toISOString().replace('.000Z', 'Z'), longitudes: [335.74999999999994, 22, 335.74999999999994, 44, 55, 66, 77, 88, 99, 111, 122] });
 const fullMeta = { ...meta, startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
   samples: (Date.parse('2400-01-01T00:00:00Z') - Date.parse('1801-01-01T00:00:00Z')) / 600000 };
@@ -213,7 +213,7 @@ test('validated moments stay immutable and reusable only for their own lifetime 
   assert.throws(() => validateLifetimeMetadata({ ...meta, planets: Array(meta.planets.length) }));
 });
 
-const decodedDay = (date: string) => ({ calculationVersion: 'a'.repeat(64), version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const decodedDay = (date: string) => ({ version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris 2.10.03', ephemeris: 'test ephemeris', timezoneDatabase: 'test tzdata', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 13 + minute / 10000 + 0.123456789012345) % 360
@@ -242,7 +242,7 @@ test('Lifetime reuses a real decoded day at exact UTC with all black/red Float64
 
 test('uncached UTC days and incompatible day contracts fall back to one complete point without fetching days', async () => {
   const raw = decodedDay('1900-01-02');
-  const variants = [null, { ...raw, engine: 'Swiss Ephemeris different' }, { ...raw, version: '1' },
+  const variants = [null, { ...raw, version: '1' },
     { ...raw, nodeModel: 'mean' }, { ...raw, zodiac: 'other' }, { ...raw, startUtc: '1900-01-03T00:00:00Z' }];
   for (const cached of variants) {
     const requests: unknown[] = [], peeks: unknown[] = [];
@@ -774,41 +774,7 @@ test('day clock updates cannot erase metadata retry feedback or its failure coun
 });
 
 
-for (const minute of [false, true] as const) test(`a rejected lifetime revision refreshes metadata and preserves ${minute ? 'the prepared fallback UTC' : 'UTC across shifted indexes'}`, async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const oldMeta = { ...meta, cacheVersion: 'a'.repeat(64) };
-  const newMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576, cacheVersion: 'b'.repeat(64) };
-  const requestedUtc = Date.parse(minute ? '1900-01-02T00:01:00Z' : '1900-01-02T00:00:00Z');
-  const maximumUtc = '1900-01-03T12:34:56Z';
-  const calls: string[] = []; let updated = false;
-  const client = createLifetimeClient({ fetch(url) {
-    calls.push(url);
-    if (url.endsWith('/meta')) return response(updated ? newMeta : oldMeta);
-    const parsed = new URL(url, 'http://local');
-    if (updated && parsed.searchParams.get('v') === oldMeta.cacheVersion) {
-      return { ok: false, json: async () => ({ error: 'unsupported_version' }) };
-    }
-    const currentMeta = updated ? newMeta : oldMeta;
-    assert.equal(parsed.pathname, '/api/lifetime');
-    return response(moment(Number(parsed.searchParams.get('index')), currentMeta));
-  } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
-  await explorer.open(); await client.getPoint(0); updated = true;
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03', maximumUtc, requestedUtc });
-  t.mock.timers.tick(1000); await tick();
-  assert.equal(explorer.state.status, 'ready');
-  assert.equal(explorer.state.metadata!.cacheVersion, newMeta.cacheVersion);
-  assert.equal(explorer.state.maxUtc, Date.parse(maximumUtc), 'refreshing numerical data preserves the personal centenary');
-  const preparedUtc = Date.parse('1900-01-02T00:00:00Z');
-  assert.equal(explorer.state.requestedUtc, preparedUtc);
-  assert.equal(Date.parse(explorer.current!.utc!), preparedUtc);
-  assert.equal(explorer.state.fromDate, '1900-01-01'); assert.equal(explorer.state.toDate, '1900-01-03');
-  assert.equal(calls.filter(url => url.endsWith('/meta')).length, 2);
-  assert.match(calls.at(-1)!, /index=288&v=b{64}$/);
-  assert.equal((await client.getPoint(0)).utc, newMeta.startUtc, 'old memory entries cannot survive a revision change');
-  const complete = calls.length; t.mock.timers.tick(60000); await tick();
-  assert.equal(calls.length, complete, 'success stops automatic retries');
-});
+
 
 
 test('a personal rail stops at the exact calendar centenary instead of the end of its day', async () => {
@@ -848,28 +814,7 @@ test('open-start restoration uses the available lower bound instead of a stored 
   assert.equal(h.explorer.state.openStart, false);
 });
 
-for (const openStart of [true, false] as const) test(`metadata expansion ${openStart ? 'expands an open start' : 'preserves an exact personal lower bound'}`, async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const nextMeta = { ...meta, startUtc: '1899-12-31T00:00:00Z', samples: 576 };
-  let metadataCalls = 0, pointCalls = 0;
-  const explorer = createLifetimeExplorer({ client: {
-    async getMeta() { return ++metadataCalls === 1 ? meta : nextMeta; },
-    async getPoint(index) {
-      if (++pointCalls === 1) throw Object.assign(new Error('Версия изменилась'), { code: 'unsupported_version' });
-      return moment(index, nextMeta);
-    },
-  } });
-  t.after(() => explorer.close());
-  const minimumUtc = '1900-01-01T12:34:56Z', requestedUtc = Date.parse('1900-01-02T00:00:00Z');
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-03',
-    requestedUtc, openStart, ...(openStart ? {} : { minimumUtc }) });
-  t.mock.timers.tick(1000); await tick();
-  assert.equal(explorer.state.status, 'ready'); assert.equal(metadataCalls, 2);
-  assert.equal(explorer.state.openStart, openStart);
-  assert.equal(explorer.state.minUtc, Date.parse(openStart ? nextMeta.startUtc : minimumUtc));
-  assert.equal(explorer.state.fromDate, openStart ? '1899-12-31' : '1900-01-01');
-  assert.equal(explorer.state.requestedUtc, requestedUtc);
-});
+
 
 test('offline lifetime reads ready minutes but a missing target keeps the accepted chart without a point request', async () => {
   let mode: 'online' | 'offline' = 'online', points = 0, readyUtc: number | null = null;

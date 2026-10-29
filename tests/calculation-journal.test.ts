@@ -146,7 +146,7 @@ test('day packing owns one invalid-result fact; valid results, cache hits and in
     return {...day, columns: invalid ? [] : day.columns.map(column => Array.from(column))};
   };
   const natal = createNatalDays({generateDay, report: fact => facts.push(fact)});
-  const transit = await createTransitDays({cacheDir: directory, calculationVersion: 'a'.repeat(64),
+  const transit = await createTransitDays({cacheDir: directory,
     now: () => new Date('2000-01-01T12:00:00Z'), generateDay: date => generateDay(date), report: fact => facts.push(fact)});
   t.after(async () => { await transit.close(); await fs.rm(directory, {recursive: true, force: true}); });
   for (const get of [() => natal.get('2000-01-01', 'UTC'), () => transit.get('2000-01-01')]) {

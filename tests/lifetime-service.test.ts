@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createLifetimeFile, createLifetimeMoments } from '../server/services/lifetime.ts';
 import * as lifetimeService from '../server/services/lifetime.ts';
-import { calculationVersion } from '../server/runtime/calculation-version.ts';
 import { createLifetimeHandler } from '../server/http/lifetime.ts';
 import { createRequestHandler } from '../server/http/app.ts';
 import { LIFETIME_PLANETS, LIFETIME_POINT_BYTES } from '../shared/lifetime-format.ts';
@@ -33,7 +32,7 @@ test('lifetime file is disabled without explicit file configuration', async () =
 test('first, middle and last points preserve all Float64 values with public metadata only', async t => {
   const input = await fixture(t), service = await openLifetime(t, input);
   assert.deepEqual(service.metadata, { startUtc: input.metadata.startUtc, endExclusiveUtc: input.metadata.endExclusiveUtc,
-    stepSeconds: 600, samples: 17, planets: [...LIFETIME_PLANETS], engine: 'Swiss Ephemeris 2.10.03' });
+    stepSeconds: 600, samples: 17, planets: [...LIFETIME_PLANETS], engine: 'Swiss Ephemeris' });
   for (const index of [0, 8, 16] as const) {
     const point = await service.getPoint(index);
     assert.equal(point.index, index);
@@ -175,99 +174,7 @@ test('HTTP validates one canonical bounded index and sanitizes unavailable error
   assert.equal(failure.status, 503); assert.deepEqual(JSON.parse(failure.body), { error: 'lifetime_unavailable', message: 'Данные летописи недоступны.' });
 });
 
-async function versionedHandler(t: test.TestContext, input: { file: string; metadataFile: string; metadata: { version: string; format: string; columns: string[]; startUtc: string; endExclusiveUtc: string; stepSeconds: number; sampleCount: number; bytes: number; flags: number; engine: string; sha256: string; provenance: { version: string; calculationFingerprint: string; }; }; columns: number[][]; bytes: Buffer<ArrayBuffer>; }, fingerprint = 'a'.repeat(64)) {
-  const source = await openLifetime(t, input), reads: number[] = [];
-  // Retain the negative-control calculator even though it is no longer a consumed port.
-  const options = { lifetimeFile: { ...source,
-    getPoint(index:number) { reads.push(index); return source.getPoint(index); } }, calculationFingerprint: fingerprint,
-    calculate() { throw Error('Grid must never calculate'); } };
-  const moments = createLifetimeMoments(options)!;
-  const handler = createRequestHandler({ root: '/unused', lifetime: { ...moments, getMetadata: async () => moments!.metadata },
-    publicFiles() { throw Error('unexpected static'); } } as unknown as Parameters<typeof createRequestHandler>[0]);
-  const send = async (url: string) => {
-    const res = captureResponse();
-    await handler({ method: 'GET', url, headers: { host: 'localhost' } } as IncomingMessage, res);
-    return res;
-  };
-  const meta = await send('/api/lifetime/meta');
-  return { send, meta, version: JSON.parse(meta.body).cacheVersion, reads };
-}
-
-test('complete-moment versions validate numerical identity without HTTP caching', async t => {
-  const input = await fixture(t), { send, meta, version, reads } = await versionedHandler(t, input);
-  assert.match(version, /^[a-f0-9]{64}$/);
-  assert.equal(meta.headers['Cache-Control'], 'no-store');
-  const first = await send(`/api/lifetime?index=2&v=${version}`), repeat = await send(`/api/lifetime?index=2&v=${version}`);
-  assert.equal(first.status, 200); assert.equal(repeat.body, first.body);
-  assert.equal(first.headers['Cache-Control'], 'no-store');
-  assert.deepEqual(reads, [2, 2]);
-  assert.equal((await send('/api/lifetime?index=2')).headers['Cache-Control'], 'no-store');
-  for (const query of [`index=3&v=${'b'.repeat(64)}`, 'index=3&v=', 'index=3&v=bad',
-    `index=3&v=${version.toUpperCase()}`, `index=3&v=${version}&v=${version}`, `index=3&v=${version}&extra=1`] as const) {
-    const result = await send(`/api/lifetime?${query}`);
-    assert.equal(result.status, 400, query); assert.equal(result.headers['Cache-Control'], 'no-store');
-  }
-  assert.deepEqual(reads, [2, 2, 2], 'stale and malformed versions do not read or publish a point');
-  const invalid = await send(`/api/lifetime?index=17&v=${version}`);
-  assert.equal(invalid.status, 400); assert.equal(invalid.headers['Cache-Control'], 'no-store');
-  await fs.truncate(input.file, 0);
-  const failure = await send(`/api/lifetime?index=3&v=${version}`);
-  assert.equal(failure.status, 503); assert.equal(failure.headers['Cache-Control'], 'no-store');
-});
-
-test('moment versions bind verified file bytes, index-to-UTC metadata and calculation inputs', async t => {
-  const input = await fixture(t), first = await versionedHandler(t, input);
-  assert.match(first.version, /^[a-f0-9]{64}$/);
-  assert.equal((await versionedHandler(t, input)).version, first.version);
-  assert.notEqual((await versionedHandler(t, input, 'b'.repeat(64))).version, first.version);
-  const shifted = { ...input.metadata, startUtc: '1900-01-02T00:00:00Z',
-    endExclusiveUtc: new Date(Date.parse(input.metadata.endExclusiveUtc) + 86400000).toISOString().replace('.000Z', 'Z') };
-  await fs.writeFile(input.metadataFile, JSON.stringify(shifted));
-  const changedMetadata = await versionedHandler(t, input);
-  assert.notEqual(changedMetadata.version, first.version, 'same bytes at another UTC origin must never share numerical version URLs');
-  const stale = await changedMetadata.send(`/api/lifetime?index=0&v=${first.version}`);
-  assert.equal(stale.status, 400); assert.equal(stale.headers['Cache-Control'], 'no-store');
-  assert.deepEqual(changedMetadata.reads, []);
-  const changed = Buffer.from(input.bytes); changed.writeDoubleLE(42, 0);
-  await fs.writeFile(input.file, changed);
-  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, sha256: createHash('sha256').update(changed).digest('hex') }));
-  assert.notEqual((await versionedHandler(t, input)).version, first.version);
-});
-
-test('calculation fingerprints follow exact inputs but ignore paths, timestamps and interface files', async t => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-moment-fingerprint-'));
-  t.after(() => fs.rm(directory, { recursive: true, force: true }));
-  const { CALCULATION_INPUTS } = await import('../server/runtime/calculation-version.ts');
-  const names = CALCULATION_INPUTS.flatMap(name => name === 'data/ephe' ? ['data/ephe/sepl_18.se1', 'data/ephe/semo_18.se1', 'data/ephe/seas_18.se1'] : [name]);
-  for (const name of names) {
-    await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
-    await fs.copyFile(new URL(`../${name}`, import.meta.url), path.join(directory, name));
-  }
-  const fingerprint = () => calculationVersion(directory);
-  const original = await fingerprint(); assert.match(original, /^[a-f0-9]{64}$/);
-  assert.equal(await calculationVersion(fileURLToPath(new URL('../', import.meta.url))), original);
-  for (const name of names) {
-    const file = path.join(directory, name), before = await fs.readFile(file), stat = await fs.stat(file);
-    const changed = Buffer.from(before); changed[0] ^= 1;
-    await fs.writeFile(file, changed); await fs.utimes(file, stat.atime, stat.mtime);
-    assert.notEqual(await fingerprint(), original, `${name}: same-sized changed inputs invalidate the revision`);
-    await fs.writeFile(file, before);
-  }
-  await fs.mkdir(path.join(directory, 'src')); await fs.writeFile(path.join(directory, 'src/app.ts'), 'interface update');
-  assert.equal(await fingerprint(), original, 'an interface deployment leaves astronomical URLs reusable');
-});
-
-test('full file provenance is required and must match current calculation inputs', async t => {
-  const input = await fixture(t), verified = await openLifetime(t, input);
-  assert.equal(verified.provenanceVerified, true);
-  const calculationFingerprint = input.metadata.provenance.calculationFingerprint;
-  for (const invalid of [undefined, null, {}, { version: '2', calculationFingerprint }, { version: '1', calculationFingerprint: '0'.repeat(64) }] as const) {
-    await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance: invalid }));
-    await assert.rejects(createLifetimeFile(input), unavailable);
-  }
-});
-
-test('real Python file provenance is accepted by the Node startup verifier', async t => {
+test('real Python file retains format and checksum without calculation markers', async t => {
   const input = await fixture(t), file = path.join(path.dirname(input.file), 'generated.f64le');
   const root = fileURLToPath(new URL('../', import.meta.url));
   const { execFile } = await import('node:child_process');
@@ -276,50 +183,10 @@ test('real Python file provenance is accepted by the Node startup verifier', asy
     '--start', '2026-10-02', '--end', '2026-10-03', '--workers', '1'], { cwd: root, env: { ...pythonEnvironment(), PYTHONDONTWRITEBYTECODE: '1' } });
   const metadataFile = file.replace('.f64le', '.metadata.json');
   const service = await openLifetime(t, { file, metadataFile });
-  assert.equal(service.provenanceVerified, true);
+  assert.equal(Object.hasOwn(service, 'provenanceVerified'), false);
+  const header=JSON.parse(await fs.readFile(metadataFile,'utf8'));
+  assert.equal(Object.hasOwn(header,'provenance'),false);assert.equal(header.engine,'Swiss Ephemeris');
   assert.equal((await service.getPoint(75)).utc, '2026-10-02T12:30:00Z');
-});
-
-
-test('optional ephemeris input presence and bytes invalidate file provenance and exact URLs in both languages', async t => {
-  const input = await fixture(t), directory = path.dirname(input.file), root = fileURLToPath(new URL('../', import.meta.url));
-  for (const name of ['server/python', 'server/services/lifetime.ts', 'requirements.txt', 'shared', 'data/ephe'] as const) {
-    await fs.mkdir(path.dirname(path.join(directory, name)), { recursive: true });
-    await fs.cp(path.join(root, name), path.join(directory, name), { recursive: true });
-  }
-  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util');
-  async function fingerprints() {
-    const fileFingerprint = await lifetimeService.lifetimeFileFingerprint(directory);
-    const { stdout } = await promisify(execFile)(pythonExecutable(root), ['-B', '-c',
-      'from server.python.lifetime_file import calculation_fingerprint; print(calculation_fingerprint())'], { cwd: directory, env: pythonEnvironment() });
-    assert.equal(stdout.trim(), fileFingerprint, 'Python preparation and Node verification use identical names, ordering and bytes');
-    return [fileFingerprint, await calculationVersion(directory)];
-  }
-  const original = await fingerprints();
-  await fs.writeFile(input.metadataFile, JSON.stringify({ ...input.metadata, provenance: { version: '1', calculationFingerprint: original[0] } }));
-  const verified = await createLifetimeFile({ ...input, root: directory });
-  assert.equal(verified.provenanceVerified, true); await verified.close();
-  const optional = path.join(directory, 'data/ephe/seleapsec.txt');
-  let before = original;
-  for (const contents of ['', '20261231\n', '20271231\n'] as const) {
-    await fs.writeFile(optional, contents);
-    const changed = await fingerprints();
-    changed.forEach((value, index) => assert.notEqual(value, before[index], 'new or changed optional bytes cannot reuse a numerical revision'));
-    await assert.rejects(createLifetimeFile({ ...input, root: directory }), unavailable);
-    before = changed;
-  }
-  await fs.unlink(optional);
-  assert.deepEqual(await fingerprints(), original, 'removal restores the original complete input set');
-  const restored = await createLifetimeFile({ ...input, root: directory }); await restored.close();
-  const nested = path.join(directory, 'data/ephe/extra');
-  await fs.mkdir(nested);
-  // Deliberately create these in reverse byte order. Empty contents still bind the file name.
-  await fs.writeFile(path.join(nested, '💫.txt'), ''); await fs.writeFile(path.join(nested, 'я.txt'), '');
-  const withNested = await fingerprints();
-  withNested.forEach((value, index) => assert.notEqual(value, original[index], 'all ephemeris directory files participate, including nested names'));
-  await assert.rejects(createLifetimeFile({ ...input, root: directory }), unavailable);
-  await fs.rm(nested, { recursive: true });
-  assert.deepEqual(await fingerprints(), original);
 });
 
 
@@ -346,7 +213,7 @@ test('a completed lifetime file becomes available on the next request without re
   t.mock.method(fs, 'open', (...args: Parameters<typeof fs.open>) => { if (args[0] === input.file) fileOpens++; return originalOpen(...args); });
   const replies = await Promise.all([send('/api/lifetime/meta'), send('/api/lifetime/meta')]);
   for (const reply of replies) { assert.equal(reply.status, 200); assert.equal(reply.body.samples, 17); }
-  const result = await send(`/api/lifetime?index=8&v=${replies[0].body.cacheVersion}`);
+  const result = await send('/api/lifetime?index=8');
   assert.equal(result.status, 200);
   assert.equal(result.body.utc, '1900-01-01T01:20:00Z');
   assert.deepEqual(result.body.longitudes, input.columns.slice(0, 11).map(column => column[8]));
@@ -406,4 +273,20 @@ test('lifetime journal distinguishes actual damaged data from preparation, bad i
   await fs.unlink(input.metadataFile);
   await assert.rejects(createLifetimeFile({...input,report}),{code:'lifetime_preparing'});assert.equal(facts.length,2);
   assert.equal(JSON.stringify(facts).includes('PRIVATE'),false);
+});
+
+
+test('a ready lifetime needs only its verified file, never calculation-source fingerprints or version URLs', async t => {
+  const input=await fixture(t),originalRead=fs.readFile;let reads:string[]=[];
+  t.mock.method(fs,'readFile',(...args:Parameters<typeof fs.readFile>)=>{reads.push(String(args[0]));return Reflect.apply(originalRead,fs,args);});
+  const reader=await openLifetime(t,input);
+  assert.deepEqual(reads,[input.metadataFile],'opening reads only prepared metadata, not source code or ephemerides');
+  assert.equal(Object.hasOwn(reader,'cacheIdentity'),false);
+  assert.equal(Object.hasOwn(reader,'provenanceVerified'),false);
+  const meta=await request(reader,'/api/lifetime/meta');
+  assert.equal(Object.hasOwn(JSON.parse(meta.body),'calculationVersion'),false);
+  assert.equal(Object.hasOwn(JSON.parse(meta.body),'cacheVersion'),false);
+  const result=await request(reader,'/api/lifetime?index=8');
+  assert.equal(result.status,200);assert.deepEqual(JSON.parse(result.body).longitudes,input.columns.slice(0,11).map(column=>column[8]));
+  assert.deepEqual(await fs.readFile(input.file),input.bytes);
 });

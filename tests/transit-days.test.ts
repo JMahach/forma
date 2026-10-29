@@ -215,7 +215,7 @@ async function request(service: Parameters<typeof createRequestHandler>[0]['tran
 test('HTTP endpoint sends negotiated lossless packets and HEAD without browser storage or conditional reads', async t => {
   let calls = 0;
   const service = await cache(t, { generateDay: async (date: string) => { calls++; return makeDay(date); } });
-  const url = `/api/transit/day?date=2026-09-24&v=2&r=${service.calculationVersion}`;
+  const url = `/api/transit/day?date=2026-09-24&v=2`;
   for (const [accept, encoding, unpack] of [['gzip, br', 'br', brotliDecompressSync], ['gzip', 'gzip', gunzipSync], ['identity', undefined, (value: Buffer) => value]] as const) {
     const result = await request(service, url, { headers: { 'accept-encoding': accept } });
     assert.equal(result.status, 200); assert.equal(result.headers['Content-Encoding'], encoding);
@@ -230,7 +230,6 @@ test('HTTP endpoint sends negotiated lossless packets and HEAD without browser s
   }
   assert.equal(calls, 1);
   assert.equal((await request(service, '/api/transit/day?date=2026-09-24&v=2')).headers['Cache-Control'], 'no-store');
-  assert.equal((await request(service, `${url.slice(0, -64)}${'f'.repeat(64)}`)).status, 409);
   assert.equal((await request(service, '/api/transit/day?date=2026-09-24')).headers['Cache-Control'], 'no-store');
   assert.equal((await request(service, url, { method: 'POST' })).status, 405);
   assert.equal((await request(service, url, { headers: { origin: 'https://unrelated.example' } })).status, 403);
@@ -248,7 +247,7 @@ test('encoding preference honors exclusions and transient HTTP failures remain r
   assert.equal(negotiateEncoding('*'), 'br');
   let calls = 0;
   const service = await cache(t, { generateDay: async (date: string) => { if (++calls === 1) throw new Error('temporary'); return makeDay(date); } });
-  const url = `/api/transit/day?date=2026-09-24&v=2&r=${service.calculationVersion}`;
+  const url = `/api/transit/day?date=2026-09-24&v=2`;
   const failed = await request(service, url);
   assert.equal(failed.status, 503); assert.equal(failed.headers['Cache-Control'], 'no-store'); assert.equal(failed.headers['Retry-After'], '5');
   assert.equal((await request(service, url)).status, 200); assert.equal(calls, 2);
@@ -377,12 +376,13 @@ test('RAM-only transit keeps outside-window calculations transient while preserv
 test('RAM-only transit restart recomputes all four dates and carries no old calculation version', async t => {
   const cacheDir=await directory(t), calls:string[]=[];
   const options={root,cacheDir,now,generateDay:async(date:string)=>{calls.push(date);return makeDay(date);}};
-  const first=await createTransitDays({...options,calculationVersion:'a'.repeat(64)});
+  const first=await createTransitDays(options);
   await first.warm();await first.close();
-  const second=await createTransitDays({...options,calculationVersion:'b'.repeat(64)});
+  const second=await createTransitDays(options);
   t.after(()=>second.close());await second.warm();
   assert.equal(calls.length,8);
-  assert.equal(decodeTransitDay((await second.get('2026-09-24')).bytes.identity).calculationVersion,'b'.repeat(64));
+  assert.equal(Object.hasOwn(second,'calculationVersion'),false);
+  assert.equal(Object.hasOwn(decodeTransitDay((await second.get('2026-09-24')).bytes.identity),'calculationVersion'),false);
   assert.deepEqual(await fs.readdir(cacheDir),[]);
 });
 

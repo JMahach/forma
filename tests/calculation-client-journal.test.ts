@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
 import { createJournal } from '../src/journal.ts';
-import { createCalculationUpdates } from '../src/data/calculation-updates.ts';
 import { createCalculationClients } from '../src/data/calculation-clients.ts';
 import { createReturnsController } from './fixtures/returns.ts';
 import { createLifetimeExplorer } from './fixtures/lifetime.ts';
@@ -10,7 +9,6 @@ import { libraryRecordAtMinute,natalDayFixture,personalChartFixture } from './fi
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import type { ClientReport } from '../shared/client-report-contract.ts';
-const expected={calculationVersion:'a'.repeat(64),cyclesVersion:'b'.repeat(64)};
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 async function until(check:()=>boolean,attempts=150){for(let i=0;i<attempts;i++){if(check())return;await new Promise(resolve=>setTimeout(resolve,2));}assert.fail('Expected diagnostic was not delivered');}
 async function journalFixture(t:test.TestContext){
@@ -19,27 +17,16 @@ async function journalFixture(t:test.TestContext){
   send:async body=>{reports.push(...body.reports);return {schemaVersion:1,results:body.reports.map(r=>({eventId:r.eventId,status:'accepted',receivedAt:1,duplicate:false}))};}});
  t.after(()=>journal.close());await journal.wake();return {journal,reports,observe:journal.begin};
 }
-function clientsFixture(t:test.TestContext){const clients=createCalculationClients({cacheOptions:{indexedDB:new IDBFactory()}});t.after(()=>clients.close());return clients;}
 const natal=()=>libraryRecordAtMinute(natalDayFixture({date:'2000-01-01'}),0,personalChartFixture({id:'saved-natal',name:'Private name'}));
-const metadata={engine:'test',calculationVersion:'a'.repeat(64),startUtc:'1801-01-01T00:00:00Z',endExclusiveUtc:'2400-01-01T00:00:00Z',stepSeconds:600,
+const metadata={engine:'test',startUtc:'1801-01-01T00:00:00Z',endExclusiveUtc:'2400-01-01T00:00:00Z',stepSeconds:600,
  samples:(Date.parse('2400-01-01')-Date.parse('1801-01-01'))/600000,planets:[...LIFETIME_PLANETS]};
 
-test('version refresh retains one controlled cause while keeping the original unavailable result',async t=>{
- const h=await journalFixture(t);let requests=0;
- const updates=createCalculationUpdates({clients:clientsFixture(t),expected,observe:h.observe,
-  request:async()=>{requests++;throw Object.assign(new Error('PRIVATE URL and input'),{code:'connection_failed'});}});t.after(()=>updates.close());
- assert.deepEqual(await updates.refresh(),{status:'unavailable'});
- await until(()=>h.reports.length===1);assert.equal(requests,1);
- assert.deepEqual(h.reports.map(r=>[r.action,r.component,r.stage,r.reason]),[['data_read','transport','request','connection_failed']]);
- assert.doesNotMatch(JSON.stringify(h.reports),/PRIVATE|saved-natal|Private name/);
-});
-
-test('version deadline reports once; cancelled and superseded refreshes stay silent',async t=>{
- const h=await journalFixture(t),clients=clientsFixture(t);
- const timeout=createCalculationUpdates({clients,expected,observe:h.observe,timeoutMs:5,request:()=>new Promise(()=>{})});t.after(()=>timeout.close());
- assert.equal((await timeout.refresh()).status,'unavailable');await until(()=>h.reports.length===1);assert.equal(h.reports[0]!.reason,'timeout');
- const abort=new AbortController(),cancelled=timeout.refresh({signal:abort.signal});abort.abort();assert.equal((await cancelled).status,'cancelled');
- await tick();assert.equal(h.reports.length,1);
+test('local window failure reaches the journal without a version request',async t=>{
+ const h=await journalFixture(t);
+ const clients=createCalculationClients({cacheOptions:{indexedDB:null},observe:h.observe});t.after(()=>clients.close());
+ assert.deepEqual(await clients.syncTransitWindow({dates:['2026-09-30'],expiresAt:Date.now()+86400000}),{status:'unavailable'});
+ await until(()=>h.reports.length===1);
+ assert.deepEqual(h.reports.map(r=>[r.action,r.component,r.stage,r.reason]),[['data_read','storage','commit','storage_unavailable']]);
 });
 
 test('one return search failure is reported for its bodies, while repeated reads add no duplicates',async t=>{
@@ -91,16 +78,4 @@ test('abandoned return requests do not report late failures for a new selection'
  const work=control.select(natal());await tick();control.select(null);
  for(const reject of rejects)reject(Object.assign(new Error('old owner'),{code:'server_error'}));
  await work;await tick();assert.equal(h.reports.length,0);
-});
-
-
-test('version observation ignores normal incompatibility and offline, but records invalid responses',async t=>{
- const h=await journalFixture(t),clients=clientsFixture(t);
- let payload:unknown={...expected,calculationVersion:'c'.repeat(64)},failure:unknown;
- const updates=createCalculationUpdates({clients,expected,observe:h.observe,request:async()=>{if(failure)throw failure;return payload;}});t.after(()=>updates.close());
- assert.equal((await updates.refresh()).status,'incompatible');
- failure=Object.assign(new Error('offline'),{code:'offline'});assert.equal((await updates.refresh()).status,'unavailable');
- await tick();assert.equal(h.reports.length,0);
- failure=null;payload={};assert.equal((await updates.refresh()).status,'invalid');
- await until(()=>h.reports.length===1);assert.equal(h.reports[0]!.reason,'invalid_response');
 });

@@ -1,4 +1,4 @@
-import { migrateCalculationKey, migrateCalculationMetadata, migrateDayPacket } from '../../shared/calculation-storage-transition.ts';
+import { migrateCalculationKey, migrateCalculationMetadata, migrateCalculationPayload } from '../../shared/calculation-storage-transition.ts';
 import { estimateBytes } from './memory-cache.ts';
 
 type Kind = Parameters<typeof migrateCalculationKey>[0];
@@ -13,26 +13,6 @@ const request = <T>(opened:IDBRequest<T>) => new Promise<T>((resolve, reject) =>
 const invalid = ():never => { throw new TypeError('Invalid stored calculation'); };
 function record(value:unknown):RecordValue {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : invalid();
-}
-
-function migrateReturnChart(source:RecordValue) {
-  const chart = record(source.chart), migrated = migrateCalculationMetadata(chart);
-  // An issued proof authenticates this historical label as well as the numbers.
-  // Keep its signed snapshot intact; the label never controls cache eligibility.
-  return typeof source.proof === 'string' && Object.hasOwn(chart, 'engine')
-    ? {...migrated, engine:chart.engine} : migrated;
-}
-
-function migratePayload(kind:Kind, value:unknown, key:string):unknown {
-  if (kind === 'natal') {
-    if (!(value instanceof ArrayBuffer)) return invalid();
-    return migrateDayPacket('natal', new Uint8Array(value)).buffer;
-  }
-  const source = record(value), migrated = {...migrateCalculationMetadata(source)};
-  if (Object.hasOwn(migrated, 'key')) migrated.key = key;
-  if (kind === 'transit') migrated.meta = migrateCalculationMetadata(record(source.meta));
-  if (kind === 'return-charts') migrated.chart = migrateReturnChart(source);
-  return migrated;
 }
 
 function bytes(value:unknown):Uint8Array|null {
@@ -83,7 +63,7 @@ async function writeData(tx:IDBTransaction, old:Catalogue, meta:Catalogue) {
   const payloads = tx.objectStore('payloads'), catalogue = tx.objectStore('catalogue');
   const source = await request(payloads.get(old.id));
   if (!source) return invalid();
-  let value = migratePayload(meta.kind!, source.value, meta.key);
+  let value = migrateCalculationPayload(meta.kind!, source.value, meta.key);
   if (old.id !== meta.id) value = await resolveCollision(tx, meta, value);
   const payload = {id:meta.id, value};
   meta.bytes = estimateBytes(payload) + estimateBytes(meta);

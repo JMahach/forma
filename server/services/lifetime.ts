@@ -6,8 +6,6 @@ import type { SharedJob } from '../runtime/job-consumers.ts';
 
 interface LifetimeReader {
   metadata: LifetimeMetadata;
-  cacheIdentity?: string;
-  provenanceVerified?: boolean;
   getPoint: (index: number) => Promise<NumericMoment>;
   close: () => Promise<void>;
 }
@@ -19,12 +17,11 @@ interface ReadWork extends SharedJob<NumericMoment> {
   resolve: (point: NumericMoment) => void;
   reject: (reason: unknown) => void;
 }
-interface LifetimeServiceOptions { report?: ServerFailureReport; root?: string; file?: string; calculationVersion?: string | null }
+interface LifetimeServiceOptions { report?: ServerFailureReport; root?: string; file?: string }
 interface LifetimeMomentOptions {
   lifetimeFile?: LifetimeReader | null;
-  calculationFingerprint?: string | null;
 }
-interface LifetimeFileOptions { report?: ServerFailureReport; file?: string; metadataFile?: string; root?: string }
+interface LifetimeFileOptions { report?: ServerFailureReport; file?: string; metadataFile?: string }
 type Moments = NonNullable<ReturnType<typeof createLifetimeMoments>>;
 export type LifetimeService = ReturnType<typeof createLifetimeService>;
 
@@ -32,15 +29,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, LIFETIME_PROVENANCE_INPUTS, LIFETIME_FIELDS, LIFETIME_POINT_BYTES } from '../../shared/lifetime-format.ts';
+import { LIFETIME_PLANETS, LIFETIME_STEP_SECONDS, LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, LIFETIME_FIELDS, LIFETIME_POINT_BYTES } from '../../shared/lifetime-format.ts';
 
 import { PERSONALITY_COLUMN, DESIGN_COLUMN, DESIGN_UNIX_SECONDS_COLUMN, DESIGN_RESIDUAL_COLUMN, validMomentValue } from '../../shared/day-packets/moment-columns.ts';
 
-import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.ts';
 import { consumeJob, aborted } from '../runtime/job-consumers.ts';
-import { inputFingerprint, calculationVersion } from '../runtime/calculation-version.ts';
 import { SUPPORTED_START, SUPPORTED_END_EXCLUSIVE } from '../../shared/date-limits.ts';
-import { lifetimeProvenanceMatches } from './lifetime-compatibility.ts';
 
 const MAX_METADATA_BYTES = 16_384;
 
@@ -51,24 +45,19 @@ export async function readLifetimeMetadata(file:string) {
   return {stat, raw, input:JSON.parse(raw)};
 }
 
-export function lifetimeFileFingerprint(root: string) {
-  return inputFingerprint(root, LIFETIME_PROVENANCE_INPUTS);
-}
-
 // One owner opens the completed file on demand. A later request can find it
 // after preparation; ready requests share one verified file and pending reads.
 export function createLifetimeService({ report, root = fileURLToPath(new URL('../../', import.meta.url)),
-  file = path.join(root, '.cache/lifetime/lifetime-1801-2400.f64le'), calculationVersion: version = null }: LifetimeServiceOptions = {}) {
+  file = path.join(root, '.cache/lifetime/lifetime-1801-2400.f64le') }: LifetimeServiceOptions = {}) {
   let source: LifetimeReader | null = null, moments: Moments | null = null, opening: Promise<Moments> | null = null, closing: Promise<void> | null = null, closed = false;
   function ready() {
     if (closed) return Promise.reject(unavailable());
     if (moments) return Promise.resolve(moments);
     if (!opening) opening = (async () => {
-      const opened = await createLifetimeFile({ file, metadataFile: file.replace(/\.f64le$/, '.metadata.json'), root, report });
+      const opened = await createLifetimeFile({ file, metadataFile: file.replace(/\.f64le$/, '.metadata.json'), report });
       try {
-        const calculationFingerprint = version || await calculationVersion(root);
         if (closed) throw unavailable();
-        moments = createLifetimeMoments({ lifetimeFile: opened, calculationFingerprint })!;
+        moments = createLifetimeMoments({ lifetimeFile: opened })!;
         source = opened;
         return moments;
       } catch (error) { await opened.close(); throw error; }
@@ -131,13 +120,9 @@ function validatedDesign(value: unknown, utc: string): DesignMoment {
 
 // Only pending reads are shared. Completed numbers remain in the prepared file,
 // not in a second server cache; a later independent visit reads them again.
-export function createLifetimeMoments({ lifetimeFile, calculationFingerprint = null }: LifetimeMomentOptions = {}) {
+export function createLifetimeMoments({ lifetimeFile }: LifetimeMomentOptions = {}) {
   if (!lifetimeFile) return null;
-  if (calculationFingerprint !== null && !/^[a-f0-9]{64}$/.test(calculationFingerprint)) throw new RangeError('Invalid calculation fingerprint');
-  const metadata = calculationFingerprint && lifetimeFile.cacheIdentity
-    ? Object.freeze({ ...lifetimeFile.metadata, calculationVersion: calculationFingerprint, cacheVersion: createHash('sha256')
-      .update(`lifetime-moment-v${LIFETIME_EXACT_VERSION}\0${lifetimeFile.cacheIdentity}\0${calculationFingerprint}`).digest('hex') })
-    : lifetimeFile.metadata;
+  const metadata = lifetimeFile.metadata;
   const reads = new Map<number, ReadWork>(), readQueue: ReadWork[] = [];
   let activeReads = 0;
   function drainReads() {
@@ -194,7 +179,7 @@ export function validateLifetimeMetadata(value: unknown) {
     || input.columns.some((planet, index) => planet !== LIFETIME_FIELDS[index])
     || !Number.isSafeInteger(input.sampleCount) || input.sampleCount < 1
     || input.stepSeconds !== LIFETIME_STEP_SECONDS || input.flags !== 258
-    || typeof input.engine !== 'string' || !/^Swiss Ephemeris(?: \d+(?:\.\d+){1,3})?$/.test(input.engine)
+    || input.engine !== 'Swiss Ephemeris'
     || typeof input.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256)) throw unavailable();
   const start = epoch(input.startUtc), end = epoch(input.endExclusiveUtc);
   const bytes = input.sampleCount * LIFETIME_POINT_BYTES;
@@ -220,23 +205,19 @@ export async function verifyLifetimeDigest(handle: FileHandle, bytes: number, ex
 // The large file stays on disk. One positional read returns each full moment.
 export function createLifetimeFile(options: LifetimeFileOptions & { file: string; metadataFile: string }): Promise<LifetimeReader>;
 export function createLifetimeFile(options?: LifetimeFileOptions): Promise<LifetimeReader | null>;
-export async function createLifetimeFile({ file, metadataFile, report, root = fileURLToPath(new URL('../../', import.meta.url)) }: LifetimeFileOptions = {}): Promise<LifetimeReader | null> {
+export async function createLifetimeFile({ file, metadataFile, report }: LifetimeFileOptions = {}): Promise<LifetimeReader | null> {
   if (!file && !metadataFile) return null;
   let handle: FileHandle | undefined;
   try {
     if (typeof file !== 'string' || !file || typeof metadataFile !== 'string' || !metadataFile) throw unavailable();
     const {input} = await readLifetimeMetadata(metadataFile);
     const validated = validateLifetimeMetadata(input);
-    if (!lifetimeProvenanceMatches(input, await lifetimeFileFingerprint(root))) throw unavailable();
     handle = await fs.open(file, 'r');
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size !== validated.bytes) throw unavailable();
     // Verify every byte once with bounded memory before accepting requests.
     await verifyLifetimeDigest(handle, validated.bytes, validated.sha256);
     const { metadata, start } = validated;
-    const cacheIdentity = createHash('sha256').update(JSON.stringify([
-      LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, validated.sha256, metadata,
-    ])).digest('hex');
     const pending = new Set<Promise<NumericMoment>>();
     let accepting = true, closing: Promise<void> | undefined;
 
@@ -257,8 +238,6 @@ export async function createLifetimeFile({ file, metadataFile, report, root = fi
 
     return {
       metadata,
-      cacheIdentity,
-      provenanceVerified: true,
       getPoint(index: number) {
         if (!accepting) return Promise.reject(unavailable());
         if (!Number.isSafeInteger(index) || index < 0 || index >= metadata.samples) return Promise.reject(invalidIndex());

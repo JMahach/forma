@@ -12,7 +12,7 @@ const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'saturn', fromAge: 0, to
 const event = { body: 'saturn', utc: '2028-07-21T12:36:05.920740Z', cycle: 1, pass: 1, direction: 'direct' };
 event.id = `${event.body}:${event.utc}`; event.cycleId = 'saturn:1'; event.age = (Date.parse(event.utc) - Date.parse(input.birthUtc) + 0.740) / (365.2425 * 86400000);
 const data = { range: { fromAge: 0, toAge: 100 }, events: [event] };
-const chartKey=(index=0,body='saturn')=>JSON.stringify(['chart',revision,new Date(Date.parse(input.birthUtc)+index*86400000).toISOString(),body,event.utc,'UTC']);
+const chartKey=(index=0,body='saturn')=>JSON.stringify(['chart',new Date(Date.parse(input.birthUtc)+index*86400000).toISOString(),body,event.utc,'UTC']);
 
 test('device dates retain microseconds and more than forty complete or empty datasets across a new connection', async t => {
   const indexedDB = new IDBFactory(),owner=createCalculationCache({indexedDB}), first = createReturnStorage({ cache:owner }); t.after(() => {first.close();owner.close();});
@@ -31,22 +31,22 @@ test('two tabs writing finished body packets keep each other’s records intact'
   assert.deepEqual(await first.getEvents('saturn'), data); assert.deepEqual(await first.getEvents('chiron'), { ...data, events: [] });
 });
 
-test('client reads a stored empty result without a new search and isolates numerical revisions', async t => {
+test('client reads a stored empty result without a new search across client replacements', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   let calls = 0; const request = async () => { calls++; return { ...data, events: [] }; };
-  const options = { returnStorage: storage, cacheVersion: revision, request };
+  const options = { returnStorage: storage, request };
   await createCyclesClient(options).events(input); await tick();
   await createCyclesClient(options).events({ ...input, timezone: 'Europe/Moscow', id: 'renamed' });
   assert.equal(calls, 1);
-  await createCyclesClient({ ...options, cacheVersion: 'b'.repeat(64) }).events(input);
-  assert.equal(calls, 2);
+  await createCyclesClient(options).events(input);
+  assert.equal(calls, 1);
 });
 
 test('a ready body packet is read while another natal request is still unfinished', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   let finish; const waiting = new Promise(resolve => { finish = resolve; });
   let calls = 0;
-  const options = { cacheVersion: revision, returnStorage: storage, request: async (_url, { body }) => { calls++; return JSON.parse(body).body === 'moon' ? waiting : data; } };
+  const options = { returnStorage: storage, request: async (_url, { body }) => { calls++; return JSON.parse(body).body === 'moon' ? waiting : data; } };
   await createCyclesClient(options).events(input); await tick();
   const client = createCyclesClient(options), pending = client.events({ ...input, body: 'moon' });
   await tick(); assert.deepEqual(await client.events(input), data); assert.equal(calls, 2);
@@ -111,7 +111,7 @@ test('an actual quota exception in the chart transaction does not prevent render
     return originalPut.apply(this, args);
   });
   let requests = 0; const ready = exactChart();
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storage, memory: createMemoryCache(), request: async () => { requests++; return ready; } });
+  const client = createCyclesClient({ returnStorage: storage, memory: createMemoryCache(), request: async () => { requests++; return ready; } });
   const query = { birthUtc: input.birthUtc, body: input.body, eventUtc: event.utc, timezone: 'UTC' };
   assert.equal(await client.chart(query), ready); await tick();
   assert.equal(await storage.getChart('missing'), null);

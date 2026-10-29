@@ -79,7 +79,7 @@ test('local SMTP code leads to login, saved chart, public link and persistent li
   const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});
   t.after(()=>calculate.close());
   const charts = { cities: createCityCatalog([{id:'1',name:'Test City',aliases:['Test City'],country:'Test',region:'',
-    timezone:'UTC',latitude:0,longitude:0}]), calculationVersion: 'runtime-test', calculate };
+    timezone:'UTC',latitude:0,longitude:0}]), calculate };
   const runtimeOptions = { configuration, charts, now: () => clock, report: (event: { event: string }) => { events.push(event.event); } };
   let runtime = await createAccountRuntime(runtimeOptions);
   t.after(() => runtime.close());

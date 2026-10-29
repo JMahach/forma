@@ -68,16 +68,10 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
   async function getMeta({ signal, refreshNatalDay = false }: { signal?: AbortSignal; refreshNatalDay?: boolean } = {}) {
     if (signal?.aborted) throw createAbortError();
     const value = metadata || await shared('meta', '/api/lifetime/meta', value => (metadata = validateLifetimeMetadata(value)), signal);
-    await days.prepare(value.calculationVersion);
+    await days.prepare();
     await prepareNatalDay(value, signal, refreshNatalDay);
     if (metadata !== value || signal?.aborted) throw createAbortError();
     return value;
-  }
-  function invalidateMetadata(expected = metadata) {
-    if (metadata !== expected) return;
-    metadata = null; natalPreparation = null;
-    for (const request of pending.values()) request.controller.abort();
-    pending.clear();
   }
   function validMoment(milliseconds: number, meta = metadata): meta is LifetimeMetadata {
     return !!meta && Number.isSafeInteger(milliseconds)
@@ -88,14 +82,12 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
   function minuteAt(milliseconds: number, day: TransitDay | null | undefined, meta = metadata) {
     if (!validMinute(milliseconds, meta) || day?.version !== TRANSIT_DAY_VERSION || day.stepSeconds !== 60
         || day.samples !== 1440 || day.date !== dateAt(milliseconds) || day.startUtc !== `${day.date}T00:00:00Z`
-        || !meta.calculationVersion || day.calculationVersion !== meta.calculationVersion || day.engine !== meta.engine
         || day.nodeModel !== 'true' || day.zodiac !== 'tropical-geocentric-apparent') return null;
     const index = (milliseconds - Date.parse(day.startUtc)) / 60000;
     return Number.isInteger(index) && index >= 0 && index < day.samples ? { day, index } : null;
   }
   function compatibleNatalDay(day: NatalDay | null | undefined, meta: LifetimeMetadata | null): day is NatalDay {
     return !!(meta && day?.version === NATAL_DAY_VERSION && day.stepSeconds === 60
-      && meta.calculationVersion && day.calculationVersion === meta.calculationVersion && day.engine === meta.engine
       && day.nodeModel === 'true' && day.zodiac === 'tropical-geocentric-apparent');
   }
   function activeNatalPreparation(meta = metadata) {
@@ -150,12 +142,12 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
   }
   function cachedMinute(milliseconds: number, meta = metadata) {
     const natal = natalSample(milliseconds, meta); if (natal) return natal;
-    if (!validMinute(milliseconds, meta) || !meta.calculationVersion) return null;
+    if (!validMinute(milliseconds, meta)) return null;
     const date = dateAt(milliseconds);
-    return minuteAt(milliseconds, dayClient?.peekDay?.(date) || days.peekDay(date, meta.calculationVersion), meta);
+    return minuteAt(milliseconds, dayClient?.peekDay?.(date) || days.peekDay(date), meta);
   }
   async function readSample(milliseconds: number, meta: LifetimeMetadata | null, signal?: AbortSignal) {
-    if (!validMoment(milliseconds, meta) || !meta.calculationVersion) return null;
+    if (!validMoment(milliseconds, meta)) return null;
     const hot = cachedMinute(milliseconds, meta); if (hot) return hot;
     const record = getPersonalRecord();
     if (record && natalDayClient && hasNatalMinute(milliseconds, meta)) {
@@ -169,7 +161,7 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     if (!validMinute(milliseconds, meta)) return null;
     // This owner reads existing RAM/IDB only. Never call dayClient.getDay here:
     // one selected minute must not trigger calculation of an entire day.
-    const day = await days.getDay(dateAt(milliseconds), meta.calculationVersion);
+    const day = await days.getDay(dateAt(milliseconds));
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     return minuteAt(milliseconds, day, meta);
   }
@@ -179,29 +171,28 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
   }
   function hasMinute(milliseconds: number) {
     return Boolean(hasNatalMinute(milliseconds) || cachedMinute(milliseconds) || validMinute(milliseconds)
-      && metadata!.calculationVersion && days.hasMinute(milliseconds, metadata!.calculationVersion));
+      && days.hasMinute(milliseconds));
   }
   async function readMinute(milliseconds: number, { signal }: { signal?: AbortSignal } = {}) {
     if (signal?.aborted) throw createAbortError();
     const sample = await readSample(milliseconds, metadata, signal);
     return sample ? chartAt(sample) : null;
   }
-  async function getPoint(index: number, { signal, checkedDay = null }: { signal?: AbortSignal; checkedDay?: { date: string; version?: string } | null } = {}) {
+  async function getPoint(index: number, { signal, checkedDay = null }: { signal?: AbortSignal; checkedDay?: { date: string } | null } = {}) {
     const meta = await getMeta({ signal });
     if (!Number.isInteger(index) || index < 0 || index >= meta.samples) throw new Error('Некорректный момент летописи.');
     const milliseconds = Date.parse(meta.startUtc) + index * meta.stepSeconds * 1000;
     // The current command may already have checked this same day before its
     // grid fallback. Recheck RAM, but do not repeat that disk miss or carry it
-    // to another date/revision or independent visit.
-    const alreadyRead = meta.calculationVersion && checkedDay?.version === meta.calculationVersion && checkedDay.date === dateAt(milliseconds);
+    // to another date or independent visit.
+    const alreadyRead = checkedDay?.date === dateAt(milliseconds);
     const sample = alreadyRead ? cachedMinute(milliseconds, meta) : await readSample(milliseconds, meta, signal);
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     if (sample) return validateLifetimeMoment({ ...sampleAt(sample), index }, meta, index);
-    const version = meta.cacheVersion ? `&v=${encodeURIComponent(meta.cacheVersion)}` : '';
-    return shared(index, `/api/lifetime?index=${index}${version}`, value => {
+    return shared(index, `/api/lifetime?index=${index}`, value => {
       if (metadata !== meta) throw createAbortError();
       return validateLifetimeMoment(value, meta, index);
     }, signal);
   }
-  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute, invalidateMetadata };
+  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute };
 }

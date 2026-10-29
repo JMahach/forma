@@ -44,6 +44,24 @@ export function migrateDayPacket(kind:'natal'|'transit', packet:Uint8Array):Uint
 }
 
 type CalculationKind = 'natal'|'transit'|'return-events'|'return-charts';
+
+/** The same one-time payload transform serves both the shared cache and its older physical sources. */
+export function migrateCalculationPayload(kind:CalculationKind,value:unknown,key:string):unknown {
+  if(kind==='natal') {
+    if(!(value instanceof ArrayBuffer))throw new TypeError('Invalid stored calculation');
+    return migrateDayPacket('natal',new Uint8Array(value)).buffer;
+  }
+  const source=migrateCalculationMetadata(value as CalculationMetadata & Record<string,unknown>),migrated={...source};
+  if(Object.hasOwn(migrated,'key'))migrated.key=key;
+  if(kind==='transit')migrated.meta=migrateCalculationMetadata(source.meta as CalculationMetadata);
+  if(kind==='return-charts') {
+    const original=source.chart as CalculationMetadata,chart=migrateCalculationMetadata(original);
+    // The old proof authenticates the engine label. It has no cache-policy meaning.
+    migrated.chart=typeof source.proof==='string' && Object.hasOwn(original,'engine')?{...chart,engine:original.engine}:chart;
+  }
+  return migrated;
+}
+
 const oldRevision = /^[a-f0-9]{64}$/;
 const legacyRevision = (value:unknown) => value === null || typeof value === 'string' && oldRevision.test(value);
 const invalidKey = ():never => { throw new TypeError('Unknown stored calculation key'); };
@@ -58,8 +76,8 @@ function returnKey(key:string, action:'events'|'chart') {
 
 export function migrateCalculationKey(kind:CalculationKind, key:string):string {
   if (kind === 'natal') {
-    const match = /^natal-day:(?:([a-f0-9]{64}):)?(\d+:\d{4}-\d{2}-\d{2}:.+)$/.exec(key);
-    return match ? `natal-day:${match[2]}` : invalidKey();
+    const match = /^(?:natal-day:(?:[a-f0-9]{64}:)?)?(\d+:\d{4}-\d{2}-\d{2}:.+)$/.exec(key);
+    return match ? `natal-day:${match[1]}` : invalidKey();
   }
   if (kind === 'transit') {
     const match = /^(?:[a-f0-9]{64}:)?(\d{4}-\d{2}-\d{2})$/.exec(key);

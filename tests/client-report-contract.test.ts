@@ -28,7 +28,7 @@ test('the exact allowlist rejects personal data and raw exception fields at ever
 });
 test('required metadata and numeric measurements reject guessed or malformed values',()=>{
   for(const patch of [{appVersion:undefined},{appVersion:''},{accountId:0},{accountId:'0'},{accountId:'name'},{environment:'local'},{occurredAt:-1},{occurredAt:Infinity},{durationMs:NaN},{durationMs:-1},{calculationVersion:'old'},{eventId:'not-uuid'},{browser:{name:'browser',version:'120'}},{browser:{name:'chrome',version:'120 private'}}])assert.equal(parseClientReport({...report(),...patch}),null);
-  assert.ok(parseClientReport({...report(),accountId:'42',calculationVersion:'a'.repeat(64),durationMs:0}));
+  assert.ok(parseClientReport({...report(),accountId:'42',durationMs:0}));
 });
 test('parsers never invoke accessors and do not accept hidden or symbolic data',()=>{
   let touched=false;const input={...report()};Object.defineProperty(input,'reason',{enumerable:true,get(){touched=true;return 'connection_failed';}});

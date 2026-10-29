@@ -36,7 +36,6 @@ function copyShuffledColumn(target: Uint8Array, column: Uint8Array, index: numbe
 
 export function encodeTransitDay(day: TransitDay, { orders = Array(TRANSIT_DAY_COLUMNS).fill(3), shuffledColumns }: EncodingOptions = {}) {
   const header = validateTransitMetadata({ version: TRANSIT_DAY_VERSION, date: day.date, startUtc: day.startUtc,
-    ...(day.calculationVersion ? { calculationVersion: day.calculationVersion } : {}),
     samples: day.samples, stepSeconds: day.stepSeconds, orders: [...orders], engine: day.engine,
     ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac });
   if (!Array.isArray(day.columns) || day.columns.length !== TRANSIT_DAY_COLUMNS) return failTransitPacket();
@@ -64,7 +63,6 @@ export function encodeTransitDay(day: TransitDay, { orders = Array(TRANSIT_DAY_C
 
 export function encodeNatalDay(day: NatalDay, { orders = Array(COLUMNS).fill(3), shuffledColumns }: EncodingOptions = {}) {
   const header = validateNatalDayMetadata({ version: NATAL_DAY_VERSION, date: day.date, timezone: day.timezone, startUtc: day.startUtc,
-    ...(day.calculationVersion !== undefined ? { calculationVersion: day.calculationVersion } : {}),
     samples: day.samples, stepSeconds: day.stepSeconds, segments: day.segments, orders: [...orders],
     engine: day.engine, ephemeris: day.ephemeris, timezoneDatabase: day.timezoneDatabase, nodeModel: day.nodeModel, zodiac: day.zodiac });
   if (!Array.isArray(day.columns) || day.columns.length !== COLUMNS) return failNatalDayPacket();

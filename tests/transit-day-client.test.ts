@@ -9,7 +9,7 @@ import { createLiveTransit } from '../src/state/live-transit.ts';
 import { createLifetimeClient } from '../src/data/lifetime-client.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 
-const day = (date: string) => ({ calculationVersion: 'a'.repeat(64), date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const day = (date: string) => ({ date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: 'Swiss Ephemeris', ephemeris: 'test', timezoneDatabase: 'test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, col) => Float64Array.from({ length: 1440 }, (_, index) => col < 22
     ? (col * 30 + index / 10000) % 360 : col === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + index * 61 : index % 100 * 1e-12)),
@@ -25,6 +25,7 @@ test('day client coalesces concurrent requests and reuses the decoded immutable 
     return new Promise(done => { resolve = done; });
   } });
   const first = client.getDay('2026-09-24'), second = client.getDay('2026-09-24');
+  await new Promise(setImmediate);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, `/api/transit/day?date=2026-09-24&v=${TRANSIT_DAY_VERSION}`);
   assert.equal(requests[0].options.method, undefined, 'packet loading is a GET');
@@ -78,6 +79,7 @@ test('day requests have a deadline instead of accumulating indefinitely', async 
     return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
   } });
   const pending = assert.rejects(client.getDay('2026-09-24'), /не успел загрузиться/);
+  await new Promise(setImmediate);
   t.mock.timers.tick(100);
   await pending;
   assert.equal(signal!.aborted, true);
@@ -90,7 +92,8 @@ test('the startup request shares the pending request and decoded cache with the 
       requests++;
       return new Promise(resolve => { finish = () => resolve(response('2026-09-24')); });
     } });
-    assert.equal(requests, 1, 'construction starts the UTC packet before UI attachment');
+    await new Promise(setImmediate);
+    assert.equal(requests, 1, 'construction checks the cache and starts the UTC packet before UI attachment');
     if (completeBeforeAttach) { finish!(); await new Promise(resolve => setImmediate(resolve)); }
     const first = client.getDay('2026-09-24'), concurrent = client.getDay('2026-09-24');
     if (!completeBeforeAttach) finish!();
@@ -158,7 +161,7 @@ test('the active local day stays visible to shared lookup while unrelated days r
   assert.equal(client.peekDay('2026-09-24'), active, 'Lifetime can use the packets still owned by the last live day');
   const lifetime = createLifetimeClient({ dayClient: client, fetch: async url => {
     assert.equal(url, '/api/lifetime/meta', 'a minute or lifetime point already held by Day needs no transport');
-    return { ok: true, json: async () => ({ calculationVersion: 'a'.repeat(64), startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
+    return { ok: true, json: async () => ({ startUtc: '2026-09-01T00:00:00Z', endExclusiveUtc: '2026-10-01T00:00:00Z',
       stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris' }) };
   } });
   await lifetime.getMeta();
@@ -189,7 +192,7 @@ test('day rollover releases every earlier pin, and late stopped loads cannot pin
     return date === '2026-09-24' ? new Promise(resolve => { finish = () => resolve(response(date)); }) : Promise.resolve(response(date));
   } });
   const delayed = createLiveTransit({ dayClient: delayedClient, now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'UTC' });
-  const loading = delayed.refresh(); delayed.stop(); finish!(); await loading;
+  const loading = delayed.refresh(); await new Promise(setImmediate); delayed.stop(); finish!(); await loading;
   assert.equal(delayed.state.status, 'idle', 'completion after stop has no right to change loading or error state');
   assert.equal(delayed.state.loading, false);
   await delayedClient.getDay('2026-09-25');
@@ -249,7 +252,7 @@ test('taking the pending startup packet transfers cancellation to its sole consu
  let finish!:(value:ReturnType<typeof response>)=>void,networkSignal!:AbortSignal;
  const client=createTransitDayClient({initialDate:'2026-09-24',fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
  const controller=new AbortController(),waiting=client.getDay('2026-09-24',{signal:controller.signal});
- controller.abort();assert.equal(networkSignal.aborted,true);
+ await new Promise(setImmediate);controller.abort();assert.equal(networkSignal.aborted,true);
  await assert.rejects(waiting,error=>(error as Error).name==='AbortError');
  finish(response('2026-09-24'));await new Promise(setImmediate);
  assert.equal(client.peekDay('2026-09-24'),null,'a cancelled early response cannot enter shared RAM');
@@ -259,15 +262,15 @@ test('aborting the startup recipient preserves another packet consumer', async (
  let finish!:(value:ReturnType<typeof response>)=>void,networkSignal!:AbortSignal;
  const client=createTransitDayClient({initialDate:'2026-09-24',fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
  const controller=new AbortController(),waiting=client.getDay('2026-09-24',{signal:controller.signal}),other=client.getDay('2026-09-24');
- controller.abort();await assert.rejects(waiting,error=>(error as Error).name==='AbortError');assert.equal(networkSignal.aborted,false);
+ await new Promise(setImmediate);controller.abort();await assert.rejects(waiting,error=>(error as Error).name==='AbortError');assert.equal(networkSignal.aborted,false);
  finish(response('2026-09-24'));assert.equal((await other).date,'2026-09-24');
 });
 
-for(const action of ['stop','invalidateCalculations'] as const)test(`live ${action} cancels its sole pending packet transport`,async()=>{
+for(const action of ['stop'] as const)test(`live ${action} cancels its sole pending packet transport`,async()=>{
  let networkSignal!:AbortSignal,finish!:(value:ReturnType<typeof response>)=>void;
  const client=createTransitDayClient({fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
  const live=createLiveTransit({dayClient:client,now:()=>Date.parse('2026-09-24T12:00:00Z'),timeZone:()=> 'UTC'});
- const waiting=live.start();live[action]();assert.equal(networkSignal.aborted,true);
+ const waiting=live.start();await new Promise(setImmediate);live[action]();assert.equal(networkSignal.aborted,true);
  await waiting;finish(response('2026-09-24'));await new Promise(setImmediate);assert.equal(client.peekDay('2026-09-24'),null);live.stop();
 });
 
@@ -275,6 +278,19 @@ test('stopping live Transit preserves an independent Lifetime packet consumer',a
  let networkSignal!:AbortSignal,finish!:(value:ReturnType<typeof response>)=>void;
  const client=createTransitDayClient({fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
  const live=createLiveTransit({dayClient:client,now:()=>Date.parse('2026-09-24T12:00:00Z'),timeZone:()=> 'UTC'});
- const waiting=live.start(),other=client.getDay('2026-09-24');live.stop();assert.equal(networkSignal.aborted,false);
+ const waiting=live.start(),other=client.getDay('2026-09-24');await new Promise(setImmediate);live.stop();assert.equal(networkSignal.aborted,false);
  finish(response('2026-09-24'));await waiting;assert.equal((await other).date,'2026-09-24');
+});
+
+
+test('cancelling before the local lookup completes never starts transport', async () => {
+  let requests = 0;
+  const client = createTransitDayClient({ fetch: async () => { requests++; return response('2026-09-24'); } });
+  const controller = new AbortController();
+  const waiting = client.getDay('2026-09-24', { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(waiting, error => (error as Error).name === 'AbortError');
+  await new Promise(setImmediate);
+  assert.equal(requests, 0);
+  assert.equal(client.peekDay('2026-09-24'), null);
 });

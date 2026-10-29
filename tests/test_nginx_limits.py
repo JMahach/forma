@@ -80,7 +80,7 @@ class CalculationAdmissionTests(unittest.TestCase):
                         def request(route):
                             connection = http.client.HTTPConnection('127.0.0.1', port, timeout=12)
                             try:
-                                connection.request('GET' if route == '/api/versions' else 'POST', route, body='{}',
+                                connection.request('GET' if route == '/api/cities' else 'POST', route, body='{}',
                                                    headers={'Content-Type': 'application/json'})
                                 response = connection.getresponse()
                                 response.read()
@@ -118,7 +118,7 @@ class CalculationAdmissionTests(unittest.TestCase):
         # One normal GET also verifies the server limit is not a hidden ceiling
         # on the location's separately counted compute requests.
         self.check_batch(['/api/cycles/events'] * 13 + ['/api/cycles/chart',
-                         '/api/chart/day', '/api/calculate', '/api/versions'], check_overflow=True)
+                         '/api/chart/day', '/api/calculate', '/api/cities'], check_overflow=True)
 
 
 if __name__ == '__main__':

@@ -3,9 +3,18 @@ import type { CycleInput, CycleEvent, CycleEventsResult } from '../../shared/cyc
 export type ReturnStorage = ReturnType<typeof createReturnStorage>;
 
 import { createCalculationCache, type CalculationCache } from './calculation-cache.ts';
-import { describeLegacyCalculation, LEGACY_CALCULATION_SOURCES } from './calculation-migration.ts';
 import { cycleAge } from '../../shared/cycles-format.ts';
 import { DEFAULT_CYCLE_BODIES } from '../domain/cycles.ts';
+
+// This gate classifies current persistent returns; numerical checks belong to the caller.
+function storedChart(key:string,value:unknown):unknown|null {
+  try {
+    const identity:unknown=JSON.parse(key),data=value as {event?:{body?:unknown}}|null;
+    if(!Array.isArray(identity) || identity.length!==5 || identity[0]!=='chart' || !DEFAULT_CYCLE_BODIES.includes(identity[2])
+      || !data || typeof data!=='object' || Array.isArray(data) || data.event?.body!==undefined && data.event.body!==identity[2])return null;
+    return data;
+  }catch{return null;}
+}
 
 const proofField=(value:unknown)=>typeof value==='string' && value.length>0 && value.length<=MAX_RETURN_PROOF_LENGTH ? {proof:value} : {};
 
@@ -15,7 +24,6 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
   indexedDB?: IDBFactory | null; timeoutMs?: number; cache?: CalculationCache;
 } = {}) {
   const owner=cache??createCalculationCache({indexedDB:factory,timeoutMs});
-  const source=LEGACY_CALCULATION_SOURCES.find(source=>source.family==='returns')!;
   let closed=false;
   return {
     async getEvents(key: string):Promise<PreparedReturn<CycleEventsResult>|null> {
@@ -34,15 +42,14 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
       if(closed || !DEFAULT_CYCLE_BODIES.includes(input.body))return Promise.resolve(null);
       const record={key,birthUtc:input.birthUtc,body:input.body,range:data.range,...proofField(data.proof),
         events:data.events.map(({utc,cycle,pass,direction})=>({utc,cycle,pass,direction}))};
-      const description=describeLegacyCalculation(source,'events',key,record)!;
-      return owner.put('return-events',key,record,description);
+      return owner.put('return-events',key,record);
     },
     removeEvents(key: string) { return closed?Promise.resolve(null):owner.remove('return-events',key); },
     touchEvents(key:string) { return closed?Promise.resolve(null):owner.touch('return-events',key); },
     async getChart(key: string):Promise<unknown|null> {
       if(closed)return null;
       const data=await owner.get<unknown>('return-charts',key);
-      return describeLegacyCalculation(source,'charts',key,{key,data})?.value??null;
+      return storedChart(key,data);
     },
     async chartKeys():Promise<string[]|null> {
       if(closed)return null;
@@ -50,8 +57,8 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
     },
     putChart(key: string, data: unknown) {
       if(closed)return Promise.resolve(null);
-      const description=describeLegacyCalculation(source,'charts',key,{key,data});
-      return description?owner.put('return-charts',key,data,description):Promise.resolve(null);
+      const value=storedChart(key,data);
+      return value?owner.put('return-charts',key,value):Promise.resolve(null);
     },
     removeChart(key: string) { return closed?Promise.resolve(null):owner.remove('return-charts',key); },
     touchChart(key:string) { return closed?Promise.resolve(null):owner.touch('return-charts',key); },

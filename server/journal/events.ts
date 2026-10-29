@@ -2,7 +2,7 @@ import { isIP } from 'node:net';
 import { parseClientReport, type ClientReport } from '../../shared/client-report-contract.ts';
 
 export type HttpFailureComponent = 'routing' | 'public_files' | 'cities' | 'calculator' | 'account' | 'charts' | 'cycles' | 'lifetime' | 'transit_day' | 'natal_day';
-export type StartupComponent = HttpFailureComponent | 'configuration' | 'versions' | 'listener';
+export type StartupComponent = HttpFailureComponent | 'configuration' | 'listener';
 export type ServiceFailure =
  | {component:'lifetime_prepare'|'return_index_prepare';reason:'spawn'|'process'}
  | {component:'postfix';reason:'process'|'cleanup'};
@@ -99,7 +99,7 @@ export function parseJournalEvent(value: unknown): JournalEvent | null {
  if(Object.hasOwn(v,'component')) {
   const components = v.event==='service_failed' ? ['lifetime_prepare','return_index_prepare','postfix']
    : v.event==='startup_failed'
-   ? ['configuration','versions','listener','routing','public_files','cities','calculator','account','charts','cycles','lifetime','transit_day','natal_day']
+   ? ['configuration','listener','routing','public_files','cities','calculator','account','charts','cycles','lifetime','transit_day','natal_day']
    : v.event==='http_request_failed'
    ? ['routing','public_files','cities','calculator','account','charts','cycles','lifetime','transit_day','natal_day']
    : v.event==='prepared_data_failed' ? ['lifetime'] : ['calculator','transit_day','natal_day','cycles'];

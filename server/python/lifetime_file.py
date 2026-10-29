@@ -43,22 +43,6 @@ def shared_literal(name, file='shared/lifetime-format.ts'):
     return ast.literal_eval(value)
 
 
-def calculation_fingerprint():
-    digest = hashlib.sha256()
-    def add(name):
-        file = ROOT / name
-        if file.is_dir():
-            for child in sorted(file.iterdir(), key=lambda entry: entry.name.encode('utf-8')):
-                add(f'{name}/{child.name}')
-        else:
-            payload = file.read_bytes()
-            digest.update(f'{name}\0{len(payload)}\0'.encode('utf-8'))
-            digest.update(payload)
-    for name in shared_literal('LIFETIME_PROVENANCE_INPUTS'):
-        add(name)
-    return digest.hexdigest()
-
-
 def lifetime_format():
     planets = shared_literal('MOMENT_PLANETS', 'shared/day-packets/moment-columns.ts')
     step = shared_literal('LIFETIME_STEP_SECONDS')
@@ -117,7 +101,6 @@ def generate_lifetime_file(file, start=MIN_DATE.isoformat(), end=MAX_DATE.isofor
         raise ValueError('Use between one and eight preparation workers')
     first, last = interval(start, end)
     planets, step, version, format_text = lifetime_format()
-    provenance = dict(version='1', calculationFingerprint=calculation_fingerprint())
     boundary = boundary_check(first, last, step)
     samples = int((last - first).total_seconds()) // step
     chunk_samples = CHUNK_DAYS * 86400 // step
@@ -176,15 +159,12 @@ def generate_lifetime_file(file, start=MIN_DATE.isoformat(), end=MAX_DATE.isofor
                         endExclusiveUtc=last.isoformat().replace('+00:00', 'Z'), stepSeconds=step,
                         sampleCount=samples, days=(last-first).days, columns=list(astro.MOMENT_FIELDS),
                         derived=dict(earth='(sun+180)%360', south_node='(north_node+180)%360'), bytes=byte_count,
-                        sha256=digest.hexdigest(), engine='Swiss Ephemeris ' + astro.swe.version,
+                        sha256=digest.hexdigest(), engine='Swiss Ephemeris',
                         flags=astro.FLAGS, nodeModel='true', zodiac='tropical-geocentric-apparent',
                         normalization='production astronomy.longitude with unchanged flags and SWIEPH/MOSEPH validation',
                         boundaryCheck=boundary, generationSeconds=time.perf_counter()-began,
                         preparationWorkers=workers, chunkSamples=chunk_samples,
                         label='Complete supported public transit interval; not a personal birth date')
-        if calculation_fingerprint() != provenance['calculationFingerprint']:
-            raise ValueError('Calculation inputs changed during lifetime file generation')
-        metadata['provenance'] = provenance
         meta_fd, metadata_temporary = tempfile.mkstemp(prefix=metadata_file.name + '.', suffix='.tmp', dir=destination.parent)
         with os.fdopen(meta_fd, 'w') as stream:
             json.dump(metadata, stream, ensure_ascii=False, indent=2)

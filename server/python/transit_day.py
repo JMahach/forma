@@ -28,7 +28,7 @@ def calculate_day(date):
     columns = astro.sample_columns(start + dt.timedelta(minutes=minute) for minute in range(1440))
     return dict(
         date=date, startUtc=civil.iso(start), stepSeconds=60, samples=1440,
-        columns=columns, engine='Swiss Ephemeris ' + astro.swe.version,
+        columns=columns, engine='Swiss Ephemeris',
         ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
         timezoneDatabase='IANA tzdata ' + civil.tzdata.__version__,
         nodeModel='true', zodiac='tropical-geocentric-apparent',

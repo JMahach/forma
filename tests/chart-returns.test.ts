@@ -165,7 +165,7 @@ test('even a cached dates read rechecks access after its async boundary',async t
 
 test('concurrent readers share unfinished calculation but keep independent access after it',async t=>{
   const f=fixture(t),pending=deferred<CycleEventsResult>(),entered=deferred<void>();let calls=0,firstAllowed=true;
-  const cycles=createCycles({cacheVersion:version,generate:async()=>{calls++;entered.resolve();return pending.promise;}});
+  const cycles=createCycles({generate:async()=>{calls++;entered.resolve();return pending.promise;}});
   t.after(()=>cycles.close());
   const service=createChartReturns({cycles});
   const first=f.records.withAuthorization(()=>firstAllowed?{accountId:f.accountId}:null);

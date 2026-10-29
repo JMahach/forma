@@ -91,26 +91,26 @@ for (const { key, expected, saved = true, maximumUtc } of [
     const writerCache = createCalculationCache({ indexedDB, now }), readerCache = createCalculationCache({ indexedDB, now });
     const writer = createTransitDayCache({ cache: writerCache }), days = createTransitDayCache({ cache: readerCache });
     t.after(async () => { await writer.close(); await days.close(); writerCache.close(); readerCache.close(); });
-    const calls: string[] = [], version = 'a'.repeat(64), engine = 'Swiss Ephemeris 2.10.03';
+    const calls: string[] = [], engine = 'Swiss Ephemeris';
     const client = createLifetimeClient({ days, fetch: (async (url: string) => {
       calls.push(url);
       assert.ok(!url.includes('/moment?'), 'an arrow must not calculate an exact moment');
-      return { ok: true, json: async () => url.endsWith('/meta') ? { ...metadata, calculationVersion: version, engine }
+      return { ok: true, json: async () => url.endsWith('/meta') ? { ...metadata, engine }
         : moment(Number(new URL(url, 'http://test').searchParams.get('index'))) };
     }) as typeof fetch });
     let rendered: (() => void) | undefined; const commands: number[] = [];
     const h = harness({ client, beforeScrub: utc => { commands.push(utc); }, onRender: () => rendered?.() });
     t.after(() => h.explorer.close());
-    await writerCache.setTransitWindow({ version, dates: h.day.timeline!.packetDates, expiresAt: h.day.timeline!.endUtc });
+    await writerCache.setTransitWindow({ dates: h.day.timeline!.packetDates, expiresAt: h.day.timeline!.endUtc });
     await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: maximumUtc ? '2026-09-30' : '2026-10-01',
       ...(maximumUtc ? { maximumUtc } : {}), requestedUtc: Date.parse('2026-09-30T12:30:00Z') });
-    if (saved) writer.putDay({ calculationVersion: version, version: '2', date: '2026-09-30', startUtc: '2026-09-30T00:00:00Z', stepSeconds: 60, samples: 1440,
+    if (saved) writer.putDay({ version: '2', date: '2026-09-30', startUtc: '2026-09-30T00:00:00Z', stepSeconds: 60, samples: 1440,
       engine, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
       columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
         ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse('2026-09-30') / 1000 - 88 * 86400 + minute * 60 : 1e-11)) } as TransitDay);
     await writer.flush();
-    await days.prepare(version);
-    assert.equal(days.hasMinute(Date.parse('2026-09-30T12:31:00Z'), version), saved,
+    await days.prepare();
+    assert.equal(days.hasMinute(Date.parse('2026-09-30T12:31:00Z')), saved,
       'the fixture must establish the intended shared-disk state before awaiting a render');
     const before = calls.length, ready = new Promise<void>(resolve => { rendered = resolve; });
     h.range.dispatch('keydown', { key });
@@ -1306,24 +1306,6 @@ test('reopening the scale recovers after a rejected file has been replaced', asy
   assert.equal(await h.explorer.open(), true);
   assert.equal(metadataCalls, 2); assert.equal(h.explorer.state.status, 'ready'); assert.equal(h.status.textContent, '');
   assert.equal(h.explorer.current!.utc!, h.day.current!.utc!);
-  h.explorer.close();
-});
-
-test('metadata rejection after a changed revision remains a file error before a new moment can load', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let metadataCalls = 0, pointCalls = 0;
-  const h = harness({ client: {
-    async getMeta() { if (++metadataCalls > 1) throw Object.assign(new Error('Данные летописи недоступны.'), { code: 'lifetime_unavailable' }); return metadata; },
-    async getPoint() { pointCalls++; throw Object.assign(new Error('Версия изменилась.'), { code: 'unsupported_version' }); },
-  } });
-  await open(h);
-  const selected = Date.parse('2000-01-01T00:00:00Z');
-  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected });
-  assert.equal(h.explorer.state.status, 'loading');
-  t.mock.timers.tick(1000); await tick();
-  assert.equal(h.explorer.state.status, 'error'); assert.equal(h.status.textContent, 'Не удалось загрузить летопись');
-  assert.equal(h.explorer.state.requestedUtc, selected); assert.equal(pointCalls, 1);
-  t.mock.timers.tick(60_000); await tick(); assert.equal(metadataCalls, 2);
   h.explorer.close();
 });
 

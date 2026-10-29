@@ -71,7 +71,7 @@ test('network, truncated content and quota failure never replace the old complet
  }
 });
 test('metadata added by the server survives caching but only known valid fields are excluded from digest',async()=>{
- const f=fixture();f.bodies.set('/index.html',f.shell.replace('<body>','<body'+appMetadataAttributes({environment:'production',appVersion:'v2',calculationVersion:'a'.repeat(64)})+'>'));
+ const f=fixture();f.bodies.set('/index.html',f.shell.replace('<body>','<body'+appMetadataAttributes({environment:'production',appVersion:'v2'})+'>'));
  await f.bundle.install();
  assert.match(await (await f.bundle.match(navigate('/')))!.text(),/data-app-version="v2"/);
  const bad=fixture('bad',f.caches);bad.bodies.set('/index.html',bad.shell.replace('<body>','<body data-private="secret">'));

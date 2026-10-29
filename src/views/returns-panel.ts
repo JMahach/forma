@@ -223,10 +223,10 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     $('returnsBodiesLabel').textContent = `Планеты · ${state.bodies?.length || 0}`;
     for (const [id, input] of checks) {
       input.checked = Boolean(state.bodies?.includes(id));
-      input.disabled = !input.checked && (state.compatible === false || Boolean(state.offline && !state.readyBodies?.includes(id)));
+      input.disabled = !input.checked && (Boolean(state.offline && !state.readyBodies?.includes(id)));
     }
     $<HTMLButtonElement>('returnsBodiesClear').disabled = !state.bodies?.length;
-    $<HTMLButtonElement>('returnsBodiesDefault').disabled = state.compatible === false || Boolean(state.offline && DEFAULT_CYCLE_BODIES.some(body => !state.readyBodies?.includes(body)));
+    $<HTMLButtonElement>('returnsBodiesDefault').disabled = Boolean(state.offline && DEFAULT_CYCLE_BODIES.some(body => !state.readyBodies?.includes(body)));
     $('returnsNote').textContent = state.year == null ? 'Возвраты выбранных планет за всю жизнь' : `Возвраты выбранных планет за ${state.year} год`;
     const busy = Boolean(state.pendingBodies?.length), events = state.events || [];
     // The controller publishes array copies containing stable exact events.
@@ -237,7 +237,7 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     status.textContent = state.loadingChart ? '' : state.chartError ? failureMessage({code:state.chartErrorCode}, UI_MESSAGES.returnUnavailable) : busy ? UI_MESSAGES.returnsLoading : '';
     panel.setAttribute('aria-busy', String(busy || state.loadingChart));
     $('returnsRetry').hidden = !state.chartError && !state.errors?.length;
-    $<HTMLButtonElement>('returnsRetry').disabled = state.compatible === false || Boolean(state.offline);
+    $<HTMLButtonElement>('returnsRetry').disabled = Boolean(state.offline);
     const now = Date.now(), errors = state.errors || [], ready = new Set(state.readyEvents);
     const listKey = JSON.stringify([state.natal?.utc, state.natal?.timezone, state.year, showPresent(state, now),
       preparedEvents.reduce((count, { at }) => count + Number(at < now), 0),

@@ -7,7 +7,7 @@ import type { LifetimeMetadata } from '../../shared/lifetime-format.ts';
 export type TestCalculate = (input: CalculationRequest, options?: { signal?: AbortSignal }) => unknown;
 type MomentOptions = NonNullable<Parameters<typeof createMoments>[0]>;
 export type TestMomentOptions = Omit<MomentOptions, 'lifetimeFile'> & {
-  lifetimeFile?: { metadata: Partial<LifetimeMetadata>; cacheIdentity?: string; provenanceVerified?: boolean; getPoint(index: number): unknown } | null;
+  lifetimeFile?: { metadata: Partial<LifetimeMetadata>; getPoint(index: number): unknown } | null;
 };
 export const createLifetimeMoments = createMoments as (options: TestMomentOptions) => ReturnType<typeof createMoments>;
 

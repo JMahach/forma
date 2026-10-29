@@ -11,7 +11,6 @@ interface NatalClientOptions {
   decode?: (bytes: ArrayBuffer) => NatalDay;
   persistentCache?: BinaryCache | null;
   memory?: MemoryCache;
-  calculationVersion?: string | null;
   timeoutMs?: number;
 }
 export type NatalDayClient = ReturnType<typeof createNatalDayClient>;
@@ -26,39 +25,37 @@ const compatibleTimezone = (day: NatalDay, timezone: string | undefined) => !tim
 
 export function createNatalDayClient({
   fetch: fetchDay = fetchResource, decode = decodeNatalDay,
-  persistentCache = createBinaryCache({ databaseName: 'bodygraph-chart-days' }),
-  memory = createMemoryCache(), calculationVersion = null, timeoutMs = 60_000,
+  persistentCache = createBinaryCache(),
+  memory = createMemoryCache(), timeoutMs = 60_000,
 }: NatalClientOptions = {}) {
-  const revision = /^[a-f0-9]{64}$/.test(calculationVersion ?? '') ? calculationVersion : null;
   const pending = new Map<string, SharedRequest<NatalDay, { timezone: string | undefined }>>();
-  const reads = new Map<string, SharedRequest<NatalDay | null>>(), dayKeys = new WeakMap<NatalDay, string | symbol>();
+  const reads = new Map<string, SharedRequest<NatalDay | null>>(), dayKeys = new WeakMap<NatalDay, string>();
   const touches = new Map<string, Promise<unknown>>();
   function touch(key:string) {
-    if(!revision || touches.has(key))return;
+    if(touches.has(key))return;
     const work=Promise.resolve().then(()=>persistentCache?.touch?.(key)).catch(()=>{})
       .finally(()=>{if(touches.get(key)===work)touches.delete(key);});
     touches.set(key,work);
   }
   function remember(key: string, day: NatalDay) {
-    dayKeys.set(day, revision ? key : Symbol('natal-day'));
-    if (revision) {memory.put(key, day);touch(key);}
+    dayKeys.set(day, key);
+    memory.put(key, day);touch(key);
     return day;
   }
   function retainDay(day: NatalDay) {
     const key = dayKeys.get(day);
     if (key === undefined) return () => {};
-    const release = memory.retain(key, day);
-    return () => { release(); if (!revision) memory.delete(key); };
+    return memory.retain(key, day);
   }
   function forget(key: string) {
     memory.delete(key);
-    Promise.resolve().then(() => revision ? persistentCache?.remove(key) : null).catch(() => {});
+    Promise.resolve().then(() => persistentCache?.remove(key)).catch(() => {});
   }
 
   function identity(chart: BirthDayIdentity | null | undefined) {
     const birthDate = chart?.birthDate, cityId = String(chart?.cityId ?? chart?.city?.id ?? '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate || '') || !cityId) return null;
-    return { birthDate: birthDate!, cityId, timezone: chart?.timezone, key: `natal-day:${revision}:${NATAL_DAY_VERSION}:${birthDate}:${cityId}` };
+    return { birthDate: birthDate!, cityId, timezone: chart?.timezone, key: `natal-day:${NATAL_DAY_VERSION}:${birthDate}:${cityId}` };
   }
   function validate(bytes: ArrayBuffer, birthDate: string) {
     let day:NatalDay;
@@ -67,12 +64,11 @@ export function createNatalDayClient({
       throw error;
     }
     if (day.date !== birthDate) throw Object.assign(new Error('Сервер вернул расчёт другого дня.'),{code:'invalid_response'});
-    if (revision && day.calculationVersion !== revision) throw Object.assign(new Error('Версия расчёта дня рождения изменилась. Обновите страницу.'),{code:'unsupported_version'});
     return day;
   }
   function peekDay(chart: BirthDayIdentity | null | undefined) {
     const input = identity(chart);
-    const day = revision && input ? memory.get<NatalDay>(input.key) : null;
+    const day = input ? memory.get<NatalDay>(input.key) : null;
     if(day && compatibleTimezone(day,input!.timezone)){touch(input!.key);return day;}
     return null;
   }
@@ -81,7 +77,7 @@ export function createNatalDayClient({
   async function readDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
     if (signal?.aborted) throw createAbortError();
     const input = identity(chart);
-    if (!revision || !input) return null;
+    if (!input) return null;
     const hot = peekDay(chart); if (hot) return hot;
     const day = await shareRequest(reads, input.key, async ({ controller }) => {
       let bytes: ArrayBuffer | null | undefined;
@@ -105,14 +101,14 @@ export function createNatalDayClient({
       if (!compatibleTimezone(day, timezone)) throw Object.assign(new Error('Часовой пояс расчёта не совпадает с картой.'),{code:'invalid_response'});
       return day;
     };
-    const cached = revision && memory.get<NatalDay>(key), skipDisk = cached && !compatibleTimezone(cached, timezone);
+    const cached = memory.get<NatalDay>(key), skipDisk = cached && !compatibleTimezone(cached, timezone);
     if (cached && !skipDisk) return remember(key, cached);
     if (skipDisk) forget(key);
     return forChart(await shareRequest(pending, key, async ({ controller, consumers }) => {
       let bytes: ArrayBuffer | null | undefined;
-      try { if (revision && !skipDisk) bytes = await persistentCache?.get(key); } catch { /* Local storage is optional. */ }
+      try { if (!skipDisk) bytes = await persistentCache?.get(key); } catch { /* Local storage is optional. */ }
       if (controller.signal.aborted) throw createAbortError();
-      const ready = revision && memory.get<NatalDay>(key);
+      const ready = memory.get<NatalDay>(key);
       if (ready && [...consumers].every(consumer => compatibleTimezone(ready, consumer.timezone))) return remember(key, ready);
       if (bytes) {
         try {
@@ -128,7 +124,7 @@ export function createNatalDayClient({
       try {
         const response = await fetchDay('/api/chart/day', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-          body: JSON.stringify({ birthDate, cityId, v: NATAL_DAY_VERSION, ...(revision ? { r: revision } : {}) }), signal: controller.signal,
+          body: JSON.stringify({ birthDate, cityId, v: NATAL_DAY_VERSION }), signal: controller.signal,
         });
         if (!response.ok) {
           let error;
@@ -142,7 +138,7 @@ export function createNatalDayClient({
         // Incompatible callers still fail independently below; without a
         // compatible consumer, the fresh packet is never retained.
         if ([...consumers].some(consumer => compatibleTimezone(day, consumer.timezone))) {
-          Promise.resolve().then(() => revision ? persistentCache?.put(key, bytes!) : null).catch(() => {});
+          Promise.resolve().then(() => persistentCache?.put(key, bytes!)).catch(() => {});
           remember(key, day);
         }
         return day;

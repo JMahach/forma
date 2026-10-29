@@ -26,14 +26,9 @@ export function createLifetimeHandler(service?: Pick<LifetimeService, 'getMetada
       }
       if (url.pathname !== '/api/lifetime') throw new LifetimeError('not_found', 'Страница не найдена.', 404);
       const values = url.searchParams.getAll('index');
-      const versions = url.searchParams.getAll('v');
-      if (values.length !== 1 || versions.length > 1 || url.searchParams.size !== 1 + versions.length
+      if (values.length !== 1 || url.searchParams.size !== 1
           || !/^(?:0|[1-9]\d{0,15})$/.test(values[0])) {
         throw new LifetimeError('invalid_index', 'Выберите момент в пределах шкалы.', 400);
-      }
-      const metadata = await service.getMetadata();
-      if (versions.length && (!/^[a-f0-9]{64}$/.test(versions[0]) || versions[0] !== metadata?.cacheVersion)) {
-        throw new LifetimeError('unsupported_version', 'Данные шкалы обновились. Обновите страницу.', 400);
       }
       const value = await service.getMoment(Number(values[0]), { signal: consumer.signal });
       if (consumer.signal.aborted) return;

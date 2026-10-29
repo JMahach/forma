@@ -3,25 +3,20 @@ export interface AppMetadata {
  environment?: 'stand' | 'production';
  standNumber?: string;
  appVersion?: string | null;
- calculationVersion?: string | null;
- cyclesVersion?: string | null;
 }
 const validators: Record<string, RegExp> = {
  'data-app-name': /^Форма(?: [1-9][0-9]*)?$/,
  'data-app-environment': /^(stand|production)$/,
  'data-app-version': /^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$/,
- 'data-calculation-version': /^[a-f0-9]{64}$/,
- 'data-cycles-version': /^[a-f0-9]{64}$/,
 };
 function attribute(name: string, value: string) {
  if (!validators[name].test(value)) throw new TypeError('Invalid application metadata: '+name);
  return ' '+name+'="'+value+'"';
 }
-export function appMetadataAttributes({environment='stand', standNumber='1', appVersion=null, calculationVersion=null, cyclesVersion=null}: AppMetadata = {}): string {
+export function appMetadataAttributes({environment='stand', standNumber='1', appVersion=null}: AppMetadata = {}): string {
  attribute('data-app-environment',environment);
  const appName=environment==='production'?'Форма':`Форма ${standNumber}`;
- return attribute('data-app-name',appName)+(cyclesVersion===null?'':attribute('data-cycles-version',cyclesVersion))
-  +(calculationVersion===null?'':attribute('data-calculation-version',calculationVersion))
+ return attribute('data-app-name',appName)
   +(appVersion===null?'':attribute('data-app-environment',environment)+attribute('data-app-version',appVersion));
 }
 /** Remove only the exact validated attributes added by the HTTP owner.

@@ -161,11 +161,3 @@ test('an interactive shell is never put back into boot mode by a layout commit',
   commitLoadingLayout(document as unknown as Document);
   assert.equal(shell.dataset.booting, 'false');
 });
-
-test('an obsolete calculation keeps its birth heading while numerical targets stay hidden', () => {
-  const h=harness();h.update({hasChart:true});
-  h.update({hasChart:false,preserveHeading:true});
-  assert.equal(h.drawing.inert,true);assert.equal(h.heading.style.visibility,'');
-  assert.equal(h.canvas.dataset.chartState,'loading');
-  h.update({hasChart:false,preserveHeading:false});assert.equal(h.heading.style.visibility,'hidden');
-});

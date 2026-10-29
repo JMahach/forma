@@ -4,7 +4,6 @@ import datetime as dt
 import hashlib
 import io
 import json
-import shutil
 from pathlib import Path
 import struct
 import subprocess
@@ -54,7 +53,8 @@ class LifetimeFileTests(unittest.TestCase):
             self.assertEqual(one['sha256'], two['sha256'])
             self.assertEqual(one['bytes'], 432 * 192)
             self.assertEqual(one['columns'], list(astro.MOMENT_FIELDS))
-            self.assertEqual(one['provenance'], dict(version='1', calculationFingerprint=lifetime.calculation_fingerprint()))
+            self.assertNotIn('provenance', one)
+            self.assertEqual(one['engine'], 'Swiss Ephemeris')
             self.assertEqual(hashlib.sha256(serial.read_bytes()).hexdigest(), one['sha256'])
             self.assertEqual(json.loads(serial.with_suffix('.metadata.json').read_text()), one)
             for boundary, index in zip(one['boundaryCheck'], (0, 431)):
@@ -106,39 +106,6 @@ class LifetimeFileTests(unittest.TestCase):
             self.assertIn(metadata['startUtc'], ('2024-02-28T00:00:00Z', '2024-02-29T00:00:00Z'))
             self.assertEqual(file.read_bytes()[:192], struct.pack('<24d', *metadata['boundaryCheck'][0]['values']))
             self.assertEqual(set(item.name for item in Path(directory).iterdir()), {'lifetime.f64le', 'lifetime.metadata.json'})
-
-    def test_changed_inputs_during_generation_never_publish(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / 'lifetime.f64le'
-            with mock.patch.object(lifetime, 'calculation_fingerprint', side_effect=['a'*64, 'b'*64]):
-                with self.assertRaisesRegex(ValueError, 'inputs changed'):
-                    lifetime.generate_lifetime_file(file, '2024-01-01', '2024-01-02', workers=1)
-            self.assertEqual(list(Path(directory).iterdir()), [])
-
-    def test_fingerprint_tracks_optional_ephemeris_shared_contract_and_date_policy(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in ('server/python', 'shared', 'data/ephe'):
-                shutil.copytree(lifetime.ROOT / name, root / name)
-            shutil.copyfile(lifetime.ROOT / 'requirements.txt', root / 'requirements.txt')
-            with mock.patch.object(lifetime, 'ROOT', root):
-                original = lifetime.calculation_fingerprint()
-                optional = root / 'data/ephe/seleapsec.txt'
-                before = original
-                for payload in (b'', b'20261231\n', b'20271231\n'):
-                    optional.write_bytes(payload)
-                    changed = lifetime.calculation_fingerprint()
-                    self.assertNotEqual(changed, before)
-                    before = changed
-                optional.unlink()
-                self.assertEqual(lifetime.calculation_fingerprint(), original)
-                for name in ('shared/day-packets/moment-columns.ts', 'server/python/date_limits.py', 'shared/date-limits.ts'):
-                    with self.subTest(name=name):
-                        contract = root / name
-                        payload = contract.read_bytes()
-                        contract.write_bytes(payload + b'\n')
-                        self.assertNotEqual(lifetime.calculation_fingerprint(), original)
-                        contract.write_bytes(payload)
 
     def test_cli_without_interval_prepares_the_full_supported_range(self):
         # Intercept only the expensive file preparation; exercise real parsing

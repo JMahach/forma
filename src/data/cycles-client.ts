@@ -12,7 +12,6 @@ interface CyclesClientOptions {
   request?: (url: string, options: RequestInit) => Promise<unknown>;
   memory?: MemoryCache;
   timeoutMs?: number;
-  cacheVersion?: string | null;
   returnStorage?: ReturnStorage | null;
 }
 export type CyclesClient = ReturnType<typeof createCyclesClient>;
@@ -28,16 +27,15 @@ import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 // Only default body dates and opened charts persist on the device. Other bodies
 // stay in shared tab memory; controllers pin active inputs within its byte budget.
 export function createCyclesClient({ request = requestJSON, memory = createMemoryCache(), timeoutMs = 60_000,
-  cacheVersion, returnStorage }: CyclesClientOptions = {}) {
+  returnStorage }: CyclesClientOptions = {}) {
   const lifetime = new AbortController(), attachments = new Map<string, SharedRequest<unknown>>();
   const preservations = new Map<string, SharedRequest<void>>();
   const reads = new Map<string, SharedRequest<unknown>>(), pending = new Map<string, SharedRequest<ClientCycleResult>>();
-  const version = typeof cacheVersion === 'string' && /^[a-f0-9]{64}$/.test(cacheVersion) ? cacheVersion : null;
-  const device = version ? returnStorage === undefined ? createReturnStorage() : returnStorage : null;
+  const device = returnStorage === undefined ? createReturnStorage() : returnStorage;
   const normalized = (action: CycleAction, input: CycleInput): CycleInput => action === 'events'
     ? { birthUtc: input.birthUtc, body: input.body, fromAge: input.fromAge ?? 0, toAge: input.toAge ?? LIFE_SPAN_YEARS }
     : { birthUtc: input.birthUtc, body: input.body, eventUtc: input.eventUtc, timezone: input.timezone ?? 'UTC' };
-  const identity = (action: CycleAction, input: CycleInput) => JSON.stringify([action, version, ...Object.values(normalized(action, input))]);
+  const identity = (action: CycleAction, input: CycleInput) => JSON.stringify([action, ...Object.values(normalized(action, input))]);
   const eventFields = ['id', 'body', 'utc', 'age', 'cycle', 'pass', 'cycleId', 'direction'] as const;
   const confirmsEvent = (event: CycleEvent | null | undefined, input: CycleInput): event is CycleEvent => validCycleEvent(event, input) && event!.utc === input.eventUtc;
   async function preserveReadyWork(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
@@ -50,7 +48,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
         const timer=setTimeout(()=>controller.abort(),timeoutMs);
         try {
           const reply = await request(`/api/charts/${encodeURIComponent(target.chartId)}/returns/accept`, {
-            method:'POST',cache:'no-store',headers:{'Content-Type':'application/json',...(version?{'X-Forma-Cycles-Version':version}:{})},
+            method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({expectedAccountId:target.expectedAccountId,action,input,result:data,proof}),signal:controller.signal,
           });
           if (!reply || typeof reply !== 'object' || !('accepted' in reply) || reply.accepted !== true) throw new Error('Invalid return attachment');
@@ -91,17 +89,16 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     const found:CycleInput[]=[];
     for(const key of keys)try {
       const parts:unknown=JSON.parse(key);
-      if(!Array.isArray(parts) || parts.length!==6 || parts[0]!=='chart' || parts[1]!==version
-        || parts[2]!==input.birthUtc || input.body && parts[3]!==input.body || typeof parts[3]!=='string'
-        || typeof parts[4]!=='string' || !Number.isFinite(Date.parse(parts[4])) || parts[5] !== (input.timezone??'UTC'))continue;
-      found.push({birthUtc:input.birthUtc,body:parts[3],eventUtc:parts[4],timezone:parts[5]});
+      if(!Array.isArray(parts) || parts.length!==5 || parts[0]!=='chart'
+        || parts[1]!==input.birthUtc || input.body && parts[2]!==input.body || typeof parts[2]!=='string'
+        || typeof parts[3]!=='string' || !Number.isFinite(Date.parse(parts[3])) || parts[4] !== (input.timezone??'UTC'))continue;
+      found.push({birthUtc:input.birthUtc,body:parts[2],eventUtc:parts[3],timezone:parts[4]});
     } catch { /* A malformed catalogue identity is not a candidate. */ }
     return found;
   }
   async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false, preserve = true }: CycleOptions = {}): Promise<ClientCycleResult | null> {
     signal = signal ? AbortSignal.any([signal,lifetime.signal]) : lifetime.signal;
     if (signal.aborted) throw createAbortError();
-    if (cacheOnly && !version) return null;
     // Copy before the optional device read so callers cannot mutate identity.
     const sourceTimezone = input.timezone ?? 'UTC';
     input = normalized(action, input);
@@ -164,8 +161,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
       try {
         const url = own ? `/api/charts/${encodeURIComponent(own.chartId)}/returns/${action}` : `/api/cycles/${action}`;
-        const data = await request(url, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json',
-          ...(version ? { 'X-Forma-Cycles-Version': version } : {}) }, body: JSON.stringify(own ? {...input, timezone: sourceTimezone, expectedAccountId: own.expectedAccountId} : input), signal: controller.signal });
+        const data = await request(url, { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(own ? {...input, timezone: sourceTimezone, expectedAccountId: own.expectedAccountId} : input), signal: controller.signal });
         if (controller.signal.aborted) throw createAbortError();
         if (!validCycleResult(action, data, input)) throw new Error('Сервер вернул неполные данные цикла.');
         return accept(data, { save: true });
@@ -178,7 +174,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
   return { preparedChartInputs, events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
     readEvents: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('events', input, signal, { cacheOnly: true }) as Promise<CycleEventsResult | null>,
     chart: (input: CycleInput, signal?: AbortSignal, options?: Omit<CycleOptions, 'cacheOnly'>) => get('chart', input, signal, options) as Promise<CachedCycleChart>,
-    // A confirmed cached chart carries its own current-revision event label.
+    // A confirmed cached chart carries its own exact event label.
     // This never joins numerical requests or asks for the body's dates.
     readChart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('chart', input, signal, { cacheOnly: true }) as Promise<CachedCycleChart | null>,
     retainChart: (input: CycleInput, data: CachedCycleChart) => memory.retain(`return-chart:${identity('chart', input)}`, data),
@@ -190,6 +186,6 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       const data=await get(action,request,active,{cacheOnly:true,preserve:false});
       if(data)await preserveReady(action,request,data,destination,active);
     },
-    close() {lifetime.abort();},
+    close() {lifetime.abort();if(returnStorage===undefined)device?.close();},
   };
 }

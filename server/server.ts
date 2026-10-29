@@ -11,11 +11,10 @@ import { createDiagnosticHandler, DIAGNOSTIC_HTTP_RESERVED_BYTES } from './http/
 import { createTransitDays } from './services/transit-days.ts';
 import { createNatalDays } from './services/natal-days.ts';
 import { createPublicFileHandler, readReleaseManifest } from './http/public-files.ts';
-import { createCycles, cyclesCalculationFingerprint } from './services/cycles.ts';
+import { createCycles } from './services/cycles.ts';
 import { createLifetimeService, LifetimeError } from './services/lifetime.ts';
 
 import { createComputeQueue } from './runtime/compute-queue.ts';
-import { calculationVersion } from './runtime/calculation-version.ts';
 import { accountEnvironment } from './runtime/account-environment.ts';
 import { createAccountRuntime } from './accounts.ts';
 import { journalEnvironment } from './runtime/journal-environment.ts';
@@ -57,25 +56,22 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     const appVersion=env.FORMA_APP_VERSION??'0.2-development';
     component='cities';
     const cities = await loadCityCatalog(path.join(root, 'data/cities.json'));
-    component='versions';
-    const numericVersion = await calculationVersion(root);
-    const cyclesVersion = await cyclesCalculationFingerprint(root);
     component='public_files';
     const releaseDir = release ? path.join(root, 'dist') : null;
-    const publicFiles = createPublicFileHandler({ cyclesVersion, calculationVersion: numericVersion, appVersion, environment:journalConfiguration.environment, standNumber:env.FORMA_STAND_NUMBER, ...(releaseDir
+    const publicFiles = createPublicFileHandler({ appVersion, environment:journalConfiguration.environment, standNumber:env.FORMA_STAND_NUMBER, ...(releaseDir
       ? { root: releaseDir, files: await readReleaseManifest(releaseDir), precompressed: true } : { root }) });
     const computeQueue = createComputeQueue(); cleanup.push(() => computeQueue.close());
     component='calculator';
     const calculate = createCalculator({ root, computeQueue, report: journal.report }); cleanup.push(() => calculate.close());
     component='transit_day';
     const transitDays = await createTransitDays({ root, computeQueue, report: journal.report,
-      calculationVersion: numericVersion, cacheDir: env.TRANSIT_CACHE_DIR }); cleanup.push(() => transitDays.close());
+      cacheDir: env.TRANSIT_CACHE_DIR }); cleanup.push(() => transitDays.close());
     component='natal_day';
-    const natalDays = createNatalDays({ root, computeQueue, report: journal.report, calculationVersion: numericVersion });
+    const natalDays = createNatalDays({ root, computeQueue, report: journal.report });
     component='cycles';
-    const cycles = createCycles({ root, computeQueue, report: journal.report, cacheVersion: cyclesVersion }); cleanup.push(() => cycles.close());
+    const cycles = createCycles({ root, computeQueue, report: journal.report }); cleanup.push(() => cycles.close());
     component='lifetime';
-    const lifetime = createLifetimeService({ root, calculationVersion: numericVersion, report: journal.report }); cleanup.push(() => lifetime?.close());
+    const lifetime = createLifetimeService({ root, report: journal.report }); cleanup.push(() => lifetime?.close());
     // The same reader verifies once before HTTP opens, not inside the first
     // visitor's request. An unfinished file keeps the existing limited mode.
     try { await lifetime.getMetadata(); }
@@ -94,7 +90,6 @@ export async function startServer({ root = projectRoot, env = process.env, relea
       trustLoopbackProxy:accountConfiguration.trustLoopbackProxy,
       write:({deliveryIp,...report})=>journal.receiveClient(report,deliveryIp)});
     const handler = createRequestHandler({ root, report: journal.report, cities, calculate, transitDays, natalDays, lifetime, cycles, publicFiles,
-      versions: { calculationVersion: numericVersion, cyclesVersion },
       accountHandler: account.handler, chartHandler: account.chartHandler, issueCalculationReceipt:account.issueCalculationReceipt, issueReturnReceipt:account.issueReturnReceipt, diagnosticHandler });
     const mailbox = createMailboxProxy({enabled:env.FORMA_LOCAL_MAILBOX === '1',
       environment:journalConfiguration.environment, release, port}); cleanup.push(() => mailbox.close());

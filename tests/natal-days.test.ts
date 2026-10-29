@@ -199,7 +199,7 @@ test('a natal disconnect during upload never submits calculation work', async t 
   assert.equal(req.destroyed, true); await handled; assert.equal(calls, 0);
 });
 
-async function request(service: { get: (date: string,timezone: string,{ signal }?: { signal?: AbortSignal; }) => Promise<DayPacket>; calculationVersion: string|null; size: number; queued: number; }, { method = 'POST', value = { birthDate: '1990-06-15', cityId: 'trusted', v: '1' }, body = JSON.stringify(value), headers = {} }: { method?: string; value?: Record<string, unknown>; body?: string; headers?: Record<string, string> } = {}) {
+async function request(service: { get: (date: string,timezone: string,{ signal }?: { signal?: AbortSignal; }) => Promise<DayPacket>; size: number; queued: number; }, { method = 'POST', value = { birthDate: '1990-06-15', cityId: 'trusted', v: '1' }, body = JSON.stringify(value), headers = {} }: { method?: string; value?: Record<string, unknown>; body?: string; headers?: Record<string, string> } = {}) {
   const req = Readable.from([Buffer.from(body)]) as IncomingMessage;
   Object.assign(req, { url: '/api/chart/day', method, headers: { host: 'localhost', 'content-type': 'application/json', ...headers } });
   const res = { headersSent: false, writeHead(status, headers) { this.status = status; this.headers = headers; this.headersSent = true; }, end(body) { this.body = body; } } as CapturedResponse<Buffer | string> & { headersSent: boolean };
@@ -261,14 +261,12 @@ test('real historical and fold days survive production compression and reconstru
 });
 
 
-test('natal requests attest the current numerical revision and reject stale clients before computation', async () => {
-  const revision = 'a'.repeat(64); let calls = 0;
-  const service = createNatalDays({ calculationVersion: revision, generateDay: async (date, timezone) => { calls++; return makeDay(date, timezone); } });
-  for (const r of ['b'.repeat(64), 'invalid'] as const) {
-    const result = await request(service, { value: { birthDate: '1990-06-15', cityId: 'trusted', v: '1', r } });
-    assert.equal(result.status, 400); assert.equal(calls, 0);
-  }
-  const result = await request(service, { value: { birthDate: '1990-06-15', cityId: 'trusted', v: '1', r: revision } });
-  assert.equal(result.status, 200);
-  assert.equal(decodeNatalDay(result.body).calculationVersion, revision); assert.equal(calls, 1);
+test('ready natal packets have no calculation marker and repeat reads reuse the prepared bytes', async () => {
+  let calls = 0;
+  const service = createNatalDays({generateDay:async (date,timezone)=>{calls++;return makeDay(date,timezone);}});
+  const value={birthDate:'1990-06-15',cityId:'trusted',v:'1'};
+  const first=await request(service,{value}),second=await request(service,{value});
+  assert.equal(first.status,200);assert.equal(second.status,200);
+  assert.equal(Object.hasOwn(decodeNatalDay(first.body),'calculationVersion'),false);
+  assert.deepEqual(second.body,first.body);assert.equal(calls,1);
 });

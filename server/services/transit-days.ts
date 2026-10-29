@@ -27,7 +27,6 @@ interface TransitDaysOptions {
   root?: string;
   cacheDir?: string;
   now?: () => Date;
-  calculationVersion?: string | null;
   computeQueue?: ComputeQueue;
   generateDay?: (date: string, options: QueueOptions) => Promise<TransitDay>;
   onCacheError?: (error: unknown) => void;
@@ -42,7 +41,6 @@ import { runJsonWorker } from '../runtime/json-worker.ts';
 import { encodePredictedDay, compressDayPacket } from '../packets/compression.ts';
 
 import { consumeJob, aborted } from '../runtime/job-consumers.ts';
-import { calculationVersion } from '../runtime/calculation-version.ts';
 
 const DAY_MS = 86400000, MAX_QUEUED = 5;
 const utcDate = (moment: number | Date) => new Date(moment).toISOString().slice(0, 10);
@@ -87,10 +85,9 @@ async function representations(raw: Buffer) {
 }
 
 export async function createTransitDays({ root, cacheDir = root ? path.join(root, '.cache/transit') : undefined,
-  now = () => new Date(), calculationVersion: version = null, computeQueue, report,
+  now = () => new Date(), computeQueue, report,
   generateDay = (date, options) => generateTransitDay({ root: root!, date, computeQueue, report, ...options }), onCacheError = () => {} }: TransitDaysOptions = {}) {
   const failure = createCalculationFailureReporter('transit_day', report);
-  version ||= await calculationVersion(root!);
   const memory = new Map<string, DayPacket>(), pending = new Map<string, TransitWork>(), queue: TransitWork[] = [];
   let running: Promise<void> | null = null, timer: ReturnType<typeof setTimeout> | null = null, warming = false, warmGeneration = 0;
   let retainedToday = '', retained = new Set<string>();
@@ -144,7 +141,7 @@ export async function createTransitDays({ root, cacheDir = root ? path.join(root
         let raw: Buffer;
         try {
           if (day.date !== job.date) throw new Error('Unexpected transit date');
-          raw = await encodeDayPacket({ ...day, calculationVersion: version! });
+          raw = await encodeDayPacket(day);
         } catch (error) {
           if (job.controller.signal.aborted) throw error;
           failure('invalid_result'); throw new TransitDayError('transit_unavailable', 'Не удалось подготовить дневной транзит. Повторите попытку.');
@@ -228,7 +225,7 @@ export async function createTransitDays({ root, cacheDir = root ? path.join(root
   }
 
   await prune();
-  return { get, warm, startWarmup, close, prune, calculationVersion: version,
+  return { get, warm, startWarmup, close, prune,
     get migration() { return {...migration}; },
     get size() { syncWindow(); return memory.size; }, get queued() { return queue.length; } };
 }

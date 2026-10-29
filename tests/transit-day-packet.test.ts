@@ -17,7 +17,7 @@ function fixture() {
       ? (column * 31.7 + row * 0.019731) % 360 : column === 22 ? Date.parse('2026-06-24T12:34:56Z') / 1000 + row * 61 : row % 100 * 1e-12)) };
 }
 function bits(values:ArrayLike<number>) { return Buffer.from(new Float64Array(values).buffer).toString('hex'); }
-type PacketHeader = ReturnType<typeof fixture> & {version:string;orders:number[];calculationVersion:string|number};
+type PacketHeader = ReturnType<typeof fixture> & {version:string;orders:number[]};
 function rewriteHeader(packet:Uint8Array, update:(header:PacketHeader)=>void) {
   const length = new DataView(packet.buffer, packet.byteOffset).getUint32(4, true);
   const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length))) as PacketHeader;
@@ -53,7 +53,7 @@ test('mixed planet predictors, offset byte views and ArrayBuffers decode identic
   assert.equal(encodeNumericColumn(day.columns[0], 3).length, 1440 * 8);
 });
 
-test('materialized minutes use exact two-sided positions and retain a valid legacy saved-transit fallback', () => {
+test('materialized minutes preserve complete snapshots and reject an incomplete saved-transit fallback', () => {
   const day = decodeTransitDay(encodeTransitDay(fixture()));
   day.columns[0][0] = 307.62499999999994;
   for (const minute of [0, 1, 719, 1439] as const) {
@@ -68,7 +68,9 @@ test('materialized minutes use exact two-sided positions and retain a valid lega
       birthPlace: '', cityId: null, city: null, note: '', createdAt: day.startUtc, updatedAt: chart.utc,
       design: [], designUtc: null, designArcResidualDegrees: null,
       activations: { personality: chart.activations!.personality, design: [] } };
-    assert.equal(normalizeTemporaryChart(legacyFallback)?.utc, chart.utc);
+    assert.equal(normalizeTemporaryChart(legacyFallback), null);
+    assert.equal(normalizeTemporaryChart({...legacyFallback, design:chart.design, designUtc:chart.designUtc,
+      designArcResidualDegrees:chart.designArcResidualDegrees, activations:chart.activations})?.utc, chart.utc);
     assert.equal(chart.utc, new Date(Date.parse(day.startUtc) + minute * 60000).toISOString().replace('.000Z', 'Z'));
     assert.equal(localDate, chart.utc!.slice(0, 10)); assert.equal(localTime, chart.utc!.slice(11, 16));
     for (const [column, planet] of TRANSIT_PLANETS.entries()) {

@@ -1,3 +1,4 @@
+import { migrateCalculationCache } from './calculation-cache-transition.ts';
 import type { StoragePressure, StorageRelief } from './storage-pressure.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
 import { estimateBytes } from './memory-cache.ts';
@@ -6,20 +7,18 @@ import { createLegacyCalculationSource, describeLegacyCalculation, LEGACY_CALCUL
 
 export const CALCULATION_CACHE_BYTES=256_000_000;
 const CONTROL_BYTES=4096;
-type Versions={natal?:string;returns?:string};
-export interface TransitWindow {version:string;dates:readonly string[];expiresAt:number}
+export interface TransitWindow {dates:readonly string[];expiresAt:number}
 interface WindowRecord extends TransitWindow {revision:number}
 interface State {key:'budget';phase:'scanning'|'migrating'|'ready';accountedBytes:number;legacyBytes:number;
-  clock:number;personalEpoch:number;revision:number;versions:Versions;window:WindowRecord|null}
+  clock:number;personalEpoch:number;revision:number;window:WindowRecord|null}
 interface SourceState {key:string;definition:LegacyCalculationSource;storeIndex:number;after?:IDBValidKey;
   scanned:boolean;finished:boolean;personalEpoch:number}
-interface Catalogue {id:string;kind:CalculationKind|null;key:string;version?:string;date?:string;
+interface Catalogue {id:string;kind:CalculationKind|null;key:string;date?:string;
   bytes:number;lru:number;location:'data'|'legacy';family:'natal'|'returns'|'transit';personalEpoch:number;
   source?:string;store?:string;sourceKey?:IDBValidKey;legacyBytes?:number;stage?:'pending'|'copied'|'evicting'}
 interface Options {indexedDB?:IDBFactory|null;timeoutMs?:number;maxBytes?:number;now?:()=>number;
   databaseName?:string;legacySources?:readonly LegacyCalculationSource[];pressure?:StoragePressure}
 export type CalculationCache=ReturnType<typeof createCalculationCache>;
-const revision=(value:unknown):value is string=>typeof value==='string' && /^[a-f0-9]{64}$/.test(value);
 const identity=(kind:CalculationKind,key:string)=>JSON.stringify([kind,key]);
 const family=(kind:CalculationKind)=>kind==='natal'?'natal':kind==='transit'?'transit':'returns';
 const request=<T>(value:IDBRequest<T>)=>new Promise<T>((resolve,reject)=>{
@@ -43,12 +42,13 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
   now=Date.now,databaseName='forma-calculation-cache',legacySources=LEGACY_CALCULATION_SOURCES,pressure}:Options={}) {
   if(!Number.isSafeInteger(maxBytes) || maxBytes<CONTROL_BYTES || maxBytes>CALCULATION_CACHE_BYTES)throw new RangeError('Invalid calculation budget');
   if(legacySources.length>3 || new Set(legacySources.map(source=>source.id)).size!==legacySources.length)throw new RangeError('Invalid legacy sources');
-  const database=createIndexedDatabase({indexedDB:factory,databaseName,version:2,timeoutMs,
-    stores:['payloads','catalogue','control'],upgrade(db,tx){
+  const database=createIndexedDatabase({indexedDB:factory,databaseName,version:3,timeoutMs,
+    stores:['payloads','catalogue','control'],upgrade(db,tx,oldVersion){
       if(!db.objectStoreNames.contains('payloads'))db.createObjectStore('payloads',{keyPath:'id'});
       const catalogue=db.objectStoreNames.contains('catalogue')?tx.objectStore('catalogue'):db.createObjectStore('catalogue',{keyPath:'id'});
       for(const name of ['lru','kind','location','stage'])if(!catalogue.indexNames.contains(name))catalogue.createIndex(name,name);
       if(!db.objectStoreNames.contains('control'))db.createObjectStore('control',{keyPath:'key'});
+      if(oldVersion>0)migrateCalculationCache(tx);
     }});
   const sources=new Map(legacySources.map(source=>[source.id,createLegacyCalculationSource(source,{indexedDB:factory,timeoutMs})]));
   let closed=false,epoch:number|undefined,working:Promise<boolean>|null=null,setupWork:Promise<boolean|null>|null=null,expiration:ReturnType<typeof setTimeout>|undefined;
@@ -80,16 +80,14 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     tx.objectStore('catalogue').delete(meta.id);if(meta.location==='data')tx.objectStore('payloads').delete(meta.id);
     value.accountedBytes-=meta.bytes;value.legacyBytes-=meta.legacyBytes??0;value.revision++;
   }
-  function eligible(meta:Pick<Catalogue,'family'|'version'|'date'|'personalEpoch'>,value:State,allowUnconfirmed=false) {
-    if(meta.family!=='transit') {
-      const current=value.versions[meta.family];return meta.personalEpoch===value.personalEpoch && (!current || meta.version===current);
-    }
+  function eligible(meta:Pick<Catalogue,'family'|'date'|'personalEpoch'>,value:State,allowUnconfirmed=false) {
+    if(meta.family!=='transit')return meta.personalEpoch===value.personalEpoch;
     const current=value.window;
-    return current?current.expiresAt>now() && current.version===meta.version && current.dates.includes(meta.date??''):allowUnconfirmed;
+    return current?current.expiresAt>now() && current.dates.includes(meta.date??''):allowUnconfirmed;
   }
   const protectedDay=(meta:Catalogue,value:State)=>meta.family==='transit' && eligible(meta,value);
-  function storedMeta(kind:CalculationKind,key:string,payload:unknown,info:{version?:string;date?:string},value:State,lru?:number):Catalogue {
-    const meta:Catalogue={id:identity(kind,key),kind,key,version:info.version,date:info.date,bytes:0,lru:lru??Math.max(now(),value.clock+1),
+  function storedMeta(kind:CalculationKind,key:string,payload:unknown,info:{date?:string},value:State,lru?:number):Catalogue {
+    const meta:Catalogue={id:identity(kind,key),kind,key,date:info.date,bytes:0,lru:lru??Math.max(now(),value.clock+1),
       location:'data',family:family(kind),personalEpoch:value.personalEpoch};
     meta.bytes=estimateBytes({id:meta.id,value:payload})+estimateBytes(meta);return meta;
   }
@@ -114,7 +112,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     setupWork=atomic(async tx=>{
     let value=await state(tx);
     if(!value){value={key:'budget',phase:'scanning',accountedBytes:CONTROL_BYTES,legacyBytes:0,clock:0,
-      personalEpoch:0,revision:0,versions:{},window:null};save(tx,value);}
+      personalEpoch:0,revision:0,window:null};save(tx,value);}
     for(const definition of legacySources) {
       const key=`source:${definition.id}`,old=await request(tx.objectStore('control').get(key)) as SourceState|undefined;
       if(old && JSON.stringify(old.definition)!==JSON.stringify(definition))throw new Error('Legacy source identity changed');
@@ -158,7 +156,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
               if(!await request(tx.objectStore('catalogue').get(id))) {
                 const oldAccess=(item.value as {accessedAt?:unknown}|null)?.accessedAt;
                 const lru=typeof oldAccess==='number' && Number.isFinite(oldAccess)?Math.max(0,Math.min(now(),oldAccess)):0;
-                const meta:Catalogue={id,kind:description?.kind??null,key:description?.key??'',version:description?.version,date:description?.date,
+                const meta:Catalogue={id,kind:description?.kind??null,key:description?.key??'',date:description?.date,
                   bytes:0,lru,location:'legacy',family:definition.family,personalEpoch:current.personalEpoch,
                   source:definition.id,store,sourceKey:item.key,legacyBytes:estimateBytes(item.value)+estimateBytes(item.key),
                   stage:description && (definition.family==='transit' || current.personalEpoch===value.personalEpoch)?'pending':'evicting'};
@@ -279,7 +277,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     };
     const accessed=await atomicResult(tx=>lookup(tx,true));
     // Failed bookkeeping must not hide a saved calculation. Re-read the live
-    // version and owner in the fallback transaction; never reuse a stale value.
+    // window and owner in the fallback transaction; never reuse a stale value.
     const found=accessed.status==='complete'?accessed.value
       :accessed.status==='quota' && !touchOnly?await atomic(tx=>lookup(tx,false),'readonly'):null;
     if(!found)return null;if(!found.legacy)return found.value??null;
@@ -311,7 +309,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     async get<T=unknown>(kind:CalculationKind,key:string):Promise<T|null>{return await read<T>(kind,key) as T|null;},
     async touch(kind:CalculationKind,key:string){return await read(kind,key,true) as boolean|null;},
     // Admission probes do not consume a payload or update its LRU. The current
-    // version, epoch and transit window are rechecked in this transaction.
+    // epoch and transit window are rechecked in this transaction.
     async has(kind:CalculationKind,key:string) {
       if(!await ready())return null;
       return atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;
@@ -319,7 +317,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
         return Boolean(meta && (meta.location==='data' || meta.stage==='pending') && eligible(meta,value));
       },'readonly');
     },
-    async put(kind:CalculationKind,key:string,payload:unknown,info:{version?:string;date?:string}={}):Promise<boolean|null> {
+    async put(kind:CalculationKind,key:string,payload:unknown,info:{date?:string}={}):Promise<boolean|null> {
       let snapshot:unknown;try{snapshot=structuredClone(payload);}catch{return null;}
       if(!await ready())return null;
       for(;;){const write=()=>atomicResult(async tx=>{
@@ -390,34 +388,19 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     },
     async catalogue(kind:CalculationKind) {
       if(!await ready())return null;
-      return atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;const found:{key:string;version?:string;date?:string}[]=[];
+      return atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;const found:{key:string;date?:string}[]=[];
         for await(const cursor of rows(tx.objectStore('catalogue').index('kind'),kind)){
-          const meta=cursor.value as Catalogue;if((meta.location==='data' || meta.stage==='pending') && eligible(meta,value))found.push({key:meta.key,version:meta.version,date:meta.date});}
+          const meta=cursor.value as Catalogue;if((meta.location==='data' || meta.stage==='pending') && eligible(meta,value))found.push({key:meta.key,date:meta.date});}
         return found;},'readonly');
     },
-    /** Only the server-confirmed update coordinator may change versions. previous guards races, never proves freshness. */
-    async confirmVersions(next:Versions,{previous={}}:{previous?:Versions}={}) {
-      if(!await setup() || Object.values(next).some(value=>!revision(value)))return {status:'invalid' as const};
-      const keys=Object.keys(next) as (keyof Versions)[];
-      let changed=false;
-      const result=await atomic(async tx=>{const value=(await state(tx))!;
-        for(const key of keys)if(value.versions[key] && value.versions[key]!==next[key] && previous[key]!==value.versions[key])return {status:'stale' as const};
-        // Ready writers already enforce these versions. With no rule change,
-        // only an expired transit window can make another row ineligible.
-        if(value.phase==='ready' && keys.every(key=>value.versions[key]===next[key])
-          && (!value.window || value.window.expiresAt>now()))return {status:'applied' as const};
-        value.versions={...value.versions,...next};await prune(tx,value);value.revision++;save(tx,value);changed=true;return {status:'applied' as const};});
-      if(result?.status==='applied' && changed)publish();return result;
-    },
-    async setTransitWindow(window:TransitWindow,{previousVersion,expectedRevision,expectedVersions}:{previousVersion?:string;expectedRevision?:number;expectedVersions?:Versions}={}) {
-      if(!await setup() || !revision(window.version) || window.dates.length<1 || window.dates.length>2
+    async setTransitWindow(window:TransitWindow,{expectedRevision}:{expectedRevision?:number}={}) {
+      if(!await setup() || window.dates.length<1 || window.dates.length>2
         || new Set(window.dates).size!==window.dates.length || window.dates.some(date=>!/^\d{4}-\d{2}-\d{2}$/.test(date))
         || !Number.isSafeInteger(window.expiresAt) || window.expiresAt<=now())return {status:'invalid' as const};
       let changed=false;
       const result=await atomic(async tx=>{const value=(await state(tx))!,current=value.window;
-        if(expectedVersions && (value.versions.natal!==expectedVersions.natal || value.versions.returns!==expectedVersions.returns))return {status:'stale' as const};
-        if(current && current.version===window.version && current.expiresAt===window.expiresAt && JSON.stringify(current.dates)===JSON.stringify(window.dates))return {status:'applied' as const,revision:current.revision};
-        if(current && (current.revision!==expectedRevision || current.version!==window.version && current.version!==previousVersion))return {status:'stale' as const};
+        if(current && current.expiresAt===window.expiresAt && JSON.stringify(current.dates)===JSON.stringify(window.dates))return {status:'applied' as const,revision:current.revision};
+        if(current && current.revision!==expectedRevision)return {status:'stale' as const};
         value.window={...window,dates:[...window.dates],revision:(current?.revision??0)+1};await prune(tx,value);value.revision++;save(tx,value);changed=true;
         return {status:'applied' as const,revision:value.window.revision};});
       if(result?.status==='applied'){schedule({...window,revision:result.revision});if(changed)publish();}return result;

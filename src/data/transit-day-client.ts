@@ -7,7 +7,6 @@ import type { SharedRequest } from '../runtime/shared-request.ts';
 interface TransitClientOptions {
   fetch?: (url: string, options: RequestInit & { signal: AbortSignal }) => DayResponse | PromiseLike<DayResponse>;
   decode?: (bytes: ArrayBuffer) => TransitDay;
-  calculationVersion?: string | null;
   timeoutMs?: number;
   initialDate?: string | null;
   memory?: MemoryCache;
@@ -23,28 +22,25 @@ import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
 // Day is a transport adapter. The common full-day cache owns reusable numbers.
 export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode = decodeTransitDay,
-  calculationVersion: suppliedVersion = null, timeoutMs = 20_000, initialDate = null,
+  timeoutMs = 20_000, initialDate = null,
   memory = createMemoryCache(), days = createTransitDayCache({ memory }),
 }: TransitClientOptions = {}) {
-  let calculationVersion: string | null | undefined = suppliedVersion;
   const pending = new Map<string, SharedRequest<TransitDay>>();
-  const peekDay = (date: string) => calculationVersion ? days.peekDay(date, calculationVersion) : null;
+  const peekDay = (date: string) => days.peekDay(date);
   async function getDay(date: string, { signal }: { signal?: AbortSignal } = {}) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Некорректная дата транзита.');
     if (signal?.aborted) throw createAbortError();
     const remembered = peekDay(date); if (remembered) return remembered;
     return shareRequest(pending, date, async ({ controller }) => {
-      if (calculationVersion) {
-        const saved = await days.getDay(date, calculationVersion);
-        if (controller.signal.aborted) throw createAbortError();
-        if (saved) return saved;
-      }
+      const saved = await days.getDay(date);
+      if (controller.signal.aborted) throw createAbortError();
+      if (saved) return saved;
       let timedOut = false;
       const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
       try {
         let response;
         try {
-          response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}${calculationVersion ? `&r=${calculationVersion}` : ''}`, { signal: controller.signal, cache: 'no-store' });
+          response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}`, { signal: controller.signal, cache: 'no-store' });
         } catch (error) {
           if (controller.signal.aborted && !timedOut) throw createAbortError();
           if ((error as Error).name === 'ConnectionError') throw error;
@@ -57,11 +53,8 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
         const day = decode(await response.arrayBuffer());
         if (controller.signal.aborted) throw createAbortError();
         if (day.date !== date) throw new Error('Сервер вернул транзит другого дня.');
-        if (calculationVersion && day.calculationVersion !== calculationVersion) throw Object.assign(new Error('Версия дневного транзита не поддерживается.'), { code: 'unsupported_version' });
-        calculationVersion ||= day.calculationVersion;
-        if (!calculationVersion) return day; // Unknown numeric revisions cannot enter the shared cache.
         days.putDay(day);
-        return days.peekDay(date, calculationVersion) || day;
+        return days.peekDay(date) || day;
       } finally { clearTimeout(deadline); }
     }, { signal });
   }
@@ -69,7 +62,7 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
   const preload = new AbortController();
   let initial = initialDate ? getDay(initialDate, { signal: preload.signal }) : null;
   initial?.catch(() => {});
-  return { days, memory: days.memory || memory, peekDay, retainDay: (day: TransitDay) => day.calculationVersion ? days.retainDay(day as TransitDay & { calculationVersion: string }) : () => {},
+  return { days, memory: days.memory || memory, peekDay, retainDay: (day: TransitDay) => days.retainDay(day),
     getDay(date: string, options?: { signal?: AbortSignal }) {
       if (initial && date === initialDate) {
         const started = initial; initial = null;

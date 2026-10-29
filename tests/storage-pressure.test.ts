@@ -46,8 +46,8 @@ test('calculation relief is atomic across owners, uses last access, keeps ten an
  t.after(()=>{a.close();b.close();});
  for(let n=0;n<11;n++)await a.put('natal',String(n),new Uint8Array([n]));
  await a.get('natal','0');await a.put('return-events','dates',{events:[]});
- const version='a'.repeat(64);await a.setTransitWindow({version,dates:['2026-10-26'],expiresAt:Date.now()+100000});
- await a.put('transit','today',new Uint8Array([1]),{version,date:'2026-10-26'});
+ await a.setTransitWindow({dates:['2026-10-26'],expiresAt:Date.now()+100000});
+ await a.put('transit','today',new Uint8Array([1]),{date:'2026-10-26'});
  const results=await Promise.all([a.evictForSpace('natal',10),b.evictForSpace('natal',10)]);
  assert.deepEqual(results.sort(),['empty','released']);assert.equal(await a.get('natal','1'),null);assert.ok(await a.get('natal','0'));
  assert.ok(await a.get('transit','today'));assert.ok(await a.get('return-events','dates'));

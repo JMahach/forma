@@ -14,7 +14,7 @@ export function makeDay(date = '1990-06-15', timezone = 'UTC', samples = 1440) {
     engine: 'Swiss Ephemeris test', ephemeris: 'Test ephemerides', timezoneDatabase: 'IANA test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
 }
 const bits = (values:ArrayLike<number>) => Buffer.from(new Float64Array(values).buffer).toString('hex');
-type PacketHeader = ReturnType<typeof makeDay> & {version:string;orders:number[];calculationVersion:string|number};
+type PacketHeader = ReturnType<typeof makeDay> & {version:string;orders:number[]};
 function rewriteHeader(packet:Uint8Array, update:(header:PacketHeader)=>void) {
   const length = new DataView(packet.buffer, packet.byteOffset).getUint32(4, true);
   const header = JSON.parse(new TextDecoder().decode(packet.subarray(8, 8 + length))) as PacketHeader;
@@ -116,7 +116,7 @@ test('materialization contains only chart data and an explicit saved record reta
 test('bounded shapes, timeline validation and value ranges reject corrupt packets', () => {
   const packet = encodeNatalDay(makeDay());
   for (const bad of [null, {}, packet.subarray(0, -1), new Uint8Array(1_000_000)] as const) assert.throws(() => decodeNatalDay(bad));
-  for (const update of [(h: { version: string; }) => h.version = '2', (h:PacketHeader) => h.calculationVersion = '', (h:PacketHeader) => h.calculationVersion = 123, (h:PacketHeader) => h.calculationVersion = 'g'.repeat(64), (h: { samples: number; }) => h.samples = 2881, (h: { samples: number; }) => h.samples = 0, (h:{orders:number[]}) => h.orders.pop(), (h: { orders: number[]; }) => h.orders[0] = 9,
+  for (const update of [(h: { version: string; }) => h.version = '2', (h: { samples: number; }) => h.samples = 2881, (h: { samples: number; }) => h.samples = 0, (h:{orders:number[]}) => h.orders.pop(), (h: { orders: number[]; }) => h.orders[0] = 9,
     (    h: { segments: { index: number; }[]; }) => h.segments[0].index = 1, (h: { segments: { offsetSeconds: number; }[]; }) => h.segments[0].offsetSeconds = 1, (h: { segments: { fold: number; }[]; }) => h.segments[0].fold = 2,
     (    h: { segments: { startUtc: string; }[]; }) => h.segments[0].startUtc = '2000-01-01T00:00:00Z', (h: { date: string; }) => h.date = '1990-02-30', (h: { timezone: string; }) => h.timezone = 'x'.repeat(161)] as const) {
     assert.throws(() => decodeNatalDay(rewriteHeader(packet, update)));

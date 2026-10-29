@@ -13,9 +13,9 @@ import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.ts';
 
 const start = Date.parse('2026-09-29T00:00:00Z');
 const utc = (text: string) => Date.parse(`2026-09-${text}Z`);
-const metadata = { calculationVersion: 'a'.repeat(64), startUtc: '2026-09-29T00:00:00Z', endExclusiveUtc: '2026-10-02T00:00:00Z', stepSeconds: 600,
+const metadata = { startUtc: '2026-09-29T00:00:00Z', endExclusiveUtc: '2026-10-02T00:00:00Z', stepSeconds: 600,
   samples: 432, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris 2.10.03' };
-const dayAt = (date: string|null) => ({ calculationVersion: 'a'.repeat(64), version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
+const dayAt = (date: string|null) => ({ version: TRANSIT_DAY_VERSION, date, startUtc: `${date}T00:00:00Z`, stepSeconds: 60, samples: 1440,
   engine: metadata.engine, nodeModel: 'true', zodiac: 'tropical-geocentric-apparent',
   columns: Array.from({ length: 24 }, (_, column) => Float64Array.from({ length: 1440 }, (_, minute) => column < 22
     ? (column * 13 + minute / 10000) % 360 : column === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + minute * 60 : 1e-11)),
@@ -26,7 +26,7 @@ const response = value => ({ ok: true, json: async () => value });
 const tick = () => new Promise(setImmediate);
 async function calculationOwner(t:test.TestContext,indexedDB:IDBFactory) {
   const cache=createCalculationCache({indexedDB,now:()=>utc('30T12:00:00')});t.after(()=>cache.close());
-  await cache.setTransitWindow({version:metadata.calculationVersion,dates:['2026-09-30'],expiresAt:Date.parse('2026-10-01T00:00:00Z')});
+  await cache.setTransitWindow({dates:['2026-09-30'],expiresAt:Date.parse('2026-10-01T00:00:00Z')});
   return cache;
 }
 function harness({ capacity = 1, getMomentState = () => null } = {}) {
@@ -62,7 +62,7 @@ test('compatible minute lookup is synchronous, matches day values, validates UTC
 
 test('minute lookup rejects incompatible day contracts and days outside lifetime metadata', async () => {
   const raw = dayAt('2026-09-30');
-  for (const patch of [{ engine: 'other' }, { version: 'old' }, { stepSeconds: 600 }, { nodeModel: 'mean' }, { zodiac: 'other' }, { startUtc: '2026-10-01T00:00:00Z' }] as const) {
+  for (const patch of [{ version: 'old' }, { stepSeconds: 600 }, { nodeModel: 'mean' }, { zodiac: 'other' }, { startUtc: '2026-10-01T00:00:00Z' }] as const) {
     const client = createLifetimeClient({ dayClient: { peekDay: () => ({ ...raw, ...patch }) }, fetch: () => response(metadata) });
     await client.getMeta(); assert.equal(client.peekMinute(utc('30T09:37:00')), null);
   }
@@ -229,7 +229,7 @@ for (const personal of [false, true] as const) test(`a persisted day gives minut
   prepared.putDay(dayAt('2026-09-30')); await prepared.close();
   const days = createTransitDayCache({ cache:await calculationOwner(t,indexedDB) }); t.after(() => days.close());
   const calls = [];
-  const dayClient = createTransitDayClient({ days, calculationVersion: metadata.calculationVersion,
+  const dayClient = createTransitDayClient({ days,
     fetch() { throw Error('a saved day must not use HTTP'); } });
   const client = createLifetimeClient({ dayClient, fetch(url) {
     calls.push(url); return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
@@ -261,7 +261,7 @@ test('the first scrub uses an exact day minute committed by another tab after op
   } });
   const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
-  writer.putDay(dayAt('2026-09-30')); await writer.flush();await days.prepare(metadata.calculationVersion);
+  writer.putDay(dayAt('2026-09-30')); await writer.flush();await days.prepare();
   const before = calls.length, preparedScans = scans;
   await explorer.scrub(utc('30T12:31:08'));
   assert.equal(explorer.current!.utc, '2026-09-30T12:31:00Z');
@@ -403,15 +403,7 @@ test('a ready disk minute still shows intermediate progress during continuous sc
   assert.deepEqual(h.points, [360]);
 });
 
-test('an old disk read cannot be relabelled with replacement metadata', async () => {
-  let finish, meta = metadata;
-  const days = { prepare: async () => {}, peekDay: () => null, hasMinute: () => false,
-    getDay: () => new Promise(resolve => { finish = resolve; }) };
-  const client = createLifetimeClient({ days, fetch(url) { assert.equal(url, '/api/lifetime/meta'); return response(meta); } });
-  const loading = client.getPoint(1); const rejected = assert.rejects(loading, { name: 'AbortError' }); await tick();
-  client.invalidateMetadata(); meta = { ...metadata, calculationVersion: 'b'.repeat(64) }; await client.getMeta();
-  finish!(dayAt('2026-09-29')); await rejected;
-});
+
 
 test('every metadata consumer waits for the device minute catalogue', async () => {
   let ready; const prepared = new Promise(resolve => { ready = resolve; }); const days = { prepare: () => prepared };

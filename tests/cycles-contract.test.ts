@@ -70,7 +70,7 @@ test('server and client reject the same corrupt successful chart before publicat
 test('a stored return with contradictory gate sets is replaced before building the displayed composition', async () => {
   const corrupt = result(); corrupt.chart.personality = []; corrupt.chart.design = [];
   const fresh = result(); let calls = 0;
-  const client = createCyclesClient({ cacheVersion: 'a'.repeat(64),
+  const client = createCyclesClient({
     returnStorage: { getChart: async () => corrupt, removeChart: async () => {}, putChart: async () => {} },
     request: async () => { calls++; return fresh; } });
   const received = await client.chart(input);
@@ -106,7 +106,7 @@ test('both chart boundaries enforce the same symmetric one-second window down to
 test('opened exact charts reuse shared memory then device storage after reload', async () => {
   let calls = 0, reads = 0, writes = 0; const records = new Map();
   const returnStorage = { getChart: async key => { reads++; return records.get(key); }, putChart: async (key, data) => { writes++; records.set(key, data); } };
-  const options = { cacheVersion: 'a'.repeat(64), returnStorage, request: async () => { calls++; return result(); } };
+  const options = { returnStorage, request: async () => { calls++; return result(); } };
   const requested = { ...input, eventUtc: '2028-07-21T12:36:05Z' }, client = createCyclesClient(options);
   const first = await client.chart(requested);
   assert.equal(await client.chart(requested), first); assert.equal(calls, 1);

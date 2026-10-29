@@ -21,6 +21,8 @@ import { createIndexedDatabase } from '../src/data/indexed-db.ts';
 import { migrateAccountCalculations } from '../src/data/account-calculation-transition.ts';
 import { migrateCalculationCache } from '../src/data/calculation-cache-transition.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
+import { createBinaryCache } from '../src/data/binary-cache.ts';
+import { createNatalDayClient } from '../src/data/natal-day-client.ts';
 import { estimateBytes } from '../src/data/memory-cache.ts';
 import fs from 'node:fs/promises';
 import { migratePreparedLifetimeFile } from '../server/services/lifetime-transition.ts';
@@ -28,6 +30,16 @@ import { lifetimeFileFixture } from './helpers/lifetime-file.ts';
 
 const revision = 'a'.repeat(64);
 const payload = (packet:Uint8Array) => packet.subarray(8 + new DataView(packet.buffer, packet.byteOffset).getUint32(4, true));
+
+// Historical fixture bytes are built explicitly; the current encoder no longer emits these fields.
+function historicalPacket(packet:Uint8Array, markers:Record<string,unknown>) {
+  const length=new DataView(packet.buffer,packet.byteOffset).getUint32(4,true);
+  const metadata=JSON.parse(new TextDecoder().decode(packet.subarray(8,8+length)));
+  const header=new TextEncoder().encode(JSON.stringify({...metadata,...markers}));
+  const numbers=payload(packet), result=new Uint8Array(8+header.byteLength+numbers.byteLength);
+  result.set(packet.subarray(0,4));new DataView(result.buffer).setUint32(4,header.byteLength,true);
+  result.set(header,8);result.set(numbers,8+header.byteLength);return result;
+}
 
 test('removing calculation metadata preserves record numbers, ownership and format revisions without mutating the source', () => {
   const source = {...accountChart(), calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03', version:'3', cacheVersion:revision, cyclesVersion:revision};
@@ -81,18 +93,18 @@ test('day transition rewrites only metadata and preserves every numeric byte for
   ];
   for (const day of days) {
     day.columns[0].set([-0, Number.MIN_VALUE, 359.99999999999994]);
-    const original = encodeNatalDay({...day, calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'});
+    const original = historicalPacket(encodeNatalDay({...day, engine:'Swiss Ephemeris 2.10.03'}), {calculationVersion:revision});
     const before = original.slice(), migrated = migrateDayPacket('natal', original);
     assert.deepEqual(payload(migrated), payload(original));
     const decoded = decodeNatalDay(migrated);
     assert.deepEqual(decoded.columns, day.columns);
     assert.deepEqual(decoded.segments, day.segments);
-    assert.equal(decoded.calculationVersion, undefined);
+    assert.equal(Object.hasOwn(decoded,'calculationVersion'),false);
     assert.equal(decoded.engine, 'Swiss Ephemeris');
     assert.deepEqual(original, before);
     assert.equal(migrateDayPacket('natal', migrated), migrated);
   }
-  const transit = encodeTransitDay({...days[0], calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'});
+  const transit = historicalPacket(encodeTransitDay({...days[0], engine:'Swiss Ephemeris 2.10.03'}), {calculationVersion:revision});
   const migrated = migrateDayPacket('transit', transit);
   assert.deepEqual(payload(migrated), payload(transit));
   assert.deepEqual(decodeTransitDay(migrated).columns, days[0].columns);
@@ -258,8 +270,14 @@ test('prepared lifetime metadata loses only calculation markers while its numeri
   assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), original);
 });
 
+async function historicalLifetimeFixture(t:test.TestContext, count:number) {
+  const fixture=await lifetimeFileFixture(t,count);
+  const metadata={...fixture.metadata,engine:'Swiss Ephemeris 2.10.03',provenance:{version:'1',calculationFingerprint:revision}};
+  await writeFile(fixture.metadataFile,JSON.stringify(metadata));return {...fixture,metadata};
+}
+
 test('each interrupted prepared-file write leaves either the original or complete new metadata; retry never rewrites planetary bytes', async t => {
-  const fixture = await lifetimeFileFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
+  const fixture = await historicalLifetimeFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
   const expected = migrateLifetimeFileMetadata(metadata), before = await stat(file);
   const open = fs.open, rename = fs.rename;
   let boundaries = 0;
@@ -299,7 +317,7 @@ test('each interrupted prepared-file write leaves either the original or complet
 });
 
 test('a metadata transition refuses concurrent changes to either source instead of publishing over them', async t => {
-  const fixture = await lifetimeFileFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
+  const fixture = await historicalLifetimeFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
   const open = fs.open;
   for (const changed of ['metadata', 'numeric']) {
     await writeFile(file, bytes); await writeFile(metadataFile, JSON.stringify(metadata));
@@ -431,36 +449,53 @@ function cacheRows(database:ReturnType<typeof createIndexedDatabase>) {
   });
 }
 async function storedCache() {
-  const indexedDB = new IDBFactory(), cache = createCalculationCache({indexedDB, databaseName:cacheName, legacySources:[], now:() => 100});
+  const indexedDB=new IDBFactory(),old=cacheDatabase(indexedDB,2);
   const natal = `natal-day:${revision}:1:2026-09-24:city`, transit = `${revision}:2026-09-24`;
   const events = JSON.stringify(['events', revision, '2000-01-01T12:00:00.123456Z', 'saturn', 0, 100]);
   const chart = JSON.stringify(['chart', revision, '2000-01-01T12:00:00.123456Z', 'saturn', '2029-01-01T01:23:45.654321Z', 'Europe/Moscow']);
-  const packet = encodeNatalDay({...natalDayFixture(), calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'});
-  assert.equal(await cache.put('natal', natal, packet.slice().buffer, {version:revision}), true);
-  assert.equal(await cache.put('return-events', events, {key:events, birthUtc:'2000-01-01T12:00:00.123456Z',
-    body:'saturn', range:{fromAge:0, toAge:100}, events:[{utc:'2029-01-01T01:23:45.654321Z', cycle:1, pass:1, direction:'direct'}]}), true);
-  assert.equal(await cache.put('return-charts', chart, {chart:{...accountChart(), engine:'Swiss Ephemeris 2.10.03'}, event:{utc:'2029-01-01T01:23:45.654321Z'}}), true);
-  assert.equal((await cache.setTransitWindow({version:revision, dates:['2026-09-24'], expiresAt:10000}))?.status, 'applied');
-  assert.equal(await cache.put('transit', transit, {key:transit, day:new Float64Array([1, -0, Number.MIN_VALUE]),
-    meta:{engine:'Swiss Ephemeris 2.10.03', ephemeris:'Swiss Ephemeris'}}, {version:revision, date:'2026-09-24'}), true);
-  cache.close();
-  const old = cacheDatabase(indexedDB, 2);
-  await old.transaction('readwrite', (tx, result) => {
-    // A still-accounted old physical row and its cursor must not be renamed:
-    // the interrupted importer needs them to finish deleting the source.
-    tx.objectStore('catalogue').put({id:'legacy-source-row', kind:'natal', key:natal, version:revision,
-      bytes:1000, legacyBytes:600, lru:50, family:'natal', location:'legacy', personalEpoch:0,
-      source:'natal', store:'packets', sourceKey:natal, stage:'copied'});
-    tx.objectStore('control').put({key:'source:natal', definition:{id:'natal', databaseName:'bodygraph-chart-days',
-      version:3, stores:['packets','metadata'], family:'natal'}, after:natal, storeIndex:0,
-      scanned:false, finished:false, personalEpoch:0});
-    const budget = tx.objectStore('control').get('budget');
-    budget.onsuccess = () => {tx.objectStore('control').put({...budget.result, phase:'migrating', legacyBytes:600,
-      accountedBytes:budget.result.accountedBytes + 1000}); result(true);};
+  const packet = historicalPacket(encodeNatalDay({...natalDayFixture(), engine:'Swiss Ephemeris 2.10.03'}), {calculationVersion:revision});
+  const entries=[
+    ['natal',natal,packet.slice().buffer],
+    ['return-events',events,{key:events,birthUtc:'2000-01-01T12:00:00.123456Z',body:'saturn',range:{fromAge:0,toAge:100},
+      events:[{utc:'2029-01-01T01:23:45.654321Z',cycle:1,pass:1,direction:'direct'}]}],
+    ['return-charts',chart,{chart:{...accountChart(),engine:'Swiss Ephemeris 2.10.03'},event:{utc:'2029-01-01T01:23:45.654321Z'}}],
+    ['transit',transit,{key:transit,day:new Float64Array([1,-0,Number.MIN_VALUE]),meta:{engine:'Swiss Ephemeris 2.10.03',ephemeris:'Swiss Ephemeris'}}],
+  ] as const;
+  await old.transaction('readwrite',(tx,result)=>{
+    let accountedBytes=4096,clock=100;
+    for(const [kind,key,value] of entries) {
+      const id=cacheId(kind,key),payload={id,value},meta={id,kind,key,version:revision,bytes:0,lru:clock++,location:'data',
+        family:kind==='natal'?'natal':kind==='transit'?'transit':'returns',personalEpoch:0,...(kind==='transit'?{date:'2026-09-24'}:{})};
+      meta.bytes=estimateBytes(payload)+estimateBytes(meta);accountedBytes+=meta.bytes;
+      tx.objectStore('payloads').put(payload);tx.objectStore('catalogue').put(meta);
+    }
+    // The unfinished import keeps its physical old address and checkpoint.
+    tx.objectStore('catalogue').put({id:'legacy-source-row',kind:'natal',key:natal,version:revision,
+      bytes:1000,legacyBytes:600,lru:50,family:'natal',location:'legacy',personalEpoch:0,
+      source:'natal',store:'packets',sourceKey:natal,stage:'copied'});
+    tx.objectStore('control').put({key:'source:natal',definition:{id:'natal',databaseName:'bodygraph-chart-days',
+      version:3,stores:['packets','metadata'],family:'natal'},after:natal,storeIndex:0,scanned:false,finished:false,personalEpoch:0});
+    tx.objectStore('control').put({key:'budget',phase:'migrating',accountedBytes:accountedBytes+1000,legacyBytes:600,clock,
+      personalEpoch:0,revision:5,versions:{},window:{version:revision,dates:['2026-09-24'],expiresAt:10000,revision:1}});
+    result(true);
   });
-  const before = (await cacheRows(old))!; old.close();
-  return {indexedDB, before, natal, transit, events, chart};
+  const before=(await cacheRows(old))!;old.close();return {indexedDB,before,natal,transit,events,chart};
 }
+
+test('the real cache owner upgrades an unfinished old cache and the new natal client reads ready numbers without network', async t => {
+  const {indexedDB,before,natal}=await storedCache();
+  const cache=createCalculationCache({indexedDB,databaseName:cacheName,now:()=>100});t.after(()=>cache.close());
+  let requests=0;
+  const client=createNatalDayClient({persistentCache:createBinaryCache({cache}),fetch:async()=>{requests++;throw new Error('network must not run');}});
+  const day=await client.getDay({birthDate:'2026-09-24',cityId:'city',timezone:'UTC'});
+  const previous=decodeNatalDay(before.payloads.find(row=>row.id===cacheId('natal',natal))!.value);
+  assert.deepEqual(day.columns,previous.columns);assert.deepEqual(day.segments,previous.segments);
+  assert.equal(requests,0);assert.equal(Object.hasOwn(day,'calculationVersion'),false);
+  const state=await cache.status();assert.equal(state.phase,'ready');assert.equal(state.legacyBytes,0);
+  assert.equal(Object.hasOwn(state,'versions'),false);
+  const oldWriter=cacheDatabase(indexedDB,2);
+  try{assert.equal(await cacheRows(oldWriter),null);}finally{oldWriter.close();}
+});
 
 test('cache transition preserves the authenticated return snapshot so old ready numbers remain reusable', async () => {
   const {indexedDB, chart} = await storedCache(), old = cacheDatabase(indexedDB, 2);
@@ -613,7 +648,7 @@ test('colliding calculation keys merge identical ready data with latest recency 
         if (conflict) {
           if (kind === 'natal') {
             const day = natalDayFixture(); day.columns[0][0] = 0.123456789;
-            value = encodeNatalDay({...day, calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'}).slice().buffer;
+            value = historicalPacket(encodeNatalDay({...day, engine:'Swiss Ephemeris 2.10.03'}), {calculationVersion:revision}).slice().buffer;
           } else if (kind === 'transit') value.day[1] = 0; // Preserve even the sign of zero.
           else if (kind === 'return-events') value.events[0].utc = '2029-01-01T01:23:45.654322Z';
           else value.chart.activations.personality[0].longitude = 0.123456789;
@@ -669,4 +704,29 @@ test('missing or unreadable cache payload aborts rekeying without discarding its
     const rollback = cacheDatabase(indexedDB, 2);
     assert.deepEqual(await cacheRows(rollback), before); rollback.close();
   }
+});
+
+
+test('explicit prepared-data command transitions both files once and can be retried without calculation', async t => {
+  const fixture=await historicalLifetimeFixture(t,3),directory=path.dirname(fixture.file);
+  const {execFile}=await import('node:child_process'),{promisify}=await import('node:util');
+  const {fileURLToPath}=await import('node:url');
+  const {pythonExecutable,pythonEnvironment}=await import('../server/runtime/python.ts');
+  const root=fileURLToPath(new URL('../',import.meta.url)),run=promisify(execFile),returns=path.join(directory,'returns with spaces.bin');
+  await run(pythonExecutable(root),['-c',"import sys; from server.python.return_index import prepare_index; prepare_index(sys.argv[1], start=2451544.5, end=2451584.5, bodies=('north_node',))",returns],{cwd:root,env:pythonEnvironment()});
+  const source=await readFile(returns),length=source.readUInt32LE(8),header=JSON.parse(source.subarray(44,44+length).toString());
+  header.provenance=revision;const encoded=Buffer.from(JSON.stringify(header)),prefix=Buffer.from(source.subarray(0,44));
+  prefix.writeUInt32LE(encoded.length,8);createHash('sha256').update(encoded).digest().copy(prefix,12);
+  const payload=source.subarray(44+length);await writeFile(returns,Buffer.concat([prefix,encoded,payload]));
+  const args=['scripts/migrate-prepared-calculations.ts','--lifetime',fixture.file,'--returns',returns];
+  const first=await run(process.execPath,args,{cwd:root,env:process.env});
+  assert.deepEqual(first.stdout.trim().split('\n').map(line=>JSON.parse(line).migrated),[true,true]);
+  const complete=await readFile(returns),newLength=complete.readUInt32LE(8);
+  assert.deepEqual(complete.subarray(44+newLength),payload);assert.deepEqual(await readFile(fixture.file),fixture.bytes);
+  const repeat=await run(process.execPath,args,{cwd:root,env:process.env});
+  assert.deepEqual(repeat.stdout.trim().split('\n').map(line=>JSON.parse(line).migrated),[false,false]);
+  assert.deepEqual(await readFile(returns),complete);
+  const {createLifetimeFile}=await import('../server/services/lifetime.ts');
+  const reader=await createLifetimeFile(fixture);try {assert.deepEqual((await reader.getPoint(1)).longitudes,fixture.columns.slice(0,11).map(column=>column[1]));}finally {await reader.close();}
+  await assert.rejects(run(process.execPath,['scripts/migrate-prepared-calculations.ts'],{cwd:root}),/Specify prepared files explicitly/);
 });

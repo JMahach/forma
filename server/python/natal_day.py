@@ -30,7 +30,7 @@ def calculate_day(date, timezone):
     columns = astro.sample_columns(item[0] for item in minutes)
     return dict(date=date, timezone=timezone, startUtc=civil.iso(minutes[0][0]),
                 stepSeconds=60, samples=len(minutes), segments=segments, columns=columns,
-                engine='Swiss Ephemeris ' + astro.swe.version,
+                engine='Swiss Ephemeris',
                 ephemeris='Swiss files: sepl_18.se1 + semo_18.se1',
                 timezoneDatabase='IANA tzdata ' + civil.tzdata.__version__,
                 nodeModel='true', zodiac='tropical-geocentric-apparent')

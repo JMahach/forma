@@ -12,7 +12,7 @@ import { createReturnsController } from './fixtures/returns.ts';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
-const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
+const tick = () => new Promise(setImmediate);
 const natal = () => libraryRecordAtMinute(natalDayFixture({ date: '2000-01-01' }), 0, personalChartFixture({ id: 'saved-natal' }));
 const event = { body: 'saturn', utc: '2028-07-21T12:36:05.920740Z', cycle: 1, pass: 1, direction: 'direct' as const } as CycleEvent;
 event.id = `${event.body}:${event.utc}`; event.cycleId = 'saturn:1'; event.age = (Date.parse(event.utc) - Date.parse(natal().utc)) / (365.2425 * 86400000);
@@ -34,7 +34,7 @@ function device() { const records = new Map<string, unknown>(); return storageDo
 
 test('both prepared dates and opened return charts persist across reloads', async () => {
   const storage = device(), calls: string[] = [];
-  const options: TestCyclesOptions = { cacheVersion: revision, returnStorage: storage, request: async (url: string) => { calls.push(url); return url.endsWith('/chart') ? chartResult : packet(); } };
+  const options: TestCyclesOptions = { returnStorage: storage, request: async (url: string) => { calls.push(url); return url.endsWith('/chart') ? chartResult : packet(); } };
   const first = createCyclesClient(options), chartInput = { birthUtc: input.birthUtc, body: 'saturn', eventUtc: event.utc, timezone: 'UTC' };
   await first.events(input); await tick(); await first.chart(chartInput);
   await first.chart(chartInput);
@@ -101,7 +101,7 @@ test('an obsolete saved exact UTC is acknowledged without calculating an unverif
 
 test('A to B to A ignores the abandoned response and keeps the last dates request alive', async () => {
   const storage = device(), jobs: (ReturnType<typeof deferred<CycleEventsResult>> & { signal?: AbortSignal | null })[] = [];
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storage, request: async (_url, { signal }) => { const job = { signal, ...deferred<CycleEventsResult>() }; jobs.push(job); return job.promise; } });
+  const client = createCyclesClient({ returnStorage: storage, request: async (_url, { signal }) => { const job = { signal, ...deferred<CycleEventsResult>() }; jobs.push(job); return job.promise; } });
   const cancelled = new AbortController();
   const first = client.events(input, cancelled.signal); await tick();
   cancelled.abort(); await assert.rejects(first, { name: 'AbortError' });
@@ -113,7 +113,7 @@ test('A to B to A ignores the abandoned response and keeps the last dates reques
 
 test('a RAM chart and a selected ready list never wait for other bodies being prepared', async () => {
   const storage = device(), waiting = deferred(); let requests = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storage, request: async url => { requests++; return url.endsWith('/chart') ? chartResult : waiting.promise; } });
+  const client = createCyclesClient({ returnStorage: storage, request: async url => { requests++; return url.endsWith('/chart') ? chartResult : waiting.promise; } });
   const chartInput = { birthUtc: input.birthUtc, body: 'saturn', eventUtc: event.utc, timezone: 'UTC' };
   const ready = await client.chart(chartInput), pending = client.events(input); await tick();
   assert.equal(await client.chart(chartInput), ready); assert.equal(requests, 2);
@@ -136,7 +136,7 @@ test('one failed body never erases successful empty lists or retries them', asyn
 
 test('dates completed by another tab are readable before this tab’s older same-key request finishes', async () => {
   const waiting = deferred(); let stored: unknown = null, calls = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: async () => stored, putEvents: async () => {} }),
+  const client = createCyclesClient({ returnStorage: storageDouble({ getEvents: async () => stored, putEvents: async () => {} }),
     request: async () => { calls++; return waiting.promise; } });
   const first = client.events(input); await tick(); stored = packet();
   const second = client.events(input);
@@ -148,7 +148,7 @@ test('dates completed by another tab are readable before this tab’s older same
 
 test('a stale device miss reuses the same-key network result that completed during its read', async () => {
   const network = deferred(), disk = deferred(); let reads = 0, requests = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
+  const client = createCyclesClient({ returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
     request: async () => { requests++; return network.promise; } });
   const first = client.events(input); await tick(); const second = client.events(input); await tick();
   network.resolve!(packet()); await first; disk.resolve!(null); await second;
@@ -157,7 +157,7 @@ test('a stale device miss reuses the same-key network result that completed duri
 
 test('an aborted captured request does not replace a later consumer’s own live result', async () => {
   const disk = deferred(), jobs: (ReturnType<typeof deferred<CycleEventsResult>> & { signal?: AbortSignal | null })[] = []; let reads = 0;
-  const client = createCyclesClient({ cacheVersion: revision, returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
+  const client = createCyclesClient({ returnStorage: storageDouble({ getEvents: () => ++reads === 1 ? Promise.resolve(null) : disk.promise, putEvents: async () => {} }),
     request: async (_url, { signal }) => { const job = { signal, ...deferred<CycleEventsResult>() }; jobs.push(job); return job.promise; } });
   const controller = new AbortController(), first = client.events(input, controller.signal); await tick();
   const next = client.events(input); await tick(); controller.abort(); await assert.rejects(first, { name: 'AbortError' });
@@ -219,7 +219,7 @@ test('accepted replacement retains the new return before releasing the previous 
 
 test('cache-only return dates and charts survive a fresh client without entering calculation', async () => {
   const storage=device();let requests=0;
-  const options:TestCyclesOptions={cacheVersion:revision,returnStorage:storage,request:async url=>{requests++;return url.endsWith('/chart')?chartResult:packet();}};
+  const options:TestCyclesOptions={returnStorage:storage,request:async url=>{requests++;return url.endsWith('/chart')?chartResult:packet();}};
   const first=createCyclesClient(options),exact={birthUtc:input.birthUtc,body:'saturn',eventUtc:event.utc,timezone:'UTC'};
   await first.events(input);await first.chart(exact,undefined,{event});await tick();
   const before=requests,second=createCyclesClient(options);

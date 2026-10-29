@@ -16,7 +16,7 @@ async function stored(factory:IDBFactory){const db=await new Promise<IDBDatabase
 async function fixture(t:test.TestContext,options:Partial<Parameters<typeof createJournal>[0]>={}) {
   const indexedDB=new IDBFactory();let online=false,time=1000;
   const calls:DiagnosticRequest[]=[];
-  const journal=createJournal({indexedDB,appVersion:'test-1',environment:'production',calculationVersion:'a'.repeat(64),
+  const journal=createJournal({indexedDB,appVersion:'test-1',environment:'production',
     connection:()=>online?'online':'offline',now:()=>time,send:async body=>{calls.push(body);return {schemaVersion:1,results:body.reports.map(report=>({eventId:report.eventId,status:'accepted',receivedAt:10,duplicate:false}))};},...options});
   t.after(()=>journal.close());await journal.wake();
   return {journal,indexedDB,calls,online(){online=true;},advance(ms:number){time+=ms;}};

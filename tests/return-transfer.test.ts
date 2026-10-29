@@ -15,7 +15,7 @@ const full={...raw,proof:receipts.issue('chart',exact,raw)!};
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 
 test('adopting a restored ready signed chart must attach it even without a cached events list',async t=>{
-  const sent:string[]=[],client=createCyclesClient({cacheVersion:version,returnStorage:null,request:async url=>{
+  const sent:string[]=[],client=createCyclesClient({returnStorage:null,request:async url=>{
     sent.push(url);if(url.endsWith('/accept'))return {accepted:true};
     if(url.endsWith('/chart'))return full;
     throw Object.assign(Error('events unavailable'),{code:'server_unavailable'});
@@ -32,7 +32,7 @@ test('adopting a restored ready signed chart must attach it even without a cache
 });
 
 for (const method of ['adopt','select'] as const) test(`${method} attaches guest-prepared data when the same chart becomes owned`,async t=>{
-  const sent:string[]=[],client=createCyclesClient({cacheVersion:version,returnStorage:null,request:async(url,{body})=>{
+  const sent:string[]=[],client=createCyclesClient({returnStorage:null,request:async(url,{body})=>{
     sent.push(url);if(url.endsWith('/accept'))return {accepted:true};
     const request=JSON.parse(String(body));const data={range:{fromAge:request.fromAge,toAge:request.toAge},events:[]};
     return {...data,proof:receipts.issue('events',request,data)!};

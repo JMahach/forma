@@ -218,13 +218,12 @@ test('offline registration failure never replaces the working application with s
   assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.nodes.get('chartLoadingRetry')!.hidden,true);
 });
 
-test('release connects a queued calculation mismatch to the existing page refresh without reloading directly',async t=>{
+test('release discovers updates once without reloading before restoration',async t=>{
  const h=await runEntry(t,`
   export function prepareOfflineUpdate(){return false;}
   export function offlineRestored(){return false;}
   export function subscribeOfflineReady(){return()=>{};}
   export function offlineReady(){return Promise.resolve();}
-  export function connectOfflineUpdates(refresh){refresh();}
   document.querySelector('.app-shell').dataset.shellReady='true';`,false,{
   release:true,serviceWorkers:{register:async()=>({} as ServiceWorkerRegistration)},
   offlineSource:`
@@ -238,6 +237,6 @@ test('release connects a queued calculation mismatch to the existing page refres
  });
  assert.equal(h.shell.dataset.shellReady,'true');
  assert.equal(h.shell.dataset.prepared,'false');
- assert.equal(h.shell.dataset.refreshes,'2','startup discovery and the queued mismatch reach the same page owner');
+ assert.equal(h.shell.dataset.refreshes,'1','startup performs one ordinary release discovery');
  assert.equal(h.shell.dataset.checks,'1');assert.equal(h.reloads,0);
 });

@@ -18,7 +18,7 @@ export type NatalDayExplorer = ReturnType<typeof createNatalDayExplorer>;
 
 import { createNatalDayClient } from '../data/natal-day-client.ts';
 import { chartAtMinute, natalDayIndexAt, originalNatalDayMoment } from '../domain/natal-day.ts';
-import { extractChartData, canExploreNatalDay, withoutChartCalculation } from '../domain/chart-data.ts';
+import { extractChartData, canExploreNatalDay } from '../domain/chart-data.ts';
 export { canExploreNatalDay } from '../domain/chart-data.ts';
 
 // The saved chart is the source of truth. A selected minute is a temporary view
@@ -31,10 +31,10 @@ export function createNatalDayExplorer({
   let releaseDay: (() => void) | null = null;
   let opened = false, status: NatalExplorerState['status'] = 'idle', error = '', exactOriginal = true, sequence = 0;
   let active: { controller: AbortController; promise: Promise<boolean> } | null = null;
-  let readyOnDevice = false, availabilitySequence = 0, compatible = true;
-  const canOpen = () => compatible && canExploreNatalDay(original) && (connection() !== 'offline' || Boolean(day) || readyOnDevice);
-  const state = () => ({ original, current: compatible || !current ? current : withoutChartCalculation(current), day: compatible ? day : null, index, referenceIndex, opened,
-    status: compatible ? status : 'idle' as const, error, exactOriginal, available: canExploreNatalDay(original), canOpen: canOpen() });
+  let readyOnDevice = false, availabilitySequence = 0;
+  const canOpen = () => canExploreNatalDay(original) && (connection() !== 'offline' || Boolean(day) || readyOnDevice);
+  const state = () => ({ original, current, day, index, referenceIndex, opened,
+    status, error, exactOriginal, available: canExploreNatalDay(original), canOpen: canOpen() });
   const notify = () => onStateChange(state());
   const cancel = () => { sequence += 1; active?.controller.abort(); active = null; };
 
@@ -44,7 +44,7 @@ export function createNatalDayExplorer({
     const version = ++availabilitySequence, chart = original;
     readyOnDevice = Boolean(day || dayClient.peekDay?.(chart));
     notify();
-    if (!compatible || connection() !== 'offline' || readyOnDevice || !canExploreNatalDay(chart) || !dayClient.readDay) return;
+    if (connection() !== 'offline' || readyOnDevice || !canExploreNatalDay(chart) || !dayClient.readDay) return;
     let ready = false;
     try { ready = Boolean(await dayClient.readDay(chart)); } catch { /* Optional device lookup. */ }
     if (version !== availabilitySequence || chart !== original) return;
@@ -52,7 +52,7 @@ export function createNatalDayExplorer({
   }
 
   async function load() {
-    if (!compatible || !opened || !canExploreNatalDay(original)) return false;
+    if (!opened || !canExploreNatalDay(original)) return false;
     if (active) return active.promise;
     const requestSequence = ++sequence, chart = original!, controller = new AbortController();
     status = 'loading'; error = ''; notify();
@@ -92,7 +92,7 @@ export function createNatalDayExplorer({
   }
 
   return {
-    get current() { return compatible && opened ? current : null; },
+    get current() { return opened ? current : null; },
     get state() { return state(); },
     select(record: ChartRecord | null, chart: ChartInput | null = record ? extractChartData(record) : null) {
       if (record === original) return;
@@ -111,12 +111,11 @@ export function createNatalDayExplorer({
     },
     close,
     refreshAvailability,
-    invalidateCalculations() { compatible = false; availabilitySequence++; cancel(); releaseDay?.(); releaseDay = null; day = null; readyOnDevice = false;
-      if(current)current = withoutChartCalculation(current); notify(); },
+
     retry: load,
     reset,
     scrub(value: number) {
-      if (!compatible || !opened || status !== 'ready' || !day || !Number.isFinite(value)) return;
+      if (!opened || status !== 'ready' || !day || !Number.isFinite(value)) return;
       const nextIndex = Math.min(day.samples - 1, Math.max(0, Math.trunc(value)));
       if (!exactOriginal && index === nextIndex) return;
       index = nextIndex; current = chartAtMinute(day, index); exactOriginal = false;

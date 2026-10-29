@@ -16,14 +16,12 @@ export function validateTransitDayQuery(searchParams: URLSearchParams, now = new
   return { date: date!, allowCalculate: Math.abs(value - today) <= 2 * DAY_MS };
 }
 
-export function createTransitDayHandler({ get, calculationVersion = null }: Pick<TransitDays, 'get'> & { calculationVersion?: string | null }, { now = () => new Date(), report }: {now?:()=>Date;report?:ServerFailureReport} = {}) {
+export function createTransitDayHandler({ get }: Pick<TransitDays, 'get'>, { now = () => new Date(), report }: {now?:()=>Date;report?:ServerFailureReport} = {}) {
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     if (!['GET', 'HEAD'].includes(req.method!)) { res.writeHead(405, { Allow: 'GET, HEAD', 'Cache-Control': 'no-store' }); res.end(); return; }
     const consumer = requestSignal(req, res);
     try {
       const { date, allowCalculate } = validateTransitDayQuery(url.searchParams, now());
-      const revision = url.searchParams.get('r');
-      if (revision !== null && revision !== calculationVersion) throw new TransitDayError('unsupported_version', 'Версия дневного транзита не поддерживается.', 409, null);
       const encoding = negotiateEncoding(req.headers['accept-encoding']);
       if (!encoding) throw new TransitDayError('encoding_not_acceptable', 'Нет поддерживаемого способа передачи дневного транзита.', 406, null);
       const packet = await get(date, { allowCalculate, signal: consumer.signal });

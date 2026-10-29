@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Cycles } from '../services/cycles.ts';
 import { CycleError, validateCycleRequest } from '../services/cycles.ts';
 
-export function createCyclesHandler(service: Pick<Cycles, 'cacheVersion' | 'events' | 'chart'>, {report,issueReceipt}: {report?:ServerFailureReport;issueReceipt?:ReturnType<typeof createReturnReceipts>['issue']} = {}) {
+export function createCyclesHandler(service: Pick<Cycles, 'events' | 'chart'>, {report,issueReceipt}: {report?:ServerFailureReport;issueReceipt?:ReturnType<typeof createReturnReceipts>['issue']} = {}) {
   return async function handle(req: IncomingMessage, res: ServerResponse, url: URL) {
     const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
     if (req.method !== 'POST') { res.writeHead(405, { ...headers, Allow: 'POST' }); res.end(); return; }
@@ -21,10 +21,6 @@ export function createCyclesHandler(service: Pick<Cycles, 'cacheVersion' | 'even
       const action = url.pathname === '/api/cycles/events' ? 'events' : url.pathname === '/api/cycles/chart' ? 'chart' : null;
       if (!action) throw new CycleError('invalid_request', 'Неизвестный режим циклов.', 404, null);
       if (!/^application\/json(?:;|$)/i.test(req.headers['content-type'] || '')) throw new CycleError('content_type', 'Нужны данные JSON.', 415, null);
-      const version = req.headers['x-forma-cycles-version'];
-      if (version !== undefined && (typeof version !== 'string' || !/^[a-f0-9]{64}$/.test(version) || version !== service.cacheVersion)) {
-        throw new CycleError('unsupported_version', 'Данные возвратов обновились. Обновите страницу.', 400, null);
-      }
       const chunks = []; let size = 0;
       for await (const chunk of req) {
         size += chunk.length;

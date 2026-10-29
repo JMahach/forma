@@ -1,3 +1,5 @@
+import {encodeNatalDay} from '../server/packets/encode.ts';
+import {natalDayFixture} from './fixtures/natal-day.ts';
 function readable(value:Awaited<ReturnType<ReturnType<typeof createLegacyCalculationSource>['next']>>) {assert.ok(value.status==='ok');return value;}
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,7 +27,7 @@ function write(db:IDBDatabase,store:string,value:unknown,key?:IDBValidKey) {
 
 test('upgrading a legacy source preserves its packets, adds missing stores, and fences old code only after commit',async t=>{
   const indexedDB=new IDBFactory();
-  const old=await open(indexedDB,natal.databaseName,2,db=>{
+  const old=await open(indexedDB,natal.legacyDatabaseName,2,db=>{
     db.createObjectStore('packets',{keyPath:'key'});db.createObjectStore('unrelated',{keyPath:'key'});
   });
   await write(old,'packets',{key:'a',bytes:new Uint8Array([1,2,3]).buffer});
@@ -34,8 +36,8 @@ test('upgrading a legacy source preserves its packets, adds missing stores, and 
   const source=createLegacyCalculationSource(natal,{indexedDB});t.after(()=>source.close());
   assert.deepEqual(await source.next('packets'),{status:'ok',entry:{key:'a',value:{key:'a',bytes:new Uint8Array([1,2,3]).buffer}}});
   assert.deepEqual(await source.next('metadata'),{status:'ok',entry:null});
-  await assert.rejects(open(indexedDB,natal.databaseName,2),{name:'VersionError'});
-  const current=await open(indexedDB,natal.databaseName,3);t.after(()=>current.close());
+  await assert.rejects(open(indexedDB,natal.legacyDatabaseName,2),{name:'VersionError'});
+  const current=await open(indexedDB,natal.legacyDatabaseName,3);t.after(()=>current.close());
   assert.equal(current.objectStoreNames.contains('unrelated'),true);
   const retained=await new Promise(resolve=>{const request=current.transaction('unrelated').objectStore('unrelated').get('keep');request.onsuccess=()=>resolve(request.result);});
   assert.deepEqual(retained,{key:'keep',value:'untouched'});
@@ -44,7 +46,7 @@ test('upgrading a legacy source preserves its packets, adds missing stores, and 
 });
 
 test('cursor checkpoints survive restart and deletion without reading an entire source',async t=>{
-  const indexedDB=new IDBFactory(),old=await open(indexedDB,natal.databaseName,2,db=>db.createObjectStore('packets',{keyPath:'key'}));
+  const indexedDB=new IDBFactory(),old=await open(indexedDB,natal.legacyDatabaseName,2,db=>db.createObjectStore('packets',{keyPath:'key'}));
   for(const key of ['a','b','c'])await write(old,'packets',{key,bytes:new Uint8Array([key.charCodeAt(0)]).buffer});
   old.close();
   t.mock.method(IDBObjectStore.prototype,'getAll',()=>{throw new Error('Payload scans are forbidden');});
@@ -60,7 +62,7 @@ test('cursor checkpoints survive restart and deletion without reading an entire 
 });
 
 test('a blocked upgrade reports unavailable, retains the source, and resumes after the old connection leaves',async t=>{
-  const indexedDB=new IDBFactory(),old=await open(indexedDB,natal.databaseName,2,db=>db.createObjectStore('packets',{keyPath:'key'}));
+  const indexedDB=new IDBFactory(),old=await open(indexedDB,natal.legacyDatabaseName,2,db=>db.createObjectStore('packets',{keyPath:'key'}));
   await write(old,'packets',{key:'a',bytes:new ArrayBuffer(7)});
   const source=createLegacyCalculationSource(natal,{indexedDB,timeoutMs:50});t.after(()=>{old.close();source.close();});
   assert.deepEqual(await source.get('packets','a'),{status:'unavailable'});
@@ -72,7 +74,7 @@ test('a blocked upgrade reports unavailable, retains the source, and resumes aft
 });
 
 test('out-of-line metadata keys and undefined values are distinguishable from absent rows',async t=>{
-  const indexedDB=new IDBFactory(),old=await open(indexedDB,transit.databaseName,1,db=>db.createObjectStore('settings'));
+  const indexedDB=new IDBFactory(),old=await open(indexedDB,transit.legacyDatabaseName,1,db=>db.createObjectStore('settings'));
   await write(old,'settings',undefined,'present');await write(old,'settings',false,'second');old.close();
   const source=createLegacyCalculationSource(transit,{indexedDB});t.after(()=>source.close());
   assert.deepEqual(await source.get('settings','present'),{status:'ok',entry:{key:'present',value:undefined}});
@@ -81,7 +83,7 @@ test('out-of-line metadata keys and undefined values are distinguishable from ab
 });
 
 test('a checkpoint may be an absent compound key without replaying preceding payloads',async t=>{
-  const indexedDB=new IDBFactory(),old=await open(indexedDB,transit.databaseName,1,db=>db.createObjectStore('settings'));
+  const indexedDB=new IDBFactory(),old=await open(indexedDB,transit.legacyDatabaseName,1,db=>db.createObjectStore('settings'));
   await write(old,'settings','first',['group',1]);await write(old,'settings','third',['group',3]);old.close();
   const source=createLegacyCalculationSource(transit,{indexedDB});t.after(()=>source.close());
   assert.deepEqual(await source.next('settings',['group',2]),{status:'ok',entry:{key:['group',3],value:'third'}});
@@ -95,14 +97,14 @@ test('missing IndexedDB does not masquerade as a completed empty source or a suc
   assert.equal(await source.remove('packets','a'),false);source.close();
 });
 
-test('legacy descriptions preserve raw numeric payloads and identify revisions without inventing them',()=>{
-  const bytes=new ArrayBuffer(11),key=`natal-day:${version}:1:2000-01-01:city`;
-  assert.deepEqual(describeLegacyCalculation(natal,'packets',key,{key,bytes}),{kind:'natal',key,value:bytes,version,date:'2000-01-01'});
+test('legacy descriptions rekey ready results without calculation markers',()=>{
+  const bytes=encodeNatalDay(natalDayFixture()).buffer,key=`natal-day:${version}:1:2026-09-24:city`;
+  assert.deepEqual(describeLegacyCalculation(natal,'packets',key,{key,bytes}),{kind:'natal',key:'natal-day:1:2026-09-24:city',value:bytes,date:'2026-09-24'});
   assert.deepEqual(describeLegacyCalculation(natal,'packets','unversioned',{bytes}),{kind:'natal',key:'unversioned',value:bytes});
   assert.equal(describeLegacyCalculation(natal,'metadata',key,{key,bytes}),null);
   assert.equal(describeLegacyCalculation(natal,'packets',key,{bytes:'broken'}),null);
   const transitKey=`${version}:2026-10-26`,packet={key:transitKey,day:new Float64Array(24*1440),meta:{engine:'test'}};
-  assert.deepEqual(describeLegacyCalculation(transit,'packets',transitKey,packet),{kind:'transit',key:transitKey,value:packet,version,date:'2026-10-26'});
+  assert.deepEqual(describeLegacyCalculation(transit,'packets',transitKey,packet),{kind:'transit',key:'2026-10-26',value:{...packet,key:'2026-10-26'},date:'2026-10-26'});
   assert.equal(describeLegacyCalculation(transit,'packets',transitKey,{...packet,day:new Float64Array(10)}),null);
   assert.equal(describeLegacyCalculation(transit,'catalogue',transitKey,{full:1}),null);
   assert.equal(describeLegacyCalculation(transit,'settings','legacy',{}),null);
@@ -111,11 +113,11 @@ test('legacy descriptions preserve raw numeric payloads and identify revisions w
 test('only basic return bodies migrate; chart identity can come from its structured key or stored event',()=>{
   const key=JSON.stringify(['events',version,'2000-01-01T00:00:00Z','saturn',0,100]);
   const dates={key,birthUtc:'2000-01-01T00:00:00Z',body:'saturn',range:{fromAge:0,toAge:100},events:[]};
-  assert.deepEqual(describeLegacyCalculation(returns,'events',key,dates),{kind:'return-events',key,value:dates,version});
+  assert.deepEqual(describeLegacyCalculation(returns,'events',key,dates),{kind:'return-events',key:JSON.stringify(['events','2000-01-01T00:00:00Z','saturn',0,100]),value:{...dates,key:JSON.stringify(['events','2000-01-01T00:00:00Z','saturn',0,100])}});
   assert.equal(describeLegacyCalculation(returns,'events',key,{...dates,body:'moon'}),null);
   const chartKey=JSON.stringify(['chart',version,'2000-01-01T00:00:00Z','chiron','2050-01-01T00:00:00Z','UTC']);
   const data={chart:{utc:'2050-01-01T00:00:00Z'}};
-  assert.deepEqual(describeLegacyCalculation(returns,'charts',chartKey,{key:chartKey,data}),{kind:'return-charts',key:chartKey,value:data,version});
+  assert.deepEqual(describeLegacyCalculation(returns,'charts',chartKey,{key:chartKey,data}),{kind:'return-charts',key:JSON.stringify(['chart','2000-01-01T00:00:00Z','chiron','2050-01-01T00:00:00Z','UTC']),value:data});
   const oldData={...data,event:{body:'saturn'}};
   assert.deepEqual(describeLegacyCalculation(returns,'charts','old-chart',{data:oldData}),{kind:'return-charts',key:'old-chart',value:oldData});
   assert.equal(describeLegacyCalculation(returns,'charts','old-chart',{data}),null);

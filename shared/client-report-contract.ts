@@ -8,7 +8,7 @@ export const CLIENT_ACTIONS=['runtime','startup','restore','chart_open','calcula
 export const CLIENT_COMPONENTS=['runtime','entry','startup','chart','account','calculator','transit_day','natal_day','cycles','lifetime','storage','transport'] as const;
 export const CLIENT_STAGES=['start','cache_read','storage_read','request','wait','response','validate','commit','restore','render'] as const;
 export const CLIENT_REPORT_REASONS=['connection_failed','server_unavailable','server_error','request_failed','invalid_response',
-  'engine_unavailable','lifetime_unavailable','cycles_unavailable','timeout','calculation_failed','invalid_calculation','unsupported_version','versions_unavailable',
+  'engine_unavailable','lifetime_unavailable','cycles_unavailable','timeout','calculation_failed','invalid_calculation','unsupported_version',
   'chart_unavailable','account_unavailable','note_conflict','source_changed','not_found','invalid_request',
   'storage_unavailable','quota_exceeded','corrupt_data','restore_failed','unclassified_error','outcome_unknown'] as const;
 export const CLIENT_CONTEXT_REASONS=[...CLIENT_REPORT_REASONS,'offline','cancelled','superseded','cache_miss','busy',
@@ -25,7 +25,7 @@ const devices=['desktop','tablet','phone'] as const;
 const waits=['network','calculation_queue','storage'] as const;
 interface Correlations {operationId?:string;requestId?:string;taskId?:string}
 export interface ClientReportMetadata {
-  environment:'stand'|'production';accountId:string|null;appVersion:string;calculationVersion?:string;
+  environment:'stand'|'production';accountId:string|null;appVersion:string;
   browser?:Readonly<{name:typeof browsers[number];version?:string}>;os?:typeof systems[number];device?:typeof devices[number];
 }
 export interface ClientActionContext extends Correlations {action:Action;component:Component;episodeId?:string}
@@ -58,7 +58,7 @@ const uuid=(value:unknown):value is string=>typeof value==='string' && /^[a-f0-9
 const timestamp=(value:unknown):value is number=>typeof value==='number' && Number.isSafeInteger(value) && value>=0 && value<=8.64e15;
 const duration=(value:unknown):value is number=>typeof value==='number' && Number.isFinite(value) && value>=0 && value<=Number.MAX_SAFE_INTEGER;
 const ids=['operationId','requestId','taskId'] as const;
-const metadataKeys=['environment','accountId','appVersion','calculationVersion','browser','os','device'] as const;
+const metadataKeys=['environment','accountId','appVersion','browser','os','device'] as const;
 function record(value:unknown,allowed:readonly string[],required:readonly string[]=[]) {
   if(!value || typeof value!=='object' || Array.isArray(value))return null;
   const prototype=Object.getPrototypeOf(value);if(prototype!==Object.prototype && prototype!==null)return null;
@@ -89,7 +89,6 @@ export function parseClientReportMetadata(value:unknown):Readonly<ClientReportMe
     const v=record(value,metadataKeys,['environment','accountId','appVersion']);if(!v)return null;
     if(!['stand','production'].includes(v.environment as string) || v.accountId!==null && (typeof v.accountId!=='string' || !/^[1-9][0-9]{0,19}$/.test(v.accountId))
       || typeof v.appVersion!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}$/.test(v.appVersion))return null;
-    if(Object.hasOwn(v,'calculationVersion') && (typeof v.calculationVersion!=='string' || !/^[a-f0-9]{64}$/.test(v.calculationVersion)))return null;
     if(Object.hasOwn(v,'browser')) {
       const browser=record(v.browser,['name','version'],['name']);if(!browser || !known(browsers,browser.name))return null;
       if(Object.hasOwn(browser,'version') && (typeof browser.version!=='string' || browser.version.length>32 || !/^\d+(?:\.\d+){0,3}$/.test(browser.version)))return null;

@@ -14,6 +14,7 @@ import mmap
 import os
 import pathlib
 import struct
+import stat
 import sys
 import tempfile
 
@@ -409,32 +410,6 @@ class InvalidIndex(ValueError):
     pass
 
 
-def provenance():
-    digest = hashlib.sha256()
-    names = ['server/python/return_index.py', 'server/python/astronomy.py', 'server/python/civil_time.py',
-             'server/python/date_limits.py', 'server/python/errors.py', 'shared/date-limits.ts', 'requirements.txt']
-    names += [file.relative_to(astro.ROOT).as_posix() for file in sorted((astro.ROOT/'data'/'ephe').glob('*')) if file.is_file()]
-    digest.update(f'{astro.swe.version}\0{astro.FLAGS}\0{SCHEMA}\0'.encode())
-    for name in names:
-        data = (astro.ROOT/name).read_bytes()
-        digest.update(f'{name}\0{len(data)}\0'.encode()); digest.update(data)
-    return digest.hexdigest()
-
-
-# The TypeScript migration changes source paths only. Preserve the index bytes;
-# accept its prior provenance only for the exact reviewed current calculator.
-_TYPESCRIPT_REVISION = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexTypescript']
-# Portable path names and optional POSIX permissions do not alter trajectories.
-# Accept only the explicitly reviewed source fingerprints for this exact code.
-_PORTABLE_REVISION = json.loads((astro.ROOT/'shared/prepared-data-revisions.json').read_text())['returnIndexPortable']
-
-
-def provenance_matches(generated, current):
-    return (generated == current
-            or (generated == _TYPESCRIPT_REVISION['from'] and current == _TYPESCRIPT_REVISION['to'])
-            or (generated in _PORTABLE_REVISION['from'] and current == _PORTABLE_REVISION['to']))
-
-
 class _ArrayView:
     def __init__(self, data, offset, count, code):
         self.data, self.offset, self.count = data, offset, count
@@ -470,7 +445,7 @@ class PreparedIndex:
         return Trajectory(*arrays)
 
 
-def load_index(path=DEFAULT_FILE, expected_provenance=None, full=False):
+def load_index(path=DEFAULT_FILE, full=False):
     with open(path, 'rb') as file:
         if os.fstat(file.fileno()).st_size < PREFIX.size:
             raise InvalidIndex('Truncated index')
@@ -484,8 +459,8 @@ def load_index(path=DEFAULT_FILE, expected_provenance=None, full=False):
             raise InvalidIndex('Index header checksum mismatch')
         header = json.loads(encoded)
         base = PREFIX.size+size
-        if header['schema'] != SCHEMA or not provenance_matches(header['provenance'], expected_provenance or provenance()):
-            raise InvalidIndex('Index calculation version changed')
+        if header['schema'] != SCHEMA:
+            raise InvalidIndex('Unsupported index format')
         if header['payloadBytes'] != len(data)-base or not header['start'] < header['end']:
             raise InvalidIndex('Invalid index coverage/size')
         view = memoryview(data)[base:]
@@ -552,9 +527,8 @@ def prepare_index(path=DEFAULT_FILE, *, start=None, end=None, bodies=PHYSICAL_BO
     end = math.nextafter(astro.julian_tt(dates.SUPPORTED_END_EXCLUSIVE), -math.inf) if end is None else end
     if not math.isfinite(start) or not math.isfinite(end) or not start < end or not bodies or len(set(bodies)) != len(bodies) or any(body not in PHYSICAL_BODIES for body in bodies):
         raise ValueError('Invalid preparation request')
-    fingerprint = provenance()
     try:
-        with load_index(path, fingerprint) as existing:
+        with load_index(path) as existing:
             if existing.header['start'] == start and existing.header['end'] == end and tuple(existing.header['bodies']) == tuple(bodies):
                 return dict(existing.header, reused=True)
     except (OSError, InvalidIndex):
@@ -580,7 +554,7 @@ def prepare_index(path=DEFAULT_FILE, *, start=None, end=None, bodies=PHYSICAL_BO
                     entry[name] = dict(offset=offset, count=len(values))
                     payload.write(encoded); digest.update(encoded); offset += len(encoded)
                 entries[body] = entry
-            header = dict(schema=SCHEMA, provenance=fingerprint, start=start, end=end,
+            header = dict(schema=SCHEMA, start=start, end=end,
                           bodies=entries, payloadBytes=offset, sha256=digest.hexdigest())
             encoded = json.dumps(header, separators=(',',':'), allow_nan=False).encode()
             with os.fdopen(descriptor, 'wb') as output:
@@ -645,13 +619,94 @@ def has_completed_return(body, start, end, origin, longitude):
     return direction*phase_delta >= (offset or 360)-ROOT_TOLERANCE
 
 
+def _sync_index_directory(path):
+    descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _index_identity(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _migration_header(path):
+    with open(path, 'rb') as source:
+        prefix = source.read(PREFIX.size)
+        if len(prefix) != PREFIX.size:
+            raise InvalidIndex('Truncated index')
+        magic, size, checksum = PREFIX.unpack(prefix)
+        if magic != MAGIC or not 0 < size <= 1_000_000:
+            raise InvalidIndex('Invalid index header')
+        encoded = source.read(size)
+        if len(encoded) != size or hashlib.sha256(encoded).digest() != checksum:
+            raise InvalidIndex('Index header checksum mismatch')
+        header = json.loads(encoded)
+        if not isinstance(header, dict) or header.get('schema') != SCHEMA:
+            raise InvalidIndex('Unsupported index format')
+        return header
+
+
+def _write_migrated_index(descriptor, index, header, before):
+    encoded = json.dumps(header, separators=(',', ':'), allow_nan=False).encode()
+    with os.fdopen(descriptor, 'wb') as output:
+        output.write(PREFIX.pack(MAGIC, len(encoded), hashlib.sha256(encoded).digest()))
+        output.write(encoded)
+        for offset in range(index.base, len(index.data), 1024*1024):
+            output.write(index.data[offset:offset+1024*1024])
+        output.flush()
+        created = os.fstat(output.fileno())
+        if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid):
+            os.fchown(output.fileno(), before.st_uid, before.st_gid)
+        os.fchmod(output.fileno(), stat.S_IMODE(before.st_mode))
+        os.fsync(output.fileno())
+
+
+def migrate_index(path):
+    """One explicit deployment transition; payload bytes are copied, never calculated.
+
+    The old checksummed header is checked with the normal reader. Publication
+    is atomic and retryable; a completed transition reads only its small header.
+    """
+    path = pathlib.Path(path)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise InvalidIndex('Expected a regular index file')
+    header = _migration_header(path)
+    if 'provenance' not in header:
+        _sync_index_directory(path)
+        return False
+    with load_index(path, full=True) as index:
+        if index.header != header:
+            raise InvalidIndex('Prepared index changed during transition')
+        migrated = {key: value for key, value in header.items() if key != 'provenance'}
+        descriptor, temporary = tempfile.mkstemp(prefix=path.name+'.', suffix='.tmp', dir=path.parent)
+        try:
+            _write_migrated_index(descriptor, index, migrated, before)
+            if _index_identity(before) != _index_identity(path.lstat()):
+                raise InvalidIndex('Prepared index changed during transition')
+            os.replace(temporary, path)
+            _sync_index_directory(path)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--file', type=pathlib.Path, default=DEFAULT_FILE)
-    parser.add_argument('--check', action='store_true', help='verify the complete existing file without writing')
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--check', action='store_true', help='verify the complete existing file without writing')
+    action.add_argument('--migrate', action='store_true', help='remove obsolete calculation metadata without recalculating')
     arguments = parser.parse_args()
     try:
-        if arguments.check:
+        if arguments.migrate:
+            result = dict(migrated=migrate_index(arguments.file))
+        elif arguments.check:
             with load_index(arguments.file, full=True) as index:
                 result = dict(index.header, verified=True)
         else:
