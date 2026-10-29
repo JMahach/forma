@@ -13,10 +13,13 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { IDBFactory, IDBCursorWithValue } from 'fake-indexeddb';
+import { IDBFactory, IDBCursorWithValue, IDBObjectStore } from 'fake-indexeddb';
 import { createAccountLibraryStore } from '../src/data/account-library-store.ts';
 import { createIndexedDatabase } from '../src/data/indexed-db.ts';
 import { migrateAccountCalculations } from '../src/data/account-calculation-transition.ts';
+import { migrateCalculationCache } from '../src/data/calculation-cache-transition.ts';
+import { createCalculationCache } from '../src/data/calculation-cache.ts';
+import { estimateBytes } from '../src/data/memory-cache.ts';
 
 const revision = 'a'.repeat(64);
 const payload = (packet:Uint8Array) => packet.subarray(8 + new DataView(packet.buffer, packet.byteOffset).getUint32(4, true));
@@ -265,5 +268,211 @@ test('an interrupted IndexedDB card upgrade retains the original schema and ever
     assert.deepEqual(await deviceRows(rollback), before); rollback.close();
     const retry = deviceDatabase(indexedDB, 4);
     try { assert.ok(await deviceRows(retry)); } finally { retry.close(); }
+  }
+});
+
+const cacheName = 'calculation-transition-fixture';
+const cacheStores = ['payloads', 'catalogue', 'control'];
+const cacheId = (kind:string, key:string) => JSON.stringify([kind, key]);
+function cacheDatabase(indexedDB:IDBFactory, version:number) {
+  return createIndexedDatabase({indexedDB, databaseName:cacheName, version, stores:cacheStores,
+    upgrade:(_, tx) => migrateCalculationCache(tx)});
+}
+function cacheRows(database:ReturnType<typeof createIndexedDatabase>) {
+  return database.transaction<Record<string, any[]>>('readonly', (tx, result) => {
+    const reads = Object.fromEntries(cacheStores.map(name => [name, tx.objectStore(name).getAll()]));
+    reads.control.onsuccess = () => result(Object.fromEntries(Object.entries(reads).map(([name, read]) => [name, read.result])));
+  });
+}
+async function storedCache() {
+  const indexedDB = new IDBFactory(), cache = createCalculationCache({indexedDB, databaseName:cacheName, legacySources:[], now:() => 100});
+  const natal = `natal-day:${revision}:1:2026-09-24:city`, transit = `${revision}:2026-09-24`;
+  const events = JSON.stringify(['events', revision, '2000-01-01T12:00:00.123456Z', 'saturn', 0, 100]);
+  const chart = JSON.stringify(['chart', revision, '2000-01-01T12:00:00.123456Z', 'saturn', '2029-01-01T01:23:45.654321Z', 'Europe/Moscow']);
+  const packet = encodeNatalDay({...natalDayFixture(), calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'});
+  assert.equal(await cache.put('natal', natal, packet.slice().buffer, {version:revision}), true);
+  assert.equal(await cache.put('return-events', events, {key:events, birthUtc:'2000-01-01T12:00:00.123456Z',
+    body:'saturn', range:{fromAge:0, toAge:100}, events:[{utc:'2029-01-01T01:23:45.654321Z', cycle:1, pass:1, direction:'direct'}]}), true);
+  assert.equal(await cache.put('return-charts', chart, {chart:accountChart(), event:{utc:'2029-01-01T01:23:45.654321Z'}}), true);
+  assert.equal((await cache.setTransitWindow({version:revision, dates:['2026-09-24'], expiresAt:10000}))?.status, 'applied');
+  assert.equal(await cache.put('transit', transit, {key:transit, day:new Float64Array([1, -0, Number.MIN_VALUE]),
+    meta:{engine:'Swiss Ephemeris 2.10.03', ephemeris:'Swiss Ephemeris'}}, {version:revision, date:'2026-09-24'}), true);
+  cache.close();
+  const old = cacheDatabase(indexedDB, 2);
+  await old.transaction('readwrite', (tx, result) => {
+    // A still-accounted old physical row and its cursor must not be renamed:
+    // the interrupted importer needs them to finish deleting the source.
+    tx.objectStore('catalogue').put({id:'legacy-source-row', kind:'natal', key:natal, version:revision,
+      bytes:1000, legacyBytes:600, lru:50, family:'natal', location:'legacy', personalEpoch:0,
+      source:'natal', store:'packets', sourceKey:natal, stage:'copied'});
+    tx.objectStore('control').put({key:'source:natal', definition:{id:'natal', databaseName:'bodygraph-chart-days',
+      version:3, stores:['packets','metadata'], family:'natal'}, after:natal, storeIndex:0,
+      scanned:false, finished:false, personalEpoch:0});
+    const budget = tx.objectStore('control').get('budget');
+    budget.onsuccess = () => {tx.objectStore('control').put({...budget.result, phase:'migrating', legacyBytes:600,
+      accountedBytes:budget.result.accountedBytes + 1000}); result(true);};
+  });
+  const before = (await cacheRows(old))!; old.close();
+  return {indexedDB, before, natal, transit, events, chart};
+}
+
+test('cache schema upgrade keeps ready numbers and unfinished source cursors, rekeys atomically and accounts the new bytes', async () => {
+  const {indexedDB, before, natal, transit, events, chart} = await storedCache();
+  const current = cacheDatabase(indexedDB, 3);
+  try {
+    const after = (await cacheRows(current))!;
+    assert.equal(after.payloads.length, 4);
+    for (const [kind, key] of [['natal', natal], ['transit', transit], ['return-events', events], ['return-charts', chart]] as const) {
+      const original = before.payloads.find(row => row.id === cacheId(kind, key)).value;
+      const value = after.payloads.find(row => row.id === cacheId(kind, migrateCalculationKey(kind, key))).value;
+      if (kind === 'natal') assert.deepEqual(payload(new Uint8Array(value)), payload(new Uint8Array(original)));
+      else if (kind === 'transit') {
+        assert.deepEqual(value.day, original.day); assert.equal(value.key, '2026-09-24');
+        assert.equal(value.meta.engine, 'Swiss Ephemeris');
+      } else if (kind === 'return-events') assert.deepEqual(value, {...original, key:migrateCalculationKey(kind, key)});
+      else assert.deepEqual(value, {...original, chart:migrateCalculationMetadata(original.chart)});
+    }
+    const source = after.control.find(row => row.key === 'source:natal');
+    assert.equal(source.after, natal); assert.equal(source.definition.legacyDatabaseName, 'bodygraph-chart-days');
+    assert.equal(Object.hasOwn(source.definition, 'databaseName'), false);
+    assert.equal(JSON.stringify(source.definition), JSON.stringify({id:'natal', legacyDatabaseName:'bodygraph-chart-days',
+      version:3, stores:['packets','metadata'], family:'natal'}), 'the unfinished importer still recognises its canonical source identity');
+    const legacy = after.catalogue.find(row => row.location === 'legacy');
+    assert.equal(legacy.id, 'legacy-source-row'); assert.equal(legacy.sourceKey, natal);
+    assert.equal(legacy.key, migrateCalculationKey('natal', natal)); assert.equal(legacy.stage, 'copied');
+    for (const row of after.catalogue) {
+      assert.equal(Object.hasOwn(row, 'version'), false);
+      const size = row.location === 'legacy' ? row.legacyBytes : estimateBytes(after.payloads.find(value => value.id === row.id));
+      assert.equal(row.bytes, size + estimateBytes(row));
+    }
+    const budget = after.control.find(row => row.key === 'budget');
+    assert.equal(Object.hasOwn(budget, 'versions'), false); assert.equal(Object.hasOwn(budget.window, 'version'), false);
+    assert.equal(budget.accountedBytes, 4096 + after.catalogue.reduce((size, row) => size + row.bytes, 0));
+    assert.equal(budget.legacyBytes, 600); assert.equal(budget.phase, 'migrating');
+    assert.equal(budget.personalEpoch, before.control.find(row => row.key === 'budget').personalEpoch);
+    assert.deepEqual(await cacheRows(current), after);
+    current.close();
+    const repeated = cacheDatabase(indexedDB, 4);
+    assert.deepEqual(await cacheRows(repeated), after); repeated.close();
+    const oldWriter = cacheDatabase(indexedDB, 2);
+    assert.equal(await cacheRows(oldWriter), null); oldWriter.close();
+  } finally { current.close(); }
+});
+
+test('every interrupted cache migration write rolls back; a retry keeps the original ready results', async () => {
+  const put = IDBObjectStore.prototype.put, remove = IDBObjectStore.prototype.delete;
+  let boundaries = 0;
+  for (let at = 0; at <= boundaries; at++) {
+    const {indexedDB, before} = await storedCache();
+    let writes = 0;
+    const written = () => {if (++writes === at) throw new Error('interrupted');};
+    IDBObjectStore.prototype.put = function(...args) {const result = put.apply(this, args); written(); return result;};
+    IDBObjectStore.prototype.delete = function(...args) {const result = remove.apply(this, args); written(); return result;};
+    const next = cacheDatabase(indexedDB, 3);
+    try {
+      const result = await cacheRows(next);
+      if (at === 0) {assert.ok(result); boundaries = writes; assert.ok(boundaries > 10);}
+      else assert.equal(result, null);
+    } finally {
+      IDBObjectStore.prototype.put = put; IDBObjectStore.prototype.delete = remove; next.close();
+    }
+    if (at === 0) continue;
+    const rollback = cacheDatabase(indexedDB, 2);
+    assert.deepEqual(await cacheRows(rollback), before); rollback.close();
+    const retry = cacheDatabase(indexedDB, 3);
+    assert.ok(await cacheRows(retry)); retry.close();
+  }
+});
+
+test('a cache collision cannot treat different container types or account generations as the same result', async () => {
+  for (const mismatch of ['typed-record', 'array-record', 'primitive-record', 'record-primitive', 'null-record', 'account']) {
+    const {indexedDB, chart} = await storedCache(), old = cacheDatabase(indexedDB, 2);
+    await old.transaction('readwrite', (tx, result) => {
+      const id = cacheId('return-charts', chart), otherKey = chart.replace(revision, 'b'.repeat(64));
+      const otherId = cacheId('return-charts', otherKey), read = tx.objectStore('payloads').get(id);
+      read.onsuccess = () => {
+        const left = read.result.value, right = structuredClone(left);
+        if (mismatch === 'typed-record') {left.chart.city = {}; right.chart.city = new Uint8Array();}
+        if (mismatch === 'array-record') {left.chart.city = {}; right.chart.city = [];}
+        if (mismatch === 'primitive-record') {left.chart.city = {}; right.chart.city = false;}
+        if (mismatch === 'record-primitive') {left.chart.city = 1; right.chart.city = {};}
+        if (mismatch === 'null-record') {left.chart.city = null; right.chart.city = {};}
+        tx.objectStore('payloads').put({id, value:left});
+        tx.objectStore('payloads').put({id:otherId, value:right});
+        tx.objectStore('catalogue').put({id:otherId, kind:'return-charts', key:otherKey, version:'b'.repeat(64),
+          bytes:1000, lru:999, family:'returns', location:'data', personalEpoch:mismatch === 'account' ? 1 : 0}); result(true);
+      };
+    });
+    const before = await cacheRows(old); old.close();
+    const next = cacheDatabase(indexedDB, 3);
+    assert.equal(await cacheRows(next), null, mismatch); next.close();
+    const rollback = cacheDatabase(indexedDB, 2);
+    assert.deepEqual(await cacheRows(rollback), before); rollback.close();
+  }
+});
+
+test('colliding calculation keys merge identical ready data with latest recency but never silently choose different numbers', async () => {
+  for (const kind of ['natal', 'transit', 'return-events', 'return-charts'] as const) for (const conflict of [false, true]) {
+    const fixture = await storedCache(), {indexedDB} = fixture, old = cacheDatabase(indexedDB, 2);
+    const key = fixture[kind === 'return-events' ? 'events' : kind === 'return-charts' ? 'chart' : kind];
+    await old.transaction('readwrite', (tx, result) => {
+      const other = key.replace(revision, 'b'.repeat(64)), id = cacheId(kind, other);
+      const rows = tx.objectStore('payloads').get(cacheId(kind, key));
+      rows.onsuccess = () => {
+        let value = rows.result.value;
+        if (conflict) {
+          if (kind === 'natal') {
+            const day = natalDayFixture(); day.columns[0][0] = 0.123456789;
+            value = encodeNatalDay({...day, calculationVersion:revision, engine:'Swiss Ephemeris 2.10.03'}).slice().buffer;
+          } else if (kind === 'transit') value.day[1] = 0; // Preserve even the sign of zero.
+          else if (kind === 'return-events') value.events[0].utc = '2029-01-01T01:23:45.654322Z';
+          else value.chart.activations.personality[0].longitude = 0.123456789;
+        }
+        if (kind === 'return-events' || kind === 'return-charts') value.proof = 'distinct-receipt-for-the-same-numbers';
+        tx.objectStore('payloads').put({id, value});
+        tx.objectStore('catalogue').put({id, kind, key:other, version:'b'.repeat(64),
+          bytes:1000, lru:999, family:'returns', location:'data', personalEpoch:0}); result(true);
+      };
+    });
+    const before = await cacheRows(old); old.close();
+    const next = cacheDatabase(indexedDB, 3);
+    const after = await cacheRows(next); next.close();
+    if (conflict) {
+      assert.equal(after, null);
+      const rollback = cacheDatabase(indexedDB, 2);
+      assert.deepEqual(await cacheRows(rollback), before); rollback.close();
+    } else {
+      assert.equal(after!.payloads.length, 4);
+      const result = after!.catalogue.find(row => row.kind === kind && row.location === 'data');
+      assert.equal(result.lru, 999);
+      assert.equal(result.key, migrateCalculationKey(kind, key));
+      if (kind === 'return-events' || kind === 'return-charts')
+        assert.equal(after!.payloads.find(row => row.id === result.id).value.proof, 'distinct-receipt-for-the-same-numbers');
+    }
+  }
+});
+
+test('missing or unreadable cache payload aborts rekeying without discarding its catalogue or source', async () => {
+  for (const damaged of ['missing', 'packet', 'key', 'window', 'source', null, [], 42]) {
+    const {indexedDB, natal, chart} = await storedCache(), old = cacheDatabase(indexedDB, 2);
+    await old.transaction('readwrite', (tx, result) => {
+      const id = cacheId('natal', natal);
+      if (damaged === 'missing') tx.objectStore('payloads').delete(id);
+      else if (damaged === 'packet') tx.objectStore('payloads').put({id, value:new ArrayBuffer(12)});
+      else if (damaged === 'key') {
+        const row = tx.objectStore('catalogue').get(id);
+        row.onsuccess = () => tx.objectStore('catalogue').put({...row.result, key:'unknown'});
+      } else if (damaged === 'window' || damaged === 'source') {
+        const row = tx.objectStore('control').get(damaged === 'window' ? 'budget' : 'source:natal');
+        row.onsuccess = () => tx.objectStore('control').put({...row.result,
+          ...(damaged === 'window' ? {window:42} : {definition:[]})});
+      } else tx.objectStore('payloads').put({id:cacheId('return-charts', chart), value:damaged});
+      result(true);
+    });
+    const before = await cacheRows(old); old.close();
+    const next = cacheDatabase(indexedDB, 3);
+    assert.equal(await cacheRows(next), null); next.close();
+    const rollback = cacheDatabase(indexedDB, 2);
+    assert.deepEqual(await cacheRows(rollback), before); rollback.close();
   }
 });
