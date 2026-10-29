@@ -134,6 +134,12 @@ function migrateControl(source:RecordValue, sizes:Awaited<ReturnType<typeof meas
 }
 
 async function migrate(tx:IDBTransaction) {
+  const budget = await request(tx.objectStore('control').get('budget'));
+  if (!budget) {
+    if (await request(tx.objectStore('catalogue').count()) || await request(tx.objectStore('payloads').count())) return invalid();
+    return;
+  }
+  if (!Object.hasOwn(budget, 'versions')) return;
   await migrateRows(tx);
   const sizes = await measure(tx), control = tx.objectStore('control');
   const opened = control.openCursor();

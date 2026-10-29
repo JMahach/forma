@@ -44,6 +44,13 @@ import { lifetimeProvenanceMatches } from './lifetime-compatibility.ts';
 
 const MAX_METADATA_BYTES = 16_384;
 
+export async function readLifetimeMetadata(file:string) {
+  const stat = await fs.stat(file);
+  if (!stat.isFile() || stat.size > MAX_METADATA_BYTES) throw unavailable();
+  const raw = await fs.readFile(file, 'utf8');
+  return {stat, raw, input:JSON.parse(raw)};
+}
+
 export function lifetimeFileFingerprint(root: string) {
   return inputFingerprint(root, LIFETIME_PROVENANCE_INPUTS);
 }
@@ -176,7 +183,7 @@ function epoch(value: unknown) {
   return milliseconds;
 }
 
-function validateMetadata(value: unknown) {
+export function validateLifetimeMetadata(value: unknown) {
   const input = value as LifetimeFileMetadata;
   if (input?.version !== LIFETIME_FILE_VERSION || input?.format !== LIFETIME_FILE_FORMAT) {
     throw new LifetimeError('lifetime_unavailable', 'Нужен полный файл летописи версии 3. Подготовьте его заново.');
@@ -187,7 +194,7 @@ function validateMetadata(value: unknown) {
     || input.columns.some((planet, index) => planet !== LIFETIME_FIELDS[index])
     || !Number.isSafeInteger(input.sampleCount) || input.sampleCount < 1
     || input.stepSeconds !== LIFETIME_STEP_SECONDS || input.flags !== 258
-    || typeof input.engine !== 'string' || !/^Swiss Ephemeris \d+(?:\.\d+){1,3}$/.test(input.engine)
+    || typeof input.engine !== 'string' || !/^Swiss Ephemeris(?: \d+(?:\.\d+){1,3})?$/.test(input.engine)
     || typeof input.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(input.sha256)) throw unavailable();
   const start = epoch(input.startUtc), end = epoch(input.endExclusiveUtc);
   const bytes = input.sampleCount * LIFETIME_POINT_BYTES;
@@ -198,7 +205,7 @@ function validateMetadata(value: unknown) {
     stepSeconds: LIFETIME_STEP_SECONDS, samples: input.sampleCount, planets: LIFETIME_PLANETS, engine: input.engine }) };
 }
 
-async function verifyDigest(handle: FileHandle, bytes: number, expected: string) {
+export async function verifyLifetimeDigest(handle: FileHandle, bytes: number, expected: string) {
   const hash = createHash('sha256'), buffer = Buffer.allocUnsafe(Math.min(bytes, 1024 * 1024));
   let position = 0;
   while (position < bytes) {
@@ -218,16 +225,14 @@ export async function createLifetimeFile({ file, metadataFile, report, root = fi
   let handle: FileHandle | undefined;
   try {
     if (typeof file !== 'string' || !file || typeof metadataFile !== 'string' || !metadataFile) throw unavailable();
-    const info = await fs.stat(metadataFile);
-    if (!info.isFile() || info.size > MAX_METADATA_BYTES) throw unavailable();
-    const input = JSON.parse(await fs.readFile(metadataFile, 'utf8'));
-    const validated = validateMetadata(input);
+    const {input} = await readLifetimeMetadata(metadataFile);
+    const validated = validateLifetimeMetadata(input);
     if (!lifetimeProvenanceMatches(input, await lifetimeFileFingerprint(root))) throw unavailable();
     handle = await fs.open(file, 'r');
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size !== validated.bytes) throw unavailable();
     // Verify every byte once with bounded memory before accepting requests.
-    await verifyDigest(handle, validated.bytes, validated.sha256);
+    await verifyLifetimeDigest(handle, validated.bytes, validated.sha256);
     const { metadata, start } = validated;
     const cacheIdentity = createHash('sha256').update(JSON.stringify([
       LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, validated.sha256, metadata,

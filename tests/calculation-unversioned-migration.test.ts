@@ -20,6 +20,9 @@ import { migrateAccountCalculations } from '../src/data/account-calculation-tran
 import { migrateCalculationCache } from '../src/data/calculation-cache-transition.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { estimateBytes } from '../src/data/memory-cache.ts';
+import fs from 'node:fs/promises';
+import { migratePreparedLifetimeFile } from '../server/services/lifetime-transition.ts';
+import { lifetimeFileFixture } from './helpers/lifetime-file.ts';
 
 const revision = 'a'.repeat(64);
 const payload = (packet:Uint8Array) => packet.subarray(8 + new DataView(packet.buffer, packet.byteOffset).getUint32(4, true));
@@ -213,6 +216,95 @@ test('prepared lifetime metadata loses only calculation markers while its numeri
   assert.equal((await stat(file)).mtimeMs, before.mtimeMs);
   assert.equal(migrated.sha256, createHash('sha256').update(await readFile(file)).digest('hex'));
   assert.ok(original.provenance, 'transition leaves the input metadata intact until its owner commits');
+  const metadataFile = path.join(directory, 'sample.metadata.json');
+  await writeFile(metadataFile, JSON.stringify(original)); await fs.chmod(metadataFile, 0o640);
+  const owner = await stat(metadataFile), group = process.getgroups?.().find(value => value !== owner.gid);
+  if (group !== undefined) await fs.chown(metadataFile, owner.uid, group);
+  assert.equal(await migratePreparedLifetimeFile({file, metadataFile}), true);
+  assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), migrated);
+  assert.equal((await stat(metadataFile)).mode & 0o777, 0o640);
+  assert.equal((await stat(metadataFile)).uid, owner.uid);
+  assert.equal((await stat(metadataFile)).gid, group ?? owner.gid);
+  assert.deepEqual(await readFile(file), bytes); assert.equal((await stat(file)).mtimeMs, before.mtimeMs);
+  const finished = await stat(metadataFile);
+  const open = fs.open; let repeatedNumericReads = 0;
+  fs.open = (...args) => {if (args[0] === file) repeatedNumericReads++; return open(...args);};
+  try {assert.equal(await migratePreparedLifetimeFile({file, metadataFile}), false);}
+  finally {fs.open = open;}
+  assert.equal(repeatedNumericReads, 0, 'a finished migration never scans the numeric file again');
+  assert.equal((await stat(metadataFile)).mtimeMs, finished.mtimeMs, 'no repeat metadata write');
+  await writeFile(metadataFile, JSON.stringify(original));
+  const damaged = Buffer.from(bytes); damaged[0] ^= 1; await writeFile(file, damaged);
+  await assert.rejects(migratePreparedLifetimeFile({file, metadataFile}));
+  assert.deepEqual(await readFile(file), damaged, 'a corrupt source is never replaced or calculated again');
+  assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), original);
+  await writeFile(file, Buffer.concat([bytes, Buffer.from([0])]));
+  await assert.rejects(migratePreparedLifetimeFile({file, metadataFile}), /Invalid prepared numeric file/);
+  assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), original);
+});
+
+test('each interrupted prepared-file write leaves either the original or complete new metadata; retry never rewrites planetary bytes', async t => {
+  const fixture = await lifetimeFileFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
+  const expected = migrateLifetimeFileMetadata(metadata), before = await stat(file);
+  const open = fs.open, rename = fs.rename;
+  let boundaries = 0;
+  for (let at = 0; at <= boundaries; at++) {
+    await writeFile(metadataFile, JSON.stringify(metadata));
+    let writes = 0;
+    const written = () => {if (++writes === at) throw new Error('interrupted');};
+    fs.open = async (...args) => {
+      const handle = await open(...args);
+      if (args[1] === 'wx') {
+        try {written();} catch (error) {await handle.close(); throw error;}
+      }
+      return new Proxy(handle, {get(target, key) {
+        const value = Reflect.get(target, key);
+        if (['writeFile','chown','chmod','sync'].includes(String(key))) return async (...values:unknown[]) => {
+          const result = await value.apply(target, values); written(); return result;
+        };
+        return typeof value === 'function' ? value.bind(target) : value;
+      }});
+    };
+    fs.rename = async (...args) => {await rename(...args); written();};
+    try {
+      if (at === 0) {
+        assert.equal(await migratePreparedLifetimeFile(fixture), true); boundaries = writes;
+        assert.ok(boundaries > 0 && boundaries <= 6, 'no redundant ownership update for the same owner');
+        t.diagnostic(`prepared metadata: ${boundaries} first-publication effects; repeat: 0 numeric reads, 0 metadata writes, directory durability sync only`);
+      }
+      else await assert.rejects(migratePreparedLifetimeFile(fixture), /interrupted/);
+    } finally {fs.open = open; fs.rename = rename;}
+    const after = JSON.parse(await readFile(metadataFile, 'utf8'));
+    assert.deepEqual(after, after.engine === 'Swiss Ephemeris' ? expected : metadata);
+    assert.deepEqual(await readFile(file), bytes); assert.equal((await stat(file)).mtimeMs, before.mtimeMs);
+    await migratePreparedLifetimeFile(fixture);
+    assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), expected);
+    assert.deepEqual((await fs.readdir(path.dirname(file))).sort(), ['sample.f64le','sample.metadata.json']);
+  }
+});
+
+test('a metadata transition refuses concurrent changes to either source instead of publishing over them', async t => {
+  const fixture = await lifetimeFileFixture(t, 3), {file, metadataFile, metadata, bytes} = fixture;
+  const open = fs.open;
+  for (const changed of ['metadata', 'numeric']) {
+    await writeFile(file, bytes); await writeFile(metadataFile, JSON.stringify(metadata));
+    const altered = {...metadata, generationSeconds:999};
+    fs.open = async (...args) => {
+      const handle = await open(...args);
+      if (args[1] === 'wx') {
+        if (changed === 'metadata') await writeFile(metadataFile, JSON.stringify(altered));
+        else {
+          const data = Buffer.from(bytes); data[0] ^= 1; await writeFile(file, data);
+          const info = await stat(file); await fs.utimes(file, info.atime, new Date(info.mtimeMs - 1000));
+        }
+      }
+      return handle;
+    };
+    try {await assert.rejects(migratePreparedLifetimeFile(fixture), /Prepared inputs changed/);}
+    finally {fs.open = open;}
+    assert.deepEqual(JSON.parse(await readFile(metadataFile, 'utf8')), changed === 'metadata' ? altered : metadata);
+    assert.deepEqual((await fs.readdir(path.dirname(file))).sort(), ['sample.f64le','sample.metadata.json']);
+  }
 });
 
 const deviceName = 'transition-fixture';
@@ -276,7 +368,10 @@ const cacheStores = ['payloads', 'catalogue', 'control'];
 const cacheId = (kind:string, key:string) => JSON.stringify([kind, key]);
 function cacheDatabase(indexedDB:IDBFactory, version:number) {
   return createIndexedDatabase({indexedDB, databaseName:cacheName, version, stores:cacheStores,
-    upgrade:(_, tx) => migrateCalculationCache(tx)});
+    upgrade:(db, tx) => {
+      for (const name of cacheStores) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, {keyPath:name === 'control' ? 'key' : 'id'});
+      migrateCalculationCache(tx);
+    }});
 }
 function cacheRows(database:ReturnType<typeof createIndexedDatabase>) {
   return database.transaction<Record<string, any[]>>('readonly', (tx, result) => {
@@ -353,13 +448,25 @@ test('cache schema upgrade keeps ready numbers and unfinished source cursors, re
     assert.deepEqual(await cacheRows(current), after);
     current.close();
     const repeated = cacheDatabase(indexedDB, 4);
-    assert.deepEqual(await cacheRows(repeated), after); repeated.close();
+    const put = IDBObjectStore.prototype.put, remove = IDBObjectStore.prototype.delete;
+    let writes = 0;
+    IDBObjectStore.prototype.put = function(...args) {writes++; return put.apply(this, args);};
+    IDBObjectStore.prototype.delete = function(...args) {writes++; return remove.apply(this, args);};
+    try {assert.deepEqual(await cacheRows(repeated), after);}
+    finally {IDBObjectStore.prototype.put = put; IDBObjectStore.prototype.delete = remove; repeated.close();}
+    assert.equal(writes, 0, 'a finished migration performs no repeat payload, catalogue or control writes');
     const oldWriter = cacheDatabase(indexedDB, 2);
     assert.equal(await cacheRows(oldWriter), null); oldWriter.close();
   } finally { current.close(); }
 });
 
-test('every interrupted cache migration write rolls back; a retry keeps the original ready results', async () => {
+test('a new empty calculation database needs no transition writes or invented budget', async () => {
+  const database = cacheDatabase(new IDBFactory(), 3);
+  try {assert.deepEqual(await cacheRows(database), {payloads:[], catalogue:[], control:[]});}
+  finally {database.close();}
+});
+
+test('every interrupted cache migration write rolls back; a retry keeps the original ready results', async t => {
   const put = IDBObjectStore.prototype.put, remove = IDBObjectStore.prototype.delete;
   let boundaries = 0;
   for (let at = 0; at <= boundaries; at++) {
@@ -371,7 +478,10 @@ test('every interrupted cache migration write rolls back; a retry keeps the orig
     const next = cacheDatabase(indexedDB, 3);
     try {
       const result = await cacheRows(next);
-      if (at === 0) {assert.ok(result); boundaries = writes; assert.ok(boundaries > 10);}
+      if (at === 0) {
+        assert.ok(result); boundaries = writes; assert.ok(boundaries > 0 && boundaries <= 19);
+        t.diagnostic(`calculation cache: ${boundaries} first-transition writes; repeat: 0 writes`);
+      }
       else assert.equal(result, null);
     } finally {
       IDBObjectStore.prototype.put = put; IDBObjectStore.prototype.delete = remove; next.close();
@@ -453,7 +563,7 @@ test('colliding calculation keys merge identical ready data with latest recency 
 });
 
 test('missing or unreadable cache payload aborts rekeying without discarding its catalogue or source', async () => {
-  for (const damaged of ['missing', 'packet', 'key', 'window', 'source', null, [], 42]) {
+  for (const damaged of ['missing', 'packet', 'key', 'window', 'source', 'budget', 'budget-and-catalogue', 'budget-and-payloads', null, [], 42]) {
     const {indexedDB, natal, chart} = await storedCache(), old = cacheDatabase(indexedDB, 2);
     await old.transaction('readwrite', (tx, result) => {
       const id = cacheId('natal', natal);
@@ -466,6 +576,10 @@ test('missing or unreadable cache payload aborts rekeying without discarding its
         const row = tx.objectStore('control').get(damaged === 'window' ? 'budget' : 'source:natal');
         row.onsuccess = () => tx.objectStore('control').put({...row.result,
           ...(damaged === 'window' ? {window:42} : {definition:[]})});
+      } else if (typeof damaged === 'string' && damaged.startsWith('budget')) {
+        tx.objectStore('control').delete('budget');
+        if (damaged === 'budget-and-catalogue') tx.objectStore('catalogue').clear();
+        if (damaged === 'budget-and-payloads') tx.objectStore('payloads').clear();
       } else tx.objectStore('payloads').put({id:cacheId('return-charts', chart), value:damaged});
       result(true);
     });
