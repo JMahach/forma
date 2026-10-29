@@ -14,6 +14,9 @@ import {createReturnReceipts} from '../server/services/return-receipt.ts';
 import {accountNatalChart,chartId} from './helpers/account-chart.ts';
 import {deferred} from './helpers/deferred.ts';
 import type {CycleInput,CycleEventsResult,CycleChartResult} from '../shared/cycles-format.ts';
+import {CYCLE_BODIES as SERVER_FAMILIES} from '../server/services/cycles.ts';
+import {CYCLE_BODIES as CLIENT_FAMILIES} from '../src/domain/cycles.ts';
+import {readFile} from 'node:fs/promises';
 
 const version='a'.repeat(64),nextVersion='b'.repeat(64);
 // 1 Jan 2000 noon -> 1 Jan 2100 noon is 36525 days, a 100-year calendar span.
@@ -87,13 +90,36 @@ test('guests and another account cannot compute or populate an owner card',async
   assert.deepEqual(f.calls(),{events:0,charts:0});
 });
 
-test('non-main bodies, arbitrary ranges and non-event moments are rejected before a full calculation',async t=>{
+test('unknown families, arbitrary ranges and non-primary full events never enter saved calculations',async t=>{
   const f=fixture(t);
-  for(const patch of [{body:'sun'},{fromAge:5},{toAge:150}]) {
+  for(const patch of [{body:'unknown'},{fromAge:5},{toAge:150}]) {
     await assert.rejects(f.service.events(f.records,f.chart.id,f.accountId,{...f.input,...patch},f.options),{code:'invalid_chart'});
   }
+  await assert.rejects(f.service.chart(f.records,f.chart.id,f.accountId,{...f.input,body:'sun'},f.options),{code:'invalid_chart'});
   await assert.rejects(f.service.chart(f.records,f.chart.id,f.accountId,{...f.input,eventUtc:'2029-01-02T12:00:00Z'},f.options),{code:'invalid_chart'});
   assert.equal(f.calls().charts,0);
+});
+
+test('all thirteen date families persist independently without calculating any full events',async t=>{
+  const f=fixture(t);
+  for(const body of SERVER_FAMILIES) {
+    const request={...f.input,body};
+    assert.equal((await f.service.events(f.records,f.chart.id,f.accountId,request,f.options)).events[0]!.body,body);
+  }
+  assert.deepEqual(f.calls(),{events:13,charts:0});
+  const service=createChartReturns({cycles:{events:async()=>assert.fail('ready dates must not be searched again'),
+    chart:async()=>assert.fail('reading dates must not prepare full events')}});
+  for(const body of SERVER_FAMILIES)assert.equal((await service.events(f.records,f.chart.id,f.accountId,{...f.input,body},f.options)).events[0]!.body,body);
+  assert.deepEqual(f.calls(),{events:13,charts:0});
+});
+
+test('client, server and Python agree on thirteen return families without imposing UI order',async()=>{
+  const text=await readFile(new URL('../server/python/return_index.py',import.meta.url),'utf8');
+  const dictionary=text.match(/^BODIES = \{([\s\S]*?)^\}/m)?.[1];assert.ok(dictionary);
+  const python=[...dictionary.matchAll(/^\s+'([^']+)':/gm)].map(([,name])=>name);
+  assert.equal(SERVER_FAMILIES.length,13);
+  assert.deepEqual(new Set(CLIENT_FAMILIES.map(row=>row.id)),new Set(SERVER_FAMILIES));
+  assert.deepEqual(new Set(python),new Set(SERVER_FAMILIES));
 });
 
 test('the expected birth and timezone cannot silently change under an existing request',async t=>{

@@ -2,7 +2,7 @@ import {validCycleResult,cycleAge,cycleUtcMilliseconds,type CycleInput,type Cycl
 import type {Activation,CalculatedChart} from './chart-types.ts';
 import {calendarAnniversaryUtc,SUPPORTED_START,SUPPORTED_END_EXCLUSIVE} from './date-limits.ts';
 
-/** Only these return families belong to a saved natal card and persistent device storage. */
+/** Only these families have durable full calculations. Server date lists cover all thirteen families. */
 export const MAIN_RETURN_BODIES=Object.freeze(['north_node','saturn','uranus_opposition','chiron','uranus'] as const);
 export type MainReturnBody=typeof MAIN_RETURN_BODIES[number];
 export const isMainReturnBody=(value:unknown):value is MainReturnBody=>

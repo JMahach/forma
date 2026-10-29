@@ -38,8 +38,9 @@ import { createComputeQueue } from '../runtime/compute-queue.ts';
 import { consumeJob } from '../runtime/job-consumers.ts';
 import { runJsonWorker } from '../runtime/json-worker.ts';
 import { cycleUtcMilliseconds as parseCycleUtc, validCycleResult } from '../../shared/cycles-format.ts';
+import {RETURN_FAMILIES} from '../../shared/library-package-contract.ts';
 
-export const CYCLE_BODIES = Object.freeze(['sun', 'moon', 'north_node', 'mercury', 'venus', 'mars', 'jupiter', 'saturn', 'uranus', 'uranus_opposition', 'neptune', 'pluto', 'chiron']);
+export const CYCLE_BODIES:readonly string[] = RETURN_FAMILIES;
 export const CYCLE_LIMITS = Object.freeze({ concurrency: 2, maxQueued: 12 });
 const YEAR_MS = 365.2425 * 86400000;
 

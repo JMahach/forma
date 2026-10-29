@@ -1,7 +1,8 @@
-import {isMainReturnBody,mainReturnRange,normalizeMainReturn,type ReturnReceiptReader,type PreparedReturnSubmission} from '../../shared/chart-return-contract.ts';
+import {mainReturnRange,normalizeMainReturn,type ReturnReceiptReader,type PreparedReturnSubmission} from '../../shared/chart-return-contract.ts';
 import {validCycleResult,cycleAge,type CycleInput,type CycleEventsResult,type CycleChartResult} from '../../shared/cycles-format.ts';
 import {ChartRecordError,type ChartRecordAccess,type ChartReturnQuery} from './chart-records.ts';
 import type {AccountChart} from '../../shared/chart-record-contract.ts';
+import {canStoreServerReturn} from '../../shared/library-package-contract.ts';
 
 export interface ChartReturnCalculator {
   events(input:CycleInput,options:{signal:AbortSignal}):Promise<CycleEventsResult>;
@@ -9,17 +10,17 @@ export interface ChartReturnCalculator {
 }
 type ReadOptions={signal:AbortSignal};
 
-/** Linked main returns of an owned natal. Computation and unfinished sharing stay with cycles. */
+/** All date families and primary full events of an owned natal. Cycles owns unfinished computation. */
 export function createChartReturns({cycles,receipts}:{
   cycles:ChartReturnCalculator;receipts?:ReturnReceiptReader;
 }) {
-  function source(access:ChartRecordAccess,id:string,accountId:string,input:CycleInput,{signal}:ReadOptions) {
+  function source(access:ChartRecordAccess,id:string,accountId:string,input:CycleInput,{signal}:ReadOptions,action:'events'|'chart') {
     signal.throwIfAborted();
     const chart=access.getOwn(id,accountId);
     if(!chart)throw new ChartRecordError('not_found');
     if(input.birthUtc!==chart.utc
       || (input.timezone??'UTC')!==(chart.timezone||'UTC'))throw new ChartRecordError('source_changed');
-    if(chart.source!=='calculated' || !isMainReturnBody(input.body))throw new ChartRecordError('invalid_chart');
+    if(chart.source!=='calculated' || !canStoreServerReturn(action,input.body))throw new ChartRecordError('invalid_chart');
     const range=mainReturnRange(chart.utc);
     if(!range || (input.fromAge!==undefined && input.fromAge!==range.fromAge)
       || (input.toAge!==undefined && input.toAge!==range.toAge))throw new ChartRecordError('invalid_chart');
@@ -41,7 +42,7 @@ export function createChartReturns({cycles,receipts}:{
   }
   return {
     async accept(access:ChartRecordAccess,id:string,expectedAccountId:string,packet:PreparedReturnSubmission,options:ReadOptions):Promise<{accepted:true}> {
-      const context=source(access,id,expectedAccountId,packet.input,options);
+      const context=source(access,id,expectedAccountId,packet.input,options,packet.action);
       if(!receipts || !['events','chart'].includes(packet.action))throw new ChartRecordError('invalid_chart');
       let trusted;
       try { trusted=receipts.read(packet.action,packet.input,packet.result,packet.proof); }
@@ -56,14 +57,14 @@ export function createChartReturns({cycles,receipts}:{
       return {accepted:true};
     },
     async events(access:ChartRecordAccess,id:string,expectedAccountId:string,input:CycleInput,options:ReadOptions):Promise<CycleEventsResult> {
-      const context=source(access,id,expectedAccountId,input,options);
+      const context=source(access,id,expectedAccountId,input,options,'events');
       const result=await dates(access,context,options);
       options.signal.throwIfAborted();
       access.assertReturnCurrent(query(context.chart,{birthUtc:context.chart.utc,body:context.body,...context.range},'events'));
       return result;
     },
     async chart(access:ChartRecordAccess,id:string,expectedAccountId:string,input:CycleInput,options:ReadOptions):Promise<CycleChartResult> {
-      const context=source(access,id,expectedAccountId,input,options),eventUtc=input.eventUtc;
+      const context=source(access,id,expectedAccountId,input,options,'chart'),eventUtc=input.eventUtc;
       const age=cycleAge(eventUtc,context.chart.utc);
       if(typeof eventUtc!=='string' || !Number.isFinite(age) || age<=0 || age>context.range.toAge)throw new ChartRecordError('invalid_chart');
       const request={birthUtc:context.chart.utc,body:context.body,eventUtc,timezone:context.chart.timezone||'UTC'};

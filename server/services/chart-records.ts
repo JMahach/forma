@@ -1,4 +1,4 @@
-import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
+import {canStoreServerReturn} from '../../shared/library-package-contract.ts';
 import {validCycleResult,type CycleInput,type CycleResult} from '../../shared/cycles-format.ts';
 import { canonicalChartId, isOperationIdentifier, CHART_ID_MIN_DIGITS, CHART_ID_MAX_DIGITS } from '../../shared/chart-record-contract.ts';
 import { randomInt } from 'node:crypto';
@@ -97,7 +97,7 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     const owner=account(now(),query.expectedAccountId), current=storage.get(owner,query.chartId);
     if(!current)throw new ChartRecordError('not_found');
     if(!isDeepStrictEqual(birthContent(current),birthContent(query.birth)))throw new ChartRecordError('source_changed');
-    if(current.source!=='calculated' || !isMainReturnBody(query.input.body))throw new ChartRecordError('invalid_chart');
+    if(current.source!=='calculated' || !canStoreServerReturn(query.action,query.input.body))throw new ChartRecordError('invalid_chart');
   }
   function saveContent(owner: string, prepared: AccountChartContent): ChartWriteOutcome {
     const content = contentOf(prepared), key = identity(content);
