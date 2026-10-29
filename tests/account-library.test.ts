@@ -316,15 +316,21 @@ test('a background page saved after quota relief stops downloading until a new p
   assert.equal(library.storageAvailable,true);
 });
 
-test('only a displayed chart changes library LRU; refreshing the full list does not',async t=>{
+test('twenty opened cards outrank eighty later background downloads across tabs',async t=>{
   let clock=0;
-  const storage=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>++clock});
-  const library=createAccountLibrary({storage,client:client([accountChart(1),accountChart(2)]),online:()=>true});
-  t.after(()=>library.close());await library.connect(session);await library.load();
-  await library.markOpened(chartId(1));
+  const indexedDB=new IDBFactory(),rows=Array.from({length:20},(_,i)=>accountChart(i+1));
+  const storage=createAccountLibraryStore({indexedDB,now:()=>++clock});
+  const other=createAccountLibraryStore({indexedDB,now:()=>++clock});
+  const library=createAccountLibrary({storage,client:client(rows),online:()=>true});
+  t.after(()=>{library.close();other.close();});await library.connect(session);await library.load();
+  for(let id=1;id<=20;id++)await library.markOpened(chartId(id));
+  rows.push(...Array.from({length:80},(_,i)=>accountChart(i+21)));
   await library.load();
-  assert.equal(await storage.evictForSpace(0),'released');
-  assert.deepEqual((await storage.read())!.charts.map(c=>c.id),[chartId(1)]);
+  assert.equal((await other.read())!.charts.length,100,'nothing is evicted while all cards fit');
+  for(let count=100;count>50;count--)assert.equal(await other.evictForSpace(50),'released');
+  const remaining=(await other.read())!.charts.map(chart=>chart.id);
+  assert.equal(remaining.length,50);
+  for(let id=1;id<=20;id++)assert.ok(remaining.includes(chartId(id)),`opened card ${id} survives`);
 });
 
 

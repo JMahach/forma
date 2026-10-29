@@ -92,7 +92,8 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
             try{
               let current:AccountChart|null=null;try{current=validateAccountChart(prior.result,seen.accountId);}catch{}
               if(!current || current.revision<chart.revision){
-                rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:now()});
+                // Acquisition is not use. Only the existing visible-opening path raises priority.
+                rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:0});
                 outcome.changed=true;
               }
             }catch(error){fail(error);}
