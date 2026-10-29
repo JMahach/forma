@@ -1517,6 +1517,7 @@
         "server/journal/mail-buffer.ts",
         "server/journal/runtime.ts",
         "server/journal/store.ts",
+        "server/journal/archive-catalog.ts",
         "server/journal/worker.ts",
         "server/journal/writer.ts"
       ],

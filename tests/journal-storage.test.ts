@@ -235,6 +235,35 @@ function allocatedBytes(directory:string) {
   },0);
 }
 
+test('ordinary append and usage do not revisit the archive; rotation and cleanup update physical accounting',t=>{
+  const directory=fixture(t),store=openJournalStore({directory,policy:{maxEventBytes:256,segmentBytes:700}});
+  try {
+    for(let i=0;i<30;i++)assert.equal(store.append(event(`catalog:${i}`),NOW+i,0).status,'accepted');
+    const retired=new Set(segments(directory).slice(0,-1).map(name=>path.join(directory,name)));
+    const readdir=fs.readdirSync,lstat=fs.lstatSync,stat=fs.statSync;
+    let scans=0,retiredStats=0;
+    try {
+      fs.readdirSync=((...args:Parameters<typeof readdir>)=>{scans++;return Reflect.apply(readdir,fs,args);}) as typeof readdir;
+      fs.lstatSync=((...args:Parameters<typeof lstat>)=>{if(retired.has(String(args[0])))retiredStats++;return Reflect.apply(lstat,fs,args);}) as typeof lstat;
+      fs.statSync=((...args:Parameters<typeof stat>)=>{if(retired.has(String(args[0])))retiredStats++;return Reflect.apply(stat,fs,args);}) as typeof stat;
+      for(let i=30;i<34;i++) {
+        assert.equal(store.append(event(`catalog:${i}`),NOW+i,0).status,'accepted');
+        store.usage();
+      }
+      assert.equal(scans,0,'append/usage must not enumerate the archive, including rotation');
+      assert.equal(retiredStats,0,'unchanged segments must not be measured again');
+    } finally {fs.readdirSync=readdir;fs.lstatSync=lstat;fs.statSync=stat;}
+    assert.equal(store.usage().diskBytes,allocatedBytes(directory));
+    assert.deepEqual(store.maintain(NOW+31*DAY,0),{more:true});
+    assert.equal(store.append(event('during-prune',{occurredAt:NOW+31*DAY}),NOW+31*DAY,0).status,'accepted');
+    while(store.maintain(NOW+31*DAY,0).more)assert.equal(store.usage().diskBytes,allocatedBytes(directory));
+    assert.equal(segments(directory).length,1);
+    assert.match(fs.readFileSync(path.join(directory,segments(directory)[0]),'utf8'),/during-prune/);
+    assert.equal(store.append(event('after-prune',{occurredAt:NOW+31*DAY}),NOW+31*DAY,0).status,'accepted');
+    assert.equal(store.usage().diskBytes,allocatedBytes(directory));
+  } finally {store.close();}
+});
+
 test('journal accounting includes allocated blocks without discounting sparse logical content',t=>{
   const directory=fixture(t),store=openJournalStore({directory});
   try {

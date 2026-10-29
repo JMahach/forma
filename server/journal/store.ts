@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { ArchiveCatalog } from './archive-catalog.ts';
 import { parseJournalEvent, type JournalEvent } from './events.ts';
 import { bufferReserve, canonicalJSON, journalPolicy, validReservedBytes, workspaceReserve,
   type JournalPolicy, type JournalResult, type JournalUsage } from './policy.ts';
@@ -9,7 +10,6 @@ import { bufferReserve, canonicalJSON, journalPolicy, validReservedBytes, worksp
 interface IndexRow { id:string;hash:string;segment:string;offset:number;receivedAt:number }
 interface RecordLine { event:JournalEvent;receivedAt:number;hash:string;bytes:Buffer;offset:number }
 export interface JournalStoreOptions {directory:string;policy?:Partial<JournalPolicy>;externalReservedBytes?:number}
-const segmentPattern=/^[0-9]{16}\.jsonl$/;
 const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
 const eventJSON=(event:JournalEvent)=>canonicalJSON({...event});
 const eventHash=(event:JournalEvent)=>{
@@ -33,23 +33,13 @@ export function openJournalStore(options: JournalStoreOptions) {
     const parentFd=fs.openSync(path.dirname(current),'r');
     try{fs.fsyncSync(parentFd);}finally{fs.closeSync(parentFd);}
   }
+  const catalog=new ArchiveCatalog(directory);
   const directoryFd=fs.openSync(directory,'r');
   let database:DatabaseSync;
   let closed=false, failed=false, externalBytes=options.externalReservedBytes??0;
   const filename=path.join(directory,'index.sqlite');
-  const archive=()=>fs.readdirSync(directory).filter(name=>segmentPattern.test(name)).sort();
   const syncDirectory=()=>fs.fsyncSync(directoryFd);
-  function diskBytes() {
-    let total=0;
-    for (const name of fs.readdirSync(directory)) {
-      const stat=fs.lstatSync(path.join(directory,name));
-      if (!stat.isFile()) throw new Error('Journal directory must contain only regular files');
-      // Match the mail buffer: st_blocks uses 512-byte units, independently
-      // of filesystem allocation size. Sparse files still owe their logical size.
-      total+=Math.max(stat.size,stat.blocks*512);
-    }
-    return total;
-  }
+  const diskBytes=()=>catalog.bytes();
   function writeAll(fd:number,bytes:Buffer) {
     let position=0;
     while(position<bytes.length) {
@@ -130,6 +120,7 @@ export function openJournalStore(options: JournalStoreOptions) {
     if(retained)fs.renameSync(temporary,path.join(directory,name));
     else {fs.unlinkSync(path.join(directory,name));fs.unlinkSync(temporary);}
     syncDirectory();
+    catalog.changed(name);
     // An interruption anywhere above leaves an old index. No further reads occur until full recovery on reopen.
     database.prepare('DELETE FROM events WHERE segment=?').run(name);
     if(retained)for(const record of readSegment(name))insert(record,name);
@@ -191,14 +182,18 @@ export function openJournalStore(options: JournalStoreOptions) {
       if(code!==11 && code!==26)throw error;
       fs.rmSync(filename,{force:true});initializeIndex();
     }
-    for(const name of fs.readdirSync(directory))if(/^[0-9]{16}\.jsonl\.tmp$/.test(name))fs.unlinkSync(path.join(directory,name));
+    catalog.changed('index.sqlite');
+    for(const name of catalog.names())if(/^[0-9]{16}\.jsonl\.tmp$/.test(name)) {
+      fs.unlinkSync(path.join(directory,name));catalog.changed(name);
+    }
     limitIndex();
-    const files=archive();
+    const files=catalog.segments();
     for(const name of files) {
       for(const record of readSegment(name,name===files.at(-1)))insert(record,name);
       if(fs.statSync(path.join(directory,name)).size>policy.segmentBytes)throw corrupt();
       // Nonfinal segments also need durability when rebuilding an index after an interrupted rotation.
       const fd=fs.openSync(path.join(directory,name),'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+      catalog.changed(name);
     }
     syncDirectory();
   } catch(error) {database!?.close();fs.closeSync(directoryFd);throw error;}
@@ -227,13 +222,13 @@ export function openJournalStore(options: JournalStoreOptions) {
         const used=makeSpace(bytes.length);
         if(used===null)return {status:'retryable',reason:'journal_full'};
         limitIndex(used);
-        const files=archive();let segment=files.at(-1);
-        let offset=segment?fs.statSync(path.join(directory,segment)).size:0;
+        const last=catalog.lastSegment();let segment=last?.name,offset=last?.size??0;
         const fresh=!segment || offset+bytes.length>policy.segmentBytes;
         if(fresh){segment=String(Number(segment?.slice(0,16)??0)+1).padStart(16,'0')+'.jsonl';offset=0;}
         const fd=fs.openSync(path.join(directory,segment!),fresh?'wx':'a',0o600);
         try{writeAll(fd,bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
         if(fresh)syncDirectory();
+        catalog.changed(segment!);
         insert({event,receivedAt,hash:eventHash(event),bytes,offset},segment!);
         return {status:'accepted',receivedAt,duplicate:false};
       } catch {failed=true;return {status:'retryable',reason:'journal_unavailable'};}
