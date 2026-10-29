@@ -51,6 +51,7 @@ interface ViewSessionOptions {
   cancel?: typeof globalThis.clearTimeout;
   delay?: number;
   onPersisted?: () => void;
+  onInterrupt?: () => void;
 }
 
 import { resolveSelectedChartId } from './chart-session.ts';
@@ -77,7 +78,7 @@ export function createViewSession({
   openReturnsTimeline = async () => null, acceptLifetimeMode = () => {},
   canRestoreLifetime = () => session.selectedId === 'current-transit',
   eventTarget = globalThis.window, interactionTarget = globalThis.document,
-  schedule: defer = globalThis.setTimeout, cancel = globalThis.clearTimeout, delay = 160, onPersisted = () => {},
+  schedule: defer = globalThis.setTimeout, cancel = globalThis.clearTimeout, delay = 160, onPersisted = () => {}, onInterrupt = () => {},
 }: ViewSessionOptions) {
   const saved = store.read();
   let restoring = true, restoreInitialized = false, interrupted = false, generation = 0;
@@ -167,10 +168,11 @@ export function createViewSession({
   function interrupt() {
     if (restoring) { interrupted = true; generation++; restoring = false; panels?.finishRestore(); }
     pendingTransit = pendingLifetime = pendingNatal = pendingReturns = null;
-    schedule();
+    schedule(); onInterrupt();
   }
-  async function restore() {
-    const request = ++generation, valid = () => request === generation;
+  async function restore(signal?:AbortSignal) {
+    if(interrupted || signal?.aborted)return false;
+    const request = ++generation, valid = () => request === generation && !signal?.aborted;
     restoring = true; restoreInitialized = false;
     panels?.beginRestore();
     let selectedId: string | undefined;

@@ -254,7 +254,7 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
         getPropertyValue: (name: string) => name === '--timeline-edge-space' ? '8px' : '0px' }) } as unknown as Parameters<typeof createStudioLayout>[0]);
   }
   let publicChart: TestChart | null = null,retainedPublic:PublicAccountChart|null=null;
-  const fixtureStore = { get publicChart(){return retainedPublic;},acceptPublic(value:PublicAccountChart){retainedPublic=value;publicChart={...value,note:'',createdAt:'',updatedAt:''};},clearPublic(id:string){if(retainedPublic?.id!==id)return false;retainedPublic=null;if(publicChart?.id===id)publicChart=null;return true;}, get displayCharts(){return charts;}, clearTemporary(_id: string) {return false;}, showPublic(value: TestChart | null) {publicChart=value;}, charts, storageAvailable: true, get: (id: string) => charts.find(chart => chart.id === id) ?? (publicChart?.id===id?publicChart:undefined), has: (id: string) => publicChart?.id===id || charts.some(chart => chart.id === id),
+  const fixtureStore = { get publicChart(){return retainedPublic;},acceptPublic(value:PublicAccountChart){retainedPublic=value;publicChart={...value,note:'',createdAt:'',updatedAt:''};},clearPublic(id:string){if(retainedPublic?.id!==id)return false;retainedPublic=null;if(publicChart?.id===id)publicChart=null;return true;}, get displayCharts(){return charts;}, clearTemporary(_id: string) {return false;}, showPublic(value: TestChart | null) {publicChart=value;}, releasePublicSource(source:TestChart){if(publicChart===source)publicChart=null;}, charts, storageAvailable: true, get: (id: string) => charts.find(chart => chart.id === id) ?? (publicChart?.id===id?publicChart:undefined), has: (id: string) => publicChart?.id===id || charts.some(chart => chart.id === id),
     projectLibrary(next: SavedChart[]) { charts = fixtureStore.charts = next; },
     remove(id: string) { charts = fixtureStore.charts = charts.filter(chart => chart.id !== id); } };
   const store=actualStore ?? fixtureStore;
@@ -344,7 +344,7 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
       if (realViewSession) return createViewSession({ ...options, eventTarget: null, interactionTarget: null, delay: 0 });
       return {
       restore, get interrupted() { return restoreInterrupted; },
-      interrupt() { restoreInterrupted = true; interruptions++; }, schedule: noop, flush: noop,
+      interrupt() { restoreInterrupted = true; interruptions++; options.onInterrupt?.(); }, schedule: noop, flush: noop,
       checkpoint: async () => ({kind:'memory-only'}),
     }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
@@ -2750,4 +2750,15 @@ for(const sample of [{error:{code:'not_found'},replaced:false},{error:{code:'off
  assert.equal(h.shown.id,removed?'current-transit':foreign.id);
  if(sample.replaced)assert.equal(store.publicChart?.name,'New source');
  await h.stopApplication();
+});
+
+for(const boundary of ['timeline','stop'] as const)test(`startup before account readiness yields to ${boundary}`,async()=>{
+ let release!:()=>void,restores=0;
+ const ready=new Promise<void>(resolve=>{release=resolve;});
+ const h=harness({accountReady:ready,restore:async()=>{restores++;return true;},
+  initialPresentation:studioPresentation({isTransit:true})});
+ if(boundary==='timeline')await h.element('lifetimeToggle').click();else await h.stopApplication();
+ release();await h.restoration;await tick();
+ assert.equal(restores,0,'a superseded runtime cannot begin restoring old values');
+ if(boundary==='timeline'){h.finishModule();await tick();assert.equal(h.lifetime.state.opened,true);}
 });

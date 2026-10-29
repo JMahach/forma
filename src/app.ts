@@ -131,8 +131,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
   // One initial reveal owns the visible screen. Later refreshes stay local to
   // their tools; a failed first attempt reveals the existing recovery UI.
-  const initialPage = { active: true, attached: false, restored: false, restoreFailed: false,
+  const initialPage = { active: true, attached: false, changingTimeline: false, contentFailed: false,
     screenPending: false, screenFailed: false, screenRevision: 0 };
+  const startupRestored=()=>application?.startup.restored===true;
+  const startupFailed=()=>application?.startup.failed===true || initialPage.contentFailed;
   const releaseInitialContent = releaseLoadingContent || holdLoadingContent(document);
   shell.dataset.booting = 'true';
   shell.dataset.pageState = 'loading'; shell.inert = false; shell.setAttribute('aria-busy', 'true');
@@ -183,7 +185,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
     message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
     onRetry: () => {
-      initialPage.restoreFailed = false;
+      initialPage.contentFailed = false;application?.send({type:'StartupInterrupted'});
       if (routeFailed() && navigation?.snapshot.route?.kind === 'chart') {application?.send({type:'RetryRoute'});return;}
       if (lifetimeOwnsLoading()) {
         if (lifetimeLoadFailed) window.location.reload();
@@ -193,7 +195,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   const updateLoading = () => {
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
-    const firstFailed = initialPage.restored && initialPage.restoreFailed && !session.hasCurrent;
+    const firstFailed = startupRestored() && startupFailed() && !session.hasCurrent;
     chartLoading.update({ hasChart: !routePending() && !routeFailed() && session.hasCurrent, holdLoading: initialPage.active,
       failed: routeFailed() || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
       loading: routePending() || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
@@ -283,7 +285,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (!navigation) return;
     if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
     viewSession?.interrupt();
-    initialPage.restored = true; initialPresentation = null;
+    initialPresentation = null;
     application?.send({type:'RoutePublished',route,replace});
     updateLoading();
   }
@@ -377,10 +379,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
       accountLibrary.charts.map(chart => chart.id));
     birthForm.refresh();
-    if (initialPage.restored && !preserveSaveSource && editedId && !store.get(editedId)) {
+    if (startupRestored() && !preserveSaveSource && editedId && !store.get(editedId)) {
       librarySelection++; selectChart('current-transit', {replace:true});
       return;
-    } else if (initialPage.restored && !preserveSaveSource && session.selectedId !== 'current-transit') {
+    } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
       if (!next || !store.has(next.id)) { librarySelection++; selectChart('current-transit', {replace:true}); }
       else if (previous?.utc !== next.utc || JSON.stringify(previous?.activations) !== JSON.stringify(next.activations)) graph.changeChart(next.id);
@@ -388,7 +390,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       // The accepted session already updates every page projection.
       return;
     }
-    if (initialPage.restored) updatePage();
+    if (startupRestored()) updatePage();
   }
   async function openLibraryChart(id: string, options?: {keepMenuOpen: boolean}, edit = false) {
     const observation=journal?.begin({action:'chart_open',component:'chart'});
@@ -534,7 +536,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   }
   const libraryReady = (async () => {
     try{await accountLibrary.restore();}catch(error){if((error as {code?:string})?.code!=='account_changed')throw error;}
-    await account.ready;await application!.requestSession(account.getSession());libraryInitialized=true;
+    await account.ready;
+    if(application!.view.lifecycle!=='running')return;
+    await application!.requestSession(account.getSession());
+    if(application!.view.lifecycle!=='running')return;
+    libraryInitialized=true;
     if (!accountLibrary.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
   })();
 
@@ -680,7 +686,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   }
 
   function presentation() {
-    if (initialPage.active && !initialPage.restored && initialPresentation) return initialPresentation;
+    if (initialPage.active && !startupRestored() && initialPresentation) return initialPresentation;
     const timeline = exploration!.pendingTimeline || lifetime?.state;
     const source=chartPresentation(session.selectedId,session.record);
     return studioPresentation({ isTransit: source.isTransit,
@@ -778,7 +784,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       ? {...current, focus:previous.focus} : current;
   }
   function restoreInitialInput() {
-    if ((!pendingInputRestore && !pendingLifetimeDraft) || initialPage.active || !initialPage.restored) return;
+    if ((!pendingInputRestore && !pendingLifetimeDraft) || initialPage.active || !startupRestored()) return;
     if (viewSession?.interrupted) {discardPendingInput();return;}
     if (workspace.screen === 'chart' && pendingLifetimeDraft) {
       if (!lifetimeControls?.restoreDraft(pendingLifetimeDraft,{restoreFocus:pendingInputRestore})) return;
@@ -789,13 +795,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     viewSession?.schedule();
   }
   function updateInitialPage() {
-    if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending) return;
+    if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending || initialPage.changingTimeline) return;
     let failed = initialPage.screenFailed;
     if (workspace.screen === 'chart') {
-      if (!initialPage.restored) return;
+      if (!startupRestored()) return;
       const view = presentation(), cycles = returns!.state, day = natalDay!.state, life = lifetime?.state;
       const cyclesVisible = view.returnsVisible || view.personalTimelineVisible;
-      failed ||= initialPage.restoreFailed || lifetimeLoadFailed || day.opened && day.status === 'error'
+      failed ||= startupFailed() || lifetimeLoadFailed || day.opened && day.status === 'error'
         || life?.opened && life.status === 'error' || cyclesVisible && (cycles.errors.length > 0 || Boolean(cycles.chartError));
       if (lifetimeLoading || view.returnsVisible && returnsViewLoading) return;
       if (!failed && (!session.hasCurrent || day.opened && day.status === 'loading'
@@ -837,6 +843,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     minimumUtc: savedChart!.utc!, mode: 'lifetime' as const, openEnded: false } } : savedView;
   viewSession = createViewSession({
     checkpoint, store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
+    onInterrupt:()=>application?.send({type:'StartupInterrupted'}),
     mandala: { get enabled() { return mandalaMode.enabled; },
       restore: enabled => mandalaMode.setEnabled(enabled, { animate: false }) }, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getBirthForm: () => pendingBirthForm ?? birthForm.snapshot,
@@ -853,9 +860,37 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     getReturns: () => returns, getLifetime: () => lifetime, getLifetimeIntent: () => exploration!.pendingTimeline, loadLifetime,
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation, publicRefresh:{
+  const initialRoute=navigation?.snapshot;
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation,startup:{
+    ready:()=>libraryReady,
+    current:()=>!viewSession!.interrupted && (!initialRoute || navigation!.isCurrent(initialRoute)),
+    async route(){
+      projectAccountLibrary();
+      if(initialRoute)await application!.requestRoute(initialRoute,true);
+    },
+    async restore(signal){
+      if(initialRoute?.route?.kind!=='chart' && accountLibrary.get(savedView?.selectedId??'')) {
+        try{await accountLibrary.open(savedView!.selectedId!,signal);}catch{/* Only accepted downloaded records can be restored. */}
+      }
+      if(signal.aborted || initialRoute && !navigation!.isCurrent(initialRoute))return false;
+      return viewSession!.restore(signal);
+    },
+    resume:()=>exploration!.finishRestore({saved:restoreView,interrupted:viewSession!.interrupted,
+      pendingLifetime:viewSession!.pendingLifetime,pendingReturns:viewSession!.pendingReturns}),
+    commit(){
+      const draft=pendingBirthForm;pendingBirthForm=null;
+      if(draft && !birthForm.opened)birthForm.restore(draft);
+      viewSession!.flush();
+      application!.send({type:'RecoverWrites'});void accountLibrary.load().catch(()=>{});
+    },
+    report(){toast('Не удалось восстановить положение страницы.');},
+    changed(){
+      if(startupRestored())initialPresentation=null;
+      updateTimelineTools();updateLoading();restoreInitialInput();notifyOfflineReady();
+    },
+  },publicRefresh:{
     source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
-    available:()=>!application?.write.source && initialPage.restored && getConnectionMode()==='online'
+    available:()=>!application?.write.source && startupRestored() && getConnectionMode()==='online'
       && !accountLibrary.get(store.publicChart!.id),
     accept(previous,next){
       store.acceptPublic(next);
@@ -947,12 +982,12 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
             store.clearPublic(route.id);selectChart('current-transit',{replace:true});viewSession?.flush();
             if (request.initial) {
               const redirected=navigation!.snapshot,ready=await transit!.start(null,{firstChart:true});
-              if(application?.view.lifecycle === 'running' && navigation!.isCurrent(redirected)){initialPage.restoreFailed=ready===false;updateLoading();}
+              if(application?.view.lifecycle === 'running' && navigation!.isCurrent(redirected)){initialPage.contentFailed=ready===false;updateLoading();}
             }
           }
         },
         settled() {
-          if (!request.initial) { initialPage.restored = true; initialPresentation = null; }
+          if (!request.initial) { initialPresentation = null; }
         },
         dispose() { observation?.finishSuccess(); },
       };
@@ -984,37 +1019,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
     application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
   });
-  const restoration = (async () => {
-    const initialRoute = navigation?.snapshot;
-    const routeCurrent = () => !initialRoute || navigation!.isCurrent(initialRoute);
-    try {
-      await libraryReady;
-      if (!routeCurrent()) return;
-      projectAccountLibrary();
-      if (initialRoute) await application!.requestRoute(initialRoute, true);
-      if (!routeCurrent()) return;
-      if (initialRoute?.route?.kind !== 'chart' && accountLibrary.get(savedView?.selectedId ?? '')) {
-        try {await accountLibrary.open(savedView!.selectedId!);} catch { /* Only compatible downloaded charts may be restored. */ }
-      }
-      if (!routeCurrent()) return;
-      const restored = await viewSession!.restore();
-      if (!viewSession!.interrupted) initialPage.restoreFailed = restored === false;
-    }
-    catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
-    if (viewSession!.interrupted || !routeCurrent()) return;
-    try {
-      const resumed = await exploration!.finishRestore({ saved: restoreView, interrupted: viewSession!.interrupted,
-        pendingLifetime: viewSession!.pendingLifetime, pendingReturns: viewSession!.pendingReturns });
-      initialPage.restoreFailed ||= resumed === false;
-    } catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
-    if (viewSession!.interrupted || !routeCurrent()) return;
-    const draft = pendingBirthForm; pendingBirthForm = null;
-    if(draft && !birthForm.opened)birthForm.restore(draft);
-    viewSession!.flush();
-    initialPage.restored = true; initialPresentation = null; updateTimelineTools(); updateLoading();
-    restoreInitialInput();
-    application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
-  })();
+  const restoration = application.whenRestored();
   studio.dataset.panelsReady = 'true';
 
   function loadReturnsView(): Promise<ReturnsPanel | null> {
@@ -1036,7 +1041,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updateTimelineTools();
       return returnsView;
     }).catch(() => {
-      if (initialPage.active) { initialPage.restoreFailed = true; }
+      if (initialPage.active) { initialPage.contentFailed = true; }
       if (returns!.opened) { returns!.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
       return null;
     }).finally(() => { returnsViewLoading = null; updateInitialPage(); });
@@ -1168,7 +1173,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     discardPendingInput();
     const pending = initialPresentation;
     const loading = initialPage.active;
-    if (loading) { initialPage.restored = false; initialPage.restoreFailed = false; }
+    if (loading) { initialPage.changingTimeline = true; initialPage.contentFailed = false; }
     initialPresentation = null;
     viewSession?.interrupt();
     let result;
@@ -1177,7 +1182,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       result = closePending ? exploration!.closeScales() : command();
     }
     finally {
-      if (loading) initialPage.restored = true;
+      if (loading) initialPage.changingTimeline = false;
       updateTimelineTools(); updateLoading();
     }
     Promise.resolve(result).then(() => { updateTimelineTools(); updateLoading(); });
@@ -1196,8 +1201,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
-  const offlineRestored = () => initialPage.restored
-    && !initialPage.restoreFailed
+  const offlineRestored = () => startupRestored()
+    && !startupFailed()
     && !initialPage.screenPending && !initialPage.screenFailed && !routePending() && !routeFailed();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},

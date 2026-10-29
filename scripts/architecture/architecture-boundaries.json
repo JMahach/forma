@@ -1761,7 +1761,8 @@
         "src/application/application-machine.ts",
         "src/application/account-boundary.ts",
         "src/application/write-continuation.ts",
-        "src/application/public-refresh.ts"
+        "src/application/public-refresh.ts",
+        "src/application/startup.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
@@ -1779,7 +1780,8 @@
       "privateEntryReasons": {
         "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime.",
         "src/application/write-continuation.ts": "Own the page-local write continuation and outcome recovery as application child states.",
-        "src/application/public-refresh.ts": "Cancellable public-source refresh belongs to the application lifetime, independent of workspace."
+        "src/application/public-refresh.ts": "Cancellable public-source refresh belongs to the application lifetime, independent of workspace.",
+        "src/application/startup.ts": "Coordinate initial restore with the application lifetime, existing route and snapshot owners."
       }
     }
   ],
@@ -1899,6 +1901,12 @@
         "from": "src/application/public-refresh.ts",
         "specifier": "xstate",
         "reason": "Use the pinned application runtime for one cancellable public-source read."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/startup.ts",
+        "specifier": "xstate",
+        "reason": "Initial restoration is a cancellable child of the pinned application runtime."
       }
     ]
   },
