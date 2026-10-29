@@ -246,6 +246,7 @@ test('card search matches normalized names, ISO and displayed dates, stored plac
     { ...h.store.charts[0], name: 'Алёна', birthDate: '2000-02-03', birthPlace: 'Омск' },
     { ...h.store.charts[1], name: 'Иван', birthDate: '1999-01-20', city: { name: 'Москва', region: 'Центр' } },
     { ...h.store.charts[2], name: 'Транзит', source: 'transit' },
+    { ...h.store.charts[2], id:'current-transit', name:'Сейчас', source:'transit' },
   ];
   h.view.show();
   for (const [query, expected] of [
@@ -263,7 +264,7 @@ test('card search matches normalized names, ISO and displayed dates, stored plac
   assert.equal(h.empty.hidden, false);
   assert.equal(await h.view.whenReady(), true);
   h.find('');
-  assert.equal(h.children.length, 2, 'clearing shows manageable saved charts only');
+  assert.equal(h.children.length, 3, 'saved transit remains manageable; the live current-transit placeholder is excluded');
   assert.equal(h.empty.hidden, true);
 });
 

@@ -11,6 +11,7 @@ import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import type { SavedChart, Activation } from '../shared/chart-types.ts';
 import type { ChartStore } from '../src/data/chart-store.ts';
+import {accountChart} from './helpers/account-chart.ts';
 type TestRecord = Omit<Partial<SavedChart>, 'activations'> & { id: string; name: string; revision?: number; noteRevision?: number; calculation?: unknown; activations?: { personality: readonly Partial<Activation>[]; design: readonly Partial<Activation>[] } };
 type BirthOptions = Parameters<typeof attachBirthForm>[0];
 interface FormNode {
@@ -34,9 +35,30 @@ interface RequestRecord { url: string; options: RequestInit; resolve(value: unkn
 
 const city = (id: string|number, name: string) => ({ id, name, country: 'DE', region: '', timezone: 'Europe/Berlin' });
 const manualChart = () => ({ id: 'manual-1', name: 'Исходная карта', source: 'manual' as const, birthDate: '2000-01-02', birthTime: '03:04', birthPlace: 'Берлин', personality: [20], design: [57], note: 'Заметка', createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z' });
+const transitChart=()=>{const {accountId,revision,noteRevision,publicRevision,...record}=accountChart();return {...record,id:'transit-1',createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z'};};
 const natalChart = () => ({ ...manualChart(), id: 'natal-1', source: 'calculated' as const, birthDate: '2025-10-26', birthTime: '02:30', city: city(1, 'Берлин') });
 const abortError = () => Object.assign(new Error('Cancelled'), { name: 'AbortError' });
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+test('saved transit metadata uses the existing submit port without birth input or calculation',async t=>{
+  const record={...accountChart(),birthPlace:'',birthDate:'',birthTime:'',createdAt:'',updatedAt:''};
+  const sent:BirthSubmission[]=[];
+  const h=formHarness(t,{charts:[record],canCalculate:()=>false,submitChart:async input=>{sent.push(input);return {id:record.id,persisted:true,metadataOnly:true};}});
+  h.form.open(true,record.id);assert.equal(h.form.opened,true);
+  h.element('chartName').value='Новое имя';h.element('chartNote').value='Новая заметка';
+  assert.notEqual(h.element('birthDate').getAttribute('readonly'),null);h.element('birthDate').value='Not a birth date';await h.submit();
+  assert.equal(sent.length,1);assert.equal(sent[0].birth,undefined);assert.equal(sent[0].previous,record);
+  assert.equal(sent[0].previous?.utc,record.utc);assert.equal(sent[0].previous?.source,'transit');
+  assert.equal(h.requests.length,0);assert.equal(h.form.opened,false);
+});
+
+test('a legacy manual draft keeps its raw fields and restores into supported natal validation',async t=>{
+  const h=formHarness(t),fields={chartName:'Legacy draft',birthDate:'12.',birthTime:'3',birthPlace:'Unresolved city',chartNote:'Keep this note'};
+  assert.equal(h.form.restore({editingId:null,accountId:null,calculationMode:'manual',fields,city:null,fold:null,base:null,focus:null}),true);
+  assert.deepEqual(h.form.snapshot?.fields,fields);assert.equal(h.form.snapshot?.calculationMode,'calculated');
+  await h.submit();assert.equal(h.calls.persisted.length,0);assert.equal(h.requests.length,0);
+  assert.ok(h.element('birthDateError').textContent);assert.ok(h.element('birthPlaceError').textContent);
+});
 
 for (const [port, accountId] of [['36', null], ['3636', null], ['', null], ['', 'signed-in-account']] as const)
 test(`random example calculates a local record on ${port || 'production'} for ${accountId ? 'an account' : 'a guest'}`, async t => {
@@ -187,7 +209,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
     addEventListener(type:string,callback:()=>void) {documentHandlers.set(type,[...documentHandlers.get(type)??[],callback]);},
     createElement: () => element('generated-' + elements.size),
     getElementById(id: string) { return element(id); },
-    querySelectorAll(selector: unknown) { assert.equal(selector, '[data-calculation-mode]'); return modes; },
+    querySelectorAll() {return [];},
   };
   function element(id: string): FormNode {
     if (elements.has(id)) return elements.get(id)!;
@@ -232,7 +254,6 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
     return node;
   }
   element('chartForm').elements = Object.fromEntries(Object.entries(fields).map(([name, id]) => [name, element(id)]));
-  const modes = ['calculated', 'manual'].map(mode => { const node = element(`mode-${mode}`); node.dataset.calculationMode = mode; return node; });
   let records = charts;
   function replaceRecords(next: readonly TestRecord[]) {
     assert.equal(chartStore, null, 'fixture replacement is only available for the in-memory form harness');
@@ -320,10 +341,10 @@ test('city search debounces input and discards an older response even when it ig
   assert.equal(h.element('birthPlace').getAttribute('aria-expanded'), 'false');
 });
 
-test('changing mode or opening another form invalidates an in-flight city response and clears its selection', async t => {
-  const h = formHarness(t); h.form.open();
+test('opening metadata or another natal form invalidates an in-flight city response and clears its selection', async t => {
+  const record=transitChart(),h = formHarness(t,{charts:[record]}); h.form.open();
   const first = await h.search('Берлин');
-  await h.mode('manual');
+  h.form.open(true,record.id);
   assert.equal(first!.options.signal!.aborted, true);
   first!.resolve!({ cities: [city(1, 'Берлин')] }); await settle();
   assert.equal(h.element('cityResults').hidden, true);
@@ -433,60 +454,17 @@ test('late city responses cannot reopen suggestions or show errors after the dia
   }
 });
 
-test('new manual cards get distinct UUIDs while a later edit preserves their identity and creation time', async t => {
-  const h = formHarness(t);
-  const ids: string[] = [];
-  for (const name of ['первая карта', 'вторая карта'] as const) {
-    h.form.open(); await h.mode('manual');
-    h.element('chartName').value = name;
-    h.element('personalityGates').value = '20';
-    h.element('designGates').value = '57';
-    await h.submit();
-    assert.equal(h.store.charts.at(-1)!.name, name[0].toUpperCase() + name.slice(1));
-    const id = h.calls.saved.at(-1)!;
-    assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-    ids.push(id);
-  }
-  assert.notEqual(ids[0], ids[1]);
-  assert.equal(h.store.charts.length, 2);
-  const original = h.store.charts.find(chart => chart.id === ids[0])!;
-  assert.ok(Number.isFinite(Date.parse(original.createdAt!)));
-  h.form.open(true, original.id);
-  h.element('chartName').value = 'переименованная карта';
-  await h.submit();
-  const updated = h.store.charts.find(chart => chart.id === ids[0])!;
-  assert.equal(updated.name, 'Переименованная карта');
-  assert.equal(updated.createdAt, original.createdAt);
-  assert.equal(h.store.charts.length, 2);
-  assert.equal(h.calls.saved.at(-1), original.id);
-  assert.equal(h.requests.length, 0);
+test('legacy manual records require supported natal validation before producing a ready result',async t=>{
+  const original=Object.freeze(manualChart()),h=formHarness(t,{charts:[original]});
+  h.form.open(true,original.id);h.element('chartName').value='Новое имя';
+  h.element('chartNote').value='Сохранить ввод';await h.submit();
+  assert.equal(h.requests.length,0);assert.equal(h.calls.persisted.length,0);
+  assert.match(h.element('birthPlaceError').textContent,/Выберите город/);
+  assert.equal(h.element('chartNote').value,'Сохранить ввод');assert.equal(h.store.charts[0],original);
 });
 
-test('legacy manual editing retains its gates and identity after removing gate inputs', async t => {
-  const original = Object.freeze(manualChart());
-  const h = formHarness(t, { charts: Object.freeze([original]) });
-  h.form.open(true, original.id);
-  assert.equal(h.element('birthDate').value, '02.01.2000');
-  h.element('chartName').value = '  новое имя  ';
-  h.element('birthDate').value = '29022000'; h.element('birthTime').value = '07:05';
-  h.element('birthPlace').value = '  Казань  '; h.element('chartNote').value = '  Новая заметка  ';
-  h.element('personalityGates').value = '34, 20; 34'; h.element('designGates').value = '57 10';
-  await h.submit();
-  assert.equal(h.requests.length, 0);
-  const saved = h.store.charts[0];
-  assert.equal(saved.id, original.id); assert.equal(saved.createdAt, original.createdAt);
-  assert.equal(saved.name, 'Новое имя'); assert.equal(saved.source, 'manual');
-  assert.equal(saved.birthDate, '2000-02-29'); assert.equal(saved.birthTime, '07:05');
-  assert.equal(saved.birthPlace, 'Казань'); assert.equal(saved.note, 'Новая заметка');
-  assert.deepEqual(saved.personality, original.personality); assert.deepEqual(saved.design, original.design);
-  assert.equal(original.name, 'Исходная карта');
-  assert.deepEqual(h.calls.saved, [original.id]);
-  assert.equal(h.form.opened, false);
-  assert.deepEqual(h.calls.toasts, []);
-});
-
-test('editing a saved manual card advances its timestamp while preserving its saved data', async t => {
-  const original = { ...manualChart(), updatedAt: '2020-01-01T00:00:00.000Z', calculation: { legacyVersion: 1, extra: 'kept' } };
+test('editing saved transit metadata advances its timestamp while preserving its exact data', async t => {
+  const original = { ...transitChart(), updatedAt: '2020-01-01T00:00:00.000Z', calculation: { legacyVersion: 1, extra: 'kept' } };
   const chartStore = projectedStore([original]);
   const h = formHarness(t, { chartStore, selectedId: original.id });
   h.form.open(true, original.id);
@@ -504,21 +482,21 @@ test('editing a saved manual card advances its timestamp while preserving its sa
 });
 
 test('failed browser persistence keeps the edited chart only in memory and explicitly warns instead of claiming success', async t => {
-  const original = Object.freeze(manualChart());
+  const original = Object.freeze(transitChart());
   const h = formHarness(t, { charts: [original], persist: false });
   h.form.open(true, original.id); h.element('chartName').value = 'Несохранённая карта';
   await h.submit();
   assert.equal(h.calls.persisted.length, 1); assert.equal(h.calls.replaced.length, 1);
   assert.equal(h.calls.replaced[0], h.calls.persisted[0]);
   assert.equal(h.store.charts[0].name, 'Несохранённая карта');
-  assert.equal(original.name, 'Исходная карта');
+  assert.equal(original.name, transitChart().name);
   assert.deepEqual(h.calls.saved, [original.id]);
   assert.equal(h.form.opened, false);
   assert.deepEqual(h.calls.toasts, ['Карта открыта, но не сохранена в браузере.']);
 });
 
 for (const failure of ['deleted', 'corrupt'] as const) test(`a ${failure} chart cannot become an in-memory save from a stale editor`, async t => {
-  const original = manualChart(), chartStore = projectedStore([original]);
+  const original = transitChart(), chartStore = projectedStore([original]);
   const h = formHarness(t, { chartStore, selectedId: original.id, saveChart() { throw Object.assign(new Error(failure === 'deleted' ? 'Карта удалена' : 'Карта повреждена'), {code: failure}); } });
   h.form.open(true, original.id); h.element('chartName').value = 'Несохранённая правка';
   await h.submit();
@@ -671,7 +649,7 @@ test('compact form reports validation beside each field without starting a reque
 });
 
 test('the name limit is thirty and opening an old card never truncates its name', async t => {
-  const original = { ...manualChart(), name: 'Я'.repeat(31) };
+  const original = { ...transitChart(), name: 'Я'.repeat(31) };
   const h = formHarness(t, { charts: [original] });
   h.form.open(true, original.id);
   assert.equal(h.element('chartName').value, original.name);
@@ -970,7 +948,7 @@ test('restoring an edited chart follows a newer confirmed birth record and prese
 
 test('pending exposes an active server write and becomes false when that form is explicitly cancelled',async t=>{
   let finish!:(value:{id:string;persisted:boolean})=>void;
-  const record=manualChart(),h=formHarness(t,{charts:[record],submitChart:()=>new Promise(resolve=>{finish=resolve;})});
+  const record=transitChart(),h=formHarness(t,{charts:[record],submitChart:()=>new Promise(resolve=>{finish=resolve;})});
   h.form.open(true);assert.equal(h.form.pending,false);
   const work=h.submit();assert.equal(h.form.pending,true);
   h.form.clearDraft();assert.equal(h.form.pending,false);assert.equal(h.form.snapshot,null);

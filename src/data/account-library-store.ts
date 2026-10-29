@@ -1,7 +1,7 @@
 import { canonicalChartId } from '../../shared/chart-record-contract.ts';
 import type { StoragePressure, StorageRelief } from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
-import { createChartId } from '../domain/chart-record.ts';
+import { createRandomId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
 import { migrateAccountCalculations } from './account-calculation-transition.ts';
@@ -71,7 +71,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           const current = lease(request.result);
           if (current?.accountId === accountId) { result({status: 'stored', lease: current}); return; }
           if (request.result && request.result.accountId !== null && !current) return;
-          const next = {accountId, generation: createChartId()};
+          const next = {accountId, generation: createRandomId()};
           tx.objectStore('charts').clear();
           contexts.put({key: 'owner', ...next});
           result({status: 'stored', lease: next});
@@ -168,7 +168,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         const contexts = tx.objectStore('context'), request = contexts.get('owner');
         request.onsuccess = () => {
           if (!same(request.result, seen)) { result({status: 'stale'}); return; }
-          const next = {...seen, generation: createChartId()};
+          const next = {...seen, generation: createRandomId()};
           tx.objectStore('charts').delete(chartId);
           contexts.put({key: 'owner', ...next});
           result({status: 'stored', lease: next});
@@ -183,7 +183,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         request.onsuccess = () => {
           if (!same(request.result, seen)) { result('stale'); return; }
           tx.objectStore('charts').clear();
-          contexts.put({key: 'owner', accountId: null, generation: createChartId()});
+          contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };
       }) ?? 'unavailable';
@@ -199,7 +199,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         request.onsuccess = () => {
           if (request.result?.accountId !== accountId) {result('stale'); return;}
           tx.objectStore('charts').clear();
-          contexts.put({key: 'owner', accountId: null, generation: createChartId()});
+          contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };
       }) ?? 'unavailable';

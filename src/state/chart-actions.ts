@@ -5,7 +5,7 @@ import type { ChartClient, ChartBirthInput, ChartReceipt, ChartReply, ChartPatch
 import type { ChartCalculation } from '../domain/chart-record.ts';
 import type { AccountLibrary, LibrarySession } from './account-library.ts';
 import type { CheckpointResult } from './view-checkpoint.ts';
-import { createChartId } from '../domain/chart-record.ts';
+import { createRandomId } from '../domain/chart-record.ts';
 import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
 
 export type ChartActionResult =
@@ -45,7 +45,7 @@ function refusedBeforeWrite(error: unknown) {
 }
 
 /** Writes are explicit once. Pending pointers contain no command or chart and permit only outcome reads. */
-export function createChartActions({client, library, getSession, calculate, saveReady, newId = createChartId, initialPending = [],
+export function createChartActions({client, library, getSession, calculate, saveReady, newId = createRandomId, initialPending = [],
   prepareWrite, onPending = () => {}}: Options) {
   const pending = new Map<string, ChartWriteIntent>();
   const saveChecks=new Map<string,{intent:ChartWriteIntent;session:LibrarySession}>();

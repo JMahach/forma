@@ -51,6 +51,7 @@ export function normalizeBirthFormDraft(input:unknown):SavedBirthForm|null {
       focus.direction=['forward','backward','none'].includes(String(caret.direction))?caret.direction as BirthDraftFocus['direction']:'none';
     }
   }
+  // Legacy manual input stays raw input; the supported form validates it as natal data.
   return {editingId:input.editingId===null?null:canonicalChartId(input.editingId as string),accountId:input.accountId as string|null,
-    calculationMode:input.calculationMode as SavedBirthForm['calculationMode'],fields,city,fold,base,focus};
+    calculationMode:'calculated',fields,city,fold,base,focus};
 }

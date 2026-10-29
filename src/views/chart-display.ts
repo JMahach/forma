@@ -7,7 +7,7 @@ import { isChartOverlay } from '../domain/chart-composition.ts';
 import { cycleEventLabel } from '../domain/cycles.ts';
 import { ageText, completedAge } from '../domain/personal-age.ts';
 
-export const canManageLibraryRecord = (record: Partial<ChartRecord> | null | undefined) => Boolean(record?.id && record.id !== 'current-transit' && record.source !== 'transit');
+export const canManageLibraryRecord = (record: Partial<ChartRecord> | null | undefined) => Boolean(record?.id && record.id !== 'current-transit');
 const isTransit = (composition: ChartComposition) => composition.id === 'current-transit' || composition.primary.source === 'transit';
 export const chartTitle = (composition: ChartComposition, record: Partial<ChartRecord> | null = null) => {
   const label = record?.name ?? composition.primaryLabel;
