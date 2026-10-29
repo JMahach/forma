@@ -1,4 +1,5 @@
 import { createCalculationReceipts } from '../server/services/calculation-receipt.ts';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartCalculation } from '../server/services/chart-calculation.ts';
@@ -114,7 +115,7 @@ test('a failing diagnostic callback never replaces the invalid result failure',a
 
 
 test('saving a signed ready calculation validates the same birth without another worker call',async()=>{
-  const receipts=createCalculationReceipts({key:Buffer.alloc(32,7),calculationVersion:'v1'});
+  const receipts=createCalculationReceipts({key:Buffer.alloc(32,7)});
   let calls=0,token='';
   const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'v1',receipts,
     calculate:async request=>{calls++;const result={chart:calculated(),timeResolution:{ambiguous:false}};
@@ -124,6 +125,7 @@ test('saving a signed ready calculation validates the same birth without another
   assert.deepEqual(await prepare({...natal,fold:0},{signal,receipt:token}),first);
   assert.equal(calls,1);
   const payload=JSON.parse(Buffer.from(token.split('.')[0]!,'base64url').toString());
+  assert.equal(Object.hasOwn(payload,'version'),false);
   assert.equal(payload.result.chart.name,'');assert.equal(payload.result.chart.note,'');
   for(const receipt of [token+'x',token.slice(0,-1)+(token.endsWith('a')?'b':'a'),'bad', 'a'.repeat(16001)]){
     await assert.rejects(prepare(natal,{signal,receipt}),{code:'invalid_request'});
@@ -132,15 +134,23 @@ test('saving a signed ready calculation validates the same birth without another
   assert.equal(calls,1,'Invalid receipts do not fall back to expensive work');
 });
 
-test('calculation receipts are specific to their server key and numerical version, not account access',async()=>{
-  const old=createCalculationReceipts({key:Buffer.alloc(32,7),calculationVersion:'old'});
+test('calculation receipts bind the server key and exact input; a signed legacy field never causes recalculation',async()=>{
+  const key=Buffer.alloc(32,7),current=createCalculationReceipts({key});
   const request:CalculationRequest={mode:'natal',date:'2000-01-01',time:'12:00',city};
-  const result={chart:calculated(),timeResolution:{ambiguous:false}},receipt=old.issue(request,result)!;
-  const current=createCalculationReceipts({key:Buffer.alloc(32,7),calculationVersion:'new'});
-  assert.equal(current.read(receipt,request),null,'A genuine older calculation requires a current calculation');
-  assert.equal(current.read(receipt,{...request,city:{...city,timezone:'Europe/London'}}),null);
-  const other=createCalculationReceipts({key:Buffer.alloc(32,8),calculationVersion:'old'});
+  const result={chart:calculated(),timeResolution:{ambiguous:false}},issued=current.issue(request,result)!;
+  const contents=JSON.parse(Buffer.from(issued.split('.')[0]!,'base64url').toString());
+  const payload=Buffer.from(JSON.stringify({...contents,version:'historical-calculation-marker'})).toString('base64url');
+  const receipt=payload+'.'+createHmac('sha256',key).update('forma:calculation-receipt:v1\0').update(payload).digest('base64url');
+  assert.deepEqual(current.read(receipt,request),current.read(issued,request));
+  const prepare=createChartCalculation({cities:createCityCatalog([city]),calculationVersion:'current',receipts:current,
+    calculate:async()=>{throw Error('A ready signed calculation must not be calculated again');}});
+  const restored=await prepare(natal,{signal:new AbortController().signal,receipt});
+  assert.deepEqual(restored.activations,contents.result.chart.activations);
+  assert.equal(restored.designUtc,result.chart.designUtc);
+  assert.throws(()=>current.read(receipt,{...request,city:{...city,timezone:'Europe/London'}}),TypeError);
+  const other=createCalculationReceipts({key:Buffer.alloc(32,8)});
   assert.throws(()=>other.read(receipt,request));
-  assert.equal(old.issue({...request,mode:'transit_moment'},result),undefined);
-  assert.equal(old.issue(request,{error:'busy',message:'busy'}),undefined);
+  assert.equal(current.issue({...request,mode:'transit_moment'},result),undefined);
+  assert.equal(current.issue(request,{error:'busy',message:'busy'}),undefined);
+  assert.throws(()=>createCalculationReceipts({key:Buffer.alloc(31)}),TypeError);
 });

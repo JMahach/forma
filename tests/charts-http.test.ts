@@ -145,7 +145,7 @@ test('real calculate response can be saved with its signature without a second P
   const {createCalculationReceipts}=await import('../server/services/calculation-receipt.ts');
   const {createRequestHandler}=await import('../server/http/app.ts');
   const root=fileURLToPath(new URL('../',import.meta.url)),calculator=createCalculator({root});t.after(()=>calculator.close());
-  const cities=createCityCatalog([]),receipts=createCalculationReceipts({key:Buffer.alloc(32,5),calculationVersion:'current'});
+  const cities=createCityCatalog([]),receipts=createCalculationReceipts({key:Buffer.alloc(32,5)});
   let calculations=0;
   const calculate:typeof calculator=Object.assign((...args:Parameters<typeof calculator>)=>{calculations++;return calculator(...args);},{close:calculator.close});
   const prepare=createChartCalculation({cities,calculate,calculationVersion:'current',receipts});

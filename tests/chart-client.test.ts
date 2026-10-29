@@ -39,7 +39,7 @@ async function fixture(t: {after(fn: () => void): void}) {
   const cities = createCityCatalog([{id: '1', name: 'Test City', aliases: [], country: 'Test',
     region: '', timezone: 'UTC', latitude: 0, longitude: 0}]);
   let preparations = 0, calculationReceipt='';
-  const receipts=()=>createCalculationReceipts({key:Buffer.alloc(32,9),calculationVersion:version});
+  const receipts=()=>createCalculationReceipts({key:Buffer.alloc(32,9)});
   const prepare = () => createChartCalculation({cities, calculationVersion: version, receipts:receipts(), calculate: async input => {
     preparations++;
     const result={chart: {id: null, name: '', note: '', createdAt: '', updatedAt: '',
