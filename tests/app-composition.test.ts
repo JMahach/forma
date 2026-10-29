@@ -75,10 +75,10 @@ interface HarnessOptions {
   transitStart?: () => Promise<boolean>;
   actualStore?: ReturnType<typeof createChartStore>;
   accountReady?: Promise<unknown>;
-  calculationVersion?:string;
   storagePressure?: ReturnType<typeof createStoragePressure>;
   journal?: Parameters<typeof import('../src/app.ts').startApp>[0]['journal'];
   navigation?: ReturnType<typeof createNavigation>; onPersonalReset?: () => void;
+  syncTransitWindow?: ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>['syncTransitWindow'];
   personalCleanup?: Pick<ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>,'resetPersonal'|'retryPersonalCleanup'>;
   chartClient?: Partial<ChartClient>; accountSession?: (LibrarySession & {diagnosticProof?:string}) | null;
   libraryStorage?: ReturnType<typeof createAccountLibraryStore>;
@@ -230,9 +230,8 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,...overrides};
 }
-function harness({copyText, transitStart = async () => true, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
-  document.body.dataset.calculationVersion=calculationVersion;
   let hovered = false, notifyHover: () => void = noop;
   const inputRestores: string[] = [];
   const notices:string[]=[];
@@ -362,7 +361,7 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
         dayClient: { getDay: async date => natalDayFixture({date}) },
       });
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, visibilityChanged: noop, invalidateCalculations:noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, visibilityChanged: noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
         goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
@@ -408,12 +407,12 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
   camera.reset();
   const cameraView = { surface: element('canvasWrap'), paint: noop };
   const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document } as unknown as Parameters<typeof createChartLibraryView>[0]);
-  const calculationClients = onPersonalReset || personalCleanup ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
-    resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,...personalCleanup} : undefined;
+  const calculationClients = onPersonalReset || personalCleanup || syncTransitWindow ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
+    resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTransitWindow,...personalCleanup} : undefined;
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
   return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
-    invalidateCalculations:application.invalidateCalculations,offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
+    offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
     attachJournal:application.attachJournal,saveShown:application.saveShownChart,cancelSave:application.cancelChartSave,
     get pendingWrites() {return savedSnapshot?.pendingChartWrites;},
@@ -443,7 +442,7 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
     get activationHoverClears() { return activationHoverClears; },
     get lifetimeStateOptions() { return lifetimeStateOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
-    clockTick() { transitOptions.onStateChange!({ wanted: false } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
+    clockTick(timeline?: ReturnType<typeof createLocalDayTimeline>) { transitOptions.onStateChange!({ wanted: false, timeline } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
     edit() { birthOptions.beforeOpen!(); },
     saveChart(chart: TestChart, options?: Parameters<NonNullable<typeof birthOptions.onSave>>[1]) {
       charts = fixtureStore.charts = [...charts.filter(previous => previous.id !== chart.id), chart];
@@ -1449,7 +1448,7 @@ test('a delayed logout notice for account A cannot clear the visible library of 
   const record = accountNatalChart(2, '2');
   const client = {
     async own() {return record;},
-    async list() {return {charts: [{...record, calculationCurrent: true}], nextCursor: null, };},
+    async list() {return {charts: [record], nextCursor: null, };},
   } satisfies Partial<ChartClient>;
   const h = harness({chartClient: client, accountSession: {accountId: '2', sessionId: 'session-B'}});
   await tick(); assert.equal(h.cards[0]?.id, record.id);
@@ -1695,7 +1694,7 @@ function journalProbe() {
    async reportError(error:unknown,step:unknown){failures.push({action,code:(error as {code?:string}).code,step});return null;}};}};
  return {journal,scopes,failures,get finishes(){return finishes;}};
 }
-function emptyDiagnosticLibrary(){return {async list(){return{charts:[],nextCursor:null,calculationVersion:'a'.repeat(64)};}} satisfies Partial<ChartClient>;}
+function emptyDiagnosticLibrary(){return {async list(){return{charts:[],nextCursor:null};}} satisfies Partial<ChartClient>;}
 
 test('late journal attachment remembers expiry without converting it into a logout',async()=>{
  const h=harness({accountSession:{accountId:'1',sessionId:'one'},chartClient:emptyDiagnosticLibrary()}),probe=journalProbe();await tick();
@@ -2501,35 +2500,9 @@ test('late journal attachment reaches the already created returns owner and the 
  ]);
 });
 
-test('incompatible calculations preserve the temporary original and draft for the ready bundle transition', async () => {
-  const record=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-obsolete',name:'Сохранённая карта',note:'Оставить заметку'}));
-  const actualStore=createChartStore({initialTemporaryChart:record});
-  const h=harness({realViewSession:true,actualStore,savedView:{selectedId:record.id,temporaryChart:record}});await h.restoration;
-  h.setBirthDraft({editingId:null,accountId:null,calculationMode:'calculated',fields:{chartName:'Черновик обновления',birthDate:'12.',birthTime:'',birthPlace:'',chartNote:'Ввод сохранён'},city:null,fold:null,base:null,focus:null});
-  h.invalidateCalculations({calculation:true,returns:true});h.flushView();
-  assert.equal(h.loading.hasChart,false);assert.equal(h.loading.preserveHeading,true);
-  assert.equal(h.savedSnapshot?.temporaryChart?.name,record.name);
-  assert.equal(h.savedSnapshot?.temporaryChart?.note,record.note);
-  assert.equal(h.savedBirthDraft?.fields.chartName,'Черновик обновления');
-  assert.equal(await h.prepareOfflineUpdate(),true);
-});
-
-test('an early mismatch hands an unresolved saved return to the new bundle without dropping its target', async () => {
-  const record=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture({id:'temporary-pending-return'}));
-  const actualStore=createChartStore({initialTemporaryChart:record});
-  const target={opened:true,bodies:['saturn'],year:null,eventId:'saturn:2055-10-01T12:00:00Z'};
-  const h=harness({realViewSession:true,actualStore,savedView:{selectedId:record.id,temporaryChart:record,returns:target}});
-  h.invalidateCalculations({calculation:true,returns:true});h.finishModule();await h.restoration;
-  assert.equal(h.offlineRestored(),true);
-  assert.equal(await h.prepareOfflineUpdate(),true);
-  assert.equal(h.savedSnapshot?.returns?.eventId,target.eventId);
-  assert.equal(h.savedSnapshot?.returns?.opened,true);
-  assert.equal(h.savedSnapshot?.temporaryChart?.id,record.id);
-});
-
-test('a confirmed mismatch does not authorize reload after a restoration exception', async () => {
+test('a restoration exception does not authorize reload', async () => {
   const h=harness({restore:async()=>{throw Error('restoration failed');}});
-  h.invalidateCalculations({calculation:true,returns:true});await h.restoration;
+  await h.restoration;
   assert.equal(h.offlineRestored(),false);
   assert.equal(await h.prepareOfflineUpdate(),false);
 });
@@ -2708,4 +2681,21 @@ test('failed personal cleanup survives a later account boundary and reconnect wi
  available=true;mode='online';for(const fn of listeners)fn();await drain();
  assert.equal(pending,false,'the failed old cleanup must be resumed by its owner after B signs in');
  assert.equal(resets,1,'retry does not revoke a new generation');assert.equal(retries,2,'one attempt at B and one on reconnect');
+});
+
+
+test('transit storage follows the current local day once per boundary even while exploring the past',async t=>{
+  let now=Date.parse('2026-09-30T12:00:00Z');t.mock.method(Date,'now',()=>now);
+  const writes:{dates:readonly string[];expiresAt:number}[]=[];
+  const h=harness({syncTransitWindow:async window=>{writes.push(window);return {status:'applied',revision:writes.length};}});
+  await h.restoration;
+  const past=createLocalDayTimeline(Date.parse('2000-01-01T12:00:00Z'),'Europe/Moscow');
+  for(let i=0;i<100;i++)h.clockTick(past);
+  const current=createLocalDayTimeline(now,'Europe/Moscow');
+  assert.deepEqual(writes,[{dates:current.packetDates,expiresAt:current.endUtc}]);
+  now=current.endUtc;
+  h.clockTick(past);
+  assert.deepEqual(writes[1],{dates:createLocalDayTimeline(now,'Europe/Moscow').packetDates,expiresAt:createLocalDayTimeline(now,'Europe/Moscow').endUtc});
+  h.clockTick(createLocalDayTimeline(now,'America/New_York'));
+  assert.equal(writes.length,3,'a timezone change changes the protected UTC packets');
 });

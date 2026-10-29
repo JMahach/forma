@@ -402,8 +402,8 @@ test('unavailable logout cleanup retains its exact account target and a retry pr
  const stored=createAccountLibraryStore({indexedDB:new IDBFactory()});let unavailable=true;
  const storage={...stored,clearAccount:async(id:string)=>unavailable?'unavailable' as const:stored.clearAccount(id)};
  const source=client([accountChart(),accountChart(2,'2')]);
- source.list=async({expectedAccountId})=>({charts:[{...accountChart(expectedAccountId==='1'?1:2,expectedAccountId),calculationCurrent:true}],nextCursor:null,calculationVersion:'current'});
- const library=createAccountLibrary({storage,client:source,calculationVersion:'current',online:()=>true});
+ source.list=async({expectedAccountId})=>({charts:[{...accountChart(expectedAccountId==='1'?1:2,expectedAccountId)}],nextCursor:null});
+ const library=createAccountLibrary({storage,client:source,online:()=>true});
  try{
   await library.connect(session);await library.load();
   const result=await library.clear();assert.equal(result.status,'unavailable');assert.equal(result.accountId,'1');

@@ -214,14 +214,14 @@ test('runtime joins private HTTP and durable main return records across reconstr
   const [{createChartRuntime},{accountNatalChart},{mainReturnRange},{cycleAge},{chartAtMinute},{natalDayFixture}] = await Promise.all([
     import('../server/charts.ts'), import('./helpers/account-chart.ts'), import('../shared/chart-return-contract.ts'),
     import('../shared/cycles-format.ts'), import('../src/domain/natal-day.ts'), import('./fixtures/natal-day.ts')]);
-  const f=await fixture(t),content=accountNatalChart(),version='b'.repeat(64);
+  const f=await fixture(t),content=accountNatalChart();
   const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
   assert.equal(saved.kind,'created');
   const range=mainReturnRange(content.utc!)!,utc='2028-07-21T12:36:00.000Z';
   const event={id:'saturn:'+utc,body:'saturn',utc,age:cycleAge(utc,content.utc),cycle:1,pass:1,cycleId:'saturn:1',direction:'direct' as const};
   const result={chart:{...chartAtMinute(natalDayFixture({date:'2028-07-21'}),756),utc}};
   let dateCalls=0,chartCalls=0;
-  const cycles={cacheVersion:version,events:async()=>{dateCalls++;return {events:[event],range};},
+  const cycles={events:async()=>{dateCalls++;return {events:[event],range};},
     chart:async()=>{chartCalls++;return result;}};
   const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});t.after(()=>calculate.close());
   const connect=()=>f.useHandler(createChartRuntime({database:f.database,accounts:f.accounts,cities:createCityCatalog([]),
@@ -279,12 +279,12 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
     import('../src/data/return-storage.ts'),import('fake-indexeddb'),import('./helpers/account-chart.ts'),
     import('../shared/chart-return-contract.ts'),import('../shared/cycles-format.ts'),
     import('../src/domain/natal-day.ts'),import('./fixtures/natal-day.ts')]);
-  const f=await fixture(t),content=accountNatalChart(),version='b'.repeat(64),key=new Uint8Array(32).fill(19);
+  const f=await fixture(t),content=accountNatalChart(),key=new Uint8Array(32).fill(19);
   const range=mainReturnRange(content.utc!)!,utc='2028-07-21T12:36:00.000Z';
   const event={id:'saturn:'+utc,body:'saturn',utc,age:cycleAge(utc,content.utc),cycle:1,pass:1,cycleId:'saturn:1',direction:'direct' as const};
   const exact={chart:{...chartAtMinute(natalDayFixture({date:'2028-07-21'}),756),utc}};
   let dateCalls=0,chartCalls=0;
-  const cycles={cacheVersion:version,events:async()=>{dateCalls++;return {events:[event],range};},
+  const cycles={events:async()=>{dateCalls++;return {events:[event],range};},
     chart:async()=>{chartCalls++;return exact;}};
   const calculate=createCalculator({root:fileURLToPath(new URL('../',import.meta.url))});t.after(()=>calculate.close());
   const connect=()=>{
@@ -296,7 +296,7 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
   connect();
   const requests:string[]=[],request=async(url:string,options:RequestInit)=>{
     requests.push(url);
-    const reply=await f.request(url,'POST',JSON.parse(String(options.body)),{headers:{'x-forma-cycles-version':version}});
+    const reply=await f.request(url,'POST',JSON.parse(String(options.body)));
     assert.equal(reply.status,200,JSON.stringify(reply.body));return reply.body;
   };
   const indexedDB=new IDBFactory(),device=createReturnStorage({indexedDB});t.after(()=>device.close());
@@ -308,11 +308,11 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
   }};
   const input={birthUtc:content.utc,body:'saturn',timezone:content.timezone,...range};
   const chartInput={birthUtc:content.utc,body:'saturn',timezone:content.timezone,eventUtc:utc};
-  const first=createCyclesClient({cacheVersion:version,returnStorage:storage,request});t.after(()=>first.close());
+  const first=createCyclesClient({returnStorage:storage,request});t.after(()=>first.close());
   await first.events(input);await first.chart(chartInput,undefined,{event});
   await new Promise(setImmediate);await Promise.all(pendingWrites);first.close();device.close();
   const restoredDevice=createReturnStorage({indexedDB});t.after(()=>restoredDevice.close());
-  const restored=createCyclesClient({cacheVersion:version,returnStorage:restoredDevice,request});t.after(()=>restored.close());
+  const restored=createCyclesClient({returnStorage:restoredDevice,request});t.after(()=>restored.close());
   const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
   assert.equal(saved.kind,'created');assert.ok('chartId' in saved);
   const owner={chartId:saved.chartId,expectedAccountId:f.accountId};
@@ -321,7 +321,7 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
     `/api/charts/${saved.chartId}/returns/accept`,`/api/charts/${saved.chartId}/returns/accept`]);
   assert.equal(f.database.connection.prepare('SELECT COUNT(*) AS count FROM account_chart_returns').get()!.count,2);
   connect();
-  const fresh=createCyclesClient({cacheVersion:version,returnStorage:null,request});t.after(()=>fresh.close());
+  const fresh=createCyclesClient({returnStorage:null,request});t.after(()=>fresh.close());
   assert.equal((await fresh.events(input,undefined,{owner})).events[0]!.utc,utc);
   assert.equal((await fresh.chart(chartInput,undefined,{owner,event})).chart.utc,utc);
   assert.equal(dateCalls,1);assert.equal(chartCalls,1);

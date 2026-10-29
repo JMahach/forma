@@ -5,7 +5,6 @@ import type { createJournal } from './journal.ts';
 import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
 import type {ClientActionContext,ClientContextStep,ClientObservation,ClientReportReason} from '../shared/client-report-contract.ts';
 import { createStoragePressure } from './data/storage-pressure.ts';
-import { createCalculationUpdates } from './data/calculation-updates.ts';
 import { createNavigation } from './platform/browser/navigation.ts';
 import { viewForRoute } from './state/view-session.ts';
 import { attachAccount } from './account.ts';
@@ -38,25 +37,6 @@ import { lifeTimelineForChart } from './domain/cycles.ts';
 type Journal=ReturnType<typeof createJournal>;
 let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
 let applicationFailed=false,connectedJournal:Journal|undefined,connection:Promise<void>|undefined;
-let refreshOffline:(()=>void)|undefined,offlineRefreshPending=false;
-const obsoleteCalculations = { calculation: false, returns: false };
-function rejectIncompatibleCalculations(versions?: {calculationVersion:string;cyclesVersion:string}) {
-  const previous = `${obsoleteCalculations.calculation}:${obsoleteCalculations.returns}`;
-  obsoleteCalculations.calculation ||= !versions || versions.calculationVersion !== document.body.dataset.calculationVersion;
-  obsoleteCalculations.returns ||= !versions || versions.cyclesVersion !== document.body.dataset.cyclesVersion;
-  if (previous !== `${obsoleteCalculations.calculation}:${obsoleteCalculations.returns}`) application?.invalidateCalculations?.(obsoleteCalculations);
-  requestOfflineRefresh();
-}
-function requestOfflineRefresh() {
-  if (!refreshOffline) { offlineRefreshPending=true; return; }
-  // Discovery is optional; only the existing page/worker handshake may reload.
-  try { refreshOffline(); } catch { /* A failed discovery keeps the current page. */ }
-}
-/** A version response can arrive before entry attaches the release updater. */
-export function connectOfflineUpdates(refresh:()=>void) {
-  refreshOffline=refresh;
-  if (offlineRefreshPending) { offlineRefreshPending=false; requestOfflineRefresh(); }
-}
 // One first startup fact, before the optional journal is available. No snapshot,
 // raw exception, private identity, queue or delivery state lives in this handoff.
 let earlyFailure:{action:ClientActionContext;step:ClientContextStep & {reason:ClientReportReason};occurredAt:number}|undefined;
@@ -129,27 +109,9 @@ const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-trans
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
 const storagePressure = createStoragePressure();
 const calculationClients = createCalculationClients({ cacheOptions: {pressure: storagePressure}, transit: {
-  calculationVersion: document.body.dataset.calculationVersion,
   initialDate: !previewLoading && !document.hidden && needsDay ? new Date().toISOString().slice(0, 10) : null,
-}, natal: {calculationVersion: document.body.dataset.calculationVersion},
-  cycles: {cacheVersion: document.body.dataset.cyclesVersion} });
+}, observe:action=>connectedJournal?.begin(action)??(earlyCalculation??=earlyObservation(action)) });
 const dayClient = calculationClients.transit;
-const calculationVersionOwner = createCalculationUpdates({clients: calculationClients,
-  observe:action=>connectedJournal?.begin(action)??(earlyCalculation??=earlyObservation(action)),
-  expected: {calculationVersion: document.body.dataset.calculationVersion, cyclesVersion: document.body.dataset.cyclesVersion}});
-const calculationUpdates = {
-  async refresh(...args:Parameters<typeof calculationVersionOwner.refresh>) {
-    const result=await calculationVersionOwner.refresh(...args);
-    if (result.status==='incompatible') rejectIncompatibleCalculations(result.versions);
-    return result;
-  },
-  async onTimelineChanged(...args:Parameters<typeof calculationVersionOwner.onTimelineChanged>) {
-    const result=await calculationVersionOwner.onTimelineChanged(...args);
-    if (result.status==='incompatible') rejectIncompatibleCalculations();
-    return result;
-  },
-};
-if (!previewLoading && getConnectionMode() === 'online') void calculationUpdates.refresh();
 const store = createChartStore({ initialTemporaryChart: savedView?.temporaryChart,
   initialPublicChart:savedView?.publicChart });
 // Account records are restored by their owner after startup. Legacy local
@@ -347,8 +309,7 @@ if (!previewLoading) try {
   if (viewCheckpoint.pending) flushLoadingView();
   const latestView = loadingInteraction ? loadingSnapshot() : savedView;
   loadingActive = false; releaseLoadingFocus();
-  application = app.startApp({ navigation, storagePressure, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
-  if (obsoleteCalculations.calculation || obsoleteCalculations.returns) application?.invalidateCalculations?.(obsoleteCalculations);
+  application = app.startApp({ navigation, storagePressure, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
   saveBeforeNavigate = () => application?.flushView();
 } catch {
   if (viewCheckpoint.pending) flushLoadingView();

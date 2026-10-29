@@ -378,7 +378,7 @@
       ],
       "privateEntryReasons": {
         "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
-        "src/data/calculation-migration.ts": "Legacy source reading, version fencing and deletion are internal to the single calculation-cache budget owner.",
+        "src/data/calculation-migration.ts": "Legacy source reading and deletion are internal to the single calculation-cache budget owner.",
         "src/data/account-calculation-transition.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting."
       }
@@ -397,7 +397,6 @@
         "src/data/natal-day-client.ts",
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
-        "src/data/calculation-updates.ts",
         "src/data/telegram-login.ts"
       ],
       "publicEntries": [
@@ -411,7 +410,6 @@
         "src/data/natal-day-client.ts",
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
-        "src/data/calculation-updates.ts",
         "src/data/telegram-login.ts"
       ],
       "allowRuntime": [
@@ -1075,7 +1073,6 @@
         "server/services/calculation-failure.ts",
         "server/services/cities.ts",
         "server/services/cycles.ts",
-        "server/services/lifetime-compatibility.ts",
         "server/services/lifetime.ts",
         "server/services/natal-days.ts",
         "server/services/transit-days.ts",
@@ -1124,10 +1121,9 @@
     },
     {
       "id": "server-runtime",
-      "responsibility": "Physical process/queue/consumer lifecycle and file signatures; the specialized calculator IPC adapter may know its explicitly declared request wire type, while calculation rules remain in services.",
+      "responsibility": "Physical process/queue/consumer lifecycle; the specialized calculator IPC adapter may know its explicitly declared request wire type, while calculation rules remain in services.",
       "files": [
         "server/runtime/account-environment.ts",
-        "server/runtime/calculation-version.ts",
         "server/runtime/calculator-workers.ts",
         "server/runtime/compute-queue.ts",
         "server/runtime/journal-environment.ts",
@@ -1137,7 +1133,6 @@
       ],
       "publicEntries": [
         "server/runtime/account-environment.ts",
-        "server/runtime/calculation-version.ts",
         "server/runtime/calculator-workers.ts",
         "server/runtime/compute-queue.ts",
         "server/runtime/journal-environment.ts",
@@ -1828,14 +1823,7 @@
       "reason": "The isolated journal storage adapter uses the common IndexedDB connection mechanism; this does not expose diagnostic records or grant product code direct queue access."
     }
   ],
-  "assets": [
-    {
-      "file": "shared/prepared-data-revisions.json",
-      "owner": "shared-contracts",
-      "public": true,
-      "reason": "Explicit manifest of allowed prepared-data revision transitions; separate from importable code."
-    }
-  ],
+  "assets": [],
   "externalPolicy": {
     "nodeBuiltinsAllowedFrom": [
       "server-composition",

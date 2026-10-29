@@ -7,8 +7,6 @@ interface PublicFileOptions {
   root: string;
   files?: PublicFiles;
   precompressed?: boolean;
-  cyclesVersion?: string | null;
-  calculationVersion?: string | null;
   environment?: 'stand' | 'production';
   standNumber?: string;
   appVersion?: string | null;
@@ -63,7 +61,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'shared/lifetime-exact-format.ts',
     'shared/cycles-format.ts',
     'shared/chart-activations.ts',
-    'shared/calculation-result.ts',
+    'shared/calculation-result.ts', 'shared/calculation-storage-transition.ts',
     'shared/chart-record-contract.ts',
     'shared/chart-return-contract.ts',
     'shared/utc-format.ts',
@@ -118,8 +116,8 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/state/account-library.ts',
     'src/state/chart-actions.ts',
     'src/data/binary-cache.ts', 'src/data/indexed-db.ts',
-    'src/data/calculation-migration.ts',
-    'src/data/calculation-updates.ts', 'src/data/calculation-clients.ts', 'src/data/calculation-cache.ts',
+    'src/data/calculation-migration.ts', 'src/data/calculation-cache-transition.ts', 'src/data/account-calculation-transition.ts',
+    'src/data/calculation-clients.ts', 'src/data/calculation-cache.ts',
     'src/data/natal-day-client.ts',
     'src/runtime/shared-request.ts',
     'src/domain/immutable-snapshot.ts', 'src/domain/temporary-chart.ts',
@@ -266,8 +264,8 @@ const RETIRE_LOCAL_WORKER = `self.addEventListener('install', event => event.wai
 self.addEventListener('activate', event => event.waitUntil(self.registration.unregister()));
 `;
 
-export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, cyclesVersion = null, calculationVersion = null, environment = 'stand', standNumber = '1', appVersion = null }: PublicFileOptions) {
-  const metadataAttributes = appMetadataAttributes({environment, standNumber, appVersion, cyclesVersion, calculationVersion});
+export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompressed = false, environment = 'stand', standNumber = '1', appVersion = null }: PublicFileOptions) {
+  const metadataAttributes = appMetadataAttributes({environment, standNumber, appVersion});
   const assets = createStaticAssets(root, { precompressed, transform: (entry, bytes) => {
     if (!precompressed && entry.file.endsWith('.ts')) {
       return Buffer.from(stripTypeScriptTypes(bytes.toString('utf8'), { mode: 'strip' }));

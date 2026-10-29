@@ -867,25 +867,24 @@ test('a legacy lifetime index becomes UTC after metadata loads and never returns
 });
 
 
-for (const source of ['compatible day', 'absent day', 'outdated day'] as const) {
+for (const source of ['available day', 'absent day', 'another day'] as const) {
   test(`a saved lifetime minute restores using ${source} and snapshots the displayed UTC`, async t => {
     const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
     const requestedUtc = Date.parse('2020-01-02T09:21:00Z');
     const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
     saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc };
     first.storage.set('liniya.view.v1', JSON.stringify(saved));
-    const meta = { ...metadata, calculationVersion: 'a'.repeat(64), engine: 'Swiss Ephemeris 2.10.03' };
-    const storedDay: TransitDay = { ...day('2020-01-02'), version: TRANSIT_DAY_VERSION,
-      calculationVersion: (source === 'outdated day' ? 'b' : 'a').repeat(64), engine: meta.engine,
+    const meta = { ...metadata, engine: 'Swiss Ephemeris' };
+    const storedDay: TransitDay = { ...day(source === 'another day' ? '2020-01-03' : '2020-01-02'), version: TRANSIT_DAY_VERSION, engine: meta.engine,
       nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' };
     const days = createTransitDayCache({ indexedDB: null }); t.after(() => days.close());
-    const requests: string[] = [], reads: [string, string][] = [];
+    const requests: string[] = [], reads: string[] = [];
     let releaseDay!: (day: TransitDay | null) => void;
     const readingDay = new Promise<TransitDay | null>(resolve => { releaseDay = resolve; });
-    // Supply a delayed stored packet; the real client checks its compatibility
+    // Supply a delayed stored packet; the real client checks its date and full numeric snapshot
     // and chooses between readMinute and the prepared file without a scalar API.
     const client = createLifetimeClient({ days: { ...days,
-      getDay(date, version) { reads.push([date, version]); return readingDay; },
+      getDay(date) { reads.push(date); return readingDay; },
     }, fetch: async url => {
       requests.push(url);
       if (url === '/api/lifetime/meta') return { ok: true, json: async () => meta };
@@ -895,21 +894,21 @@ for (const source of ['compatible day', 'absent day', 'outdated day'] as const) 
     assert.equal('getMoment' in client, false);
     const second = harness(first.storage, { lifetimeClient: client }); t.after(() => second.transit.stop());
     const restoring = second.view.restore(); await new Promise(setImmediate);
-    assert.deepEqual(reads, [['2020-01-02', meta.calculationVersion]]);
+    assert.deepEqual(reads, ['2020-01-02']);
     second.view.flush();
     assert.equal(JSON.parse(first.storage.get('liniya.view.v1')!).lifetime.requestedUtc, requestedUtc,
       'the pending cache read must not overwrite the saved target');
     releaseDay(source === 'absent day' ? null : storedDay);
     assert.equal(await restoring, true);
-    const expectedUtc = source === 'compatible day' ? '2020-01-02T09:21:00Z' : '2020-01-02T09:20:00Z';
+    const expectedUtc = source === 'available day' ? '2020-01-02T09:21:00Z' : '2020-01-02T09:20:00Z';
     assert.equal(second.session.current.utc, expectedUtc);
     assert.equal(second.ensureLifetime().state.requestedUtc, Date.parse(expectedUtc));
     assert.equal(second.ensureLifetime().state.displayedUtc, Date.parse(expectedUtc));
     assert.equal(second.view.pendingLifetime, null);
-    assert.deepEqual(requests, source === 'compatible day' ? ['/api/lifetime/meta']
+    assert.deepEqual(requests, source === 'available day' ? ['/api/lifetime/meta']
       : ['/api/lifetime/meta', '/api/lifetime?index=200']);
-    assert.equal(reads.length, 1, 'the fallback must not reread the same missing or incompatible day');
-    if (source === 'compatible day') {
+    assert.equal(reads.length, 1, 'the fallback must not reread the same missing or wrong-date day');
+    if (source === 'available day') {
       const displayed = second.ensureLifetime().current!, expected = transitChartAt(storedDay, 561);
       assert.deepEqual(displayed.planetFilter!.activations, expected.activations!.personality);
       assert.deepEqual(displayed.planetFilter!.designActivations, expected.activations!.design);

@@ -16,7 +16,6 @@ interface BirthFormOptions {
   document: Document; getChart: (id: string | null) => SavedChart | undefined;
   submitChart?: (input: BirthSubmission, signal: AbortSignal) => Promise<{id: string; persisted: boolean; metadataOnly?: boolean}> | null;
   isCheckingSubmission?: () => boolean;
-  canCalculate?: () => boolean;
   /** Optional caption; omit until its words are approved. The comparison itself is accepted. */
   noteComparisonLabel?: string;
   saveChart: (chart: SavedChart, replacingId?: string | null) => boolean;
@@ -39,7 +38,7 @@ import { createFeedback } from '../ui/feedback.ts';
 import { failureMessage, UI_MESSAGES } from '../ui/messages.ts';
 
 // Birth data, city search, DST ambiguity and calculation live within one dialog.
-export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange=()=>{}, getChart, saveChart, submitChart, isCheckingSubmission = () => false, canCalculate = () => true, noteComparisonLabel, findCities, calculate, getConnectionMode, subscribeConnection, randomBirth = randomBirthMoment, session, onSave, beforeOpen = () => {}, toast, getFormData = form => new FormData(form) }: BirthFormOptions) {
+export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange=()=>{}, getChart, saveChart, submitChart, isCheckingSubmission = () => false, noteComparisonLabel, findCities, calculate, getConnectionMode, subscribeConnection, randomBirth = randomBirthMoment, session, onSave, beforeOpen = () => {}, toast, getFormData = form => new FormData(form) }: BirthFormOptions) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   let editingId: string | null = null, openedRecord: SavedChart | undefined, displayedRecord: SavedChart | undefined;
   type VersionedRecord = SavedChart & {revision?: number; noteRevision?: number};
@@ -79,7 +78,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
   const randomButton = $<HTMLButtonElement>('randomChartButton');
   let randomController: AbortController | null = null;
   function setRandomBusy(busy: boolean) {
-    if (randomButton) { randomButton.disabled = !canCalculate() || actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:busy}).disabled; randomButton.setAttribute('aria-busy', String(busy)); }
+    if (randomButton) { randomButton.disabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:busy}).disabled; randomButton.setAttribute('aria-busy', String(busy)); }
   }
   function cancelRandom() { randomController?.abort(); randomController = null; setRandomBusy(false); }
 
@@ -174,7 +173,6 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     else if (formMessageKind === 'busy') showForm();
     formBusy = busy; $<HTMLFormElement>('chartForm').setAttribute('aria-busy', String(busy));
     $<HTMLFormElement>('chartForm').querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input, textarea, select, button').forEach(control => { if (control.id !== 'cancelDialog') control.disabled = actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:busy}).disabled; });
-    if (formPurpose==='natal' && !canCalculate()) $<HTMLButtonElement>('saveChartButton').disabled = true;
     $('saveChartButton').textContent = busy ? serverPending ? serverLabel : 'Рассчитываем…' : formPurpose === 'natal' ? 'Рассчитать и сохранить' : 'Сохранить карту';
   }
   let closedFormDiscarded = false;
@@ -300,7 +298,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     if (!$<HTMLDialogElement>('chartDialog').open) discardClosedForm();
   });
   $<HTMLFormElement>('chartForm').addEventListener('submit', async e => {
-    e.preventDefault(); if (formPurpose==='natal' && !canCalculate() || actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy}).disabled) return; clearErrors();
+    e.preventDefault(); if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy}).disabled) return; clearErrors();
     const controller = new AbortController(); calculationController = controller;
     const submittedNoteRevision = (openedRecord as VersionedRecord | undefined)?.noteRevision ?? 0;
     try {
@@ -422,7 +420,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
   });
 
   randomButton?.addEventListener('click', async () => {
-    if (!canCalculate() || actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy || Boolean(randomController)}).disabled || $<HTMLDialogElement>('chartDialog').open) return;
+    if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy || Boolean(randomController)}).disabled || $<HTMLDialogElement>('chartDialog').open) return;
     const controller = new AbortController(); randomController = controller; setRandomBusy(true);
     try {
       const birth = randomBirth();

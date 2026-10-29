@@ -22,7 +22,7 @@ function prepareJournal():Promise<Journal|undefined> {
   // Optional diagnostics load beside the application, never ahead of its recovery UI.
   journalReady=import('./journal.ts').then(({createJournal})=>{
     const journal=createJournal({appVersion:metadata.appVersion!,
-      environment:metadata.appEnvironment as 'stand'|'production',calculationVersion:metadata.calculationVersion});
+      environment:metadata.appEnvironment as 'stand'|'production'});
     journal.attachBrowser(window,navigator);return journal;
   }).catch(()=>undefined);
   return journalReady;
@@ -42,7 +42,6 @@ try {
       const page=attachOfflinePage({registration,serviceWorker:navigator.serviceWorker,loadedVersion,
         owner:{prepare:startup.prepareOfflineUpdate,restored:startup.offlineRestored,subscribe:startup.subscribeOfflineReady},
         hold:()=>holdOfflineInput(window),reload:()=>location.reload()});
-      startup.connectOfflineUpdates(()=>{void page.refresh();});
       void page.refresh();void startup.offlineReady().then(()=>page.check()).catch(()=>{});
     }).catch(()=>{}); }
     catch { /* Browser storage/security restrictions must not hide the working app. */ }

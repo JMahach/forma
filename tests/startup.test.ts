@@ -3,7 +3,6 @@ import {createViewCheckpoint} from '../src/state/view-checkpoint.ts';
 import { createLayoutObserver } from '../src/ui/layout/resize-observer.ts';
 import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
 import {createJournal} from '../src/journal.ts';
-import {createCalculationUpdates} from '../src/data/calculation-updates.ts';
 import {createCalculationClients} from '../src/data/calculation-clients.ts';
 import {createDiagnosticClient} from '../src/data/diagnostic-client.ts';
 import {createDiagnosticQueue} from '../src/data/diagnostic-queue.ts';
@@ -73,7 +72,7 @@ type AccountFixture = Pick<RealStartupPorts['account'], 'ready' | 'snapshot' | '
   & Partial<Pick<RealStartupPorts['account'], 'getSession'>> & {loadingOnly?: boolean};
 type StartupPorts = Omit<RealStartupPorts, 'dayClient' | 'calculationClients' | 'layout' | 'viewStore' | 'store' | 'account' | 'savedView'> & {
   dayClient: Partial<TransitDayClient>;
-  calculationClients: {transit: Partial<TransitDayClient>; natal: object; cycles: object};
+  calculationClients: {transit: Partial<TransitDayClient>; natal: object; cycles: object; syncTransitWindow?: ReturnType<typeof createCalculationClients>['syncTransitWindow']};
   layout: LayoutFixture;
   viewStore: {read(): ViewFixture | null; write?(value: Partial<SavedView>): boolean};
   store: StoreFixture; account: AccountFixture; savedView: ViewFixture | null; previewLoading?: boolean;
@@ -85,7 +84,6 @@ type LibraryFixture = Omit<TestStub<LibraryOptions>, 'getCharts'> & {
 type StartupLocation = Partial<Pick<Location, 'href' | 'pathname' | 'port' | 'hostname' | 'search' | 'reload'>>;
 type StartupExports = {
   connectJournal(journal: Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'>):Promise<void>;
-  connectOfflineUpdates(refresh:()=>void):void;
 };
 type LoadApp = () => Promise<{startApp(ports: StartupPorts): unknown}>;
 type AccountFactory = (options: Parameters<typeof import('../src/account.ts').attachAccount>[0]) => AccountFixture;
@@ -129,7 +127,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -147,17 +145,16 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   storeFactory: (options:Parameters<typeof createChartStore>[0]) => StoreFixture, loadApp: LoadApp, location: StartupLocation = {},
   storage = tabStorage(), createCamera = cameraModule.createCamera,
   attachAccount: AccountFactory = ({saved, loadingOnly}) => ({ready: Promise.resolve(), snapshot: saved ?? null, loadingOnly, setVisible() {}}),
-  updateFactory:(options:Parameters<typeof createCalculationUpdates>[0])=>Pick<ReturnType<typeof createCalculationUpdates>,'refresh'|'onTimelineChanged'>
-    =()=>({refresh:async()=>({status:'unavailable'}),onTimelineChanged:async()=>({status:'unconfirmed'})}),
+  clientFactory?: (options:Parameters<typeof createCalculationClients>[0])=>StartupPorts['calculationClients'],
   gestureFactory: typeof attachGestures = attachGestures) => {
   const address = {...location, href: location.href || 'http://localhost:3636/'};
   const attachPreview = (options: Parameters<typeof attachLoadingPreview>[0]) => attachLoadingPreview({...options, getStorage: () => storage});
   const events = new EventTarget();
   const navigate = (_state: unknown, _title: string, path?: string | URL | null) => {if (path != null) address.pathname = String(path);};
   const history = {pushState: navigate, replaceState: navigate};
-  const clients = (options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}});
+  const clients = clientFactory ?? ((options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}}));
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -210,7 +207,7 @@ function startupDocument(overrides: Record<string, object> = {}) {
     }
     return nodes.get(id)!;
   };
-  const document: FakeDocument = Object.assign(new EventTarget(), { activeElement: null as unknown, defaultView: Object.assign(new EventTarget(), { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }), body: { dataset: { calculationVersion: 'a'.repeat(64) } }, hidden: false,
+  const document: FakeDocument = Object.assign(new EventTarget(), { activeElement: null as unknown, defaultView: Object.assign(new EventTarget(), { innerHeight: 900, getComputedStyle: () => ({ bottom: '0px' }) }), body: { dataset: {} }, hidden: false,
     createElement: library.document.createElement, getElementById: element,
     querySelector: (selector: string) => {
       const id = ({ '.app-shell': 'shell', '.chart-tools': 'chartTools', '#summaryScreen .summary-heading': 'summaryHeading' } as Record<string, string>)[selector];
@@ -262,10 +259,9 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
         assertPageZoomBlocked(document);
         return { startApp(value) { received = value; } };
       });
-    assert.equal(options!.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options!.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
-    const { navigation, storagePressure, calculationClients, calculationUpdates, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, viewCheckpoint, ...existingPorts } = received!;
+    const { navigation, storagePressure, calculationClients, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, viewCheckpoint, ...existingPorts } = received!;
     assert.equal(calculationClients.transit, client);
     assert.equal(typeof storagePressure?.write, 'function');
     assert.equal(typeof viewCheckpoint?.flushForPageHide, 'function');
@@ -898,7 +894,7 @@ test('legacy local records remain untouched but do not become a guest collection
 
 for(const preview of [false,true])test(`the last public source joins early restoration in ${preview?'Preview':'startup'}`,async()=>{
   const own=accountNatalChart(113),foreign=accountNatalChart(114,'2');
-  const {accountId,note,noteRevision,publicRevision,...fields}=foreign,publicChart={...fields,calculationVersion:'a'.repeat(64)};
+  const {accountId,note,noteRevision,publicRevision,...fields}=foreign,publicChart={...fields};
   const temporaryChart={...own,id:'own-temporary',createdAt:'',updatedAt:''};
   const tab=tabStorage(),viewStore=createViewStore({getStorage:()=>tab});
   viewStore.write({version:1,selectedId:foreign.id,publicChart,temporaryChart,panels:{left:false,right:true},workspace:'chart'});
@@ -937,9 +933,9 @@ for (const trigger of ['account','panel'] as const) test(`early ${trigger} updat
 });
 
 
-for(const source of ['view','versions'] as const)test(`early ${source} failure crosses the real journal, HTTP and writer with its original time and anonymous owner`,async t=>{
+for(const source of ['view','window'] as const)test(`early ${source} failure crosses the real journal, HTTP and writer with its original time and anonymous owner`,async t=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'forma-startup-journal-')),indexedDB=new IDBFactory();
- let time=1_000_000,online=false,access:{accountId:string;sessionId:string}|null=null,versionWork:Promise<unknown>|undefined;
+ let time=1_000_000,online=false,access:{accountId:string;sessionId:string}|null=null,windowWork:Promise<unknown>|undefined;
  t.mock.method(Date,'now',()=>time);
  const runtime=createJournalRuntime({directory,environment:'stand',now:()=>time,clientReservedBytes:DIAGNOSTIC_HTTP_RESERVED_BYTES});
  const http=createDiagnosticHandler({origins:['https://forma.example.test'],accounts:{diagnosticOwner:()=>null},
@@ -952,63 +948,27 @@ for(const source of ['view','versions'] as const)test(`early ${source} failure c
   return new Response(response.body,{status:response.status,headers:{'Content-Type':'application/json'}});
  }});
  const journal=createJournal({indexedDB,appVersion:'test-1',environment:'stand',now:()=>time,connection:()=>online?'online':'offline',send});
- const inspect=createDiagnosticQueue({indexedDB,now:()=>time}),clients=createCalculationClients({cacheOptions:{indexedDB:new IDBFactory()}});
- let updates:ReturnType<typeof createCalculationUpdates>|undefined;
- t.after(async()=>{updates?.close();clients.close();inspect.close();await journal.close();await runtime.close();fs.rmSync(directory,{recursive:true,force:true});});
+ const inspect=createDiagnosticQueue({indexedDB,now:()=>time});
+ let clients:ReturnType<typeof createCalculationClients>|undefined;
+ t.after(async()=>{await clients?.close();inspect.close();await journal.close();await runtime.close();fs.rmSync(directory,{recursive:true,force:true});});
  const {document}=startupDocument(),storage=tabStorage();
  let ports:StartupPorts|undefined;
  const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
   options=>createViewStore({...options,getStorage:()=>({...storage,getItem(key){if(source==='view')throw new Error('PRIVATE snapshot');return storage.getItem(key);},setItem(){throw new Error('PRIVATE disk');}})}),
-  emptyStore,async()=>({startApp(value){ports=value;access={accountId:'42',sessionId:'session-later'};return {attachJournal(value:ReturnType<typeof createJournal>){value.setAccount(access!.accountId,access!.sessionId);}};}}),
+  emptyStore,async()=>({startApp(value){ports=value;if(source==='window')windowWork=value.calculationClients.syncTransitWindow!({dates:['2000-01-01'],expiresAt:time+1000});access={accountId:'42',sessionId:'session-later'};return {attachJournal(value:ReturnType<typeof createJournal>){value.setAccount(access!.accountId,access!.sessionId);}};}}),
   {href:'http://localhost:3636/'},storage,undefined,()=>({ready:Promise.resolve(),snapshot:null,setVisible(){},getSession:()=>access}),
-  options=>{updates=createCalculationUpdates({...options,clients,expected:{calculationVersion:'a'.repeat(64),cyclesVersion:'b'.repeat(64)},
-    request:async()=>{if(source==='versions')throw Object.assign(new Error('PRIVATE request'),{code:'connection_failed'});return {calculationVersion:'c'.repeat(64),cyclesVersion:'b'.repeat(64)};}});
-    return {...updates,refresh(){return versionWork=updates!.refresh();}};});
- await versionWork;time+=5000;await startup.connectJournal(journal);
+  options=>(clients=createCalculationClients({...options,transit:{initialDate:null},cacheOptions:{indexedDB:null}})));
+ await windowWork;time+=5000;await startup.connectJournal(journal);
  online=true;await journal.wake();
  const read=():ClientReport[]=>{const archive=path.join(directory,'archive');return fs.existsSync(archive)?fs.readdirSync(archive).filter(file=>file.endsWith('.jsonl')).flatMap(file=>fs.readFileSync(path.join(archive,file),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line))):[];};
  for(let i=0;i<300 && !read().length;i++)await new Promise(resolve=>setTimeout(resolve,5));
  const reports=read();assert.equal(reports.length,1);assert.equal(reports[0]!.occurredAt,1_000_000);assert.equal(reports[0]!.accountId,null);
- assert.equal(reports[0]!.reason,source==='view'?'storage_unavailable':'connection_failed');
+ assert.equal(reports[0]!.reason,'storage_unavailable');
  assert.doesNotMatch(JSON.stringify(reports),/PRIVATE|session-later/);assert.ok(ports);
  await journal.wake();assert.equal(read().length,1);
  const state=await inspect.state();assert.equal(state.status,'ready');if(state.status==='ready')assert.equal(state.count,0);
 });
 
-
-test('an early incompatible calculation response reaches the release updater attached after startup',async t=>{
- const clients=createCalculationClients({cacheOptions:{indexedDB:new IDBFactory()}});
- let owner:ReturnType<typeof createCalculationUpdates>|undefined,first:Promise<unknown>|undefined,ports:StartupPorts|undefined;
- t.after(()=>{owner?.close();clients.close();});
- const expected={calculationVersion:'a'.repeat(64),cyclesVersion:'b'.repeat(64)};
- const newer={calculationVersion:'c'.repeat(64),cyclesVersion:'d'.repeat(64)};
- const before=await clients.status(),{document}=startupDocument();
- const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
-  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;}}),{},undefined,undefined,undefined,
-  options=>{
-   owner=createCalculationUpdates({...options,clients,expected,request:async()=>newer});
-   return {onTimelineChanged:owner.onTimelineChanged,refresh(options){const work=owner!.refresh(options);first??=work;return work;}};
-  });
- await first;await Promise.resolve();let discoveries=0;
- startup.connectOfflineUpdates(()=>{discoveries++;});
- assert.equal(discoveries,1,'the response is retained until entry supplies the existing updater');
- const next=await ports!.calculationUpdates!.refresh();
- assert.deepEqual(next,{status:'incompatible',versions:newer});
- assert.equal(discoveries,2,'the application receives the same connected refresh path');
- assert.deepEqual(await clients.status(),before,'an old client never confirms a new numerical epoch');
-});
-
-test('an incompatible local window wakes the same updater, but cancelled and unavailable results do not',async()=>{
- const {document}=startupDocument();let ports:StartupPorts|undefined,discoveries=0;
- let result:'cancelled'|'unavailable'='cancelled';
- const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
-  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;}}),{},undefined,undefined,undefined,
-  ()=>({refresh:async()=>({status:result}),onTimelineChanged:async()=>({status:'incompatible'})}));
- startup.connectOfflineUpdates(()=>{discoveries++;});assert.equal(discoveries,0);
- result='unavailable';assert.equal((await ports!.calculationUpdates!.refresh()).status,'unavailable');assert.equal(discoveries,0);
- assert.equal((await ports!.calculationUpdates!.onTimelineChanged(null)).status,'incompatible');
- assert.equal(discoveries,1);
-});
 
 test('connected view storage reports one failure per outage, recovers on disk success and resets at an account boundary',async t=>{
  const reports:ClientReport[]=[],indexedDB=new IDBFactory();
@@ -1030,18 +990,6 @@ test('connected view storage reports one failure per outage, recovers on disk su
  access={accountId:'42',sessionId:'different-session'};journal.setAccount(access.accountId,access.sessionId);
  assert.equal(ports!.viewStore.write!({...snapshot,mandala:true}),false);await wait(3);assert.equal(reports[2]!.accountId,'42');
  for(let i=0;i<10;i++)ports!.viewStore.write!({...snapshot,mandala:true});await journal.wake();assert.equal(reports.length,3);
-});
-
-test('a confirmed returns-only mismatch invalidates only that domain before discovering the next bundle',async()=>{
- const {document}=startupDocument();let ports:StartupPorts|undefined;
- document.body.dataset.calculationVersion='a'.repeat(64);document.body.dataset.cyclesVersion='b'.repeat(64);
- const invalidations:{calculation:boolean;returns:boolean}[]=[];
- const startup=await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,()=>()=>{},
-  ()=>({read:()=>null}),emptyStore,async()=>({startApp(value){ports=value;return {invalidateCalculations(value:{calculation:boolean;returns:boolean}){invalidations.push({...value});}};}}),{},undefined,undefined,undefined,
-  ()=>({refresh:async()=>({status:'incompatible',versions:{calculationVersion:'a'.repeat(64),cyclesVersion:'c'.repeat(64)}}),onTimelineChanged:async()=>({status:'unconfirmed'})}));
- await ports!.calculationUpdates!.refresh();
- assert.deepEqual(invalidations.at(-1),{calculation:false,returns:true});
- let discoveries=0;startup.connectOfflineUpdates(()=>{discoveries++;});assert.equal(discoveries,1);
 });
 
 test('early camera bursts write one latest snapshot and pagehide flushes before its timer',async()=>{

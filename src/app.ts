@@ -5,7 +5,6 @@ import type { AccountBoundaryRequest, AccountBoundaryWork } from './application/
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import type { StoragePressure } from './data/storage-pressure.ts';
-import type { createCalculationUpdates } from './data/calculation-updates.ts';
 import { createLocalDayTimeline } from './domain/day-timeline.ts';
 import type { CalculationClients } from './data/calculation-clients.ts';
 import type { AppRoute } from '../shared/app-routes.ts';
@@ -39,8 +38,7 @@ interface AppOptions {
   journal?:AppJournal;
   storagePressure?:StoragePressure;
   navigation?: Navigation;
-  calculationUpdates?: Pick<ReturnType<typeof createCalculationUpdates>, 'refresh' | 'onTimelineChanged'>;
-  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'>>;
+  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'>>;
   account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'>;
   dayClient: TransitDayClient; layout: StudioLayout; toast: Toast; viewStore: ViewStore;
   viewCheckpoint?: ViewCheckpoint;
@@ -96,7 +94,7 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ journal, storagePressure, navigation, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+export function startApp({ journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   let application: Application | null = null;
   const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
@@ -106,8 +104,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
     ? savedView?.temporaryChartSave ?? null : null;
   let publicRefreshRequest:AbortController|null=null;
-  let calculationObsolete = false, returnsObsolete = false;
-  let restorationException = false;
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   function cancelChartSave(){application?.send({type:'CancelWrite'});}
@@ -200,7 +196,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
     const firstFailed = initialPage.restored && initialPage.restoreFailed && !session.hasCurrent;
     chartLoading.update({ hasChart: !routePending() && !routeFailed() && session.hasCurrent, holdLoading: initialPage.active,
-      preserveHeading: calculationObsolete,
       failed: routeFailed() || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
       loading: routePending() || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
     updateInitialPage();
@@ -344,7 +339,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const button=$<HTMLButtonElement>('saveShownChart'),wrap=$('saveShownChartWrap');
     $('saveShownChartGroup').hidden=!visible;
     const availability=actionAvailability({connection:getConnectionMode(),requiresConnection:true,
-      available:visible && (!calculationObsolete || source?.source === 'manual'),pending:Boolean(application?.write.busy && !application.write.waitingForLogin)});
+      available:visible,pending:Boolean(application?.write.busy && !application.write.waitingForLogin)});
     button.disabled=availability.disabled;button.setAttribute('aria-busy',String(availability.busy));
     const unavailable=Boolean(availability.reason);
     wrap.dataset.unavailable=String(unavailable);wrap.title=availability.reason;
@@ -556,7 +551,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
   const birthForm = attachBirthForm({
-    canCalculate: () => !calculationObsolete,
     getAccountId: () => accountLibrary.accountId,
     onDraftChange: () => { pendingBirthForm = null; viewSession?.schedule(); },
     document, getChart: id => id ? store.get(id) : undefined,
@@ -575,7 +569,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     },
     beforeOpen: () => { formIntent = null; returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
   });
-  const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory, calculationVersion: document.body.dataset.calculationVersion });
+  const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory });
   natalDay = attachNatalDayExplorer({
     dayClient: natalDayClient,
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
@@ -594,7 +588,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         && record.utc === chart.utc && record.timezone === chart.timezone
         ? {chartId: record.id, expectedAccountId: access.accountId} : null;
     },
-    client: calculationClients?.cycles ?? createCyclesClient({ memory: dayClient.memory, cacheVersion: document.body.dataset.cyclesVersion }),
+    client: calculationClients?.cycles ?? createCyclesClient({ memory: dayClient.memory }),
     onRequest: exploration!.requestReturn, onRender: exploration!.publishReturn,
     onStateChange() {
       updateTimelineTools(); viewSession?.schedule();
@@ -603,16 +597,19 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); });
   $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()));
   let cacheTimeline: ReturnType<typeof createLocalDayTimeline> | null = null;
+  function syncTransitCacheWindow(timeline: typeof cacheTimeline | undefined, refresh = false) {
+    if (!calculationClients?.syncTransitWindow || !timeline) return;
+    const now = Date.now();
+    if (!refresh && cacheTimeline && now < cacheTimeline.endUtc && cacheTimeline.timeZone === timeline.timeZone) return;
+    // Persistent transit covers today's local day, even while exploring a past date.
+    cacheTimeline = createLocalDayTimeline(now, timeline.timeZone);
+    void calculationClients.syncTransitWindow({dates: cacheTimeline.packetDates, expiresAt: cacheTimeline.endUtc});
+  }
   transit = attachLiveTransit({
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     isChartVisible: () => workspace.screen === 'chart',
     onRender: exploration!.publishTransit, onStateChange: state => {
-      // Persistent transit covers today's local day, even while exploring a past date.
-      if (calculationUpdates && state.timeline && (!cacheTimeline || Date.now() >= cacheTimeline.endUtc
-          || cacheTimeline.timeZone !== state.timeline.timeZone)) {
-        cacheTimeline = createLocalDayTimeline(Date.now(), state.timeline.timeZone);
-        void calculationUpdates.onTimelineChanged(cacheTimeline);
-      }
+      syncTransitCacheWindow(state.timeline);
       transitControls?.setCoveredByLifetime(session.selectedId !== 'current-transit' || Boolean(lifetime?.state.opened));
       transitControls?.update(state); syncLifetimeTransit(); updateLoading(); refreshTimelineLayout(); viewSession?.schedule();
       if (returns?.available) updateChartCaption();
@@ -982,7 +979,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (!document.hidden && libraryInitialized) {
       void accountLibrary.refreshLocal().catch(() => {});
       application!.send({type:'RecoverWrites'});
-      if (getConnectionMode() === 'online') {void calculationUpdates?.refresh();void refreshPublicChart();}
+      syncTransitCacheWindow(transit?.state.timeline, true);
+      if (getConnectionMode() === 'online') void refreshPublicChart();
     }
   });
   let previousConnection = getConnectionMode();
@@ -992,7 +990,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     void natalDay?.refreshAvailability();
     void returns?.refreshAvailability();
     lifetime?.refreshAvailability(); updateTimelineTools();
-    if (returned) {void calculationUpdates?.refresh();void journal?.wake();void refreshPublicChart();}
+    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();void refreshPublicChart();}
     if (!libraryInitialized) return;
     if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
     application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
@@ -1013,13 +1011,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       const restored = await viewSession!.restore();
       if (!viewSession!.interrupted) initialPage.restoreFailed = restored === false;
     }
-    catch { restorationException = true; initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
+    catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
     if (viewSession!.interrupted || !routeCurrent()) return;
     try {
       const resumed = await exploration!.finishRestore({ saved: restoreView, interrupted: viewSession!.interrupted,
         pendingLifetime: viewSession!.pendingLifetime, pendingReturns: viewSession!.pendingReturns });
       initialPage.restoreFailed ||= resumed === false;
-    } catch { restorationException = true; initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
+    } catch { initialPage.restoreFailed = true; toast('Не удалось восстановить положение страницы.'); }
     if (viewSession!.interrupted || !routeCurrent()) return;
     const draft = pendingBirthForm; pendingBirthForm = null;
     if(draft && !birthForm.opened)birthForm.restore(draft);
@@ -1049,7 +1047,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updateTimelineTools();
       return returnsView;
     }).catch(() => {
-      if (initialPage.active) { restorationException = true; initialPage.restoreFailed = true; }
+      if (initialPage.active) { initialPage.restoreFailed = true; }
       if (returns!.opened) { returns!.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
       return null;
     }).finally(() => { returnsViewLoading = null; updateInitialPage(); });
@@ -1076,13 +1074,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const chart = currentChart();
     const viewState = { ...state, visible: view.returnsVisible,
       birthSelected: !exploration!.live && chart.primary === session.baseChart && !chart.secondary, live: exploration!.live,
-      nowAvailable: !calculationObsolete && (getConnectionMode() !== 'offline' || transit?.state.referenceIndex != null) };
+      nowAvailable: getConnectionMode() !== 'offline' || transit?.state.referenceIndex != null };
     chartSummary!.setReturnsVisible(view.returnsVisible);
     if (returnsView) returnsView!.update(viewState);
     else if (view.returnsVisible) void loadReturnsView();
     const lifetimeToggle = $('lifetimeToggle');
     lifetimeToggle.hidden = !view.lifetimeAvailable;
-    (lifetimeToggle as HTMLButtonElement).disabled = !view.toggleEnabled && (calculationObsolete || getConnectionMode() === 'offline'
+    (lifetimeToggle as HTMLButtonElement).disabled = !view.toggleEnabled && (getConnectionMode() === 'offline'
       && !lifetimeState?.metadata && (session.selectedId !== 'current-transit' || !transit?.state.current));
     lifetimeToggle.title = view.toggleLabel;
     lifetimeToggle.setAttribute('aria-label', view.toggleLabel);
@@ -1165,7 +1163,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         });
         lifetime = controller;
         lifetimeControls = controls;
-        if (calculationObsolete) lifetime.invalidateCalculations();
         return lifetime;
       } catch {
         lifetimeLoadFailed = true; updateLoading(); updateTimelineTools();
@@ -1210,20 +1207,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
-  // An obsolete calculation may deliberately remain pending in the durable view
-  // snapshot. Waiting for it to calculate with old code would deadlock the update.
-  // Exceptions, missing records/screens and unconfirmed writes still block it.
   const offlineRestored = () => initialPage.restored
-    && (!initialPage.restoreFailed || (calculationObsolete || returnsObsolete) && !restorationException)
+    && !initialPage.restoreFailed
     && !initialPage.screenPending && !initialPage.screenFailed && !routePending() && !routeFailed();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
-    invalidateCalculations({ calculation = true, returns: obsoleteReturns = true }: {calculation?:boolean;returns?:boolean} = {}) {
-      calculationObsolete ||= calculation; returnsObsolete ||= obsoleteReturns || calculation;
-      session.invalidateCalculations({calculation:calculationObsolete,returns:returnsObsolete});
-      if (calculationObsolete) { natalDay?.invalidateCalculations(); lifetime?.invalidateCalculations(); transit?.invalidateCalculations(); }
-      if (returnsObsolete) returns?.invalidateCalculations();
-      birthForm.refreshAvailability(); updateChartSaveControl(); updateTimelineTools(); updateLoading();
-    },
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate() {
       const ready=()=>{
