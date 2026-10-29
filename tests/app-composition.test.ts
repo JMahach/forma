@@ -70,6 +70,7 @@ import type { attachLifetimeControls } from '../src/views/lifetime-controls.ts';
 import type { attachReturnsPanel, ReturnsPanelState } from '../src/views/returns-panel.ts';
 interface HarnessOptions {
   copyText?: (text: string) => Promise<void>;
+  transitStart?: () => Promise<boolean>;
   actualStore?: ReturnType<typeof createChartStore>;
   accountReady?: Promise<unknown>;
   calculationVersion?:string;
@@ -226,7 +227,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,...overrides};
 }
-function harness({copyText, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({copyText, transitStart = async () => true, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   document.body.dataset.calculationVersion=calculationVersion;
   let hovered = false, notifyHover: () => void = noop;
@@ -357,7 +358,7 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
         dayClient: { getDay: async date => natalDayFixture({date}) },
       });
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, visibilityChanged: noop, invalidateCalculations:noop, setWanted: noop, start: async () => {transitStarts++;return true;},
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, visibilityChanged: noop, invalidateCalculations:noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
         goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
@@ -406,7 +407,7 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
   const calculationClients = onPersonalReset ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
     resetPersonal:async()=>{onPersonalReset();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null} : undefined;
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
-  return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration,
+  return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
     invalidateCalculations:application.invalidateCalculations,offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
@@ -2252,6 +2253,25 @@ test('a confirmed public 404 clears only that public source and restores transit
   assert.equal(store.publicChart,null);assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,'/');
   assert.equal(h.savedSnapshot?.publicChart,null);assert.equal(store.temporaryChart?.id,c.temporary.id);
   assert.equal(h.transitStarts,1,'a cold redirect must start the transit owner rather than leave its day uninitialized');
+});
+
+test('a cold 404 fallback cannot publish late route effects after stop or a newer destination',async()=>{
+  for(const boundary of ['stop','route'] as const){
+    let release!:(ready:boolean)=>void;
+    const pending=new Promise<boolean>(resolve=>{release=resolve;});
+    const n=addressHarness('/chart/'+chartId(105));
+    const h=harness({navigation:n.navigation, transitStart:()=>pending,
+      chartClient:{async public(){throw Object.assign(new Error('deleted'),{code:'not_found',status:404});}}});
+    await h.restoration;await tick();
+    assert.equal(h.transitStarts,1);
+    if(boundary==='stop')await h.stopApplication();else n.navigation.navigate({kind:'account'});
+    await tick();
+    const loading=h.loading, notices=h.notices.length;
+    release(false);await tick();
+    assert.equal(h.notices.length,notices,'the old failure cannot display a late message');
+    assert.equal(h.loading,loading,'the old fallback cannot update route loading after its boundary');
+    await h.stopApplication();n.navigation.destroy();
+  }
 });
 
 test('an offline public URL never restores a different cached public ID',async()=>{

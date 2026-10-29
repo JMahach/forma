@@ -970,14 +970,14 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         },
         async failed(error) {
           void observation?.reportError(error,{stage:'request'});
+          toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
           if (route.kind === 'chart' && (error as {code?:string})?.code === 'not_found') {
             store.clearPublic(route.id);selectChart('current-transit',{replace:true});viewSession?.flush();
             if (request.initial) {
               const redirected=navigation.snapshot,ready=await transit!.start(null,{firstChart:true});
-              if(navigation.isCurrent(redirected)){initialPage.restoreFailed=ready===false;updateLoading();}
+              if(application?.view.lifecycle === 'running' && navigation.isCurrent(redirected)){initialPage.restoreFailed=ready===false;updateLoading();}
             }
           }
-          toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
         },
         settled() {
           if (!request.initial) { initialPage.restored = true; initialPresentation = null; }
