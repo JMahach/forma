@@ -60,6 +60,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
       return true;
     },
     showPublic(chart: SavedChart | null) { publicChart = chart; },
+    releasePublicSource(source: SavedChart) { if(publicChart===source)publicChart=null; },
     has(id: string) { if (temporaryChart?.id === id) return true; return working().some(chart => chart.id === id) ? projection.ready.has(id) : publicChart?.id === id; },
     get(id: string) { if (temporaryChart?.id === id) return temporaryChart; return working().find(chart => chart.id === id) ?? (publicChart?.id === id ? publicChart : undefined); },
     // Account-library owns these values. Local persistence must never write them.

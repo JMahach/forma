@@ -877,7 +877,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     async ready(){await libraryReady;if(account.getSession())await application!.requestSession(account.getSession());},
     source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
     binding:()=>temporaryChartSave,bind:value=>{temporaryChartSave=value;},
-    retire(source){store.clearTemporary(source.id);store.showPublic(null);},
+    retire(source){store.clearTemporary(source.id);store.releasePublicSource(source);},
     public:chartClient.public,acceptPublic:store.acceptPublic,clearPublic:store.clearPublic,
     view:{
       signIn(){navigateWorkspace('account');},select(id){selectChart(id,{replace:true});},

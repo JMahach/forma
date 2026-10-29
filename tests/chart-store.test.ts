@@ -175,3 +175,12 @@ test('the current store never reads or writes the abandoned local collection', t
   assert.equal(reads, 0); assert.equal(writes, 0);
   assert.deepEqual([...values], before, 'runtime detachment does not speculate about the rollout deletion');
 });
+
+test('releasing a save source removes only that pin even behind the library projection',()=>{
+ const store=createChartStore(),source=accountNatalChart(94),next=accountNatalChart(116);
+ store.showPublic(source);store.projectLibrary([{...source,name:'Accepted'}],true);
+ store.releasePublicSource(source);store.projectLibrary([],true);
+ assert.equal(store.get(source.id),undefined,'an accepted record must not leave an obsolete pin behind');
+ store.showPublic(next);store.releasePublicSource(source);
+ assert.equal(store.get(next.id),next,'another source keeps its working projection');
+});

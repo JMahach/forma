@@ -2163,6 +2163,33 @@ async function temporaryReplay(t:{after:(cleanup:()=>void)=>void}) {
     setOwnFailure(value:boolean){failOwn=value;},finish(value:'created'|'unknown'='created'){outcome=value;release();}};
 }
 
+test('recovered temporary save preserves an unrelated selected public source',async t=>{
+  const own=accountNatalChart(94),temporary={...own,id:'temporary-replay',createdAt:'',updatedAt:''};
+  const {accountId,note,noteRevision,publicRevision,...foreign}=accountNatalChart(116,'2');
+  const intent={operationId:'a'.repeat(32),expectedAccountId:'1'};
+  const store=createChartStore({initialTemporaryChart:temporary,initialPublicChart:foreign});
+  store.projectLibrary([],false);
+  let release!:()=>void,reads=0;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const n=addressHarness('/chart/'+foreign.id);
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,
+    accountSession:{accountId:'1',sessionId:'public-during-recovery'},
+    savedView:{selectedId:foreign.id,publicChart:foreign,temporaryChart:store.temporaryChart,
+      temporaryChartSave:{...intent,sourceId:temporary.id},pendingChartWrites:[intent]},
+    chartClient:{
+      async list(){return {charts:[],nextCursor:null};},async public(){return foreign;},async own(){return own;},
+      async outcome(input){reads++;await gate;return {...input,outcome:{kind:'created',chartId:own.id,revision:own.revision}};},
+    }});
+  t.after(()=>h.stopApplication());
+  await h.restoration;await waitForOwnLink(()=>reads===1);
+  assert.equal(h.shown.id,foreign.id);release();
+  await waitForOwnLink(()=>store.temporaryChart===null);h.flushView();
+  assert.ok(store.get(own.id),'the recovered record is accepted into the library');
+  assert.ok(store.get(foreign.id),'recovery must preserve the independently selected public source');
+  assert.equal(h.shown.id,foreign.id);assert.equal(n.location.pathname,'/chart/'+foreign.id);
+  assert.equal(h.savedSnapshot?.publicChart?.id,foreign.id);
+});
+
 test('temporary save replay after reload adopts the confirmed card without another Add write',async t=>{
   const c=await temporaryReplay(t);c.finish();await waitForOwnLink(()=>c.h.cards.length===1);await tick();c.h.flushView();
   assert.equal(c.store.temporaryChart,null);

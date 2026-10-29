@@ -43,7 +43,7 @@ const settle = async () => { await Promise.resolve(); await Promise.resolve(); }
 test('saved transit metadata uses the existing submit port without birth input or calculation',async t=>{
   const record={...accountChart(),birthPlace:'',birthDate:'',birthTime:'',createdAt:'',updatedAt:''};
   const sent:BirthSubmission[]=[];
-  const h=formHarness(t,{charts:[record],canCalculate:()=>false,submitChart:async input=>{sent.push(input);return {id:record.id,persisted:true,metadataOnly:true};}});
+  const h=formHarness(t,{charts:[record],submitChart:async input=>{sent.push(input);return {id:record.id,persisted:true,metadataOnly:true};}});
   h.form.open(true,record.id);assert.equal(h.form.opened,true);
   h.element('chartName').value='Новое имя';h.element('chartNote').value='Новая заметка';
   assert.notEqual(h.element('birthDate').getAttribute('readonly'),null);h.element('birthDate').value='Not a birth date';await h.submit();
