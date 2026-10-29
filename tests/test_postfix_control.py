@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -136,7 +137,9 @@ class ServiceReportDeadlineTests(unittest.TestCase):
         import tempfile
         import threading
         import time
-        with tempfile.TemporaryDirectory(dir='/private/tmp', prefix='forma-deadline-') as directory:
+        # Keep the Unix socket path short on macOS; use the system temp root elsewhere.
+        root = '/tmp' if sys.platform == 'darwin' else tempfile.gettempdir()
+        with tempfile.TemporaryDirectory(dir=root, prefix='forma-deadline-') as directory:
             target = str(pathlib.Path(directory) / 'input.sock')
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
                 listener.bind(target)

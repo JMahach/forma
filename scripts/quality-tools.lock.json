@@ -1,0 +1,28 @@
+{
+  "python": "3.12",
+  "tools": {
+    "crapper": {
+      "repository": "https://github.com/unclebob/crapper.git",
+      "revision": "6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d"
+    },
+    "dryer": {
+      "repository": "https://github.com/unclebob/dryer.git",
+      "revision": "66ff6d21a42c04afcad89c78a80066176d1294b0"
+    },
+    "mutator": {
+      "repository": "https://github.com/unclebob/mutator.git",
+      "revision": "a5a0cb803b66e0cdb8bf471b3b08af701d424a41"
+    }
+  },
+  "dependencies": {
+    "coverage": "7.17.0",
+    "tree-sitter": "0.26.0",
+    "tree-sitter-language-pack": "1.22.1"
+  },
+  "scope": "Developer tools only; keep outside the application environment",
+  "thresholds": {
+    "crap": 10,
+    "duplicateSimilarity": 0.8
+  },
+  "mutationWorkers": 2
+}

@@ -8,12 +8,13 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {pythonExecutable} from '../server/runtime/python.ts';
 import {createServiceInput,serviceSocketPath} from '../server/journal/service-input.ts';
+import {socketDirectory} from './helpers/socket-directory.ts';
 
 const root=fileURLToPath(new URL('../',import.meta.url)),run=promisify(execFile);
 test('real prepare launchers and Postfix adapter send only safe service facts',{
  skip:!existsSync(pythonExecutable(root))&&'Project Python environment is not installed',
 },async t=>{
- const directory=await fs.mkdtemp('/private/tmp/forma-source-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const directory=await socketDirectory('forma-source-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const rows:Record<string,unknown>[]=[];
  const input=createServiceInput({directory,report:async value=>{rows.push(value as Record<string,unknown>);return true;}});
  try {

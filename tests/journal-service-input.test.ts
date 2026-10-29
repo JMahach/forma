@@ -6,9 +6,10 @@ import net from 'node:net';
 import {execFile} from 'node:child_process';
 import {createServiceInput, reportServiceFailure, serviceSocketPath, SERVICE_INPUT_RESERVED_BYTES} from '../server/journal/service-input.ts';
 import {createJournalRuntime} from '../server/journal/runtime.ts';
+import {socketDirectory} from './helpers/socket-directory.ts';
 
 test('private service facts reach the existing archive without arbitrary content',async t=>{
- const directory=await fs.mkdtemp('/private/tmp/forma-service-');
+ const directory=await socketDirectory('forma-service-');
  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const journal=createJournalRuntime({directory,environment:'stand',clientReservedBytes:SERVICE_INPUT_RESERVED_BYTES});
  const input=createServiceInput({directory,report:journal.report});
@@ -33,7 +34,7 @@ test('private service facts reach the existing archive without arbitrary content
 });
 
 test('a stopped site does not create a queue; unsafe and live socket paths are preserved',async t=>{
- const directory=await fs.mkdtemp('/private/tmp/forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const directory=await socketDirectory('forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const socket=serviceSocketPath(directory);
  assert.equal(await reportServiceFailure(socket,{component:'postfix',reason:'process'}),false);
  assert.deepEqual(await fs.readdir(directory),[]);
@@ -53,7 +54,7 @@ test('a stopped site does not create a queue; unsafe and live socket paths are p
 });
 
 test('a crashed owner leaves a stale socket that the next start can reclaim',async t=>{
- const directory=await fs.mkdtemp('/private/tmp/forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const directory=await socketDirectory('forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const socket=serviceSocketPath(directory);await fs.mkdir(path.dirname(socket),{mode:0o700});
  await new Promise<void>((resolve,reject)=>execFile(process.execPath,['--input-type=module','-e',
   "import net from 'node:net';net.createServer().listen(process.argv[1],()=>process.exit(0));",socket],
@@ -68,7 +69,7 @@ test('a crashed owner leaves a stale socket that the next start can reclaim',asy
 });
 
 test('oversized and incomplete submissions cannot hold the private input open',async t=>{
- const directory=await fs.mkdtemp('/private/tmp/forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+ const directory=await socketDirectory('forma-service-');t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  let calls=0;const input=createServiceInput({directory,report:async()=>{calls++;return true;}});
  try {
   assert.equal(await input.ready,true);
