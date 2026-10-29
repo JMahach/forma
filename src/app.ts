@@ -154,6 +154,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let natalDay: ReturnType<typeof attachNatalDayExplorer> | null = null;
   let lifetime: LifetimeExplorer | null = null, lifetimeControls: LifetimeControls | null = null;
   let viewSession: ReturnType<typeof createViewSession> | null = null;
+  let chartPaintPending = false, captionPending = false;
   let lifetimeLoading: Promise<LifetimeExplorer | null> | null = null, lifetimeLoadFailed = false;
   let returns: ReturnType<typeof createReturnsController> | null = null, returnsView: ReturnsPanel | null = null;
   let returnsViewLoading: Promise<ReturnsPanel | null> | null = null;
@@ -209,7 +210,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       void exploration!.select(id);
     },
   });
-  chartHighlight.subscribe(() => graph.render());
+  chartHighlight.subscribe(() => renderGraph());
   const cameraChanged = createCameraChangeHandler({
     heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
@@ -241,7 +242,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   hoverPreview = attachHoverPreview($('bodygraph'), {
     surface: $('canvasWrap'),
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
-    coalesceMandala: true, onPreview: graph.preview, onClear: activationHover.clear,
+    coalesceMandala: true, onPreview: previewGraph, onClear: activationHover.clear,
   });
   const knowledge = attachKnowledgeEntry({ button: $('openKnowledge'), dialog: $('knowledgeDialog'),
     initialView: savedView?.knowledge, onChange: () => viewSession?.schedule(),
@@ -264,7 +265,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     onFinish: enabled => mandalaMode?.finishTransition(enabled),
   });
   mandalaMode = attachMandalaMode({
-    button: $('mandalaSwitch'), canvas: $('canvasWrap'), gestures, render: graph.render,
+    button: $('mandalaSwitch'), canvas: $('canvasWrap'), gestures, render: renderGraph,
     motion: mandalaMotion, layout, onStateChange: () => viewSession?.schedule(),
     beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
   });
@@ -433,11 +434,14 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     birthForm.refresh();
     if (initialPage.restored && !preserveSaveSource && editedId && !store.get(editedId)) {
       librarySelection++; selectChart('current-transit', {replace:true});
+      return;
     } else if (initialPage.restored && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
       if (!next || !store.has(next.id)) { librarySelection++; selectChart('current-transit', {replace:true}); }
       else if (previous?.utc !== next.utc || JSON.stringify(previous?.activations) !== JSON.stringify(next.activations)) graph.changeChart(next.id);
       else session.refreshRecord();
+      // The accepted session already updates every page projection.
+      return;
     }
     if (initialPage.restored) updatePage();
   }
@@ -589,7 +593,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
 
   library = attachChartLibrary({ serverDeletion: {handles: id => Boolean(accountLibrary.get(id)), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
-    removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}else store.remove(id);}, getConnectionMode, subscribeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
+    removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode, subscribeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
@@ -648,6 +652,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let cacheTimeline: ReturnType<typeof createLocalDayTimeline> | null = null;
   transit = attachLiveTransit({
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
+    isChartVisible: () => workspace.screen === 'chart',
     onRender: exploration!.publishTransit, onStateChange: state => {
       // Persistent transit covers today's local day, even while exploring a past date.
       if (calculationUpdates && state.timeline && (!cacheTimeline || Date.now() >= cacheTimeline.endUtc
@@ -679,6 +684,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
 
   function updateChartCaption() {
+    if (workspace.screen !== 'chart') { captionPending = true; return; }
+    captionPending = false;
     const chart = currentChart();
     // The accepted composition describes the shown moment, even while another
     // source is loading. A pending owner must not change the natal caption.
@@ -687,6 +694,17 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         showAge: Boolean(returns?.available),
         ageUtc: new Date().toISOString() });
     headingLayout.updateText(caption.title, caption.subtitle, caption.moments);
+  }
+
+  function renderGraph() {
+    if (workspace.screen !== 'chart') { chartPaintPending = true; return; }
+    chartPaintPending = false;
+    graph.render();
+  }
+
+  function previewGraph() {
+    if (workspace.screen !== 'chart') { chartPaintPending = true; return; }
+    graph.preview();
   }
 
   function refreshStudioLayout({ preserveScale = panelResizePending } = {}) {
@@ -698,7 +716,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       mandalaColumns = layout.showMandalaColumns;
       activationPopover.close();
       hoverPreview?.clear({ notify: false });
-      graph.render();
+      renderGraph();
     }
     gestures.resize({ preserveScale });
     if (panelResizePending) {
@@ -740,7 +758,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const layoutRendered = updateTimelineTools();
     updateChartCaption();updateChartSaveControl();
     library!.render(); allCharts?.update(); updateWorkspaceNavigation();
-    if (!layoutRendered) graph.render();
+    if (!layoutRendered) renderGraph();
     updateLoading();
     viewSession?.schedule();
   }
@@ -780,6 +798,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       if (switching) {
         studio.getBoundingClientRect();
         delete studio.dataset.workspaceSwitching;
+      }
+    }
+    if (switching) {
+      transit?.visibilityChanged();
+      if (screen === 'chart') {
+        if (captionPending) updateChartCaption();
+        if (chartPaintPending) renderGraph();
       }
     }
     viewSession?.schedule();
@@ -973,8 +998,17 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       if (getConnectionMode() === 'online') {void calculationUpdates?.refresh();void refreshPublicChart();}
     }
   });
+  const publicAccessKey = () => {
+    const access = account.getSession();
+    return JSON.stringify([access?.accountId, access?.sessionId, access?.diagnosticProof]);
+  };
+  let lastPublicAccessKey = publicAccessKey();
   account.subscribeSession(() => {
-    publicRefreshRequest?.abort();
+    const nextPublicAccessKey = publicAccessKey();
+    if (nextPublicAccessKey !== lastPublicAccessKey) {
+      lastPublicAccessKey = nextPublicAccessKey;
+      publicRefreshRequest?.abort();
+    }
     syncJournalAccount();
     if(account.getSession() && chartSave?.action.waitingForLogin)void continueChartSave(chartSave);
     if (!libraryInitialized) return;
@@ -1050,7 +1084,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (returnsView) return Promise.resolve(returnsView);
     if (returnsViewLoading) return returnsViewLoading;
     returnsViewLoading = import('./views/returns-panel.ts').then(({ attachReturnsPanel }) => {
-      returnsView = attachReturnsPanel({ getLayout: () => layout.returnsLayout, viewportLayout: layout,
+      returnsView = attachReturnsPanel({ viewportLayout: layout,
         document, onBack: () => returns!.close(),
         onYear: value => returns!.setYear(value),
         onBodies: value => returns!.setBodies(value),

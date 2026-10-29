@@ -235,8 +235,6 @@ test('flattened throat minus gate 20 preserves remaining gate halves and unrelat
   assert.deepEqual(highlights.planets, new Set(['design-sun']));
   assert.deepEqual(graphPressed(markup), new Set(flattened.filter((item: { type: string; }) => item.type !== 'planet').map(item => `${item.type}:${item.id}`)), 'remaining gates are individual committed items and the center is gone');
   assert.deepEqual(highlights.integrationPaths, visibleHighlights(render(chart, [gate(57)])).integrationPaths, 'only the unrelated gate 57 arm remains');
-  assert.match(markup, /class="bg-integration-arm" data-arm="20" data-related="false"/);
-  assert.match(markup, /class="bg-integration-arm" data-arm="57" data-related="true"/);
   assert.equal(highlights.integrationPaths.has(stemPath), false, 'removing gate 20 does not invent a shared stem');
   const mask = markup.match(/<mask id="bodygraph-integration-selection-outline"[^>]*>([\s\S]*?)<\/mask>/)?.[1];
   assert.ok(mask);

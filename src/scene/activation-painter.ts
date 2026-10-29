@@ -4,7 +4,7 @@ import type { RenderState, RenderOptions, RenderedScene } from './render-state.t
 import type { ActivationRow } from './activation-columns.ts';
 
 import { PALETTE } from '../ui/chart-palette.ts';
-import { capturePlanetTarget, updatePlanetTarget, activationPanelRule, createActivationNumberFitter } from './activation-targets.ts';
+import { capturePlanetTarget, updatePlanetTarget, activationPanelRule, createActivationNumberFitter, fitActivationNumbers } from './activation-targets.ts';
 import { createOverlayActivationPainter } from './overlay-activation-columns.ts';
 import { isChartOverlay, primaryChart } from '../domain/chart-composition.ts';
 import { describeActivationColumns, renderActivationColumn, renderActivationRow, fixingMark, fixingPath, alignPersonalityHeading, renderPlanetFilterControl, planetFilterMark } from './activation-columns.ts';
@@ -63,6 +63,8 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
   let headingKey: string | null = null;
   let previousInput: string | null = null;
   const columns = new Map([...drawing.querySelectorAll<SVGElement>('.activation-column')].filter(node => !node.dataset.cycleOrigin).map(node => [node.dataset.source!, captureColumn(node)]));
+  const fitNumbers = () => fitActivationNumbers([...columns.values()].flatMap(column => [...column.rows.values()].map(row => row.fitNumber)));
+  fitNumbers();
   if (rendered && !isChartOverlay(rendered.chart)) {
     previousInput = columnInput(rendered.chart, rendered.state, rendered.options);
     if (group) {
@@ -92,7 +94,6 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
     setAttribute(entry.gateRect, 'fill', row.selected ? PALETTE.halo : 'transparent');
     if (entry.value.firstChild!.nodeValue !== String(row.gate)) entry.value.firstChild!.nodeValue = String(row.gate);
     text(entry.line, `.${row.line}`);
-    entry.fitNumber();
     if (row.fixingLabel) {
       if (!entry.fixing) {
         entry.fixing = elementFrom(entry.row, fixingMark(row.fixing));
@@ -159,6 +160,7 @@ export function createActivationPainter(root: Element, rendered: RenderedScene |
           updateRow(entry, row); next = entry.row;
         }
       }
+      fitNumbers();
       const personality = models.find(column => column.source === 'personality');
       const sun = personality?.rows.find(row => row.planet === 'sun');
       const nextHeadingKey = `${personality?.label || ''}:${sun?.gate || ''}.${sun?.line || ''}`;

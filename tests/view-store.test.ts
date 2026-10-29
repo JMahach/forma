@@ -78,10 +78,12 @@ test('same-tab reload restores the view while a new tab starts fresh and shares 
   assert.equal(view.read(), null, 'a new tab must not revive the legacy persistent view');
   view.write(snapshot);
   assert.equal(createViewStore().read()!.mandala, true, 'reload uses the same tab storage');
-  assert.equal(createChartStore().get('saved-chart')!.name, 'My chart');
+  const projected = createChartStore(); projected.projectLibrary([{id: 'saved-chart', name: 'My chart', source: 'manual', personality: [1], design: [2]} as never], true);
+  assert.equal(projected.get('saved-chart')!.name, 'My chart');
   globalThis.sessionStorage = nextTab as unknown as Storage;
   assert.equal(createViewStore().read(), null, 'a new tab has no presentation snapshot');
-  assert.equal(createChartStore().get('saved-chart')!.name, 'My chart');
+  const newTabProjection = createChartStore(); newTabProjection.projectLibrary(projected.charts, true);
+  assert.equal(newTabProjection.get('saved-chart')!.name, 'My chart');
   createViewStore().write({ ...snapshot, mandala: false });
   globalThis.sessionStorage = firstTab as unknown as Storage;
   assert.equal(createViewStore().read()!.mandala, true, 'another tab cannot overwrite this tab');

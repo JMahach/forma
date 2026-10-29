@@ -102,15 +102,23 @@ export function createReturnsController({ observe, connection = getConnectionMod
     if (!compatible || !offline() || !available()) { const changed = readyEvents.size > 0; readyEvents.clear(); if (changed) emit(); return; }
     const controller = new AbortController(), version = generation, owner = natal!;
     availabilityJob = controller;
-    const events = visibleEvents(), visible = new Set(events.map(event => event.id));
+    const events = visibleEvents(), visible = new Map(events.map(event => [event.id,event]));
     readyEvents = new Set([...readyEvents].filter(id => visible.has(id)));
     if (current && selectedEvent) readyEvents.add(selectedEvent.id);
     emit();
-    let index = 0;
     const owns = () => !controller.signal.aborted && version === generation && offline();
-    await Promise.all(Array.from({ length: Math.min(4, events.length) }, async () => {
-      while (owns() && index < events.length) {
-        const event = events[index++];
+    const candidates = client.preparedChartInputs
+      ? await client.preparedChartInputs({birthUtc:owner.utc!,timezone:owner.timezone||'UTC'},{signal:controller.signal}).catch(()=>[])
+      : events.map(event=>({birthUtc:owner.utc!,body:event.body,eventUtc:event.utc,timezone:owner.timezone||'UTC'}));
+    if(!owns())return;
+    // An absent catalogue key is no longer ready. Only the accepted chart
+    // remains usable independently of cache ownership; candidates are rechecked.
+    readyEvents = new Set(current && selectedEvent ? [selectedEvent.id] : []);
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async () => {
+      while (owns() && index < candidates.length) {
+        const input = candidates[index++], event = visible.get(`${input.body}:${input.eventUtc}`);
+        if(!event)continue;
         if (current && event.id === selectedEvent?.id) continue;
         let ready = false;
         try { ready = Boolean(await client.readChart?.({ birthUtc: owner.utc!, timezone: owner.timezone || 'UTC', body: event.body, eventUtc: event.utc }, { signal: controller.signal })); }
@@ -210,7 +218,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     const changed = opened || loadingChart || pendingEvent;
     cancelChart(); opened = false;
     if (changed) emit();
-    return ensure();
+    return Promise.all(pendingJobs().map(job => job.promise));
   }
   function reset() {
     const changed = current || selectedEvent || failedEvent || chartError || loadingChart || pendingEvent;
@@ -324,7 +332,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     return ensure();
   }
   return { select, adopt, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore, refreshAvailability,
-    invalidateCalculations() { compatible = false; generation++; availabilityJob?.abort(); availabilityJob = null; cancelChart(); cancelSearches(); emit(); },
+    invalidateCalculations() { compatible = false; generation++; availabilityJob?.abort(); availabilityJob = null; cancelChart(); cancelSearches(); dropCurrent(); records.clear(); eventView = null; readyEvents.clear(); emit(); },
     get available() { return available(); }, get natal() { return natal; }, get opened() { return opened; },
     get year() { return year; }, get selectedEvent() { return selectedEvent; },
     get state() { return state(); }, get current() { return compatible ? current : null; } };

@@ -47,6 +47,8 @@ export function createMemoryCache({ maxBytes = TAB_CACHE_BYTES } = {}) {
       return value;
     },
     delete: remove,
+    // Snapshot existing identities without retaining values or changing LRU.
+    keys(prefix: string) { return [...entries.keys()].filter((key): key is string => typeof key === 'string' && key.startsWith(prefix)); },
     clearExcept(prefix:string) {
       const keep=(key:PropertyKey)=>typeof key==='string' && key.startsWith(prefix);
       for(const key of entries.keys())if(!keep(key))remove(key);

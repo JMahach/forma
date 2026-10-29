@@ -349,3 +349,27 @@ test('single mount builds column models once and still performs its initial head
     assertRendered(h.root, chart, selection, options);
   } finally { await post('Profiler.stopPreciseCoverage'); session.disconnect(); }
 });
+
+
+test('selection reuses only the current physical projection and mutable gate inputs still repaint', () => {
+  const h = fixture(), primary = chartAt(), secondary = chartAt(1);
+  const composition = createChartComposition(primary, { kind: 'transit', secondary });
+  const initial = h.renderer.update(composition);
+  for (let i = 0; i < 120; i++) {
+    const next = h.renderer.update(composition, { type: 'gate', id: i % 64 + 1 });
+    assert.equal(next.definition, initial.definition);
+    assert.equal(next.overlaySources, initial.overlaySources);
+  }
+  secondary.personality.push(64);
+  const mutated = h.renderer.update(composition);
+  assert.notEqual(mutated.overlaySources, initial.overlaySources, 'source arrays remain mutable even inside a composition');
+  assertRendered(h.root, composition, null);
+  const raw = { personality: [1], design: [8] };
+  const firstRaw = h.renderer.update(raw);
+  raw.design.splice(0, 1, 2);
+  const nextRaw = h.renderer.update(raw);
+  assert.notEqual(nextRaw.definition, firstRaw.definition);
+  assertRendered(h.root, raw, null);
+  h.renderer.clear();
+  assert.notEqual(h.renderer.update(raw).definition, nextRaw.definition, 'clearing releases the current projection');
+});

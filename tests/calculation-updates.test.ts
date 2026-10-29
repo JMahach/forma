@@ -102,14 +102,17 @@ test('a timeline change during a window write is applied after that write using 
 });
 
 test('superseding refresh, cancellation, close and deadline discard late responses without retries',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
   const h=fixture(t),first=deferred(),arrived=deferred();let calls=0;
   const updates=createCalculationUpdates({clients:h.clients,expected,timeline:h.timeline,timeoutMs:10,request:async()=>{
     if(++calls===1){arrived.resolve!();return first.promise;}return expected;
   }});t.after(()=>updates.close());
   const old=updates.refresh();await arrived.promise;assert.equal((await updates.refresh()).status,'confirmed');
   assert.equal((await old).status,'cancelled');first.resolve!(newer);await new Promise(setImmediate);assert.equal(calls,2);
-  const stalled=createCalculationUpdates({clients:h.clients,expected,timeoutMs:5,request:()=>new Promise(()=>{})});t.after(()=>stalled.close());
-  assert.equal((await stalled.refresh()).status,'unavailable');
+  const requested=deferred();
+  const stalled=createCalculationUpdates({clients:h.clients,expected,timeoutMs:5,request:()=>{requested.resolve();return new Promise(()=>{});}});t.after(()=>stalled.close());
+  const expiring=stalled.refresh();await requested.promise;t.mock.timers.tick(5);
+  assert.equal((await expiring).status,'unavailable');
   const controller=new AbortController(),cancelled=stalled.refresh({signal:controller.signal});controller.abort();
   assert.equal((await cancelled).status,'cancelled');
   const closing=stalled.refresh();stalled.close();assert.equal((await closing).status,'cancelled');
@@ -143,4 +146,16 @@ test('a local window write cannot extend an old version when versions changed af
   await h.disk.confirmVersions({natal:newer.calculationVersion,returns:newer.cyclesVersion},{previous:{natal:expected.calculationVersion,returns:expected.cyclesVersion}});
   gate.resolve!();assert.equal((await syncing).status,'stale');
   assert.deepEqual((await h.clients.status()).window,before);
+});
+
+test('unchanged synchronized hot days skip payload rewrites but an evicted day is admitted again',async t=>{
+ const h=fixture(t),date=h.timeline.packetDates[0];await h.clients.transit.getDay(date);
+ const updates=createCalculationUpdates({clients:h.clients,expected,timeline:h.timeline,request:async()=>expected});t.after(()=>updates.close());
+ await updates.refresh();await new Promise(setImmediate);
+ const {IDBObjectStore}=await import('fake-indexeddb'),put=IDBObjectStore.prototype.put;let payloadWrites=0;
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){if(this.name==='payloads')payloadWrites++;return put.apply(this,args);});
+ for(let i=0;i<10;i++)assert.equal((await updates.syncWindow()).status,'applied');
+ assert.equal(payloadWrites,0);
+ const key=`${expected.calculationVersion}:${date}`;await h.disk.remove('transit',key);
+ assert.equal((await updates.syncWindow()).status,'applied');assert.equal(payloadWrites,1);assert.ok(await h.disk.get('transit',key));
 });

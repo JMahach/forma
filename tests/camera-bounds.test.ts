@@ -18,10 +18,10 @@ test('zooming out preserves the last two percent until the exact Home floor', ()
   camera.zoomAt({ x: 160, y: 300 }, 2);
   camera.zoomAt({ x: 220, y: 400 }, home.k * 1.015 / camera.getView().k, 17, -9);
   closeTo(camera.getView().k, home.k * 1.015, 'pinch keeps the requested zoom above Home');
-  camera.zoom(1.5);
-  camera.zoom(home.k * 1.01 / camera.getView().k);
-  closeTo(camera.getView().k, home.k * 1.01, 'button zoom keeps the requested last percent');
-  camera.zoom(.001);
+  camera.zoomAt({ x: 320, y: 410 }, 1.5);
+  camera.zoomAt({ x: 320, y: 410 }, home.k * 1.01 / camera.getView().k);
+  closeTo(camera.getView().k, home.k * 1.01, 'anchored zoom keeps the requested last percent');
+  camera.zoomAt({ x: 320, y: 410 }, .001);
   assert.deepEqual(camera.getView(), home, 'only the exact floor completes Home');
 });
 const projected = (view: { readonly x: 60; readonly y: 25; readonly k: 0.65; }|{ readonly x: -80; readonly y: 105; readonly k: 1.2; }, bounds = DRAWING_BOUNDS) => ({
@@ -134,13 +134,12 @@ function cameraHarness(t: test.TestContext, initialRect = { left: 0, top: 0, wid
   };
 }
 
-test('100% is stationary for wheel, control buttons, keyboard minus, and dragging', t => {
+test('100% is stationary for wheel, anchored zoom, and dragging', t => {
   const harness = cameraHarness(t), home = harness.controls.getView();
   assert.deepEqual(home, harness.fitted);
   for (let i = 0; i < 8; i++) {
     assert.equal(harness.send('wheel', { deltaY: 200, clientX: 60, clientY: 80 }).defaultPrevented, true);
-    harness.controls.zoom(0.8);
-    assert.equal(harness.send('keydown', { key: '-' }).defaultPrevented, true);
+    harness.controls.zoomAt({ x: 320, y: 410 }, 0.8);
     harness.drag(i % 2 ? -300 : 300, i % 2 ? 250 : -250);
     assert.deepEqual(harness.controls.getView(), home, 'no input route can move or shrink the home view');
   }
@@ -149,12 +148,11 @@ test('100% is stationary for wheel, control buttons, keyboard minus, and draggin
   assert.equal(harness.captures.size, 0);
 });
 
-test('wheel and keyboard zoom in, pan limits cover Home, and every zoom-out path returns exactly Home', t => {
+test('wheel and anchored zoom in, pan limits cover Home, and zoom-out returns exactly Home', t => {
   const harness = cameraHarness(t), home = harness.controls.getView();
   const routes = [
     { zoomIn: () => harness.send('wheel', { deltaY: -200 }), zoomOut: () => harness.send('wheel', { deltaY: 200 }) },
-    { zoomIn: () => harness.send('keydown', { key: '+' }), zoomOut: () => harness.send('keydown', { key: '-' }) },
-    { zoomIn: () => harness.controls.zoom(1.25), zoomOut: () => harness.controls.zoom(0.8) },
+    { zoomIn: () => harness.controls.zoomAt({ x: 320, y: 410 }, 1.25), zoomOut: () => harness.controls.zoomAt({ x: 320, y: 410 }, 0.8) },
   ];
   for (const { zoomIn, zoomOut } of routes) {
     zoomIn();
@@ -172,7 +170,7 @@ test('wheel and keyboard zoom in, pan limits cover Home, and every zoom-out path
 
 test('dragging above 100% moves within its available range and stops at each exact limit', t => {
   const harness = cameraHarness(t), home = harness.fitted;
-  harness.controls.zoom(2);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 2);
   const before = harness.controls.getView();
   harness.drag(40, -30);
   closeTo(harness.controls.getView().x, before.x + 40, 'horizontal movement is available while zoomed');
@@ -232,7 +230,7 @@ test('setView and reset enforce the home floor and keep returned camera snapshot
   assertCoversHome(harness.controls.getView(), home);
   harness.controls.reset();
   assert.deepEqual(harness.controls.getView(), home);
-  harness.controls.zoom(2);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 2);
   harness.send('keydown', { key: '0' });
   assert.deepEqual(harness.controls.getView(), home, 'keyboard Home resets scale and position');
   harness.controls.setView({ x: NaN, y: 0, k: 1 });
@@ -245,19 +243,19 @@ test('resizing recomputes the fitted floor, preserves relative zoom when possibl
   harness.resize({ left: 25, top: 40, width: 1200, height: 1000 });
   assert.deepEqual(harness.controls.getView(), harness.fitted, 'Home remains Home after resize');
   assert.notEqual(harness.fitted.k, originalHome.k);
-  harness.controls.zoom(2);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 2);
   harness.drag(-10000, 10000);
   const before = harness.controls.getView(), previousHome = harness.fitted;
   harness.resize({ left: 45, top: 65, width: 900, height: 900 });
   closeTo(harness.controls.getView().k / harness.fitted.k, before.k / previousHome.k, 'resize preserves the relative zoom percentage');
   assertCoversHome(harness.controls.getView(), harness.fitted);
-  harness.controls.zoom(100);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 100);
   harness.resize({ left: 0, top: 0, width: 1800, height: 1400 });
   assert.equal(harness.controls.getView().k, MAX_ZOOM, 'resizing a maximally zoomed view respects the absolute ceiling');
   assertCoversHome(harness.controls.getView(), harness.fitted);
   harness.resize({ left: 0, top: 0, width: 390, height: 844 });
   assertCoversHome(harness.controls.getView(), harness.fitted);
-  harness.controls.zoom(0.001);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 0.001);
   assert.deepEqual(harness.controls.getView(), harness.fitted, 'the smaller viewport has its own exact 100% floor');
 });
 
@@ -267,7 +265,7 @@ test('bounded drags preserve selection semantics and a fresh background tap stil
   harness.send('pointerdown', { target: gate }); harness.send('pointerup', { target: gate });
   assert.deepEqual(harness.selections, [{ type: 'gate' as const, id: '37', pointerType: 'touch' }]);
   for (const zoom of [1, 2] as const) {
-    harness.controls.reset(); harness.controls.zoom(zoom);
+    harness.controls.reset(); harness.controls.zoomAt({ x: 320, y: 410 }, zoom);
     harness.drag(9000, -9000, { target: gate });
     harness.send('pointerdown'); harness.send('pointercancel'); harness.send('pointerup');
     harness.send('pointerdown'); harness.send('lostpointercapture'); harness.send('pointerup');
@@ -278,19 +276,19 @@ test('bounded drags preserve selection semantics and a fresh background tap stil
   assert.equal(harness.backgroundTaps, 1);
 });
 
-test('the Home button resets the same camera used by bounded keyboard and programmatic zoom', t => {
+test('the Home button resets the same camera used by wheel and anchored zoom', t => {
   const harness = cameraHarness(t), home = harness.fitted;
   let reset;
   attachCameraControls({ fitButton: { addEventListener(type: unknown, callback: EventListener) { assert.equal(type, 'click'); reset = callback; } } }, harness.controls);
-  harness.send('keydown', { key: '-' });
+  harness.send('wheel', { deltaY: 200 });
   assert.deepEqual(harness.controls.getView(), home);
-  harness.send('keydown', { key: '+' });
+  harness.send('wheel', { deltaY: -200 });
   assert.ok(harness.controls.getView().k > home.k);
   harness.drag(10000, 10000);
   assertCoversHome(harness.controls.getView(), home);
-  for (let i = 0; i < 20; i++) harness.send('keydown', { key: '-' });
+  for (let i = 0; i < 20; i++) harness.send('wheel', { deltaY: 200 });
   assert.deepEqual(harness.controls.getView(), home);
-  harness.controls.zoom(1.25);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 1.25);
   reset!();
   assert.deepEqual(harness.controls.getView(), home);
 });
@@ -307,7 +305,7 @@ test('mouse panning and dragging cursors are enabled only above 100% and are cle
   harness.send('pointermove', { pointerType: 'mouse', clientX: 600 });
   check(false, false);
   harness.send('pointerup', { pointerType: 'mouse', clientX: 600 });
-  harness.controls.zoom(2);
+  harness.controls.zoomAt({ x: 320, y: 410 }, 2);
   check(true, false);
   harness.send('pointerdown', { pointerType: 'mouse' });
   check(true, true);
@@ -368,4 +366,22 @@ test('Home availability follows the desired camera after retaining a wider view'
   assert.equal(fitButton.hidden, true, 'the desired Home can coexist with a wider navigation range');
   changed({ ...fitted, x: fitted.x + 10 }, fitted);
   assert.equal(fitButton.hidden, false, 'a displaced camera at the same scale still offers Home');
+});
+
+
+test('clamped inputs and unchanged reset do not publish, while layout refresh still paints', () => {
+  let notifications = 0;
+  const camera = createCamera({ measureFit: () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, min: .1 }), onChange() { notifications++; } });
+  camera.reset(); notifications = 0;
+  for (let i = 0; i < 100; i++) camera.pan(10, -10);
+  camera.reset();
+  assert.equal(notifications, 0, 'Home pan and unchanged reset have no effects');
+  camera.zoomAt({ x: 320, y: 410 }, 100);
+  notifications = 0;
+  for (let i = 0; i < 100; i++) camera.zoomAt({ x: 320, y: 410 }, 2);
+  assert.equal(notifications, 0, 'maximum zoom has no effects');
+  camera.resize();
+  assert.equal(notifications, 1, 'layout changes repaint even when logical view is unchanged');
+  camera.refreshFrame();
+  assert.equal(notifications, 2);
 });

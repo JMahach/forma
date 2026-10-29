@@ -152,13 +152,13 @@ test('Home and resize reread responsive chrome space while preserving the screen
 test('explicit fit insets allow short canvases to fit below the historical normal-scale floor', t => {
   const h = harness(t, 320, 56);
   assert.ok(h.controls.getFittedView().k < 0.65, 'the full drawing can shrink when the reserved canvas is short');
-  h.controls.zoom(1.01);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.01);
   const saved = h.controls.getView();
   assert.ok(saved.k < 0.65);
   h.controls.reset();
   h.controls.setView(saved);
   assert.deepEqual(h.controls.getView(), saved, 'a valid saved camera below the old floor can be restored');
-  h.controls.zoom(0.001);
+  h.controls.zoomAt({ x: 320, y: 410 }, 0.001);
   assertCenteredAndContained(h);
 });
 
@@ -205,10 +205,10 @@ for (const mandala of [false, true] as const) {
     h.controls.reset();
     assert.equal(h.heading.hidden, false, 'Home restores the fixed heading');
     assert.equal(h.fitButton.hidden, true, 'Home removes its own button again');
-    h.controls.zoom(1.25);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1.25);
     assert.equal(h.heading.hidden, true);
     assert.equal(h.fitButton.hidden, false);
-    h.controls.zoom(0.001);
+    h.controls.zoomAt({ x: 320, y: 410 }, 0.001);
     assert.equal(h.heading.hidden, false, 'zooming out to the fitted floor restores the heading too');
     assert.equal(h.fitButton.hidden, true, 'zooming out to the fitted floor also hides Home');
   });
@@ -255,13 +255,13 @@ test('studio modes share one Home baseline and leave the caption to its overlap 
   assert.deepEqual(h.controls.getView(), chartHome);
   assert.equal(h.fitButton.hidden, true);
   assert.equal(h.heading.hidden, false, 'the unchanged normal Home restores its title');
-  h.controls.zoom(1.25);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.25);
   const zoomedChart = h.controls.getView();
   assert.equal(h.fitButton.hidden, false);
   toggle();
   assert.deepEqual(h.controls.getView(), zoomedChart, 'a zoomed chart also stays in place');
   assert.equal(h.fitButton.hidden, false);
-  h.controls.zoom(1.2);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.2);
   const latest = h.controls.getView();
   toggle();
   assert.deepEqual(h.controls.getView(), latest, 'closing retains the latest zoom rather than the pre-open view');
@@ -291,7 +291,7 @@ test('studio modes share one Home baseline and leave the caption to its overlap 
   assert.deepEqual(h.controls.getView(), finalChartHome, 'repeated toggles do not accumulate camera drift');
   assert.equal(h.fitButton.hidden, true);
   toggle();
-  h.controls.zoom(.0001);
+  h.controls.zoomAt({ x: 320, y: 410 }, .0001);
   const minimum = h.controls.getView();
   assert.deepEqual(minimum, h.controls.getFittedView(), 'studio zoom-out stops at the shared Home even with expanded navigation');
   assert.equal(h.fitButton.hidden, true, 'the minimum studio view remains Home');
@@ -314,7 +314,7 @@ test('shared Home survives resizing in mandala while moved cameras retain their 
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
   assert.equal(h.fitButton.hidden, true);
   assert.equal(h.heading.hidden, false);
-  h.controls.zoom(1.5);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.5);
   const moved = h.controls.getView();
   h.resize(844, 390);
   const rotated = h.controls.getView();
@@ -334,13 +334,13 @@ test('shared Home does not narrow an existing mandala pan when the ring is hidde
   const h = harness(t, 1200, 800, false, { side: 20, top: 100, bottom: 100 }, true);
   const toggle = h.attachMandalaToggle();
   for (const [dx, dy] of [[10000, 0], [-10000, 0], [0, 10000], [0, -10000]] as const) {
-    h.controls.reset(); toggle(); h.controls.zoom(2);
+    h.controls.reset(); toggle(); h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const center = { clientX: h.rect.left + h.rect.width / 2, clientY: h.rect.top + h.rect.height / 2 };
     h.send('pointerdown', center);
     h.send('pointermove', { clientX: center.clientX + dx, clientY: center.clientY + dy });
     h.send('pointerup', { clientX: center.clientX + dx, clientY: center.clientY + dy });
     const edge = h.controls.getView();
-    toggle(); h.controls.zoom(1); h.send('wheel', { deltaY: 0 });
+    toggle(); h.controls.zoomAt({ x: 320, y: 410 }, 1); h.send('wheel', { deltaY: 0 });
     assert.deepEqual(h.controls.getView(), edge, 'the shared Home target cannot clamp a retained outer pan');
     assert.equal(h.fitButton.hidden, false);
   }
@@ -354,7 +354,7 @@ for (const [width, height] of [[390, 844], [390, 664], [1228, 705], [844, 390]] 
       // Include the narrow → wide history that keeps expanded navigation.
       h.resize(390, 844); h.controls.reset(); h.resize(width, height);
       const home = h.controls.getFittedView(), homeDrawing = h.project(home);
-      h.controls.zoom(2);
+      h.controls.zoomAt({ x: 320, y: 410 }, 2);
       h.controls.pan(dx, dy);
       for (const excess of [.03, .019, .005, .0001, .000001] as const) {
         h.controls.zoomAt({ x: 10, y: 790 }, home.k * (1 + excess) / h.controls.getView().k);
@@ -364,7 +364,7 @@ for (const [width, height] of [[390, 844], [390, 664], [1228, 705], [844, 390]] 
         assert.ok(distance < Math.max(width, height) * excess * 3,
           `remaining movement must shrink with zoom, not wait for a Home snap: ${distance}px at +${excess}`);
       }
-      h.controls.zoom(.999);
+      h.controls.zoomAt({ x: 320, y: 410 }, .999);
       assert.deepEqual(h.controls.getView(), home, 'the continuous limit is still exact Home');
     }
   });
@@ -436,7 +436,7 @@ for (const [width, height] of [[404, 872], [550, 590], [1100, 900], [1440, 900]]
     const home = h.controls.getFittedView(), initialInsets = { ...layout.insets() }, columns = layout.showMandalaColumns;
     const originalRail = [panel.style.left, panel.style.width, panel.style.top];
     for (const factor of [1, 2] as const) {
-      h.controls.reset(); h.controls.zoom(factor); h.controls.pan(-100, 80);
+      h.controls.reset(); h.controls.zoomAt({ x: 320, y: 410 }, factor); h.controls.pan(-100, 80);
       const before = h.controls.getView();
       for (const open of [true, false, true, false] as const) {
         panel.hidden = !open; layout.setTimelineKind(open ? 'chronicle' : 'day'); layout.refresh(); h.setInsets(layout.insets()); h.controls.resize();
@@ -465,7 +465,7 @@ for (const [width, height] of [[404, 872], [1440, 900], [844, 390]] as const) {
     const h = harness(t, width, height, false, { side: 4, top: 112, bottom: 68.8 }, true);
     const toggle = h.attachMandalaToggle();
     for (const pointerType of ['mouse', 'touch'] as const) for (const [dx, dy] of [[10000, 10000], [-10000, 10000], [-10000, -10000], [10000, -10000]] as const) {
-      h.controls.reset(); h.controls.zoom(2);
+      h.controls.reset(); h.controls.zoomAt({ x: 320, y: 410 }, 2);
       h.send('pointerdown', { pointerType });
       h.send('pointermove', { pointerType, clientX: h.rect.left + width / 2 + dx, clientY: h.rect.top + height / 2 + dy });
       h.send('pointerup', { pointerType, clientX: h.rect.left + width / 2 + dx, clientY: h.rect.top + height / 2 + dy });
@@ -473,9 +473,9 @@ for (const [width, height] of [[404, 872], [1440, 900], [844, 390]] as const) {
       closeTo(dx > 0 ? field.left : field.right, dx > 0 ? 0 : width, 'horizontal edge is reachable but cannot pass the screen edge');
       closeTo(dy > 0 ? field.top : field.bottom, dy > 0 ? 0 : height, 'vertical edge is reachable but cannot pass the screen edge');
       assert.ok(field.left <= 1e-8 && field.top <= 1e-8 && field.right >= width - 1e-8 && field.bottom >= height - 1e-8);
-      toggle(); toggle(); h.controls.zoom(1); h.controls.resize();
+      toggle(); toggle(); h.controls.zoomAt({ x: 320, y: 410 }, 1); h.controls.resize();
       assert.deepEqual(h.controls.getView(), before, 'mode switches and unchanged size cannot alter pan boundaries');
-      h.controls.zoom(.0001);
+      h.controls.zoomAt({ x: 320, y: 410 }, .0001);
       assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
     }
   });

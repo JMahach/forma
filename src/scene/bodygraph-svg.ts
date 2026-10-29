@@ -132,11 +132,6 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
   const backgroundParts = [...integrationArmState, { path: STEM_PATH, opacity: stemOpacity }];
   const integrationOutlines = `<g class="bodygraph-integration-outlines" pointer-events="none">${backgroundParts.map(({ path, opacity }) => `<path d="${path}" fill="none" stroke="${PALETTE.outline}" stroke-width="${CHANNEL_WIDTH.outline}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" pointer-events="none"/>`).join('')}</g>`;
   const integrationBackground = backgroundParts.map(({ path, opacity }) => `<path d="${path}" fill="none" stroke="${PALETTE.paper}" stroke-width="${CHANNEL_WIDTH.paint}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" pointer-events="none"/>`).join('');
-  const integrationBranches = integrationArmState.map(({ gate, highlighted, opacity }) => {
-    return `<g class="bg-integration-arm" data-arm="${gate}" data-related="${highlighted}" opacity="${opacity}" pointer-events="none">
-
-    </g>`;
-  }).join('');
 
   // Child ownership masks preserve the authored integration cuts. Their inner
   // subtraction now includes a gap; no blur or color covers the physical node.
@@ -163,7 +158,6 @@ export function renderBodygraphState(chart: ChartView, state: RenderState, optio
 
   const integration = `<g ${attrs('integration', 'integration', 'Интеграция: ворота 20, 10, 57 и 34, шесть каналов', integrationSelected)} data-junction="integration" data-visual-selected="${integrationSelected}">
     ${integrationBackground}
-    ${integrationBranches}
     <g class="bodygraph-integration-paint" pointer-events="none">${paintIntegrationLayers(state)}</g>
     ${thumbnail ? '' : `<path d="${INTEGRATION_PATH}" fill="none" stroke="transparent" stroke-width="20" stroke-linecap="round" pointer-events="${interactive ? 'stroke' : 'none'}"/>`}
   </g>${integrationSelectors}`;

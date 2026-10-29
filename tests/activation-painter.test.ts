@@ -1,3 +1,6 @@
+import type { Activation } from '../shared/chart-types.ts';
+import type { ChartView } from '../src/domain/chart-composition.ts';
+import type { SelectionTarget } from '../src/selection/selection-targets.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartComposition } from '../src/domain/chart-composition.ts';
@@ -15,7 +18,7 @@ SvgElement.prototype.getCTM = () => null;
 const options = { showActivations: true };
 function chartAt(tick = 0, overrides = {}) {
   const activations = Object.fromEntries(['design', 'personality'].map((source, side) => [source,
-    PLANETS.map(([planet], index) => ({ planet, ...gatePositionAtLongitude((index * 23 + side * 143 + tick * 0.31) % 360) }))]));
+    PLANETS.map(([planet], index) => ({ planet, ...gatePositionAtLongitude((index * 23 + side * 143 + tick * 0.31) % 360) }))])) as Record<'design' | 'personality', Activation[]>;
   return { source: 'calculated' as const, activations,
     personality: [...new Set(activations.personality.map(entry => entry.gate))],
     design: [...new Set(activations.design.map(entry => entry.gate))], ...overrides };
@@ -27,7 +30,7 @@ function markup(chart, state, opt) {
     previewGates: state.previewGates,
   }) : '';
 }
-function fixture(chart = chartAt(), selection = null, opt = options) {
+function fixture(chart: ChartView = chartAt(), selection: SelectionTarget | null = null, opt = options) {
   const document = svgDocument(), root = document.createElementNS(SVG_NS, 'svg');
   const state = createRenderState(chart, selection, opt);
   root.innerHTML = `<g class="bodygraph-drawing">${markup(chart, state, opt)}</g>`;
@@ -36,7 +39,7 @@ function fixture(chart = chartAt(), selection = null, opt = options) {
 function assertEquivalent(root: SvgElement, chart: { source: string; activations: { [k: string]: { longitude: number; gate: number; line: number; planet: string; }[]; }; personality: number[]; design: number[]; }|undefined, selection = null, opt = options) {
   assert.deepEqual(significantDOM(root.querySelector('.bodygraph-drawing')), significantDOM(fixture(chart, selection, opt).root.querySelector('.bodygraph-drawing')));
 }
-function update(painter, chart, selection = null, opt = options) { painter.update(chart, createRenderState(chart, selection, opt), opt); }
+function update(painter: ReturnType<typeof createActivationPainter>, chart: ChartView, selection: SelectionTarget | null = null, opt = options) { painter.update(chart, createRenderState(chart, selection, opt), opt); }
 const targets = (root: SvgElement) => new Map(root.querySelectorAll('[data-activation]').map(node => [node.dataset.activation, node]));
 
 test('all planetary and numeric targets survive a hundred exact minute changes with the same SVG as full rendering', () => {
@@ -485,3 +488,60 @@ test('overlay numeric highlights stay fitted through selection and compact-to-si
   update(painter, chart);
   assert.equal(Number(rect.getAttribute('width')), expectedWidth(), 'single overlay rows also reserve the two-digit width');
 });
+
+
+test('all numeric label writes finish before measurements and all measurements precede target width writes', () => {
+  for (const overlay of [false, true]) {
+    const primary = chartAt(), secondary = chartAt(1);
+    const chart = overlay ? createChartComposition(primary, { secondary, kind: 'transit' }) : primary;
+    const h = fixture(chart), painter = createActivationPainter(h.root), labels = h.root.querySelectorAll('[data-type="gate"] text');
+    let reading = false, reads = 0, widthWrites = 0;
+    for (const value of labels) {
+      value.getBBox = () => {
+        reading = true; reads++;
+        assert.equal(widthWrites, 0, 'width mutations wait until every numeric target is measured');
+        for (const label of labels) assert.equal(label.querySelector('tspan')!.textContent, '.2', 'all label writes precede the first numeric measurement');
+        return { x: Number(value.getAttribute('x')), width: 51 } as DOMRect;
+      };
+      (value as unknown as SVGTextElement).getSubStringLength = () => 12;
+      const rect = value.parentElement!.querySelector('rect')!, set = rect.setAttribute.bind(rect);
+      rect.setAttribute = (name, text) => { if (name === 'width' && reading) widthWrites++; set(name, text); };
+    }
+    // Mount measurement is intentionally tested separately from the changed-label pass.
+    reading = false; reads = widthWrites = 0;
+    for (const owner of [primary, secondary]) for (const side of ['design', 'personality'] as const) for (const value of owner.activations[side]) value.line = 2;
+    update(painter, chart);
+    assert.equal(reads, overlay ? 52 : 26);
+    assert.ok(widthWrites > 0);
+    reads = 0;
+    update(painter, chart, { type: 'gate', id: 1 });
+    assert.equal(reads, 0, 'selection-only changes preserve measured widths');
+  }
+});
+
+for (const initial of ['single', 'hidden'] as const) {
+  test(`first overlay after ${initial} columns fits numeric targets once`, t => {
+    let reads = 0;
+    const descriptors = ['getBBox', 'getSubStringLength'].map(name => [name, Object.getOwnPropertyDescriptor(SvgElement.prototype, name)] as const);
+    t.after(() => { for (const [name, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(SvgElement.prototype, name, descriptor);
+      else Reflect.deleteProperty(SvgElement.prototype, name);
+    } });
+    Object.defineProperty(SvgElement.prototype, 'getBBox', {configurable: true, value(this: SvgElement) {
+      reads++; return {x: Number(this.getAttribute('x')), width: 51};
+    }});
+    Object.defineProperty(SvgElement.prototype, 'getSubStringLength', {configurable: true, value: () => 12});
+    const owner = chartAt(), chart = createChartComposition(owner, {kind: 'transit', secondary: chartAt(1)});
+    const h = fixture(owner, null, {...options, showActivations: initial === 'single'});
+    const painter = createActivationPainter(h.root);
+    if (initial === 'hidden') update(painter, chart, null, {...options, showActivations: false});
+    reads = 0;
+    update(painter, chart);
+    const target = h.root.querySelector('.cycle-activation-value')!;
+    const rect = target.querySelector('rect')!, text = target.querySelector('text')!;
+    assert.equal(Number(rect.getAttribute('width')), 51 + 2 * (Number(text.getAttribute('x')) - Number(rect.getAttribute('x'))));
+    assert.ok(reads > 0);
+    const firstReads = reads; update(painter, chart);
+    assert.equal(reads, firstReads, 'unchanged overlay must keep its first fitted geometry');
+  });
+}

@@ -24,7 +24,6 @@ export function activationHoverBounds(box: Box, target: Affine, block: Affine): 
 // Motion's findSpring resolves exp(-w) * (1 + w) = .001 at w below;
 // its critically damped generator gives this curve, sampled for native WAAPI.
 // Source: motiondivision/motion, motion-dom/src/animation/generators/spring.ts.
-// Attribution and MIT notices: THIRD_PARTY_NOTICES.md.
 export function activationSpringProgress(progress: number) {
   if (progress <= 0) return 0;
   if (progress >= 1) return 1;
@@ -39,7 +38,7 @@ export function attachActivationHover(svg: SVGSVGElement) {
   const media = view?.matchMedia?.('(prefers-reduced-motion: reduce)');
   let target: Element | null = null, block: SVGGraphicsElement | null = null, destination: Box | null = null;
   let highlight: SVGRectElement | null = null, movement: Animation | null = null, fade: Animation | null = null;
-  let disposed = false;
+  let disposed = false, geometryKey: string | null = null;
   const listeners: (() => void)[] = [];
   function listen(owner: EventTarget | null | undefined, event: string, handler: EventListener) {
     if (!owner?.addEventListener) return;
@@ -78,7 +77,7 @@ export function attachActivationHover(svg: SVGSVGElement) {
       if (animate && !committed) fadeTo(0, 60, opacity);
       else { stopFade(); highlight.setAttribute('opacity', '0'); }
     }
-    destination = null;
+    destination = null; geometryKey = null;
   }
   const clear = () => hide(false), leave = () => hide(true);
   function move(event: PointerEvent) {
@@ -88,13 +87,26 @@ export function attachActivationHover(svg: SVGSVGElement) {
     const parent = next?.closest('.activation-block-content') as SVGGraphicsElement | null;
     const rect = next?.querySelector('rect') as SVGRectElement | null;
     if (!next || !parent || !rect || !svg.contains(next)) { leave(); return; }
+    // Only transforms between the hit rectangle and its shared highlight
+    // parent affect local bounds. Camera, column motion and viewport scaling
+    // multiply both matrices equally and cancel in activationHoverBounds.
+    const geometry: (string | null)[] = ['x', 'y', 'width', 'height', 'rx', 'ry'].map(name => rect.getAttribute(name));
+    for (let node: Element | null = rect; node && node !== parent; node = node.parentElement) {
+      geometry.push(node.getAttribute('transform'), node.getAttribute('style'));
+    }
+    const nextGeometryKey = JSON.stringify(geometry);
+    const sameBlock = parent === block && highlight?.parentNode === parent;
+    const opacity = next.getAttribute('opacity') || '1';
+    if (next === target && sameBlock && nextGeometryKey === geometryKey) {
+      if (Number(highlight!.getAttribute('opacity')) !== Number(opacity)) { stopFade(); highlight!.setAttribute('opacity', opacity); }
+      return;
+    }
     const targetMatrix = rect.getCTM?.(), blockMatrix = parent.getCTM?.();
     if (!targetMatrix || !blockMatrix) { clear(); return; }
     const box = activationHoverBounds({ x: Number(rect.getAttribute('x') || 0), y: Number(rect.getAttribute('y') || 0),
       width: Number(rect.getAttribute('width')), height: Number(rect.getAttribute('height')) }, targetMatrix, blockMatrix);
     if (!box) { clear(); return; }
-    const sameBlock = parent === block && highlight?.parentNode === parent;
-    const opacity = next.getAttribute('opacity') || '1';
+    geometryKey = nextGeometryKey;
     // Compare owned numbers, never CSS serialization: browsers normalize transform
     // strings, which otherwise restarts travel on every move within the same cell.
     if (next === target && sameBlock && sameBox(destination, box)) {

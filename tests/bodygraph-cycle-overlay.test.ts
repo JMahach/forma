@@ -1,4 +1,4 @@
-import type { ChartActivations, Activation } from '../shared/chart-types.ts';
+import type { Activation } from '../shared/chart-types.ts';
 import type { ChartView } from '../src/domain/chart-composition.ts';
 import type { SelectionTarget } from '../src/selection/selection-targets.ts';
 import type { RenderOptions } from '../src/scene/render-state.ts';

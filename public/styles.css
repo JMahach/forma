@@ -264,7 +264,6 @@ small { font-size: 11px; }
 .app-shell:has(.library.open) .site-brand { opacity: 1; visibility: visible; }
 @media (prefers-reduced-motion: reduce) { .site-brand { transition: none; } }
 .site-brand svg { flex: none; width: 28px; height: 36px; }
-.brand-period { color: #a59782; }
 .main-navigation { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
 .menu-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 46px; padding: 10px 12px; border-radius: 8px; text-align: left; font-size: 1rem; line-height: 1.4; color: var(--panel-ink); }
 .menu-item svg { flex-shrink: 0; color: var(--panel-muted); }
@@ -287,8 +286,6 @@ small { font-size: 11px; }
 .city-input-wrap { position: relative; }
 .city-results [role='option'] + [role='option'] { margin-top: 2px; }
 .fold-field .field-hint { margin: 0 0 2px; }
-.form-extras { margin: 5px 0 19px; }
-.form-extras .field { margin-top: 6px; margin-bottom: 0; }
 .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 19px; }
 dialog::backdrop { background: #18263b25; }
 .field input:hover, .field textarea:hover, .field select:hover { border-color: #bfcbdc; }
@@ -398,7 +395,6 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .knowledge-link { color: var(--panel-ink); display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 48px; padding: 10px; border: 1px solid var(--panel-border); border-radius: 5px; text-align: left; font-size: .875rem; line-height: 1.4; }
 .knowledge-link-number { flex: none; min-width: 34px; color: var(--knowledge-accent); font-size: 1rem; font-variant-numeric: tabular-nums; }
 .knowledge-link-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.knowledge-link-label small { display: block; margin-top: 3px; color: var(--panel-muted); font-size: .6875rem; }
 .knowledge-link-arrow { flex: none; color: var(--knowledge-accent); }
 .knowledge-link:hover, .knowledge-link:focus-visible { color: var(--knowledge-accent); background: var(--panel-surface); border-color: var(--knowledge-accent); }
 @container (min-width: 960px) {
@@ -519,7 +515,6 @@ dialog { overscroll-behavior: contain; max-height: calc(100dvh - 40px); border: 
 .mandala-gate:focus-visible .mandala-gate-highlight { opacity: 1; }
 
 /* Chart summary drawer. */
-.form-extras summary { cursor: pointer; padding: 11px 0; font-size: .875rem; min-height: 44px; color: #536174; }
 .chart-actions summary { position: absolute; right: 5px; top: 16px; width: 44px; height: 44px; display: grid; place-items: center; list-style: none; border-radius: 7px; color: #626b77; cursor: pointer; font-size: 25px; line-height: 1; }
 .chart-actions summary::-webkit-details-marker { display: none; }
 .chart-actions summary:hover, .chart-actions[open] summary { background: #e6e9ef; color: #20242b; }
@@ -966,8 +961,6 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 .app-shell:has(.canvas-wrap[data-layout='desktop']):has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .library { bottom: 0; }
 .knowledge-page .knowledge-categories button[aria-pressed='true'] { background: var(--panel-selected); color: var(--panel-selected-ink); }
 .knowledge-page .knowledge-index button[aria-pressed='true'] { background: var(--knowledge-accent); border-color: var(--knowledge-accent); color: #fffefd; }
-@media (max-width: 699px) {
-}
 
 /* Phone drawers share the left navigation's width, height and motion. */
 .app-shell:has(.canvas-wrap[data-layout='phone']) :is(.library, .chart-summary) {
@@ -1014,7 +1007,7 @@ body:has(.studio[data-workspace-screen]:not([data-workspace-screen='chart'])) .s
 .app-shell[data-page-state='loading'] .library .chart-caption::after { width: min(64%, 92px); height: 5px; opacity: .6; }
 .app-shell[data-page-state='loading'] .library .new-chart-button::after { left: 50%; width: 86px; transform: translate(-50%, -50%); }
 .app-shell[data-page-state='loading'] .library .new-chart-button > span,
-.app-shell[data-page-state='loading'] :is(.library-count, .chart-actions, .brand-period) { opacity: 0; }
+.app-shell[data-page-state='loading'] :is(.library-count, .chart-actions) { opacity: 0; }
 .app-shell[data-page-state='loading'] :is(.library .menu-item svg, .site-brand > svg) { opacity: .16; }
 .app-shell[data-page-state='loading'] .library .eyebrow::after { width: 66px; height: 5px; opacity: .6; }
 .app-shell[data-page-state='loading'] .library .sidebar-tool:not(#toggleLoadingPreview)::after { height: 5px; opacity: .6; }
@@ -1409,15 +1402,9 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 .toast.ui-feedback.visible { pointer-events: auto; }
 .toast.ui-feedback .ui-feedback-actions { justify-content: flex-end; }
 
-:is(.shared-copy-setting, .stand-calculation-setting) { display: grid; grid-template-columns: 1fr minmax(0, 1.3fr); align-items: center; gap: 8px; font: 12px/1.35 var(--sans); color: var(--panel-muted); }
-.shared-copy-setting { grid-template-columns: 1fr; gap: 0; padding-top: 10px; margin-top: 2px; border-top: 1px solid var(--panel-border); }
-.shared-copy-options.stand-connection-options { grid-template-columns: 1fr 1fr; }
-.stand-calculation-setting select { min-width: 0; min-height: 32px; padding: 5px 7px; border: 1px solid var(--panel-border); border-radius: 6px; background: transparent; color: var(--panel-ink); font: inherit; }
-@media (pointer: coarse) { .stand-calculation-setting select, .stand-connection-options button, .shared-study-choices button { min-height: 44px; } }
 
 .account-study-panel .account-study-action { border-radius: 6px; padding: 10px 14px; font: 500 14px/1.35 var(--sans); }
 
-.stand-calculation-setting { width: 100%; }
 
 /* One anchored action surface; content and operation semantics stay with their owners. */
 .action-notice.ui-feedback {
@@ -1478,10 +1465,6 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 .app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-action { border-color: var(--panel-border); background: transparent; }
 .app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-action::after { inset-inline: 12px; }
 .app-shell[data-page-state='loading'] .account-page[data-account-study] .account-study-details dt svg { opacity: .4; }
-.account-study-options { display: none; flex: 0 0 100%; min-width: 0; padding: 0 0 10px; margin-bottom: 2px; border-bottom: 1px solid var(--panel-border); }
-body:has(.studio[data-workspace-screen='account']) .account-study-options { display: grid; gap: 9px; }
-.account-study-option-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--panel-muted); font-size: 11px; }
-.account-study-option-heading select { width: auto; max-width: 176px; min-height: 32px; padding: 4px 18px 4px 7px; border: 1px solid var(--panel-border); border-radius: 6px; color: var(--panel-ink); background: var(--canvas-background); font: inherit; font-size: 12px; }
 @media (hover: hover) and (pointer: fine) { .account-study-action:hover:not(:disabled) { background: var(--panel-hover); } .account-study-primary:hover:not(:disabled) { background: var(--account-hover); } }
 @media (prefers-reduced-motion: reduce) { .account-study-action { transition: none; } .account-study-action:active:not(:disabled) { transform: none; } }
 @media (max-width: 1099px) {
@@ -1494,8 +1477,6 @@ body:has(.studio[data-workspace-screen='account']) .account-study-options { disp
 .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-logout { grid-template-columns: 1fr; gap: 14px; padding-block: 24px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-intro { font-size: 20px; }
 .app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-session { padding: 16px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-option-heading select { min-height: 40px; font-size: 16px; }
-.app-shell:has(.canvas-wrap[data-layout='phone']) .account-study-options { gap: 12px; padding-bottom: 13px; }
 
 /* Account loading preserves the real form geometry without exposing its input. */
 .app-shell[data-page-state='loading'] .account-auth-form :is(h2, .account-auth-intro, label, .primary-button, .secondary-button) { position: relative; color: transparent; }

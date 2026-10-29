@@ -261,3 +261,40 @@ for (const stop of ['close', 'reset', 'select'] as const) test(`late cached char
   waiting.resolve!({ ...chartPacket(), event: selectedEvent });
   assert.equal(await restoring, false); assert.equal(signal!.aborted, true); assert.equal(control.current, null); assert.equal(pins, 0);
 });
+
+test('existing persisted exact chart keys can be enumerated after reload without reading chart payloads',async t=>{
+ const storage=createReturnStorage({indexedDB:new IDBFactory()}),selected=selectedEvent;t.after(()=>storage.close());
+ const query={birthUtc:input.birthUtc,body:selected.body,eventUtc:selected.utc,timezone:'UTC'};
+ const first=createCyclesClient({cacheVersion:revision,returnStorage:storage,request:async()=>chartPacket()});
+ await first.chart(query,undefined,{event:selected});await tick();
+ const reload=createCyclesClient({cacheVersion:revision,returnStorage:storage,request:async()=>assert.fail('enumeration never calculates')});
+ let reads=0;const getChart=storage.getChart;t.mock.method(storage,'getChart',async (key:string)=>{reads++;return getChart(key);});
+ assert.deepEqual(await reload.preparedChartInputs({birthUtc:query.birthUtc,timezone:'UTC'}),[query]);assert.equal(reads,0);
+ assert.ok(await reload.readChart(query));assert.equal(reads,1);
+});
+
+
+test('offline availability drops an exact return after its unpinned cache entry is evicted',async()=>{
+ const memory=createMemoryCache({maxBytes:1_000_000});let online=true,calls=0;
+ const client=createCyclesClient({memory,cacheVersion:revision,returnStorage:null,
+  request:async(url,{body})=>{
+   assert.equal(online,true,'offline availability must never calculate');calls++;
+   if(url.endsWith('/chart'))return chartPacket();
+   const value=JSON.parse(body as string);
+   return {...packet(value),events:value.body===selectedEvent.body?[selectedEvent]:[]};
+  }});
+ const control=createReturnsController({client,connection:()=>online?'online':'offline'});
+ try {
+  await client.chart(chartInput,undefined,{event:selectedEvent});
+  await control.select(natal());online=false;
+  await control.refreshAvailability();
+  assert.ok(control.state.readyEvents.includes(selectedEvent.id));
+  const before=calls;
+  // Active lists stay pinned; the unopened full chart loses ordinary RAM ownership.
+  memory.put('pressure',new ArrayBuffer(1_000_001));
+  assert.equal(await client.readChart(chartInput),null);
+  await control.refreshAvailability();
+  assert.equal(control.state.readyEvents.includes(selectedEvent.id),false);
+  assert.equal(calls,before);
+ } finally {await control.select(null);client.close();}
+});

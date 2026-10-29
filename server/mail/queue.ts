@@ -22,10 +22,13 @@ export function createCodeMailQueue({ database, postfix, isCurrent, now = Date.n
   const storage = createMailStorage(database, policy);
   let tail: Promise<unknown> = Promise.resolve(), closed = false, timer: NodeJS.Timeout | undefined;
   let draining: Promise<void> | undefined;
+  let queuedMaintenance: Promise<PostfixEntry[]> | undefined;
   let lastReported: { completedAt: number; id: string } | undefined;
   const emit = async (event: MailEvent) => { try { return await report(event) === true; } catch { return false; } };
-  function serial<T>(run: () => Promise<T>): Promise<T> {
+  function serial<T>(run: () => Promise<T>, maintenance = false): Promise<T> {
     if (closed) return Promise.reject(new Error('Mail queue is closed'));
+    // A command is an ordering boundary: a later tick must observe it.
+    if (!maintenance) queuedMaintenance = undefined;
     const task = tail.then(run); tail = task.catch(() => {}); return task;
   }
   async function attempt(entry: PostfixEntry) {
@@ -91,7 +94,17 @@ export function createCodeMailQueue({ database, postfix, isCurrent, now = Date.n
         // Preserve the small reservation until reconciliation can expire an omitted/in-flight file.
       });
     },
-    tick() { return serial(reconcile); },
+    tick() {
+      if (closed) return Promise.reject(new Error('Mail queue is closed'));
+      if (queuedMaintenance) return queuedMaintenance;
+      const task = serial(async () => {
+        // A running pass may have one successor, never an unbounded timer backlog.
+        if (queuedMaintenance === task) queuedMaintenance = undefined;
+        return reconcile();
+      }, true);
+      queuedMaintenance = task;
+      return task;
+    },
     drain(): Promise<void> {
       if (closed) return Promise.resolve();
       if (draining) return draining;

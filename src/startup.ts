@@ -117,7 +117,7 @@ const viewStore = createViewStore({ onStorageError: toast,
   },
   onStorageRecovery(){viewObservation?.finishSuccess();viewObservation=undefined;},
 }), savedView = viewForRoute(navigation.snapshot.route, viewStore.read());
-let saveBeforeNavigate = () => {}, flushLoadingView = () => {};
+let saveBeforeNavigate = () => {}, flushLoadingView = () => {}, scheduleLoadingView = () => {};
 const previewLoading = attachLoadingPreview({ button: element('toggleLoadingPreview'), location,
   beforeNavigate: () => saveBeforeNavigate() });
 let pendingView: Partial<SavedView> | null = savedView;
@@ -150,7 +150,7 @@ const calculationUpdates = {
   },
 };
 if (!previewLoading && getConnectionMode() === 'online') void calculationUpdates.refresh();
-const store = createChartStore({ onStorageError: toast, initialTemporaryChart: savedView?.temporaryChart,
+const store = createChartStore({ initialTemporaryChart: savedView?.temporaryChart,
   initialPublicChart:savedView?.publicChart, calculationVersion:document.body.dataset.calculationVersion });
 // Account records are restored by their owner after startup. Legacy local
 // records remain untouched and never become a persistent guest collection.
@@ -248,7 +248,7 @@ const camera = createCamera({ getHomeFrame: () => layout.frame(), getFrame: () =
   measureFit: frame => cameraView.measureFit(frame, () => layout.insets()), onChange(view, fitted) { cameraView.paint(view); cameraChanged(view, fitted); } });
 camera.restoreView(savedView?.camera);
 const gestures = attachGestures(element('bodygraph'), { camera, cameraView, resolvePointerTarget: () => null,
-  onChange(view, fitted) { cameraChanged(view, fitted); flushLoadingView(); } });
+  onChange(view, fitted) { cameraChanged(view, fitted); scheduleLoadingView(); } });
 attachCameraControls({ fitButton: element('fitButton') }, gestures);
 let loadingActive = true, pendingAccountFocus = savedView?.account?.focus;
 function cancelLoadingFocus() {
@@ -277,10 +277,18 @@ function loadingSnapshot(): Partial<SavedView> {
     account: accountView, mandala: pendingView?.mandala === true,
     camera: camera.getSavedView() };
 }
+let loadingWrite: ReturnType<typeof setTimeout> | null = null;
 flushLoadingView = () => {
+  if (loadingWrite !== null) clearTimeout(loadingWrite);
+  loadingWrite = null;
   if (!loadingActive) return;
   loadingInteraction = true;
   viewStore.write?.(loadingSnapshot());
+};
+scheduleLoadingView = () => {
+  if (!loadingActive) return;
+  loadingInteraction = true;
+  if (loadingWrite === null) loadingWrite = setTimeout(flushLoadingView, 160);
 };
 saveBeforeNavigate = flushLoadingView;
 const flushOnHide = () => { if (document.hidden) flushLoadingView(); };
@@ -342,6 +350,7 @@ if (!previewLoading) try {
   const app = await import('./app.ts');
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
+  if (loadingWrite !== null) flushLoadingView();
   const latestView = loadingInteraction ? loadingSnapshot() : savedView;
   loadingActive = false; releaseLoadingFocus();
   document.removeEventListener('visibilitychange', flushOnHide);
@@ -350,6 +359,7 @@ if (!previewLoading) try {
   if (obsoleteCalculations.calculation || obsoleteCalculations.returns) application?.invalidateCalculations?.(obsoleteCalculations);
   saveBeforeNavigate = () => application?.flushView();
 } catch {
+  if (loadingWrite !== null) flushLoadingView();
   applicationFailed=true;
   const shell = document.querySelector<HTMLElement>('.app-shell')!;
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');

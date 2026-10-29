@@ -2,7 +2,6 @@ import { readModuleSource } from '../helpers/module-source.ts';
 // Isolated local experiment. No API, saved charts or production files modified.
 // Run: node tests/benchmarks/hover-server.ts
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
 import { readPreviewResource } from '../previews/preview-server.ts';
 import { MANDALA_FRAME } from '../../src/scene/geometry/frames.ts';
 

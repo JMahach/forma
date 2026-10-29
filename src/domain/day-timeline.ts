@@ -4,8 +4,15 @@ const MINUTE = 60_000;
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const labelFormatters = new Map<string, { time: Intl.DateTimeFormat; date: Intl.DateTimeFormat }>();
 
+// Match the existing bounded formatter settings in cycles and personal-age.
+// These maps retain settings only, never a history of formatted dates.
+function rememberFormatter<T>(settings: Map<string,T>, zone: string, value: T) {
+  if (settings.size >= 8) settings.delete(settings.keys().next().value!);
+  settings.set(zone,value);
+}
+
 const dateFormatter = (timeZone: string) => {
-  if (!formatters.has(timeZone)) formatters.set(timeZone, new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }));
+  if (!formatters.has(timeZone)) rememberFormatter(formatters,timeZone, new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }));
   return formatters.get(timeZone)!;
 };
 
@@ -66,7 +73,7 @@ export function formatTimelineMinute(timeline: Pick<LocalDayTimeline, 'startUtc'
   const { utc } = timelineMinute(timeline, index);
   if (utc === previousLabelUtc && timeline.timeZone === previousLabelZone) return { ...previousLabel! };
   const date = new Date(utc);
-  if (!labelFormatters.has(timeline.timeZone)) labelFormatters.set(timeline.timeZone, {
+  if (!labelFormatters.has(timeline.timeZone)) rememberFormatter(labelFormatters,timeline.timeZone, {
     time: new Intl.DateTimeFormat('ru-RU', { timeZone: timeline.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' }),
     date: new Intl.DateTimeFormat('ru-RU', { timeZone: timeline.timeZone, day: 'numeric', month: 'long' }),
   });

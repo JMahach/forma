@@ -10,7 +10,6 @@ import { TIMELINE_THUMB_SIZE } from './metrics.ts';
 export const DAY_CONTROL_HEIGHT = TIMELINE_THUMB_SIZE + 4;
 export const DAY_CONTROL_TOP_CLEARANCE = 20;
 const GAP = 4;
-const RETURNS_SHEET_REFERENCE_WIDTH = 1126;
 // The backing is compact; the existing 44px range target remains unchanged.
 export const TIMELINE_BAR_HEIGHT = 30.6;
 // Keep the complete focus/error frame and a quiet gap above the rail backing.
@@ -55,17 +54,6 @@ export function computeStudioLayout({ footprint, width, height, side = 4, top = 
   area.y += offsetY;
   center.y += offsetY;
   return { area, scale, center, mandalaRadius, columns: { left: columnLeft, right: columnRight }, showMandalaColumns, insets: { side, top, bottom: cameraBottom, offsetY } };
-}
-
-// Decide from the full studio, even with the drawer closed. Reading the
-// already narrowed canvas here would make the placement feed back on itself.
-export function returnsPlacement(options: StudioDimensions, { phone = false, reserve = 0 } = {}) {
-  // The author supplied a narrow-window reference at approximately 1126 CSS px.
-  // Beyond that boundary, the full mandala still has to fit at the same scale.
-  if (phone || options.width <= RETURNS_SHEET_REFERENCE_WIDTH || !(reserve > 0) || options.width <= reserve) return 'sheet';
-  const full = computeStudioLayout(options);
-  const beside = computeStudioLayout({ ...options, width: options.width - reserve });
-  return beside.scale + 1e-9 >= full.scale ? 'side' : 'sheet';
 }
 
 // Every mode shares the current free chart area. The natural rail length still

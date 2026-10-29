@@ -69,8 +69,10 @@ export function createChartHeadingLayout({ header, content, title, subtitle, lef
       && header.getBoundingClientRect().bottom + mandalaGap > getMandalaTop());
     return current;
   }
+  // App owns canvas resize ordering: studio layout, then this refresh.
+  // Local text/control/font changes still have their own observation.
   const observer = ResizeObserver ? createLayoutObserver(refresh, {Observer: ResizeObserver, requestFrame, cancelFrame}) : null;
-  for (const element of new Set([header, title, subtitle, leftControls, rightControls, canvas].filter(Boolean))) {
+  for (const element of new Set([header, title, subtitle, leftControls, rightControls].filter(Boolean))) {
     observer?.observe(element!);
   }
   // Padding may change while the fit-content text keeps the same dimensions.

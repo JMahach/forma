@@ -407,7 +407,7 @@ export function createLifetimeExplorer({
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
     refreshAvailability: notify,
-    invalidateCalculations() { compatible = false; cancel(); notify(); },
+    invalidateCalculations() { compatible = false; cancel(); metadata = null; fullChart = exploredChart = null; notify(); },
     setInteracting(value: boolean) { interacting = Boolean(value); },
     adjacentUtc,
     step(direction: number, bounds: LifetimeBounds | null = null, beforeSelect: (utc: number) => boolean | void = () => {}) {

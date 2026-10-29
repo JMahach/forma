@@ -198,6 +198,7 @@
         "src/domain/planets.ts",
         "src/domain/returns-window.ts",
         "src/domain/substructure.ts",
+        "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
         "src/domain/variables.ts"
@@ -222,6 +223,7 @@
         "src/domain/planets.ts",
         "src/domain/returns-window.ts",
         "src/domain/substructure.ts",
+        "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
         "src/domain/variables.ts"
@@ -337,7 +339,6 @@
         "src/data/memory-cache.ts",
         "src/data/return-storage.ts",
         "src/data/storage-pressure.ts",
-        "src/data/storage.ts",
         "src/data/transit-day-cache.ts",
         "src/data/view-store.ts"
       ],
@@ -365,7 +366,6 @@
       ],
       "privateEntryReasons": {
         "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
-        "src/data/storage.ts": "Record mutation/validation internals are reached through chart-store, not feature views.",
         "src/data/calculation-migration.ts": "Legacy source reading, version fencing and deletion are internal to the single calculation-cache budget owner."
       }
     },
@@ -381,7 +381,6 @@
         "src/data/http-transport.ts",
         "src/data/lifetime-client.ts",
         "src/data/natal-day-client.ts",
-        "src/data/shared-request.ts",
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
         "src/data/calculation-updates.ts",
@@ -405,13 +404,15 @@
         "data-clients",
         "data-storage",
         "domain",
-        "shared-contracts"
+        "shared-contracts",
+        "request-lifetime"
       ],
       "allowTypes": [
         "data-clients",
         "data-storage",
         "domain",
-        "shared-contracts"
+        "shared-contracts",
+        "request-lifetime"
       ]
     },
     {
@@ -1547,14 +1548,16 @@
       ],
       "allowRuntime": [
         "chart-actions",
-        "domain"
+        "domain",
+        "request-lifetime"
       ],
       "allowTypes": [
         "chart-actions",
         "account-library",
         "data-clients",
         "domain",
-        "shared-contracts"
+        "shared-contracts",
+        "request-lifetime"
       ]
     },
     {
@@ -1711,6 +1714,22 @@
       ],
       "allowTypes": [
         "local-mailbox-http"
+      ]
+    },
+    {
+      "id": "request-lifetime",
+      "responsibility": "Share only the lifetime of in-flight work and independent consumer cancellation; no transport, storage or retained results.",
+      "files": [
+        "src/runtime/shared-request.ts"
+      ],
+      "publicEntries": [
+        "src/runtime/shared-request.ts"
+      ],
+      "allowRuntime": [
+        "request-lifetime"
+      ],
+      "allowTypes": [
+        "request-lifetime"
       ]
     }
   ],

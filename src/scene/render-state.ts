@@ -22,12 +22,29 @@ export interface RenderedScene { chart: ChartView; state: RenderState; options: 
 
 import { CHANNELS, getChannel, getDefinition } from '../domain/topology.ts';
 import { createOverlaySourceState } from '../domain/chart-overlay.ts';
-import { chartTopology } from '../domain/chart-composition.ts';
+import { chartTopology, isChartOverlay } from '../domain/chart-composition.ts';
 import { gatesForSelection } from '../selection/selection-targets.ts';
+
+// The renderer retains only the physical projection of its current drawing.
+// Inspect actual source values: raw charts and composition sources may mutate.
+export function physicalRenderInput(chart: ChartView) {
+  const topology = chartTopology(chart);
+  return JSON.stringify([topology.personality, topology.design, isChartOverlay(chart)
+    ? [chart.kind, chart.primaryLabel, chart.primary.personality, chart.primary.design,
+      chart.secondary.personality, chart.secondary.design] : null]);
+}
+export function createPhysicalRenderState(chart: ChartView) {
+  const topology = chartTopology(chart);
+  const personality = new Set((topology.personality || []).map(Number));
+  const design = new Set((topology.design || []).map(Number));
+  const definition = getDefinition(topology);
+  const definedChannels = new Set(definition.channels.map(({ id }) => id));
+  return { personality, design, definition, definedChannels, overlaySources: createOverlaySourceState(chart) };
+}
 
 // One render snapshot: preview paint stays separate from committed selection.
 // Does not mutate the chart, the selection controller, or any DOM element.
-export function createRenderState(chart: ChartView, selection: SelectionTarget | null | undefined, options: RenderOptions) {
+export function createRenderState(chart: ChartView, selection: SelectionTarget | null | undefined, options: RenderOptions, physical = createPhysicalRenderState(chart)) {
   const committedSelection = selection;
   const committedSelections = (options.selections || [selection]).filter((item): item is SelectionTarget => Boolean(item));
   const committedIdsByType = new Map<SelectionType, Set<string>>();
@@ -38,11 +55,6 @@ export function createRenderState(chart: ChartView, selection: SelectionTarget |
   // Hover adds a temporary layer. Only the committed selection owns pressed
   // state; moving the pointer must never erase or broaden that selection.
   const visualSelections = [...committedSelections, options.previewSelection].filter((item): item is SelectionTarget => Boolean(item));
-  const topology = chartTopology(chart);
-  const personality = new Set((topology.personality || []).map(Number));
-  const design = new Set((topology.design || []).map(Number));
-  const definition = getDefinition(topology);
-  const definedChannels = new Set(definition.channels.map(({ id }) => id));
   const interactive = options.interactive !== false;
   const prefix = String(options.idPrefix || 'bodygraph').replace(/[^a-zA-Z0-9_-]/g, '') || 'bodygraph';
   const relatedChannels = new Set<string>();
@@ -74,8 +86,7 @@ export function createRenderState(chart: ChartView, selection: SelectionTarget |
   return {
     committedSelection, committedSelections, committedIdsByType, visualSelections,
     hasExplicitSelection: Boolean(options.previewSelection || options.selections),
-    personality, design, definition, definedChannels, interactive, prefix,
-    overlaySources: createOverlaySourceState(chart),
+    ...physical, interactive, prefix,
     relatedChannels, relatedGates, halfGates, selectedGates, selectedCenters,
     selectedChannels, committedGates, previewGates,
   };

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getEventListeners } from 'node:events';
-import { shareRequest } from '../src/data/shared-request.ts';
+import { shareRequest } from '../src/runtime/shared-request.ts';
 
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 

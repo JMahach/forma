@@ -170,7 +170,7 @@ test('cached first touches keep the exact present boundary and notice appended o
   } finally { Date.now = now; }
 });
 
-function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: boolean; getLayout?: () => string } = {}) {
+function panelHarness({ rows = false }: { rows?: boolean } = {}) {
   const document = dateDom() as unknown as PanelDocument, ids = ['chartSummary', 'summaryScreen', 'summaryReturns', 'summarySwitch', 'summaryBackdrop', 'returnsBack', 'returnsPanel', 'returnsContent', 'returnsStatus', 'returnsYear', 'returnsYearCalendar', 'returnsBody', 'returnsRetry', 'returnsYearField', 'returnsBodyField', 'returnsNote', 'returnsBodiesToggle', 'returnsBodiesLabel', 'returnsYearLabel', 'returnsBodyMenu', 'returnsBodiesClose', 'returnsBodiesClear', 'returnsBodiesDefault'];
   const nodes = Object.fromEntries(ids.map(id => [id, Object.assign(document.createElement(id === 'chartSummary' ? 'aside' : 'div'), { nodeType: 1 })]));
   if (rows) {
@@ -228,7 +228,7 @@ function panelHarness({ rows = false, getLayout = () => 'sheet' }: { rows?: bool
     returnsPanel: nodes.returnsPanel, returnsButton: nodes.summaryReturns,
     switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
   } as unknown as Parameters<typeof attachChartSummary>[0]);
-  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), getLayout, onBack: () => { backs.push('summary'); update({ opened: false }); },
+  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), onBack: () => { backs.push('summary'); update({ opened: false }); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
     onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ });
   function escape(target = document.activeElement || nodes.returnsPanel) {
@@ -561,7 +561,7 @@ test('the shipped panel places compact filters above the full-height list withou
   assert.ok(panel.querySelector('[id="returnsYearCalendar"]'));
 });
 
-test('an open phone return sheet remains nonmodal so native navigation and the personal strip stay accessible', () => {
+test('an open phone returns panel remains nonmodal so native navigation and the personal strip stay accessible', () => {
   const h = panelHarness(); h.update({ timelineVisible: true, opened: true });
   assert.equal(h.summary.screen, 'returns');
   assert.notEqual(h.nodes.chartSummary.getAttribute('aria-modal'), 'true');
@@ -584,19 +584,17 @@ test('a newly loading planet anchors after its rows arrive, including the initia
   assert.equal(h.nodes.returnsContent.scrollTop, 1500);
 });
 
-test('resizing between side and sheet preserves the open list, scroll and current filters', () => {
-  let layout = 'side';
-  const h = panelHarness({ rows: true, getLayout: () => layout });
+test('layout refresh preserves the open list, scroll and current filters', () => {
+  const h = panelHarness({ rows: true });
   h.update({ timelineVisible: true, opened: true, year: 2027, bodies: ['saturn'], events: [event('saturn','2027-01-01T00:00:00Z')] });
   const row = h.nodes.returnsContent.querySelector('[data-return-event]');
   h.nodes.returnsContent.scrollTop = 120;
-  for (const next of ['sheet','side','sheet'] as const) {
-    layout = next; h.summary.layout();
+  for (let i = 0; i < 3; i++) {
+    h.summary.layout();
     assert.equal(h.nodes.returnsPanel.hidden, false);
     assert.equal(h.summary.screen, 'returns');
     assert.equal(h.nodes.chartSummary.inert, false);
     assert.equal(h.nodes.summaryBackdrop.hidden, false, 'both placements share the same dismissal owner');
-    assert.equal(h.view.sheet(), next === 'sheet');
     assert.equal(h.nodes.returnsContent.querySelector('[data-return-event]'), row);
     assert.equal(h.nodes.returnsContent.scrollTop, 120);
     assert.equal(h.nodes.returnsYearLabel.textContent, '2027');
@@ -700,4 +698,31 @@ test('offline return rows distinguish ready dates from ready charts and update w
   assert.equal(h.nodes.returnsContent.innerHTMLWrites, writes);
   h.update({ offline: false, readyEvents: [] });
   assert.equal(button.disabled, false);
+});
+
+
+test('unchanged return readiness leaves disabled properties untouched while in-place edits update one row', () => {
+  const h = panelHarness({ rows: true }), selected = event('saturn', '2027-01-01T00:00:00Z');
+  const readyEvents = [selected.id];
+  h.update({ opened: true, events: [selected], offline: true, readyEvents });
+  const row = h.nodes.returnsContent.querySelector('[data-return-event]')!;
+  let disabled = row.disabled, writes = 0;
+  Object.defineProperty(row, 'disabled', { get: () => disabled, set(value) { disabled = value; writes++; } });
+  h.update({ readyEvents });
+  assert.equal(writes, 0);
+  readyEvents.pop();
+  h.update({ readyEvents });
+  assert.equal(writes, 1);
+  assert.equal(row.disabled, true);
+});
+
+
+test('offline list rendering indexes current ready IDs once', () => {
+  const events = Array.from({ length: 100 }, (_, i) => event('moon', new Date(Date.parse(natal.utc) + i * 2500000000).toISOString(), i + 1));
+  let reads = 0;
+  const readyEvents = new Proxy(events.map(value => value.id), { get(target, key, receiver) { if (/^\d+$/.test(String(key))) reads++; return Reflect.get(target, key, receiver); } });
+  const markup = renderReturnEvents({ natal, events, offline: true, readyEvents });
+  assert.ok(reads <= events.length, `linear ready indexing: ${reads}`);
+  assert.equal((markup.match(/data-return-event=/g) || []).length, events.length);
+  assert.doesNotMatch(markup, / disabled/);
 });

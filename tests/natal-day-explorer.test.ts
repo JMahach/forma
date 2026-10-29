@@ -3,7 +3,6 @@ import type { NatalDayClient } from '../src/data/natal-day-client.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
 import type { NatalDayExplorer } from '../src/state/natal-day.ts';
 import type { GraphController } from '../src/scene/updates.ts';
-import type { ChartStorage } from '../src/data/storage.ts';
 type GetDay = NatalDayClient['getDay'];
 type ControlOptions = Parameters<typeof attachNatalDayExplorer>[0];
 type ControlName = 'toggle' | 'panel' | 'range' | 'status' | 'retryButton' | 'marker';
@@ -428,7 +427,8 @@ test('birth controls remain usable when the optional marker is omitted', async (
 
 test('personal scrubbing keeps real graph pins, camera transform and saved storage intact', async () => {
   const original = libraryRecordAtMinute(natalDayFixture(), 754), writes: unknown[] = [], values = JSON.stringify([original]);
-  const store = createChartStore({ getStorage: () => ({ getItem: () => values, setItem: (...args: [string, string]) => writes.push(args) } as unknown as ChartStorage) });
+  const store = createChartStore();
+  store.projectLibrary([original], true);
   let explorer: NatalDayExplorer, graph: GraphController;
   const session = createChartSession({ store, getNatalDay: () => explorer, onChange: () => graph?.render() });
   session.select(original.id);

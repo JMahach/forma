@@ -72,7 +72,7 @@ test('fine and coarse drag starts retain the same full travel and return to the 
     const fine = harness(), coarse = harness();
     for (const h of [fine, coarse] as const) {
       h.resize(width, height);
-      h.controls.zoom(2);
+      h.controls.zoomAt({ x: 320, y: 410 }, 2);
       h.send('pointerdown');
     }
     const start = fine.controls.getView();
@@ -102,7 +102,7 @@ test('fine and coarse drag starts retain the same full travel and return to the 
 test('a diagonal drag includes both components of the initial travel on a phone-sized surface', () => {
   const h = harness(), scale = 390 / 640;
   h.resize(390, 844);
-  h.controls.zoom(2);
+  h.controls.zoomAt({ x: 320, y: 410 }, 2);
   const start = h.controls.getView();
   h.send('pointerdown');
   h.send('pointermove', { clientX: 198, clientY: 418 }); // 3, -4: within tolerance.
@@ -117,7 +117,7 @@ test('a diagonal drag includes both components of the initial travel on a phone-
 test('movement within tap tolerance still selects the pressed object without moving the camera', () => {
   for (const pointerType of ['touch', 'mouse'] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const start = h.controls.getView();
     const target = { dataset: { type: 'gate' as const, id: '41' }, closest() { return this; } };
     h.send('pointerdown', { pointerType, target });
@@ -135,7 +135,7 @@ test('finger roll over a control still selects immediately without camera work',
     { type: 'channel' as const, id: '41-30' }, { type: 'planet-filter' as const, id: 'design:all' },
     { type: 'gate' as const, id: '41', activation: 'personality-pluto' }] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.changes.length = h.transforms.length = 0;
     const before = h.controls.getView(), target = { dataset, closest() { return this; } };
     h.send('pointerdown', { target });
@@ -152,7 +152,7 @@ test('finger roll over a control still selects immediately without camera work',
 test('control drag keeps full displacement, while mouse keeps its original start distance', () => {
   for (const [pointerType, travel] of [['touch', 11], ['mouse', 7]] as const) {
     const h = harness(), target = { dataset: { type: 'center' as const, id: 'solar' }, closest() { return this; } };
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const before = h.controls.getView();
     h.send('pointerdown', { pointerType, target });
     h.send('pointermove', { pointerType, target, clientX: 320 + travel });
@@ -190,7 +190,7 @@ test('expanded touch target selects on a tap and never toggles after drag, pinch
     };
     const svg = { querySelector: () => null, querySelectorAll: (selector: string) => selector === '.activation-planet-filter-hit' ? [hit] : [] };
     const h = harness({ resolvePointerTarget: (event: PointerEvent) => pointerTarget(svg, event) });
-    h.resize(390, 844); h.controls.zoom(2);
+    h.resize(390, 844); h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const start = h.controls.getView();
     // The press is 20px left of the painted hit, inside its empty touch margin.
     h.send('pointerdown', { clientX: 300, clientY: 410 });
@@ -218,7 +218,7 @@ test('expanded touch target selects on a tap and never toggles after drag, pinch
 
 test('starting a pinch after tiny movements uses current fingers and does not replay travel on return to pan', () => {
   const h = harness(), reference = harness();
-  for (const current of [h, reference] as const) current.controls.zoom(2);
+  for (const current of [h, reference] as const) current.controls.zoomAt({ x: 320, y: 410 }, 2);
   h.send('pointerdown', { clientX: 320 });
   h.send('pointermove', { clientX: 324 });
   reference.send('pointerdown', { clientX: 324 });
@@ -242,7 +242,7 @@ test('starting a pinch after tiny movements uses current fingers and does not re
 test('a fresh drag cannot inherit its starting point from a cancelled gesture', () => {
   for (const release of ['pointercancel', 'lostpointercapture'] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const start = h.controls.getView();
     h.send('pointerdown', { clientX: 250 });
     h.send('pointermove', { clientX: 254 });
@@ -293,7 +293,7 @@ test('pointerup consumes final pan movement and can cross the drag threshold wit
   for (const [width, height] of [[640, 820], [390, 844]] as const) for (const priorMove of [null, 4, 30] as const) {
     const h = harness(), scale = Math.min(width / 640, height / 820);
     h.resize(width, height);
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const start = h.controls.getView(), center = width / 2;
     h.send('pointerdown');
     if (priorMove !== null) h.send('pointermove', { clientX: center + priorMove });
@@ -309,7 +309,7 @@ test('pointerup consumes final pan movement and can cross the drag threshold wit
 test('a final pinch coordinate matches an explicit move and becomes the next pan baseline', () => {
   const released = harness(), moved = harness();
   for (const h of [released, moved] as const) {
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown', { clientX: 250 });
     h.send('pointerdown', { pointerId: 2, clientX: 390 });
     h.send('pointermove', { clientX: 240 });
@@ -329,7 +329,7 @@ test('a final pinch coordinate matches an explicit move and becomes the next pan
 test('unchanged release coordinates add no projection, frame request or paint', () => {
   for (const alreadyPainted of [false, true] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 350 });
     if (alreadyPainted) h.tick();
@@ -344,7 +344,7 @@ test('unchanged release coordinates add no projection, frame request or paint', 
 test('movement first seen on release retains a tap through the exact screen tolerance', () => {
   for (const dx of [0, 4, 6] as const) {
     const h = harness(), target = { dataset: { type: 'gate' as const, id: '41' }, closest() { return this; } };
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     const start = h.controls.getView();
     h.send('pointerdown', { target });
     h.send('pointerup', { clientX: 320 + dx });
@@ -357,7 +357,7 @@ test('movement first seen on release retains a tap through the exact screen tole
 test('cancel and capture loss ignore their endpoint and retain the last real movement', () => {
   for (const type of ['pointercancel', 'lostpointercapture'] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 350 });
     const view = h.controls.getView(), reads = h.projectionReads;
@@ -373,7 +373,7 @@ test('cancel and capture loss ignore their endpoint and retain the last real mov
 test('resize or a collapsed surface under a still finger cannot invent release movement', () => {
   for (const size of [[390, 844], [0, 0]] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 350 });
     const view = h.controls.getView(), reads = h.projectionReads;
@@ -389,7 +389,7 @@ test('resize or a collapsed surface under a still finger cannot invent release m
 test('a changed release uses the current projection and ignores an unavailable one', () => {
   const released = harness(), moved = harness();
   for (const h of [released, moved] as const) {
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 350 });
     h.setSurfaceSize(390, 844);
@@ -400,7 +400,7 @@ test('a changed release uses the current projection and ignores an unavailable o
   assert.deepEqual(released.changes.at(-1), released.controls.getView());
 
   const collapsed = harness();
-  collapsed.controls.zoom(2);
+  collapsed.controls.zoomAt({ x: 320, y: 410 }, 2);
   collapsed.send('pointerdown');
   collapsed.send('pointermove', { clientX: 350 });
   const view = collapsed.controls.getView();
@@ -434,7 +434,7 @@ test('keyboard Home publishes only the fitted pose and discards pending gesture 
     const h = harness({ deferred });
     h.resize(width, height);
     const home = h.controls.getView();
-    h.send('keydown', { key: '+' });
+    h.controls.zoomAt({ x: 320, y: 410 }, 1.25);
     assert.ok(h.controls.getView().k > home.k);
     h.send('wheel', { deltaY: -50 });
     const stale = [...h.queued.values()][0];
@@ -454,7 +454,7 @@ test('keyboard Home publishes only the fitted pose and discards pending gesture 
 test('cancel and lost pointer capture flush the final camera state', () => {
   for (const release of ['pointercancel', 'lostpointercapture'] as const) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 350 });
     const view = h.controls.getView();
@@ -535,7 +535,7 @@ test('fixed canvas owns pointer capture and blank presses preserve keyboard focu
 test('mouse and pen drags only update the cursor at their start and end', () => {
   for (const pointerType of ['mouse', 'pen']) {
     const h = harness();
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     assert.deepEqual(h.cursorChanges, [['is-pannable', true]]);
     h.cursorChanges.length = 0;
     h.send('pointerdown', { pointerType, clientX: 320, clientY: 410 });
@@ -576,7 +576,7 @@ test('a finger can tap the gate margin but dragging or pinching there never sele
 
 test('a finger moves the maximally zoomed map without changing the cursor', () => {
   const h = harness();
-  h.controls.zoom(20);
+  h.controls.zoomAt({ x: 320, y: 410 }, 20);
   const before = h.controls.getView();
   h.cursorChanges.length = 0;
   h.send('pointerdown');
@@ -589,7 +589,7 @@ test('a finger moves the maximally zoomed map without changing the cursor', () =
 
 test('the grabbing cursor ends with the mouse even if a finger remains pressed', () => {
   const h = harness();
-  h.controls.zoom(20);
+  h.controls.zoomAt({ x: 320, y: 410 }, 20);
   h.cursorChanges.length = 0;
   h.send('pointerdown', { pointerType: 'touch', pointerId: 1 });
   h.send('pointerdown', { pointerType: 'mouse', pointerId: 2 });

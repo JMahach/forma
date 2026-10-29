@@ -202,3 +202,15 @@ test('buffered responsibility uses a distinct handoff result and never masquerad
   buffered=true;await queue.drain();assert.equal(storage.completed().length,0);
   assert.equal(finalReports,0);
 });
+
+test('maintenance coalesces to one queued pass while commands keep their serial order',async t=>{
+ const f=fixture(t),order:string[]=[];let release!:()=>void;
+ const held=new Promise<void>(resolve=>{release=resolve;});let lists=0;
+ f.postfix.list=async()=>{order.push('list'+(++lists));if(lists===1)await held;return [];};
+ const active=f.queue.tick();await new Promise<void>(resolve=>setImmediate(resolve));
+ const queued=Array.from({length:100},()=>f.queue.tick());
+ const cancel=f.queue.cancel(f.mail.id);
+ const afterCommand=f.queue.tick();
+ release();await Promise.all([active,...queued,cancel,afterCommand]);
+ assert.deepEqual(order,['list1','list2','list3','list4']);
+});

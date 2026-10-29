@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { TIMELINE_THUMB_SIZE } from '../src/ui/layout/metrics.ts';
 import { DAY_CONTROL_HEIGHT, DAY_CONTROL_TOP_CLEARANCE, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT } from '../src/ui/layout/studio.ts';
 import { computeCameraFit } from '../src/scene/camera-fit.ts';
-import { createStudioLayout, computeStudioLayout, returnsPlacement } from './fixtures/studio-layout.ts';
+import { createStudioLayout, computeStudioLayout } from './fixtures/studio-layout.ts';
 import { PHONE_LAYOUT_QUERY } from '../src/ui/layout/studio-controller.ts';
 import { STUDIO_FRAME } from '../src/scene/geometry/frames.ts';
 import { attachMandalaMode } from './fixtures/gesture-harness.ts';
@@ -358,7 +358,7 @@ test('the real camera applies the shared CSS-pixel headroom adjustment without s
     for (const zoom of [1, 1.8] as const) {
       gestures.reset();
       if (zoom > 1) {
-        gestures.zoom(zoom);
+        gestures.zoomAt({ x: 320, y: 410 }, zoom);
         send('pointerdown'); send('pointermove', { clientX: rect.left + width / 2 + 70 });
         send('pointerup', { clientX: rect.left + width / 2 + 70 });
       }
@@ -536,21 +536,7 @@ test('compact exterior spacing preserves width-limited phone Home while reservin
 });
 
 
-test('returns measures the mandala without requiring exterior calculation columns', () => {
-  const placement = (width: number, height: number, phone = false) => returnsPlacement({ width, height, top: 74, bottom: 52, side: 4 }, { reserve: 352, phone });
-  for (const [width, height] of [[320,700], [390,844], [1000,910], [1280,1200]] as const) assert.equal(placement(width,height), 'sheet');
-  assert.equal(placement(1280,800), 'side');
-  assert.equal(placement(1140,800), 'side', 'columns may disappear while the complete mandala keeps its size');
-  assert.equal(placement(844,390,true), 'sheet', 'phones stay bottom sheets even in landscape');
-  for (let width = 700; width <= 2400; width += 25) for (let height = 390; height <= 1800; height += 25) {
-    if (placement(width,height) !== 'side') continue;
-    const options = { height, top: 74, bottom: 52, side: 4 };
-    const full = computeStudioLayout({ ...options, width });
-    const side = computeStudioLayout({ ...options, width: width - 352 });
-    close(side.scale, full.scale, `${width}×${height}: opening returns preserves map size`);
 
-  }
-});
 
 test('side panel placement stays stable when opening changes the canvas width', () => {
   const full = { width: 1280, height: 800 }, dataset: DOMStringMap = {};
@@ -568,17 +554,7 @@ test('side panel placement stays stable when opening changes the canvas width', 
 });
 
 
-test('return placement respects actual safe-area insets, including landscape notches', () => {
-  for (const width of [844,1100,1280,1440,1800] as const) for (const height of [390,690,824,910] as const) {
-    for (const insets of [{side:44,top:74,bottom:52},{side:60,top:112,bottom:98}] as const) {
-      const options={width,height,...insets};
-      if (returnsPlacement(options,{reserve:352}) !== 'side') continue;
-      const full=computeStudioLayout(options), side=computeStudioLayout({...options,width:width-352});
-      close(side.scale,full.scale,'actual safe-area preserves map size');
 
-    }
-  }
-});
 
 
 test('only visible chronicle dates require a second row; every mode shares one rail', () => {
@@ -636,12 +612,7 @@ test('studio reads real DOMRect dimensions, whose properties are not enumerable'
 });
 
 
-test('returns uses the user supplied narrow-window reference before the map becomes cramped', () => {
-  const options={width:1126,height:889,top:74,bottom:60,side:4};
-  assert.equal(returnsPlacement(options,{reserve:320}),'sheet');
-  assert.equal(returnsPlacement({...options,width:1127},{reserve:320}),'side');
-  assert.equal(returnsPlacement({...options,width:1400,height:1400},{reserve:320}),'sheet','tall windows must still protect the mandala scale');
-});
+
 
 
 test('a tall 924px window clips wide calculation edges to the available space and moves dates above', () => {
@@ -852,7 +823,7 @@ test('closing the keyboard on a zoomed page restores its prior viewport geometry
   close(parseFloat(h.values.get('--timeline-viewport-lift')!), 844 - viewport.height - 80, 'later page pan is not suppressed');
 });
 
-test('hidden period fields determine date placement without changing the shared rail or original styles', () => {
+test('hidden period fields determine date placement without changing the shared rail or original styles', t => {
   function node(hidden: boolean, initial: string | null = null) {
     let attribute = initial;
     const properties = new Map();
@@ -865,12 +836,28 @@ test('hidden period fields determine date placement without changing the shared 
       } } as unknown as CSSStyleDeclaration, properties };
   }
   const rect = { width: 700, height: 440 };
-  const studio = { dataset: {} as DOMStringMap, style: { setProperty() {} } as unknown as CSSStyleDeclaration, getBoundingClientRect: () => rect };
+  const fonts = new EventTarget(), frames = new Map<number, FrameRequestCallback>();
+  const originalRequest = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, 'cancelAnimationFrame');
+  globalThis.requestAnimationFrame = callback => { frames.set(1, callback); return 1; };
+  globalThis.cancelAnimationFrame = handle => { frames.delete(handle); };
+  t.after(() => {
+    if (originalRequest) Object.defineProperty(globalThis, 'requestAnimationFrame', originalRequest); else delete (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame;
+    if (originalCancel) Object.defineProperty(globalThis, 'cancelAnimationFrame', originalCancel); else delete (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame;
+  });
+  let metricChanged!: () => void, disconnected = false;
+  class Observer {
+    constructor(callback: () => void) { metricChanged = callback; }
+    observe() {}
+    disconnect() { disconnected = true; }
+  }
+  const studio = { ownerDocument: { fonts, defaultView: { ResizeObserver: Observer } }, dataset: {} as DOMStringMap, style: { setProperty() {} } as unknown as CSSStyleDeclaration, getBoundingClientRect: () => rect };
   const canvas = { parentElement: studio, dataset: {} as DOMStringMap, getBoundingClientRect: () => rect };
   const panel = Object.assign(node(true), { id: 'lifetimeControls' }) as ReturnType<typeof node> & { id: string; querySelector(): ReturnType<typeof node>; querySelectorAll(): { getBoundingClientRect(): { width: number } }[] };
   const heading = node(true, 'color: inherit');
-  let fieldWidth = 210, failMeasurement = false;
+  let fieldWidth = 210, failMeasurement = false, fieldReads = 0;
   const field = { getBoundingClientRect() {
+    fieldReads++;
     if (failMeasurement) throw new Error('measurement failed');
     const laidOut = (!panel.hidden || panel.properties.get('display') === 'block') &&
       (!heading.hidden || heading.properties.get('display') === 'flex');
@@ -884,6 +871,9 @@ test('hidden period fields determine date placement without changing the shared 
   panel.querySelectorAll = () => [field, field];
   const layout = createStudioLayout({ canvas: canvas as unknown as HTMLElement, panels: [panel as unknown as HTMLElement], media: { matches: false }, viewport: null,
     readStyle: () => ({ scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px' }) });
+  fieldReads = 0;
+  for (let i = 0; i < 12; i++) layout.refresh();
+  assert.equal(fieldReads, 0, 'unchanged hidden fields are not exposed and measured during canvas motion');
   const initialHome = layout.refresh();
   close(Number.parseFloat(panel.style.left), (700 - initialHome.columns.right + initialHome.columns.left) / 2, 'hidden wide dates cannot shorten or displace the centered Home calculation span');
   close(Number.parseFloat(panel.style.width), initialHome.columns.right - initialHome.columns.left, 'both calculation edges determine the rail');
@@ -901,13 +891,27 @@ test('hidden period fields determine date placement without changing the shared 
     assert.equal(panel.properties.has('visibility'), false);
   }
   fieldWidth = 140;
+  fonts.dispatchEvent(new Event('loadingdone'));
+  assert.ok(fieldReads > 0, 'loaded fonts invalidate date metrics');
   layout.refresh();
   assert.deepEqual([panel.style.left, panel.style.width, panel.style.top], initialRail, 'changing date font width changes only date placement, never rail length');
+  const beforeGeometry = fieldReads;
+  fieldWidth = 150; metricChanged();
+  assert.equal(fieldReads, beforeGeometry, 'geometry notifications measure outside resize delivery');
+  for (const callback of frames.values()) callback(0);
+  frames.clear();
+  assert.equal(fieldReads, beforeGeometry + 2, 'actual field geometry invalidates its metric');
   const originalPanelStyle = panel.getAttribute('style');
   failMeasurement = true;
+  rect.width += 1; // A changed studio width invalidates responsive date metrics.
   assert.throws(() => layout.refresh(), /measurement failed/);
   assert.equal(panel.getAttribute('style'), originalPanelStyle, 'even a failed measurement restores the exact style attribute');
   assert.equal(heading.getAttribute('style'), 'color: inherit');
+  layout.destroy();
+  assert.equal(disconnected, true);
+  const afterDestroy = fieldReads;
+  fonts.dispatchEvent(new Event('loadingdone'));
+  assert.equal(fieldReads, afterDestroy, 'destroy removes font invalidation');
 });
 
 test('Home stays centered when possible and rises only enough for the two-row footer', () => {

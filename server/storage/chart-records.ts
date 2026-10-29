@@ -13,7 +13,7 @@ function decode(row: Row | undefined): AccountChart | null {
 }
 
 /** SQL and physical records only. Authorization and mutation meaning belong to the service. */
-export function createChartRecordStorage(database: Database, migrateIdentifier: (id:string)=>string = id=>id) {
+export function createChartRecordStorage(database: Database, migrateIdentifier?: (id:string)=>string) {
   const sql = database.connection;
   sql.exec(`CREATE TABLE IF NOT EXISTS account_charts (
     id TEXT PRIMARY KEY, accountId INTEGER NOT NULL REFERENCES accounts(id),
@@ -24,6 +24,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier: 
     content TEXT NOT NULL,
     UNIQUE(accountId, nameKey, birthMinute)
   ) STRICT;
+  CREATE INDEX IF NOT EXISTS account_charts_account_id ON account_charts(accountId,id);
   CREATE TABLE IF NOT EXISTS account_chart_returns (
     chartId TEXT NOT NULL REFERENCES account_charts(id) ON DELETE CASCADE,
     action TEXT NOT NULL CHECK(action IN ('events','chart')),
@@ -40,22 +41,37 @@ export function createChartRecordStorage(database: Database, migrateIdentifier: 
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chart_operation_expiry ON chart_operation_outcomes(createdAt);`);
   // Issued addresses are never recycled after deletion.
-  sql.exec('CREATE TABLE IF NOT EXISTS chart_identifiers (id TEXT PRIMARY KEY) STRICT');
+  sql.exec(`CREATE TABLE IF NOT EXISTS chart_identifiers (id TEXT PRIMARY KEY) STRICT;
+    CREATE TABLE IF NOT EXISTS chart_storage_migrations (name TEXT PRIMARY KEY) STRICT;`);
   database.transaction(()=>{
-    sql.exec(`INSERT OR IGNORE INTO chart_identifiers SELECT id FROM account_charts;
-      INSERT OR IGNORE INTO chart_identifiers SELECT json_extract(outcome,'$.chartId')
-        FROM chart_operation_outcomes WHERE json_extract(outcome,'$.chartId') IS NOT NULL;`);
+    // Old backups have no marker and seed from both live records and durable outcomes.
+    // Old binaries ignore this additive table and retain their existing shortening behavior.
+    const applied=sql.prepare('SELECT 1 FROM chart_storage_migrations WHERE name=?');
+    const mark=sql.prepare('INSERT INTO chart_storage_migrations VALUES (?)');
+    if(!applied.get('issued_identifiers_v1')) {
+      sql.exec(`INSERT OR IGNORE INTO chart_identifiers SELECT id FROM account_charts;
+        INSERT OR IGNORE INTO chart_identifiers SELECT json_extract(outcome,'$.chartId')
+          FROM chart_operation_outcomes WHERE json_extract(outcome,'$.chartId') IS NOT NULL;`);
+      mark.run('issued_identifiers_v1');
+    }
+    if(!migrateIdentifier || applied.get('short_identifiers_v1'))return;
     const ids=(sql.prepare('SELECT id FROM chart_identifiers').all() as {id:string}[]).map(row=>row.id);
-    const targets=new Set<string>();
-    for(const id of ids){const next=migrateIdentifier(id);if(targets.has(next))throw Error('short_chart_id_collision');targets.add(next);}
-    const renamed=ids.filter(id=>migrateIdentifier(id)!==id);
-    if(!renamed.length)return;
-    sql.exec('PRAGMA defer_foreign_keys = ON');
-    const chart=sql.prepare('UPDATE account_charts SET id = ? WHERE id = ?');
-    const returns=sql.prepare('UPDATE account_chart_returns SET chartId = ? WHERE chartId = ?');
-    const outcomes=sql.prepare("UPDATE chart_operation_outcomes SET outcome = json_set(outcome,'$.chartId',?) WHERE json_extract(outcome,'$.chartId') = ?");
-    const issued=sql.prepare('UPDATE chart_identifiers SET id = ? WHERE id = ?');
-    for(const id of renamed){const next=migrateIdentifier(id);chart.run(next,id);returns.run(next,id);outcomes.run(next,id);issued.run(next,id);}
+    const targets=new Set<string>(),renamed:{id:string;next:string}[]=[];
+    for(const id of ids){
+      const next=migrateIdentifier(id);
+      if(targets.has(next))throw Error('short_chart_id_collision');
+      targets.add(next);if(next!==id)renamed.push({id,next});
+    }
+    if(renamed.length) {
+      sql.exec('PRAGMA defer_foreign_keys = ON');
+      const chart=sql.prepare('UPDATE account_charts SET id = ? WHERE id = ?');
+      const returns=sql.prepare('UPDATE account_chart_returns SET chartId = ? WHERE chartId = ?');
+      const outcomes=sql.prepare("UPDATE chart_operation_outcomes SET outcome = json_set(outcome,'$.chartId',?) WHERE json_extract(outcome,'$.chartId') = ?");
+      const issued=sql.prepare('UPDATE chart_identifiers SET id = ? WHERE id = ?');
+      for(const {id,next} of renamed){chart.run(next,id);returns.run(next,id);outcomes.run(next,id);issued.run(next,id);}
+    }
+    // The marker commits with the renames; a collision/crash leaves the migration retryable.
+    mark.run('short_identifiers_v1');
   });
   // Compile fixed SQL once per connection owner; each execution reads current rows.
   const statements = {
@@ -74,7 +90,10 @@ export function createChartRecordStorage(database: Database, migrateIdentifier: 
         WHERE chartId = ? AND action = ? AND body = ? AND eventUtc = ? AND calculationVersion = ? AND cyclesVersion = ?`),
     saveReturn: sql.prepare(`INSERT INTO account_chart_returns VALUES (?,?,?,?,?,?,?)
         ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET calculationVersion=excluded.calculationVersion,
-          cyclesVersion=excluded.cyclesVersion, content=excluded.content`),
+          cyclesVersion=excluded.cyclesVersion, content=excluded.content
+        WHERE account_chart_returns.calculationVersion IS NOT excluded.calculationVersion
+          OR account_chart_returns.cyclesVersion IS NOT excluded.cyclesVersion
+          OR account_chart_returns.content IS NOT excluded.content`),
     clearReturns: sql.prepare('DELETE FROM account_chart_returns WHERE chartId = ?'),
     clearOldReturns: sql.prepare('DELETE FROM account_chart_returns WHERE calculationVersion <> ? OR cyclesVersion <> ?'),
     outcome: sql.prepare('SELECT createdAt, outcome FROM chart_operation_outcomes WHERE accountId = ? AND operationId = ?'),

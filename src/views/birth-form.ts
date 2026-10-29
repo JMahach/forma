@@ -178,7 +178,10 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     if (!canCalculate()) $<HTMLButtonElement>('saveChartButton').disabled = true;
     $('saveChartButton').textContent = busy ? serverPending ? serverLabel : 'Рассчитываем…' : calculationMode === 'calculated' ? 'Рассчитать и сохранить' : 'Сохранить карту';
   }
+  let closedFormDiscarded = false;
   function discardClosedForm() {
+    if (closedFormDiscarded) return;
+    closedFormDiscarded = true;
     cancelRandom(); calculationController?.abort(); calculationController = undefined;
     cityController?.abort(); cityController = undefined; clearTimeout(cityTimer); citySequence++;
     selectedCity = null; cityResults = []; closeCityResults();
@@ -240,6 +243,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     }
     setCalculationMode(edit && c!.source !== 'calculated' ? 'manual' : 'calculated');
     beforeOpen();
+    closedFormDiscarded = false;
     $<HTMLDialogElement>('chartDialog').showModal();draftChanged();
   }
 

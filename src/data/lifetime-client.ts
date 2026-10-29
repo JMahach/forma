@@ -7,7 +7,7 @@ import type { TransitDay } from '../../shared/day-packets/transit-format.ts';
 import type { TransitDayClient } from './transit-day-client.ts';
 import type { TransitDayCache } from './transit-day-cache.ts';
 import type { NatalDayClient } from './natal-day-client.ts';
-import type { SharedRequest } from './shared-request.ts';
+import type { SharedRequest } from '../runtime/shared-request.ts';
 interface LifetimeClientOptions {
   fetch?: (url: string, options: RequestInit & { signal: AbortSignal }) => LifetimeResponse | PromiseLike<LifetimeResponse>;
   timeoutMs?: number;
@@ -26,7 +26,7 @@ import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
 import { LIFETIME_EXACT_VERSION } from '../../shared/lifetime-exact-format.ts';
 import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.ts';
 import { createTransitDayCache } from './transit-day-cache.ts';
-import { createAbortError, shareRequest } from './shared-request.ts';
+import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
 // Only completed days are reusable. A point or exact minute belongs to its
 // current view; independent visits use the server again without HTTP storage.

@@ -135,24 +135,26 @@ export function openJournalStore(options: JournalStoreOptions) {
     if(retained)for(const record of readSegment(name))insert(record,name);
   }
   function makeSpace(required:number) {
-    while(diskBytes()+bufferReserve(policy)+externalBytes+workspaceReserve(policy)+required>policy.maxBytes) {
+    let used=diskBytes();
+    while(used+bufferReserve(policy)+externalBytes+workspaceReserve(policy)+required>policy.maxBytes) {
       // Only this bounded eviction batch lives in memory, never the archive's complete set of IDs.
       const oldest=database.prepare('SELECT id,segment FROM events ORDER BY receivedAt,segment,offset LIMIT 128')
         .all() as unknown as {id:string;segment:string}[];
-      if(!oldest.length)return false;
+      if(!oldest.length)return null;
       const victims=new Map<string,Set<string>>();
       for(const row of oldest) {
         if(!victims.has(row.segment))victims.set(row.segment,new Set());
         victims.get(row.segment)!.add(row.id);
       }
       for(const [segment,ids] of victims)replaceSegment(segment,record=>!ids.has(eventKey(record.event)));
+      used=diskBytes();
     }
-    return true;
+    return used;
   }
-  function limitIndex() {
+  function limitIndex(used=diskBytes()) {
     // SQLite's page ceiling is logical. Keep any already allocated excess of
     // this index charged in `other` rather than granting that space twice.
-    const other=diskBytes()-fs.statSync(filename).size;
+    const other=used-fs.statSync(filename).size;
     const pages=Math.floor((policy.maxBytes-bufferReserve(policy)-externalBytes-other-policy.segmentBytes)/4096);
     if(pages<6)throw new Error('Journal budget exhausted');
     const actual=database.prepare(`PRAGMA max_page_count=${pages}`).get()?.max_page_count;
@@ -222,8 +224,9 @@ export function openJournalStore(options: JournalStoreOptions) {
         if(retentionStart(event,receivedAt)<=receivedAt-policy.retentionMs)return {status:'invalid',reason:'expired'};
         const checksum=digest(canonicalJSON({...event,receivedAt}));
         const bytes=Buffer.from(JSON.stringify({...event,receivedAt,checksum})+'\n');
-        if(!makeSpace(bytes.length))return {status:'retryable',reason:'journal_full'};
-        limitIndex();
+        const used=makeSpace(bytes.length);
+        if(used===null)return {status:'retryable',reason:'journal_full'};
+        limitIndex(used);
         const files=archive();let segment=files.at(-1);
         let offset=segment?fs.statSync(path.join(directory,segment)).size:0;
         const fresh=!segment || offset+bytes.length>policy.segmentBytes;
@@ -244,7 +247,7 @@ export function openJournalStore(options: JournalStoreOptions) {
           .get(now) as {segment:string}|undefined;
         const expired=next();
         if(expired)replaceSegment(expired.segment,record=>retentionStart(record.event,record.receivedAt)>now-policy.retentionMs);
-        if(!makeSpace(0))throw new Error('Journal reservation exceeds its budget');
+        if(makeSpace(0)===null)throw new Error('Journal reservation exceeds its budget');
         return {more:!!next()};
       } catch(error){failed=true;throw error;}
     },

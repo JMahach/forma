@@ -25,8 +25,9 @@ for (const entry of ['deploy/prepare-accounts', 'deploy/postfix/prepare']) {
     banner: { js: "import {createRequire as createBundleRequire} from 'node:module';const require=createBundleRequire(import.meta.url);" } });
   await save(`${entry}.mjs`, result.outputFiles[0]!.contents);
 }
-for (const name of ['install.py', 'control.py', 'receipt.py', 'linux.md']) {
+for (const name of ['install.py', 'control.py', 'receipt.py']) {
   await save(`deploy/postfix/${name}`, await readFile(new URL(name, import.meta.url)));
 }
+await save('README.md', await readFile(path.join(root, 'README.md')));
 await writeFile(path.join(output, 'SHA256SUMS'), manifest.join('\n') + '\n', { mode: 0o600, flag: 'wx' });
 console.log(`Prepared mail-only installation package: ${output}. No services, DNS or emails changed.`);

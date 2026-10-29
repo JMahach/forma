@@ -492,3 +492,25 @@ test('planet glyph and cycle ordinal have separate styling without changing the 
     }
   }
 });
+
+
+test('ready membership is linear per update and unchanged disabled states are untouched', () => {
+  const h = harness();
+  const events = Array.from({ length: 1336 }, (_, i) => ({ ...event(`moon-${i}`, 'moon', new Date(Date.parse(fromUtc) + i * 600000).toISOString()), cycle: i + 1 }));
+  const ids = events.map(value => value.id);
+  let reads = 0, writes = 0;
+  const readyEvents = new Proxy(ids, { get(target, key, receiver) { if (/^\d+$/.test(String(key))) reads++; return Reflect.get(target, key, receiver); } });
+  h.update({ events, readyEvents });
+  for (const button of h.buttons()) {
+    let disabled = button.disabled;
+    Object.defineProperty(button, 'disabled', { configurable: true, get: () => disabled, set(value) { disabled = value; writes++; } });
+  }
+  reads = 0;
+  h.update({ events, readyEvents });
+  assert.ok(reads <= events.length, `one linear readiness pass: ${reads}`);
+  assert.equal(writes, 0);
+  ids.pop();
+  h.update({ events, readyEvents });
+  assert.equal(writes, 1, 'in-place ready edits are observed');
+  assert.equal(h.buttons().at(-1)!.disabled, true);
+});

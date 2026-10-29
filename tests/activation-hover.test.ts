@@ -216,3 +216,48 @@ test('reduced-motion changes settle both movement and fades immediately', () => 
   assert.equal(h.animations.length, 3);
   h.controller.dispose(); assert.equal(h.animations[2].cancelled, true);
 });
+
+
+test('same-cell moves skip matrix reads while opacity and relative geometry stay current', () => {
+  const h = fixture(), target = h.left.targets[1], rect = target.querySelector('rect')!;
+  const targetMatrix = rect.getCTM.bind(rect), blockMatrix = h.left.block.getCTM.bind(h.left.block);
+  let reads = 0;
+  rect.getCTM = () => { reads++; return targetMatrix(); };
+  h.left.block.getCTM = () => { reads++; return blockMatrix(); };
+  h.move(target); reads = 0;
+  for (let i = 0; i < 100; i++) h.move(target);
+  assert.equal(reads, 0);
+  target.setAttribute('opacity', '.22'); h.move(target);
+  assert.equal(Number(h.highlight().getAttribute('opacity')), .22);
+  assert.equal(reads, 0, 'opacity has no geometry dependency');
+  rect.setAttribute('width', '76'); h.move(target);
+  assert.equal(h.highlight().getAttribute('width'), '76');
+  assert.equal(reads, 2, 'changed hit dimensions invalidate the current geometry');
+  target.parentElement!.setAttribute('transform', 'translate(32 180)');
+  rect.getCTM = () => { reads++; return { ...identity, e: 0, f: 180 } as DOMMatrix; };
+  h.move(target);
+  assert.equal(h.highlight().style.transform, 'translate(32px, 156px)');
+  assert.equal(reads, 4, 'changed row position is measured');
+  h.controller.clear(); h.move(target);
+  assert.equal(reads, 6, 'camera/column owners clearing hover invalidate its geometry');
+  h.controller.dispose();
+});
+
+
+test('camera and shared column transforms cannot stale local hover geometry', () => {
+  const h = fixture(), target = h.left.targets[1], rect = target.querySelector('rect')!;
+  h.move(target);
+  let reads = 0;
+  h.left.block.getCTM = () => { reads++; return { ...identity, a: 2, d: 2, e: 200, f: 300 } as DOMMatrix; };
+  rect.getCTM = () => { reads++; return { ...identity, a: 2, d: 2, e: 264, f: 636 } as DOMMatrix; };
+  h.left.block.setAttribute('transform', 'scale(2)');
+  h.root.setAttribute('style', 'transform:matrix(2,0,0,2,200,300)');
+  h.move(target);
+  assert.equal(reads, 0, 'shared camera/column movement cancels before measuring');
+  assert.equal(h.highlight().style.transform, 'translate(32px, 144px)');
+  rect.setAttribute('width', '76'); h.move(target);
+  assert.equal(reads, 2);
+  assert.equal(h.highlight().style.transform, 'translate(32px, 144px)');
+  assert.equal(h.highlight().getAttribute('width'), '76');
+  h.controller.dispose();
+});

@@ -95,3 +95,38 @@ test('real version and window transitions still notify peers, prune old data and
   assert.deepEqual(await b.setTransitWindow(window, { expectedVersions: versions }), { status: 'stale' });
   assert.equal(changes, 2);
 });
+
+test('steady status and catalogue reads use readonly transactions, while cache hits still touch LRU atomically', async t => {
+  const { a } = await fixture(t);
+  const { IDBDatabase } = await import('fake-indexeddb');
+  const transaction = IDBDatabase.prototype.transaction;
+  const modes: IDBTransactionMode[] = [];
+  t.mock.method(IDBDatabase.prototype, 'transaction', function(this: IDBDatabase, stores: string[], mode: IDBTransactionMode, ...rest: []) {
+    modes.push(mode); return transaction.call(this, stores, mode, ...rest);
+  });
+  for (let i = 0; i < 10; i++) await a.status();
+  assert.equal(modes.filter(mode => mode === 'readwrite').length, 0);
+  modes.length = 0;
+  for (let i = 0; i < 10; i++) await a.catalogue('natal');
+  assert.equal(modes.filter(mode => mode === 'readwrite').length, 0);
+  modes.length = 0;
+  await a.get('natal', 'current');
+  assert.ok(modes.includes('readwrite'));
+});
+
+test('removing absent data succeeds without rewriting control or notifying peers', async t => {
+  const { a, b } = await fixture(t), before = await a.status();
+  let writes = 0, changes = 0;
+  const put = IDBObjectStore.prototype.put;
+  t.mock.method(IDBObjectStore.prototype, 'put', function(this: IDBObjectStore, ...args: Parameters<typeof put>) {
+    if (this.name === 'control') writes++;
+    return put.apply(this, args);
+  });
+  b.subscribe(() => changes++);
+  for (let i = 0; i < 10; i++) assert.equal(await a.remove('natal', 'absent'), true);
+  assert.equal(writes, 0); assert.equal(changes, 0);
+  assert.deepEqual(await a.status(), before);
+  assert.equal(await a.remove('natal', 'current'), true);
+  assert.equal(writes, 1); assert.equal(changes, 1);
+  assert.equal(await b.get('natal', 'current'), null);
+});

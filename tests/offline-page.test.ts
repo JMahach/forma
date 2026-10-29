@@ -158,3 +158,30 @@ test('dispose removes observation of existing and newly discovered workers',asyn
  await f.page.check();await settle();assert.equal(f.calls.length,0);assert.equal(f.reloads,0);assert.equal(f.held,0);
  for(const worker of [active,waiting,installing])assert.equal(getEventListeners(worker,'statechange').length,0);
 });
+
+test('replaced workers detach their state listeners while current workers and a prepared handshake remain observed', async t => {
+ const f=fixture();t.after(()=>f.page.dispose());const workers:any[]=[];
+ for(let i=0;i<30;i++){
+  const worker=f.worker(next);workers.push(worker);f.registration.installing=worker;
+  f.registration.dispatchEvent(new Event('updatefound'));
+ }
+ assert.equal(workers.slice(0,-1).filter(worker=>getEventListeners(worker,'statechange').length).length,0);
+ assert.equal(getEventListeners(workers.at(-1),'statechange').length,1);
+ const preparing=f.worker(next);f.registration.waiting=preparing;f.registration.dispatchEvent(new Event('updatefound'));
+ assert.equal((await f.ask('prepare-tab','kept',next,preparing)).ready,true);
+ f.registration.waiting=f.worker(next);f.registration.dispatchEvent(new Event('updatefound'));
+ assert.equal(getEventListeners(preparing,'statechange').length,1,'an active preparation still owns its worker');
+ f.events.dispatchEvent(new Event('pagehide'));
+ assert.equal(getEventListeners(preparing,'statechange').length,0);
+ f.page.dispose();assert.equal(getEventListeners(workers.at(-1),'statechange').length,0);
+});
+
+test('a replaced worker stays observed only until its active status exchange finishes',async t=>{
+ const f=fixture();t.after(()=>f.page.dispose());let reply!:MessagePort;
+ const pending=Object.assign(f.worker(old),{postMessage(_data:unknown,ports:MessagePort[]){reply=ports[0];}});
+ f.registration.active=f.container.controller=pending;const checking=f.page.check();
+ f.registration.active=f.container.controller=f.worker(old);f.registration.dispatchEvent(new Event('updatefound'));
+ assert.equal(getEventListeners(pending,'statechange').length,1);
+ reply.postMessage({type:'forma-offline',action:'status',ready:false});await checking;
+ assert.equal(getEventListeners(pending,'statechange').length,0);
+});

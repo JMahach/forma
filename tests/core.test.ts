@@ -1,11 +1,9 @@
+import { INTEGRATION_ARMS } from '../src/scene/geometry/drawing-geometry.ts';
 import { integrationArmMarkup } from './helpers/integration-markup.ts';
 import type { SavedChart, Activation } from '../shared/chart-types.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  parseGates, validateLibraryChart,
-  readCharts, writeChartChanges, STORAGE_KEY, TRASH_KEY, CHART_DELETED_PREFIX, deleteChart
-} from './fixtures/storage.ts';
+import { normalizeTemporaryChart } from '../src/domain/temporary-chart.ts';
 import { zoomAt, validView, fitView, MAX_ZOOM } from '../src/scene/camera.ts';
 import { attachGestures } from './fixtures/gesture-harness.ts';
 import { DRAWING_BOUNDS } from '../src/scene/geometry/frames.ts';
@@ -31,107 +29,43 @@ const exampleChart = <T extends object = Record<never, never>>(extra: T = {} as 
   ...extra
 });
 
-function createMemoryStorage() {
-  const entries = new Map<string, string>();
-  return { get length() { return entries.size; }, key: (index: number) => [...entries.keys()][index] ?? null,
-    getItem: (key: string) => entries.get(key) ?? null, setItem: (key: string, value: string) => entries.set(key, value), removeItem: (key: string) => entries.delete(key) };
-}
-
-test('permanent deletion removes only the selected card without creating a recovery copy', () => {
-  const storage = createMemoryStorage();
-  const charts = [validateLibraryChart(exampleChart()), validateLibraryChart(exampleChart({ id: 'other', name: 'Другая' }))];
-  writeChartChanges(storage, charts, []);
-  const removed = deleteChart(storage, charts, 'chart-test');
-  assert.deepEqual(removed.map(c => c.id), ['other']);
-  assert.deepEqual(readCharts(storage), [charts[1]]);
-  assert.equal(storage.getItem(TRASH_KEY), null);
-  assert.throws(() => deleteChart(storage, charts, 'missing'));
-  assert.throws(() => deleteChart(storage, [exampleChart({ id: 'current-transit' })], 'current-transit'));
-});
-
-test('permanent deletion commits its tombstone before cleanup and preserves live data when that commit fails', () => {
-  const values = new Map<string, string>();
-  let failKey: string|null = null;
-  const storage = { get length() { return values.size; }, key: (index: number) => [...values.keys()][index] ?? null,
-    getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { if (key === failKey) throw new Error('full'); values.set(key, value); } };
-  const charts = [validateLibraryChart(exampleChart())];
-  storage.setItem(STORAGE_KEY, JSON.stringify(charts));
-  storage.setItem(TRASH_KEY, JSON.stringify(charts));
-  failKey = `${CHART_DELETED_PREFIX}chart-test`;
-  assert.throws(() => deleteChart(storage, charts, 'chart-test'));
-  assert.deepEqual(readCharts(storage), charts);
-  failKey = TRASH_KEY;
-  const warnings: string[] = [];
-  assert.deepEqual(deleteChart(storage, charts, 'chart-test', message => warnings.push(message)), []);
-  assert.deepEqual(readCharts(storage), []);
-  assert.deepEqual(readCharts(storage, TRASH_KEY), charts, 'failed historical cleanup remains explicit');
-  assert.match(warnings[0], /не удалось очистить/);
-  failKey = null;
-  deleteChart(storage, charts, 'chart-test');
-  assert.deepEqual(readCharts(storage), []);
-  assert.deepEqual(readCharts(storage, TRASH_KEY), []);
-});
-
-test('gate input accepts supported separators and sorts unique gate numbers', () => {
-  assert.deepEqual(parseGates(' 64, 37; 40\n1\t37 01 '), [1, 37, 40, 64]);
-  assert.deepEqual(parseGates(''), []);
-  assert.deepEqual(parseGates('  \n\t '), []);
-  assert.deepEqual(parseGates('1 64'), [1, 64]);
-});
-
-test('gate input rejects out-of-range, non-integer, and non-numeric tokens', () => {
-  for (const input of ['0', '65', '-1', '1.2', '1e1', 'NaN', 'Infinity', '2foo', '37/40', '001', '1, 65', '<script>'] as const) {
-    assert.throws(() => parseGates(input), Error, input);
-  }
-});
-
-test('chart storage preserves Unicode and script-looking strings as data', () => {
-  const storage = createMemoryStorage();
-  const original = exampleChart();
-  writeChartChanges(storage, [original], []);
-  const [roundtrip] = readCharts(storage);
-  assert.deepEqual(roundtrip, validateLibraryChart(original));
+test('chart validation preserves Unicode and script-looking strings as data', () => {
+  const original = { ...calculatedChart(), name: exampleChart().name, note: exampleChart().note };
+  const roundtrip = normalizeTemporaryChart(original);
+  assert.ok(roundtrip);
+  assert.deepEqual(roundtrip, normalizeTemporaryChart(original));
   assert.equal(roundtrip.name, original.name);
   assert.equal(roundtrip.note, original.note);
-  assert.deepEqual(roundtrip.personality, [1, 22, 37]);
+  assert.deepEqual(roundtrip.personality, original.personality);
 });
 
 test('chart validation deduplicates activations and rejects invalid numbers', () => {
-  for (const invalid of [undefined, null, [], {}] as const) assert.throws(() => validateLibraryChart(invalid), Error);
-  assert.deepEqual(validateLibraryChart(exampleChart({ personality: [37, 1, 37] })).personality, [1, 37]);
+  for (const invalid of [undefined, null, [], {}, exampleChart(), { ...calculatedChart(), source: 'manual' }] as const) assert.equal(normalizeTemporaryChart(invalid), null);
+  for (const id of [null, '', 'demo', 'current-transit', 'bad id', 'x'.repeat(81)] as const) assert.equal(normalizeTemporaryChart({ ...calculatedChart(), id }), null);
+  assert.equal(normalizeTemporaryChart(calculatedChart())?.id, 'calculated-test');
+  const original = calculatedChart();
+  assert.deepEqual(normalizeTemporaryChart({ ...original, personality: [...original.personality, ...original.personality] })?.personality, original.personality);
   for (const key of ['personality', 'design'] as const) {
     for (const values of [null, '37, 40', {}, [0], [65], [-1], [1.5], ['37'], [NaN], [Infinity]] as const) {
-      assert.throws(() => validateLibraryChart(exampleChart({ [key]: values })), Error);
+      assert.equal(normalizeTemporaryChart({ ...calculatedChart(), [key]: values }), null);
     }
   }
 });
 
 test('chart limits reject oversized input; bounded note fields are trimmed', () => {
-  assert.throws(() => validateLibraryChart(exampleChart({ name: 'я'.repeat(81) })), Error);
-  assert.throws(() => validateLibraryChart(exampleChart({ name: ' \n ' })), Error);
+  assert.equal(normalizeTemporaryChart({ ...calculatedChart(), name: 'я'.repeat(81) }), null);
+  assert.equal(normalizeTemporaryChart({ ...calculatedChart(), name: ' \n ' }), null);
   for (const key of ['personality', 'design'] as const) {
-    assert.throws(() => validateLibraryChart(exampleChart({ [key]: Array(65).fill(1) })), Error);
+    assert.equal(normalizeTemporaryChart({ ...calculatedChart(), [key]: Array(65).fill(1) }), null);
   }
-  const chart = validateLibraryChart(exampleChart({ name: 'я'.repeat(80), note: 'н'.repeat(2100), birthPlace: 'м'.repeat(130) }));
+  const chart = normalizeTemporaryChart({ ...calculatedChart(), name: 'я'.repeat(80), note: 'н'.repeat(2100), birthPlace: 'м'.repeat(130) });
+  assert.ok(chart);
   assert.equal(chart.name.length, 80);
   assert.equal(chart.note.length, 2000);
   assert.equal(chart.birthPlace.length, 120);
 });
 
-test('legacy chart library reads valid data and preserves corrupt or oversized source data while reporting it', () => {
-  const entries = new Map<string, string>();
-  const storage = { getItem: (key: string) => entries.get(key) ?? null, setItem: (key: string, value: string) => entries.set(key, value) };
-  assert.deepEqual(readCharts(storage), []);
-  storage.setItem(STORAGE_KEY, JSON.stringify([exampleChart()]));
-  assert.deepEqual(readCharts(storage), [validateLibraryChart(exampleChart())]);
-  for (const content of ['{invalid', 'null', '{}', '[null]', '[{}]', '[[]]', JSON.stringify(Array(501).fill(exampleChart()))] as const) {
-    storage.setItem(STORAGE_KEY, content);
-    const invalid = [];
-    assert.deepEqual(readCharts(storage, STORAGE_KEY, key => invalid.push(key)), []);
-    assert.ok(invalid.length > 0);
-    assert.equal(storage.getItem(STORAGE_KEY), content, 'read failure never replaces its source');
-  }
-});
+
 
 test('zoom keeps the graph point beneath its anchor invariant', () => {
   const before = { x: -45, y: 130, k: 1.4 };
@@ -444,6 +378,11 @@ test('demo renders all 64 gates, nine centers and 36 channels as keyboard-operab
   assert.deepEqual(interactiveGroups(markup, 'gate').map(group => Number(group.id)).sort((a, b) => a - b), Array.from({ length: 64 }, (_, i) => i + 1));
 });
 
+function highlightedIntegrationArms(markup: string) {
+  const path = markup.match(/<path class="bg-integration-selection" d="([^"]+)"/)?.[1] || '';
+  return INTEGRATION_ARMS.filter(arm => path.includes(arm.path)).map(arm => arm.gate);
+}
+
 test('gate selection highlights only that gate and its own channel halves, including integration', () => {
   for (const { id } of GATES) {
     const markup = renderBodygraph(DEMO_CHART, { type: 'gate' as const, id });
@@ -455,7 +394,7 @@ test('gate selection highlights only that gate and its own channel halves, inclu
     assert.deepEqual(new Set(relatedChannels), new Set(CHANNELS.filter(channel => channel.gates.includes(id)).map(channel => channel.id)));
     assert.ok(interactiveGroups(markup, 'channel').every(group => /aria-pressed="false"/.test(group.attributes)));
     const halfGates = [...markup.matchAll(/data-highlight-gate="(\d+)"/g)].map(match => Number(match[1]));
-    const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+    const arms = highlightedIntegrationArms(markup);
     if ([10, 20, 34, 57].includes(id)) {
       assert.deepEqual(arms, [id]);
       assert.deepEqual(halfGates, []);
@@ -476,7 +415,7 @@ test('center selection highlights only its own gates and their channel halves', 
     const halfGates = [...markup.matchAll(/data-highlight-gate="(\d+)"/g)].map(match => Number(match[1]));
     const ordinaryGates = expected.filter(id => ![10, 20, 34, 57].includes(id));
     assert.deepEqual(new Set(halfGates), new Set(ordinaryGates), `${center.id} ordinary halves`);
-    const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+    const arms = highlightedIntegrationArms(markup);
     assert.deepEqual(new Set(arms), new Set(expected.filter(id => [10, 20, 34, 57].includes(id))), `${center.id} integration branches`);
     for (const [, gateId, path] of markup.matchAll(/data-highlight-gate="(\d+)"><path d="([^"]+)"/g)) {
       const gate = getGate(Number(gateId));
@@ -493,7 +432,7 @@ test('channel selection highlights the full connection and both gates, not other
     assert.deepEqual(new Set(related), new Set(channel.gates), channel.id);
     assert.deepEqual(interactiveGroups(markup, 'channel').filter(group => /data-related="true"/.test(group.attributes)).map(group => group.id), [channel.id]);
     if (channel.gates.every(id => [10, 20, 34, 57].includes(id))) {
-      const arms = [...markup.matchAll(/data-arm="(\d+)" data-related="true"/g)].map(match => Number(match[1]));
+      const arms = highlightedIntegrationArms(markup);
       assert.deepEqual(new Set(arms), new Set(channel.gates));
     } else {
       assert.ok(markup.includes(`d="${channel.path}" fill="none" stroke="#83a9d2" stroke-width="16.06"`));
@@ -518,7 +457,7 @@ test('integration selection outlines sit above ordinary channels and below their
     assert.ok(integration.indexOf(halo![0]) > integration.indexOf('data-type="channel" data-id="26-44"'), 'selected outline is above the ordinary crossing');
     assert.ok(integration.indexOf(halo![0]) > integration.indexOf('class="bodygraph-integration-outlines"'), 'selected blue covers the original physical outlines');
     assert.ok(integration.indexOf(halo![0]) < integration.indexOf('stroke="#ffffff"', bundleStart), 'semantic white interiors stay above selected blue');
-    assert.ok(integration.indexOf(halo![0]) < integration.indexOf('class="bg-integration-arm"'), 'selected outline is below all branches');
+    assert.ok(integration.indexOf(halo![0]) < integration.indexOf('class="bodygraph-integration-paint"'), 'selected outline is below all branches');
     const maskId = selection.type === 'integration' ? 'integration-outline' : 'integration-selection-outline';
     assert.ok(halo![0].includes(`mask="url(#bodygraph-${maskId})"`), 'the lower outline retains its exterior ownership mask');
     for (const gate of [20, 10, 34, 57] as const) {
@@ -585,7 +524,7 @@ test('only a background tap clears selection; dragging, pinching and cancelled p
   send('pointerdown'); send('pointermove', { clientX: 140 }); send('pointerup', { clientX: 140 });
   assert.equal(cleared, 1);
   assert.equal(controls.getView().x, 0, 'the fitted camera does not pan at 100%');
-  controls.zoom(2);
+  controls.zoomAt({ x: 320, y: 410 }, 2);
   const zoomedX = controls.getView().x;
   send('pointerdown'); send('pointermove', { clientX: 140 }); send('pointerup', { clientX: 140 });
   assert.equal(controls.getView().x, zoomedX + 40, 'panning is available above 100%');
@@ -736,28 +675,25 @@ function calculatedChart(): SavedChart & { activations: { personality: Activatio
   });
 }
 
-test('calculated chart storage retains both activation streams and calculation provenance', () => {
-  const storage = createMemoryStorage();
+test('calculated chart validation retains both activation streams and calculation provenance', () => {
   const original = calculatedChart();
-  writeChartChanges(storage, [original], []);
-  const [roundtrip] = readCharts(storage);
+  const roundtrip = normalizeTemporaryChart(original);
+  assert.ok(roundtrip);
   for (const key of ['source', 'personality', 'design', 'activations', 'timezone', 'utc', 'utcOffset', 'fold', 'designUtc', 'cityId', 'city', 'engine', 'ephemeris', 'timezoneDatabase', 'nodeModel', 'zodiac', 'designArcResidualDegrees', 'verification'] as const) {
     assert.deepEqual(roundtrip[key], original[key], `preserve ${key}`);
   }
-  assert.equal(writeChartChanges(storage, [roundtrip], [roundtrip]), 0);
-  assert.deepEqual(readCharts(storage), [roundtrip], 'repeated saves remain stable');
+  assert.deepEqual(normalizeTemporaryChart(roundtrip), roundtrip, 'repeated validation remains stable');
 });
 
-test('transit chart storage keeps its source and absence of design activations', () => {
-  const storage = createMemoryStorage();
+test('transit chart validation keeps its source and absence of design activations', () => {
   const original = calculatedChart();
   Object.assign(original, {
     source: 'transit' as const, name: 'Текущий момент', design: [], designUtc: null, designArcResidualDegrees: null,
     city: null, cityId: null, timezone: 'UTC', utcOffset: 'UTC+00:00'
   });
   original.activations.design = [];
-  writeChartChanges(storage, [original], []);
-  const [roundtrip] = readCharts(storage);
+  const roundtrip = normalizeTemporaryChart(original);
+  assert.ok(roundtrip);
   assert.equal(roundtrip.source, 'transit');
   assert.deepEqual(roundtrip.design, []);
   assert.deepEqual(roundtrip.activations, original.activations);
@@ -773,20 +709,20 @@ test('calculated chart validation rejects invalid activation records', () => {
   ] as const) {
     const chart = calculatedChart();
     Object.assign(chart.activations.personality[0], invalid);
-    assert.throws(() => validateLibraryChart(chart), Error, JSON.stringify(invalid));
+    assert.equal(normalizeTemporaryChart(chart), null, JSON.stringify(invalid));
   }
   for (const invalid of [null, {}, '33.3', []] as const) {
     const chart = calculatedChart();
     chart.activations.personality = invalid as unknown as Activation[];
-    assert.throws(() => validateLibraryChart(chart), Error);
+    assert.equal(normalizeTemporaryChart(chart), null);
   }
 });
 
 test('calculated chart validation rejects duplicate planets and gates inconsistent with activation details', () => {
   const duplicate = calculatedChart();
   duplicate.activations.personality[1] = { ...duplicate.activations.personality[0] };
-  assert.throws(() => validateLibraryChart(duplicate), Error);
+  assert.equal(normalizeTemporaryChart(duplicate), null);
   const inconsistent = calculatedChart();
   inconsistent.personality = [1];
-  assert.throws(() => validateLibraryChart(inconsistent), Error);
+  assert.equal(normalizeTemporaryChart(inconsistent), null);
 });

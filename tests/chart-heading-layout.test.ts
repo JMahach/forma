@@ -162,7 +162,7 @@ test('appearing navigation buttons trigger an actual fit check', () => {
   h.setButtons(3);
   h.resize();
   assert.equal(h.header.dataset.captionPlacement, 'top');
-  for (const element of [h.header, h.title, h.subtitle, h.leftControls, h.rightControls, h.canvas] as const) {
+  for (const element of [h.header, h.title, h.subtitle, h.leftControls, h.rightControls] as const) {
     assert.ok(h.observed.has(element));
   }
 });
@@ -514,4 +514,15 @@ test('resize delivery never mutates observed caption geometry and coalesces to t
   h.notifyResize(); h.flushFrames(); assert.equal(h.header.style.getPropertyValue('--caption-width'), after, 'stable measurements converge');
   h.canvas.rect.width = 700; h.notifyResize(); h.layout.destroy(); h.flushFrames();
   assert.equal(h.header.style.getPropertyValue('--caption-width'), after, 'destroy cancels queued measurements');
+});
+
+
+test('canvas fitting belongs to the studio cycle while heading keeps control and text observers', () => {
+  const h = harness();
+  assert.equal(h.observed.has(h.canvas), false);
+  for (const element of [h.leftControls, h.rightControls, h.title, h.subtitle, h.header, h.content]) assert.equal(h.observed.has(element), true);
+  h.canvas.rect.width = 400;
+  h.setButtons(3);
+  h.layout.refresh();
+  assert.equal(h.header.dataset.captionPlacement, 'below');
 });

@@ -151,8 +151,12 @@ export function openMailBuffer({filename: requestedFilename, now = Date.now}: {f
       } catch { return false; }
     },
     maintain() {
-      return transaction(() => database.prepare('DELETE FROM pending WHERE occurredAt <= ?')
-        .run(clock() - JOURNAL_POLICY.retentionMs).changes);
+      if (closed) throw new Error('Mail buffer is closed');
+      physicalUsage();
+      const cutoff = clock() - JOURNAL_POLICY.retentionMs;
+      // The single connection owner cannot gain an expired row between this read and deletion.
+      if (!database.prepare('SELECT 1 FROM pending WHERE occurredAt <= ? LIMIT 1').get(cutoff)) return 0;
+      return transaction(() => database.prepare('DELETE FROM pending WHERE occurredAt <= ?').run(cutoff).changes);
     },
     usage() {
       return {...physicalUsage(), records: closed ? 0 : Number(database.prepare('SELECT count(*) AS n FROM pending').get()!.n)};

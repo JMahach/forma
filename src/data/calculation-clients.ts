@@ -6,7 +6,7 @@ import { createTransitDayCache } from './transit-day-cache.ts';
 import { createTransitDayClient } from './transit-day-client.ts';
 import { createNatalDayClient, type NatalDayClient } from './natal-day-client.ts';
 import { createCyclesClient, type CyclesClient } from './cycles-client.ts';
-import { createAbortError } from './shared-request.ts';
+import { createAbortError } from '../runtime/shared-request.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 
 type Options = {
@@ -31,6 +31,7 @@ function privateMemory(memory:MemoryCache) {
     get<T>(key:PropertyKey){return open?memory.get<T>(key):null;},
     put<T>(key:PropertyKey,value:T,size?:number){return open?memory.put(key,value,size):value;},
     delete(key:PropertyKey){if(open)memory.delete(key);},
+    keys(prefix:string){return open?memory.keys(prefix):[];},
     retain<T>(key:PropertyKey,value:T,size?:number){return open?memory.retain(key,value,size):()=>{};},
     clearExcept(prefix:string){if(open)memory.clearExcept(prefix);},
     get bytes(){return open?memory.bytes:0;},get size(){return open?memory.size:0;},
@@ -107,6 +108,8 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
     retainDay(day){const owner=natalOwners.get(day);return owner && !owner.generation.closed?owner.client.retainDay(day):()=>{};},
   };
   const cycles:CyclesClient={
+    preparedChartInputs(input,options){const value=current,client=value.clients.cycles;
+      return run(value,options?.signal,signal=>client.preparedChartInputs(input,{signal}));},
     close(){current.clients.cycles.close();},
     syncPrepared(input,owner,signal){const value=current,client=value.clients.cycles;
       return run(value,signal,signal=>client.syncPrepared(input,owner,signal));},

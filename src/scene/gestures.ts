@@ -133,7 +133,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
       if (!pointers.size) initialTarget.focus?.({ preventScroll: true });
     }
     if (event.target === surface) {
-      // The loading surface owns keyboard zoom until the real SVG becomes
+      // The loading surface owns keyboard focus until the real SVG becomes
       // interactive. Ready charts retain their existing selection focus.
       event.preventDefault();
       (svg.inert ? surface : svg).focus?.({ preventScroll: true });
@@ -231,10 +231,9 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
     const event = raw as KeyboardEvent;
     const target = (event.target as Element).closest<HTMLElement | SVGElement>('[data-type]');
     if (target && ['Enter', ' '].includes(event.key)) { event.preventDefault(); selectTarget(target, Boolean(event.shiftKey), event); }
-    if ((event.target === svg || event.target === surface) && ['+', '-', '0'].includes(event.key)) {
+    if ((event.target === svg || event.target === surface) && event.key === '0') {
       event.preventDefault();
-      if (event.key === '0') camera.reset();
-      else camera.zoom(event.key === '+' ? 1.25 : 0.8);
+      camera.reset();
     }
   }
   svg.addEventListener('keydown', keydown);

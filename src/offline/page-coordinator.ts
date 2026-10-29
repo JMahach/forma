@@ -19,14 +19,17 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
  function releaseReload(){if(reloadTimer!==null)clearTimeout(reloadTimer);reloadTimer=null;reloadRelease?.();reloadRelease=null;}
  function navigationHidden(){releasePreparation();releaseReload();}
  function navigationShown(){releaseReload();reloading=false;void refresh();}
- const pending=new Set<()=>void>(),observedWorkers=new Set<ServiceWorker>();
- function releasePreparation(){if(!prepared)return;const old=prepared;prepared=null;clearTimeout(old.timer);old.release();}
+ const pending=new Set<()=>void>(),observedWorkers=new Set<ServiceWorker>(),askingWorkers=new Map<ServiceWorker,number>();
+ function releasePreparation(){if(!prepared)return;const old=prepared;prepared=null;clearTimeout(old.timer);old.release();observeWorkers();}
  function known(worker:ServiceWorker|null){return !!worker&&[registration.waiting,registration.active,serviceWorker.controller].includes(worker);}
  function ask(worker:ServiceWorker,data:OfflineCommand):Promise<Reply|null>{
   return new Promise(resolve=>{
+   askingWorkers.set(worker,(askingWorkers.get(worker)??0)+1);observeWorkers();
    const channel=new MessageChannel();let done=false;
    const finish=(value:Reply|null)=>{if(done)return;done=true;clearTimeout(timer);pending.delete(cancel);
-    channel.port1.close();channel.port2.close();resolve(value);};
+    channel.port1.close();channel.port2.close();
+    const waiting=askingWorkers.get(worker)!-1;if(waiting)askingWorkers.set(worker,waiting);else askingWorkers.delete(worker);
+    observeWorkers();resolve(value);};
    const cancel=()=>finish(null),timer=setTimeout(cancel,timeoutMs);pending.add(cancel);
    channel.port1.onmessage=event=>{
     const reply=event.data as Reply|null;
@@ -128,7 +131,9 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
   if(disposed)return;
   // An uncontrolled page may already have a waiting/active worker at attach.
   // Its activation need not produce controllerchange for this page.
-  for(const worker of [registration.installing,registration.waiting,registration.active,serviceWorker.controller]){
+  const current=new Set([registration.installing,registration.waiting,registration.active,serviceWorker.controller,prepared?.worker,...askingWorkers.keys()]);
+  for(const worker of observedWorkers)if(!current.has(worker)){worker.removeEventListener('statechange',wake);observedWorkers.delete(worker);}
+  for(const worker of current){
    if(!worker||observedWorkers.has(worker))continue;
    observedWorkers.add(worker);worker.addEventListener('statechange',wake);
   }

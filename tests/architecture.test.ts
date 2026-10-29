@@ -183,8 +183,8 @@ test('page layout owns placement without importing scene, feature state or views
 });
 
 test('state and data do not depend on feature views, page layout or drawing', () => {
-  for (const file of files('src/state')) only(file, ['src/state/', 'src/data/', 'src/domain/', 'shared/']);
-  for (const file of files('src/data')) only(file, ['src/data/', 'src/domain/', 'shared/']);
+  for (const file of files('src/state')) only(file, ['src/state/', 'src/data/', 'src/domain/', 'src/runtime/shared-request.ts', 'shared/']);
+  for (const file of files('src/data')) only(file, ['src/data/', 'src/domain/', 'src/runtime/shared-request.ts', 'shared/']);
   only('src/ui/studio-presentation.ts', []);
   pure('src/ui/studio-presentation.ts');
 });

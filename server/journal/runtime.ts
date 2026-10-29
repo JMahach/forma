@@ -33,12 +33,14 @@ export function createJournalRuntime({directory,environment,clientReservedBytes=
    let removed=0;
    try{
     const events=await buffer.batch();
-    for(const event of events) {
-     if(closed)break;
+    // The durable buffer bounds this batch. Admit it together so the writer can
+    // use its bounded worker batch; acknowledge each exact event only after its own ACK.
+    const results=await Promise.allSettled(events.map(async event=>{
+     if(closed)return false;
      const result=await writer.write(event);
-     if(closed)break;
-     if(result.status==='accepted' && await buffer.acknowledge(event))removed++;
-    }
+     return !closed && result.status==='accepted' && await buffer.acknowledge(event);
+    }));
+    removed=results.filter(result=>result.status==='fulfilled' && result.value).length;
    }catch{/* Diagnostics cannot break account or mail work. */}
    return removed;
   })();

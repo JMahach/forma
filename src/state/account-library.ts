@@ -18,7 +18,14 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
   let version = calculationVersion, controller = new AbortController(), loading: Promise<void> | null = null;
   let removals = {pending: new Map<string, Promise<void>>(), tail: Promise.resolve()};
   const listeners = new Set<() => void>();
-  const emit = () => { for (const listener of listeners) listener(); };
+  const observable = () => [charts, ownerId, available, version, current?.accountId, current?.sessionId, lease?.generation];
+  let published = observable();
+  const emit = (durableChanged = false) => {
+    const next = observable();
+    if (!durableChanged && next.every((value, index) => value === published[index])) return;
+    published = next;
+    for (const listener of listeners) listener();
+  };
   function retainList(next: AccountChart[]) {
     if (next.length !== charts.length || next.some((chart, index) => chart !== charts[index])) charts = next;
   }
@@ -29,7 +36,7 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
   function check(seen: number) { if (closed || seen !== generation) throw failed('account_changed'); }
   async function readLocal(valid: () => void, accountId = current?.accountId) {
     const snapshot = await storage.read(); valid();
-    if (!snapshot) { available = false; return false; }
+    if (!snapshot) { available = false; emit(); return false; }
     available = true;
     if (accountId && snapshot.lease?.accountId !== accountId) {
       invalidate(); lease = null; ownerId = null; charts = []; emit(); return false;
@@ -51,9 +58,11 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
   async function accept(values: readonly AccountChart[], seen: number, expectedLease: LibraryLease | null) {
     check(seen);
     if (values.some(chart => chart.accountId !== ownerId)) throw failed('account_changed');
+    let durableChanged = false;
     if (expectedLease) {
       const result = await storage.put(expectedLease, values); check(seen);
       if (result.status === 'stale') { await refreshLocal(); throw failed('account_changed'); }
+      durableChanged = (result.status === 'stored' || result.status === 'partial') && result.changed !== false;
       available = result.status === 'stored';
       if (result.status === 'partial' || result.status === 'stored' && result.pressure) backgroundStopped = true;
     }
@@ -61,7 +70,8 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
     for (const chart of values) {
       if (!next.has(chart.id) || next.get(chart.id)!.revision < chart.revision) next.set(chart.id, chart);
     }
-    retainList([...next.values()]); emit(); notify();
+    retainList([...next.values()]); emit(durableChanged);
+    if (durableChanged) notify();
   }
   function forget(chartId: string): Promise<void> {
     const scope = removals, accountId = ownerId, pending = scope.pending.get(chartId);

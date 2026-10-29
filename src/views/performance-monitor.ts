@@ -59,7 +59,7 @@ export function attachPerformanceMonitor({ document, button, panel, drawing, inp
     observeDrag(inputSurface);
     listen(inputSurface, 'wheel', event => { if (event.deltaX || event.deltaY) activity(); });
     listen(drawing, 'keydown', event => {
-      if (event.target === drawing && ['+', '-', '0'].includes(event.key)) activity();
+      if (event.target === drawing && event.key === '0') activity();
     });
     for (const range of ranges) {
       observeDrag(range);

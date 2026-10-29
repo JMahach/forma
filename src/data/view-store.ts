@@ -1,6 +1,6 @@
 import { canonicalChartId } from '../../shared/chart-record-contract.ts';
 import { validatePublicAccountChart } from '../domain/account-chart.ts';
-import { normalizeTemporaryChart } from './storage.ts';
+import { normalizeTemporaryChart } from '../domain/temporary-chart.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import { normalizeLifetimeDraft, normalizeTextSelection, type SavedLifetimeDraft, type TextSelection } from '../domain/input-draft.ts';
 import { normalizeBirthFormDraft, type SavedBirthForm } from '../domain/birth-form-draft.ts';

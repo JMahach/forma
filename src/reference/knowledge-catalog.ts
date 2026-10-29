@@ -68,10 +68,11 @@ export function findKnowledgeEntries(query: string, collectionId: string): reado
     const entry = entries.get(id);
     return entry ? [entry] : [];
   });
-  const terms = normalized.split(' ');
-  return searchIndex.filter(({ text }) => terms.every(term => /^\d+$/.test(term)
-    ? new RegExp(`(^|\\D)${term}(?!\\d)`).test(text)
-    : text.includes(term)))
+  const terms = normalized.split(' ').map(term => /^\d+$/.test(term)
+    ? new RegExp(`(^|\\D)${term}(?!\\d)`)
+    : term);
+  return searchIndex.filter(({ text }) => terms.every(term => typeof term === 'string'
+    ? text.includes(term) : term.test(text)))
     .map(item => ({ ...item, rank: item.entry.kind === 'gate' && String(item.entry.key) === normalized ? 0
       : item.exact.includes(normalized) || normalize(String(item.entry.key)) === normalized ? 1 : 2 }))
     .sort((a, b) => a.rank - b.rank || a.order - b.order)

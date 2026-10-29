@@ -191,13 +191,13 @@ test('nonzero wheel input, either timeline and each configured motion control st
   h.view.destroy();
 });
 
-test('keyboard monitoring is limited to drawing zoom and home shortcuts', () => {
+test('keyboard monitoring is limited to the drawing Home shortcut', () => {
   const h = harness({ initiallyEnabled: true });
-  for (const key of ['ArrowLeft', 'Enter', 'Escape', '=', 'a'] as const) h.drawing.emit('keydown', { key });
+  for (const key of ['ArrowLeft', 'Enter', 'Escape', '=', 'a', '+', '-'] as const) h.drawing.emit('keydown', { key });
   h.drawing.emit('keydown', { key: '+', target: eventTarget() });
   h.ranges[0].emit('keydown', { key: '-' });
   assert.equal(h.scheduled.size, 0);
-  for (const key of ['+', '-', '0'] as const) {
+  for (const key of ['0'] as const) {
     h.drawing.emit('keydown', { key });
     assert.equal(h.scheduled.size, 1);
     h.view.setEnabled(false);

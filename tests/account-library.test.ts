@@ -318,7 +318,7 @@ test('late durability proof cannot approve a calculation version invalidated whi
 });
 
 
-test('unchanged library reads retain the working records and list while storage notifications remain active', async () => {
+test('unchanged library reads retain records without notifications, while durable recovery still notifies', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const rows = [accountChart(1), accountChart(2)];
   let notices = 0, observations = 0;
@@ -332,9 +332,16 @@ test('unchanged library reads retain the working records and list while storage 
     const before = observations, notified = notices;
     await library.open(chartId(1));
     assert.equal(library.charts, first, 'unchanged network data must not recreate the working list');
-    assert.ok(observations > before && notices > notified, 'storage recovery still wakes observers');
+    assert.equal(observations, before, 'unchanged data does not wake local observers');
+    assert.equal(notices, notified, 'unchanged durable data does not wake other tabs');
     await library.refreshLocal();
     assert.equal(library.charts, first, 'IndexedDB clones of the same revisions reuse working records');
+    assert.equal(observations, before);
+    for (let repeat = 0; repeat < 10; repeat++) await library.load();
+    assert.equal(notices, notified, 'identical pages do not publish durable changes');
+    assert.equal(await storage.evictForSpace(0), 'released');
+    await library.open(chartId(1));
+    assert.ok(observations > before && notices > notified, 're-admitting an evicted row wakes observers');
     rows[0] = {...rows[0]!, revision: 2, noteRevision: 2, note: 'Updated note'};
     await library.open(chartId(1));
     assert.notEqual(library.charts, first);

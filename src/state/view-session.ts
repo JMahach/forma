@@ -201,9 +201,12 @@ export function createViewSession({
         acceptLifetimeMode({ opened: true, mode: 'lifetime' });
       }
       restoreInitialized = true;
-      const firstChart = await transit.start(pendingTransit, { firstChart: true });
+      // A hidden workspace restores the transit owner and its pause, but has
+      // no first visible minute to wait for. Drawing resumes on visibility.
+      const waitForChart = !workspace || workspace.screen === 'chart';
+      const firstChart = await transit.start(pendingTransit, { firstChart: waitForChart });
       const needsTransitMoment = selectedId === 'current-transit' ? pendingLifetime?.mode !== 'lifetime' : getPersonalLive() === true;
-      const firstMomentReady = !needsTransitMoment || firstChart !== false;
+      const firstMomentReady = !waitForChart || !needsTransitMoment || firstChart !== false;
       // The day controller now owns its accepted pause, including retries.
       pendingTransit = null;
       if (!valid() || session.selectedId !== selectedId) return false;

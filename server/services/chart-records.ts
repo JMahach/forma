@@ -160,6 +160,9 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
           name:intent.name ?? current.name, note:intent.note ? intent.note.value : current.note});
         const key = identity(content), duplicate = storage.match(owner, key.nameKey, key.birthMinute);
         if (duplicate && duplicate.id !== current.id) return {kind:'rejected', chartId:current.id, code:'duplicate_chart'};
+        // A distinct operation still receives its own durable outcome in write().
+        // Authorization, note CAS, validation and duplicate detection have already run.
+        if(isDeepStrictEqual(content,contentOf(current)))return {kind:'updated',chartId:current.id,revision:current.revision};
         const row: AccountChart = {...content, id:current.id, accountId:owner, revision:current.revision + 1,
           noteRevision:current.noteRevision + (content.note !== current.note ? 1 : 0),
           publicRevision:current.publicRevision + (isDeepStrictEqual(publicContent(content), publicContent(current)) ? 0 : 1)};

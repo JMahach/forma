@@ -74,8 +74,7 @@ test('data provenance pins the verified source and preserves the complete upstre
   assert.equal(LINE_FIXING_PROVENANCE.sourceSha256, 'bc22a96b00f79735fc791362bca24a9adadf67d9c219496c20ef5233ed924720');
   assert.equal(LINE_FIXING_PROVENANCE.license, 'MIT');
   assert.equal(LINE_FIXING_PROVENANCE.copyright, 'Copyright 2023 Christian Reizner');
-  const license = readFileSync(new URL('../licenses/SharpAstrology.HumanDesign-MIT.txt', import.meta.url), 'utf8').trimEnd();
-  assert.equal(createHash('sha256').update(license).digest('hex'), '9c5d3400ccfbd746e5fc48d6696bb0998c14935801aa669448cf5a564594b9c3', 'the full pinned license is retained without alteration');
   const moduleSource = readFileSync(new URL('../src/domain/line-fixing-data.ts', import.meta.url), 'utf8');
-  assert.ok(moduleSource.replace(/^ \* ?/gm, '').includes(license), 'the module header carries the same complete upstream notice');
+  const license = moduleSource.slice(moduleSource.indexOf(' * Copyright 2023 Christian Reizner'), moduleSource.indexOf(' */')).replace(/^ \* ?/gm, '').trimEnd();
+  assert.equal(createHash('sha256').update(license).digest('hex'), '9c5d3400ccfbd746e5fc48d6696bb0998c14935801aa669448cf5a564594b9c3', 'the full pinned license is retained without alteration');
 });

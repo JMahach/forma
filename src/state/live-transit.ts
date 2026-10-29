@@ -34,7 +34,7 @@ export function createLiveTransit({
   let timeline: LocalDayTimeline | null = null, days: Map<string, TransitDay> | null = null, current: ReturnType<typeof transitChartAt> | null = null;
   let compatible = true;
   let status: LiveTransitState['status'] = 'idle', error = '', errorCode = '', sequence = 0, failures = 0, nextRetry = 0;
-  let activeLoad: { key: string | null; promise: Promise<boolean>; failedDates: Set<string> } | null = null;
+  let activeLoad: { key: string | null; promise: Promise<boolean>; failedDates: Set<string>; controller: AbortController } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null, running = false, activated = false, loading = false, unavailable = false;
   const retained = new Map<string, () => void>();
   // Initial presentation can wait for its selected minute independently of the
@@ -107,7 +107,8 @@ export function createLiveTransit({
     const key = keyOf(target);
     if (activeLoad?.key === key) return activeLoad.promise;
     finishFirstCharts(false);
-    const requestSequence = ++sequence, failedDates = new Set<string>();
+    activeLoad?.controller.abort();
+    const requestSequence = ++sequence, failedDates = new Set<string>(), controller = new AbortController();
     // Keep successful packets on retry, but never mix different local days.
     const sameDay = keyOf(timeline) === key;
     if (!sameDay) { failures = 0; nextRetry = 0; }
@@ -126,7 +127,7 @@ export function createLiveTransit({
         const dates = [currentDate, ...target.packetDates.filter(date => date !== currentDate)];
         const results = await Promise.allSettled(dates.map(async date => {
           try {
-            const packet = days!.get(date) || await dayClient.getDay(date);
+            const packet = days!.get(date) || await dayClient.getDay(date, { signal: controller.signal });
             if (requestSequence !== sequence) return;
             days!.set(date, packet);
             retainActiveDays();
@@ -164,7 +165,7 @@ export function createLiveTransit({
         }
       }
     })();
-    activeLoad = { key, promise, failedDates };
+    activeLoad = { key, promise, failedDates, controller };
     return promise;
   }
 
@@ -209,7 +210,7 @@ export function createLiveTransit({
     get current() { return compatible ? current : null; },
     get state() { return state(); },
     refresh, visibilityChanged,
-    invalidateCalculations() { compatible = false; sequence++; activeLoad = null; loading = false; clearTimeout(timer!); timer = null; finishFirstCharts(false); notify(); },
+    invalidateCalculations() { compatible = false; sequence++; activeLoad?.controller.abort(); activeLoad = null; loading = false; days = null; current = null; retainActiveDays(); clearTimeout(timer!); timer = null; finishFirstCharts(false); notify(); },
     setWanted(value: boolean) {
       if (wanted !== value) { failures = 0; nextRetry = 0; }
       wanted = value;
@@ -241,7 +242,7 @@ export function createLiveTransit({
     retry() { nextRetry = 0; return refresh(); },
     stop() {
       finishFirstCharts(false);
-      sequence++; activeLoad = null; loading = false; status = 'idle'; failures = 0; nextRetry = 0;
+      sequence++; activeLoad?.controller.abort(); activeLoad = null; loading = false; status = 'idle'; failures = 0; nextRetry = 0;
       running = false; days = null; retainActiveDays(); clearTimeout(timer!); timer = null;
     },
   };

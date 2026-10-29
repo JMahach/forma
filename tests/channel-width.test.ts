@@ -260,13 +260,6 @@ const originalActivationStyle = (markup: string) => markup.replace(
   .replace('    .bg-activation[data-fluid-active="true"] > rect { fill: transparent; }\n', '')
   // Committed cell outlines are unrelated to channel geometry.
   .replace('    .bg-activation[aria-pressed="true"] > rect { stroke: #c4d9f1; stroke-width: 2; }\n', '');
-// A later layout split supplies the standalone mandala fallback explicitly.
-// These historical cases render normal charts, where that property is inert.
-// Normalize only this exact metadata attribute, retaining every transform,
-// painted path, hit target and original hash. mandala.test.ts covers its value.
-const originalDrawingStyle = (markup: string) => markup.replace(
-  /(<g class="bodygraph-drawing"(?: transform="[^"]*")?) style="--activation-column-expanded-offset:244px"/,
-  '$1');
 // The later stationary bloom is independent of width. Remove only its paint
 // additions and decorative core tuning for this historical geometry oracle;
 // gate-highlight.test.ts covers the current thin cores and retained boundaries.

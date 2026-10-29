@@ -4,7 +4,7 @@ import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 import type { BinaryCache } from './binary-cache.ts';
 import type { MemoryCache } from './memory-cache.ts';
-import type { SharedRequest } from './shared-request.ts';
+import type { SharedRequest } from '../runtime/shared-request.ts';
 type BirthDayIdentity = Partial<Pick<ChartRecord, 'birthDate' | 'cityId' | 'city' | 'timezone'>>;
 interface NatalClientOptions {
   fetch?: (url: string, options: RequestInit & { signal: AbortSignal }) => DayResponse | PromiseLike<DayResponse>;
@@ -20,7 +20,7 @@ import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
 import { decodeNatalDay } from '../../shared/day-packets/decode.ts';
 import { createBinaryCache } from './binary-cache.ts';
 import { createMemoryCache } from './memory-cache.ts';
-import { createAbortError, shareRequest } from './shared-request.ts';
+import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
 const compatibleTimezone = (day: NatalDay, timezone: string | undefined) => !timezone || day.timezone === timezone;
 

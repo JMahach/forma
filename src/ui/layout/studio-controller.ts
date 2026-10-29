@@ -11,6 +11,7 @@ interface StudioLayoutOptions {
 import { computeStudioLayout, TIMELINE_BAR_HEIGHT, TIMELINE_WITH_DATES_HEIGHT, computeSidePanelLayout, computeTimelineDock } from './studio.ts';
 import { createViewport } from './viewport.ts';
 import { applyTimelineMetrics } from './metrics.ts';
+import { createLayoutObserver } from './resize-observer.ts';
 
 // Phone chrome is presentation, not a branch in camera or chart geometry.
 export const PHONE_LAYOUT_QUERY = '(max-width: 699px), (pointer: coarse) and (max-width: 1099px) and (max-height: 500px)';
@@ -46,6 +47,15 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
   const phone = () => media.matches;
   let current: ReturnType<typeof computeStudioLayout>, dock: ReturnType<typeof computeTimelineDock>, sideInsets: ReturnType<typeof computeSidePanelLayout>, appliedPhone: boolean | undefined;
   const viewportSubscribers = new Set<() => void>();
+  const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
+  let controlWidth: number | undefined, controlMetricKey: string | null = null;
+  const fonts = studio.ownerDocument?.fonts;
+  const metricFields = [...(lifetime?.querySelectorAll?.<HTMLElement>('.lifetime-date-control') || [])];
+  const invalidateControlMetrics = () => { controlMetricKey = null; refresh(); };
+  fonts?.addEventListener('loadingdone', invalidateControlMetrics);
+  const Observer = studio.ownerDocument?.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
+  const metricObserver = Observer && metricFields.length ? createLayoutObserver(invalidateControlMetrics, { Observer }) : null;
+  for (const field of metricFields) metricObserver?.observe(field, { box: 'border-box' });
   function applyViewport(visible: ViewportBounds) {
     const full = studio.getBoundingClientRect();
     const bottom = full.bottom ?? (full.top || 0) + full.height;
@@ -75,8 +85,16 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
       top: parseFloat(style.scrollPaddingTop) || 112,
       bottom: TIMELINE_BAR_HEIGHT + safeBottom,
       footerHeight: TIMELINE_WITH_DATES_HEIGHT + safeBottom };
-    const lifetime = panels.find(panel => panel.id === 'lifetimeControls');
-    const controlWidth = timelineControlWidth(lifetime);
+    // Side-panel animation changes the canvas, not these fixed-width fields.
+    // Full viewport width covers responsive CSS; opening either hidden owner
+    // also measures its current geometry. Fonts explicitly invalidate above.
+    const metricKey = JSON.stringify([full.width, isPhone, lifetime?.hidden,
+      lifetime?.querySelector?.<HTMLElement>('.lifetime-heading')?.hidden,
+      metricFields.map(field => [field.textContent, field.getAttribute?.('class'), field.getAttribute?.('style')])]);
+    if (metricKey !== controlMetricKey) {
+      controlWidth = timelineControlWidth(lifetime);
+      controlMetricKey = metricKey;
+    }
     sideInsets = computeSidePanelLayout({ ...sidePanels(), width: full.width, phone: phone() });
     studio.style?.setProperty('--studio-left-space', `${sideInsets.left}px`);
     studio.style?.setProperty('--studio-right-space', `${sideInsets.right}px`);
@@ -139,7 +157,7 @@ export function createStudioLayout({ canvas, panels, footprint, studio = canvas.
       return true;
     },
     readViewport: environment.read,
-    destroy() { environment.destroy(); viewportSubscribers.clear(); },
+    destroy() { environment.destroy(); viewportSubscribers.clear(); fonts?.removeEventListener('loadingdone', invalidateControlMetrics); metricObserver?.disconnect(); },
     subscribeViewport(callback: () => void) { viewportSubscribers.add(callback); return () => viewportSubscribers.delete(callback); },
     insets() { return current.insets; },
   };

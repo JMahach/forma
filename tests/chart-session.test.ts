@@ -3,7 +3,6 @@ import type { NatalDayClient } from '../src/data/natal-day-client.ts';
 import type { CycleEvent, CycleChartResult } from '../shared/cycles-format.ts';
 import type { ChartComposition, ChartInput } from '../src/domain/chart-composition.ts';
 import type { SavedChart, ChartRecord, Activation } from '../shared/chart-types.ts';
-import type { ChartStorage } from '../src/data/storage.ts';
 import type { NatalDayExplorer } from '../src/state/natal-day.ts';
 import type { LiveTransit } from '../src/state/live-transit.ts';
 import type { LifetimeExplorer } from '../src/state/lifetime.ts';
@@ -34,7 +33,8 @@ import type { SavedView } from '../src/data/view-store.ts';
 function harness(charts: readonly SavedChart[]) {
   const writes: [string, string][] = [], changes: { id: string; chart: ChartComposition }[] = [];
   charts = charts.map(chart => libraryRecordAtMinute(natalDayFixture(), 754, chart));
-  const store = createChartStore({ getStorage: () => ({ getItem: () => JSON.stringify(charts), setItem: (...value: [string, string]) => writes.push(value) } as unknown as ChartStorage) });
+  const store = createChartStore();
+  store.projectLibrary(charts, true);
   let natal: NatalDayExplorer, transit: LiveTransit;
   const session = createChartSession({ store, getNatalDay: () => natal, getTransit: () => transit,
     onChange: () => changes.push({ id: session.selectedId, chart: session.current }) });

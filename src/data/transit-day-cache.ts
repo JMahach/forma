@@ -99,17 +99,20 @@ export function createTransitDayCache({ indexedDB, databaseName = 'forma-moments
     }
     return reads.get(key)!.promise;
   }
-  function putDay(day: TransitDay) {
+  function putDay(day: TransitDay, { ifMissing = false } = {}) {
     if (closed || !validDay(day, day?.date, day?.calculationVersion)) return false;
     const { date, calculationVersion: version } = day, key = keyOf(date, version);
     memory.put(memoryKey(key), day);
     if (reads.has(key)) reads.get(key)!.latest = day;
+    if (writes.get(key)?.day === day) return true;
     // A write is optional. Quota failure never removes the usable RAM result.
-    const numbers = new Float64Array(MOMENT_COLUMN_COUNT * SAMPLES);
-    day.columns.forEach((column, c) => numbers.set(column, c * SAMPLES));
-    const work = owner.put('transit',key,{key,day:numbers,
-      meta:Object.fromEntries(metadataKeys.map(name=>[name,day[name]]))},{version,date})
-      .then(async saved=>{if(saved && coverageVersion===version)await prepare(version);return saved;}).catch(()=>null)
+    const work = (async () => {
+      if (ifMissing && await owner.has('transit', key)) return true;
+      const numbers = new Float64Array(MOMENT_COLUMN_COUNT * SAMPLES);
+      day.columns.forEach((column, c) => numbers.set(column, c * SAMPLES));
+      return owner.put('transit',key,{key,day:numbers,
+        meta:Object.fromEntries(metadataKeys.map(name=>[name,day[name]]))},{version,date});
+    })().then(async saved=>{if(saved && coverageVersion===version)await prepare(version);return saved;}).catch(()=>null)
       .finally(() => { if (writes.get(key)?.promise === work) writes.delete(key); });
     writes.set(key, { day, promise: work });
     return true;

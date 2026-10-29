@@ -4,7 +4,6 @@ import type { TransitDay } from '../shared/day-packets/transit-format.ts';
 import type { CycleEvent, CycleChartResult, CycleInput } from '../shared/cycles-format.ts';
 import type { TestReturnsOptions } from './fixtures/returns.ts';
 import type { TestLifetimeOptions } from './fixtures/lifetime.ts';
-import type { ChartStorage } from '../src/data/storage.ts';
 import type { SavedView } from '../src/data/view-store.ts';
 type ViewOptions = Parameters<typeof createViewSession>[0];
 type LiveOptions = NonNullable<Parameters<typeof createLiveTransit>[0]>;
@@ -87,9 +86,10 @@ function harness(storage = new Map<string, string>(), { denyWrites = () => false
   const storagePort = { getItem: (key: string) => storage.get(key) ?? null,
     setItem(key: string, value: string) { if(denyWrites())throw new Error("QuotaExceededError"); storage.set(key, value); writes.push([key, value]); } };
   const saved = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
-  if (!storage.has('liniya.charts.v1')) storage.set('liniya.charts.v1', JSON.stringify([saved, { ...saved, id: 'second' }]));
+  if (!storage.has('fixture:account-library')) storage.set('fixture:account-library', JSON.stringify([saved, { ...saved, id: 'second' }]));
   const viewStore = createViewStore({ getStorage: () => storagePort });
-  const chartStore = createChartStore({ getStorage: () => storagePort as ChartStorage,initialTemporaryChart:viewStore.read()?.temporaryChart });
+  const chartStore = createChartStore({initialTemporaryChart:viewStore.read()?.temporaryChart});
+  chartStore.projectLibrary(JSON.parse(storage.get('fixture:account-library')!), true);
   let view: ReturnType<typeof createViewSession>, transit: ReturnType<typeof createLiveTransit>, natalDay: ReturnType<typeof createNatalDayExplorer>, mandala: ReturnType<typeof attachMandalaMode>, lifetime: LifetimeExplorer | null = null, returns: ReturnType<typeof createReturnsController>, exploration: ReturnType<typeof createChartExploration>, summary: ReturnType<typeof attachChartSummary> | null = null;
   const planets = createTransitPlanetFilter(), panels = createPanelState(), workspace = createWorkspaceState();
   const changed = () => { summary?.setReturnsVisible(Boolean(returns?.opened)); view?.schedule(); };
@@ -160,12 +160,12 @@ function harness(storage = new Map<string, string>(), { denyWrites = () => false
 test('browser reload restores saved chart, mandala endpoint, natal minute and camera without modifying the library', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   // The fixture identity is fixed independently from session internals.
-  first.session.select(JSON.parse(first.storage.get('liniya.charts.v1')!)[0].id);
+  first.session.select(JSON.parse(first.storage.get('fixture:account-library')!)[0].id);
   first.mandala.setEnabled(true, { animate: false });
-  first.camera.zoom(2); first.camera.pan(40, 25);
+  first.camera.zoomAt({ x: 320, y: 410 }, 2); first.camera.pan(40, 25);
   await first.natalDay.open(); first.natalDay.scrub(800);
   first.eventTarget.dispatch('pagehide');
-  const beforeLibrary = first.storage.get('liniya.charts.v1');
+  const beforeLibrary = first.storage.get('fixture:account-library');
   const pose = first.camera.getView();
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.view.interrupted, false);
@@ -175,7 +175,7 @@ test('browser reload restores saved chart, mandala endpoint, natal minute and ca
   assert.equal(second.natalDay.state.opened, true); assert.equal(second.natalDay.state.index, 800);
   assert.equal(second.session.current.utc, '2026-09-24T13:20:00Z');
   assert.deepEqual(second.camera.getView(), pose);
-  assert.equal(second.storage.get('liniya.charts.v1'), beforeLibrary);
+  assert.equal(second.storage.get('fixture:account-library'), beforeLibrary);
   second.session.select('second');
   assert.equal(second.mandala.enabled, true); assert.deepEqual(second.camera.getView(), pose);
 });
@@ -191,7 +191,7 @@ test('day slider pause at the first minute survives refresh while the real clock
 
 test('camera restoration rebases against the new screen Home and respects maximum zoom', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  first.camera.zoom(2); first.view.flush();
+  first.camera.zoomAt({ x: 320, y: 410 }, 2); first.view.flush();
   const second = harness(first.storage, { size: 500 }); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.camera.getView().k / second.camera.getFittedView().k, 2);
   const third = harness(first.storage, { size: 5000, normalizeSavedView(value) { delete value!.camera!.maxK; return value; } }); t.after(() => third.transit.stop()); await third.view.restore();
@@ -206,7 +206,7 @@ test('a deleted chart falls back to transit and malformed presentation never cle
   assert.equal(second.session.record, null);
   assert.equal(second.session.current.primary.source, 'transit');
   assert.equal(second.session.current.utc, second.transit.current!.utc);
-  assert.equal(JSON.parse(second.storage.get('liniya.charts.v1')!).length, 2);
+  assert.equal(JSON.parse(second.storage.get('fixture:account-library')!).length, 2);
 });
 
 test('initial loading cannot overwrite a saved view and a later user action cancels pending paused restoration', async t => {
@@ -223,7 +223,7 @@ test('initial loading cannot overwrite a saved view and a later user action canc
 
 test('coalesced camera updates save the latest position and page hiding flushes pending changes', async t => {
   const h = harness(); t.after(() => h.transit.stop()); await h.view.restore(); h.writes.length = 0;
-  for (let i = 0; i < 100; i++) h.camera.zoom(1.002);
+  for (let i = 0; i < 100; i++) h.camera.zoomAt({ x: 320, y: 410 }, 1.002);
   assert.equal(h.writes.length, 0); h.tick(); assert.equal(h.writes.length, 1);
   h.camera.pan(-10, -10); h.interactionTarget.hidden = true; h.interactionTarget.dispatch('visibilitychange');
   assert.equal(h.writes.length, 2);
@@ -305,7 +305,7 @@ test('reload preserves an empty end as the full available lifetime range', async
 
 async function savePersonalLifetime(t: test.TestContext) {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const personalId = JSON.parse(first.storage.get('liniya.charts.v1')!)[0].id;
+  const personalId = JSON.parse(first.storage.get('fixture:account-library')!)[0].id;
   first.session.select(personalId); await first.natalDay.open(); first.natalDay.scrub(800);
   first.exploration.restorePreview(true);
   const lifetime = first.ensureLifetime(); await lifetime.open();
@@ -357,7 +357,7 @@ test('navigation while personal Lifetime metadata is pending cancels restoration
 test('personal Lifetime remains opt-in and a deleted saved personal chart cannot restore its lifetime', async t => {
   for (const missing of [false, true] as const) {
     const { storage, personalId } = await savePersonalLifetime(t);
-    if (missing) storage.set('liniya.charts.v1', JSON.stringify(JSON.parse(storage.get('liniya.charts.v1')!).filter((chart: { id: string }) => chart.id !== personalId)));
+    if (missing) storage.set('fixture:account-library', JSON.stringify(JSON.parse(storage.get('fixture:account-library')!).filter((chart: { id: string }) => chart.id !== personalId)));
     let loads = 0;
     const second = harness(storage, { ...(missing ? { canRestoreLifetime: () => true } : {}), loadLifetime: async () => { loads++; return null; } });
     t.after(() => second.transit.stop()); await second.view.restore();
@@ -390,9 +390,9 @@ test('successful personal Lifetime restore acknowledges a UTC target clamped by 
 
 test('same-tab reload restores the exact personal return and transit navigation clears its ownership', async t => {
   const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
-  first.view.flush(); const beforeLibrary = first.storage.get('liniya.charts.v1');
+  first.view.flush(); const beforeLibrary = first.storage.get('fixture:account-library');
   const second = harness(first.storage); t.after(() => second.transit.stop()); await second.view.restore();
   assert.equal(second.session.selectedId, source.id);
   assert.equal(second.returns.state.opened, true); assert.equal(second.returns.state.selectedEvent!.id, first.returnEvent.id);
@@ -400,7 +400,7 @@ test('same-tab reload restores the exact personal return and transit navigation 
   assert.equal(second.session.record!.id, source.id);
   assert.equal(second.session.current.primary, second.session.baseChart);
   assert.equal(chartCaption(second.session.current, second.session.record).title, source.name + ' · Возврат Сатурна 1');
-  assert.equal(second.storage.get('liniya.charts.v1'), beforeLibrary);
+  assert.equal(second.storage.get('fixture:account-library'), beforeLibrary);
   second.session.select('current-transit'); second.view.flush();
   assert.equal(second.session.current.primaryLabel, 'Транзит'); assert.equal(second.session.record, null); assert.equal(second.returns.current, null);
   assert.equal(JSON.parse(second.storage.get('liniya.view.v1')!).returns, undefined);
@@ -408,7 +408,7 @@ test('same-tab reload restores the exact personal return and transit navigation 
 
 test('navigation during a restored exact return cannot resurrect its personal overlay', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
   let resolveChart, began: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
@@ -426,7 +426,7 @@ test('navigation during a restored exact return cannot resurrect its personal ov
 
 test('selected Saturn survives refresh after list changes to Year and the panel is closed', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   first.session.select(source.id); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   // The displayed selection remains independent from the list's active filter.
   await first.returns.setYear(2050); first.returns.close(); first.view.flush();
@@ -441,7 +441,7 @@ const returnMetadata = { ...metadata, startUtc: '2026-01-01T00:00:00Z', endExclu
 const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 async function saveExactLifetime(t: test.TestContext) {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   const event = { ...first.returnEvent, utc: '2055-10-01T12:03:07.123456Z', id: 'saturn:2055-10-01T12:03:07.123456Z' };
   Object.assign(first.returnEvent, event);
   first.session.select(source.id); await first.returns.open();
@@ -476,7 +476,7 @@ test('an old exact snapshot ignores its stale descriptor and restores from the c
   assert.equal(lists.length, DEFAULT_CYCLE_BODIES.length + 1);
   lists.find(job => job.input.body === event.body)!.resolve({ events: [refreshed] }); await nextTurn();
   assert.deepEqual(order, ['chart']);
-  second.interactionTarget.dispatch('wheel', { target: second.cameraSurface }); second.camera.zoom(2);
+  second.interactionTarget.dispatch('wheel', { target: second.cameraSurface }); second.camera.zoomAt({ x: 320, y: 410 }, 2);
   const pose = second.camera.getView();
   releaseChart!({ chart: { ...source, utc: event.utc } }); await nextTurn();
   assert.equal(restored, true, 'the other unfinished body lists cannot delay restoration');
@@ -550,7 +550,7 @@ test('legacy return IDs restore through event lookup while the original remains 
 
 async function saveColdReturns(t: test.TestContext) {
   const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   first.session.select(source.id); await first.natalDay.open();
   // Older snapshots can contain a drawer before its lazy rail was created.
   first.natalDay.close(); await first.returns.open();
@@ -579,7 +579,7 @@ test('reload during a cold Returns opening restores its rail even before a Lifet
 
 for (const exact of ['none', 'ready', 'missing'] as const) test(`cold offline Returns restore independently of an unavailable rail: ${exact}`, async t => {
   const storage = await saveColdReturns(t);
-  const source = JSON.parse(storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(storage.get('fixture:account-library')!)[0];
   const event: CycleEvent = { id: 'saturn:2055-10-01T12:00:00Z', utc: '2055-10-01T12:00:00Z', body: 'saturn', cycle: 1, pass: 1, cycleId: 'saturn:1', age: 29, direction: 'direct' };
   if (exact !== 'none') {
     const snapshot = JSON.parse(storage.get('liniya.view.v1')!);
@@ -627,7 +627,7 @@ test('an open Returns menu owns restoration ahead of a stale natal Day snapshot'
 
 test('a selected return with its phone menu closed restores a missing cold rail', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  first.session.select(JSON.parse(first.storage.get('liniya.charts.v1')!)[0].id);
+  first.session.select(JSON.parse(first.storage.get('fixture:account-library')!)[0].id);
   await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   first.returns.close(); first.view.flush();
   const second = harness(first.storage, { canRestoreLifetime: () => true,
@@ -664,7 +664,7 @@ test('camera gestures during personal Lifetime loading preserve the lifetime tar
   const restoring = second.view.restore();
   await new Promise<void>(resolve => setImmediate(resolve));
   second.interactionTarget.dispatch('pointerdown', { target: second.cameraSurface });
-  second.camera.zoom(2); second.camera.pan(30, 20);
+  second.camera.zoomAt({ x: 320, y: 410 }, 2); second.camera.pan(30, 20);
   const pose = second.camera.getView();
   releaseMetadata!(metadata);
   assert.equal(await restoring, true);
@@ -680,7 +680,7 @@ test('camera gestures during personal Lifetime loading preserve the lifetime tar
 
 test('wheel zoom during an exact return restoration keeps that event and the new camera position', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
   first.session.select(source.id); await first.returns.open();
   await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
   let resolveChart, began: () => void;
@@ -690,7 +690,7 @@ test('wheel zoom during an exact return restoration keeps that event and the new
     chart: () => new Promise(resolve => { resolveChart = resolve; began(); }),
   } });
   t.after(() => second.transit.stop()); const restoring = second.view.restore(); await started;
-  second.interactionTarget.dispatch('wheel', { target: second.cameraSurface }); second.camera.zoom(2);
+  second.interactionTarget.dispatch('wheel', { target: second.cameraSurface }); second.camera.zoomAt({ x: 320, y: 410 }, 2);
   const pose = second.camera.getView();
   resolveChart!({ event: first.returnEvent, chart: { ...source, utc: first.returnEvent.utc } });
   assert.equal(await restoring, true);
@@ -923,9 +923,9 @@ for (const source of ['compatible day', 'absent day', 'outdated day'] as const) 
 
 for (const personalPreview of [undefined, true] as const) test(`metadata retry consumes the legacy birth target for ${personalPreview ? 'an explicit lifetime sample' : 'the exact original'}`, async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  const charts = JSON.parse(first.storage.get('liniya.charts.v1')!);
+  const charts = JSON.parse(first.storage.get('fixture:account-library')!);
   charts[0].utc = '2026-09-24T12:34:56.789Z';
-  first.storage.set('liniya.charts.v1', JSON.stringify(charts));
+  first.storage.set('fixture:account-library', JSON.stringify(charts));
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
   saved.selectedId = charts[0].id;
   saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', index: 75,
@@ -1104,7 +1104,7 @@ test('closed return filters survive a reload of the personal rail without an exa
     getMeta: async () => returnMetadata, getPoint: async index => point(index, returnMetadata),
   } });
   t.after(() => first.transit.stop()); await first.view.restore();
-  const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0]; first.session.select(source.id);
+  const source = JSON.parse(first.storage.get('fixture:account-library')!)[0]; first.session.select(source.id);
   await first.exploration.openTimeline(); await first.returns.setBodies([]); await first.returns.setYear(2050);
   first.returns.close(); first.view.flush();
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
@@ -1182,7 +1182,7 @@ test('reload cannot recover an obsolete zoom ceiling from the tab snapshot', asy
 for (const delayed of ['events', 'return'] as const) for (const reopen of [false, true] as const) {
   test(`a right-panel command during ${delayed} restoration preserves the exact return (reopen: ${reopen})`, async t => {
     const first = harness(undefined, { panelView: true }); t.after(() => first.transit.stop()); await first.view.restore();
-    const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+    const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
     first.session.select(source.id); first.summary!.open(); await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
     let release;
     const second = harness(first.storage, { panelView: true, returnsClient: {
@@ -1218,7 +1218,7 @@ for (const delayed of ['events', 'return'] as const) for (const reopen of [false
 
 test('reload restores the workspace before fitting the retained chart camera', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  first.session.select('second'); first.camera.zoom(2); first.camera.pan(35, 20);
+  first.session.select('second'); first.camera.zoomAt({ x: 320, y: 410 }, 2); first.camera.pan(35, 20);
   first.panels.restore({ left: true, right: true }); first.workspace.setScreen('charts'); first.view.flush();
   const pose = first.camera.getView(), second = harness(first.storage); t.after(() => second.transit.stop());
   const restoreView = second.camera.restoreView; let seenAtFit;
@@ -1273,7 +1273,7 @@ test('an already restored startup camera is retained after early panel interacti
   h.panels.restore(saved.panels); h.camera.restoreView(saved.camera);
   h.panels.beginRestore(); h.panels.setLeft(true); h.panels.setRight(false);
   // Startup already adapted this same camera to the newly chosen free area.
-  h.camera.zoom(1.2); h.camera.pan(-20, -30);
+  h.camera.zoomAt({ x: 320, y: 410 }, 1.2); h.camera.pan(-20, -30);
   const prepared = h.camera.getView();
   assert.equal(await h.view.restore(), true);
   assert.deepEqual(h.panels.snapshot, { left: true, right: false });
@@ -1283,7 +1283,7 @@ test('an already restored startup camera is retained after early panel interacti
 
 test('presentation persistence waits until synchronous restoration has applied the saved view', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  first.mandala.setEnabled(true, { animate: false }); first.camera.zoom(2); first.view.flush();
+  first.mandala.setEnabled(true, { animate: false }); first.camera.zoomAt({ x: 320, y: 410 }, 2); first.view.flush();
   const encoded = first.storage.get('liniya.view.v1');
   const second = harness(first.storage); t.after(() => second.transit.stop());
   second.view.schedule(); second.tick(); second.eventTarget.dispatch('pagehide');
@@ -1306,7 +1306,7 @@ for (const flushBy of ['timer', 'pagehide', 'visibilitychange'] as const) test(`
   t.after(() => second.transit.stop());
   const restoring = second.view.restore(); await nextTurn();
   assert.equal(typeof release, 'function');
-  second.camera.zoom(1.4); second.camera.pan(20, 10);
+  second.camera.zoomAt({ x: 320, y: 410 }, 1.4); second.camera.pan(20, 10);
   second.mandala.setEnabled(true, { animate: false });
   second.panels.setLeft(true); second.panels.setRight(true); second.workspace.setScreen('account');
   second.view.schedule();
@@ -1340,10 +1340,10 @@ for (const personal of [false, true] as const) for (const flushBy of ['flush', '
     t.after(() => h.transit.stop());
     await h.view.restore();
     if (personal) h.session.select('saved-person');
-    const libraryBefore = h.storage.get('liniya.charts.v1');
+    const libraryBefore = h.storage.get('fixture:account-library');
     h.view.interrupt();
     const opening = personal ? h.exploration.toggleReturns() : h.exploration.toggleTransit();
-    h.camera.zoom(1.4);
+    h.camera.zoomAt({ x: 320, y: 410 }, 1.4);
     if (flushBy === 'flush') h.view.flush();
     else h.eventTarget.dispatch('pagehide');
     const saved = JSON.parse(h.storage.get('liniya.view.v1')!);
@@ -1355,7 +1355,7 @@ for (const personal of [false, true] as const) for (const flushBy of ['flush', '
       assert.equal(saved.lifetime.personalPreview, false, 'opening at birth retains the exact original chart');
     }
     assert.ok(Math.abs(saved.camera.k - 1.4) < 1e-9);
-    assert.equal(h.storage.get('liniya.charts.v1'), libraryBefore, 'an opening changes only tab presentation');
+    assert.equal(h.storage.get('fixture:account-library'), libraryBefore, 'an opening changes only tab presentation');
     h.exploration.closeScales();
     h.eventTarget.dispatch('pagehide');
     assert.equal(JSON.parse(h.storage.get('liniya.view.v1')!).lifetime, null, 'closing before import cancels the saved opening');
@@ -1370,14 +1370,14 @@ for (const command of ['none', 'open', 'open-close'] as const) {
   test(`saved closed right shell preserves the active Returns screen through a late exact result (${command})`, async t => {
     const first = harness(undefined, { panelView: true });
     t.after(() => first.transit.stop()); await first.view.restore();
-    const source = JSON.parse(first.storage.get('liniya.charts.v1')!)[0];
+    const source = JSON.parse(first.storage.get('fixture:account-library')!)[0];
     first.session.select(source.id); await first.returns.open();
     await first.returns.selectEvent(first.returnEvent.id); first.view.flush();
     const snapshot = JSON.parse(first.storage.get('liniya.view.v1')!);
     snapshot.panels = { left: true, right: false };
     assert.equal(snapshot.returns.opened, true, 'preview retained the old menu content but closed its shell');
     first.storage.set('liniya.view.v1', JSON.stringify(snapshot));
-    const libraryBefore = first.storage.get('liniya.charts.v1');
+    const libraryBefore = first.storage.get('fixture:account-library');
     let release;
     const second = harness(first.storage, { panelView: true, returnsClient: {
       events: async (input: { body: string; }) => ({ events: input.body === 'saturn' ? [first.returnEvent] : [] }),
@@ -1400,7 +1400,7 @@ for (const command of ['none', 'open', 'open-close'] as const) {
     assert.equal(saved.panels.right, command === 'open');
     assert.equal(saved.returns.opened, true);
     assert.equal(saved.returns.eventId, first.returnEvent.id);
-    assert.equal(second.storage.get('liniya.charts.v1'), libraryBefore);
+    assert.equal(second.storage.get('fixture:account-library'), libraryBefore);
   });
 }
 
@@ -1511,9 +1511,9 @@ test('the form owner supplies and clears the draft in the same tab snapshot with
  const h=harness(new Map(),{getBirthForm:()=>birthForm});t.after(()=>h.transit.stop());
  await h.view.restore();h.view.flush();
  assert.deepEqual(JSON.parse(h.storage.get('liniya.view.v1')!).birthForm,birthForm);
- const library=h.storage.get('liniya.charts.v1');birthForm=null;h.view.flush();
+ const library=h.storage.get('fixture:account-library');birthForm=null;h.view.flush();
  assert.equal(JSON.parse(h.storage.get('liniya.view.v1')!).birthForm,null);
- assert.equal(h.storage.get('liniya.charts.v1'),library);
+ assert.equal(h.storage.get('fixture:account-library'),library);
 });
 
 test('only a durable restored snapshot wakes a deferred update',async t=>{
@@ -1555,5 +1555,5 @@ test('tab restoration and later snapshots retain exactly one temporary chart out
   h.view.flush();
   const ready=JSON.parse(storage.get('liniya.view.v1')!);
   assert.equal(ready.temporaryChart.id,temporaryChart.id);
-  assert.equal(JSON.parse(storage.get('liniya.charts.v1')!).some((chart:{id:string})=>chart.id===temporaryChart.id),false);
+  assert.equal(JSON.parse(storage.get('fixture:account-library')!).some((chart:{id:string})=>chart.id===temporaryChart.id),false);
 });

@@ -111,7 +111,7 @@ test('Shift+Enter and Shift+Space emit additive selection while ordinary keyboar
 
 test('Shift drags, pinches, cancellations and background taps retain existing gesture behavior', t => {
   const h = harness(t), target = h.target(datasets[0]);
-  h.controls.zoom(2);
+  h.controls.zoomAt({ x: 320, y: 410 }, 2);
   const beforeDrag = h.controls.getView();
   h.send('pointerdown', { target, shiftKey: true });
   h.send('pointermove', { target, shiftKey: true, clientX: 350 });
@@ -142,4 +142,18 @@ test('Shift drags, pinches, cancellations and background taps retain existing ge
   h.send('pointerdown', { target });
   h.send('pointerup', { target });
   assert.deepEqual(h.selections, [{ ...datasets[0], pointerType: 'mouse' }], 'a fresh ordinary tap works after all rejected gestures');
+});
+
+
+test('removed plus and minus shortcuts leave the camera and notifications untouched', t => {
+  const h = harness(t), before = h.controls.getView(), changes = h.changes.length;
+  for (const key of ['+', '-']) {
+    const event = h.send('keydown', { key });
+    assert.equal(event.defaultPrevented, false);
+    assert.deepEqual(h.controls.getView(), before);
+  }
+  assert.equal(h.changes.length, changes);
+  h.controls.zoomAt({ x: 320, y: 410 }, 2);
+  assert.equal(h.send('keydown', { key: '0' }).defaultPrevented, true);
+  assert.deepEqual(h.controls.getView(), before, 'Home remains available');
 });

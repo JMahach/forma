@@ -97,3 +97,15 @@ test('screen title search keeps number boundaries, partial words and every combi
     assert.deepEqual(catalog.findKnowledgeEntries(query, 'gates'), [], query);
   }
 });
+
+test('numeric search prepares its matchers once per query, independent of catalogue size', () => {
+  const OriginalRegExp = globalThis.RegExp;
+  let preparations = 0;
+  globalThis.RegExp = new Proxy(OriginalRegExp, {
+    construct(target, args) { preparations++; return Reflect.construct(target, args); },
+  });
+  try {
+    assert.deepEqual(catalog.findKnowledgeEntries('10 20', 'gates').map(entry => entry.id), ['channel.10-20']);
+    assert.equal(preparations, 2, 'two numeric terms need two matchers, not a new matcher for each article');
+  } finally { globalThis.RegExp = OriginalRegExp; }
+});

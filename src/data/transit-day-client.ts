@@ -3,7 +3,7 @@ type DayResponse = Pick<Response, 'ok' | 'json' | 'arrayBuffer'>;
 import type { TransitDay } from '../../shared/day-packets/transit-format.ts';
 import type { TransitDayCache } from './transit-day-cache.ts';
 import type { MemoryCache } from './memory-cache.ts';
-import type { SharedRequest } from './shared-request.ts';
+import type { SharedRequest } from '../runtime/shared-request.ts';
 interface TransitClientOptions {
   fetch?: (url: string, options: RequestInit & { signal: AbortSignal }) => DayResponse | PromiseLike<DayResponse>;
   decode?: (bytes: ArrayBuffer) => TransitDay;
@@ -19,7 +19,7 @@ import { TRANSIT_DAY_VERSION } from '../../shared/day-packets/transit-format.ts'
 import { decodeTransitDay } from '../../shared/day-packets/decode.ts';
 import { createTransitDayCache } from './transit-day-cache.ts';
 import { createMemoryCache } from './memory-cache.ts';
-import { createAbortError, shareRequest } from './shared-request.ts';
+import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
 // Day is a transport adapter. The common full-day cache owns reusable numbers.
 export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode = decodeTransitDay,
@@ -66,11 +66,21 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
     }, { signal });
   }
   // Preserve an early failure until the live view takes ownership of its retry.
-  let initial = initialDate ? getDay(initialDate) : null;
+  const preload = new AbortController();
+  let initial = initialDate ? getDay(initialDate, { signal: preload.signal }) : null;
   initial?.catch(() => {});
   return { days, memory: days.memory || memory, peekDay, retainDay: (day: TransitDay) => day.calculationVersion ? days.retainDay(day as TransitDay & { calculationVersion: string }) : () => {},
     getDay(date: string, options?: { signal?: AbortSignal }) {
-      if (initial && date === initialDate) { const started = initial; initial = null; return started; }
+      if (initial && date === initialDate) {
+        const started = initial; initial = null;
+        if (pending.has(date)) {
+          // Join before releasing the preload so the physical request always
+          // has an owner; other independent consumers keep their own waits.
+          const joined = getDay(date, options); preload.abort(); return joined;
+        }
+        if (options?.signal?.aborted) return Promise.reject(createAbortError());
+        return started; // Keep a completed early failure for the live retry policy.
+      }
       return getDay(date, options);
     } };
 }

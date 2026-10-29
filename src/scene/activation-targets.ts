@@ -105,9 +105,15 @@ export function createActivationNumberFitter(node: SVGElement) {
     const missingDigit = text.firstChild?.nodeValue?.length === 1 ? text.getSubStringLength(0, 1) : 0;
     const width = bounds.width + missingDigit + 2 * left;
     if (!Number.isFinite(width) || bounds.width <= 0 || left < 0) return;
-    setAttributes(rect, { width });
-    previous = key;
+    return () => { setAttributes(rect, { width }); previous = key; };
   };
-  fit();
   return fit;
+}
+
+
+// Finish every numeric text write, then read every dirty label before applying
+// widths. This retains each target's current measurement without row-by-row layout.
+export function fitActivationNumbers(fitters: Iterable<ReturnType<typeof createActivationNumberFitter>>) {
+  const writes = [...fitters].map(measure => measure());
+  for (const write of writes) write?.();
 }

@@ -66,7 +66,7 @@ export function createCalculationUpdates({clients,expected,timeline:initialTimel
       // Re-admit only the exact current packets, through the normal validator.
       for(const date of target.packetDates){
         const day=clients.transit.peekDay(date);
-        if(day?.calculationVersion===expectedVersions.calculationVersion)clients.transit.days.putDay(day);
+        if(day?.calculationVersion===expectedVersions.calculationVersion)clients.transit.days.putDay(day,{ifMissing:true});
       }
       await clients.transit.days.flush();
       if(closed || !isCurrent())return {status:'cancelled'};

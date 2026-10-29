@@ -36,7 +36,7 @@ test('both preview pages serve the complete browser module graph without the app
       assert.ok(visited.has(path), `${path} is reachable`);
     }
     assert.ok(!visited.has('/src/app.ts'));
-    assert.ok(!visited.has('/src/data/storage.ts'));
+    assert.ok(!visited.has('/src/domain/temporary-chart.ts'));
     assert.equal((await readPreviewResource('/styles.css', config)).status, 200);
     for (const path of ['/api/calculate', '/src/app.ts', '/src/startup.ts', '/server/server.ts', '/data/cities.json', '/tests/previews/preview-server.ts', '/.git/config', '/src/../server/server.ts', '/src/%2e%2e/server/server.mjs', '/src/missing.js'] as const) {
       assert.equal((await readPreviewResource(path, config)).status, 404, path);
@@ -154,7 +154,7 @@ test('line-fixing preview renders fixation marks and its Home control resets the
   const { controller, viewport, click } = browserHarness(t, fixingPreview);
   const states = new Set([...viewport!.innerHTML.matchAll(/data-fixing="([^"]+)"/g)].map(match => match[1]));
   assert.deepEqual([...states].sort(), ['detriment', 'exalted', 'juxtaposed']);
-  controller.gestures.zoom(2);
+  controller.gestures.zoomAt({ x: 320, y: 410 }, 2);
   click('home');
   assert.deepEqual(controller.gestures.getView(), controller.gestures.getFittedView());
   click('leave');

@@ -163,7 +163,7 @@ test('fresh keyboard activation uses the gate midpoint and never borrows another
 
 test('drag, pinch, cancellation and lost capture cannot pin a cross', t => {
   const h = harness(t), target = h.target(), start = h.point(305.64);
-  h.controls.zoom(2);
+  h.controls.zoomAt({ x: 320, y: 410 }, 2);
   h.send('pointerdown', { target, shiftKey: true, ...start });
   h.send('pointermove', { target, buttons: 1, ...start, clientX: start.clientX + 20 });
   h.send('pointerup', { target, ...start });

@@ -17,7 +17,7 @@ interface ColumnRecord {
   rows: Map<string, { node: SVGElement; planetTarget: ReturnType<typeof capturePlanetTarget> }>;
 }
 
-import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget, renderActivationPanel, activationPanelAttributes, activationPanelRule, createActivationNumberFitter } from './activation-targets.ts';
+import { describePlanetTarget, renderPlanetTarget, capturePlanetTarget, updatePlanetTarget, renderActivationPanel, activationPanelAttributes, activationPanelRule, createActivationNumberFitter, fitActivationNumbers } from './activation-targets.ts';
 import { OVERLAY_SOURCES, overlayOriginLabel } from '../domain/chart-overlay.ts';
 import { PALETTE, ACTIVATION_HIGHLIGHT_OPACITY } from '../ui/chart-palette.ts';
 import { OVERLAY_PALETTE } from '../ui/overlay-palette.ts';
@@ -107,6 +107,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
   let previousInput: string | null = null;
   const captureValue = (node: SVGElement) => ({ node, fitNumber: createActivationNumberFitter(node), rect: node.querySelector('rect'),
     text: node.querySelector('text')!, line: node.querySelector('tspan')!, previous: null as string | null });
+  const fitNumbers = () => fitActivationNumbers([...values.values()].map(value => value.fitNumber));
   function capture() {
     values = new Map([...group!.querySelectorAll<SVGElement>('.cycle-activation-value')].map(node => [node.dataset.activation!, captureValue(node)]));
     columns = new Map([...group!.querySelectorAll<SVGElement>('[data-cycle-origin]')].map(node => [node.dataset.cycleOrigin!, {
@@ -119,6 +120,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
   function clear() { group?.remove(); group = null; values.clear(); columns.clear(); previousInput = null; }
   if (group) {
     capture();
+    fitNumbers();
     if (isChartOverlay(rendered?.chart) && rendered!.options?.showActivations) {
       previousInput = columnInput(rendered!.chart as Extract<ChartComposition, { kind: 'transit' | 'return' }>, rendered!.state, rendered!.options);
     }
@@ -133,7 +135,7 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
       const models = describeOverlayActivationColumns(chart, state.relatedGates, state.committedGates, selectionOptions);
       if (!group) {
         group = svgNodes(drawing, columnsMarkup(models)).find(node => node.nodeType === 1)! as SVGElement;
-        drawing.insertBefore(group, drawing.firstChild); capture(); previousInput = input; return;
+        drawing.insertBefore(group, drawing.firstChild); capture(); fitNumbers(); previousInput = input; return;
       }
       const nextIds = new Set();
       for (const column of models) {
@@ -180,9 +182,9 @@ export function createOverlayActivationPainter(drawing: Element, rendered: Rende
         setAttributes(record.text, { x: value.textX, 'font-size': value.fontSize });
         if (record.text.firstChild!.nodeValue !== String(value.gate)) record.text.firstChild!.nodeValue = String(value.gate);
         if (record.line.textContent !== `.${value.line}`) record.line.textContent = `.${value.line}`;
-        record.fitNumber();
       }
       for (const [id, record] of values) if (!nextIds.has(id)) { record.node.remove(); values.delete(id); }
+      fitNumbers();
       previousInput = input;
     },
     clear,

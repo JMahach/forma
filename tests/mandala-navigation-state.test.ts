@@ -34,7 +34,7 @@ test('saved chart navigation keeps the enabled mandala, current reveal and camer
     button: { setAttribute: (key, value) => attributes.set(key, value), addEventListener: (_, callback) => { toggle = callback; } },
     canvas: { classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) } },
     gestures: camera, layout: { frame: () => STUDIO_FRAME }, render: graph.render, motion });
-  camera.reset(); camera.zoom(1.7); camera.pan(17, 31);
+  camera.reset(); camera.zoomAt({ x: 320, y: 410 }, 1.7); camera.pan(17, 31);
   graph.render(); toggle!();
   const tick = (value: number) => { time = value; const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); };
   tick(100);

@@ -7,7 +7,7 @@ import { createIndexedDatabase } from './indexed-db.ts';
 
 export interface LibraryLease { accountId: string; generation: string }
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
-export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true} | {status:'partial';lease:LibraryLease} | {status: 'stale' | 'unavailable'};
+export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'};
 interface Options { indexedDB?: IDBFactory | null; databaseName?: string;now?:()=>number;pressure?:StoragePressure }
 const ownerId = (value: unknown): value is string => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -84,13 +84,17 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         const request=tx.objectStore('context').get('owner');request.onsuccess=()=>{
           if(!same(request.result,seen)){result({status:'stale'});return;}
           const rows=tx.objectStore('charts');
+          const outcome:LibraryStoreResult & {status:'stored'}={status:'stored',lease:{...seen},changed:false};
           for(const chart of batch){const prior=rows.get(chart.id);prior.onsuccess=()=>{
             try{
               let current:AccountChart|null=null;try{current=validateAccountChart(prior.result,seen.accountId);}catch{}
-              if(!current || current.revision<chart.revision)rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:now()});
+              if(!current || current.revision<chart.revision){
+                rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:now()});
+                outcome.changed=true;
+              }
             }catch(error){fail(error);}
           };}
-          result({status:'stored',lease:{...seen}});
+          result(outcome);
         };
       });
       const first=await write(charts);
@@ -99,20 +103,21 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       // One hundred cards need not fit atomically to preserve one usable card.
       // Keep the leading saved subset; never cycle through the whole library
       // evicting cards that this same background page just downloaded.
-      let stored=0;
+      let stored=0,changed=false;
       for(const chart of charts){
         let result=await write([chart]),recovered=false;
         if(result.status==='quota'){
           if(isCurrent && !isCurrent())return {status:'stale'};
-          if(stored)return {status:'partial',lease:{...seen}};
+          if(stored)return {status:'partial',lease:{...seen},changed};
           if(pressure){result=await pressure.write(()=>write([chart]),{chartIds:[chart.id]});recovered=true;}
         }
-        if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen}}:unavailable();
+        if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen},changed}:unavailable();
         if(result.value.status!=='stored')return result.value;
+        changed ||= result.value.changed!==false;
         stored++;
-        if(recovered)return stored===charts.length?{...result.value,pressure:true}:{status:'partial',lease:{...seen}};
+        if(recovered)return stored===charts.length?{...result.value,changed,pressure:true}:{status:'partial',lease:{...seen},changed};
       }
-      return {status:'stored',lease:{...seen},pressure:true};
+      return {status:'stored',lease:{...seen},changed,pressure:true};
     },
     // A working RAM record and an open database do not prove a reload can restore it.
     async canRestore(seen:LibraryLease,expected:AccountChart):Promise<boolean> {

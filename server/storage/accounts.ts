@@ -87,7 +87,7 @@ export function createAccountStorage(db: Database) {
       sql.prepare('INSERT INTO account_sessions VALUES (?,?,?,?,?,?,?)').run(row.id, row.accountId,
         row.secretHash, row.createdAt, row.expiresAt, row.bindingHash, row.bindingExpiresAt);
     },
-    touchSession(id: string, expiresAt: number) { sql.prepare('UPDATE account_sessions SET expiresAt = ? WHERE id = ?').run(expiresAt, id); },
+    touchSession(id: string, expiresAt: number) { sql.prepare('UPDATE account_sessions SET expiresAt = ? WHERE id = ? AND expiresAt IS NOT ?').run(expiresAt, id, expiresAt); },
     deleteAttempt(id: string) { sql.prepare('DELETE FROM account_attempts WHERE id = ?').run(id); },
     deleteSession(id: string) { sql.prepare('DELETE FROM account_sessions WHERE id = ?').run(id); },
     mailIsCurrent(id: string, now: number) {
@@ -97,8 +97,8 @@ export function createAccountStorage(db: Database) {
     cleanup(now: number) {
       sql.prepare('DELETE FROM account_attempts WHERE expiresAt <= ?').run(now);
       sql.prepare('DELETE FROM account_sessions WHERE expiresAt <= ?').run(now);
-      sql.prepare('UPDATE account_attempts SET codeHash = NULL WHERE codeExpiresAt <= ?').run(now);
-      sql.prepare('UPDATE account_sessions SET bindingHash = NULL WHERE bindingExpiresAt <= ?').run(now);
+      sql.prepare('UPDATE account_attempts SET codeHash = NULL WHERE codeExpiresAt <= ? AND codeHash IS NOT NULL').run(now);
+      sql.prepare('UPDATE account_sessions SET bindingHash = NULL WHERE bindingExpiresAt <= ? AND bindingHash IS NOT NULL').run(now);
     },
   };
 }

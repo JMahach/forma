@@ -27,23 +27,7 @@ function relatedEntries(current: KnowledgeEntry) {
     if (!groups.has(label)) groups.set(label, []);
     if (!groups.get(label)!.some(item => item.id === entry.id)) groups.get(label)!.push(entry);
   };
-  if (current.kind === 'center') {
-    const channels = current.relations.filter(relation => relation.type === 'connected_by')
-      .flatMap(relation => getKnowledgeEntry(relation.target) ?? []);
-    for (const channel of channels) add('Каналы', channel);
-    for (const relation of current.relations) {
-      const target = getKnowledgeEntry(relation.target);
-      if (target?.kind === 'gate') add('Ворота', target);
-    }
-    for (const channel of channels) for (const relation of channel.relations) {
-      const target = getKnowledgeEntry(relation.target);
-      if (target?.kind === 'center') add('Центры', target);
-    }
-    for (const relation of current.relations) {
-      const target = getKnowledgeEntry(relation.target);
-      if (target && !['gate', 'channel', 'center'].includes(target.kind)) add('По теме', target);
-    }
-  } else for (const relation of current.relations) {
+  for (const relation of current.relations) {
     add(KNOWLEDGE_RELATION_LABELS[relation.type] ?? 'По теме', getKnowledgeEntry(relation.target));
   }
   return [...groups];
@@ -58,12 +42,7 @@ function renderConnections(current: KnowledgeEntry) {
       `<button type="button" data-relation-group="${index}" aria-pressed="${index === 0}" aria-controls="${groupId(index)}">${escape(label)} <span>${entries.length}</span></button>`).join('')}</div>
     ${groups.map(([label, entries], index) => `<div class="knowledge-relation-items" id="${groupId(index)}" data-relation-panel="${index}" aria-label="${escape(label)}" ${index ? 'hidden' : ''}>${entries.map(entry => {
       const numbered = ['gate', 'channel', 'line', 'profile'].includes(entry.kind);
-      const gates = entry.kind === 'gate' ? [entry.key] : entry.kind === 'channel' ? String(entry.key).split('-') : [];
-      const centers = current.kind === 'center' && entry.kind === 'channel' ? entry.relations
-        .flatMap(relation => getKnowledgeEntry(relation.target) ?? [])
-        .filter(target => target.kind === 'center' && target.id !== current.id) : [];
-      const destination = centers.length ? `<small>↔ ${escape(centers.map(target => knowledgeTopicLabel(target)).join(', '))}</small>` : '';
-      return `<button type="button" class="knowledge-link" data-entry-id="${entry.id}" data-related-gates="${gates.join(',')}" aria-label="${escape(knowledgeEntryTitle(entry))}">${numbered ? `<span class="knowledge-link-number">${escape(String(entry.key).replaceAll('-', '–'))}</span>` : ''}<span class="knowledge-link-label">${escape(numbered ? knowledgeTopicLabel(entry) : knowledgeEntryTitle(entry))}${destination}</span><span class="knowledge-link-arrow" aria-hidden="true">↗</span></button>`;
+      return `<button type="button" class="knowledge-link" data-entry-id="${entry.id}" aria-label="${escape(knowledgeEntryTitle(entry))}">${numbered ? `<span class="knowledge-link-number">${escape(String(entry.key).replaceAll('-', '–'))}</span>` : ''}<span class="knowledge-link-label">${escape(numbered ? knowledgeTopicLabel(entry) : knowledgeEntryTitle(entry))}</span><span class="knowledge-link-arrow" aria-hidden="true">↗</span></button>`;
     }).join('')}</div>`).join('')}</section>`;
 }
 
@@ -282,16 +261,6 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
     event.preventDefault();
     if (gate.dataset.entryId) selectCenterGate(gate.dataset.entryId);
   });
-  const highlight = (event: Event, active: boolean) => {
-    const link = (event.target as Element).closest<HTMLElement>('[data-related-gates]');
-    if (!link) return;
-    const gates = active ? (link.dataset.relatedGates ?? '').split(',') : [];
-    article.querySelectorAll<SVGElement>('.knowledge-center-gate').forEach(gate => {
-      gate.setAttribute('data-highlighted', String(gates.includes(gate.dataset.entryId?.slice(5) ?? '')));
-    });
-  };
-  for (const name of ['pointerover', 'focusin']) article.addEventListener?.(name, event => highlight(event, true));
-  for (const name of ['pointerout', 'focusout']) article.addEventListener?.(name, event => highlight(event, false));
   return {
     restoreInputFocus,
     get snapshot(): NonNullable<SavedView['knowledge']> {

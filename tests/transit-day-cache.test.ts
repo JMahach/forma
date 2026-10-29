@@ -146,3 +146,11 @@ test('RAM hits touch the common LRU and coalesce concurrent touches',async t=>{
   for(let i=0;i<10;i++)assert.equal(first.peekDay(value.date,version),value);
   assert.deepEqual(calls,[['transit',`${version}:${value.date}`]]);
 });
+
+test('equal concurrent day admissions share pending storage work and retry after a failed write',async t=>{
+ const shared=owner(t),value=day();await shared.setTransitWindow(windowFor());const adapter=cache(t,{cache:shared});
+ const put=shared.put;let attempts=0;
+ t.mock.method(shared,'put',async(...args:Parameters<typeof put>)=>{if(++attempts===1)return false;return put(...args);});
+ adapter.putDay(value);adapter.putDay(value);adapter.putDay(value);await adapter.flush();assert.equal(attempts,1);
+ adapter.putDay(value);await adapter.flush();assert.equal(attempts,2);assert.ok(await shared.get('transit',`${version}:${value.date}`));
+});

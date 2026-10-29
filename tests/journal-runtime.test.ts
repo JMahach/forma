@@ -142,3 +142,42 @@ test('browser receipt uses the same durable archive and preserves first delivery
  assert.equal(rows[0].occurredAt,1);assert.equal(rows[0].receivedAt,NOW);
  assert.deepEqual(await runtime.receiveClient(client,'192.0.2.1'),{status:'retryable',reason:'journal_unavailable'});
 });
+
+test('recovered mail handoff admits a bounded writer batch and preserves every individual durable ACK',async t=>{
+ const {openMailBuffer}=await import('../server/journal/mail-buffer.ts');
+ const {Worker}=await import('node:worker_threads');
+ const directory=fixture(t),mailDirectory=path.join(directory,'mail-pending');
+ fs.mkdirSync(mailDirectory,{mode:0o700});
+ const buffer=openMailBuffer({filename:path.join(mailDirectory,'pending.sqlite'),now:()=>NOW});
+ const {completeJournalEvent}=await import('../server/journal/events.ts');
+ for(let i=0;i<32;i++){
+  const event=completeJournalEvent({...fact,eventId:'mail:synthetic:'+i},{environment:'stand',occurredAt:NOW,eventId:'unused'});
+  assert.ok(event);assert.equal(buffer.stage(event).status,'buffered');
+ }
+ buffer.close();
+ const post=Worker.prototype.postMessage,batches:number[]=[];
+ Worker.prototype.postMessage=function(value:unknown,...args:Parameters<typeof post> extends [unknown,...infer Rest]?Rest:never){
+  if(value && typeof value==='object' && 'kind'in value && value.kind==='batch' && 'entries'in value && Array.isArray(value.entries))batches.push(value.entries.length);
+  return post.call(this,value,...args);
+ };
+ const runtime=createJournalRuntime({directory,environment:'stand',now:()=>NOW});
+ try{await runtime.flushMail();}finally{await runtime.close();Worker.prototype.postMessage=post;}
+ assert.equal(archive(directory).length,32);assert.equal(pending(directory),0);
+ assert.ok(batches.some(length=>length===32),JSON.stringify(batches));
+});
+
+test('a conflict in a recovered batch keeps only that pending event while later durable ACKs release theirs',async t=>{
+ const {openMailBuffer}=await import('../server/journal/mail-buffer.ts');
+ const {openJournalStore}=await import('../server/journal/store.ts');
+ const {completeJournalEvent}=await import('../server/journal/events.ts');
+ const directory=fixture(t),mailDirectory=path.join(directory,'mail-pending');fs.mkdirSync(mailDirectory,{mode:0o700});
+ const event=completeJournalEvent(fact,{environment:'stand',occurredAt:NOW,eventId:'unused'});assert.ok(event);
+ const archiveStore=openJournalStore({directory:path.join(directory,'archive')});
+ assert.equal(archiveStore.append({...event,recipient:'previous@example.test'},NOW,0).status,'accepted');archiveStore.close();
+ const buffer=openMailBuffer({filename:path.join(mailDirectory,'pending.sqlite'),now:()=>NOW});
+ assert.equal(buffer.stage(event).status,'buffered');
+ for(let i=0;i<31;i++)assert.equal(buffer.stage({...event,eventId:'mail:later:'+i}).status,'buffered');buffer.close();
+ const runtime=createJournalRuntime({directory,environment:'stand',now:()=>NOW});
+ try{assert.equal(await runtime.flushMail(),31);}finally{await runtime.close();}
+ assert.equal(archive(directory).length,32);assert.equal(pending(directory),1);
+});

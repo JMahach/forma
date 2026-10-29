@@ -48,7 +48,6 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
     disc: node.querySelector('.bg-gate-disc'), glow: node.querySelector('.bg-gate-glow'), halo: node.querySelector('.bg-gate-highlight'), text: node.querySelector('text') }] : []; });
   const integration = byType('integration', 'integration');
   const background = [...drawing.querySelector('.bodygraph-integration-outlines')!.children, ...[...integration.children].slice(0, 5)];
-  const arms = [...integration.querySelectorAll<SVGElement>('.bg-integration-arm')].map(node => ({ gate: Number(node.dataset.arm), node }));
   const colorLayer = integration.querySelector('.bodygraph-integration-paint')!;
   const paintColors = fragmentSlot(colorLayer, null, [...colorLayer.childNodes],
     initialState ? paintIntegrationLayers(initialState) : undefined);
@@ -209,10 +208,6 @@ export function createBodygraphPainter(root: Element, initialState: RenderState 
         setAttribute(background[index], 'opacity', part.opacity);
         setAttribute(background[index + 5], 'opacity', part.opacity);
       });
-      for (const arm of arms) {
-        const part = integrationArmState.find(part => part.gate === arm.gate)!;
-        setAttributes(arm.node, { 'data-related': part.highlighted, opacity: part.opacity });
-      }
       if (physicalChanged) paintColors(paintIntegrationLayers(state));
       const selectionChanged = selectionHalo?.getAttribute('d') !== selectionPath
         || selectionHalo?.getAttribute('mask') !== `url(#${prefix}-${integrationSelected ? 'integration-outline' : 'integration-selection-outline'})`;

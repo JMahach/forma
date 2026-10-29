@@ -194,3 +194,14 @@ test('cache-only return readiness uses the current personal generation and never
  await owner.cycles.events(cycleInput);assert.deepEqual((await owner.cycles.readEvents(cycleInput))?.events,[]);
  await owner.resetPersonal();assert.equal(await owner.cycles.readEvents(cycleInput),null);assert.equal(requests,1);
 });
+
+test('prepared chart enumeration follows the revocable personal generation without retaining cleared identities',async t=>{
+ const owner=createCalculationClients({cacheOptions:{indexedDB:new IDBFactory(),legacySources:[]},cycles:{cacheVersion:version}});t.after(()=>owner.close());
+ const input={birthUtc:cycleInput.birthUtc,body:'saturn',eventUtc:'2028-07-21T12:36:05Z',timezone:'UTC'};
+ owner.memory.put(`return-chart:${JSON.stringify(['chart',version,input.birthUtc,input.body,input.eventUtc,input.timezone])}`,{});
+ assert.deepEqual(await owner.cycles.preparedChartInputs(input),[input]);
+ const pending=owner.cycles.preparedChartInputs(input),rejected=assert.rejects(pending,{name:'AbortError'});
+ await owner.resetPersonal();await rejected;
+ assert.deepEqual(await owner.cycles.preparedChartInputs(input),[]);
+ await owner.close();await assert.rejects(owner.cycles.preparedChartInputs(input),{name:'AbortError'});
+});

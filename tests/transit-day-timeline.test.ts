@@ -102,3 +102,20 @@ test('views reuse one exact UTC/zone label across timeline origins without shari
   assert.equal(subminute.utc, '2026-11-01T05:30:00.001Z', 'exact UTC is never rounded to the visible minute');
   assert.equal(formatting.mock.callCount(), 5);
 });
+
+test('timeline formatter settings reuse the existing eight-zone bound and recreate evicted settings without changing labels',async t=>{
+ const {localDateAt}=await import('../src/domain/day-timeline.ts');
+ const counts=new Map<string,number>(),Original=Intl.DateTimeFormat;
+ t.mock.method(Intl,'DateTimeFormat',new Proxy(Original,{construct(target,args){
+  const zone=args[1]?.timeZone;if(zone)counts.set(zone,(counts.get(zone)??0)+1);return Reflect.construct(target,args);
+ }}));
+ const zones=Array.from({length:9},(_,i)=>`Etc/GMT+${i+1}`),startUtc=Date.parse('2026-09-24T12:00:00Z');
+ const timeline=(timeZone:string)=>({startUtc,minutes:1440,timeZone});
+ let firstDate='',firstLabel;
+ for(const zone of zones){const date=localDateAt(startUtc,zone),label=formatTimelineMinute(timeline(zone),0);if(zone===zones[0]){firstDate=date;firstLabel=label;}}
+ assert.equal(counts.get(zones[0]),3);
+ assert.equal(localDateAt(startUtc,zones[0]),firstDate);assert.deepEqual(formatTimelineMinute(timeline(zones[0]),0),firstLabel);
+ assert.equal(counts.get(zones[0]),6,'oldest date formatter and label pair are recreated after eight other zones');
+ localDateAt(startUtc,zones[8]);formatTimelineMinute(timeline(zones[8]),1);
+ assert.equal(counts.get(zones[8]),3,'recent formatter settings remain reusable');
+});

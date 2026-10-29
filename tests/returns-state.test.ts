@@ -718,3 +718,21 @@ test('offline return readiness from an old natal cannot enable the new selection
   assert.equal(control.state.canOpen, false);
   assert.deepEqual(control.state.readyEvents, []);
 });
+
+test('closing the list does not restart prepared availability or cancel independent date consumers',async()=>{
+ let reads=0,searches=0;
+ const control=createReturnsController({connection:()=> 'offline',client:{readEvents:async input=>{searches++;return packet(input);},readChart:async()=>{reads++;return null;}}});
+ await control.select(natal());await control.enableMarkers(true);await control.open();reads=0;const before=searches;
+ for(let i=0;i<10;i++)await control.close();
+ assert.equal(reads,0);assert.equal(searches,before);assert.equal(control.state.markersEnabled,true);
+});
+
+test('offline availability enumerates existing charts before checking their visible event identities',async()=>{
+ const events=Array.from({length:1336},(_,i)=>event('moon',new Date(Date.UTC(2000,0,2)+i*27*86400000).toISOString()));
+ const opened=events[100];let chartReads=0;
+ const control=createReturnsController({connection:()=> 'offline',client:{readEvents:async input=>input.body==='moon'?packet(input,events):null,
+  preparedChartInputs:async()=>[{birthUtc:'2000-01-01T00:00:00Z',body:'moon',eventUtc:opened.utc,timezone:'UTC'}],
+  readChart:async()=>{chartReads++;return {...chartPacket(opened),event:opened};}}});
+ await control.select(natal());await control.setBodies(['moon']);chartReads=0;
+ await control.refreshAvailability();assert.equal(chartReads,1);assert.deepEqual(control.state.readyEvents,[opened.id]);
+});

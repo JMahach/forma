@@ -4,6 +4,7 @@ import type { ChartClient, ChartBirthInput, ChartReceipt, ChartPatchInput } from
 import type { ChartCalculation } from '../domain/chart-record.ts';
 import type { LibrarySession } from './account-library.ts';
 import { createChartId } from '../domain/chart-record.ts';
+import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
 
 export type ChartActionResult =
   | {kind: 'temporary'; chart: SavedChart}
@@ -44,6 +45,7 @@ function refusedBeforeWrite(error: unknown) {
 export function createChartActions({client, library, getSession, calculate, saveReady, newId = createChartId, initialPending = [], onPending = () => {}}: Options) {
   const pending = new Map<string, ChartWriteIntent>();
   const saveChecks=new Map<string,{intent:ChartWriteIntent;session:LibrarySession}>();
+  const recoveries=new Map<string,SharedRequest<ChartActionResult,{live:()=>boolean}>>();
   let generation=0,saving:{key:string;live:()=>boolean;action:ChartSaveAction}|null=null;
   // Only the open page associates a deletion with its recovery pointer. No
   // command payload, queued write or deletion tombstone is persisted here.
@@ -51,7 +53,7 @@ export function createChartActions({client, library, getSession, calculate, save
   const key = (intent: ChartWriteIntent) => intent.expectedAccountId + ':' + intent.operationId;
   for (const intent of initialPending) pending.set(key(intent), {...intent});
   const publish = () => onPending([...pending.values()].map(value => ({...value})));
-  function forget(intent: ChartWriteIntent) { pending.delete(key(intent)); publish(); }
+  function forget(intent: ChartWriteIntent) { if (pending.delete(key(intent))) publish(); }
   function same(seen: LibrarySession) {
     const current = getSession(); return current?.accountId === seen.accountId && current.sessionId === seen.sessionId;
   }
@@ -93,9 +95,18 @@ export function createChartActions({client, library, getSession, calculate, save
     if (intent.expectedAccountId !== seen.accountId) throw failed('account_changed');
     const ownedGeneration=generation;
     const live=()=>ownedGeneration===generation && !signal?.aborted && isCurrent();
-    const receipt = await client.outcome(intent, signal);
-    if (receipt.outcome.kind === 'unknown') return {kind: 'unknown', intent: {...intent}};
-    return settle({...receipt, outcome: receipt.outcome}, seen,live);
+    const recoveryKey=ownedGeneration+':'+seen.sessionId+':'+key(intent);
+    const result=await shareRequest(recoveries,recoveryKey,async (request):Promise<ChartActionResult>=>{
+      const receipt = await client.outcome(intent, request.controller.signal);
+      if (receipt.outcome.kind === 'unknown') return {kind: 'unknown', intent: {...intent}};
+      return settle({...receipt, outcome: receipt.outcome}, seen,
+        ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()));
+    },{signal,consumer:{live}});
+    if(result.kind==='settled' && (!same(seen) || !live())) {
+      const {readError: _error,...settled}=result;
+      return {...settled,chart:null,active:false};
+    }
+    return result;
   }
   function removalKey(chartId: string) { return getSession()?.accountId + ':' + chartId; }
   function remove(chartId: string, signal?: AbortSignal): Promise<ChartActionResult> {
@@ -206,7 +217,11 @@ export function createChartActions({client, library, getSession, calculate, save
   return {
     isCheckingRemoval(chartId: string) { return Boolean(removals.get(removalKey(chartId))?.intent); },
     get pending(): readonly ChartWriteIntent[] { return [...pending.values()].map(value => ({...value})); },
-    clear() { saving?.action.cancel();saving=null;generation++;removals.clear();saveChecks.clear(); pending.clear(); publish(); },
+    clear() {
+      saving?.action.cancel();saving=null;generation++;
+      for(const request of recoveries.values())request.controller.abort();
+      recoveries.clear();removals.clear();saveChecks.clear();pending.clear();publish();
+    },
     prepareSave,
     async create(input: CreateInput, signal = new AbortController().signal): Promise<ChartActionResult> {
       signal.throwIfAborted();

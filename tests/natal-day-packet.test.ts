@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { encodeNatalDay } from '../server/packets/encode.ts';
 import { decodeNatalDay } from '../shared/day-packets/decode.ts';
 import { natalDayMinute, natalDayIndexAt, chartAtMinute } from '../src/domain/natal-day.ts';
-import { validateLibraryChart } from '../src/data/storage.ts';
+import { normalizeTemporaryChart } from '../src/domain/temporary-chart.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
 
 export function makeDay(date = '1990-06-15', timezone = 'UTC', samples = 1440) {
@@ -108,7 +108,7 @@ test('materialization contains only chart data and an explicit saved record reta
   assert.equal(record.id, original.id); assert.equal(record.name, original.name); assert.equal(record.note, original.note);
   assert.equal(record.createdAt, original.createdAt); assert.equal(record.updatedAt, original.updatedAt);
   assert.equal(record.birthTime, chart.localTime); assert.deepEqual(record.activations, chart.activations);
-  assert.equal(validateLibraryChart(record).utc, chart.utc);
+  assert.equal(normalizeTemporaryChart(record)?.utc, chart.utc);
   assert.equal(Reflect.get(original,'birthTime'), undefined);
   for (const bad of [-1, 1440, 0.5, '1', NaN] as const) assert.throws(() => chartAtMinute(day, bad as number));
 });

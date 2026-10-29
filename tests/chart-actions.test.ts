@@ -308,3 +308,48 @@ test('a definitive ready-save refusal allows a fresh explicit write instead of c
   assert.equal((await h.actions.prepareSave(source).run()).kind,'settled');
   assert.deepEqual(h.counts(),{writes:2,calculations:0,reads:0,opens:1});
 });
+
+test('concurrent recovery shares acquisition but keeps each consumer cancellation independent',async()=>{
+ const intent={operationId:chartId(77),expectedAccountId:'1'};
+ let reads=0,opens=0,release!:()=>void,transport:AbortSignal|undefined;
+ const gate=new Promise<void>(resolve=>{release=resolve;});
+ const actions=createChartActions({initialPending:[intent],getSession:()=>access,calculate:async()=>accountChart(),
+  client:{async outcome(value,signal){reads++;transport=signal;await gate;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}} as Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>,
+  library:{async open(){opens++;return accountChart();},async forget(){}}});
+ const controller=new AbortController();
+ const first=actions.recover(intent,controller.signal);
+ const firstRejected=assert.rejects(first,{name:'AbortError'});
+ let current=true;
+ const second=actions.recover(intent,undefined,()=>current);
+ const third=actions.recover(intent);
+ assert.equal(reads,1);
+ controller.abort();await firstRejected;assert.equal(transport?.aborted,false);
+ current=false;release();
+ const [obsolete,active]=await Promise.all([second,third]);
+ assert.equal(opens,1);assert.equal(obsolete.kind,'settled');assert.equal(active.kind,'settled');
+ if(obsolete.kind==='settled'&&active.kind==='settled'){
+  assert.equal(obsolete.active,false);assert.equal(obsolete.chart,null);
+  assert.equal(active.active,true);assert.equal(active.chart?.id,chartId(1));
+ }
+ assert.deepEqual(actions.pending,[]);
+ await actions.recover(intent);assert.equal(reads,2,'completed outcomes are not cached');
+});
+
+test('the last recovery consumer aborts transport and a cleared generation cannot settle for the new one',async()=>{
+ const intent={operationId:chartId(78),expectedAccountId:'1'};
+ const requests:{signal?:AbortSignal;finish:(value:unknown)=>void}[]=[];
+ let opens=0;
+ const actions=createChartActions({initialPending:[intent],getSession:()=>access,calculate:async()=>accountChart(),
+  client:{outcome(_value: ChartWriteIntent,signal?: AbortSignal){return new Promise(resolve=>requests.push({signal,finish:resolve}));}} as unknown as Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>,
+  library:{async open(){opens++;return accountChart();},async forget(){}}});
+ const controller=new AbortController(),first=actions.recover(intent,controller.signal);
+ const rejected=assert.rejects(first,{name:'AbortError'});
+ controller.abort();await rejected;assert.equal(requests[0]!.signal?.aborted,true);
+ const old=actions.recover(intent);actions.clear();
+ const next=actions.recover(intent);assert.equal(requests.length,3);
+ for(const request of requests)request.finish({...intent,outcome:{kind:'created',chartId:chartId(1),revision:1}});
+ const [oldResult,nextResult]=await Promise.all([old,next]);
+ assert.equal(opens,1);
+ assert.equal(oldResult.kind==='settled'&&oldResult.active,false);
+ assert.equal(nextResult.kind==='settled'&&nextResult.active,true);
+});

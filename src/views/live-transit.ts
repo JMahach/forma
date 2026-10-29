@@ -1,5 +1,5 @@
 import type { LiveTransit, LiveTransitOptions } from '../state/live-transit.ts';
-interface LiveTransitViewOptions extends LiveTransitOptions { document: Document; button: HTMLButtonElement; isFormOpen?: () => boolean }
+interface LiveTransitViewOptions extends LiveTransitOptions { document: Document; button: HTMLButtonElement; isFormOpen?: () => boolean; isChartVisible?: () => boolean }
 
 import { createLiveTransit } from '../state/live-transit.ts';
 
@@ -11,9 +11,12 @@ export function attachTransitNavigation(button: HTMLButtonElement, { onSelect, r
 }
 
 // Adapt page visibility and the navigation button without making state own DOM.
-export function attachLiveTransit({ document, button, isFormOpen = () => false, onStateChange = () => {}, ...options }: LiveTransitViewOptions) {
+export function attachLiveTransit({ document, button, isFormOpen = () => false, isChartVisible = () => true, onStateChange = () => {}, ...options }: LiveTransitViewOptions) {
   const transit = createLiveTransit({
-    ...options, isVisible: () => !document.hidden && !isFormOpen(), isSuspended: () => document.hidden,
+    ...options, isVisible: () => !document.hidden && isChartVisible() && !isFormOpen(),
+    // Another workspace keeps its selected/paused state and shared day loads,
+    // while the live minute clock waits until the chart is visible again.
+    isSuspended: () => document.hidden || !isChartVisible(),
     onStateChange(state) {
       if (state.loading) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');

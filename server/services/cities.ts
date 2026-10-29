@@ -25,12 +25,21 @@ export function createCityCatalog(cities: CatalogCity[]) {
       if (q.length < 2) return [];
       const exact: CatalogCity[] = [], prefix: CatalogCity[] = [], rest: CatalogCity[] = [];
       for (const { city, names } of searchable) {
-        if (names.some(name => name === q)) {
-          exact.push(city);
-          if (exact.length === 12) break;
+        let match = 0;
+        for (const name of names) {
+          // Once lower ranks are full, only an exact match can improve this city's rank.
+          if (match === 2 || prefix.length >= 12 && (match === 1 || rest.length >= 12)) {
+            if (name === q) { match = 3; break; }
+            continue;
+          }
+          const at = name.indexOf(q);
+          if (at === 0 && name.length === q.length) { match = 3; break; }
+          if (at === 0 && prefix.length < 12) match = 2;
+          else if (at >= 0 && rest.length < 12 && match < 1) match = 1;
         }
-        else if (prefix.length < 12 && names.some(name => name.startsWith(q))) prefix.push(city);
-        else if (rest.length < 12 && names.some(name => name.includes(q))) rest.push(city);
+        if (match === 3) { exact.push(city); if (exact.length === 12) break; }
+        else if (match === 2) prefix.push(city);
+        else if (match === 1) rest.push(city);
       }
       return [...exact, ...prefix, ...rest].slice(0, 12).map(city => {
         const alias = city.aliases.find(name => normalize(name) === q) || city.aliases.find(name => normalize(name).startsWith(q));

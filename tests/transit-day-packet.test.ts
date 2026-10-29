@@ -5,7 +5,7 @@ import { encodeTransitDay, encodeNumericColumn } from '../server/packets/encode.
 import { decodeTransitDay } from '../shared/day-packets/decode.ts';
 import { transitChartAt } from '../src/domain/transit-day.ts';
 import { TRANSIT_PLANETS, TRANSIT_DAY_COLUMNS } from '../shared/day-packets/transit-format.ts';
-import { validateLibraryChart } from '../src/data/storage.ts';
+import { normalizeTemporaryChart } from '../src/domain/temporary-chart.ts';
 import { gatePositionAtLongitude } from '../src/domain/gate-wheel.ts';
 
 type TestDay = Omit<ReturnType<typeof fixture>,'columns'> & {columns:(Float64Array|number[])[]};
@@ -68,7 +68,7 @@ test('materialized minutes use exact two-sided positions and retain a valid lega
       birthPlace: '', cityId: null, city: null, note: '', createdAt: day.startUtc, updatedAt: chart.utc,
       design: [], designUtc: null, designArcResidualDegrees: null,
       activations: { personality: chart.activations!.personality, design: [] } };
-    assert.equal(validateLibraryChart(legacyFallback).utc, chart.utc);
+    assert.equal(normalizeTemporaryChart(legacyFallback)?.utc, chart.utc);
     assert.equal(chart.utc, new Date(Date.parse(day.startUtc) + minute * 60000).toISOString().replace('.000Z', 'Z'));
     assert.equal(localDate, chart.utc!.slice(0, 10)); assert.equal(localTime, chart.utc!.slice(11, 16));
     for (const [column, planet] of TRANSIT_PLANETS.entries()) {

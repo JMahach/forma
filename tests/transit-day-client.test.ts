@@ -14,7 +14,8 @@ const day = (date: string) => ({ calculationVersion: 'a'.repeat(64), date, start
   columns: Array.from({ length: 24 }, (_, col) => Float64Array.from({ length: 1440 }, (_, index) => col < 22
     ? (col * 30 + index / 10000) % 360 : col === 22 ? Date.parse(`${date}T00:00:00Z`) / 1000 - 88 * 86400 + index * 61 : index % 100 * 1e-12)),
 });
-const response = (date: string|null) => ({ ok: true, arrayBuffer: async () => encodeTransitDay(day(date)).buffer });
+const response = (date: string|null) => ({ ok: true, arrayBuffer: async () => encodeTransitDay(day(date)).buffer,
+  json: async () => assert.fail('a successful day response must be read as binary') });
 
 test('day client coalesces concurrent requests and reuses the decoded immutable packet without more network', async () => {
   const requests = [];
@@ -242,4 +243,38 @@ test('a different UTC packet does not disturb a pending startup handoff or its s
   finish!(); const [a, b] = await Promise.all([first, shared]);
   assert.equal(a, b); assert.equal(await client.getDay('2026-09-24'), a);
   assert.deepEqual(requests, ['2026-09-24', '2026-09-23']);
+});
+
+test('taking the pending startup packet transfers cancellation to its sole consumer', async () => {
+ let finish!:(value:ReturnType<typeof response>)=>void,networkSignal!:AbortSignal;
+ const client=createTransitDayClient({initialDate:'2026-09-24',fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
+ const controller=new AbortController(),waiting=client.getDay('2026-09-24',{signal:controller.signal});
+ controller.abort();assert.equal(networkSignal.aborted,true);
+ await assert.rejects(waiting,error=>(error as Error).name==='AbortError');
+ finish(response('2026-09-24'));await new Promise(setImmediate);
+ assert.equal(client.peekDay('2026-09-24'),null,'a cancelled early response cannot enter shared RAM');
+});
+
+test('aborting the startup recipient preserves another packet consumer', async () => {
+ let finish!:(value:ReturnType<typeof response>)=>void,networkSignal!:AbortSignal;
+ const client=createTransitDayClient({initialDate:'2026-09-24',fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
+ const controller=new AbortController(),waiting=client.getDay('2026-09-24',{signal:controller.signal}),other=client.getDay('2026-09-24');
+ controller.abort();await assert.rejects(waiting,error=>(error as Error).name==='AbortError');assert.equal(networkSignal.aborted,false);
+ finish(response('2026-09-24'));assert.equal((await other).date,'2026-09-24');
+});
+
+for(const action of ['stop','invalidateCalculations'] as const)test(`live ${action} cancels its sole pending packet transport`,async()=>{
+ let networkSignal!:AbortSignal,finish!:(value:ReturnType<typeof response>)=>void;
+ const client=createTransitDayClient({fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
+ const live=createLiveTransit({dayClient:client,now:()=>Date.parse('2026-09-24T12:00:00Z'),timeZone:()=> 'UTC'});
+ const waiting=live.start();live[action]();assert.equal(networkSignal.aborted,true);
+ await waiting;finish(response('2026-09-24'));await new Promise(setImmediate);assert.equal(client.peekDay('2026-09-24'),null);live.stop();
+});
+
+test('stopping live Transit preserves an independent Lifetime packet consumer',async()=>{
+ let networkSignal!:AbortSignal,finish!:(value:ReturnType<typeof response>)=>void;
+ const client=createTransitDayClient({fetch:(_url,{signal})=>{networkSignal=signal;return new Promise(resolve=>{finish=resolve;});}});
+ const live=createLiveTransit({dayClient:client,now:()=>Date.parse('2026-09-24T12:00:00Z'),timeZone:()=> 'UTC'});
+ const waiting=live.start(),other=client.getDay('2026-09-24');live.stop();assert.equal(networkSignal.aborted,false);
+ finish(response('2026-09-24'));await waiting;assert.equal((await other).date,'2026-09-24');
 });

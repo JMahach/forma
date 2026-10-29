@@ -102,3 +102,21 @@ test('a prefix collision aborts shortening without changing either record',t=>{
  assert.throws(()=>createChartRecordStorage(f.database,canonicalChartId),/short_chart_id_collision/);
  assert.deepEqual(f.storage.get(f.a,a.id),a);assert.deepEqual(f.storage.get(f.a,b.id),b);
 });
+
+test('a backup without schema markers migrates outcome-only issued IDs, and failed migration leaves no marker',t=>{
+ const f=fixture(t),old='2345678901'+'7'.repeat(29),other='2345678901'+'8'.repeat(29);
+ f.database.connection.exec('DROP TABLE chart_storage_migrations');
+ f.storage.saveOutcome(f.a,'a'.repeat(32),100,{kind:'deleted',chartId:old});
+ f.storage.saveOutcome(f.a,'b'.repeat(32),100,{kind:'deleted',chartId:other});
+ assert.throws(()=>createChartRecordStorage(f.database,canonicalChartId),/short_chart_id_collision/);
+ assert.equal(f.database.connection.prepare('SELECT count(*) n FROM chart_storage_migrations').get()!.n,0);
+ assert.equal(f.storage.outcome(f.a,'a'.repeat(32))!.outcome.chartId,old);
+ f.storage.removeOutcome(f.a,'b'.repeat(32));
+ const migrated=createChartRecordStorage(f.database,canonicalChartId);
+ assert.equal(migrated.outcome(f.a,'a'.repeat(32))!.outcome.chartId,old.slice(0,10));
+ assert.equal(migrated.identifierUsed(old.slice(0,10)),true);
+ assert.equal(f.database.connection.prepare('SELECT count(*) n FROM chart_storage_migrations').get()!.n,2);
+ // Old binaries ignore the additive markers. Their existing inserts still reserve every issued address.
+ f.insert({...accountNatalChart(5,f.a),id:'3456789012'});
+ assert.equal(createChartRecordStorage(f.database,canonicalChartId).identifierUsed('3456789012'),true);
+});

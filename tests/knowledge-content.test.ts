@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   KNOWLEDGE_ENTRIES,
   KNOWLEDGE_COLLECTIONS,
   KNOWLEDGE_RELATION_LABELS,
 } from '../src/reference/knowledge-content.ts';
 
-const publicJson = JSON.parse(readFileSync(new URL('../src/reference/knowledge-content.ru.json', import.meta.url), 'utf8'));
+const publicContent = { entries: KNOWLEDGE_ENTRIES, collections: KNOWLEDGE_COLLECTIONS, relationLabels: KNOWLEDGE_RELATION_LABELS };
 
 test('public knowledge contains the complete agreed reference set', () => {
   assert.equal(KNOWLEDGE_ENTRIES.length, 184);
@@ -64,18 +63,10 @@ test('public content excludes attribution, internal records and deferred topics'
       }
     }
   };
-  inspect(publicJson);
-  const serialized = JSON.stringify(publicJson);
+  inspect(publicContent);
+  const serialized = JSON.stringify(publicContent);
   assert.doesNotMatch(serialized, /(?<![\p{L}\p{N}])(?:Ра|Ra|Уру|Uru)(?![\p{L}\p{N}])/u);
   assert.doesNotMatch(serialized, /concept\.(?:reading-order|about-system)|С чего начать|О карте|[A-Z]:\\\\/u);
   assert.ok(KNOWLEDGE_ENTRIES.every(entry => !entry.id.startsWith('cross.')));
   assert.ok(KNOWLEDGE_ENTRIES.every(entry => !/^gate\.\d+\.\d/.test(entry.id)));
-});
-
-test('synchronous TypeScript exports and deliverable JSON contain identical public data', () => {
-  assert.deepEqual(publicJson, {
-    entries: KNOWLEDGE_ENTRIES,
-    collections: KNOWLEDGE_COLLECTIONS,
-    relationLabels: KNOWLEDGE_RELATION_LABELS,
-  });
 });

@@ -48,9 +48,8 @@ test('camera minimum is exact Home for both test frames despite wider navigation
   const h = harness(t);
   for (let i = 0; i < 4; i++) {
     const home = h.controls.getFittedView();
-    h.controls.zoom(.00001);
+    h.controls.zoomAt({ x: 320, y: 410 }, .00001);
     h.send('wheel', { deltaY: 200, clientX: 30 });
-    h.send('keydown', { key: '-' });
     h.send('pointerdown'); h.send('pointermove', { clientX: 800 }); h.send('pointerup', { clientX: 800 });
     h.send('pointerdown', { pointerId: 1, clientX: 145 });
     h.send('pointerdown', { pointerId: 2, clientX: 245 });
@@ -67,19 +66,19 @@ test('camera minimum is exact Home for both test frames despite wider navigation
 test('shared Home and all pan positions remain exact across refreshFrame', t => {
   const h = harness(t, { shared: true });
   for (const factor of [1, 2] as const) {
-    h.controls.reset(); h.controls.zoom(factor);
+    h.controls.reset(); h.controls.zoomAt({ x: 320, y: 410 }, factor);
     h.send('pointerdown'); h.send('pointermove', { clientX: 900 }); h.send('pointerup', { clientX: 900 });
     const before = h.controls.getView();
-    for (let i = 0; i < 6; i++) { h.refresh(); h.controls.zoom(1); h.send('wheel', { deltaY: 0 }); }
+    for (let i = 0; i < 6; i++) { h.refresh(); h.controls.zoomAt({ x: 320, y: 410 }, 1); h.send('wheel', { deltaY: 0 }); }
     assert.deepEqual(h.controls.getView(), before);
   }
-  h.controls.zoom(.00001);
+  h.controls.zoomAt({ x: 320, y: 410 }, .00001);
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
 });
 
 test('changing frames and resize map zoom and pan relative to Home without accumulating drift', t => {
   const h = harness(t);
-  h.controls.zoom(1.6);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.6);
   const start = h.controls.getView();
   h.controls.setView({ ...start, x: start.x + 8, y: start.y - 6 });
   const before = h.controls.getView(), home = h.controls.getFittedView();
@@ -101,7 +100,7 @@ test('changing frame policy preserves relative zoom across different Home frames
   const h = harness(t, { shared: true });
   h.resize(1200, 800, false); h.refresh();
   for (const factor of [1, 1.7] as const) {
-    h.controls.reset(); h.controls.zoom(factor);
+    h.controls.reset(); h.controls.zoomAt({ x: 320, y: 410 }, factor);
     const original = h.controls.getView(), previousHome = h.controls.getFittedView();
     h.resize(390, 844, true);
     const alternateHome = h.controls.getFittedView();
@@ -115,7 +114,7 @@ test('changing frame policy preserves relative zoom across different Home frames
 test('pan edges remain valid through responsive Home rebases and absolute maximum zoom stays bounded', t => {
   const h = harness(t);
   for (const [dx, dy] of [[9000, 0], [-9000, 0], [0, 9000], [0, -9000]] as const) {
-    h.controls.reset(); h.controls.zoom(1.6);
+    h.controls.reset(); h.controls.zoomAt({ x: 320, y: 410 }, 1.6);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 195 + dx, clientY: 422 + dy });
     h.send('pointerup', { clientX: 195 + dx, clientY: 422 + dy });
@@ -128,7 +127,7 @@ test('pan edges remain valid through responsive Home rebases and absolute maximu
     closeTo(h.controls.getView().k / h.controls.getFittedView().k, relative);
     h.toggle();
   }
-  h.controls.zoom(100);
+  h.controls.zoomAt({ x: 320, y: 410 }, 100);
   assert.equal(h.controls.getView().k, MAX_ZOOM);
   h.toggle(); h.toggle();
   assert.ok(h.controls.getView().k <= MAX_ZOOM);

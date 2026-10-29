@@ -1,7 +1,6 @@
 import { readModuleSource } from './helpers/module-source.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { CENTERS, GATES } from '../src/scene/geometry/chart-geometry.ts';
 import { createSelectionState } from '../src/selection/selection-state.ts';
 import { createGraphController } from '../src/scene/updates.ts';

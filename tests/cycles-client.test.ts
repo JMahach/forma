@@ -375,3 +375,25 @@ test('closing the calculation client aborts pending attachments and forbids new 
   await assert.rejects(client.events(input),{name:'AbortError'});
   await new Promise(setImmediate);assert.equal(accepts,1);
 });
+
+test('adopting a long return list enumerates opened charts and coalesces only the pending adoption',async()=>{
+ const proof='v1.'+'a'.repeat(64)+'.'+'b'.repeat(43),birthUtc=input.birthUtc,query={birthUtc,body:'saturn',fromAge:0,toAge:100};
+ const dates=Array.from({length:1336},(_,i)=>{const utc=new Date(Date.parse(birthUtc)+(i+1)*27*86400000).toISOString();return {...event,id:`saturn:${utc}`,utc,age:((i+1)*27)/365.2425};});
+ const opened=dates[50],hold=deferred();let chartReads=0,enumerations=0,accepts=0;
+ const client=createCyclesClient({cacheVersion:'a'.repeat(64),returnStorage:{getEvents:async()=>null,getChart:async()=>{chartReads++;return null;},putEvents:async()=>true,putChart:async()=>true,chartKeys:async()=>{enumerations++;return [];}},
+  request:async url=>{if(url.endsWith('/accept')){accepts++;return hold.promise;}return url.endsWith('/events')?{events:dates,range:{fromAge:0,toAge:100},proof}:{...chartResult(opened),proof};}});
+ await client.events(query);await client.chart({...chartInput,eventUtc:opened.utc},undefined,{event:opened});chartReads=0;
+ const owner={chartId:'123',expectedAccountId:'7'};
+ const a=client.syncPrepared(query,owner),b=client.syncPrepared(query,owner);await new Promise(setImmediate);
+ assert.equal(chartReads,0,'1336 dates must not trigger 1336 device probes');assert.equal(enumerations,1);assert.equal(accepts,2,'dates and one opened chart attach once each');
+ hold.resolve!({accepted:true});await Promise.all([a,b]);
+ await client.syncPrepared(query,owner);assert.equal(enumerations,2,'a settled adoption leaves no forever memo');
+});
+
+test('prepared chart enumeration includes only matching revision, natal, body and timezone from current RAM and device keys',async()=>{
+ const revision='a'.repeat(64),key=(values:unknown[])=>JSON.stringify(['chart',revision,...values]);
+ const keyValues=[input.birthUtc,input.body,event.utc,'UTC'];
+ const saved=[key(keyValues),key([input.birthUtc,'venus',event.utc,'UTC']),key([input.birthUtc,input.body,event.utc,'Europe/Moscow']),key(['1999-01-01T00:00:00Z',input.body,event.utc,'UTC']),JSON.stringify(['chart','b'.repeat(64),...keyValues]),'broken'];
+ const client=createCyclesClient({cacheVersion:revision,returnStorage:{chartKeys:async()=>saved},request:async()=>assert.fail('enumeration never calculates')});
+ assert.deepEqual(await client.preparedChartInputs({birthUtc:input.birthUtc,body:input.body,timezone:'UTC'}),[chartInput]);
+});

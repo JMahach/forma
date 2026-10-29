@@ -111,7 +111,8 @@ export function createNatalDayExplorer({
     },
     close,
     refreshAvailability,
-    invalidateCalculations() { compatible = false; availabilitySequence++; cancel(); notify(); },
+    invalidateCalculations() { compatible = false; availabilitySequence++; cancel(); releaseDay?.(); releaseDay = null; day = null; readyOnDevice = false;
+      if(current)current = withoutChartCalculation(current); notify(); },
     retry: load,
     reset,
     scrub(value: number) {

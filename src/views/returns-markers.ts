@@ -105,8 +105,10 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   }
   function updateActive() {
     const displayed = milliseconds(inputs!.displayedUtc);
+    const ready = inputs!.readyEvents ? new Set(inputs!.readyEvents) : null;
     for (const target of targets) {
-      target.button.disabled = Boolean(inputs!.readyEvents && !inputs!.readyEvents.includes(target.event.id));
+      const disabled = Boolean(ready && !ready.has(target.event.id));
+      if (target.button.disabled !== disabled) target.button.disabled = disabled;
       const active = String(isReferenceMoment(displayed, target.utc));
       if (target.button.getAttribute('aria-pressed') !== active) target.button.setAttribute('aria-pressed', active);
     }

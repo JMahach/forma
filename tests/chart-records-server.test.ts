@@ -337,3 +337,23 @@ test('short ID allocation skips issued IDs even after deletion and grows only af
  assert.equal(first.chartId,'1234567890');assert.equal(second.chartId,'12345678901');
  assert.equal(records.getPublic(first.chartId),null);
 });
+
+test('unchanged metadata preserves revisions but durably records each distinct operation and checks note CAS',t=>{
+ const f=fixture(t),created=f.create(),id=created.chartId!,before=f.records.getOwn(id)!;
+ const changes=()=>Number(f.database.connection.prepare('SELECT total_changes() n').get()!.n);
+ const start=changes();
+ for(const n of [2,3]) {
+  const intent={operationId:operation(n),expectedAccountId:f.a,chartId:id,name:before.name,
+   note:{value:before.note,seenRevision:before.noteRevision}};
+  const result=f.records.update(intent);
+  assert.deepEqual(result,{kind:'updated',chartId:id,revision:before.revision});
+  assert.deepEqual(f.records.outcome(intent),result);
+  assert.deepEqual(f.records.update(intent),result);
+ }
+ assert.equal(changes()-start,2,'only two distinct durable outcomes are written');
+ assert.deepEqual(f.records.getOwn(id),before);
+ assert.equal(rejectedCode(f.records.update({operationId:operation(4),expectedAccountId:f.a,chartId:id,
+  note:{value:before.note,seenRevision:before.noteRevision+1}})),'note_conflict');
+ f.setAccount(null);
+ assert.throws(()=>f.records.update({operationId:operation(5),expectedAccountId:f.a,chartId:id,name:before.name}),{code:'auth_required'});
+});

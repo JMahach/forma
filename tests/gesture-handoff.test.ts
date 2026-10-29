@@ -18,7 +18,7 @@ function harness({ drawing = null, ...options } = {}) {
   };
   const measureFit = () => ({ area: { x: 0, y: 0, width: 640, height: 820 }, min: .1 });
   const camera = createCamera({ measureFit, onChange() {} });
-  camera.reset(); camera.zoom(1.5);
+  camera.reset(); camera.zoomAt({ x: 320, y: 410 }, 1.5);
   const controls = attachGestures(drawing || surface, {
     camera, cameraView: { surface, point: event => ({ x: event.clientX, y: event.clientY }), measureFit, paint: view => paints.push(view) },
     onChange: view => changes.push(view), onSelect: selection => selections.push(selection),
@@ -108,14 +108,14 @@ test('loading can attach camera gestures before selection and change handlers ex
 });
 
 
-test('loading surface owns keyboard zoom and focus until the actual drawing is interactive', () => {
+test('loading and ready surfaces ignore removed zoom keys and keep Home and focus', () => {
   const keyboard = new Map(); let drawingFocus = 0, surfaceFocus = 0;
   const drawing = { inert: true, closest: () => null, classList: { toggle() {} },
     addEventListener: (type, handler) => keyboard.set(type, handler), focus: () => drawingFocus++ };
   const h = harness({ drawing }); h.surface.focus = () => surfaceFocus++;
   const before = h.controls.getView();
   h.send('keydown', { key: '+' });
-  assert.ok(Math.abs(h.controls.getView().k - before.k * 1.25) < 1e-9);
+  assert.deepEqual(h.controls.getView(), before);
   h.send('keydown', { key: '-' });
   assert.ok(Math.abs(h.controls.getView().k - before.k) < 1e-9);
   h.send('pointerdown'); h.send('pointerup');
@@ -126,7 +126,8 @@ test('loading surface owns keyboard zoom and focus until the actual drawing is i
   const event = { type: 'keydown' as const, target: drawing, key: '+', preventDefault() {} };
   keyboard.get('keydown')(event);
   h.send('keydown', event); // The SVG event bubbles through the stationary surface.
-  assert.ok(Math.abs(h.controls.getView().k - before.k * 1.25) < 1e-9, 'bubbling cannot apply zoom twice');
+  assert.deepEqual(h.controls.getView(), before, 'neither the drawing nor its outer surface handles removed zoom keys');
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.25);
   h.send('keydown', { key: '0' });
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
 });

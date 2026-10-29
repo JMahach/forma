@@ -89,7 +89,7 @@ for (const [width, height] of [[320, 568], [390, 844], [844, 390], [568, 320], [
     const h = harness(t, width, height);
     assertFullyVisible(h);
     assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
-    h.controls.zoom(0.0001);
+    h.controls.zoomAt({ x: 320, y: 410 }, 0.0001);
     assertFullyVisible(h);
     assert.deepEqual(h.controls.getView(), h.controls.getFittedView(), 'zoom out keeps the exact fitted home');
     h.resize(height, width);
@@ -103,18 +103,18 @@ for (const [width, height] of [[1280, 960], [390, 844], [844, 390]] as const) {
     const h = harness(t, width, height, false), chartHome = h.controls.getView();
     h.refreshMode(true);
     assert.deepEqual(h.controls.getView(), chartHome, 'showing the ring preserves chart Home exactly');
-    h.controls.zoom(0.0001);
+    h.controls.zoomAt({ x: 320, y: 410 }, 0.0001);
     assertFullyVisible(h);
     const mandalaHome = h.controls.getView();
     assert.deepEqual(mandalaHome, h.controls.getFittedView(), 'wheel zoom-out can reach the wider Home without a reset');
     h.refreshMode(false);
     assert.deepEqual(h.controls.getView(), mandalaHome, 'hiding the ring preserves its smaller camera');
     assert.ok(mandalaHome.k < h.controls.getFittedView().k, 'the retained camera is below normal Home');
-    h.controls.zoom(1);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1);
     h.send('wheel', { deltaY: 0 });
     h.controls.setView(mandalaHome);
     assert.deepEqual(h.controls.getView(), mandalaHome, 'zero input and restoring the live snapshot cannot snap to normal Home');
-    h.controls.zoom(1.001);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1.001);
     closeTo(h.controls.getView().k, mandalaHome.k * 1.001);
     assert.ok(h.controls.getView().k < h.controls.getFittedView().k, 'a small zoom remains below normal Home');
     const current = h.controls.getView();
@@ -127,7 +127,7 @@ for (const [width, height] of [[1280, 960], [390, 844], [844, 390]] as const) {
     assert.deepEqual(h.controls.getFittedView(), desired, 'Home snapshots do not expose mutable state');
     h.controls.reset();
     assert.deepEqual(h.controls.getView(), desired, 'explicit Home adopts the visible chart frame');
-    h.controls.zoom(0.001);
+    h.controls.zoomAt({ x: 320, y: 410 }, 0.001);
     assert.deepEqual(h.controls.getView(), desired, 'normal Home restores its usual zoom floor');
   });
 }
@@ -136,14 +136,14 @@ test('hiding the ring keeps every extreme pan edge valid for the next zero or sm
   const h = harness(t, 1280, 960);
   for (const [dx, dy] of [[5000, 0], [-5000, 0], [0, 5000], [0, -5000]] as const) {
     h.mode(true);
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 640 + dx, clientY: 480 + dy });
     h.send('pointerup', { clientX: 640 + dx, clientY: 480 + dy });
     const edge = h.controls.getView();
     h.refreshMode(false);
     h.send('wheel', { deltaY: 0 });
-    h.controls.zoom(1);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1);
     assert.deepEqual(h.controls.getView(), edge, 'the narrower drawing cannot clamp an existing extreme pan');
     h.send('pointerdown');
     h.send('pointermove', { clientX: 640 - Math.sign(dx) * 8, clientY: 480 - Math.sign(dy) * 8 });
@@ -159,15 +159,15 @@ test('showing the ring keeps a chart camera at every extreme pan edge and uses t
   const h = harness(t, 1280, 960, false);
   for (const [dx, dy] of [[5000, 0], [-5000, 0], [0, 5000], [0, -5000]] as const) {
     h.mode(false);
-    h.controls.zoom(2);
+    h.controls.zoomAt({ x: 320, y: 410 }, 2);
     h.send('pointerdown');
     h.send('pointermove', { clientX: 640 + dx, clientY: 480 + dy });
     h.send('pointerup', { clientX: 640 + dx, clientY: 480 + dy });
     const chartEdge = h.controls.getView();
     h.refreshMode(true);
-    h.controls.zoom(1);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1);
     assert.deepEqual(h.controls.getView(), chartEdge, 'opening never reclamps the panned chart');
-    h.controls.zoom(1.01);
+    h.controls.zoomAt({ x: 320, y: 410 }, 1.01);
     const latest = h.controls.getView();
     h.refreshMode(false);
     assert.deepEqual(h.controls.getView(), latest, 'closing keeps movements made while the ring was visible');
@@ -176,7 +176,7 @@ test('showing the ring keeps a chart camera at every extreme pan edge and uses t
 
 test('resize uses the current navigation frame after hiding the ring and the next toggle keeps that camera', t => {
   const h = harness(t, 1280, 960);
-  h.controls.zoom(1.5);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.5);
   const before = h.controls.getView(), beforeFit = h.controls.getFittedView();
   h.refreshMode(false);
   h.resize(390, 844);
@@ -195,7 +195,7 @@ test('expanded camera validates and restores sub-normal-scale views without rese
   const h = harness(t, 320, 568);
   const fitted = h.controls.getFittedView();
   assert.ok(fitted.k < 0.65);
-  h.controls.zoom(1.1);
+  h.controls.zoomAt({ x: 320, y: 410 }, 1.1);
   const saved = h.controls.getView();
   assert.ok(saved.k < 0.65);
   h.controls.reset();
@@ -232,7 +232,7 @@ test('mandala wheel, bounded pan and pinch keep home covered while Shift keeps i
   assert.equal(h.selections.length, 2, 'drag and pinch never select or remove a gate');
   assert.equal(h.backgroundTaps, 0);
   assert.equal(h.captures.size, 0);
-  h.controls.zoom(0.0001);
+  h.controls.zoomAt({ x: 320, y: 410 }, 0.0001);
   assertFullyVisible(h);
   h.send('pointerdown'); h.send('pointerup');
   assert.equal(h.backgroundTaps, 1, 'a fresh background tap still uses the existing callback');

@@ -4,7 +4,7 @@ import type { ReturnsState } from '../state/returns.ts';
 import type { StudioLayout } from '../ui/layout/studio-controller.ts';
 export type ReturnsPanelState = Partial<ReturnsState> & { visible?: boolean; birthSelected?: boolean; live?: boolean; nowAvailable?: boolean };
 interface ReturnsPanelOptions {
-  document: Document; viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'>; getLayout?: () => string | undefined;
+  document: Document; viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'>;
   onBack: () => void; onYear: (year: number | null) => void; onBodies: (bodies: string[]) => void;
   onSelect: (id: string) => void; onBirth?: () => void; onNow?: () => void; onRetry: () => void; onLayout?: () => void;
 }
@@ -31,18 +31,18 @@ function firstReturnEvents(events: readonly CycleEvent[]) {
   return [...first.values()];
 }
 const eventStatusLabel = (selected: boolean, pending: boolean) => pending ? '' : selected ? 'На карте' : '';
-function eventRow(event: CycleEvent, state: ReturnsPanelState) {
+function eventRow(event: CycleEvent, state: ReturnsPanelState, ready: ReadonlySet<string>) {
   const moment = returnMomentDetails(event.utc, state.natal);
   const selected = event.id === state.selectedEvent?.id, pending = event.id === state.pendingEvent?.id;
   const label = eventStatusLabel(selected, pending);
-  return `<button type="button" class="returns-event${selected ? ' is-selected' : ''}" data-return-event="${esc(event.id)}" aria-pressed="${selected}"${pending || state.offline && !state.readyEvents?.includes(event.id) ? ' disabled' : ''}><span class="returns-event-copy"><strong>${esc(cycleEventLabel(event))}</strong><time datetime="${esc(event.utc)}">${esc(moment.date)} · ${esc(moment.time)}</time></span><span class="returns-event-action"><span>${esc(moment.age)}</span>${label ? `<small>${label}</small>` : ''}</span></button>`;
+  return `<button type="button" class="returns-event${selected ? ' is-selected' : ''}" data-return-event="${esc(event.id)}" aria-pressed="${selected}"${pending || state.offline && !ready.has(event.id) ? ' disabled' : ''}><span class="returns-event-copy"><strong>${esc(cycleEventLabel(event))}</strong><time datetime="${esc(event.utc)}">${esc(moment.date)} · ${esc(moment.time)}</time></span><span class="returns-event-action"><span>${esc(moment.age)}</span>${label ? `<small>${label}</small>` : ''}</span></button>`;
 }
 export function renderReturnEvents(state: ReturnsPanelState, now = Date.now()) {
   return renderPreparedReturnEvents(state, firstReturnEvents(state.events || []), now);
 }
 const inSelectedYear = (state: ReturnsPanelState, utc: string | number) => state.year == null || cycleCalendarYear(utc, state.natal?.timezone) === state.year;
 const showPresent = (state: ReturnsPanelState, now: number) => now >= Date.parse(state.natal?.utc!) && inSelectedYear(state, now);
-function renderPreparedReturnEvents(state: ReturnsPanelState, events: ReturnType<typeof firstReturnEvents>, now: number) {
+function renderPreparedReturnEvents(state: ReturnsPanelState, events: ReturnType<typeof firstReturnEvents>, now: number, ready: ReadonlySet<string> = new Set(state.readyEvents)) {
   const birth = Number.isFinite(Date.parse(state.natal?.utc!)) && inSelectedYear(state, state.natal!.utc!)
     ? returnMomentDetails(state.natal!.utc!, state.natal) : null;
   const showNow = showPresent(state, now);
@@ -53,12 +53,12 @@ function renderPreparedReturnEvents(state: ReturnsPanelState, events: ReturnType
   const marker = () => showNow ? `<div class="returns-timeline-item returns-timeline-now">${dot}<button type="button" class="returns-event returns-now${state.live ? ' is-selected' : ''}" data-return-now="" aria-pressed="${Boolean(state.live)}"><span>Сейчас · ${esc(ageText(completedAge(new Date(now).toISOString(), state.natal)!))}</span></button></div>` : '';
   const rows = events.map(({ event, at }) => {
     const current = !marked && at >= now ? (marked = true, marker()) : '';
-    return `${current}<div class="returns-timeline-item" data-cycle-body="${esc(event.body)}">${dot}${eventRow(event, state)}</div>`;
+    return `${current}<div class="returns-timeline-item" data-cycle-body="${esc(event.body)}">${dot}${eventRow(event, state, ready)}</div>`;
   }).join('');
   return `<div class="returns-timeline">${birthRow}${rows}${marked ? '' : marker()}</div>`;
 }
 
-export function attachReturnsPanel({ document, viewportLayout, getLayout = () => 'sheet', onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }: ReturnsPanelOptions) {
+export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }: ReturnsPanelOptions) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   const panel = $('returnsPanel');
   panel.style.setProperty('--return-selection', PALETTE.halo);
@@ -66,7 +66,6 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
   const content = $('returnsContent'), status = $('returnsStatus'), year = $<HTMLInputElement>('returnsYear'), body = $('returnsBody');
   const yearButton = $<HTMLButtonElement>('returnsYearCalendar');
   const bodyButton = $('returnsBodiesToggle'), bodyMenu = $('returnsBodyMenu');
-  const sheet = () => getLayout() === 'sheet';
   let state: ReturnsPanelState = { visible: false, events: [], errors: [], pendingBodies: [], year: null, bodies: [] }, markup = '', listSnapshot: { key: string; events: ReturnType<typeof firstReturnEvents> } | null = null, filterKey = '', jumpPending = false;
   const checks = new Map<string, HTMLInputElement>();
   bodyMenu.hidden = true;
@@ -239,7 +238,7 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
     panel.setAttribute('aria-busy', String(busy || state.loadingChart));
     $('returnsRetry').hidden = !state.chartError && !state.errors?.length;
     $<HTMLButtonElement>('returnsRetry').disabled = state.compatible === false || Boolean(state.offline);
-    const now = Date.now(), errors = state.errors || [];
+    const now = Date.now(), errors = state.errors || [], ready = new Set(state.readyEvents);
     const listKey = JSON.stringify([state.natal?.utc, state.natal?.timezone, state.year, showPresent(state, now),
       preparedEvents.reduce((count, { at }) => count + Number(at < now), 0),
       completedAge(new Date(now).toISOString(), state.natal), errors]);
@@ -247,7 +246,7 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
     if (!unchanged) {
       const causes = [...new Set(errors.map(error => failureMessage(error, '')).filter(Boolean))];
       const causeText = causes.length ? `${causes.map(esc).join('. ')}. ` : '';
-      const nextMarkup = renderPreparedReturnEvents(state, preparedEvents, now) + (errors.length ? `<p class="returns-error">${causeText}Не удалось загрузить: ${errors.map(error => esc(cycleLabel(error.body))).join(', ')}</p>` : '');
+      const nextMarkup = renderPreparedReturnEvents(state, preparedEvents, now, ready) + (errors.length ? `<p class="returns-error">${causeText}Не удалось загрузить: ${errors.map(error => esc(cycleLabel(error.body))).join(', ')}</p>` : '');
       listSnapshot = { key: listKey, events: preparedEvents };
       if (nextMarkup !== markup) {
         const focused = (document.activeElement as HTMLElement | null)?.dataset, scroll = content.scrollTop;
@@ -261,12 +260,14 @@ export function attachReturnsPanel({ document, viewportLayout, getLayout = () =>
       }
     }
     paintEventState();
-    const ready = new Set(state.readyEvents);
-    for (const [id, row] of rows) row.node.disabled = id === state.pendingEvent?.id || Boolean(state.offline && !ready.has(id));
-    if (nowRow) nowRow.disabled = state.nowAvailable === false;
+    for (const [id, row] of rows) {
+      const disabled = id === state.pendingEvent?.id || Boolean(state.offline && !ready.has(id));
+      if (row.node.disabled !== disabled) row.node.disabled = disabled;
+    }
+    if (nowRow && nowRow.disabled !== (state.nowAvailable === false)) nowRow.disabled = state.nowAvailable === false;
     paintMomentState();
     if (jumpPending && !busy) jumpToPresent();
     if (!wasVisible) { onLayout(); $('returnsBack').focus({ preventScroll: true }); }
   }
-  return { update, sheet };
+  return { update };
 }

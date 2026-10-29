@@ -88,8 +88,10 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   }
   // Studio pan limits converge at Home; standalone limits follow their frame.
   const constrain = (candidate: CameraPosition) => constrainView(candidate, studioHome ? fittedView : navigationFit, studioHome ? homeField : navigationFrame.bounds, { max: maximumScale });
-  function apply() {
-    view = constrain(view);
+  function apply(candidate = view, force = false) {
+    const next = constrain(candidate);
+    if (!force && sameView(view, next)) return;
+    view = next;
     publish();
   }
   function defaultView(frame = activeFrame(), { area, min } = measureFit(frame)) {
@@ -108,13 +110,12 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     }
     return next;
   }
-  function fit() {
+  function fit(force = false) {
     navigationFrame = homeFrame();
     fittedView = measureHome();
     navigationFit = { ...fittedView };
-    view = { ...fittedView };
     expandNavigation();
-    apply();
+    apply({ ...fittedView }, force);
   }
   function expandNavigation() {
     if (studioHome) return;
@@ -148,7 +149,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
     navigationFit = rebase(navigationFit, previous, next);
     fittedView = next;
     expandNavigation();
-    apply();
+    apply(view, true);
   }
   const controls = {
     // Startup hands its existing camera to gestures; no reset or second state.
@@ -173,9 +174,8 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
       controls.setView(limited);
     },
     minimumScale, maximumScale: () => maximumScale,
-    pan(dx: number, dy: number) { view.x += dx; view.y += dy; apply(); },
-    zoomAt(anchor: Point, factor: number, dx = 0, dy = 0) { view = zoom(anchor, factor); view.x += dx; view.y += dy; apply(); },
-    zoom(factor: number) { view = zoom({ x: 320, y: 410 }, factor); apply(); },
+    pan(dx: number, dy: number) { apply({ ...view, x: view.x + dx, y: view.y + dy }); },
+    zoomAt(anchor: Point, factor: number, dx = 0, dy = 0) { const next = zoom(anchor, factor); apply({ ...next, x: next.x + dx, y: next.y + dy }); },
     reset() { fit(); },
     refreshFrame() {
       fittedView = measureHome();
@@ -186,7 +186,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
       if (studioHome) { rebaseHome(options); return; }
       // Responsive presentation can replace Home with a larger or smaller
       // frame. Adopt it before constraining an unchanged Home camera.
-      if (isHomeView(view, fittedView)) { fit(); return; }
+      if (isHomeView(view, fittedView)) { fit(true); return; }
       const next = defaultView(navigationFrame), ratio = next.k / navigationFit.k;
       if (!sameView(next, navigationFit)) {
         view = { x: next.x + (view.x - navigationFit.x) * ratio, y: next.y + (view.y - navigationFit.y) * ratio, k: view.k * ratio };
@@ -194,16 +194,16 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
       navigationFit = next;
       fittedView = measureHome();
       expandNavigation();
-      apply();
+      apply(view, true);
     },
     getView() { return { ...view }; },
     getFittedView() { return { ...fittedView }; },
     setView(value: unknown) {
       if (validView(value, { min: Math.min(navigationFrame.minScale, navigationFit.k), max: maximumScale })) {
-        view = { ...value }; apply();
+        apply({ ...value });
       } else fit();
     }
   };
-  apply();
+  apply(view, true);
   return controls;
 }

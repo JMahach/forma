@@ -4,7 +4,7 @@ import type { RenderState, RenderOptions } from './render-state.ts';
 export type SceneRenderer = ReturnType<typeof createSceneRenderer>;
 
 import { renderBodygraphState } from './bodygraph-svg.ts';
-import { createRenderState } from './render-state.ts';
+import { createRenderState, createPhysicalRenderState, physicalRenderInput } from './render-state.ts';
 import { createBodygraphPainter } from './bodygraph-painter.ts';
 import { createMandalaPainter } from './mandala-painter.ts';
 import { createActivationPainter } from './activation-painter.ts';
@@ -23,6 +23,7 @@ const backdropSignature = (state: RenderState, options: RenderOptions) => JSON.s
 // One SVG skeleton per view. Decorative modes leave all body layers in place;
 // changing the minute only paints their current values.
 export function createSceneRenderer(root: Element) {
+  let physical: ReturnType<typeof createPhysicalRenderState> | null = null, physicalInput: string | null = null;
   let body: ReturnType<typeof createBodygraphPainter> | null = null;
   let wheel: ReturnType<typeof createMandalaPainter> | null = null;
   let columns: ReturnType<typeof createActivationPainter> | null = null;
@@ -77,7 +78,11 @@ export function createSceneRenderer(root: Element) {
     update(chart: ChartView, selection?: SelectionTarget | null, options: RenderOptions = {}) {
       const nextStructure = JSON.stringify([options.profile, options.interactive !== false, options.idPrefix,
         options.showLabels === true, options.highlightStyle ?? 'outline']);
-      const state = createRenderState(chart, selection, options);
+      const nextPhysicalInput = physicalRenderInput(chart);
+      if (!physical || nextPhysicalInput !== physicalInput) {
+        physical = createPhysicalRenderState(chart); physicalInput = nextPhysicalInput;
+      }
+      const state = createRenderState(chart, selection, options, physical);
       if (!body || structure !== nextStructure) {
         mount(chart, state, options); structure = nextStructure;
       } else {
@@ -89,6 +94,6 @@ export function createSceneRenderer(root: Element) {
       columns!.update(chart, state, options);
       return state;
     },
-    clear() { body?.dispose(); root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; backdropKey = variableKey = undefined; },
+    clear() { physical = null; physicalInput = null; body?.dispose(); root.replaceChildren(); body = wheel = columns = drawing = null; structure = null; backdropKey = variableKey = undefined; },
   };
 }

@@ -17,7 +17,7 @@ import type {IncomingMessage} from 'node:http';
 import type {ClientReport} from '../shared/client-report-contract.ts';
 import {accountNatalChart} from './helpers/account-chart.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
-import { STORAGE_KEY } from '../src/data/storage.ts';
+const STORAGE_KEY = 'liniya.charts.v1';
 import { createNavigation } from '../src/state/navigation.ts';
 import { createStoragePressure } from '../src/data/storage-pressure.ts';
 import { viewForRoute } from '../src/state/view-session.ts';
@@ -149,7 +149,8 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   storage = tabStorage(), createCamera = cameraModule.createCamera,
   attachAccount: AccountFactory = ({saved, loadingOnly}) => ({ready: Promise.resolve(), snapshot: saved ?? null, loadingOnly, setVisible() {}}),
   updateFactory:(options:Parameters<typeof createCalculationUpdates>[0])=>Pick<ReturnType<typeof createCalculationUpdates>,'refresh'|'onTimelineChanged'>
-    =()=>({refresh:async()=>({status:'unavailable'}),onTimelineChanged:async()=>({status:'unconfirmed'})})) => {
+    =()=>({refresh:async()=>({status:'unavailable'}),onTimelineChanged:async()=>({status:'unconfirmed'})}),
+  gestureFactory: typeof attachGestures = attachGestures) => {
   const address = {...location, href: location.href || 'http://localhost:3636/'};
   const attachPreview = (options: Parameters<typeof attachLoadingPreview>[0]) => attachLoadingPreview({...options, getStorage: () => storage});
   const events = new EventTarget();
@@ -157,7 +158,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = (options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}});
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate((refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, attachGestures, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate((refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -235,7 +236,7 @@ const layoutStyle: Pick<CSSStyleDeclaration, 'scrollPaddingTop' | 'scrollPadding
 };
 const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, setTimelineKind() {}, subscribeViewport() {} });
 
-const emptyStore = (options: Parameters<typeof createChartStore>[0] = {}) => createChartStore({...options,getStorage:()=>tabStorage()});
+const emptyStore = (options: Parameters<typeof createChartStore>[0] = {}) => createChartStore({...options});
 
 function assertPageZoomBlocked(document: EventTarget) {
   const zoom = Object.assign(new Event('wheel', { cancelable: true }), { ctrlKey: true });
@@ -849,7 +850,7 @@ for (const preview of [false,true]) test(`one tab result survives early gestures
   const {document,element,rows}=startupDocument();
   let store:ReturnType<typeof createChartStore>|undefined,received:StartupPorts|undefined,imports=0;
   await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,
-    ()=>()=>{},()=>viewStore,options=>{store=createChartStore({...options,getStorage:()=>local});return store;},async()=>{
+    ()=>()=>{},()=>viewStore,options=>{store=createChartStore({...options});return store;},async()=>{
       imports++;
       element('mandalaSwitch').click();
       return{startApp(ports){received=ports;}};
@@ -884,7 +885,7 @@ test('legacy local records remain untouched but do not become a guest collection
   let received:StartupPorts|undefined;
   await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,
     ()=>()=>{},()=>({read:()=>({version:1,selectedId:'legacy'})}),
-    options=>createChartStore({...options,getStorage:()=>local}),async()=>({startApp(ports){received=ports;}}));
+    options=>createChartStore({...options}),async()=>({startApp(ports){received=ports;}}));
   assert.ok(received);
   assert.deepEqual(received.store.charts,[]);
   assert.equal(received.store.temporaryChart,null);
@@ -903,7 +904,7 @@ for(const preview of [false,true])test(`the last public source joins early resto
   if(preview)tab.setItem('forma.loading-preview.v1','1');
   const {document,element}=startupDocument();let store:ReturnType<typeof createChartStore>|undefined,received:StartupPorts|undefined;
   await run(attachPageGestures,document,class{observe(){}disconnect(){}},()=>({}),layoutStub,
-    ()=>()=>{},()=>viewStore,options=>{store=createChartStore({...options,getStorage:()=>tabStorage()});return store;},
+    ()=>()=>{},()=>viewStore,options=>{store=createChartStore({...options});return store;},
     async()=>({startApp(ports){received=ports;}}),{href:'http://localhost:3636/chart/'+foreign.id,pathname:'/chart/'+foreign.id},tab);
   assert.equal(store?.has(foreign.id),true);assert.equal(store?.get(foreign.id)?.note,'');assert.equal(store?.temporaryChart?.id,temporaryChart.id);
   element('mandalaSwitch').click();document.defaultView.dispatchEvent(new Event('pagehide'));
@@ -1037,4 +1038,27 @@ test('a confirmed returns-only mismatch invalidates only that domain before disc
  await ports!.calculationUpdates!.refresh();
  assert.deepEqual(invalidations.at(-1),{calculation:false,returns:true});
  let discoveries=0;startup.connectOfflineUpdates(()=>{discoveries++;});assert.equal(discoveries,1);
+});
+
+test('early camera bursts write one latest snapshot and pagehide flushes before its timer',async()=>{
+ const {document}=startupDocument(),storage=tabStorage();storage.setItem('forma.loading-preview.v1','1');
+ const writes:Partial<SavedView>[]=[];
+ let gestures!:Parameters<typeof attachGestures>[1];
+ await run(attachPageGestures,document,class{observe(){} disconnect(){}},()=>({}),layoutStub,
+  ()=>()=>{},()=>({read:()=>null,write(value){writes.push(value);return true;}}),emptyStore,
+  async()=>({startApp(){}}),{port:'3636',href:'http://localhost:3636/'},storage,undefined,undefined,undefined,
+  (element,options)=>{gestures=options;return attachGestures(element,options);});
+ assert.ok(gestures.camera);
+ const camera=gestures.camera,notifyCamera=()=>gestures.onChange?.(camera.getView(),camera.getFittedView(),{minScale:camera.minimumScale()});
+ const before=writes.length;
+ for(let i=0;i<100;i++){camera.setView({x:-i,y:-i,k:2});notifyCamera();}
+ assert.equal(writes.length,before,'camera events do not synchronously serialize the full view');
+ await new Promise(resolve=>setTimeout(resolve,180));
+ assert.equal(writes.length,before+1);
+ assert.deepEqual(writes.at(-1)?.camera,camera.getSavedView());
+ camera.setView({x:-200,y:-200,k:2});notifyCamera();
+ document.defaultView.dispatchEvent(new Event('pagehide'));
+ assert.equal(writes.length,before+2);
+ await new Promise(resolve=>setTimeout(resolve,180));
+ assert.equal(writes.length,before+2,'the flushed timer cannot write again');
 });

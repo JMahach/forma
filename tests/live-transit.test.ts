@@ -1,7 +1,7 @@
 import type { TransitDay } from '../shared/day-packets/transit-format.ts';
 import type { LiveTransit, LiveTransitState } from '../src/state/live-transit.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
-import type { ChartStorage } from '../src/data/storage.ts';
+import type { SavedChart } from '../shared/chart-types.ts';
 import type { TestStub } from './helpers/test-stub.ts';
 type TestLiveOptions = Omit<Parameters<typeof attachLiveTransit>[0], 'document' | 'button'> & {
   document: { hidden: boolean; addEventListener(name: string, listener: () => void): unknown };
@@ -297,18 +297,20 @@ test('the running clock waits for the next minute boundary and uses no per-secon
   assert.equal(h.requests.length, 1);
 });
 
-test('scrubbing through the real graph controller preserves pinned selection, camera transform and stored charts', async () => {
-  const personal = { id: 'personal', name: 'Saved chart', source: 'manual' as const, personality: [1], design: [8] };
+test('scrubbing through the real graph controller preserves pinned selection, camera transform and the projected library', async () => {
+  const personal: SavedChart = { id: 'personal', name: 'Saved chart', source: 'manual', personality: [1], design: [8],
+    birthDate: '', birthTime: '', birthPlace: '', note: '', createdAt: '', updatedAt: '' };
   const { localDate, localTime, ...complete } = transitChartAt(day('2026-09-23'), 720);
-  // Older saved transit fallbacks contain only Personality. Live two-sided
-  // charts remain ephemeral and never rewrite that legacy stored record.
+  assert.ok(complete.activations);
+  // An already accepted fallback can contain only Personality. Live two-sided
+  // exploration leaves the separately projected library unchanged.
   const fallback = { ...complete, id: 'current-transit', name: 'Транзит', birthDate: localDate, birthTime: localTime,
     design: [], designUtc: null, designArcResidualDegrees: null,
     activations: { ...complete.activations, design: [] } };
-  const writes: unknown[] = [], stored = JSON.stringify([personal, fallback]);
-  const store = createChartStore({ getStorage: () => ({ getItem: () => stored, setItem: (...args: string[]) => writes.push(args) } as unknown as ChartStorage) });
+  const store = createChartStore();
+  store.projectLibrary([personal], true);
   const originalCharts = store.charts, originalValues = JSON.stringify(store.charts);
-  const fallbackData = extractChartData(store.get('current-transit')!);
+  const fallbackData = extractChartData(fallback);
   const viewport = { innerHTML: '', transform: 'translate(-50,30) scale(1.25)', querySelector: () => null };
   const popoverCharts: (ChartInput | null)[] = [];
   let live: LiveTransit | undefined;
@@ -319,7 +321,7 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
     activationPopover: { close() {}, show() {}, refresh(chart) { popoverCharts.push(chart); } },
   });
   graph.render();
-  assert.equal(popoverCharts.at(-1)!.utc, fallback.utc, 'the saved transit remains a usable loading/error fallback');
+  assert.equal(popoverCharts.at(-1)!.utc, fallback.utc, 'the accepted transit remains a usable loading/error fallback');
   live = createLiveTransit({
     document: { hidden: false, addEventListener() {} }, button: { setAttribute() {}, removeAttribute() {} },
     now: () => Date.parse('2026-09-24T12:00:00Z'), timeZone: () => 'UTC', dayClient: { getDay: async date => day(date) },
@@ -337,7 +339,6 @@ test('scrubbing through the real graph controller preserves pinned selection, ca
   assert.equal(popoverCharts.at(-1), live.current);
   assert.equal(store.charts, originalCharts);
   assert.equal(JSON.stringify(store.charts), originalValues);
-  assert.deepEqual(writes, []);
 });
 
 // A local day can span two UTC packets. Chart readiness and range readiness

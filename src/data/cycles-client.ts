@@ -2,7 +2,7 @@ import {MAX_RETURN_PROOF_LENGTH} from '../../shared/chart-return-contract.ts';
 import type { CycleInput, CycleEvent, CycleEventsResult, CycleChartResult, CycleResult } from '../../shared/cycles-format.ts';
 import type { ReturnStorage } from './return-storage.ts';
 import type { MemoryCache } from './memory-cache.ts';
-import type { SharedRequest } from './shared-request.ts';
+import type { SharedRequest } from '../runtime/shared-request.ts';
 type CycleAction = 'events' | 'chart';
 export interface CycleOwner { chartId: string; expectedAccountId: string }
 interface CycleOptions { event?: CycleEvent | null; owner?: CycleOwner | null; cacheOnly?: boolean; preserve?: boolean }
@@ -18,18 +18,19 @@ interface CyclesClientOptions {
 export type CyclesClient = ReturnType<typeof createCyclesClient>;
 
 import { requestJSON } from './api-client.ts';
-import { validCycleResult, validCycleEvent } from '../../shared/cycles-format.ts';
+import { validCycleResult, validCycleEvent, cycleUtcDifference } from '../../shared/cycles-format.ts';
 import { LIFE_SPAN_YEARS } from '../../shared/date-limits.ts';
 import { createReturnStorage } from './return-storage.ts';
 import { DEFAULT_CYCLE_BODIES } from '../domain/cycles.ts';
 import { createMemoryCache } from './memory-cache.ts';
-import { createAbortError, shareRequest } from './shared-request.ts';
+import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
 // Only default body dates and opened charts persist on the device. Other bodies
 // stay in shared tab memory; controllers pin active inputs within its byte budget.
 export function createCyclesClient({ request = requestJSON, memory = createMemoryCache(), timeoutMs = 60_000,
   cacheVersion, returnStorage }: CyclesClientOptions = {}) {
   const lifetime = new AbortController(), attachments = new Map<string, SharedRequest<unknown>>();
+  const preservations = new Map<string, SharedRequest<void>>();
   const reads = new Map<string, SharedRequest<unknown>>(), pending = new Map<string, SharedRequest<ClientCycleResult>>();
   const version = typeof cacheVersion === 'string' && /^[a-f0-9]{64}$/.test(cacheVersion) ? cacheVersion : null;
   const device = version ? returnStorage === undefined ? createReturnStorage() : returnStorage : null;
@@ -39,7 +40,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
   const identity = (action: CycleAction, input: CycleInput) => JSON.stringify([action, version, ...Object.values(normalized(action, input))]);
   const eventFields = ['id', 'body', 'utc', 'age', 'cycle', 'pass', 'cycleId', 'direction'] as const;
   const confirmsEvent = (event: CycleEvent | null | undefined, input: CycleInput): event is CycleEvent => validCycleEvent(event, input) && event!.utc === input.eventUtc;
-  async function preserveReady(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
+  async function preserveReadyWork(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
     if (signal.aborted || !DEFAULT_CYCLE_BODIES.includes(input.body)) return;
     const writes: Promise<unknown>[] = [];
     if (!alreadyStored && typeof data.proof === 'string' && data.proof.length > 0 && data.proof.length <= MAX_RETURN_PROOF_LENGTH) {
@@ -58,14 +59,44 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     }
     // Only already opened full charts are read here. Missing ones never enter the numerical queue.
     if (action === 'events') writes.push((async () => {
-      for (const event of (data as CycleEventsResult).events) {
+      const events = (data as CycleEventsResult).events;
+      const candidates = await preparedChartInputs(input, {signal});
+      for (const exact of candidates) {
         if (signal.aborted) return;
-        const exact={birthUtc:input.birthUtc,body:input.body,eventUtc:event.utc,timezone:input.timezone??'UTC'};
+        // Lists are validated in ascending UTC order. Find only the few stored
+        // destinations instead of reading every possible astronomical event.
+        let low = 0, high = events.length;
+        while (low < high) { const mid = (low + high) >>> 1;
+          if (cycleUtcDifference(events[mid].utc, exact.eventUtc) < 0) low = mid + 1; else high = mid;
+        }
+        if (events[low]?.utc !== exact.eventUtc) continue;
         const ready=await get('chart',exact,signal,{cacheOnly:true,preserve:false});
         if(ready)await preserveReady('chart',exact,ready,owner,signal);
       }
     })());
     await Promise.allSettled(writes);
+  }
+  function preserveReady(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
+    const key=JSON.stringify([action,owner,input,data.proof,alreadyStored]);
+    return shareRequest(preservations,key,({controller})=>preserveReadyWork(action,input,data,owner,controller.signal,alreadyStored),{signal});
+  }
+  async function preparedChartInputs(input: {birthUtc:string;body?:string;timezone?:string}, {signal}:{signal?:AbortSignal}={}):Promise<CycleInput[]> {
+    if(lifetime.signal.aborted || signal?.aborted)throw createAbortError();
+    const prefix='return-chart:',keys=new Set(memory.keys(prefix).map(key=>key.slice(prefix.length)));
+    const stored=await device?.chartKeys?.();
+    if(lifetime.signal.aborted || signal?.aborted)throw createAbortError();
+    for(const key of stored??[])keys.add(key);
+    // A chart can arrive while the catalogue transaction is pending.
+    for(const key of memory.keys(prefix))keys.add(key.slice(prefix.length));
+    const found:CycleInput[]=[];
+    for(const key of keys)try {
+      const parts:unknown=JSON.parse(key);
+      if(!Array.isArray(parts) || parts.length!==6 || parts[0]!=='chart' || parts[1]!==version
+        || parts[2]!==input.birthUtc || input.body && parts[3]!==input.body || typeof parts[3]!=='string'
+        || typeof parts[4]!=='string' || !Number.isFinite(Date.parse(parts[4])) || parts[5] !== (input.timezone??'UTC'))continue;
+      found.push({birthUtc:input.birthUtc,body:parts[3],eventUtc:parts[4],timezone:parts[5]});
+    } catch { /* A malformed catalogue identity is not a candidate. */ }
+    return found;
   }
   async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false, preserve = true }: CycleOptions = {}): Promise<ClientCycleResult | null> {
     signal = signal ? AbortSignal.any([signal,lifetime.signal]) : lifetime.signal;
@@ -144,7 +175,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       } finally { clearTimeout(timeout); }
     }, { signal });
   }
-  return { events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
+  return { preparedChartInputs, events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
     readEvents: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('events', input, signal, { cacheOnly: true }) as Promise<CycleEventsResult | null>,
     chart: (input: CycleInput, signal?: AbortSignal, options?: Omit<CycleOptions, 'cacheOnly'>) => get('chart', input, signal, options) as Promise<CachedCycleChart>,
     // A confirmed cached chart carries its own current-revision event label.

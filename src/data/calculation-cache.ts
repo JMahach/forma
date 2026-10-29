@@ -60,7 +60,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     if(!names.has(databaseName))names.set(databaseName,new Set());peers=names.get(databaseName)!;
   }
   const channel=typeof window!=='undefined' && typeof BroadcastChannel!=='undefined'?new BroadcastChannel(databaseName):null;
-  const notify=()=>{void atomic(async tx=>(await state(tx))?.window??null).then(schedule);
+  const notify=()=>{void atomic(async tx=>(await state(tx))?.window??null,'readonly').then(schedule);
     for(const listener of listeners)try{listener();}catch{}};peers?.add(notify);
   if(channel)channel.onmessage=notify;
   const publish=()=>{for(const notifyPeer of peers??[])notifyPeer();channel?.postMessage({changed:true});};
@@ -240,7 +240,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     if(closed)return Promise.resolve(false);
     if(!working)working=(async()=>{
       if(!await setup())return false;
-      const current=await atomic(async tx=>(await state(tx))!.phase==='ready');return current===true || await migrate();
+      const current=await atomic(async tx=>(await state(tx))!.phase==='ready','readonly');return current===true || await migrate();
     })().finally(()=>working=null);
     return working;
   }
@@ -310,6 +310,15 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
   return {
     async get<T=unknown>(kind:CalculationKind,key:string):Promise<T|null>{return await read<T>(kind,key) as T|null;},
     async touch(kind:CalculationKind,key:string){return await read(kind,key,true) as boolean|null;},
+    // Admission probes do not consume a payload or update its LRU. The current
+    // version, epoch and transit window are rechecked in this transaction.
+    async has(kind:CalculationKind,key:string) {
+      if(!await ready())return null;
+      return atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;
+        const meta=await find(tx,kind,key,value);
+        return Boolean(meta && (meta.location==='data' || meta.stage==='pending') && eligible(meta,value));
+      },'readonly');
+    },
     async put(kind:CalculationKind,key:string,payload:unknown,info:{version?:string;date?:string}={}):Promise<boolean|null> {
       let snapshot:unknown;try{snapshot=structuredClone(payload);}catch{return null;}
       if(!await ready())return null;
@@ -374,16 +383,17 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
       const result=await atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;
         const meta=await request(tx.objectStore('catalogue').get(identity(kind,key))) as Catalogue|undefined;
         if(meta)remove(tx,meta,value);
-        const retired=await retireLegacy(tx,kind,key,value);save(tx,value);return {retired};});
+        const retired=await retireLegacy(tx,kind,key,value),changed=Boolean(meta || retired.length);
+        if(changed)save(tx,value);return {retired,changed};});
       for(const meta of result?.retired??[])try{await dropLegacy(meta);}catch{return null;}
-      if(result)publish();return result?true:null;
+      if(result?.changed)publish();return result?true:null;
     },
     async catalogue(kind:CalculationKind) {
       if(!await ready())return null;
       return atomic(async tx=>{const value=(await state(tx))!;if(!allowed(kind,value))return null;const found:{key:string;version?:string;date?:string}[]=[];
         for await(const cursor of rows(tx.objectStore('catalogue').index('kind'),kind)){
           const meta=cursor.value as Catalogue;if((meta.location==='data' || meta.stage==='pending') && eligible(meta,value))found.push({key:meta.key,version:meta.version,date:meta.date});}
-        return found;});
+        return found;},'readonly');
     },
     /** Only the server-confirmed update coordinator may change versions. previous guards races, never proves freshness. */
     async confirmVersions(next:Versions,{previous={}}:{previous?:Versions}={}) {
@@ -425,7 +435,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     },
     async status() {
       if(!await setup())return {phase:'unavailable' as const,accountedBytes:null,legacyBytes:null};
-      return await atomic(async tx=>{const value=(await state(tx))!;return {...value,maxBytes};})
+      return await atomic(async tx=>{const value=(await state(tx))!;return {...value,maxBytes};},'readonly')
         ??{phase:'unavailable' as const,accountedBytes:null,legacyBytes:null};
     },
     subscribe(listener:()=>void){listeners.add(listener);return()=>listeners.delete(listener);},

@@ -44,6 +44,10 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
       const data=await owner.get<unknown>('return-charts',key);
       return describeLegacyCalculation(source,'charts',key,{key,data})?.value??null;
     },
+    async chartKeys():Promise<string[]|null> {
+      if(closed)return null;
+      return (await owner.catalogue('return-charts'))?.map(row=>row.key)??null;
+    },
     putChart(key: string, data: unknown) {
       if(closed)return Promise.resolve(null);
       const description=describeLegacyCalculation(source,'charts',key,{key,data});
