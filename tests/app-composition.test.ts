@@ -77,6 +77,7 @@ interface HarnessOptions {
   storagePressure?: ReturnType<typeof createStoragePressure>;
   journal?: Parameters<typeof import('../src/app.ts').startApp>[0]['journal'];
   navigation?: ReturnType<typeof createNavigation>; onPersonalReset?: () => void;
+  personalCleanup?: Pick<ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>,'resetPersonal'|'retryPersonalCleanup'>;
   chartClient?: Partial<ChartClient>; accountSession?: (LibrarySession & {diagnosticProof?:string}) | null;
   libraryStorage?: ReturnType<typeof createAccountLibraryStore>;
   realSummary?: boolean; realViewSession?: boolean; realTransit?: boolean; search?: string; restore?: () => Promise<boolean>; savedView?: TestStub<SavedView> | null;
@@ -227,7 +228,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,...overrides};
 }
-function harness({copyText, transitStart = async () => true, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({copyText, transitStart = async () => true, actualStore, calculationVersion = '', accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   document.body.dataset.calculationVersion=calculationVersion;
   let hovered = false, notifyHover: () => void = noop;
@@ -404,8 +405,8 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
   camera.reset();
   const cameraView = { surface: element('canvasWrap'), paint: noop };
   const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document } as unknown as Parameters<typeof createChartLibraryView>[0]);
-  const calculationClients = onPersonalReset ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
-    resetPersonal:async()=>{onPersonalReset();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null} : undefined;
+  const calculationClients = onPersonalReset || personalCleanup ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
+    resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,...personalCleanup} : undefined;
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
   return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
@@ -2666,4 +2667,25 @@ test('leaving the chart with a hovered item defers the cleared highlight until r
   assert.equal(h.renders, before, 'hover clearing must obey the same hidden-scene gate');
   h.workspace.setScreen('chart');
   assert.ok(h.renders > before, 'the visible scene receives its cleared highlight');
+});
+
+
+test('failed personal cleanup survives a later account boundary and reconnect without another reset',async t=>{
+ let mode:'online'|'offline'='online';const listeners=new Set<()=>void>();
+ configureTransportSimulation({get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}});
+ t.after(()=>configureTransportSimulation(null));
+ let resets=0,retries=0,pending=false,available=false;const record=accountNatalChart();
+ const h=harness({chartClient:{async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};}},
+  accountSession:{accountId:'1',sessionId:'one'},personalCleanup:{
+   async resetPersonal(){resets++;pending=true;return {status:'unavailable',generation:1};},
+   async retryPersonalCleanup(){if(!pending)return null;retries++;if(!available)return {status:'unavailable',generation:1};pending=false;return {status:'cleared',generation:1};},
+  }});
+ t.after(()=>h.stopApplication());const drain=async()=>{for(let i=0;i<8;i++)await tick();};
+ await h.restoration;await drain();
+ h.changeAccount(null);h.logoutNotice(['one']);await drain();assert.equal(resets,1);
+ h.changeAccount({accountId:'2',sessionId:'two'});await drain();
+ mode='offline';for(const fn of listeners)fn();await drain();
+ available=true;mode='online';for(const fn of listeners)fn();await drain();
+ assert.equal(pending,false,'the failed old cleanup must be resumed by its owner after B signs in');
+ assert.equal(resets,1,'retry does not revoke a new generation');assert.equal(retries,2,'one attempt at B and one on reconnect');
 });

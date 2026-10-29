@@ -543,7 +543,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const resetPersonal=!!logout || !!access && (previousAccount!==null && previousAccount!==access.accountId
       || chartActions.pending.some(intent=>intent.expectedAccountId!==access.accountId)
       || !!temporaryChartSave && temporaryChartSave.expectedAccountId!==access.accountId);
-    const cleanup=resetPersonal?calculationClients?.resetPersonal():undefined;
+    // The calculation owner retains failed cleanup across session boundaries.
+    const cleanup=resetPersonal?calculationClients?.resetPersonal():calculationClients?.retryPersonalCleanup();
     let snapshotReady=true;
     if(logout){
       if(!journal){journalBoundaryPending=true;for(const id of logout)journalBoundaryIds.add(id);}
@@ -578,7 +579,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
           clearResult={...clearResult,status:await accountLibrary.retryClear(clearResult.accountId)};
           if(clearResult.status==='unavailable')throw unavailable();
         }
-        if(resetPersonal)checkCleanup(await calculationClients?.retryPersonalCleanup());
+        checkCleanup(await calculationClients?.retryPersonalCleanup());
         // A later checkpoint reads current tab state; it never replays an old snapshot.
         if(!snapshotReady)snapshotReady=viewSession!.flush();
         if(!snapshotReady)throw unavailable();
