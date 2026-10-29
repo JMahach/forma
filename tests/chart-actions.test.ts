@@ -9,7 +9,7 @@ import type { ChartClient } from '../src/data/chart-client.ts';
 
 const access = {accountId: '1', sessionId: 'session'};
 const input = {name: 'A', note: 'draft', birth: {source: 'transit' as const, utc: '2000-01-01T12:00:00Z'}};
-function fixture() {
+function fixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepareWrite']) {
   let current: typeof access | null = {...access}, writes = 0, calculations = 0, opens = 0;
   let sendError: unknown = null, seen: unknown, lookup = {kind: 'unknown'} as any;
   let afterWrite = () => {};
@@ -23,7 +23,7 @@ function fixture() {
   } satisfies Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>;
   const actions = createChartActions({client, getSession:()=>current, newId:()=>chartId(77),
     library:{async open(){opens++;return accountChart();},async forget(){}},
-    async calculate(){calculations++;return accountChart();},onPending:values=>pending.push(values)});
+    async calculate(){calculations++;return accountChart();},prepareWrite,onPending:values=>pending.push(values)});
   return {actions, pending, seen:()=>seen, writes:()=>writes, calculations:()=>calculations, opens:()=>opens,
     switch(value:typeof current){current=value;}, fail(value:unknown){sendError=value;},lookup(value:unknown){lookup=value;},
     afterWrite(fn:()=>void){afterWrite=fn;}};
@@ -200,7 +200,7 @@ test('expanded decimal chart IDs remain distinct through deletion, lost replies 
 });
 
 
-function readySaveFixture() {
+function readySaveFixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepareWrite']) {
   let current:typeof access|null=null,writes=0,calculations=0,reads=0,opens=0;
   let result:ChartWriteOutcome={kind:'created',chartId:chartId(2),revision:1};
   let error:unknown,after=async()=>{};
@@ -212,7 +212,7 @@ function readySaveFixture() {
     client:{create:write,update:write,remove:write,addFromSource:write,
       async outcome(value){reads++;return {...value,outcome:result};}},
     library:{async open(){opens++;return copy;},async forget(){}},
-    async calculate(){calculations++;return temporary;},saveReady:write});
+    async calculate(){calculations++;return temporary;},saveReady:write,prepareWrite});
   return {actions,temporary,copy,submitted,counts:()=>({writes,calculations,reads,opens}),
     login(value:typeof current={...access}){current=value;},outcome(value:ChartWriteOutcome){result=value;},
     fail(value:unknown){error=value;},wait(value:()=>Promise<void>){after=value;}};
@@ -352,4 +352,42 @@ test('the last recovery consumer aborts transport and a cleared generation canno
  assert.equal(opens,1);
  assert.equal(oldResult.kind==='settled'&&oldResult.active,false);
  assert.equal(nextResult.kind==='settled'&&nextResult.active,true);
+});
+
+
+test('ready save waits for the prepared pointer and binding; RAM-only still permits one write',async()=>{
+ let release!:(value:{kind:'memory-only'})=>void;const prepared=new Promise<{kind:'memory-only'}>(resolve=>{release=resolve;});
+ const steps:string[]=[];let binding:ChartWriteIntent|null=null;
+ const h=readySaveFixture(async(intent,seen,signal)=>{
+  steps.push('checkpoint');assert.deepEqual(h.actions.pending,[intent]);assert.deepEqual(binding,intent);
+  assert.equal(seen.sessionId,access.sessionId);assert.equal(signal.aborted,false);return prepared;
+ });h.login();
+ const action=h.actions.prepareSave({kind:'temporary',chart:h.temporary},()=>true,{onIntent:value=>{binding=value;steps.push('binding');}});
+ const first=action.run(),second=action.run();
+ assert.equal(h.counts().writes,0,'HTTP cannot begin while the checkpoint waits');assert.deepEqual(steps,['binding','checkpoint']);
+ release({kind:'memory-only'});assert.equal(await first,await second);assert.equal(h.counts().writes,1);
+});
+
+for(const change of ['session','source','abort','failed'] as const)test(`an unsent save drops its recovery pointer after ${change} during preparation`,async()=>{
+ let release!:(value:{kind:'stored'}|{kind:'failed';cause:unknown})=>void;let attempts=0;
+ const prepared=new Promise<{kind:'stored'}|{kind:'failed';cause:unknown}>(resolve=>{release=resolve;});
+ const h=readySaveFixture(async()=>++attempts===1?prepared:{kind:'stored'});h.login();
+ let current=true,binding:ChartWriteIntent|null=null;
+ const controller=new AbortController(),source={kind:'temporary' as const,chart:h.temporary};
+ const action=h.actions.prepareSave(source,()=>current,{onIntent:value=>{binding=value;}});
+ const running=action.run(controller.signal);
+ assert.equal(h.counts().writes,0);
+ const rejected=assert.rejects(running);
+ if(change==='session')h.login({accountId:'2',sessionId:'next'});
+ if(change==='source')current=false;
+ if(change==='abort')controller.abort();
+ release(change==='failed'?{kind:'failed',cause:new Error('snapshot producer')}:{kind:'stored'});
+ await rejected;assert.equal(h.counts().writes,0);assert.deepEqual(h.actions.pending,[]);assert.equal(binding,null);
+ if(change==='failed'){
+  assert.equal((await action.run()).kind,'settled','another explicit save is not trapped in lookup for an unsent operation');
+  assert.equal(h.counts().writes,1);assert.equal(h.counts().reads,0);
+  const direct=fixture(async()=>({kind:'failed',cause:new Error('snapshot')}));
+  await assert.rejects(direct.actions.create(input),{code:'checkpoint_failed'});
+  assert.equal(direct.writes(),0);assert.deepEqual(direct.actions.pending,[]);
+ }
 });

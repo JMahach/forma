@@ -346,6 +346,7 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
       return {
       restore, get interrupted() { return restoreInterrupted; },
       interrupt() { restoreInterrupted = true; interruptions++; }, schedule: noop, flush: noop,
+      checkpoint: async () => ({kind:'memory-only'}),
     }; },
     chartCaption: (...args) => { captionUpdates++; return chartCaption(...args); },
     createLayoutObserver: refresh => createLayoutObserver(refresh, {

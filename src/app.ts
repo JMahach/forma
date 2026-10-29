@@ -328,6 +328,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let formIntent: ChartWriteIntent | null = null, privateLibraryShown = false, librarySelection = 0;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
+    prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
   function continueChartSave(intent:NonNullable<typeof chartSave>):Promise<void> {
     if(intent.work)return intent.work;

@@ -2232,6 +2232,18 @@
       "mode": "types",
       "status": "stable-value-contract",
       "reason": "Форма переданных сроков и пределов очереди. Хранилище принимает значения от владельца почтовой политики; импорт отправки, очереди и исполняемых функций не разрешается."
+    },
+    {
+      "id": "write-checkpoint-result",
+      "from": "src/state/chart-actions.ts",
+      "to": "src/state/view-checkpoint.ts",
+      "kind": "import-declaration",
+      "importedBindings": [
+        "CheckpointResult"
+      ],
+      "mode": "types",
+      "status": "stable-value-contract",
+      "reason": "Write preparation receives only the stored/memory-only/failed value contract through its port; importing or creating the snapshot coordinator at this boundary remains forbidden."
     }
   ],
   "legacyExceptions": []

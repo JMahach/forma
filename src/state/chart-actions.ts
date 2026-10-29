@@ -3,6 +3,7 @@ import type { CalculationRequest, SavedChart } from '../../shared/chart-types.ts
 import type { ChartClient, ChartBirthInput, ChartReceipt, ChartPatchInput } from '../data/chart-client.ts';
 import type { ChartCalculation } from '../domain/chart-record.ts';
 import type { LibrarySession } from './account-library.ts';
+import type { CheckpointResult } from './view-checkpoint.ts';
 import { createChartId } from '../domain/chart-record.ts';
 import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
 
@@ -26,6 +27,7 @@ interface Options {
   // calculation receipt; browser activation numbers never cross this boundary.
   saveReady?: (input:ChartWriteIntent & {chart:SavedChart},signal?:AbortSignal)=>Promise<ChartReceipt<ChartWriteOutcome>>;
   newId?: () => string; initialPending?: readonly ChartWriteIntent[];
+  prepareWrite?: (intent:ChartWriteIntent,session:LibrarySession,signal:AbortSignal)=>Promise<CheckpointResult>;
   onPending?: (pending: readonly ChartWriteIntent[]) => void;
 }
 type CreateInput = {name: string; note: string; birth: ChartBirthInput};
@@ -42,7 +44,8 @@ function refusedBeforeWrite(error: unknown) {
 }
 
 /** Writes are explicit once. Pending pointers contain no command or chart and permit only outcome reads. */
-export function createChartActions({client, library, getSession, calculate, saveReady, newId = createChartId, initialPending = [], onPending = () => {}}: Options) {
+export function createChartActions({client, library, getSession, calculate, saveReady, newId = createChartId, initialPending = [],
+  prepareWrite, onPending = () => {}}: Options) {
   const pending = new Map<string, ChartWriteIntent>();
   const saveChecks=new Map<string,{intent:ChartWriteIntent;session:LibrarySession}>();
   const recoveries=new Map<string,SharedRequest<ChartActionResult,{live:()=>boolean}>>();
@@ -71,12 +74,24 @@ export function createChartActions({client, library, getSession, calculate, save
     const active = same(seen) && live();
     return {kind: 'settled', receipt, chart: active ? chart : null, active, ...(!active || readError === undefined ? {} : {readError})};
   }
-  async function write(send: (intent: ChartWriteIntent) => Promise<ChartReceipt<ChartWriteOutcome>>, signal?: AbortSignal, isCurrent:()=>boolean=()=>true, onIntent?:(intent:ChartWriteIntent,session:LibrarySession)=>void): Promise<ChartActionResult> {
-    signal?.throwIfAborted();
+  async function write(send: (intent: ChartWriteIntent) => Promise<ChartReceipt<ChartWriteOutcome>>, signal = new AbortController().signal, isCurrent:()=>boolean=()=>true, onIntent?:(intent:ChartWriteIntent|null,session:LibrarySession)=>void): Promise<ChartActionResult> {
+    signal.throwIfAborted();
     const ownedGeneration=generation;
     const seen = access(), intent = {operationId: newId(), expectedAccountId: seen.accountId};
-    const live=()=>ownedGeneration===generation && !signal?.aborted && isCurrent();
-    pending.set(key(intent), intent); onIntent?.(intent,seen); publish();
+    const live=()=>ownedGeneration===generation && !signal.aborted && isCurrent();
+    pending.set(key(intent), intent);
+    try {
+      onIntent?.(intent,seen);
+      // Preparation owns the new pointer's persistence. Other changes publish
+      // below; a standalone owner without a checkpoint has only its RAM pointer.
+      const checkpoint=prepareWrite?await prepareWrite(intent,seen,signal):(publish(),{kind:'memory-only' as const});
+      signal.throwIfAborted();
+      if(!same(seen) || !live())throw failed('account_changed');
+      if(checkpoint.kind==='failed')throw Object.assign(failed('checkpoint_failed'),{cause:checkpoint.cause});
+    }catch(error){
+      // Nothing reached the server: this pointer must never become outcome recovery.
+      forget(intent);onIntent?.(null,seen);throw error;
+    }
     let receipt: ChartReceipt<ChartWriteOutcome>;
     try { receipt = await send(intent); }
     catch (error) {
@@ -176,7 +191,14 @@ export function createChartActions({client, library, getSession, calculate, save
         if(intent && intent.expectedAccountId!==current.accountId){cancel();return Promise.resolve({kind:'inactive'});}
         const previous=saveChecks.get(selectedKey);
         if(!intent && previous && same(previous.session))intent=previous.intent;
-        const remember=(value:ChartWriteIntent,session:LibrarySession)=>{intent=value;saveChecks.set(selectedKey,{intent:value,session});recovery.onIntent?.(value);};
+        const remember=(value:ChartWriteIntent|null,session:LibrarySession)=>{
+          if(value){intent=value;saveChecks.set(selectedKey,{intent:value,session});recovery.onIntent?.(value);}
+          else {
+            // A newer save of the same source may already own its binding.
+            if(saveChecks.get(selectedKey)?.intent===intent){saveChecks.delete(selectedKey);recovery.onIntent?.(null);}
+            intent=null;
+          }
+        };
         work=(async()=>{
           let result:ChartActionResult;
           if(intent)result=await recover(intent,controller.signal,live);
