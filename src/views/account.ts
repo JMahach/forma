@@ -1,31 +1,10 @@
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
-import type { AccountIdentity, AccountScreen, AccountRequest, AccountReply } from '../state/account-flow.ts';
+import type { AccountScreen } from '../state/account-flow.ts';
 import type { AccountFlow, AccountIssue, AccountState } from '../state/account-flow.ts';
 import { escapeHtml as esc } from '../ui/html.ts';
 import { actionAvailability } from '../ui/action-state.ts';
 import { createFeedback } from '../ui/feedback.ts';
 import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
-
-// Optional stand adapter access to the same mounted account view, independent of browser assembly.
-export interface AccountPreviewAdapter {
-  request: (request: AccountRequest, signal: AbortSignal) => Promise<AccountReply>;
-  screen: AccountScreen; identity: AccountIdentity | null;
-}
-export interface AccountPreviewPort {
-  preview(adapter: AccountPreviewAdapter | null): Pick<AccountFlow, 'subscribe'> | null;
-  cancelPreview(): void;
-}
-let previewSetup: ((account: AccountPreviewPort) => void) | null = null;
-let mountedPreview: AccountPreviewPort | null = null;
-export function registerAccountPreview(setup: (account: AccountPreviewPort) => void) {
-  previewSetup = setup;
-  if (mountedPreview) setup(mountedPreview);
-  return () => { if (previewSetup === setup) previewSetup = null; };
-}
-export function connectAccountPreview(port: AccountPreviewPort) {
-  mountedPreview = port; previewSetup?.(port);
-  return () => { if (mountedPreview === port) mountedPreview = null; };
-}
 
 type Feedback = ReturnType<typeof createFeedback>;
 export function attachAccountView({ page, flow, offline, telegram = true, onInputChange = () => {} }: { page: HTMLElement; flow: AccountFlow; offline: () => boolean; telegram?: boolean; onInputChange?: () => void }) {

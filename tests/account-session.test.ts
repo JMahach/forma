@@ -7,7 +7,7 @@ import type { AccountClient } from '../src/data/account-client.ts';
 import type { TelegramLogin } from '../src/data/telegram-login.ts';
 
 const id = 'a'.repeat(32), nextId = 'b'.repeat(32);
-const account = { id: 'account-one', email: 'a@example.org', telegramHandle: null };
+const account = { id: 'account-one', email: 'a@example.org', telegramHandle: null, telegramLinked: false };
 const confirmed = (context = id) => ({ account, session: { id: context, expiresAt: 999999999 } });
 function setup(telegram?: Pick<TelegramLogin, 'reserve'>) {
   const indexedDB = new IDBFactory(), pending = createAccountLogoutStore({ indexedDB });
@@ -193,3 +193,17 @@ for (const change of ['account', 'session', 'unchanged'] as const) {
     assert.equal(s.owner.flow.state.code, change === 'unchanged' ? '123456' : '');
   });
 }
+
+test('session observers keep A to B to A boundaries but ignore login field and busy updates', async () => {
+  const s=setup(), seen:(string|null)[]=[];
+  const stop=s.owner.subscribeSession(access=>seen.push(access?access.accountId+':'+access.sessionId:null));
+  await s.owner.refresh();
+  s.owner.flow.input('email','changed@example.org');s.owner.flow.input('code','123');
+  await s.owner.refresh();
+  assert.deepEqual(seen,[null,account.id+':'+id]);
+  s.useNewAccount();await s.owner.refresh();
+  s.client.current=async()=>confirmed();await s.owner.refresh();
+  assert.deepEqual(seen,[null,account.id+':'+id,'account-two:'+nextId,account.id+':'+id]);
+  stop();await s.owner.flow.logout();assert.equal(seen.length,4);
+  s.owner.destroy();
+});

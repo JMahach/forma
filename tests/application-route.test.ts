@@ -32,7 +32,7 @@ function fixture(adapter: 'memory' | 'browser', pathname = '/account') {
   const reads: {signal: AbortSignal; release: () => void}[] = [];
   const applied: string[] = [], failures: unknown[] = [];
   let disposals = 0;
-  const createRuntime = () => createApplication({navigation, route: request => ({
+  const createRuntime = () => createApplication({runtimeId:crypto.randomUUID(),navigation, route: request => ({
     enter() {},
     prepare(signal) { return new Promise<void>(release => reads.push({signal, release})); },
     apply() { applied.push(request.snapshot.route!.kind); },

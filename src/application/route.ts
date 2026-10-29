@@ -2,7 +2,7 @@ import type { ApplicationPorts, RouteRequest } from './ports.ts';
 
 /** Route order lives here; numerical data and presentation remain with their owners. */
 export async function prepareRoute(ports: ApplicationPorts, request: RouteRequest, signal: AbortSignal) {
-  const current = () => !signal.aborted && ports.navigation.isCurrent(request.snapshot);
+  const current = () => !signal.aborted && !!ports.navigation?.isCurrent(request.snapshot);
   if (!current()) return 'cancelled' as const;
   const route = ports.route(request);
   let disposed = false;

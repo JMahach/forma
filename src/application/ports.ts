@@ -1,5 +1,29 @@
 import type { AppRoute } from '../../shared/app-routes.ts';
 
+export interface AccountAccess { readonly accountId: string; readonly sessionId: string; readonly diagnosticProof?: string }
+export interface AccountBoundaryRequest {
+  readonly runtimeId: string;
+  readonly generation: number;
+  readonly access: AccountAccess | null;
+  readonly previous: AccountAccess | null;
+  readonly logoutIds: readonly string[] | null;
+}
+export interface AccountBoundaryWork {
+  readonly ready: Promise<void>;
+  retry(): Promise<void>;
+  settled(): void;
+}
+export interface AccountPort {
+  subscribeSession(listener: (access: AccountAccess | null) => void): () => void;
+  subscribeLogout(listener: (ids: readonly string[]) => void): () => void;
+  begin(request: AccountBoundaryRequest): AccountBoundaryWork;
+  stop(): void;
+}
+export type AccountEvent =
+  | {type: 'SessionChanged'; access: AccountAccess | null}
+  | {type: 'LogoutObserved'; ids: readonly string[]}
+  | {type: 'RetryAccountBoundary'};
+
 export interface NavigationSnapshot { readonly route: AppRoute | null; readonly revision: number }
 export type NavigationOrigin = 'external' | 'publication';
 export interface NavigationPort {
@@ -22,11 +46,12 @@ export interface RoutePort {
   settled(): void;
   dispose(): void;
 }
-export interface ApplicationPorts { navigation: NavigationPort; route(request: RouteRequest): RoutePort }
+export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}
-  | {type: 'RetryRoute'};
+  | {type: 'RetryRoute'}
+  | AccountEvent;
 export interface ApplicationView {
   lifecycle: 'created' | 'running' | 'stopping' | 'stopped';
   destination: 'idle' | 'preparing' | 'ready' | 'failed';

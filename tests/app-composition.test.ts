@@ -1528,6 +1528,31 @@ test('cold shared-chart restoration cannot override a newer account address', as
  await tick();n.backTo('/account');await tick();finish(publicRecord);await tick();await tick();
  assert.equal(h.workspace.screen,'account');assert.equal(n.location.pathname,'/account');
 });
+test('an account change cancels a pending chart URL read and checks access again', async t => {
+ const record=accountNatalChart(), {accountId,note,noteRevision,publicRevision,...publicRecord}=record;
+ const n=addressHarness('/chart/'+record.id);
+ let finish!:(value:typeof publicRecord)=>void, oldSignal:AbortSignal|undefined, reads=0;
+ const client={
+  async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};},
+  public(_id:string,signal?:AbortSignal){
+   if(++reads===1){oldSignal=signal;return new Promise<typeof publicRecord>(resolve=>{finish=resolve;});}
+   return Promise.reject(Object.assign(new Error('private to the previous account'),{code:'not_found',status:404}));
+  },
+ } satisfies Partial<ChartClient>;
+ const store=createChartStore({calculationVersion:record.calculationVersion});store.projectLibrary([],false);
+ const h=harness({actualStore:store,navigation:n.navigation,chartClient:client,realViewSession:true,
+  accountSession:{accountId:'1',sessionId:'old'},calculationVersion:record.calculationVersion});
+ t.after(async()=>{finish?.(publicRecord);await h.stopApplication();n.navigation.destroy();});
+ await waitForOwnLink(()=>reads===1);
+ h.changeAccount({accountId:'2',sessionId:'new'});
+ assert.equal(oldSignal?.aborted,true,'the old account loses its read immediately');
+ await h.restoration;await tick();
+ assert.equal(reads,2,'only the replacement read checks access with the new account');
+ assert.equal(n.location.pathname,'/');assert.equal(h.shown.id,'current-transit');
+ finish(publicRecord);await tick();h.flushView();
+ assert.equal(store.publicChart,null);assert.equal(h.savedSnapshot?.publicChart??null,null);
+ assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,'/');
+});
 test('returning to the temporary address uses this tab current temporary chart', async () => {
  const n=addressHarness('/'), record={...accountNatalChart(92),id:'temporary-one',name:'Temporary',createdAt:'',updatedAt:''};
  const actualStore=createChartStore({initialTemporaryChart:record});

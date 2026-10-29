@@ -1275,7 +1275,8 @@
         "account-flow",
         "data-clients",
         "data-storage",
-        "shared-contracts"
+        "shared-contracts",
+        "application"
       ]
     },
     {
@@ -1751,7 +1752,8 @@
         "src/application/application.ts",
         "src/application/ports.ts",
         "src/application/route.ts",
-        "src/application/application-machine.ts"
+        "src/application/application-machine.ts",
+        "src/application/account-boundary.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
@@ -1763,7 +1765,10 @@
       "allowTypes": [
         "application",
         "shared-contracts"
-      ]
+      ],
+      "privateEntryReasons": {
+        "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime."
+      }
     }
   ],
   "cyclePolicy": {
@@ -1871,6 +1876,12 @@
         "from": "src/application/application-machine.ts",
         "specifier": "xstate",
         "reason": "Pure application transition table and cancellable child operation in the approved v5 runtime."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/account-boundary.ts",
+        "specifier": "xstate",
+        "reason": "Account boundary actor uses the same pinned application runtime."
       }
     ]
   },

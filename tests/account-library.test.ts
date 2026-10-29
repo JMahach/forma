@@ -396,3 +396,20 @@ test('unchanged library reads retain records without notifications, while durabl
     assert.deepEqual(library.charts, [], 'logout discards the previous account projection');
   } finally { library.close(); }
 });
+
+test('unavailable logout cleanup retains its exact account target and a retry preserves a newer account',async()=>{
+ const stored=createAccountLibraryStore({indexedDB:new IDBFactory()});let unavailable=true;
+ const storage={...stored,clearAccount:async(id:string)=>unavailable?'unavailable' as const:stored.clearAccount(id)};
+ const source=client([accountChart(),accountChart(2,'2')]);
+ source.list=async({expectedAccountId})=>({charts:[{...accountChart(expectedAccountId==='1'?1:2,expectedAccountId),calculationCurrent:true}],nextCursor:null,calculationVersion:'current'});
+ const library=createAccountLibrary({storage,client:source,calculationVersion:'current',online:()=>true});
+ try{
+  await library.connect(session);await library.load();
+  const result=await library.clear();assert.equal(result.status,'unavailable');assert.equal(result.accountId,'1');
+  assert.deepEqual(library.charts,[]);
+  await library.connect({accountId:'2',sessionId:'second-session'});await library.load();
+  unavailable=false;assert.equal(await library.retryClear(result.accountId!), 'stale');
+  assert.deepEqual((await stored.read())!.charts.map(chart=>chart.accountId),['2']);
+  assert.equal(library.accountId,'2');
+ }finally{library.close();}
+});

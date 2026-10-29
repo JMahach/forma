@@ -178,15 +178,25 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
     },
     forget,
     async clear() {
-      const accountId = ownerId ?? current?.accountId;
+      let accountId = ownerId ?? current?.accountId ?? null;
       // Queue account-scoped deletion before observers may connect a new account.
       const clearing = accountId ? storage.clearAccount(accountId)
-        : storage.read().then(snapshot => snapshot?.lease ? storage.clearAccount(snapshot.lease.accountId) : null);
+        : storage.read().then(snapshot => {
+          accountId=snapshot?.lease?.accountId??null;
+          return accountId ? storage.clearAccount(accountId) : snapshot ? 'cleared' as const : 'unavailable' as const;
+        });
       invalidate(); const seen = generation;
       current = null; ownerId = null; lease = null; charts = []; emit();
-      const result = clearing ? await clearing : null;
-      if (seen === generation && result) available = result !== 'unavailable';
-      notify();
+      const status = await clearing;
+      if (seen === generation) {available=status!=='unavailable';emit();}
+      if(status==='cleared')notify();
+      return {accountId,status};
+    },
+    async retryClear(accountId:string) {
+      const seen=generation, status=await storage.clearAccount(accountId);
+      if(seen===generation && !ownerId && !current){available=status!=='unavailable';emit();}
+      if(status==='cleared')notify();
+      return status;
     },
     refreshLocal,
     close() { closed = true; invalidate(); listeners.clear(); storage.close(); },
