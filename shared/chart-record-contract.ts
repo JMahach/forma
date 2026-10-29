@@ -18,6 +18,14 @@ export type ChartWriteOutcome =
   | { kind: 'deleted' | 'absent'; chartId: string }
   | { kind: 'rejected'; chartId: string; code: 'not_found' | 'duplicate_chart' | 'note_conflict' | 'source_changed'; revision?: number };
 export type ChartOutcome = ChartWriteOutcome | { kind: 'unknown' };
+/** Only these facts identify a record worth reading now; the fact is not that record. */
+export function chartOutcomeTarget(outcome: ChartOutcome): {id:string; revision:number} | null {
+  if(outcome.kind==='created' || outcome.kind==='updated' || outcome.kind==='existing')
+    return {id:outcome.chartId,revision:outcome.revision};
+  if(outcome.kind==='rejected' && (outcome.code==='note_conflict' || outcome.code==='duplicate_chart'))
+    return {id:outcome.chartId,revision:outcome.revision??1};
+  return null;
+}
 export interface ChartWriteIntent { operationId: string; expectedAccountId: string }
 export interface ChartUpdate extends ChartWriteIntent {
   chartId: string; name?: string; birth?: AccountChartBirth;

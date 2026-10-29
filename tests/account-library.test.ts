@@ -15,6 +15,24 @@ function client(rows = [accountChart()]): Pick<ChartClient, 'list' | 'own'> {
     async own({chartId: id}) { const chart = rows.find(row => row.id === id); if (!chart) throw Object.assign(new Error(), {code: 'not_found'}); return chart; },
   };
 }
+test('prepared acceptance cannot read or accept for a retired session, including retained offline data',async()=>{
+  for(const transition of ['logout','session','account','close','guest']) {
+    const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}), source=client();
+    let reads=0, online=true;const own=source.own;
+    source.own=(...args)=>{reads++;return own(...args);};
+    const library=createAccountLibrary({storage,client:source,online:()=>online});
+    try {
+      if(transition!=='guest'){await library.connect(session);await library.load();}
+      const accept=library.prepareAcceptance();
+      if(transition==='logout')await library.connect(null);
+      if(transition==='session')await library.connect({...session,sessionId:'next'});
+      if(transition==='account')await library.connect({accountId:'2',sessionId:'other'});
+      if(transition==='close'){online=false;library.close();}
+      await assert.rejects(accept(chartId(1),accountChart()),{code:'account_changed'},transition);
+      assert.equal(reads,0,transition);
+    } finally {library.close();}
+  }
+});
 test('offline restore keeps the downloaded library after expiry without asking the server', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const active = await storage.activate('1'); assert.equal(active.status, 'stored');

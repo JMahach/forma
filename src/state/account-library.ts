@@ -101,6 +101,26 @@ export function createAccountLibrary({client, storage, online, restoreAllowed = 
     charts = charts.filter(chart => chart.id !== chartId); emit();
     return work;
   }
+  async function open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
+    consumerSignal?.throwIfAborted();
+    const cached = charts.find(chart => chart.id === chartId);
+    if (!online() || !current) {
+      if (cached) return cached;
+      throw failed(online() ? 'auth_required' : 'offline');
+    }
+    const seen = generation, target = lease;
+    const signal = consumerSignal ? AbortSignal.any([controller.signal, consumerSignal]) : controller.signal;
+    const valid = () => { check(seen); signal.throwIfAborted(); };
+    try {
+      const chart = await client.own({chartId, expectedAccountId: current.accountId}, signal);
+      valid(); await accept([chart], seen, target); valid(); return charts.find(value => value.id === chartId)!;
+    } catch (error) {
+      valid();
+      if (codeOf(error) === 'not_found') await forget(chartId);
+      else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached) return cached;
+      throw error;
+    }
+  }
   return {
     get charts(): readonly AccountChart[] { return charts; },
     get accountId() { return ownerId; },
@@ -155,25 +175,18 @@ export function createAccountLibrary({client, storage, online, restoreAllowed = 
       // The visible selection calls this; background acquisition never counts as use.
       await storage.touch(lease, chartId).catch(() => false);
     },
-    async open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
-      consumerSignal?.throwIfAborted();
-      const cached = charts.find(chart => chart.id === chartId);
-      if (!online() || !current) {
-        if (cached) return cached;
-        throw failed(online() ? 'auth_required' : 'offline');
-      }
-      const seen = generation, target = lease;
-      const signal = consumerSignal ? AbortSignal.any([controller.signal, consumerSignal]) : controller.signal;
-      const valid = () => { check(seen); signal.throwIfAborted(); };
-      try {
-        const chart = await client.own({chartId, expectedAccountId: current.accountId}, signal);
-        valid(); await accept([chart], seen, target); valid(); return charts.find(value => value.id === chartId)!;
-      } catch (error) {
-        valid();
-        if (codeOf(error) === 'not_found') await forget(chartId);
-        else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached) return cached;
-        throw error;
-      }
+    open,
+    prepareAcceptance() {
+      const seen=generation, target=lease, access=current && {...current};
+      return async (chartId:string, chart?:AccountChart):Promise<AccountChart> => {
+        if(closed || !access || current?.accountId!==access.accountId || current.sessionId!==access.sessionId)
+          throw failed('account_changed');
+        // A deletion fences responses already in flight. A fresh address read may
+        // establish current data; the captured projection cannot restore it.
+        if(!chart || seen!==generation)return open(chartId);
+        await accept([chart],seen,target); check(seen);
+        return charts.find(value=>value.id===chartId)!;
+      };
     },
     forget,
     async clear() {

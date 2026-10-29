@@ -1,8 +1,9 @@
 import type { AccountChart, PublicAccountChart, ChartWriteIntent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
+import { chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
 import type { CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
-import type { ChartClient, ChartBirthInput, ChartReceipt, ChartPatchInput } from '../data/chart-client.ts';
+import type { ChartClient, ChartBirthInput, ChartReceipt, ChartReply, ChartPatchInput } from '../data/chart-client.ts';
 import type { ChartCalculation } from '../domain/chart-record.ts';
-import type { LibrarySession } from './account-library.ts';
+import type { AccountLibrary, LibrarySession } from './account-library.ts';
 import type { CheckpointResult } from './view-checkpoint.ts';
 import { createChartId } from '../domain/chart-record.ts';
 import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
@@ -20,7 +21,7 @@ export interface ChartSaveAction {
 }
 interface Options {
   client: Pick<ChartClient, 'create' | 'update' | 'remove' | 'addFromSource' | 'outcome'>;
-  library: {open(id: string): Promise<AccountChart>; forget(id: string): Promise<void>};
+  library: Pick<AccountLibrary,'open'|'forget'> & Partial<Pick<AccountLibrary,'prepareAcceptance'>>;
   getSession: () => LibrarySession | null;
   calculate(input: CalculationRequest, signal: AbortSignal): Promise<ChartCalculation>;
   // Optional transport override. The default sends source input and the server
@@ -61,14 +62,17 @@ export function createChartActions({client, library, getSession, calculate, save
     const current = getSession(); return current?.accountId === seen.accountId && current.sessionId === seen.sessionId;
   }
   function access() { const current = getSession(); if (!current) throw failed('auth_required'); return {...current}; }
-  async function settle(receipt: ChartReceipt<ChartWriteOutcome>, seen: LibrarySession, live:()=>boolean=()=>true): Promise<ChartActionResult> {
+  const prepareAcceptance=()=>library.prepareAcceptance?.()??((id:string)=>library.open(id));
+  async function settle(reply: ChartReply<ChartWriteOutcome>, seen: LibrarySession, live:()=>boolean,
+    accept:ReturnType<typeof prepareAcceptance>): Promise<ChartActionResult> {
+    const receipt={operationId:reply.operationId,expectedAccountId:reply.expectedAccountId,outcome:reply.outcome};
     forget(receipt);
     if (!same(seen) || !live()) return {kind: 'settled', receipt, chart: null, active: false};
     let chart: AccountChart | null = null, readError: unknown;
     try {
       if (receipt.outcome.kind === 'deleted' || receipt.outcome.kind === 'absent') await library.forget(receipt.outcome.chartId);
-      else if (receipt.outcome.kind !== 'rejected' || receipt.outcome.code === 'note_conflict' || receipt.outcome.code === 'duplicate_chart') {
-        chart = await library.open(receipt.outcome.chartId);
+      else if (chartOutcomeTarget(receipt.outcome)) {
+        chart = await accept(receipt.outcome.chartId,reply.chart);
       }
     } catch (error) { readError = error; }
     const active = same(seen) && live();
@@ -92,7 +96,8 @@ export function createChartActions({client, library, getSession, calculate, save
       // Nothing reached the server: this pointer must never become outcome recovery.
       forget(intent);onIntent?.(null,seen);throw error;
     }
-    let receipt: ChartReceipt<ChartWriteOutcome>;
+    const accept=prepareAcceptance();
+    let receipt: ChartReply<ChartWriteOutcome>;
     try { receipt = await send(intent); }
     catch (error) {
       // A gateway/server failure can arrive after commit. Only a typed refusal
@@ -102,7 +107,7 @@ export function createChartActions({client, library, getSession, calculate, save
       }
       return {kind: 'unknown', intent, ...(same(seen) && live() ? {error} : {})};
     }
-    return settle(receipt, seen,live);
+    return settle(receipt, seen,live,accept);
   }
   async function recover(intent: ChartWriteIntent, signal?: AbortSignal,isCurrent:()=>boolean=()=>true): Promise<ChartActionResult> {
     signal?.throwIfAborted();
@@ -112,10 +117,11 @@ export function createChartActions({client, library, getSession, calculate, save
     const live=()=>ownedGeneration===generation && !signal?.aborted && isCurrent();
     const recoveryKey=ownedGeneration+':'+seen.sessionId+':'+key(intent);
     const result=await shareRequest(recoveries,recoveryKey,async (request):Promise<ChartActionResult>=>{
+      const accept=prepareAcceptance();
       const receipt = await client.outcome(intent, request.controller.signal);
       if (receipt.outcome.kind === 'unknown') return {kind: 'unknown', intent: {...intent}};
       return settle({...receipt, outcome: receipt.outcome}, seen,
-        ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()));
+        ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()),accept);
     },{signal,consumer:{live}});
     if(result.kind==='settled' && (!same(seen) || !live())) {
       const {readError: _error,...settled}=result;

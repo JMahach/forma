@@ -12,6 +12,10 @@ import { createChartHandler } from '../server/http/charts.ts';
 import { createChartCalculation } from '../server/services/chart-calculation.ts';
 import { createCityCatalog } from '../server/services/cities.ts';
 import { createChartClient } from '../src/data/chart-client.ts';
+import { IDBFactory } from 'fake-indexeddb';
+import { createAccountLibraryStore } from '../src/data/account-library-store.ts';
+import { createAccountLibrary } from '../src/state/account-library.ts';
+import { createChartActions } from '../src/state/chart-actions.ts';
 
 const op = (n: number) => n.toString(16).padStart(32, '0');
 const utc = '2000-01-01T12:00:32.789Z';
@@ -86,7 +90,7 @@ test('create receipt is separate from the current private and public chart', asy
   assert.equal(receipt.outcome.kind, 'created');
   assert.equal(receipt.expectedAccountId, f.first.accountId);
   assert.equal(receipt.operationId, op(1));
-  assert.equal('chart' in receipt, false);
+  assert.equal(receipt.chart?.id, receipt.outcome.chartId);
   const chartId = receipt.outcome.chartId;
   const own = await f.client.own({chartId, expectedAccountId: f.first.accountId});
   assert.equal(own.note, 'private');
@@ -126,11 +130,76 @@ test('copy reads the seen public revision and never carries a private note', asy
 test('delete and expired outcome never turn a receipt into a present chart or repeat a write', async t => {
   const f = await fixture(t), created = await f.create(), chartId = created.outcome.chartId;
   assert.equal((await f.client.remove({...f.intent(2), chartId})).outcome.kind, 'deleted');
-  assert.deepEqual(await f.client.outcome(f.intent(1)), created);
+  const recovered = await f.client.outcome(f.intent(1));
+  assert.deepEqual(recovered.outcome, created.outcome);
+  assert.equal(recovered.chart, undefined);
   await assert.rejects(f.client.own({chartId, expectedAccountId: f.first.accountId}), {code: 'not_found', status: 404});
   f.advance(48 * 60 * 60 * 1000);
   assert.deepEqual((await f.client.outcome(f.intent(1))).outcome, {kind: 'unknown'});
   assert.equal(f.calls.filter(c => c.options.method !== 'GET').length, 2);
+});
+
+test('write replies join the real HTTP, client and library with only a necessary fallback read', async t => {
+  for (const projection of ['current', 'missing', 'foreign', 'older', 'malformed']) {
+    const f = await fixture(t), storage = createAccountLibraryStore({indexedDB:new IDBFactory()});
+    const library = createAccountLibrary({client:f.client,storage,online:()=>true});
+    t.after(()=>library.close()); await library.connect(f.getSession());
+    let puts=0, updates=0;
+    const put=storage.put; storage.put=(...args)=>{puts++;return put(...args);};
+    library.subscribe(()=>{updates++;}); updates=0;
+    f.alter(async response=>{
+      const value=await response.json();
+      if(value.kind==='created') {
+        if(projection==='missing')delete value.chart;
+        if(projection==='foreign' && value.chart)value.chart.accountId='999';
+        if(projection==='older')value.revision=2;
+        if(projection==='malformed' && value.chart)value.chart.activations.design.pop();
+      }
+      return Response.json(value,{status:response.status});
+    });
+    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1),
+      calculate:async()=>{throw new Error('server owns this calculation');}});
+    const result=await actions.create({name:'A',note:'',birth:{source:'transit',utc}});
+    assert.equal(result.kind,'settled'); assert.equal(result.chart?.utc,utc);
+    assert.equal('chart' in result.receipt,false,'the immutable receipt does not contain its current projection');
+    assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);
+    assert.equal(f.calls.filter(call=>call.options.method==='GET').length,projection==='current'?0:1,projection);
+    assert.equal(f.preparations(),1); assert.equal(puts,1); assert.equal(updates,1);
+    assert.equal((await storage.read())!.charts.length,1);
+  }
+});
+
+test('outcome recovery returns the current projection without rewriting the historical fact', async t=>{
+  const f=await fixture(t), created=await f.create(), chartId=created.outcome.chartId;
+  await f.client.update({...f.intent(2),chartId,name:'Later name'});
+  const reply=await f.client.outcome(f.intent(1));
+  assert.deepEqual(reply.outcome,created.outcome);
+  assert.equal(reply.chart?.revision,2); assert.equal(reply.chart?.name,'Later name');
+  assert.equal(f.preparations(),1);
+});
+
+test('a delayed write projection cannot undo a confirmed local or peer deletion', async t=>{
+  for(const peer of [false,true]) {
+    const f=await fixture(t), indexedDB=new IDBFactory();
+    const storage=createAccountLibraryStore({indexedDB}), other=createAccountLibraryStore({indexedDB});
+    const library=createAccountLibrary({client:f.client,storage,online:()=>true});
+    t.after(()=>{library.close();other.close();}); await library.connect(f.getSession());
+    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1),
+      calculate:async()=>{throw new Error('unused');}});
+    f.alter(async response=>{
+      const value=await response.clone().json();
+      if(value.kind==='created') {
+        await f.client.remove({...f.intent(2),chartId:value.chartId});
+        if(peer){const snapshot=await other.read();await other.remove(snapshot!.lease!,value.chartId);}
+        else await library.forget(value.chartId);
+      }
+      return response;
+    });
+    const result=await actions.create({name:'A',note:'',birth:{source:'transit',utc}});
+    assert.equal(result.kind,'settled'); assert.equal(result.receipt.outcome.kind,'created');
+    assert.equal(result.chart,null); assert.deepEqual(library.charts,[]);
+    assert.deepEqual((await storage.read())!.charts,[]);
+  }
 });
 
 test('a lost response is recovered by a separate read, with no automatic repeated save', async t => {

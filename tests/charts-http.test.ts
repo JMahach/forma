@@ -73,7 +73,9 @@ test('HTTP separates public card data, private library and read-only operation r
   assert.equal((await f.request(`/api/charts?accountId=${f.accountId}`,'GET',undefined,{cookie:false})).status,401);
   const deleted=await f.request(`/api/charts/${id}`,'DELETE',f.intent(2)); assert.equal(deleted.body.kind,'deleted');
   const receipt=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
-  assert.deepEqual(receipt.body,created.body); assert.equal(f.calls(),1);
+  const {chart:projection,...fact}=created.body;
+  assert.equal(projection.id,id);
+  assert.deepEqual(receipt.body,fact); assert.equal(f.calls(),1);
   f.advance(48*60*60*1000);
   assert.deepEqual((await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`)).body,{kind:'unknown'});
 });

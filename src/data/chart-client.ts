@@ -1,4 +1,4 @@
-import { isChartIdentifier as identifier, isOperationIdentifier, MAX_CALCULATION_RECEIPT_LENGTH, canonicalChartId } from '../../shared/chart-record-contract.ts';
+import { isChartIdentifier as identifier, isOperationIdentifier, MAX_CALCULATION_RECEIPT_LENGTH, canonicalChartId, chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
 import type { AccountChart, PublicAccountChart, AccountChartPage, ChartWriteIntent, ChartWriteOutcome, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart, validatePublicAccountChart } from '../domain/account-chart.ts';
 import { ConnectionError, fetchResource, responseError } from './http-transport.ts';
@@ -13,6 +13,8 @@ export interface ChartPatchInput extends ChartWriteIntent {
 }
 /** An immutable command fact, never a current chart or permission to show one. */
 export interface ChartReceipt<T extends ChartOutcome = ChartOutcome> extends ChartWriteIntent { outcome: T }
+/** An optional current projection accompanies, but never changes, the immutable fact. */
+export interface ChartReply<T extends ChartOutcome = ChartOutcome> extends ChartReceipt<T> { chart?:AccountChart }
 interface Session { accountId: string; sessionId: string }
 interface Options { fetch?: typeof globalThis.fetch; getSession: () => Session | null }
 
@@ -63,6 +65,16 @@ function outcome(value: unknown): ChartOutcome {
   return {kind: 'rejected', chartId: value.chartId, code: value.code as Extract<ChartOutcome, {kind: 'rejected'}>['code'],
     ...(value.revision === undefined ? {} : {revision: value.revision as number})};
 }
+function reply<T extends ChartOutcome>(base:ChartWriteIntent, result:T, value:Record<string,unknown>):ChartReply<T> {
+  const fact={...base,outcome:result}, target=chartOutcomeTarget(result);
+  if(target && value.chart) {
+    try {
+      const chart=validateAccountChart(value.chart,base.expectedAccountId);
+      if(chart.id===target.id && chart.revision>=target.revision)return {...fact,chart};
+    } catch { /* An unusable optional projection leaves the receipt and normal read path intact. */ }
+  }
+  return fact;
+}
 
 /** No retries, queues, local storage, navigation or implicit account selection. */
 export function createChartClient({fetch: send = fetchResource, getSession}: Options) {
@@ -112,13 +124,14 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       throw error;
     }
   }
-  async function command(base: ChartWriteIntent, path: string, method: string, body: object, signal?: AbortSignal): Promise<ChartReceipt<ChartWriteOutcome>> {
-    session(base.expectedAccountId);
-    const result = outcome(await request(path, method, body, signal));
+  async function command(base: ChartWriteIntent, path: string, method: string, body: object, signal?: AbortSignal): Promise<ChartReply<ChartWriteOutcome>> {
+    const seen=session(base.expectedAccountId);
+    const value=await request(path, method, body, signal), result = outcome(value);
     if (result.kind === 'unknown') throw invalid();
     // A changed session cannot undo a committed command. Return only its tagged
     // fact; current chart reads independently guard the active account/session.
-    return {...base, outcome: result};
+    try { stillCurrent(seen); } catch { return {...base,outcome:result}; }
+    return reply(base,result,value);
   }
   return {
     async create(input: ChartCreateInput, signal?: AbortSignal) {
@@ -147,10 +160,10 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       if (!positive(input.seenRevision)) throw badInput();
       return command(base, '/api/charts/add', 'POST', {...base, sourceId: id(input.sourceId), seenRevision: input.seenRevision}, signal);
     },
-    async outcome(input: ChartWriteIntent, signal?: AbortSignal): Promise<ChartReceipt> {
+    async outcome(input: ChartWriteIntent, signal?: AbortSignal): Promise<ChartReply> {
       const base = intent(input), seen = session(base.expectedAccountId);
-      const result = outcome(await privateRead(seen, '/api/charts/operations/' + base.operationId + '?accountId=' + base.expectedAccountId, signal));
-      return {...base, outcome: result};
+      const value=await privateRead(seen, '/api/charts/operations/' + base.operationId + '?accountId=' + base.expectedAccountId, signal);
+      return reply(base,outcome(value),value);
     },
     async own(input: {chartId: string; expectedAccountId: string}, signal?: AbortSignal): Promise<AccountChart> {
       const chartId = id(input.chartId), seen = session(input.expectedAccountId);

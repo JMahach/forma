@@ -1561,7 +1561,7 @@
     },
     {
       "id": "chart-actions",
-      "responsibility": "Own explicit chart write intents, one submission and read-only outcome recovery; guest calculation remains a temporary chart.",
+      "responsibility": "Own explicit chart write intents, one submission and read-only outcome recovery; use the shared pure outcome target contract for current-record acceptance.",
       "files": [
         "src/state/chart-actions.ts"
       ],
@@ -1571,7 +1571,8 @@
       "allowRuntime": [
         "chart-actions",
         "domain",
-        "request-lifetime"
+        "request-lifetime",
+        "shared-contracts"
       ],
       "allowTypes": [
         "chart-actions",

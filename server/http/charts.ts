@@ -1,6 +1,6 @@
 import type {createReturnReceipts} from '../services/return-receipt.ts';
 import { reportServerFailure, type ServerFailureReport } from '../journal/report.ts';
-import { isChartIdentifier, isOperationIdentifier, canonicalChartId } from '../../shared/chart-record-contract.ts';
+import { isChartIdentifier, isOperationIdentifier, canonicalChartId, chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AccountChartBirth, ChartWriteIntent, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import type { createChartReturns } from '../services/chart-returns.ts';
@@ -71,6 +71,16 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
         current = accounts.current(proof);
         return current ? {accountId:current.account.id} : null;
       });
+      function withCurrentChart(result:ChartOutcome, expectedAccountId:string) {
+        const target=chartOutcomeTarget(result);
+        if(target) {
+          try {
+            const chart=access.getOwn(target.id,expectedAccountId);
+            if(chart && chart.revision>=target.revision)return {...result,chart};
+          } catch { /* Read permission or availability cannot revoke a completed operation. */ }
+        }
+        return result;
+      }
       const publicMatch = /^\/api\/shared-charts\/([^/]+)$/.exec(url.pathname);
       if (publicMatch) {
         if (req.method !== 'GET') { reply(405,{error:'method_not_allowed'}); return; }
@@ -80,7 +90,8 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       const outcomeMatch = /^\/api\/charts\/operations\/([^/]+)$/.exec(url.pathname);
       if (outcomeMatch) {
         if (req.method !== 'GET') { reply(405,{error:'method_not_allowed'}); return; }
-        reply(200, access.outcome({operationId:operationIdentifier(outcomeMatch[1]), expectedAccountId:accountId(url.searchParams.get('accountId'))})); return;
+        const intent={operationId:operationIdentifier(outcomeMatch[1]), expectedAccountId:accountId(url.searchParams.get('accountId'))};
+        reply(200,withCurrentChart(access.outcome(intent),intent.expectedAccountId)); return;
       }
       if (url.pathname === '/api/charts' && req.method === 'GET') {
         const expectedAccountId = accountId(url.searchParams.get('accountId'));
@@ -132,12 +143,12 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       fields(input, [...base, ...(adding ? ['sourceId','seenRevision'] : req.method === 'DELETE' ? [] : ['name','note','birth','calculationReceipt'])]);
       const intent: ChartWriteIntent = {operationId:operationIdentifier(input.operationId), expectedAccountId:accountId(input.expectedAccountId)};
       // A completed action is immutable; do not repeat an expensive calculation.
-      recover = () => access.outcome(intent);
+      recover = () => withCurrentChart(access.outcome(intent),intent.expectedAccountId);
       const prior = recover();
       if (prior.kind !== 'unknown') { reply(200,prior); return; }
       if (adding) {
         if (!Number.isSafeInteger(input.seenRevision) || (input.seenRevision as number) < 1) throw invalid();
-        reply(200, access.addFromSource({...intent,sourceId:identifier(input.sourceId),seenRevision:input.seenRevision as number})); return;
+        reply(200, withCurrentChart(access.addFromSource({...intent,sourceId:identifier(input.sourceId),seenRevision:input.seenRevision as number}),intent.expectedAccountId)); return;
       }
       if (req.method === 'DELETE') { reply(200,access.remove({...intent,chartId:id!})); return; }
       const name = creating || input.name !== undefined ? text(input.name,80,true) : undefined;
@@ -152,7 +163,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
           : access.update({...intent,chartId:id!,...(name === undefined ? {} : {name}),
             ...(birth === undefined ? {} : {birth}),
             ...(nextNote === undefined ? {} : {note:nextNote as ReturnType<typeof note>})});
-        reply(200,result);
+        reply(200,withCurrentChart(result,intent.expectedAccountId));
       } finally { consumer.close(); }
     } catch (error) {
       if (consumer.signal.aborted) return;
