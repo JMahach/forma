@@ -1,6 +1,6 @@
 import { isChartIdentifier, canonicalChartId } from './chart-record-contract.ts';
-export type AppRoute={kind:'transit'|'temporary-chart'|'account'|'charts'|'library'}|{kind:'chart';id:string};
-const pages:Record<string,AppRoute['kind']>={'/':'transit','/chart':'temporary-chart','/account':'account','/charts':'charts','/library':'library'};
+export type AppRoute={kind:'transit'|'temporary-chart'|'account'|'charts'|'knowledge'}|{kind:'chart';id:string};
+const pages:Record<string,AppRoute['kind']>={'/':'transit','/chart':'temporary-chart','/account':'account','/charts':'charts','/library':'knowledge'};
 /** Paths choose a page, never grant access or imply a successful chart lookup. */
 export function readAppRoute(pathname:unknown):AppRoute|null {
  if(typeof pathname!=='string')return null;

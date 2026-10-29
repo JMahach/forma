@@ -140,7 +140,7 @@ small { font-size: 11px; }
 .topbar button { pointer-events: auto; }
 .topbar .icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--panel-border); border-radius: 9px; color: var(--panel-ink); background: var(--canvas-background); }
 /* Section colours apply with the restored workspace, including the first loading frame. */
-.app-shell:has(.studio[data-workspace-screen='library']) {
+.app-shell:has(.studio[data-workspace-screen='knowledge']) {
   --section-control-accent: var(--sage-accent); --section-control-fill: hsl(105.6 14.450867% 86%);
   --section-control-ink: #202020; --section-control-border: hsl(105.6 14.450867% 70%);
   --section-control-idle: var(--sage-accent); --section-control-edge: var(--sage-border);
@@ -1295,7 +1295,7 @@ body:has(.canvas-wrap[data-layout='phone']) .summary-backdrop:not([hidden]) { di
 
 /* Loading preview projects the same workspace, without importing its content. */
 .workspace-loading { display: none; }
-.app-shell[data-page-state='loading'] .studio[data-workspace-screen='library'] #knowledgeDialog,
+.app-shell[data-page-state='loading'] .studio[data-workspace-screen='knowledge'] #knowledgeDialog,
 .app-shell[data-page-state='loading'] .studio[data-workspace-screen='charts'] #allChartsDialog { display: flex !important; opacity: 1; }
 .app-shell[data-page-state='loading'] :is(.knowledge-page, .all-charts-page) > :not(.workspace-header, .workspace-loading) { display: none; }
 .app-shell[data-page-state='loading'] :is(.knowledge-page, .all-charts-page) .workspace-loading { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }

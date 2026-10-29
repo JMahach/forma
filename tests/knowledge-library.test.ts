@@ -302,7 +302,7 @@ test('real tab serialization restores reading separately from Cartoteka and drop
   first.article.scrollTop = 220;
   assert.equal(store.write({ version: 1, selectedId: '', mandala: false,
     camera: null, lifetime: null, transit: null, natalDay: null, planets: null,
-    workspace: 'library', knowledge: first.controller.snapshot, charts: { query: 'Анна', searchOpen: true } }), true);
+    workspace: 'knowledge', knowledge: first.controller.snapshot, charts: { query: 'Анна', searchOpen: true } }), true);
   const saved = createViewStore({ getStorage: () => storage }).read()!;
   const second = fixture({ isPhone: () => true, initialView: saved.knowledge }); second.controller.show();
   assert.equal(second.search.value, 'Вклад');

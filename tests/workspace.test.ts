@@ -8,12 +8,12 @@ test('workspace navigation keeps one screen and notifies only real changes', () 
   const stop = workspace.subscribe(screen => changes.push(screen));
   assert.equal(workspace.screen, 'chart');
   assert.equal(workspace.snapshot, 'chart');
-  for (const screen of ['library', 'charts', 'account', 'chart'] as const) {
+  for (const screen of ['knowledge', 'charts', 'account', 'chart'] as const) {
     workspace.setScreen(screen); workspace.setScreen(screen);
     assert.equal(workspace.screen, screen); assert.equal(workspace.snapshot, screen);
   }
-  assert.deepEqual(changes, ['library', 'charts', 'account', 'chart'] as const);
-  stop(); workspace.setScreen('library');
+  assert.deepEqual(changes, ['knowledge', 'charts', 'account', 'chart'] as const);
+  stop(); workspace.setScreen('knowledge');
   assert.equal(changes.length, 4);
 });
 
@@ -27,5 +27,5 @@ test('unknown navigation commands are ignored while missing or malformed snapsho
     workspace.restore('account'); workspace.restore(value);
     assert.equal(workspace.screen, 'chart');
   }
-  workspace.restore('library'); assert.equal(workspace.screen, 'library');
+  workspace.restore('knowledge'); assert.equal(workspace.screen, 'knowledge');
 });

@@ -1,8 +1,8 @@
-export type WorkspaceScreen = 'chart' | 'library' | 'charts' | 'account';
+export type WorkspaceScreen = 'chart' | 'knowledge' | 'charts' | 'account';
 export type WorkspaceState = ReturnType<typeof createWorkspaceState>;
 // One owner for the central screen; chart exploration stays with its own owners.
 export function createWorkspaceState() {
-  const screens = new Set<WorkspaceScreen>(['chart', 'library', 'charts', 'account']);
+  const screens = new Set<WorkspaceScreen>(['chart', 'knowledge', 'charts', 'account']);
   const listeners = new Set<(screen: WorkspaceScreen) => void>();
   let screen: WorkspaceScreen = 'chart';
   function setScreen(value: WorkspaceScreen) {

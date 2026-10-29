@@ -1,3 +1,5 @@
+import {chartPresentation} from '../src/domain/chart-presentation.ts';
+import {createViewCheckpoint} from '../src/state/view-checkpoint.ts';
 import { createLayoutObserver } from '../src/ui/layout/resize-observer.ts';
 import { attachChartLink } from '../src/views/chart-link.ts';
 import { appRoutePath } from '../shared/app-routes.ts';
@@ -89,7 +91,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -288,7 +290,7 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,
+    createApplication,createViewCheckpoint,chartPresentation,
     appRoutePath, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
@@ -307,7 +309,7 @@ function harness({copyText, transitStart = async () => true, actualStore, calcul
       knowledgeOptions = options;
       return attachKnowledgeEntry({ ...options, load: async () => {
         knowledgeLoads++; if (loadKnowledge) await loadKnowledge();
-        return { attachKnowledge: page => ({ snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('library');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
+        return { attachKnowledge: page => ({ snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('knowledge');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
       } });
     },
     attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
@@ -686,7 +688,7 @@ test('the lazy knowledge entry replaces the center while retaining the persisten
   await element('openKnowledge').click(); await tick();
   assert.equal(element('library').inert, false, 'the persistent navigation stays available beside the reference');
   assert.equal(element('knowledgeDialog').hidden, false, 'the reference page opens after successful application composition');
-  assert.equal(element('studio').dataset.workspaceScreen, 'library');
+  assert.equal(element('studio').dataset.workspaceScreen, 'knowledge');
 });
 
 test('two real toolbar clicks cancel cold Lifetime without reopening it after module arrival', async () => {
@@ -950,7 +952,7 @@ test('workspace pages preserve the chart moment and camera while keeping one cur
   await tick(); h.select(chart.id); await tick(); h.natalDay.scrub(800);
   h.camera.zoomAt({ x: 320, y: 410 }, 2); h.camera.pan(-40, 25); h.panels.setRight(true);
   const shown = h.shown, camera = h.camera.getView(), interrupted = h.interruptions;
-  const pages = [['openKnowledge', 'library', 'knowledgeDialog'], ['openAllCharts', 'charts', 'allChartsDialog'], ['openAccount', 'account', 'accountPage']];
+  const pages = [['openKnowledge', 'knowledge', 'knowledgeDialog'], ['openAllCharts', 'charts', 'allChartsDialog'], ['openAccount', 'account', 'accountPage']];
   for (const [button, screen, page] of pages) {
     await h.element(button).click(); await tick();
     assert.equal(h.workspace.screen, screen); assert.equal(h.element('studio').dataset.workspaceScreen, screen);
@@ -993,14 +995,14 @@ for (const [button, screen] of [['openAccount', 'account'], ['openAllCharts', 'c
     let release;
     const h = harness({ loadKnowledge: () => new Promise(done => { release = done; }) }); await tick();
     const opening = h.element('openKnowledge').click(); await tick();
-    assert.equal(h.workspace.screen, 'library'); assert.equal(h.knowledgeLoads, 1);
+    assert.equal(h.workspace.screen, 'knowledge'); assert.equal(h.knowledgeLoads, 1);
     await h.element(button).click(); release!(); await opening; await tick();
     assert.equal(h.workspace.screen, screen); assert.equal(h.element('studio').dataset.workspaceScreen, screen);
     assert.equal(h.element('knowledgeDialog').hidden, true);
     assert.equal(h.element('openKnowledge').getAttribute('aria-current'), null);
     assert.equal(h.element('openKnowledge').getAttribute('aria-busy'), null);
     await h.element('openKnowledge').click(); await tick();
-    assert.equal(h.workspace.screen, 'library'); assert.equal(h.element('knowledgeDialog').hidden, false);
+    assert.equal(h.workspace.screen, 'knowledge'); assert.equal(h.element('knowledgeDialog').hidden, false);
     assert.equal(h.knowledgeLoads, 1, 'intentional reopening reuses the loaded page without resurrecting an old navigation');
   });
 }
@@ -1041,7 +1043,7 @@ test('a failed first restoration reveals the existing recovery interface instead
 
 test('workspace readiness waits for its lazy content but never for the hidden chart restoration', async () => {
   let finishKnowledge;
-  const h = harness({ savedView: { workspace: 'library' }, restore: () => new Promise(() => {}),
+  const h = harness({ savedView: { workspace: 'knowledge' }, restore: () => new Promise(() => {}),
     loadKnowledge: () => new Promise(done => { finishKnowledge = done; }) });
   await tick(); assert.equal(h.element('shell').dataset.pageState, 'loading');
   finishKnowledge!(); await tick();
@@ -1076,7 +1078,7 @@ test('a timeline command during delayed restoration survives the late failed res
 });
 
 
-for (const screen of ['chart', 'library', 'charts'] as const) test(`closing a restoring chronicle releases the initial screen and retains ${screen} after module arrival`, async () => {
+for (const screen of ['chart', 'knowledge', 'charts'] as const) test(`closing a restoring chronicle releases the initial screen and retains ${screen} after module arrival`, async () => {
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const lifetime = { opened: true as const, mode: 'lifetime' as const, fromDate: '2026-09-24', toDate: '2126-09-24', personalPreview: false };
   const h = harness({ realViewSession: true, charts: [chart], chartsReady: async () => true,
@@ -1092,7 +1094,7 @@ for (const screen of ['chart', 'library', 'charts'] as const) test(`closing a re
   assert.equal(h.element('lifetimeToggle').getAttribute('aria-pressed'), 'false');
   assert.equal(h.element('shell').dataset.pageState, 'loading');
   if (screen !== 'chart') {
-    await h.element(screen === 'library' ? 'openKnowledge' : 'openAllCharts').click(); await tick();
+    await h.element(screen === 'knowledge' ? 'openKnowledge' : 'openAllCharts').click(); await tick();
     assert.equal(h.workspace.screen, screen);
     assert.equal(h.element('shell').dataset.pageState, 'ready', 'an auxiliary screen does not wait for the hidden chronicle');
   }
@@ -1183,7 +1185,7 @@ test('a resized initial card viewport is measured again before revealing its new
 });
 
 test('initial workspace and font failures release the existing navigation', async () => {
-  const knowledge = harness({ savedView: { workspace: 'library' }, loadKnowledge: async () => { throw new Error('missing module'); },
+  const knowledge = harness({ savedView: { workspace: 'knowledge' }, loadKnowledge: async () => { throw new Error('missing module'); },
     fonts: Promise.reject(new Error('font failed')), restore: () => new Promise(() => {}) });
   await tick();
   assert.equal(knowledge.element('shell').dataset.pageState, 'error');
@@ -1219,7 +1221,7 @@ for (const [width, phone] of [[390, true], [1200, false]] as const) {
     for (const [button, screen, page] of [
       ['openAllCharts', 'charts', 'allChartsDialog'],
       ['openAccount', 'account', 'accountPage'],
-      ['openKnowledge', 'library', 'knowledgeDialog'],
+      ['openKnowledge', 'knowledge', 'knowledgeDialog'],
     ] as const) {
       h.panels.setLeft(true);
       await h.element(button).click(); await tick();
@@ -1487,7 +1489,7 @@ test('direct account address overrides a saved different screen and back/forward
  const n=addressHarness('/account'), h=harness({navigation:n.navigation, realViewSession:true,savedView:{workspace:'charts',selectedId:'current-transit'}});
  await tick();
  assert.equal(h.workspace.screen,'account');
- n.backTo('/library');await tick();assert.equal(h.workspace.screen,'library');
+ n.backTo('/library');await tick();assert.equal(h.workspace.screen,'knowledge');
  n.backTo('/');await tick();assert.equal(h.workspace.screen,'chart');
  assert.equal(h.shown.id,'current-transit');assert.deepEqual(n.writes,[]);
 });
@@ -1868,7 +1870,7 @@ test('application composition reclaims diagnostics through its journal facade fo
 });
 
 
-for (const screen of ['account','charts','library'] as const) {
+for (const screen of ['account','charts','knowledge'] as const) {
   test(`restored ${screen} screen restores its input through its owner exactly once`, async () => {
     let resolve!:()=>void; const ready=new Promise<void>(done=>{resolve=done;});
     const focus={start:1,end:2,direction:'backward' as const};
@@ -2638,7 +2640,7 @@ test('unchanged account form notification does not abort a public refresh', asyn
  assert.equal(store.publicChart?.name,'Updated original');
 });
 
-for (const screen of ['account', 'charts', 'library'] as const) {
+for (const screen of ['account', 'charts', 'knowledge'] as const) {
   test(`restoring ${screen} defers the transit drawing without blocking a later offline update`, async t => {
     const h = harness({realViewSession: true, realTransit: true,
       savedView: {workspace: screen, selectedId: 'current-transit',

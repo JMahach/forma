@@ -1,3 +1,5 @@
+import {chartPresentationHint} from '../domain/chart-presentation.ts';
+import {createViewCheckpoint,type ViewCheckpoint} from './view-checkpoint.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
 import type { ChartStore } from '../data/chart-store.ts';
 import type { SavedView, SavedLifetimeView, ViewStore } from '../data/view-store.ts';
@@ -12,6 +14,7 @@ import type { WorkspaceState } from './workspace.ts';
 import type { TransitPlanetFilter } from './transit-planets.ts';
 export type ViewSession = ReturnType<typeof createViewSession>;
 interface ViewSessionOptions {
+  checkpoint?: ViewCheckpoint;
   store: Pick<ViewStore, 'write'> & { read: () => Partial<SavedView> | null };
   chartStore: ChartStore;
   session: ChartSession;
@@ -60,14 +63,14 @@ export function viewForRoute(route: AppRoute | null, saved: Partial<SavedView> |
     : route.kind === 'temporary-chart' ? saved?.temporaryChart?.id ?? 'current-transit' : saved?.selectedId;
   const next: Partial<SavedView> = {...saved, version: 1, workspace, ...(selectedId ? {selectedId} : {})};
   if (selectedId && selectedId !== saved?.selectedId)
-    Object.assign(next, {camera:null, lifetimeDraft:null, lifetime:null, returns:null, natalDay:null, transit:null, planets:null});
+    Object.assign(next, {chartHint:null,camera:null, lifetimeDraft:null, lifetime:null, returns:null, natalDay:null, transit:null, planets:null});
   return next;
 }
 
 // One restoration transaction connects existing state owners. Initialization
 // cannot overwrite the previous page; explicit moment commands supersede pending work.
 export function createViewSession({
-  store, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
+  store, checkpoint, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
   getBirthForm = () => undefined, getLifetimeDraft = () => undefined, getPendingChartWrites = () => undefined, getTemporaryChartSave = () => undefined, getAccountView = () => undefined, getLifetimeIntent = () => null, getKnowledgeView = () => undefined, getChartsView = () => undefined, getLibrarySelection = () => undefined,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
@@ -77,7 +80,7 @@ export function createViewSession({
   schedule: defer = globalThis.setTimeout, cancel = globalThis.clearTimeout, delay = 160, onPersisted = () => {},
 }: ViewSessionOptions) {
   const saved = store.read();
-  let restoring = true, restoreInitialized = false, interrupted = false, generation = 0, pending: ReturnType<typeof globalThis.setTimeout> | null = null;
+  let restoring = true, restoreInitialized = false, interrupted = false, generation = 0;
   let pendingTransit = saved?.transit?.live === false ? saved.transit : null;
   let pendingLifetime = saved?.lifetime || null, startedLifetime: SavedLifetimeView | null = null;
   let pendingReturns = saved?.returns || null;
@@ -136,7 +139,7 @@ export function createViewSession({
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)
       ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) as unknown as SavedLifetimeView : pendingLifetime;
     return {
-      version: 1, ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId,
+      version: 1, chartHint:chartPresentationHint(session.record), ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId,
       ...presentationSnapshot(),
       lifetime: lifetimeTarget || getLifetimeIntent() || (lifetimeState?.opened ? { opened: true, mode: lifetimeState.mode, fromDate: lifetimeState.fromDate, toDate: lifetimeState.toDate, ...(Number.isFinite(lifetimeState.requestedUtc) ? { requestedUtc: lifetimeState.requestedUtc! } : {}), ...(lifetimeState.openStart ? { openStart: true } : {}), ...(lifetimeState.openEnded ? { openEnded: true } : {}), ...(typeof personalPreview === 'boolean' ? { personalPreview } : {}), ...(typeof personalLive === 'boolean' ? { personalLive } : {}) } : null),
       transit: pendingTransit || (live.timeline ? { live: live.live, date: live.timeline.date, timeZone: live.timeline.timeZone, index: live.index } : null),
@@ -144,24 +147,20 @@ export function createViewSession({
       planets: planetFilter.snapshot,
     };
   }
+  const writer=checkpoint??createViewCheckpoint({store,eventTarget,interactionTarget,schedule:defer,cancel,delay});
+  const writing=writer.claim(()=>{
+    // Incomplete restoration may preserve new input without replacing accepted moments.
+    if(restoring)return restoreInitialized?{...saved,version:1,...presentationSnapshot()}:null;
+    applyPending();return snapshot();
+  },()=>{if(!restoring)onPersisted();});
   function flush() {
-    if (pending !== null) cancel(pending);
-    pending = null;
-    if (restoring) {
-      // The visible shell is usable while its chart waits. Preserve that
-      // interaction without replacing accepted moments with unfinished data.
-      if (restoreInitialized) store.write({ ...saved, version: 1, ...presentationSnapshot() });
-      return false;
-    }
-    applyPending(); const written=store.write(snapshot());
-    if(written===true)onPersisted();
-    return written;
+    const result=writing.flush();
+    return !restoring && result.kind==='stored';
   }
   function schedule() {
     if (restoring && !restoreInitialized) return;
     if (!restoring) applyPending();
-    if (pending !== null) return;
-    pending = defer(flush, delay);
+    writing.schedule();
   }
   // Called by the existing UI actions that choose a chart, moment or range.
   // Pointer/focus/keyboard activity alone does not replace a saved target.
@@ -170,10 +169,6 @@ export function createViewSession({
     pendingTransit = pendingLifetime = pendingNatal = pendingReturns = null;
     schedule();
   }
-  eventTarget?.addEventListener('pagehide', flush);
-  // Mobile browsers often suspend without pagehide. Flush the latest gesture.
-  interactionTarget?.addEventListener('visibilitychange', () => { if (interactionTarget!.hidden) flush(); });
-
   async function restore() {
     const request = ++generation, valid = () => request === generation;
     restoring = true; restoreInitialized = false;
@@ -272,7 +267,7 @@ export function createViewSession({
       }
     }
   }
-  return { restore, interrupt, schedule, flush,
+  return { restore, interrupt, schedule, flush, checkpoint:writing.checkpoint,
     get interrupted() { return interrupted; },
     get pendingReturns() { return pendingReturns ? { ...pendingReturns } : null; },
     get pendingLifetime() { return pendingLifetime ? { ...pendingLifetime } : null; },

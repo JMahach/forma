@@ -11,7 +11,7 @@ import { createPublicFileHandler } from '../server/http/public-files.ts';
 const id='12345678-1234-1234-1234-123456789012';
 const cases:[string,AppRoute][]=[
  ['/',{kind:'transit'}],['/chart',{kind:'temporary-chart'}],['/chart/'+id,{kind:'chart',id}],
- ['/account',{kind:'account'}],['/charts',{kind:'charts'}],['/library',{kind:'library'}],
+ ['/account',{kind:'account'}],['/charts',{kind:'charts'}],['/library',{kind:'knowledge'}],
 ];
 test('one route contract round-trips only the agreed pages, without private data or API fallback',()=>{
  for(const [url,route] of cases){assert.deepEqual(readAppRoute(url),route);assert.equal(appRoutePath(route),url);}
@@ -47,7 +47,7 @@ test('confirmed save replaces the temporary address; Back/Forward use the same o
  assert.equal(navigation.isCurrent(current),true);
  assert.deepEqual(seen,[{kind:'temporary-chart'},{kind:'chart',id},{kind:'transit'},{kind:'chart',id}]);
  navigation.destroy();b.back();assert.equal(navigation.isCurrent(current),false);
- assert.equal(navigation.navigate({kind:'library'}),false);assert.equal(seen.length,4);
+ assert.equal(navigation.navigate({kind:'knowledge'}),false);assert.equal(seen.length,4);
 });
 test('direct pages serve the same shell; unknown API/private paths never become HTML',async()=>{
  const root=fileURLToPath(new URL('../',import.meta.url)),serve=createPublicFileHandler({root});
@@ -79,8 +79,8 @@ test('the address selects the restored screen and chart without borrowing anothe
  const same = viewForRoute({kind:'chart',id:saved.selectedId},saved as never);
  assert.equal(same?.camera,saved.camera);assert.equal(same?.lifetime,saved.lifetime);
  assert.equal(viewForRoute({kind:'transit'},saved as never)?.selectedId,'current-transit');
- assert.equal(viewForRoute({kind:'library'},saved as never)?.workspace,'library');
- assert.equal(viewForRoute({kind:'library'},saved as never)?.selectedId,saved.selectedId);
+ assert.equal(viewForRoute({kind:'knowledge'},saved as never)?.workspace,'knowledge');
+ assert.equal(viewForRoute({kind:'knowledge'},saved as never)?.selectedId,saved.selectedId);
 });
 
 

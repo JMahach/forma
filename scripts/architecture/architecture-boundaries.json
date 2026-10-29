@@ -185,6 +185,7 @@
         "src/domain/account-chart.ts",
         "src/domain/birth-form-draft.ts",
         "src/domain/chart-composition.ts",
+        "src/domain/chart-presentation.ts",
         "src/domain/chart-data.ts",
         "src/domain/chart-overlay.ts",
         "src/domain/chart-record.ts",
@@ -202,6 +203,7 @@
         "src/domain/planets.ts",
         "src/domain/returns-window.ts",
         "src/domain/substructure.ts",
+        "src/domain/immutable-snapshot.ts",
         "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
@@ -211,6 +213,7 @@
         "src/domain/account-chart.ts",
         "src/domain/birth-form-draft.ts",
         "src/domain/chart-composition.ts",
+        "src/domain/chart-presentation.ts",
         "src/domain/chart-data.ts",
         "src/domain/chart-overlay.ts",
         "src/domain/chart-record.ts",
@@ -227,6 +230,7 @@
         "src/domain/planets.ts",
         "src/domain/returns-window.ts",
         "src/domain/substructure.ts",
+        "src/domain/immutable-snapshot.ts",
         "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
@@ -281,9 +285,11 @@
       "id": "restore-coordinator",
       "responsibility": "Collect and restore state through owner ports; supersede pending restoration on a newer explicit command.",
       "files": [
+        "src/state/view-checkpoint.ts",
         "src/state/view-session.ts"
       ],
       "publicEntries": [
+        "src/state/view-checkpoint.ts",
         "src/state/view-session.ts"
       ],
       "allowRuntime": [

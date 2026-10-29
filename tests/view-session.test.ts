@@ -1233,11 +1233,11 @@ test('reload restores the workspace before fitting the retained chart camera', a
 
 test('changing workspace during a pending reload keeps the new screen and finishes the saved moment', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
-  first.transit.scrub(0); first.workspace.setScreen('library'); first.view.flush();
+  first.transit.scrub(0); first.workspace.setScreen('knowledge'); first.view.flush();
   let release;
   const second = harness(first.storage, { transitDay: date => new Promise(done => { release = () => done(day(date)); }) });
   t.after(() => second.transit.stop()); const restoring = second.view.restore();
-  assert.equal(second.workspace.screen, 'library');
+  assert.equal(second.workspace.screen, 'knowledge');
   second.workspace.setScreen('account'); second.view.schedule();
   release!(); assert.equal(await restoring, true);
   assert.equal(second.workspace.screen, 'account'); assert.equal(second.view.interrupted, false);
@@ -1500,7 +1500,7 @@ test('update snapshot reports durable success only after restoration, and refuse
  let denied=false;const h=harness(new Map(),{denyWrites:()=>denied});t.after(()=>h.transit.stop());
  assert.equal(h.view.flush(),false,'Early shell is not a restored page');
  await h.view.restore();assert.equal(h.view.flush(),true);
- denied=true;h.workspace.setScreen("library");assert.equal(h.view.flush(),false,'Memory fallback cannot authorize reload');
+ denied=true;h.workspace.setScreen("knowledge");assert.equal(h.view.flush(),false,'Memory fallback cannot authorize reload');
  denied=false;assert.equal(h.view.flush(),true);
 });
 
@@ -1520,7 +1520,7 @@ test('only a durable restored snapshot wakes a deferred update',async t=>{
  let denied=false,wakes=0;const h=harness(new Map(),{denyWrites:()=>denied,onPersisted:()=>wakes++});
  t.after(()=>h.transit.stop());h.view.flush();assert.equal(wakes,0);
  await h.view.restore();const ready=wakes;assert.ok(ready>0);
- denied=true;h.workspace.setScreen('library');h.view.flush();assert.equal(wakes,ready);
+ denied=true;h.workspace.setScreen('knowledge');h.view.flush();assert.equal(wakes,ready);
  denied=false;h.view.flush();assert.equal(wakes,ready+1);
 });
 

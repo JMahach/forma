@@ -1,3 +1,5 @@
+import { chartPresentation } from './domain/chart-presentation.ts';
+import {createViewCheckpoint} from './state/view-checkpoint.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
@@ -14,14 +16,11 @@ import { createViewStore } from './data/view-store.ts';
 import { getConnectionMode } from './data/http-transport.ts';
 import { actionAvailability } from './ui/action-state.ts';
 import { createChartStore } from './data/chart-store.ts';
-import { resolveSelectedChartId } from './state/chart-session.ts';
 import { holdLoadingContent, commitLoadingLayout } from './views/chart-loading.ts';
 import { createChartLibraryView } from './views/library.ts';
 import { createPanelState } from './state/panels.ts';
 import { createWorkspaceState } from './state/workspace.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
-import { eligibleCycleChart } from './domain/cycles.ts';
-import { canExploreNatalDay } from './domain/chart-data.ts';
 import { originalNatalDayMoment } from './domain/natal-day.ts';
 import { createCameraChangeHandler } from './views/camera-controls.ts';
 import { createToast } from './ui/toast.ts';
@@ -117,6 +116,7 @@ const viewStore = createViewStore({ onStorageError: toast,
   },
   onStorageRecovery(){viewObservation?.finishSuccess();viewObservation=undefined;},
 }), savedView = viewForRoute(navigation.snapshot.route, viewStore.read());
+const viewCheckpoint=createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
 let saveBeforeNavigate = () => {}, flushLoadingView = () => {}, scheduleLoadingView = () => {};
 const previewLoading = attachLoadingPreview({ button: element('toggleLoadingPreview'), location,
   beforeNavigate: () => saveBeforeNavigate() });
@@ -180,15 +180,15 @@ syncLoadingPanels();
 // The independent temporary result never becomes a saved-library row.
 const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document,
   canEdit: () => !actionAvailability({ connection: getConnectionMode(), requiresConnection: true }).disabled });
-const selectedId = resolveSelectedChartId(store, savedView?.selectedId);
+const selectedId = savedView?.selectedId ?? 'current-transit';
 libraryView.update(store.displayCharts, workspace.screen === 'chart' ? selectedId : null, savedView?.librarySelection);
 libraryView.setScreen(workspace.screen);
 if (panels.left) libraryView.show();
 // Project only the saved controls' geometry; the state owners still restore
 // their actual values and data after import. The loading mask uses this same
 // panel until restoration has prepared the visible screen.
-const record = store.get(selectedId), isTransit = selectedId === 'current-transit';
-const personalAvailable = eligibleCycleChart(record), dayAvailable = canExploreNatalDay(record);
+const record = store.get(selectedId), sourcePresentation=chartPresentation(selectedId,record,savedView?.chartHint);
+const {isTransit,personalAvailable,dayAvailable}=sourcePresentation;
 const canvas = element('canvasWrap');
 function renderLoadingTools() {
   const sameChart = selectedId === pendingView?.selectedId;
@@ -277,24 +277,18 @@ function loadingSnapshot(): Partial<SavedView> {
     account: accountView, mandala: pendingView?.mandala === true,
     camera: camera.getSavedView() };
 }
-let loadingWrite: ReturnType<typeof setTimeout> | null = null;
+const loadingWriter=viewCheckpoint.claim(loadingSnapshot);
 flushLoadingView = () => {
-  if (loadingWrite !== null) clearTimeout(loadingWrite);
-  loadingWrite = null;
   if (!loadingActive) return;
   loadingInteraction = true;
-  viewStore.write?.(loadingSnapshot());
+  loadingWriter.flush();
 };
 scheduleLoadingView = () => {
   if (!loadingActive) return;
   loadingInteraction = true;
-  if (loadingWrite === null) loadingWrite = setTimeout(flushLoadingView, 160);
+  loadingWriter.schedule();
 };
 saveBeforeNavigate = flushLoadingView;
-const flushOnHide = () => { if (document.hidden) flushLoadingView(); };
-document.addEventListener('visibilitychange', flushOnHide);
-const page = document.defaultView;
-page?.addEventListener?.('pagehide', flushLoadingView);
 function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
   const view = renderLoadingTools();
   pendingView = { ...pendingView, version: 1, selectedId:pendingView?.selectedId ?? selectedId };
@@ -306,7 +300,7 @@ function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
     pendingView.natalDay = { ...day, opened: kind === 'day' && !close };
     pendingView.lifetime = kind === 'lifetime' && !close
       ? personalAvailable
-        ? { opened: true, mode: 'lifetime', ...lifeTimelineForChart(record)!, requestedUtc: Date.parse(record!.utc!), personalPreview: false }
+        ? { opened: true, mode: 'lifetime', ...lifeTimelineForChart({utc:sourcePresentation.utc!})!, requestedUtc: Date.parse(sourcePresentation.utc!), personalPreview: false }
         : { opened: true, mode: 'day', fromDate: null, toDate: null }
       : null;
   }
@@ -350,16 +344,15 @@ if (!previewLoading) try {
   const app = await import('./app.ts');
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
-  if (loadingWrite !== null) flushLoadingView();
+  if (viewCheckpoint.pending) flushLoadingView();
   const latestView = loadingInteraction ? loadingSnapshot() : savedView;
   loadingActive = false; releaseLoadingFocus();
-  document.removeEventListener('visibilitychange', flushOnHide);
-  page?.removeEventListener?.('pagehide', flushLoadingView);
-  application = app.startApp({ navigation, storagePressure, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  application = app.startApp({ navigation, storagePressure, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
   if (obsoleteCalculations.calculation || obsoleteCalculations.returns) application?.invalidateCalculations?.(obsoleteCalculations);
   saveBeforeNavigate = () => application?.flushView();
 } catch {
-  if (loadingWrite !== null) flushLoadingView();
+  if (viewCheckpoint.pending) flushLoadingView();
+  viewCheckpoint.destroy();
   applicationFailed=true;
   const shell = document.querySelector<HTMLElement>('.app-shell')!;
   shell.dataset.pageState = 'error'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
@@ -367,8 +360,6 @@ if (!previewLoading) try {
   loadingActive = false; releaseLoadingFocus();
   loadingLayoutObserver.disconnect();
   handoffLoadingPanels();
-  document.removeEventListener('visibilitychange', flushOnHide);
-  page?.removeEventListener?.('pagehide', flushLoadingView);
   element('chartLoadingArt').setAttribute('hidden', '');
   element('chartLoadingMessage').hidden = false;
   studio.dataset.workspaceScreen = 'chart';

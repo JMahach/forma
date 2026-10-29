@@ -109,7 +109,7 @@ export function createChartLibraryView({ chartList, libraryCount, nowButton, doc
       reconcile();
     },
     setScreen(screen: WorkspaceScreen) {
-      for (const [id, section] of [['openKnowledge', 'library'], ['openAllCharts', 'charts'], ['openAccount', 'account']]) {
+      for (const [id, section] of [['openKnowledge', 'knowledge'], ['openAllCharts', 'charts'], ['openAccount', 'account']]) {
         const selected = screen === section, button = document.getElementById(id)!;
         button.setAttribute('aria-pressed', String(selected));
         if (selected) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');

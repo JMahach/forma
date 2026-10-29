@@ -1,3 +1,5 @@
+import {chartPresentation} from '../src/domain/chart-presentation.ts';
+import {createViewCheckpoint} from '../src/state/view-checkpoint.ts';
 import { createLayoutObserver } from '../src/ui/layout/resize-observer.ts';
 import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '../shared/client-report-contract.ts';
 import {createJournal} from '../src/journal.ts';
@@ -39,14 +41,11 @@ import { createPanelState } from '../src/state/panels.ts';
 import { createWorkspaceState } from '../src/state/workspace.ts';
 import { createStudioLayout } from '../src/ui/layout/studio-controller.ts';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.ts';
-import * as chartSession from '../src/state/chart-session.ts';
 import { libraryDom } from './helpers/library-dom.ts';
 import * as cameraModule from '../src/scene/camera.ts';
 import { createCameraView } from '../src/scene/camera-view.ts';
 import { holdLoadingContent, commitLoadingLayout } from '../src/views/chart-loading.ts';
 import { studioPresentation } from '../src/ui/studio-presentation.ts';
-import { eligibleCycleChart } from '../src/domain/cycles.ts';
-import { canExploreNatalDay } from '../src/state/natal-day.ts';
 import { originalNatalDayMoment } from '../src/domain/natal-day.ts';
 import { createCameraChangeHandler } from '../src/views/camera-controls.ts';
 import { libraryRecordAtMinute, natalDayFixture } from './fixtures/natal-day.ts';
@@ -130,7 +129,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'eligibleCycleChart', 'canExploreNatalDay', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'resolveSelectedChartId', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createCalculationUpdates', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'lifeTimelineForChart', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal,connectOfflineUpdates};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -158,7 +157,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = (options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}});
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate((refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, eligibleCycleChart, canExploreNatalDay, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, chartSession.resolveSelectedChartId, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, updateFactory, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, lifeTimelineForChart, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -266,9 +265,10 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
     assert.equal(options!.calculationVersion, 'a'.repeat(64));
     assert.equal(Boolean(options!.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
-    const { navigation, storagePressure, calculationClients, calculationUpdates, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, ...existingPorts } = received!;
+    const { navigation, storagePressure, calculationClients, calculationUpdates, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, viewCheckpoint, ...existingPorts } = received!;
     assert.equal(calculationClients.transit, client);
     assert.equal(typeof storagePressure?.write, 'function');
+    assert.equal(typeof viewCheckpoint?.flushForPageHide, 'function');
     assert.deepEqual(existingPorts, { dayClient: client, layout, toast, viewStore, savedView });
   }
 });
@@ -351,8 +351,8 @@ test('saved panel space and visible shells are restored before the application i
 
 test('loading navigation keeps the tab result outside the saved list and retains the current section', async () => {
   const chart = {...libraryRecordAtMinute(natalDayFixture(),754),id:'saved',name:'Анна'};
-  for (const [screen, selectedId, expected] of [['chart', 'saved', 'saved'], ['chart', 'missing', 'current-transit'],
-    ['library', 'saved', null], ['charts', 'saved', null], ['account', 'saved', null]] as const) {
+  for (const [screen, selectedId, expected] of [['chart', 'saved', 'saved'], ['chart', 'missing', 'missing'],
+    ['knowledge', 'saved', null], ['charts', 'saved', null], ['account', 'saved', null]] as const) {
     const { document, element, rows } = startupDocument();
     let store:ReturnType<typeof createChartStore>;
     let storeReads = 0, attached = false; let loadingError: unknown;
@@ -365,7 +365,7 @@ test('loading navigation keeps the tab result outside the saved list and retains
         assert.doesNotMatch(element('chartList').innerHTML, /Анна/);
         assert.equal(store.temporaryChart?.id, chart.id);
         assert.equal(element('nowButton').getAttribute('aria-pressed'), String(expected === 'current-transit'));
-        for (const [id, section] of [['openKnowledge', 'library'], ['openAllCharts', 'charts'], ['openAccount', 'account']] as const) {
+        for (const [id, section] of [['openKnowledge', 'knowledge'], ['openAllCharts', 'charts'], ['openAccount', 'account']] as const) {
           assert.equal(element(id).getAttribute('aria-pressed'), String(screen === section));
           assert.equal(element(id).getAttribute('aria-current'), screen === section ? 'page' : null);
         }
@@ -487,8 +487,8 @@ test('saved timeline geometry and tool visibility exist before the application i
     [{ selectedId: personal.id }, 'natal-day', 'natal-day', false],
     [{ selectedId: personal.id, natalDay: { opened: false } }, 'none', 'day', false],
     [{ selectedId: personal.id, returns: { opened: true } }, 'lifetime', 'day', false],
-    [{ selectedId: 'manual' }, 'transit', 'day', true],
-    [{ selectedId: 'missing', lifetime: { opened: true, mode: 'lifetime' } }, 'transit', 'day', true],
+    [{ selectedId: 'manual' }, 'none', 'day', true],
+    [{ selectedId: 'missing', lifetime: { opened: true, mode: 'lifetime' } }, 'none', 'day', true],
   ] as const) {
     const { document, element } = startupDocument();
     let options: Parameters<typeof createStudioLayout>[0]; let received: StartupPorts | undefined, failure: unknown;
@@ -890,7 +890,8 @@ test('legacy local records remain untouched but do not become a guest collection
   assert.deepEqual(received.store.charts,[]);
   assert.equal(received.store.temporaryChart,null);
   assert.equal(rows.length,0);
-  assert.equal(element('nowButton').getAttribute('aria-pressed'),'true');
+  assert.equal(element('nowButton').getAttribute('aria-pressed'),'false','unknown saved intent is not a ready current transit');
+  assert.equal(received.savedView?.selectedId,'legacy');
   assert.equal(local.getItem(STORAGE_KEY),original);
 });
 
@@ -917,7 +918,8 @@ for(const preview of [false,true])test(`the last public source joins early resto
 for (const trigger of ['account','panel'] as const) test(`early ${trigger} update preserves a private route and its return before the library loads`,async()=>{
   const storage=tabStorage(),viewStore=createViewStore({getStorage:()=>storage});
   const own=accountNatalChart(121),eventId='saturn:2020-02-02T19:27:23.000Z';
-  viewStore.write({version:1,selectedId:own.id,workspace:'chart',returns:{opened:true,bodies:['saturn'],year:null,eventId},
+  viewStore.write({version:1,selectedId:own.id,workspace:'chart',
+    ...(trigger==='account'?{chartHint:{id:own.id,kind:'natal',utc:own.utc,dayAvailable:true}}:{}),returns:{opened:true,bodies:['saturn'],year:null,eventId},
     lifetime:{opened:true,mode:'lifetime',fromDate:'1990-05-15',toDate:'2090-05-15',requestedUtc:Date.parse('2020-02-02T19:27:23.000Z')}});
   const {document}=startupDocument();let changed=()=>{},received:StartupPorts|undefined;
   await run(attachPageGestures,document,class {observe(){}disconnect(){}},()=>({}),layoutStub,
@@ -929,6 +931,8 @@ for (const trigger of ['account','panel'] as const) test(`early ${trigger} updat
   assert.equal(viewStore.read()?.selectedId,own.id);
   assert.equal(received?.savedView?.selectedId,own.id);
   assert.equal(received?.savedView?.returns?.eventId,eventId);
+  assert.notEqual(received?.initialPresentation?.timelinePanel,'transit','an unresolved private selection is not the current transit');
+  if(trigger==='account')assert.equal(received?.initialPresentation?.returnsVisible,true,'the saved hint projects controls without pretending the record is loaded');
   assert.equal(received?.savedView?.lifetime?.requestedUtc,Date.parse('2020-02-02T19:27:23.000Z'));
 });
 

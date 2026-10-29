@@ -1,3 +1,4 @@
+import {immutableSnapshot} from '../domain/immutable-snapshot.ts';
 import { validatePublicAccountChart } from '../domain/account-chart.ts';
 import type { AccountChart, PublicAccountChart } from '../../shared/chart-record-contract.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
@@ -8,13 +9,14 @@ import { normalizeTemporaryChart } from '../domain/temporary-chart.ts';
 // Account-library owns saved records; this store projects only its current
 // library and the separate ready temporary/public results of this tab.
 export function createChartStore({ initialTemporaryChart = null, initialPublicChart = null, calculationVersion = '' }: { initialPublicChart?: unknown; calculationVersion?: string; initialTemporaryChart?: unknown } = {}) {
-  const readPublic=(value:unknown):PublicAccountChart|null=>{try{return validatePublicAccountChart(value);}catch{return null;}};
+  const readPublic=(value:unknown):PublicAccountChart|null=>{try{return immutableSnapshot(validatePublicAccountChart(value));}catch{return null;}};
   const displayPublic=(value:PublicAccountChart):SavedChart=>({...value,note:'',createdAt:'',updatedAt:''});
   // One public source belongs to this tab. The working projection may separately
   // pin an accepted save source; that transient pin is never persisted here.
   let lastPublicChart=readPublic(initialPublicChart);
   let publicChart: SavedChart | null = lastPublicChart?.calculationVersion===calculationVersion ? displayPublic(lastPublicChart) : null;
   let temporaryChart = normalizeTemporaryChart(initialTemporaryChart);
+  if(temporaryChart)temporaryChart=immutableSnapshot(temporaryChart);
   let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} = {sources: [], charts: [], storageAvailable: false, ready: new Set()};
   const working = () => projection.charts;
   const names = new Intl.Collator('ru', {sensitivity: 'base', numeric: true});
@@ -36,7 +38,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
     setTemporary(chart: SavedChart) {
       const next = normalizeTemporaryChart(chart);
       if (!next) throw Object.assign(new Error('Не удалось сохранить карту'), {code:'invalid'});
-      temporaryChart = next;
+      temporaryChart = immutableSnapshot(next);
       return temporaryChart;
     },
     clearTemporary(expectedId: string) {
@@ -47,7 +49,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
     get storageAvailable() { return projection.storageAvailable; },
     get publicChart() { return lastPublicChart; },
     acceptPublic(chart: PublicAccountChart) {
-      lastPublicChart=validatePublicAccountChart(chart);
+      lastPublicChart=immutableSnapshot(validatePublicAccountChart(chart));
       publicChart=displayPublic(lastPublicChart);
       return publicChart;
     },

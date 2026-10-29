@@ -227,7 +227,7 @@ test('legacy camera ceilings are discarded while the saved pose stays readable',
 
 test('workspace screen shares the existing tab snapshot and validates legacy and malformed values', () => {
   const storage = memory(), store = createViewStore({ getStorage: () => storage });
-  for (const workspace of ['chart', 'library', 'charts', 'account'] as const) {
+  for (const workspace of ['chart', 'knowledge', 'charts', 'account'] as const) {
     store.write({ ...snapshot, workspace });
     assert.equal(createViewStore({ getStorage: () => storage }).read()!.workspace, workspace);
   }
@@ -532,4 +532,24 @@ test('short chart IDs preserve the restored selection and editing draft without 
  assert.equal(state?.selectedId,id.slice(0,10));assert.deepEqual(state?.librarySelection,[id.slice(0,10)]);
  assert.deepEqual(state?.birthForm,{...birthForm,editingId:id.slice(0,10)});
  assert.equal(state?.pendingChartWrites?.[0].operationId,operationId);
+});
+
+test('camera-only checkpoints reuse an immutable accepted chart, while a new source replaces it',()=>{
+ const storage=memory(),store=createViewStore({getStorage:()=>storage});
+ const charts=createChartStore({initialTemporaryChart:{...accountNatalChart(),id:'temporary-checkpoint'}});
+ const save=(x:number)=>store.write({...snapshot,temporaryChart:charts.temporaryChart,camera:{x,y:0,k:1}});
+ save(0);const first=store.read()!.temporaryChart!;
+ save(1);assert.equal(store.read()!.temporaryChart,first,'camera changes must not recreate the validated numerical snapshot');
+ assert.equal(Reflect.set(charts.temporaryChart!.activations!.personality![0]!,'gate',64),false);
+ assert.equal(Reflect.set(first,'name','outside mutation'),false,'a cached snapshot must stay immutable through read');
+ charts.setTemporary({...charts.temporaryChart!,name:'Changed source'});save(2);
+ assert.notEqual(store.read()!.temporaryChart,first);assert.equal(store.read()!.temporaryChart!.name,'Changed source');
+ assert.notEqual(first.name,'Changed source');assert.equal(storage.writes.length,3);
+});
+
+test('the old library workspace normalizes to knowledge while preserving the selected source and unfinished input',()=>{
+ const birthForm={editingId:null,accountId:null,calculationMode:'manual',fields:{chartName:'Unfinished',birthDate:'01.',birthTime:'12:',birthPlace:'Town',chartNote:'Draft'},city:null,fold:null,base:null,focus:null};
+ const store=createViewStore({getStorage:()=>memory({...snapshot,workspace:'library',birthForm})});
+ const saved=store.read()!;assert.equal(saved.workspace,'knowledge');assert.equal(saved.selectedId,snapshot.selectedId);
+ assert.deepEqual(saved.birthForm?.fields,birthForm.fields);assert.equal(saved.temporaryChart,undefined,'unfinished input is not a ready chart');
 });

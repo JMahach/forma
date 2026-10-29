@@ -1,3 +1,5 @@
+import {normalizeChartHint,type ChartPresentationHint} from '../domain/chart-presentation.ts';
+import {immutableSnapshot,isImmutableSnapshot} from '../domain/immutable-snapshot.ts';
 import { canonicalChartId } from '../../shared/chart-record-contract.ts';
 import { validatePublicAccountChart } from '../domain/account-chart.ts';
 import { normalizeTemporaryChart } from '../domain/temporary-chart.ts';
@@ -26,6 +28,7 @@ export interface SavedAccountView {
 }
 export interface SavedTemporaryChartSave extends ChartWriteIntent { sourceId: string }
 export interface SavedView {
+  chartHint?:ChartPresentationHint|null;
   publicChart?: PublicAccountChart | null;
   temporaryChartSave?: SavedTemporaryChartSave | null;
   temporaryChart?: SavedChart | null;
@@ -38,7 +41,7 @@ export interface SavedView {
   selectedId: string;
   librarySelection?: string[];
   mandala: boolean;
-  workspace?: 'chart' | 'library' | 'charts' | 'account';
+  workspace?: 'chart' | 'knowledge' | 'charts' | 'account';
   panels?: { left: boolean; right: boolean };
   charts?: { query: string; searchOpen: boolean; focus?: TextSelection | null };
   knowledge?: { query: string; searchOpen: boolean; focus?: TextSelection | null; collection: string; entryId: string; view: 'catalog' | 'article' };
@@ -123,10 +126,32 @@ function normalizeTemporarySave(input: unknown, chart: SavedChart | null): Saved
   const sourceId=object(input) && 'sourceId' in input ? input.sourceId : null;
   return pointer && chart && sourceId===chart.id ? {...pointer,sourceId:chart.id} : null;
 }
-function normalize(input: unknown): SavedView | null {
-  const value = input as Omit<SavedView, 'lifetime'> & { lifetime: (Omit<SavedLifetimeView, 'mode'> & { mode: 'day' | 'lifetime' | 'archive' }) | null };
+function snapshotField<T extends object>(normalize:(input:unknown)=>T|null) {
+  let previous:{source:object|null;value:T|null;encoded:string}|null=null;
+  return {
+    read(input:unknown):T|null {
+      if(previous && (input===previous.value || isImmutableSnapshot(input) && input===previous.source))return previous.value;
+      const normalized=normalize(input),value=normalized?immutableSnapshot(normalized):null;
+      previous={source:isImmutableSnapshot(input)?input:null,value,encoded:JSON.stringify(value)};
+      return value;
+    },
+    get encoded(){return previous?.encoded??'null';},
+    reset(){previous=null;},
+  };
+}
+function chartFields(){return {temporaryChart:snapshotField(normalizeTemporaryChart),publicChart:snapshotField(normalizePublicChart)};}
+function encodeView(view:SavedView,fields:ReturnType<typeof chartFields>) {
+  return '{'+Object.entries(view).flatMap(([key,value])=>{
+    const encoded=key==='temporaryChart'||key==='publicChart'?fields[key].encoded:JSON.stringify(value);
+    return encoded===undefined?[]:[JSON.stringify(key)+':'+encoded];
+  }).join(',')+'}';
+}
+
+function normalize(input: unknown, fields:ReturnType<typeof chartFields>): SavedView | null {
+  const value = input as Omit<SavedView, 'lifetime'|'workspace'> & { workspace?: SavedView['workspace']|'library'; lifetime: (Omit<SavedLifetimeView, 'mode'> & { mode: 'day' | 'lifetime' | 'archive' }) | null };
   if (!object(value) || value.version !== 1) return null;
-  const temporaryChart=normalizeTemporaryChart(value.temporaryChart);
+  const workspace=value.workspace==='library'?'knowledge':value.workspace;
+  const temporaryChart=fields.temporaryChart.read(value.temporaryChart);
   const returnView = normalizeReturns(value.returns);
   const charts = normalizeSearchView(value.charts), knowledge = normalizeKnowledgeView(value.knowledge);
   // Before shell visibility was saved separately, an open Returns screen
@@ -139,7 +164,8 @@ function normalize(input: unknown): SavedView | null {
     && list.every(id => PLANET_IDS.includes(id)) && new Set(list).size === list.length;
   return {
     version: 1,
-    ...('publicChart' in value ? {publicChart:normalizePublicChart(value.publicChart)} : {}),
+    ...('chartHint' in value ? {chartHint:normalizeChartHint(value.chartHint)} : {}),
+    ...('publicChart' in value ? {publicChart:fields.publicChart.read(value.publicChart)} : {}),
     ...('temporaryChart' in value ? {temporaryChart} : {}),
     ...('temporaryChartSave' in value ? {temporaryChartSave:normalizeTemporarySave(value.temporaryChartSave,temporaryChart)} : {}),
     ...('pendingChartWrites' in value ? {pendingChartWrites: normalizePendingWrites(value.pendingChartWrites)} : {}),
@@ -152,7 +178,7 @@ function normalize(input: unknown): SavedView | null {
     ...(Array.isArray(value.librarySelection) && value.librarySelection.every(id => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(id))
       ? { librarySelection: [...new Set(value.librarySelection.map(canonicalChartId))] } : {}),
     mandala: value.mandala === true,
-    ...(['chart', 'library', 'charts', 'account'].includes(value.workspace!) ? { workspace: value.workspace } : {}),
+    ...(['chart', 'knowledge', 'charts', 'account'].includes(workspace!) ? { workspace } : {}),
     ...(object(panels) && typeof panels.left === 'boolean' && typeof panels.right === 'boolean'
       ? { panels: { left: panels.left, right: panels.right } } : {}),
     camera: object(camera) && (['x', 'y', 'k'] as const).every(key => Number.isFinite(camera[key]))
@@ -187,6 +213,7 @@ interface ViewStoreOptions {
   onStorageRecovery?: () => unknown;
 }
 export function createViewStore({ getStorage = () => globalThis.sessionStorage, onStorageError = () => {}, onStorageFailure, onStorageRecovery }: ViewStoreOptions = {}) {
+  const fields=chartFields();
   let memory: SavedView | null = null, encoded: string | null = null, warned = false, unsaved = false, failed = false;
   // The external journal owns delivery. Only safe source facts leave this
   // store; recipient failure must not alter restoration or memory fallback.
@@ -212,15 +239,16 @@ export function createViewStore({ getStorage = () => globalThis.sessionStorage, 
       let raw;
       try { raw = getStorage().getItem(VIEW_STORAGE_KEY); } catch { report('storage_read', 'storage_unavailable'); warn(); return memory; }
       if (!raw) {memory=null;encoded=null;recovered();return null;}
-      try { memory = normalize(JSON.parse(raw)); encoded = memory ? raw : null; recovered(); }
+      if(raw===encoded && memory){recovered();return memory;}
+      try { const next=normalize(JSON.parse(raw),fields); memory=next?immutableSnapshot(next):null; encoded = memory ? raw : null; recovered(); }
       catch { memory = null; encoded = null; report('validate', 'corrupt_data'); }
       return memory;
     },
     write(value: unknown) {
-      const next = normalize(value);
+      const next = normalize(value,fields);
       if (!next) return false;
-      memory = next;unsaved=true;
-      const serialized = JSON.stringify(next);
+      memory = immutableSnapshot(next);unsaved=true;
+      const serialized = encodeView(next,fields);
       let stage: ViewStorageFailure['stage'] = 'storage_read';
       try {
         const storage=getStorage();
@@ -231,7 +259,7 @@ export function createViewStore({ getStorage = () => globalThis.sessionStorage, 
       } catch { report(stage, 'storage_unavailable'); warn(); return false; }
     },
     clear() {
-      memory=null;encoded=null;unsaved=true;
+      memory=null;encoded=null;unsaved=true;fields.temporaryChart.reset();fields.publicChart.reset();
       let stage: ViewStorageFailure['stage'] = 'storage_read';
       try {
         const storage=getStorage();stage='commit';

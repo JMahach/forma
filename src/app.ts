@@ -1,3 +1,6 @@
+import { chartPresentation } from './domain/chart-presentation.ts';
+import { createViewCheckpoint } from './state/view-checkpoint.ts';
+import type { ViewCheckpoint } from './state/view-checkpoint.ts';
 import type { AccountBoundaryRequest, AccountBoundaryWork } from './application/ports.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
@@ -40,6 +43,7 @@ interface AppOptions {
   calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'>>;
   account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'>;
   dayClient: TransitDayClient; layout: StudioLayout; toast: Toast; viewStore: ViewStore;
+  viewCheckpoint?: ViewCheckpoint;
   savedView: Partial<SavedView> | null; panels: PanelState; workspace: WorkspaceState;
   store: ChartStore; libraryView: ChartLibraryView; camera: Camera;
   cameraView: ReturnType<typeof createCameraView>; gestures?: Gestures | null;
@@ -92,7 +96,8 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ journal, storagePressure, navigation, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+export function startApp({ journal, storagePressure, navigation, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+  const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   let application: Application | null = null;
   const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
   const routeFailed = () => application?.view.destination === 'failed';
@@ -154,7 +159,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let hoverPreview: ReturnType<typeof attachHoverPreview> | null = null;
   let chartSummary: ReturnType<typeof attachChartSummary> | null = null;
   let mandalaMode: ReturnType<typeof attachMandalaMode> | null = null;
-  let library: ReturnType<typeof attachChartLibrary> | null = null;
+  let chartLibrary: ReturnType<typeof attachChartLibrary> | null = null;
   let transit: ReturnType<typeof attachLiveTransit> | null = null;
   let transitControls: ReturnType<typeof attachTransitControls> | null = null;
   let natalDay: ReturnType<typeof attachNatalDayExplorer> | null = null;
@@ -253,11 +258,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     initialView: savedView?.knowledge, onChange: () => viewSession?.schedule(),
     onSelect: selection => { navigateWorkspace('chart'); graph.choose(selection); },
     onOpen: () => {
-      const alreadyShown = workspace.screen === 'library';
-      navigateWorkspace('library');
+      const alreadyShown = workspace.screen === 'knowledge';
+      navigateWorkspace('knowledge');
       if (alreadyShown) void knowledge.show();
     },
-    isCurrent: () => workspace.screen === 'library',
+    isCurrent: () => workspace.screen === 'knowledge',
     getSelection: () => graph.selectionState.primary, onError: toast });
   chartSummary = attachChartSummary({ panels, initialReturnsVisible: initialPresentation?.returnsVisible === true, isAvailable: () => workspace.screen === 'chart',
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'),
@@ -291,7 +296,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   }
   function navigateWorkspace(screen: WorkspaceScreen, { keepMenuOpen = false, fromRoute = false } = {}) {
     if(chartSave && !(screen==='account' && chartSave.action.waitingForLogin))cancelChartSave();
-    if (layout.phone && !keepMenuOpen) library?.close();
+    if (layout.phone && !keepMenuOpen) chartLibrary?.close();
     workspace.setScreen(screen);
     if (!fromRoute) publishRoute(screen === 'chart' ? routeForChart(session.selectedId) : {kind:screen});
   }
@@ -539,7 +544,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const clearing=logout?accountLibrary.clear():null;
     const connecting=logout?Promise.resolve():accountLibrary.connect(access);
     publicRefreshRequest?.abort();syncJournalAccount();
-    library?.closeDelete();
+    chartLibrary?.closeDelete();
     const resetPersonal=!!logout || !!access && (previousAccount!==null && previousAccount!==access.accountId
       || chartActions.pending.some(intent=>intent.expectedAccountId!==access.accountId)
       || !!temporaryChartSave && temporaryChartSave.expectedAccountId!==access.accountId);
@@ -551,12 +556,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       journal?.leave(logout);
       cancelChartSave();pendingBirthForm=null;discardPendingInput();
       temporaryChartSave=null;chartActions.clear();formIntent=null;librarySelection++;birthForm.close();
-      snapshotReady=viewStore.clear();
-      // Preserve only the independent tab source at the logout boundary.
-      if(store.temporaryChart || store.publicChart)snapshotReady=viewStore.write({version:1,
+      // Replace the private snapshot once, retaining only independent tab sources.
+      snapshotReady=checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
         temporaryChart:store.temporaryChart,publicChart:store.publicChart,
         selectedId:session.selectedId===store.temporaryChart?.id || session.selectedId===store.publicChart?.id
-          ? session.selectedId:'current-transit'}) && snapshotReady;
+          ? session.selectedId:'current-transit'}:undefined).kind==='stored';
     }else if(resetPersonal && access){
       if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
       temporaryChartSave=null;cancelChartSave();chartActions.clear();formIntent=null;librarySelection++;
@@ -632,14 +636,14 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (!accountLibrary.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
   })();
 
-  library = attachChartLibrary({ serverDeletion: {handles: id => Boolean(accountLibrary.get(id)), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
+  chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => Boolean(accountLibrary.get(id)), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
     removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode, subscribeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
   const allCharts = attachAllCharts({ button: $('openAllCharts'), dialog: $('allChartsDialog'),
-    list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => library.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
+    list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => chartLibrary.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
   });
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
@@ -774,8 +778,9 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   function presentation() {
     if (initialPage.active && !initialPage.restored && initialPresentation) return initialPresentation;
     const timeline = exploration!.pendingTimeline || lifetime?.state;
-    return studioPresentation({ isTransit: session.selectedId === 'current-transit',
-      personalAvailable: Boolean(returns?.available), dayOpened: Boolean(natalDay?.state.opened),
+    const source=chartPresentation(session.selectedId,session.record);
+    return studioPresentation({ isTransit: source.isTransit,
+      personalAvailable: source.personalAvailable && Boolean(returns?.available), dayOpened: Boolean(natalDay?.state.opened),
       lifetime: timeline ? { opened: timeline.opened, mode: timeline.mode } : null, returnsOpened: Boolean(returns?.opened),
       returnsEnabled: exploration!.returnsEnabled, transitEnabled: exploration!.transitEnabled,
       loadFailed: lifetimeLoadFailed });
@@ -798,7 +803,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   function updatePage() {
     const layoutRendered = updateTimelineTools();
     updateChartCaption();updateChartSaveControl();
-    library!.render(); allCharts?.update(); updateWorkspaceNavigation();
+    chartLibrary!.render(); allCharts?.update(); updateWorkspaceNavigation();
     if (!layoutRendered) renderGraph();
     updateLoading();
     viewSession?.schedule();
@@ -828,10 +833,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     try {
       studio.dataset.workspaceScreen = screen;
       allCharts.setVisible(screen === 'charts');
-      knowledgeReady = screen === 'library' ? knowledge.show() : (knowledge.hide(), null);
+      knowledgeReady = screen === 'knowledge' ? knowledge.show() : (knowledge.hide(), null);
       $('accountPage').hidden = screen !== 'account';
       account.setVisible(screen === 'account');
-      chartSummary!.layout(); library!.render(); updateWorkspaceNavigation();
+      chartSummary!.layout(); chartLibrary!.render(); updateWorkspaceNavigation();
       activationPopover.close(); hoverPreview?.clear();
       panelResizePending = true;
       refreshStudioLayout({ preserveScale: true });
@@ -851,8 +856,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     viewSession?.schedule();
     if (initialPage.active) {
       initialPage.screenFailed = false;
-      initialPage.screenPending = screen === 'library' || screen === 'charts' || screen === 'account';
-      const ready = screen === 'library' ? knowledgeReady : screen === 'charts'
+      initialPage.screenPending = screen === 'knowledge' || screen === 'charts' || screen === 'account';
+      const ready = screen === 'knowledge' ? knowledgeReady : screen === 'charts'
         ? waitForInitialCharts(revision) : screen === 'account' ? account.ready : null;
       if (ready) void Promise.resolve(ready).then(value => {
         if (revision !== initialPage.screenRevision) return;
@@ -864,7 +869,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updateInitialPage();
     }
   }
-  function inputSnapshot<T extends {focus?: unknown} | null | undefined>(current: T, previous: T, screen: 'account' | 'charts' | 'library'): T {
+  function inputSnapshot<T extends {focus?: unknown} | null | undefined>(current: T, previous: T, screen: 'account' | 'charts' | 'knowledge'): T {
     return pendingInputRestore && workspace.screen === screen && current && previous?.focus
       ? {...current, focus:previous.focus} : current;
   }
@@ -875,7 +880,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       if (!lifetimeControls?.restoreDraft(pendingLifetimeDraft,{restoreFocus:pendingInputRestore})) return;
     } else if (pendingInputRestore && workspace.screen === 'account' && savedView?.account?.focus) account.restoreInputFocus(savedView.account.focus);
     else if (pendingInputRestore && workspace.screen === 'charts' && savedView?.charts?.focus) allCharts.restoreInputFocus();
-    else if (pendingInputRestore && workspace.screen === 'library' && savedView?.knowledge?.focus) knowledge.restoreInputFocus();
+    else if (pendingInputRestore && workspace.screen === 'knowledge' && savedView?.knowledge?.focus) knowledge.restoreInputFocus();
     pendingInputRestore = false; pendingLifetimeDraft = null;
     viewSession?.schedule();
   }
@@ -927,15 +932,15 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const restoreView = savedLife ? { ...savedView, lifetime: { ...savedView!.lifetime!, ...savedLife,
     minimumUtc: savedChart!.utc!, mode: 'lifetime' as const, openEnded: false } } : savedView;
   viewSession = createViewSession({
-    store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
+    checkpoint, store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
     mandala: { get enabled() { return mandalaMode.enabled; },
       restore: enabled => mandalaMode.setEnabled(enabled, { animate: false }) }, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getBirthForm: () => pendingBirthForm ?? birthForm.snapshot,
     getLifetimeDraft: () => pendingLifetimeDraft ?? lifetimeControls?.snapshot ?? null, onPersisted:notifyOfflineReady,
     getTemporaryChartSave: () => temporaryChartSave,
     getPendingChartWrites: () => [...chartActions.pending], getAccountView: () => inputSnapshot(account.snapshot,savedView?.account,'account'),
-    getKnowledgeView: () => inputSnapshot(knowledge.snapshot,savedView?.knowledge,'library'),
-    getChartsView: () => inputSnapshot(allCharts.snapshot,savedView?.charts,'charts'), getLibrarySelection: () => library?.selection,
+    getKnowledgeView: () => inputSnapshot(knowledge.snapshot,savedView?.knowledge,'knowledge'),
+    getChartsView: () => inputSnapshot(allCharts.snapshot,savedView?.charts,'charts'), getLibrarySelection: () => chartLibrary?.selection,
     getPersonalPreview: () => returns!.available ? exploration!.preview : undefined,
     getPersonalLive: () => returns!.available ? exploration!.live : undefined,
     restorePersonalPreview: exploration!.restorePreview,
@@ -1296,7 +1301,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       const savedFocus = birthForm.snapshot?.focus
         || workspace.screen === 'account' && focused?.id === 'accountEmail' && account.snapshot?.focus
         || workspace.screen === 'charts' && focused?.id === 'allChartsSearch' && allCharts.snapshot.focus
-        || workspace.screen === 'library' && focused?.id === 'knowledgeSearch' && knowledge.snapshot?.focus
+        || workspace.screen === 'knowledge' && focused?.id === 'knowledgeSearch' && knowledge.snapshot?.focus
         || workspace.screen === 'chart' && ['lifetimeFromDate','lifetimeToDate'].includes(focused?.id ?? '') && lifetimeControls?.snapshot?.focus;
       if(focused?.matches?.('input,textarea,[contenteditable="true"]') && !savedFocus)return false;
       return true;
