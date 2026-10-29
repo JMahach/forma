@@ -39,6 +39,12 @@ server {
         client_max_body_size 64k;
         proxy_pass http://127.0.0.1:4173;
     }
+    location ~ ^/api/charts/[^/]+/returns/accept$ {
+        # Matches the prepared-return transport's 64 KiB limit in server/http/charts.ts.
+        # Reuse proven numbers; other API requests keep the existing 20 KiB limit.
+        client_max_body_size 64k;
+        proxy_pass http://127.0.0.1:4173;
+    }
     location ~ ^/api/(?:calculate|cycles/(?:events|chart)|chart/day)$ {
         # One panel: 13 event lists + selected chart + birth day + form calculation.
         # Admit waiting requests; Node still bounds actual compute work to 4 workers.

@@ -38,8 +38,8 @@ async function fixture(t:{after(fn:()=>void):void}, prepareBirth?: ReturnType<ty
   const records=createChartRecords({database,authorize:()=>null,now:()=>time});
   let handler=createChartHandler({records,accounts,origins:['https://forma.example.test'],now:()=>time,...extra,
     prepareBirth:async (input, options)=>{calls++; await beforePrepare(); if(options.signal.aborted) throw new Error('aborted'); return prepareBirth ? prepareBirth(input,options) : {...birth};}});
-  async function request(path:string, method='GET', body?:unknown, options:{cookie?:boolean;origin?:string|null;headers?:Record<string,string>}={}) {
-    const req=Object.assign(Readable.from(body===undefined?[]:[Buffer.from(JSON.stringify(body))]),{method,url:path,
+  async function request(path:string, method='GET', body?:unknown, options:{cookie?:boolean;origin?:string|null;headers?:Record<string,string>;rawBody?:string}={}) {
+    const req=Object.assign(Readable.from(options.rawBody!==undefined?[Buffer.from(options.rawBody)]:body===undefined?[]:[Buffer.from(JSON.stringify(body))]),{method,url:path,
       headers:{host:'forma.example.test','content-type':'application/json',
         ...(options.origin===null?{}:{origin:options.origin??'https://forma.example.test'}),
         cookie:options.cookie===false?'':Object.entries(proof.sessions).map(([id,token])=>`__Host-forma_s_${id}=${token}`).join('; '),...options.headers},
@@ -269,6 +269,11 @@ test('HTTP accepts a proven prepared return without calculating it again', async
   assert.equal((await f.request(path,'POST',body,{cookie:false})).status,401);
   assert.equal((await f.request(path,'POST',{...body,extra:'unaccepted'})).status,400);
   assert.equal(accepted,1);
+  const encoded=JSON.stringify(body),atLimit=encoded+' '.repeat(65536-Buffer.byteLength(encoded));
+  assert.equal((await f.request(path,'POST',undefined,{rawBody:atLimit})).status,200,'a valid JSON packet at 64 KiB is accepted');
+  const oversized=await f.request(path,'POST',undefined,{rawBody:atLimit+' '});
+  assert.equal(oversized.status,413);assert.equal(oversized.body.error,'too_large');
+  assert.equal(accepted,2,'oversized input never reaches the prepared-data owner');
 });
 
 
