@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {normalizeMainReturn} from '../shared/chart-return-contract.ts';
+import {MAIN_RETURN_BODIES,normalizeMainReturn} from '../shared/chart-return-contract.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -66,6 +66,27 @@ test('main dates persist, and only an opened full return is calculated; ready re
   assert.equal((await f.selected()).chart.utc,eventUtc);
 });
 
+test('a whole primary family is ready only after every listed event has a valid calculation',async t=>{
+  const f=fixture(t),later='2058-01-01T12:00:00Z';
+  const read=()=>f.service.readPackage(f.records,f.chart.id,f.accountId,f.input,f.options);
+  assert.equal(read(),null,'no date list is not an empty complete family');
+  f.cycles.events=async input=>({range:dates(input).range,events:[dates(input).events[0]!,{
+    ...dates(input).events[0]!,id:`saturn:${later}`,utc:later,age:(Date.parse(later)-Date.parse(f.chart.utc))/(365.2425*86400000),
+    cycle:2,cycleId:'saturn:2',
+  }]});
+  await f.selected();assert.equal(read(),null,'one of two events is still a partial server result');
+  await f.service.chart(f.records,f.chart.id,f.accountId,{...f.input,eventUtc:later},f.options);
+  const complete=read();assert.ok(complete);
+  assert.equal(complete.ref.kind,'major-returns');assert.equal(complete.ref.family,'saturn');
+  assert.deepEqual(complete.payload.charts.map(item=>item.chart.utc),[eventUtc,later]);
+  const before=f.calls();
+  assert.deepEqual(read(),complete);assert.deepEqual(f.calls(),before,'reading a package never fills its gaps');
+  f.update({name:'Renamed'});assert.deepEqual(read(),complete,'metadata is not a new numerical source');
+  f.database.connection.prepare("UPDATE account_chart_returns SET content=x'00' WHERE action='chart' AND eventUtc=?").run(later);
+  assert.equal(read(),null,'one corrupt event makes the whole family unavailable');
+  assert.equal(f.records.readReturn({chartId:f.chart.id,expectedAccountId:f.accountId,birth:f.chart,action:'chart',input:f.input})!==null,true);
+});
+
 test('a new server instance reads the saved return from the same database without computing',async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'forma-chart-returns-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const filename=path.join(dir,'accounts.sqlite'),f=fixture(t,filename);
@@ -75,6 +96,34 @@ test('a new server instance reads the saved return from the same database withou
   const service=createChartReturns({
     cycles:{events:async()=>{throw Error('must not run');},chart:async()=>{throw Error('must not run');}}});
   assert.equal((await service.chart(records,f.chart.id,f.accountId,f.input,f.options)).chart.utc,eventUtc);
+  const changes=database.connection.prepare('SELECT total_changes() AS n').get()!.n;
+  assert.deepEqual(service.readPackage(records,f.chart.id,f.accountId,f.input,f.options)?.payload.charts.map(item=>item.chart.utc),[eventUtc]);
+  assert.equal(database.connection.prepare('SELECT total_changes() AS n').get()!.n,changes);
+});
+
+test('an empty confirmed family is complete, but wrong sources, owners and non-primary families are rejected',async t=>{
+  const f=fixture(t),read=(input=f.input)=>f.service.readPackage(f.records,f.chart.id,f.accountId,input,f.options);
+  f.cycles.events=async input=>({range:dates(input).range,events:[]});
+  await f.events();assert.deepEqual(read()?.payload.charts,[]);
+  for(const patch of [{body:'moon'},{fromAge:1},{birthUtc:'2000-01-02T12:00:00Z'}])assert.throws(()=>read({...f.input,...patch}));
+  f.auth(f.otherId);assert.throws(()=>read(),{code:'account_changed'});f.auth(f.accountId);
+  f.update({birth:{...f.chart,birthDate:'2000-01-02',utc:'2000-01-02T12:00:00Z'}});
+  assert.throws(()=>read(),{code:'source_changed'});
+  f.remove();assert.throws(()=>read(),{code:'not_found'});
+  assert.equal(f.calls().charts,0);
+});
+
+test('all five primary families expose their complete saved events without a new calculation',async t=>{
+  const f=fixture(t);
+  for(const body of MAIN_RETURN_BODIES) {
+    const input={...f.input,body};
+    await f.service.chart(f.records,f.chart.id,f.accountId,input,f.options);
+    const packet=f.service.readPackage(f.records,f.chart.id,f.accountId,input,f.options);
+    assert.ok(packet);assert.equal(packet.ref.family,body);
+    assert.equal(packet.payload.dates.events[0]!.body,body);
+    assert.deepEqual(packet.payload.charts.map(item=>item.chart.utc),[eventUtc]);
+  }
+  assert.deepEqual(f.calls(),{events:5,charts:5});
 });
 
 test('names and notes do not invalidate attached dates or calculations',async t=>{

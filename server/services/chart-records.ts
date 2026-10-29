@@ -115,6 +115,13 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
         return storage.readReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'');
       });
     },
+    readReturnFamily(query:ChartReturnQuery) {
+      if(query.action!=='chart')throw new ChartRecordError('invalid_chart');
+      return database.transaction(()=>{
+        returnContext(query);
+        return storage.readReturnFamily(query.chartId,query.input.body);
+      });
+    },
     // Only trusted, validated computation owners may call this; not browser-supplied numbers.
     saveReturn(query:ChartReturnQuery,result:CycleResult):void {
       if(!validCycleResult(query.action,result,query.input))throw new ChartRecordError('invalid_chart');

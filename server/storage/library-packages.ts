@@ -150,17 +150,30 @@ export function createReturnPackets(database:Database,{compress=(raw:Buffer)=>gz
   sql.exec(returnTable('account_chart_returns'));
   migrateReturnPackets(database,compress);
   const read=sql.prepare('SELECT content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
+  const family=sql.prepare('SELECT action,eventUtc,content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND body=?');
   const remove=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
   const insert=sql.prepare(`INSERT INTO account_chart_returns VALUES(?,?,?,?,?,?,?)
     ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content,checksum=excluded.checksum,rawDigest=excluded.rawDigest`);
   const clear=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=?');
   const keyArgs=({chartId,action,body,eventUtc}:ReturnAddress)=>[chartId,action,body,eventUtc];
+  function decode(address:ReturnAddress,row:ReturnRow) {
+    try {return unpackReturn(returnKey(address),row);}
+    catch {remove.run(...keyArgs(address));return null;}
+  }
   return {
     read(address:ReturnAddress):unknown {
       const args=keyArgs(address),row=read.get(...args) as unknown as ReturnRow|undefined;
       if(!row)return null;
-      try {return unpackReturn(returnKey(address),row);}
-      catch {remove.run(...args);return null;}
+      return decode(address,row);
+    },
+    readFamily(chartId:string,body:string) {
+      let dates:unknown=null;
+      const charts=new Map<string,unknown>();
+      for(const row of family.all(chartId,body) as unknown as (ReturnRow & Pick<ReturnAddress,'action'|'eventUtc'>)[]) {
+        const value=decode({chartId,body,action:row.action,eventUtc:row.eventUtc},row);
+        if(row.action==='events')dates=value;else if(value!==null)charts.set(row.eventUtc,value);
+      }
+      return {dates,charts};
     },
     save(address:ReturnAddress,value:unknown):boolean {
       const args=keyArgs(address),key=returnKey(address),raw=returnBytes(value),hash=digest(key,raw);

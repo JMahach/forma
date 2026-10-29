@@ -119,6 +119,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     readReturn(chartId: string, action: 'events'|'chart', body: string, eventUtc: string): unknown {
       return returns.read({chartId,action,body,eventUtc});
     },
+    readReturnFamily(chartId:string,body:string) {return returns.readFamily(chartId,body);},
     saveReturn(chartId: string, action: 'events'|'chart', body: string, eventUtc: string, value: unknown) {
       returns.save({chartId,action,body,eventUtc},value);
     },
