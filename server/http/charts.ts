@@ -18,7 +18,7 @@ interface ChartHttpOptions {
   records: ReturnType<typeof createChartRecords>;
   accounts: Pick<Accounts, 'current'>;
   prepareBirth(input: unknown, options: {signal: AbortSignal;receipt?:unknown}): Promise<AccountChartBirth>;
-  returns?: ReturnType<typeof createChartReturns>;
+  returns?: Pick<ReturnType<typeof createChartReturns>, 'events'|'chart'|'accept'>;
   issueReturnReceipt?:ReturnType<typeof createReturnReceipts>['issue'];
   origins: string[];
   now?: () => number;
