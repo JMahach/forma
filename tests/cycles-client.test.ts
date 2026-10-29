@@ -10,6 +10,7 @@ import { createMemoryCache, estimateBytes } from '../src/data/memory-cache.ts';
 import { createCyclesClient } from './fixtures/returns.ts';
 import { chartAtMinute } from '../src/domain/natal-day.ts';
 import { natalDayFixture } from './fixtures/natal-day.ts';
+import {mainReturnRange} from '../shared/chart-return-contract.ts';
 
 const input = { birthUtc: '2000-01-01T00:00:00Z', body: 'saturn', fromAge: 28, toAge: 30 };
 const event = { id: 'saturn:2028-07-21T12:36:05.920740Z', body: 'saturn', utc: '2028-07-21T12:36:05.920740Z', age: 28.5550697647, cycle: 1, pass: 1, cycleId: 'saturn:1', direction: 'direct' as const };
@@ -41,6 +42,28 @@ test('extra return charts use RAM without consulting or writing persistent stora
   const query={...chartInput,body:'moon'},ready=await client.chart(query);
   assert.equal(await client.chart(query),ready);await new Promise(setImmediate);
   assert.equal(accesses,0);assert.equal(calls,1);
+});
+
+test('non-primary dates of an owned natal use its durable server list while full events stay in RAM',async()=>{
+  const body='moon',owner={chartId:'1234567890',expectedAccountId:'1'};
+  const range=mainReturnRange(input.birthUtc)!;
+  const selected={...event,body,id:`${body}:${event.utc}`,cycleId:`${body}:1`};
+  const requests:string[]=[];let deviceAccess=0;
+  const client=createCyclesClient({returnStorage:{async getEvents(){deviceAccess++;return null;},async getChart(){deviceAccess++;return null;},
+    async putEvents(){deviceAccess++;return false;},async putChart(){deviceAccess++;return false;}},
+    request:async(url,options)=>{
+      requests.push(url!);
+      const sent=JSON.parse(options!.body as string);
+      if(url!.endsWith('/events')){assert.equal(sent.expectedAccountId,owner.expectedAccountId);return {range,events:[selected]};}
+      assert.equal(sent.expectedAccountId,undefined);return chartResult(selected);
+    }});
+  const dates=await client.events({...input,body,...range},undefined,{owner});
+  const chart=await client.chart({...chartInput,body},undefined,{owner});
+  assert.equal(await client.events({...input,body,...range},undefined,{owner}),dates);
+  assert.equal(await client.chart({...chartInput,body},undefined,{owner}),chart);
+  await new Promise(setImmediate);
+  assert.deepEqual(requests,[`/api/charts/${owner.chartId}/returns/events`,'/api/cycles/chart']);
+  assert.equal(deviceAccess,0);
 });
 
 test('personal inputs travel in POST JSON only; exact chart RAM is bounded and isolated by natal', async () => {

@@ -104,7 +104,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     input = normalized(action, input);
     const key = identity(action, input);
     const memoryKey = `return-${action}:${key}`;
-    const own = owner && DEFAULT_CYCLE_BODIES.includes(input.body)
+    const own = owner && (action==='events' || DEFAULT_CYCLE_BODIES.includes(input.body))
       ? {chartId: owner.chartId, expectedAccountId: owner.expectedAccountId} : null;
     // Numerical reuse is common; a request that persists a result belongs to one card.
     const requestKey = own ? JSON.stringify([key, own.chartId, own.expectedAccountId, sourceTimezone]) : key;
