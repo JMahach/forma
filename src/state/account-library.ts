@@ -4,21 +4,21 @@ import type { AccountLibraryStore, LibraryLease } from '../data/account-library-
 
 export interface LibrarySession { accountId: string; sessionId: string }
 interface Options {
-  client: Pick<ChartClient, 'list' | 'own'>; storage: AccountLibraryStore; calculationVersion: string;
+  client: Pick<ChartClient, 'list' | 'own'>; storage: AccountLibraryStore;
   online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: () => void;
 }
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
 
 /** One working account library. Acquisition and persistence never choose the visible chart. */
-export function createAccountLibrary({client, storage, calculationVersion, online, restoreAllowed = async () => true, notify = () => {}}: Options) {
+export function createAccountLibrary({client, storage, online, restoreAllowed = async () => true, notify = () => {}}: Options) {
   let charts: AccountChart[] = [], ownerId: string | null = null, current: LibrarySession | null = null;
   let lease: LibraryLease | null = null, generation = 0, available = true, closed = false;
   let backgroundStopped = false;
-  let version = calculationVersion, controller = new AbortController(), loading: Promise<void> | null = null;
+  let controller = new AbortController(), loading: Promise<void> | null = null;
   let removals = {pending: new Map<string, Promise<void>>(), tail: Promise.resolve()};
   const listeners = new Set<() => void>();
-  const observable = () => [charts, ownerId, available, version, current?.accountId, current?.sessionId, lease?.generation];
+  const observable = () => [charts, ownerId, available, current?.accountId, current?.sessionId, lease?.generation];
   let published = observable();
   const emit = (durableChanged = false) => {
     const next = observable();
@@ -47,7 +47,7 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
       const prior = previous.get(chart.id);
       return [chart.id, prior?.accountId === chart.accountId && (prior.revision > chart.revision
         || prior.revision === chart.revision && prior.noteRevision === chart.noteRevision
-          && prior.publicRevision === chart.publicRevision && prior.calculationVersion === chart.calculationVersion) ? prior : chart] as const;
+          && prior.publicRevision === chart.publicRevision) ? prior : chart] as const;
     }));
     if (sameGeneration) for (const chart of charts) if (!next.has(chart.id) && !removals.pending.has(chart.id)) next.set(chart.id, chart);
     lease = snapshot.lease; ownerId = lease?.accountId ?? null; retainList([...next.values()]); emit(); return true;
@@ -106,7 +106,6 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
     get accountId() { return ownerId; },
     get session() { return current; },
     get storageAvailable() { return available; },
-    get calculationVersion() { return version; },
     subscribe(listener: () => void) { listeners.add(listener); listener(); return () => { listeners.delete(listener); }; },
     get: (id: string) => charts.find(chart => chart.id === id),
     async restore() {
@@ -135,7 +134,7 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
         do {
           check(seen);
           const page = await client.list({expectedAccountId: access.accountId, ...(after ? {after} : {})}, signal);
-          check(seen); version = page.calculationVersion;
+          check(seen);
           await accept(page.charts, seen, target);
           if (backgroundStopped || !available) { backgroundStopped = true; return; } // Retry background storage only after the next opening.
           after = page.nextCursor ?? undefined;
@@ -146,9 +145,9 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
     },
     async canRestore(chartId:string):Promise<boolean> {
       const seen=generation,target=lease,chart=charts.find(value=>value.id===chartId);
-      if(closed || !target || !chart || chart.calculationVersion!==version || removals.pending.has(chartId))return false;
+      if(closed || !target || !chart || removals.pending.has(chartId))return false;
       const durable=await storage.canRestore(target,chart).catch(()=>false);
-      return durable && !closed && generation===seen && lease===target && chart.calculationVersion===version
+      return durable && !closed && generation===seen && lease===target
         && charts.find(value=>value.id===chartId)===chart && !removals.pending.has(chartId);
     },
     async markOpened(chartId: string): Promise<void> {
@@ -160,7 +159,7 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
       consumerSignal?.throwIfAborted();
       const cached = charts.find(chart => chart.id === chartId);
       if (!online() || !current) {
-        if (cached?.calculationVersion === version) return cached;
+        if (cached) return cached;
         throw failed(online() ? 'auth_required' : 'offline');
       }
       const seen = generation, target = lease;
@@ -172,7 +171,7 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
       } catch (error) {
         valid();
         if (codeOf(error) === 'not_found') await forget(chartId);
-        else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached?.calculationVersion === version) return cached;
+        else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached) return cached;
         throw error;
       }
     },

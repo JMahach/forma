@@ -151,7 +151,7 @@ const calculationUpdates = {
 };
 if (!previewLoading && getConnectionMode() === 'online') void calculationUpdates.refresh();
 const store = createChartStore({ initialTemporaryChart: savedView?.temporaryChart,
-  initialPublicChart:savedView?.publicChart, calculationVersion:document.body.dataset.calculationVersion });
+  initialPublicChart:savedView?.publicChart });
 // Account records are restored by their owner after startup. Legacy local
 // records remain untouched and never become a persistent guest collection.
 store.projectLibrary([], false);

@@ -8,13 +8,13 @@ import { normalizeTemporaryChart } from '../domain/temporary-chart.ts';
 
 // Account-library owns saved records; this store projects only its current
 // library and the separate ready temporary/public results of this tab.
-export function createChartStore({ initialTemporaryChart = null, initialPublicChart = null, calculationVersion = '' }: { initialPublicChart?: unknown; calculationVersion?: string; initialTemporaryChart?: unknown } = {}) {
+export function createChartStore({ initialTemporaryChart = null, initialPublicChart = null }: { initialPublicChart?: unknown; initialTemporaryChart?: unknown } = {}) {
   const readPublic=(value:unknown):PublicAccountChart|null=>{try{return immutableSnapshot(validatePublicAccountChart(value));}catch{return null;}};
   const displayPublic=(value:PublicAccountChart):SavedChart=>({...value,note:'',createdAt:'',updatedAt:''});
   // One public source belongs to this tab. The working projection may separately
   // pin an accepted save source; that transient pin is never persisted here.
   let lastPublicChart=readPublic(initialPublicChart);
-  let publicChart: SavedChart | null = lastPublicChart?.calculationVersion===calculationVersion ? displayPublic(lastPublicChart) : null;
+  let publicChart: SavedChart | null = lastPublicChart ? displayPublic(lastPublicChart) : null;
   let temporaryChart = normalizeTemporaryChart(initialTemporaryChart);
   if(temporaryChart)temporaryChart=immutableSnapshot(temporaryChart);
   let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} = {sources: [], charts: [], storageAvailable: false, ready: new Set()};

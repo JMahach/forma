@@ -322,7 +322,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     charts: (keep, ids, guard) => libraryStorage.evictForSpace(keep, ids, guard),
   });
   const accountLibrary = createAccountLibrary({client: chartClient, storage: libraryStorage,
-    calculationVersion: document.body.dataset.calculationVersion ?? '', online: () => getConnectionMode() !== 'offline',
+    online: () => getConnectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   let formIntent: ChartWriteIntent | null = null, privateLibraryShown = false, librarySelection = 0;
@@ -435,7 +435,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if(preserveSaveSource)store.showPublic(chartSave!.source);
     const previous = session.record, editedId = birthForm.editedId;
     store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
-      accountLibrary.charts.filter(chart => chart.calculationVersion === accountLibrary.calculationVersion).map(chart => chart.id));
+      accountLibrary.charts.map(chart => chart.id));
     birthForm.refresh();
     if (initialPage.restored && !preserveSaveSource && editedId && !store.get(editedId)) {
       librarySelection++; selectChart('current-transit', {replace:true});
@@ -999,7 +999,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
           if (!current()) return;
           if (accountLibrary.get(route.id)) await accountLibrary.open(route.id, signal);
           else {
-            const cached=store.publicChart?.id===route.id && store.publicChart.calculationVersion===accountLibrary.calculationVersion
+            const cached=store.publicChart?.id===route.id
               ? store.publicChart : null;
             let chart;
             try { chart=getConnectionMode()==='offline' && cached ? cached : await chartClient.public(route.id, signal); }
@@ -1310,7 +1310,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       // Ask the durable owner again immediately before reload; quota relief in
       // this or another tab may have removed a card still visible in RAM.
       return selected==='current-transit' || selected===store.temporaryChart?.id
-        || !accountLibrary.get(selected) && selected===store.publicChart?.id && store.publicChart.calculationVersion===accountLibrary.calculationVersion ? finish()
+        || !accountLibrary.get(selected) && selected===store.publicChart?.id ? finish()
         : accountLibrary.canRestore(selected).then(durable=>durable && finish(),()=>false);
     },
     // P17 extends the shared lifetime to the remaining owners; this stops all P02 resources.

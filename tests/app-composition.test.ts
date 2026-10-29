@@ -1403,7 +1403,7 @@ test('the existing birth form creates an account chart through one command and d
   const client = {
     async create(input) { writes++; return {...input, outcome: {kind: 'created', chartId: record.id, revision: record.revision}}; },
     async own() { reads++; return record; },
-    async list() { return {charts: [], nextCursor: null, calculationVersion: record.calculationVersion}; },
+    async list() { return {charts: [], nextCursor: null, }; },
   } satisfies Partial<ChartClient>;
   const h = harness({chartClient: client, accountSession: {accountId: record.accountId, sessionId: 'real'}});
   await tick();
@@ -1419,7 +1419,7 @@ test('the connected form recovers an unknown save by lookup without repeating it
     async create() {writes++; throw Object.assign(new Error('lost response'), {code: 'connection_failed'});},
     async outcome(input) {reads++; return {...input, outcome: {kind: 'created', chartId: record.id, revision: record.revision}};},
     async own() {return record;},
-    async list() {return {charts: [], nextCursor: null, calculationVersion: record.calculationVersion};},
+    async list() {return {charts: [], nextCursor: null, };},
   } satisfies Partial<ChartClient>;
   const h = harness({realViewSession: true, chartClient: client, accountSession: {accountId: record.accountId, sessionId: 'real'}});
   await tick();
@@ -1437,7 +1437,7 @@ test('restored pending commands are read after sign-in without recreating their 
     async create() {assert.fail('restoration cannot resend a write');},
     async outcome(input) {reads++; return {...input, outcome: {kind: 'created', chartId: record.id, revision: record.revision}};},
     async own() {return record;},
-    async list() {return {charts: [], nextCursor: null, calculationVersion: record.calculationVersion};},
+    async list() {return {charts: [], nextCursor: null, };},
   } satisfies Partial<ChartClient>;
   const h = harness({chartClient: client, accountSession: {accountId: record.accountId, sessionId: 'real'},
     savedView: {pendingChartWrites: [{operationId: 'a'.repeat(32), expectedAccountId: record.accountId}]}});
@@ -1449,7 +1449,7 @@ test('a delayed logout notice for account A cannot clear the visible library of 
   const record = accountNatalChart(2, '2');
   const client = {
     async own() {return record;},
-    async list() {return {charts: [{...record, calculationCurrent: true}], nextCursor: null, calculationVersion: record.calculationVersion};},
+    async list() {return {charts: [{...record, calculationCurrent: true}], nextCursor: null, };},
   } satisfies Partial<ChartClient>;
   const h = harness({chartClient: client, accountSession: {accountId: '2', sessionId: 'session-B'}});
   await tick(); assert.equal(h.cards[0]?.id, record.id);
@@ -1465,7 +1465,7 @@ test('a confirmed library update from another tab refreshes the current chart me
   await local.put(lease.lease, [record]);
   const client = {
     async own() {return record;},
-    async list() {return {charts: [], nextCursor: null, calculationVersion: record.calculationVersion};},
+    async list() {return {charts: [], nextCursor: null, };},
   } satisfies Partial<ChartClient>;
   const h = harness({libraryStorage: local, realViewSession: true, chartClient: client,
     accountSession: {accountId: record.accountId, sessionId: 'real'}, savedView: {selectedId: record.id}});
@@ -1497,7 +1497,7 @@ test('direct account address overrides a saved different screen and back/forward
 test('accepted server save replaces the temporary address without adding a history entry', async () => {
  const n=addressHarness('/chart'), record=accountNatalChart(), access={accountId:'1',sessionId:'session-one'};
  const client={async create(input){return {...input,outcome:{kind:'created',chartId:record.id,revision:record.revision}};},
-  async own(){return record;},async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};}} satisfies Partial<ChartClient>;
+  async own(){return record;},async list(){return {charts:[],nextCursor:null,};}} satisfies Partial<ChartClient>;
  const h=harness({navigation:n.navigation,accountSession:access,chartClient:client});await tick();
  await h.submit({name:record.name,note:'',birth:{source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'}} as BirthSubmission);
  assert.equal(n.location.pathname,'/chart/'+record.id);assert.deepEqual(n.writes,['replace:/chart/'+record.id]);
@@ -1537,15 +1537,15 @@ test('an account change cancels a pending chart URL read and checks access again
  const n=addressHarness('/chart/'+record.id);
  let finish!:(value:typeof publicRecord)=>void, oldSignal:AbortSignal|undefined, reads=0;
  const client={
-  async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};},
+  async list(){return {charts:[],nextCursor:null,};},
   public(_id:string,signal?:AbortSignal){
    if(++reads===1){oldSignal=signal;return new Promise<typeof publicRecord>(resolve=>{finish=resolve;});}
    return Promise.reject(Object.assign(new Error('private to the previous account'),{code:'not_found',status:404}));
   },
  } satisfies Partial<ChartClient>;
- const store=createChartStore({calculationVersion:record.calculationVersion});store.projectLibrary([],false);
+ const store=createChartStore({});store.projectLibrary([],false);
  const h=harness({actualStore:store,navigation:n.navigation,chartClient:client,realViewSession:true,
-  accountSession:{accountId:'1',sessionId:'old'},calculationVersion:record.calculationVersion});
+  accountSession:{accountId:'1',sessionId:'old'},});
  t.after(async()=>{finish?.(publicRecord);await h.stopApplication();n.navigation.destroy();});
  await waitForOwnLink(()=>reads===1);
  h.changeAccount({accountId:'2',sessionId:'new'});
@@ -1587,7 +1587,7 @@ test('a menu selection clears loading of a superseded shared-chart request', asy
 });
 test('logout and account change revoke private calculation clients; an old logout does not revoke the new account', async () => {
  let resets=0;const record=accountNatalChart();
- const client={async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};}} satisfies Partial<ChartClient>;
+ const client={async list(){return {charts:[],nextCursor:null,};}} satisfies Partial<ChartClient>;
  const h=harness({chartClient:client,accountSession:{accountId:'1',sessionId:'one'},onPersonalReset:()=>{resets++;}});
  await tick();h.changeAccount({accountId:'2',sessionId:'two'});assert.equal(resets,1);await tick();
  h.logoutNotice(['one']);assert.equal(resets,1);
@@ -1597,7 +1597,7 @@ test('logout and account change revoke private calculation clients; an old logou
 
 function deletionClient(record: ReturnType<typeof accountNatalChart>, overrides: Partial<ChartClient> = {}) {
   return {
-    async list() {return {charts:[{...record,calculationCurrent:true}],nextCursor:null,calculationVersion:record.calculationVersion};},
+    async list() {return {charts:[{...record}],nextCursor:null,};},
     async own() {return record;}, ...overrides,
   } satisfies Partial<ChartClient>;
 }
@@ -1636,7 +1636,7 @@ test('logout closes the delete dialog and a late result cannot change the new ac
 test('a confirmed deletion of the edited record closes its draft and immediately leaves another chart for transit', async () => {
   const record=accountNatalChart(), other=accountNatalChart(2,record.accountId), n=addressHarness('/');
   const client=deletionClient(record,{
-    async list(){return {charts:[record,other].map(c=>({...c,calculationCurrent:true})),nextCursor:null,calculationVersion:record.calculationVersion};},
+    async list(){return {charts:[record,other].map(c=>({...c})),nextCursor:null,};},
     async own(input){return input.chartId===record.id?record:other;},
     async remove(input){return {...input,outcome:{kind:'deleted',chartId:input.chartId}};},
   });
@@ -1666,7 +1666,7 @@ test('diagnostic scope follows access changes and only the matching explicit log
  const accounts:(string|null)[]=[],record=accountNatalChart();let exits=0;
  const journal={setAccount(id:string|null){accounts.push(id);},leave(){exits++;},wake(){},
   begin(){return{step(){},finishSuccess(){},reportFailure:async()=>null,reportRecovery:async()=>null,reportError:async()=>null};}};
- const h=harness({journal,accountSession:{accountId:'1',sessionId:'one'},chartClient:{async list(){return{charts:[],nextCursor:null,calculationVersion:record.calculationVersion};}}});
+ const h=harness({journal,accountSession:{accountId:'1',sessionId:'one'},chartClient:{async list(){return{charts:[],nextCursor:null,};}}});
  await tick();assert.equal(accounts.at(-1),'1');
  h.changeAccount(null);assert.equal(accounts.at(-1),null);assert.equal(exits,0);
  h.changeAccount({accountId:'2',sessionId:'two'});assert.equal(accounts.at(-1),'2');
@@ -1745,7 +1745,7 @@ for (const signedIn of [false,true]) test(`an explicitly saved temporary card fi
   const access={accountId:'1',sessionId:'row-login'};let writes=0;
   const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart').navigation,
     accountSession:signedIn?access:null,savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart},chartClient:{
-      async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};},
+      async list(){return {charts:[],nextCursor:null,};},
       async create(input){writes++;return {...input,outcome:{kind:'created',chartId:own.id,revision:1}};},
       async own(){return own;}
     }});
@@ -1771,7 +1771,7 @@ test('a ready temporary chart survives login and saves once with its calculation
   let writes=0;const commands:Parameters<ChartClient['create']>[0][]=[];
   const h=harness({charts:[source],chartClient:{
     async create(input){writes++;commands.push(input);return {...input,outcome:{kind:'created',chartId:own.id,revision:1}};},
-    async own(){return own;},async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};}}});
+    async own(){return own;},async list(){return {charts:[],nextCursor:null,};}}});
   await tick();h.select(source.id);await tick();
   await h.saveShown();await tick();assert.equal(h.workspace.screen,'account');assert.equal(writes,0);
   h.changeAccount({accountId:'1',sessionId:'login'});await tick();await tick();
@@ -1785,7 +1785,7 @@ test('the existing add control copies a shared chart after login and opens an ex
   const own={...source,id:chartId(43),accountId:'1',note:'Keep my note'};let writes=0;
   const h=harness({charts:[source],chartClient:{
     async addFromSource(input){writes++;assert.equal(input.sourceId,source.id);return {...input,outcome:{kind:'existing',chartId:own.id,revision:1}};},
-    async own(){return own;},async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};}}});
+    async own(){return own;},async list(){return {charts:[],nextCursor:null,};}}});
   await tick();h.select(source.id);await tick();
   await h.element('saveShownChart').click();
   await tick();assert.equal(h.workspace.screen,'account');assert.equal(writes,0);
@@ -1797,7 +1797,7 @@ for(const cancel of ['back','navigation'] as const)test(`a login completed after
   const source={...accountNatalChart(44,'7'),createdAt:'',updatedAt:''};let writes=0;
   const h=harness({charts:[source],chartClient:{
     async addFromSource(){writes++;assert.fail('cancelled continuation must not write');},
-    async list(){return {charts:[],nextCursor:null,calculationVersion:source.calculationVersion};}}});
+    async list(){return {charts:[],nextCursor:null,};}}});
   await tick();h.select(source.id);await tick();await h.saveShown();
   if(cancel==='back')await h.element('accountPage').dispatch('click',{target:{closest:()=>({disabled:false,dataset:{accountAction:'back'}})}});
   else await h.element('openKnowledge').click();
@@ -1812,7 +1812,7 @@ for(const tool of ['day','return'] as const)test(`saving after login preserves t
   const exact={...chart,id:'exact-return',utc:event.utc};let returnRequests=0;
   const h=harness({charts:[chart],returnEvents:[event],getReturn:async()=>{returnRequests++;return {event,chart:exact};},chartClient:{
     async addFromSource(input){return {...input,outcome:{kind:'created',chartId:own.id,revision:1}};},
-    async own(){return own;},async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};}}});
+    async own(){return own;},async list(){return {charts:[],nextCursor:null,};}}});
   await tick();h.select(chart.id);await tick();
   if(tool==='day')h.natalDay.scrub(800);
   else {await h.element('lifetimeToggle').click();h.finishModule();await tick();await h.returns.selectEvent(event.id);await h.returns.setBodies(['venus']);}
@@ -1830,7 +1830,7 @@ test('the release add control follows the real source and disappears once the sa
   const source={...accountNatalChart(48,'7'),createdAt:'',updatedAt:''},own={...source,id:chartId(49),accountId:'1'};
   let writes=0;const h=harness({charts:[source],chartClient:{
     async addFromSource(input){writes++;return {...input,outcome:{kind:'created',chartId:own.id,revision:1}};},
-    async own(){return own;},async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};}}});
+    async own(){return own;},async list(){return {charts:[],nextCursor:null,};}}});
   await tick();assert.equal(h.element('saveShownChartGroup').hidden,true);
   h.select(source.id);await tick();assert.equal(h.element('saveShownChartGroup').hidden,false);
   await h.element('saveShownChart').click();await tick();assert.equal(h.workspace.screen,'account');
@@ -1938,7 +1938,7 @@ test('quota eviction cannot approve a reload from a RAM-only account chart, and 
  const active=await storage.activate(record.accountId);assert.equal(active.status,'stored');if(active.status!=='stored')return;
  await storage.put(active.lease,[record]);
  const h=harness({storagePressure:pressure,libraryStorage:storage,chartClient:deletionClient(record),
-  accountSession:{accountId:record.accountId,sessionId:'quota-session'},calculationVersion:record.calculationVersion,realViewSession:true});
+  accountSession:{accountId:record.accountId,sessionId:'quota-session'},realViewSession:true});
  await h.restoration;await tick();h.select(record.id);await tick();
  assert.equal(await h.prepareOfflineUpdate(),true,'the actual local copy initially supports reload');
  pressure.setSources({diagnostics:async()=> 'empty',natalDays:(keep,exclude,guard)=>cache.evictForSpace('natal',keep,exclude,guard),
@@ -1959,7 +1959,7 @@ test('quota eviction cannot approve a reload from a RAM-only account chart, and 
  const noNetwork=async()=>assert.fail('offline restoration must not request the server');
  configureTransportSimulation({current:'offline',subscribe(){return()=>{};}});
  const restored=harness({libraryStorage:storage,chartClient:{list:noNetwork,own:noNetwork,public:noNetwork},
-  calculationVersion:record.calculationVersion,realViewSession:true,savedView:h.savedSnapshot});
+  realViewSession:true,savedView:h.savedSnapshot});
  await restored.restoration;await tick();
  assert.equal(restored.shown.id,record.id);assert.equal(restored.cards[0]?.note,record.note);
 });
@@ -1998,7 +1998,7 @@ test('ordinary login keeps a temporary card local and only explicit add moves it
   const own=accountNatalChart(83);let writes=0;
   const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart').navigation,
     savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart},chartClient:{
-      async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};},
+      async list(){return {charts:[],nextCursor:null,};},
       async create(input){writes++;return {...input,outcome:{kind:'created',chartId:own.id,revision:1}};},
       async own(){return own;}
     }});
@@ -2030,9 +2030,9 @@ async function ownLinkLoginContinuation(staleProjection=false) {
   const n=addressHarness('/chart/'+source.id);
   const libraryStorage=createAccountLibraryStore({indexedDB:new IDBFactory()});
   let finish!:()=>void,writes=0,ownReads=0;
-  const h=harness({actualStore:store,libraryStorage,navigation:n.navigation,realViewSession:true,calculationVersion:own.calculationVersion,
+  const h=harness({actualStore:store,libraryStorage,navigation:n.navigation,realViewSession:true,
     chartClient:{async public(){return publicFields;},
-      async list(input){return {charts:input.expectedAccountId==='1'?[staleProjection?{...own,revision:1,publicRevision:1,calculationVersion:'previous',calculationCurrent:false}:{...own,calculationCurrent:true}]:[],nextCursor:null,calculationVersion:own.calculationVersion};},
+      async list(input){return {charts:input.expectedAccountId==='1'?[staleProjection?{...own,revision:1,publicRevision:1}:{...own}]:[],nextCursor:null,};},
       async addFromSource(input){writes++;await new Promise<void>(done=>{finish=done;});return {...input,outcome:{kind:'existing',chartId:own.id,revision:own.revision}};},
       async own(){ownReads++;return own;}}});
   await h.restoration;await tick();
@@ -2107,7 +2107,7 @@ test('the composed account list retains display records after an unchanged stora
   await storage.put(active.lease, [record]);
   const h = harness({actualStore: store, libraryStorage: storage,
     accountSession: {accountId: record.accountId, sessionId: 'projection'},
-    chartClient: {async list() {return {charts: [{...record,calculationCurrent:true}], nextCursor: null, calculationVersion: record.calculationVersion};}}});
+    chartClient: {async list() {return {charts: [{...record}], nextCursor: null, };}}});
   await h.restoration;
   const cards = h.cards;
   assert.equal(cards.length, 1);
@@ -2127,20 +2127,20 @@ async function temporaryReplay(t:{after:(cleanup:()=>void)=>void}) {
     async create(){writes++;throw Object.assign(new Error('lost response'),{code:'connection_failed'});},
     async outcome(input){if(++reads===1)await gate;return {...input,outcome:outcome==='unknown'?{kind:'unknown' as const}:{kind:'created' as const,chartId:own.id,revision:own.revision}};},
     async own(){ownReads++;if(failOwn)throw Object.assign(new Error('read unavailable'),{code:'connection_failed'});return own;},
-    async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};},
+    async list(){return {charts:[],nextCursor:null,};},
   } satisfies Partial<ChartClient>;
   const access={accountId:own.accountId,sessionId:'replay'};
   const store=createChartStore({initialTemporaryChart:temporary});store.projectLibrary([],false);
   const first=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart').navigation,
     savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart},accountSession:access,libraryStorage:storage,
-    calculationVersion:own.calculationVersion,chartClient:client});
+    chartClient:client});
   await first.restoration;await first.saveShown();first.flushView();assert.equal(writes,1);
   const data=new Map<string,string>();const viewStore=createViewStore({getStorage:()=>({getItem:key=>data.get(key)??null,setItem:(key,value)=>{data.set(key,value);},removeItem:key=>{data.delete(key);}})});
   viewStore.write(first.savedSnapshot!);const saved=viewStore.read()!;
   const restoredStore=createChartStore({initialTemporaryChart:saved.temporaryChart});restoredStore.projectLibrary([],false);
   const n=addressHarness('/chart');
   const h=harness({actualStore:restoredStore,realViewSession:true,navigation:n.navigation,savedView:saved,
-    accountSession:access,libraryStorage:storage,calculationVersion:own.calculationVersion,chartClient:client});
+    accountSession:access,libraryStorage:storage,chartClient:client});
   await h.restoration;await waitForOwnLink(()=>reads===1);
   return {h,n,store:restoredStore,own,temporary,client,storage,access,viewStore,
     get writes(){return writes;},get reads(){return reads;},get ownReads(){return ownReads;},
@@ -2195,7 +2195,7 @@ test('temporary save replay retains its binding through a failed own read and an
   c.setOwnFailure(false);
   const store=createChartStore({initialTemporaryChart:saved.temporaryChart});store.projectLibrary([],false);
   const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart').navigation,savedView:saved,
-    accountSession:c.access,libraryStorage:c.storage,chartClient:c.client,calculationVersion:c.own.calculationVersion});
+    accountSession:c.access,libraryStorage:c.storage,chartClient:c.client,});
   await h.restoration;await waitForOwnLink(()=>store.temporaryChart===null);
   assert.equal(h.shown.id,c.own.id);await h.saveShown();assert.equal(c.writes,1);assert.equal(c.reads,2);
 });
@@ -2211,7 +2211,7 @@ test('legacy pending snapshots recover every operation without assuming a tempor
   const pointers=records.map((_,i)=>({operationId:String(i+1).repeat(32),expectedAccountId:'1'}));
   const h=harness({realViewSession:true,savedView:{pendingChartWrites:pointers},accountSession:{accountId:'1',sessionId:'legacy'},chartClient:{
     async outcome(input){reads++;const record=records[pointers.findIndex(p=>p.operationId===input.operationId)]!;return {...input,outcome:{kind:'created',chartId:record.id,revision:record.revision}};},
-    async own(input){return records.find(r=>r.id===input.chartId)!;},async list(){return {charts:[],nextCursor:null,calculationVersion:records[0]!.calculationVersion};}
+    async own(input){return records.find(r=>r.id===input.chartId)!;},async list(){return {charts:[],nextCursor:null,};}
   }});
   await h.restoration;await waitForOwnLink(()=>reads===2);await waitForOwnLink(()=>h.cards.length===2);
   assert.deepEqual(h.pendingWrites,[]);assert.equal(h.shown.id,'current-transit');
@@ -2232,11 +2232,11 @@ for(const preceding of ['created','unknown'] as const)test(`a preceding ${preced
   const first={operationId:'a'.repeat(32),expectedAccountId:'1'},second={operationId:'b'.repeat(32),expectedAccountId:'1'};
   const store=createChartStore({initialTemporaryChart:temporary});store.projectLibrary([],false);
   const reads:string[]=[];
-  const h=harness({actualStore:store,realViewSession:true,accountSession:{accountId:'1',sessionId:'queued'},calculationVersion:own.calculationVersion,
+  const h=harness({actualStore:store,realViewSession:true,accountSession:{accountId:'1',sessionId:'queued'},
     savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart,temporaryChartSave:{...second,sourceId:temporary.id},pendingChartWrites:[first,second]},chartClient:{
       async outcome(input){reads.push(input.operationId);return {...input,outcome:input.operationId===first.operationId && preceding==='unknown'
         ?{kind:'unknown'}:{kind:'created',chartId:input.operationId===first.operationId?other.id:own.id,revision:1}};},
-      async own(input){return input.chartId===other.id?other:own;},async list(){return {charts:[],nextCursor:null,calculationVersion:own.calculationVersion};}
+      async own(input){return input.chartId===other.id?other:own;},async list(){return {charts:[],nextCursor:null,};}
     }});
   await h.restoration;await waitForOwnLink(()=>store.temporaryChart===null);
   assert.deepEqual(reads,[first.operationId,second.operationId]);assert.equal(h.shown.id,own.id);
@@ -2249,7 +2249,7 @@ async function publicReload() {
   const {accountId,note,noteRevision,publicRevision,...publicFields}=foreign;
   const store=createChartStore({initialTemporaryChart:temporary});store.projectLibrary([],false);
   const n=addressHarness('/chart/'+foreign.id);
-  const first=harness({actualStore:store,realViewSession:true,navigation:n.navigation,calculationVersion:foreign.calculationVersion,
+  const first=harness({actualStore:store,realViewSession:true,navigation:n.navigation,
     savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart},chartClient:{async public(){return publicFields;}}});
   await first.restoration;first.flushView();assert.equal(first.shown.id,foreign.id);
   const records=new Map<string,string>(),view=createViewStore({getStorage:()=>({getItem:key=>records.get(key)??null,setItem:(key,value)=>{records.set(key,value);},removeItem:key=>{records.delete(key);}})});
@@ -2260,9 +2260,9 @@ async function publicReload() {
 test('the last public chart restores offline independently of the own temporary card',async()=>{
   const c=await publicReload(),saved=c.view.read()!;
   const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,
-    calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+    });store.projectLibrary([],false);
   const n=addressHarness('/chart/'+c.foreign.id);
-  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,calculationVersion:c.foreign.calculationVersion,
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
     chartClient:{async public(){throw Object.assign(new Error('no connection'),{code:'offline'});}}});
   await h.restoration;
   assert.equal(h.shown.id,c.foreign.id);assert.equal(h.loading.failed,undefined);
@@ -2274,9 +2274,9 @@ test('the last public chart restores offline independently of the own temporary 
 test('a confirmed public 404 clears only that public source and restores transit',async()=>{
   const c=await publicReload(),saved=c.view.read()!;
   const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,
-    calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+    });store.projectLibrary([],false);
   const n=addressHarness('/chart/'+c.foreign.id);
-  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,calculationVersion:c.foreign.calculationVersion,
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
     chartClient:{async public(){throw Object.assign(new Error('deleted'),{code:'not_found',status:404});}}});
   await h.restoration;await tick();h.flushView();
   assert.equal(store.publicChart,null);assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,'/');
@@ -2306,30 +2306,30 @@ test('a cold 404 fallback cannot publish late route effects after stop or a newe
 test('an offline public URL never restores a different cached public ID',async()=>{
   const c=await publicReload(),saved=c.view.read()!,other=accountNatalChart(105,'2');
   const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,
-    calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+    });store.projectLibrary([],false);
   const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart/'+other.id).navigation,savedView:saved,
-    calculationVersion:c.foreign.calculationVersion,chartClient:{async public(){throw Object.assign(new Error('offline'),{code:'offline'});}}});
+    chartClient:{async public(){throw Object.assign(new Error('offline'),{code:'offline'});}}});
   await h.restoration;assert.notEqual(h.shown.id,c.foreign.id);assert.equal(h.loading.failed,true);
   assert.equal(store.publicChart?.id,c.foreign.id);assert.equal(store.temporaryChart?.id,c.temporary.id);
 });
 
 
-test('an incompatible public calculation is retained as data but cannot restore offline',async()=>{
+test('a ready public calculation restores offline without a calculation marker',async()=>{
   const c=await publicReload(),saved=c.view.read()!;
-  const store=createChartStore({initialPublicChart:saved.publicChart,calculationVersion:'new-calculation'});store.projectLibrary([],false);
+  const store=createChartStore({initialPublicChart:saved.publicChart});store.projectLibrary([],false);
   const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart/'+c.foreign.id).navigation,savedView:saved,
-    calculationVersion:'new-calculation',chartClient:{async public(){throw Object.assign(new Error('offline'),{code:'offline'});}}});
-  await h.restoration;assert.equal(store.has(c.foreign.id),false);assert.notEqual(h.shown.id,c.foreign.id);
-  assert.equal(h.loading.failed,true);assert.equal(await h.prepareOfflineUpdate(),false);assert.equal(store.publicChart?.id,c.foreign.id);
+    chartClient:{async public(){throw Object.assign(new Error('offline'),{code:'offline'});}}});
+  await h.restoration;assert.equal(store.has(c.foreign.id),true);assert.equal(h.shown.id,c.foreign.id);
+  assert.equal(Boolean(h.loading.failed),false);assert.equal(await h.prepareOfflineUpdate(),true);assert.equal(store.publicChart?.id,c.foreign.id);
 });
 
 test('a late public response cannot replace the newer public snapshot or its route',async()=>{
   const c=await publicReload(),saved=c.view.read()!,next=accountNatalChart(106,'2'),old=accountNatalChart(107,'2');
   const publicPart=(record:typeof next)=>{const {accountId,note,noteRevision,publicRevision,...result}=record;return result;};
   let release!:(value:PublicAccountChart)=>void;
-  const store=createChartStore({initialPublicChart:saved.publicChart,calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+  const store=createChartStore({initialPublicChart:saved.publicChart,});store.projectLibrary([],false);
   const n=addressHarness('/account');
-  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,calculationVersion:c.foreign.calculationVersion,
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
     chartClient:{public(id){return id===old.id?new Promise(resolve=>{release=resolve;}):Promise.resolve(publicPart(next));}}});
   await h.restoration;n.backTo('/chart/'+old.id);await tick();n.backTo('/chart/'+next.id);await tick();await tick();
   release(publicPart(old));await tick();h.flushView();
@@ -2341,9 +2341,9 @@ test('deleting an owned card also removes the same ID from the tab public snapsh
   const record=accountNatalChart(108),{accountId,note,noteRevision,publicRevision,...publicFields}=record;
   const storage=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>storage.close());
   const active=await storage.activate(record.accountId);assert.equal(active.status,'stored');await storage.put(active.lease,[record]);
-  const store=createChartStore({initialPublicChart:publicFields,calculationVersion:record.calculationVersion});store.projectLibrary([],false);
+  const store=createChartStore({initialPublicChart:publicFields,});store.projectLibrary([],false);
   const h=harness({actualStore:store,realViewSession:true,libraryStorage:storage,accountSession:{accountId:record.accountId,sessionId:'owner'},
-    navigation:addressHarness('/chart/'+record.id).navigation,savedView:{selectedId:record.id,publicChart:publicFields},calculationVersion:record.calculationVersion,
+    navigation:addressHarness('/chart/'+record.id).navigation,savedView:{selectedId:record.id,publicChart:publicFields},
     chartClient:deletionClient(record,{async remove(input){return {...input,outcome:{kind:'deleted',chartId:input.chartId}};}})});
   await h.restoration;await h.removeChart(record.id);await waitForOwnLink(()=>h.cards.length===0);await tick();h.flushView();
   assert.equal(store.publicChart,null);assert.equal(h.savedSnapshot?.publicChart,null);assert.equal(h.shown.id,'current-transit');
@@ -2354,9 +2354,9 @@ for(const outcome of ['updated','not_found','connection_failed'] as const)test(`
   const c=await publicReload(),saved=c.view.read()!;
   let mode:'online'|'offline'='offline',reads=0;const listeners=new Set<(mode:'online'|'offline')=>void>();
   configureTransportSimulation({get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}});t.after(()=>configureTransportSimulation(null));
-  const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+  const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,});store.projectLibrary([],false);
   const n=addressHarness('/chart/'+c.foreign.id);
-  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,calculationVersion:c.foreign.calculationVersion,
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
     chartClient:{async public(){reads++;if(outcome!=='updated')throw Object.assign(new Error(outcome),{code:outcome});return {...c.publicFields,name:'Current original',revision:c.foreign.revision+1};}}});
   await h.restoration;assert.equal(reads,0);h.camera.restoreView({x:-70,y:-90,k:2});const position=h.camera.getSavedView();
   mode='online';for(const listener of listeners)listener(mode);await waitForOwnLink(()=>reads===1);await tick();h.flushView();
@@ -2375,10 +2375,10 @@ test('two real tab owners restore private and public cards before the worker ret
   const noNetwork=async()=>{throw Object.assign(new Error('offline'),{code:'offline'});};
   const makeApp=(kind:'private'|'public',saved:Partial<SavedView>,accountReady=Promise.resolve())=>{
     const store=createChartStore({initialTemporaryChart:saved.temporaryChart,initialPublicChart:saved.publicChart,
-      calculationVersion:privateChart.calculationVersion});store.projectLibrary([],false);
+      });store.projectLibrary([],false);
     return harness({actualStore:store,realViewSession:true,savedView:saved,accountReady,
       navigation:addressHarness('/chart/'+(kind==='private'?privateChart.id:c.foreign.id)).navigation,
-      calculationVersion:privateChart.calculationVersion,
+
       ...(kind==='private'?{libraryStorage:privateStorage,accountSession:{accountId:privateChart.accountId,sessionId:'offline-integration'}}:{}),
       chartClient:kind==='private'?deletionClient(privateChart):{public:noNetwork}});
   };
@@ -2459,10 +2459,10 @@ for(const boundary of ['navigation','login'] as const)test(`a delayed public rec
   const c=await publicReload(),saved=c.view.read()!;
   let mode:'online'|'offline'='offline',release!:(value:PublicAccountChart)=>void,reads=0;const listeners=new Set<(mode:'online'|'offline')=>void>();
   configureTransportSimulation({get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}});t.after(()=>configureTransportSimulation(null));
-  const store=createChartStore({initialPublicChart:saved.publicChart,calculationVersion:c.foreign.calculationVersion});store.projectLibrary([],false);
+  const store=createChartStore({initialPublicChart:saved.publicChart,});store.projectLibrary([],false);
   const n=addressHarness('/chart/'+c.foreign.id);
-  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,calculationVersion:c.foreign.calculationVersion,
-    chartClient:{public(){reads++;return new Promise(resolve=>{release=resolve;});},async list(){return {charts:[],nextCursor:null,calculationVersion:c.foreign.calculationVersion};}}});
+  const h=harness({actualStore:store,realViewSession:true,navigation:n.navigation,savedView:saved,
+    chartClient:{public(){reads++;return new Promise(resolve=>{release=resolve;});},async list(){return {charts:[],nextCursor:null,};}}});
   await h.restoration;mode='online';for(const listener of listeners)listener(mode);await waitForOwnLink(()=>reads===1);
   if(boundary==='navigation')n.backTo('/account');else h.changeAccount({accountId:'3',sessionId:'new-login'});
   await tick();release({...c.publicFields,name:'Late original',revision:c.foreign.revision+1});await tick();h.flushView();
@@ -2530,7 +2530,7 @@ test('copying the selected public original uses its decimal ID without a save or
   const n = addressHarness('/chart/' + original.id);
   const store = createChartStore({});
   store.projectLibrary([], false);
-  const h = harness({actualStore: store, realViewSession: true, navigation: n.navigation, calculationVersion: original.calculationVersion,
+  const h = harness({actualStore: store, realViewSession: true, navigation: n.navigation,
     chartClient: {async public() {return publicFields;}}});
   await h.restoration;
   assert.equal(h.element('copyChartLink').hidden, false);
@@ -2553,11 +2553,11 @@ test('a temporary card has no copy action until an explicit save adopts its perm
   store.projectLibrary([], false);
   let writes = 0;
   const n = addressHarness('/chart');
-  const h = harness({navigation: n.navigation, actualStore: store, realViewSession: true, calculationVersion: saved.calculationVersion,
+  const h = harness({navigation: n.navigation, actualStore: store, realViewSession: true,
     savedView: {selectedId: temporary.id, temporaryChart: store.temporaryChart},
     accountSession: {accountId: '1', sessionId: 'copy-link-test'}, chartClient: {
       async create(input) {writes++; return {...input, outcome: {kind: 'created', chartId: saved.id, revision: 1}};},
-      async own() {return saved;}, async list() {return {charts: [], nextCursor: null, calculationVersion: saved.calculationVersion};},
+      async own() {return saved;}, async list() {return {charts: [], nextCursor: null, };},
     }});
   await h.restoration;
   assert.equal(h.element('copyChartLink').hidden, true);
@@ -2580,8 +2580,8 @@ test('the sidebar and Kartoteka display the same alphabetical saved rows', async
   const active = await storage.activate('1'); assert.equal(active.status, 'stored'); await storage.put(active.lease, records);
   const store = createChartStore({}); store.projectLibrary([], false);
   const h = harness({actualStore: store, libraryStorage: storage, realViewSession: true,
-    accountSession: {accountId: '1', sessionId: 'alphabetical'}, calculationVersion: records[0].calculationVersion,
-    chartClient: {async list() {return {charts: records, nextCursor: null, calculationVersion: records[0].calculationVersion};}}});
+    accountSession: {accountId: '1', sessionId: 'alphabetical'},
+    chartClient: {async list() {return {charts: records, nextCursor: null, };}}});
   await h.restoration; await waitForOwnLink(() => h.cards.length === 3);
   await h.element('openLibrary').click(); await h.element('openAllCharts').click();
   const ids = (id: string) => h.element(id).children.map(row => row.innerHTML.match(/data-chart-id="([^"]+)"/)?.[1]);
@@ -2605,9 +2605,9 @@ test('unchanged peer library notifications do not redraw the selected chart', as
  await storage.put(acquired.lease,[own]);
  const store=createChartStore({});store.projectLibrary([],false);
  const h=harness({actualStore:store,libraryStorage:storage,realViewSession:true,
-  accountSession:{accountId:own.accountId,sessionId:'fixture'},calculationVersion:own.calculationVersion,
+  accountSession:{accountId:own.accountId,sessionId:'fixture'},
   savedView:{selectedId:own.id},chartClient:{async own(){return own;},
-   async list(){return{charts:[{...own,calculationCurrent:true}],nextCursor:null,calculationVersion:own.calculationVersion};}}});
+   async list(){return{charts:[{...own}],nextCursor:null,};}}});
  try {
   await h.restoration;for(let i=0;i<30;i++)await tick();
   const renders=h.renders,captions=h.captionUpdates;
@@ -2630,8 +2630,8 @@ test('unchanged peer library notifications do not redraw the selected chart', as
 test('unchanged account form notification does not abort a public refresh', async () => {
  const {accountId,note,noteRevision,publicRevision,...foreign}=accountNatalChart(97,'7');
  let reads=0,refreshSignal:AbortSignal|undefined,finish!:(value:PublicAccountChart)=>void;
- const store=createChartStore({initialPublicChart:foreign,calculationVersion:foreign.calculationVersion});store.projectLibrary([],false);
- const h=harness({actualStore:store,realViewSession:true,calculationVersion:foreign.calculationVersion,
+ const store=createChartStore({initialPublicChart:foreign,});store.projectLibrary([],false);
+ const h=harness({actualStore:store,realViewSession:true,
   navigation:addressHarness('/chart/'+foreign.id).navigation,savedView:{selectedId:foreign.id,publicChart:foreign},
   chartClient:{async public(_id,signal){reads++;if(reads===1)return foreign;refreshSignal=signal;return new Promise(resolve=>{finish=resolve;});}}});
  await h.restoration;for(let i=0;i<10;i++)await tick();await h.element('openAccount').click();
@@ -2678,7 +2678,7 @@ test('failed personal cleanup survives a later account boundary and reconnect wi
  configureTransportSimulation({get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}});
  t.after(()=>configureTransportSimulation(null));
  let resets=0,retries=0,pending=false,available=false;const record=accountNatalChart();
- const h=harness({chartClient:{async list(){return {charts:[],nextCursor:null,calculationVersion:record.calculationVersion};}},
+ const h=harness({chartClient:{async list(){return {charts:[],nextCursor:null,};}},
   accountSession:{accountId:'1',sessionId:'one'},personalCleanup:{
    async resetPersonal(){resets++;pending=true;return {status:'unavailable',generation:1};},
    async retryPersonalCleanup(){if(!pending)return null;retries++;if(!available)return {status:'unavailable',generation:1};pending=false;return {status:'cleared',generation:1};},
