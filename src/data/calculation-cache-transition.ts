@@ -15,6 +15,14 @@ function record(value:unknown):RecordValue {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : invalid();
 }
 
+function migrateReturnChart(source:RecordValue) {
+  const chart = record(source.chart), migrated = migrateCalculationMetadata(chart);
+  // An issued proof authenticates this historical label as well as the numbers.
+  // Keep its signed snapshot intact; the label never controls cache eligibility.
+  return typeof source.proof === 'string' && Object.hasOwn(chart, 'engine')
+    ? {...migrated, engine:chart.engine} : migrated;
+}
+
 function migratePayload(kind:Kind, value:unknown, key:string):unknown {
   if (kind === 'natal') {
     if (!(value instanceof ArrayBuffer)) return invalid();
@@ -23,7 +31,7 @@ function migratePayload(kind:Kind, value:unknown, key:string):unknown {
   const source = record(value), migrated = {...migrateCalculationMetadata(source)};
   if (Object.hasOwn(migrated, 'key')) migrated.key = key;
   if (kind === 'transit') migrated.meta = migrateCalculationMetadata(record(source.meta));
-  if (kind === 'return-charts') migrated.chart = migrateCalculationMetadata(record(source.chart));
+  if (kind === 'return-charts') migrated.chart = migrateReturnChart(source);
   return migrated;
 }
 
@@ -55,7 +63,8 @@ function resultWithoutProof(kind:Kind, value:unknown) {
   // Two signed receipts can certify the same result. Keep the selected receipt
   // intact; authentication remains the server's responsibility when it is used.
   const {proof, ...result} = record(value);
-  return result;
+  return kind === 'return-charts'
+    ? {...result, chart:migrateCalculationMetadata(record(result.chart))} : result;
 }
 
 async function resolveCollision(tx:IDBTransaction, meta:Catalogue, value:unknown) {

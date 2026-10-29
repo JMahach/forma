@@ -4,12 +4,14 @@ import { migrateCalculationMetadata, migrateDayPacket, migrateCalculationKey, mi
 import { encodeNatalDay, encodeTransitDay } from '../server/packets/encode.ts';
 import { decodeNatalDay, decodeTransitDay } from '../shared/day-packets/decode.ts';
 import { natalDayFixture } from './fixtures/natal-day.ts';
-import { accountChart } from './helpers/account-chart.ts';
+import { accountChart, accountNatalChart } from './helpers/account-chart.ts';
+import { createReturnReceipts } from '../server/services/return-receipt.ts';
 import { openDatabase, type Database } from '../server/storage/database.ts';
 import { createChartRecordStorage } from '../server/storage/chart-records.ts';
 import { migrateStoredCalculations } from '../server/storage/calculation-transition.ts';
 import { LIFETIME_FILE_VERSION, LIFETIME_FILE_FORMAT, LIFETIME_FIELDS } from '../shared/lifetime-format.ts';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { normalizeMainReturn } from '../shared/chart-return-contract.ts';
 import { mkdtemp, writeFile, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -388,7 +390,7 @@ async function storedCache() {
   assert.equal(await cache.put('natal', natal, packet.slice().buffer, {version:revision}), true);
   assert.equal(await cache.put('return-events', events, {key:events, birthUtc:'2000-01-01T12:00:00.123456Z',
     body:'saturn', range:{fromAge:0, toAge:100}, events:[{utc:'2029-01-01T01:23:45.654321Z', cycle:1, pass:1, direction:'direct'}]}), true);
-  assert.equal(await cache.put('return-charts', chart, {chart:accountChart(), event:{utc:'2029-01-01T01:23:45.654321Z'}}), true);
+  assert.equal(await cache.put('return-charts', chart, {chart:{...accountChart(), engine:'Swiss Ephemeris 2.10.03'}, event:{utc:'2029-01-01T01:23:45.654321Z'}}), true);
   assert.equal((await cache.setTransitWindow({version:revision, dates:['2026-09-24'], expiresAt:10000}))?.status, 'applied');
   assert.equal(await cache.put('transit', transit, {key:transit, day:new Float64Array([1, -0, Number.MIN_VALUE]),
     meta:{engine:'Swiss Ephemeris 2.10.03', ephemeris:'Swiss Ephemeris'}}, {version:revision, date:'2026-09-24'}), true);
@@ -410,6 +412,35 @@ async function storedCache() {
   const before = (await cacheRows(old))!; old.close();
   return {indexedDB, before, natal, transit, events, chart};
 }
+
+test('cache transition preserves the authenticated return snapshot so old ready numbers remain reusable', async () => {
+  const {indexedDB, chart} = await storedCache(), old = cacheDatabase(indexedDB, 2);
+  const [, , birthUtc, body, eventUtc, timezone] = JSON.parse(chart);
+  const input = {birthUtc, body, eventUtc, timezone};
+  const result = {chart:{...accountNatalChart(), utc:eventUtc, timezone, engine:'Swiss Ephemeris 2.10.03'}};
+  const receipts = createReturnReceipts({key:new Uint8Array(32).fill(17)});
+  const prepared = normalizeMainReturn('chart', input, result)!;
+  const signature = createHmac('sha256', new Uint8Array(32).fill(17)).update('forma:return-receipt:v1\0')
+    .update(JSON.stringify([revision, 'chart', prepared.input, prepared.result])).digest('base64url');
+  const proof = `v1.${revision}.${signature}`;
+  assert.ok(proof);
+  const trusted = receipts.read('chart', input, result, proof);
+  await old.transaction('readwrite', (tx, done) => {
+    tx.objectStore('payloads').put({id:cacheId('return-charts', chart), value:{...result, proof}}); done(true);
+    const normalizedKey = migrateCalculationKey('return-charts', chart), id = cacheId('return-charts', normalizedKey);
+    const canonical = {...result, chart:{...result.chart, engine:'Swiss Ephemeris'}};
+    tx.objectStore('payloads').put({id, value:{...canonical, proof:receipts.issue('chart', input, canonical)}});
+    tx.objectStore('catalogue').put({id, kind:'return-charts', key:normalizedKey, bytes:1000, lru:0,
+      family:'returns', location:'data', personalEpoch:0});
+  }); old.close();
+  const current = cacheDatabase(indexedDB, 3);
+  try {
+    const migrated = (await cacheRows(current))!.payloads.find(row => row.id === cacheId('return-charts', migrateCalculationKey('return-charts', chart)))!.value;
+    assert.equal(migrated.proof, proof);
+    assert.deepEqual(receipts.read('chart', input, migrated, migrated.proof), trusted);
+    assert.equal(Object.hasOwn(migrated.chart, 'calculationVersion'), false);
+  } finally {current.close();}
+});
 
 test('cache schema upgrade keeps ready numbers and unfinished source cursors, rekeys atomically and accounts the new bytes', async () => {
   const {indexedDB, before, natal, transit, events, chart} = await storedCache();

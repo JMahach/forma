@@ -21,7 +21,7 @@ export type PreparedReturn<T extends CycleResult=CycleResult>=T & {proof?:string
 export const MAX_RETURN_PROOF_LENGTH=112;
 export interface PreparedReturnSubmission {action:ReturnAction;input:CycleInput;result:unknown;proof:unknown}
 export interface ReturnReceiptReader {
-  read(action:ReturnAction,input:CycleInput,result:unknown,proof:unknown):CycleResult|null;
+  read(action:ReturnAction,input:CycleInput,result:unknown,proof:unknown):CycleResult;
 }
 
 /** A stable, checked projection. Neither personal fields nor UI event labels cross this boundary. */

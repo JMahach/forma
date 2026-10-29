@@ -47,7 +47,6 @@ export function createChartReturns({records,cycles,calculationVersion,cyclesVers
       let trusted;
       try { trusted=receipts.read(packet.action,packet.input,packet.result,packet.proof); }
       catch(error) { if(error instanceof TypeError)throw new ChartRecordError('invalid_chart');throw error; }
-      if(!trusted)throw new ChartRecordError('source_changed');
       const prepared=normalizeMainReturn(packet.action,packet.input,trusted);
       if(!prepared)throw new ChartRecordError('invalid_chart');
       // The trusted engine has already verified the real root. Rounded input aliases

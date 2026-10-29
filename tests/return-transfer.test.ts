@@ -10,7 +10,7 @@ const input={birthUtc:'2000-01-01T12:00:00Z',body:'saturn',timezone:'UTC',...ran
 const event={body:'saturn',utc:'2029-01-01T12:00:00Z',id:'saturn:2029-01-01T12:00:00Z',age:10593/365.2425,cycle:1,pass:1,cycleId:'saturn:1',direction:'direct' as const};
 const exact={...input,eventUtc:event.utc};
 const raw={chart:{...accountNatalChart(),source:'calculated' as const,utc:event.utc,timezone:'UTC',designUtc:'2028-10-10T01:00:00Z',designArcResidualDegrees:1e-9}};
-const receipts=createReturnReceipts({key:new Uint8Array(32).fill(17),cyclesVersion:version});
+const receipts=createReturnReceipts({key:new Uint8Array(32).fill(17)});
 const full={...raw,proof:receipts.issue('chart',exact,raw)!};
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 

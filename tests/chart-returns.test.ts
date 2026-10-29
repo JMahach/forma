@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
+import {normalizeMainReturn} from '../shared/chart-return-contract.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -201,20 +203,25 @@ test('a numerical version change cleans returns of every card, including cards n
 });
 
 function signedFixture(t:test.TestContext) {
-  const f=fixture(t),receipts=createReturnReceipts({key:new Uint8Array(32).fill(17),cyclesVersion:version});
+  const f=fixture(t),receipts=createReturnReceipts({key:new Uint8Array(32).fill(17)});
   const service=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:version,receipts});
   const result=calculation(f.input),proof=receipts.issue('chart',f.input,result)!;
   const packet={action:'chart' as const,input:f.input,result,proof};
   return {...f,service,receipts,packet,accept:()=>service.accept(f.records,f.chart.id,f.accountId,packet,f.options)};
 }
 
-test('a confirmed ready return is attached without a dates search and is subsequently readable without any generator',async t=>{
+test('a historically signed ready return is attached without a dates search and remains readable without any generator',async t=>{
   const f=signedFixture(t);
+  const prepared=normalizeMainReturn('chart',f.input,f.packet.result)!;
+  const signature=createHmac('sha256',new Uint8Array(32).fill(17)).update('forma:return-receipt:v1\0')
+    .update(JSON.stringify([nextVersion,'chart',prepared.input,prepared.result])).digest('base64url');
+  f.packet.proof=`v1.${nextVersion}.${signature}`;
   f.cycles.events=async()=>{throw Error('no dates calculation allowed');};
   f.cycles.chart=async()=>{throw Error('no chart calculation allowed');};
   assert.deepEqual(await f.accept(),{accepted:true});
   assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,1);
-  assert.equal((await f.service.chart(f.records,f.chart.id,f.accountId,f.input,f.options)).chart.utc,eventUtc);
+  assert.deepEqual(await f.service.chart(f.records,f.chart.id,f.accountId,f.input,f.options),prepared.result);
+  assert.deepEqual(f.calls(),{events:0,charts:0});
 });
 
 test('the same signed numbers attach independently to two owner cards without exposing notes or growing duplicate rows',async t=>{
@@ -225,12 +232,12 @@ test('the same signed numbers attach independently to two owner cards without ex
   assert.deepEqual(f.calls(),{events:0,charts:0});
 });
 
-test('altered and old proofs, missing verifier, foreign owners and changed birth cannot populate a card',async t=>{
+test('altered and foreign proofs, missing verifier, foreign owners and changed birth cannot populate a card',async t=>{
   const f=signedFixture(t),accept=(patch:Partial<typeof f.packet>)=>f.service.accept(f.records,f.chart.id,f.accountId,{...f.packet,...patch},f.options);
   const bad=structuredClone(f.packet.result);bad.chart.activations.personality[0]!.longitude+=1;
   await assert.rejects(accept({result:bad}),{code:'invalid_chart'});
-  const old=createReturnReceipts({key:new Uint8Array(32).fill(17),cyclesVersion:nextVersion});
-  await assert.rejects(accept({proof:old.issue('chart',f.input,f.packet.result)!}),{code:'source_changed'});
+  const foreign=createReturnReceipts({key:new Uint8Array(32).fill(18)});
+  await assert.rejects(accept({proof:foreign.issue('chart',f.input,f.packet.result)!}),{code:'invalid_chart'});
   const noVerifier=createChartReturns({records:f.records,cycles:f.cycles,calculationVersion:'current',cyclesVersion:version});
   await assert.rejects(noVerifier.accept(f.records,f.chart.id,f.accountId,f.packet,f.options),{code:'invalid_chart'});
   f.auth(f.otherId);await assert.rejects(f.accept(),{code:'account_changed'});f.auth(f.accountId);

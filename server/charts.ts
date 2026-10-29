@@ -28,7 +28,7 @@ export function createChartRuntime({report,database,accounts,cities,calculate,ca
   const records=createChartRecords({database,authorize:()=>null,now});
   const receipts=key?createCalculationReceipts({key}):undefined;
   const prepareBirth=createChartCalculation({cities,calculate,calculationVersion,onInvalidResult,receipts});
-  const returnReceipts=key && cycles?.cacheVersion ? createReturnReceipts({key,cyclesVersion:cycles.cacheVersion}) : undefined;
+  const returnReceipts=key ? createReturnReceipts({key}) : undefined;
   const returns = cycles?.cacheVersion ? createChartReturns({records,cycles,calculationVersion,cyclesVersion:cycles.cacheVersion,receipts:returnReceipts}) : undefined;
   const handler=createChartHandler({report,records,accounts,prepareBirth,calculationVersion,returns,cyclesVersion:cycles?.cacheVersion ?? undefined,issueReturnReceipt:returnReceipts?.issue,origins,now});
   return {handler,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue};
