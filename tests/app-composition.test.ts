@@ -1736,6 +1736,23 @@ test('a superseded chart address remains silent when its rejected request arrive
 });
 
 
+test('a committed reply after leaving the chart enters the library without late navigation',async()=>{
+  const {accountId,revision,noteRevision,publicRevision,...prepared}=accountNatalChart(40);
+  const temporary={...prepared,id:'temporary-row',createdAt:'',updatedAt:''},own=accountNatalChart(41);
+  const store=createChartStore({initialTemporaryChart:temporary});store.projectLibrary([],false);
+  let finish!:()=>void,writes=0;
+  const h=harness({actualStore:store,realViewSession:true,navigation:addressHarness('/chart').navigation,
+    accountSession:{accountId:'1',sessionId:'late-write'},savedView:{selectedId:temporary.id,temporaryChart:store.temporaryChart},chartClient:{
+      async list(){return {charts:[],nextCursor:null};},async own(){return own;},
+      async create(input){writes++;return new Promise(resolve=>{finish=()=>resolve({...input,outcome:{kind:'created',chartId:own.id,revision:1},chart:own});});},
+    }});
+  await h.restoration;const saving=h.saveShown();await tick();assert.equal(writes,1);
+  await h.element('openKnowledge').click();finish();await saving;await tick();
+  assert.ok(store.get(own.id),'a valid committed reply still reaches the current account library');
+  assert.equal(h.workspace.screen,'knowledge');assert.equal(h.shown.id,temporary.id);
+  assert.equal(writes,1);
+});
+
 for (const signedIn of [false,true]) test(`an explicitly saved temporary card first enters the visible list ${signedIn?'while signed in':'after login'}`,async()=>{
   const {accountId:_account,revision:_revision,noteRevision:_note,publicRevision:_public,...prepared}=accountNatalChart(40);
   const temporary={...prepared,id:'temporary-row',calculationReceipt:'signed-calculation',createdAt:'',updatedAt:''};

@@ -64,10 +64,12 @@ export function createChartActions({client, library, getSession, calculate, save
   function access() { const current = getSession(); if (!current) throw failed('auth_required'); return {...current}; }
   const prepareAcceptance=()=>library.prepareAcceptance?.()??((id:string)=>library.open(id));
   async function settle(reply: ChartReply<ChartWriteOutcome>, seen: LibrarySession, live:()=>boolean,
-    accept:ReturnType<typeof prepareAcceptance>): Promise<ChartActionResult> {
+    accept:ReturnType<typeof prepareAcceptance>,acceptCurrent:()=>boolean): Promise<ChartActionResult> {
     const receipt={operationId:reply.operationId,expectedAccountId:reply.expectedAccountId,outcome:reply.outcome};
     forget(receipt);
-    if (!same(seen) || !live()) return {kind: 'settled', receipt, chart: null, active: false};
+    // Leaving a screen revokes navigation, not an already committed record.
+    // Account/owner retirement independently revokes library acceptance.
+    if (!same(seen) || !acceptCurrent()) return {kind: 'settled', receipt, chart: null, active: false};
     let chart: AccountChart | null = null, readError: unknown;
     try {
       if (receipt.outcome.kind === 'deleted' || receipt.outcome.kind === 'absent') await library.forget(receipt.outcome.chartId);
@@ -107,7 +109,7 @@ export function createChartActions({client, library, getSession, calculate, save
       }
       return {kind: 'unknown', intent, ...(same(seen) && live() ? {error} : {})};
     }
-    return settle(receipt, seen,live,accept);
+    return settle(receipt, seen,live,accept,()=>ownedGeneration===generation);
   }
   async function recover(intent: ChartWriteIntent, signal?: AbortSignal,isCurrent:()=>boolean=()=>true): Promise<ChartActionResult> {
     signal?.throwIfAborted();
@@ -121,7 +123,7 @@ export function createChartActions({client, library, getSession, calculate, save
       const receipt = await client.outcome(intent, request.controller.signal);
       if (receipt.outcome.kind === 'unknown') return {kind: 'unknown', intent: {...intent}};
       return settle({...receipt, outcome: receipt.outcome}, seen,
-        ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()),accept);
+        ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()),accept,()=>ownedGeneration===generation);
     },{signal,consumer:{live}});
     if(result.kind==='settled' && (!same(seen) || !live())) {
       const {readError: _error,...settled}=result;

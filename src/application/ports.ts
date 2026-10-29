@@ -1,4 +1,5 @@
 import type { AppRoute } from '../../shared/app-routes.ts';
+import type { WriteContinuationPorts, WriteEvent } from './write-continuation.ts';
 
 export interface AccountAccess { readonly accountId: string; readonly sessionId: string; readonly diagnosticProof?: string }
 export interface AccountBoundaryRequest {
@@ -46,12 +47,12 @@ export interface RoutePort {
   settled(): void;
   dispose(): void;
 }
-export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort }
+export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}
   | {type: 'RetryRoute'}
-  | AccountEvent;
+  | AccountEvent | Exclude<WriteEvent,{type:'Stop'|'SourcesReconciled'}>;
 export interface ApplicationView {
   lifecycle: 'created' | 'running' | 'stopping' | 'stopped';
   destination: 'idle' | 'preparing' | 'ready' | 'failed';

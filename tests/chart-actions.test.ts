@@ -273,7 +273,8 @@ for(const change of ['cancel','account','session','clear'] as const)test(`a comm
   if(change==='clear')h.actions.clear();
   finish();const result=await pending;
   assert.equal(result.kind,'settled');if(result.kind!=='settled')return;
-  assert.equal(result.active,false);assert.equal(result.chart,null);assert.equal(h.counts().opens,0);
+  assert.equal(result.active,false);assert.equal(result.chart,null);
+  assert.equal(h.counts().opens,change==='cancel'?1:0,'screen cancellation allows library acceptance, account retirement does not');
   assert.deepEqual(await action.run(),{kind:'inactive'});
 });
 

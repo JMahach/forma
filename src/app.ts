@@ -17,7 +17,7 @@ import type { Application } from './application/application.ts';
 import type { AccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 import type { BirthSubmission } from './views/birth-form.ts';
-import type { ChartActionResult, ChartSaveAction } from './state/chart-actions.ts';
+import type { ChartActionResult } from './state/chart-actions.ts';
 import type { AccountWorkspace } from './account.ts';
 import type { TransitDayClient } from './data/transit-day-client.ts';
 import type { SavedView, ViewStore } from './data/view-store.ts';
@@ -110,8 +110,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let restorationException = false;
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
-  let chartSave:{action:ChartSaveAction;source:SavedChart;work:Promise<void>|null}|null=null;
-  function cancelChartSave(){chartSave?.action.cancel();chartSave=null;updateChartSaveControl();}
+  function cancelChartSave(){application?.send({type:'CancelWrite'});}
   let lastJournalAccount=account.getSession()?.accountId??null,lastJournalSession=account.getSession()?.sessionId??null,lastJournalProof=account.getSession()?.diagnosticProof,journalBoundaryPending=false;
   const journalBoundaryIds=new Set<string>();
   journal?.setAccount(lastJournalAccount,lastJournalSession,lastJournalProof);
@@ -295,7 +294,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     updateLoading();
   }
   function navigateWorkspace(screen: WorkspaceScreen, { keepMenuOpen = false, fromRoute = false } = {}) {
-    if(chartSave && !(screen==='account' && chartSave.action.waitingForLogin))cancelChartSave();
+    if(application?.write.source && !(screen==='account' && application.write.waitingForLogin))cancelChartSave();
     if (layout.phone && !keepMenuOpen) chartLibrary?.close();
     workspace.setScreen(screen);
     if (!fromRoute) publishRoute(screen === 'chart' ? routeForChart(session.selectedId) : {kind:screen});
@@ -330,64 +329,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
-  function continueChartSave(intent:NonNullable<typeof chartSave>):Promise<void> {
-    if(intent.work)return intent.work;
-    intent.work=(async()=>{
-      try {
-        await libraryReady;
-        if(chartSave!==intent)return;
-        if(account.getSession())await application!.requestSession(account.getSession());
-        if(chartSave!==intent)return;
-        const result=await intent.action.run();
-        if(chartSave!==intent)return;
-        if(result.kind==='sign-in'){navigateWorkspace('account');return;}
-        if(result.kind==='inactive')return;
-        if(result.kind==='unknown'){toast(UI_MESSAGES.chartSaveUnconfirmed);return;}
-        if(result.kind!=='settled' || !result.active)return;
-        if(result.receipt.outcome.kind==='rejected') {
-          if(temporaryChartSave?.sourceId===intent.source.id)temporaryChartSave=null;
-          if(result.receipt.outcome.code==='source_changed') {
-            const fresh=await chartClient.public(intent.source.id);
-            if(chartSave!==intent)return;
-            store.acceptPublic(fresh);
-            selectChart(fresh.id,{replace:true});
-          } else if(result.receipt.outcome.code==='not_found')selectChart('current-transit',{replace:true});
-          else toast(UI_MESSAGES.chartSaveFailed);
-          cancelChartSave();viewSession?.flush();return;
-        }
-        if(!result.chart){toast(UI_MESSAGES.chartUnavailable);return;}
-        const id=result.chart.id,temporary=!('revision' in intent.source);
-        // Adopting the saved identity redraws the list; retire its temporary row first.
-        if(temporary){
-          temporaryChartSave=null;
-          store.clearTemporary(intent.source.id);
-          store.showPublic(null);
-        }
-        if(session.adopt(id,intent.source.id)) {
-          workspace.setScreen('chart');publishRoute({kind:'chart',id},true);
-        } else selectChart(id,{replace:true});
-        cancelChartSave();viewSession?.flush();
-      }catch(error){if(chartSave===intent)toast(failureMessage(error,UI_MESSAGES.chartSaveFailed));}
-      finally{intent.work=null;updateChartSaveControl();notifyOfflineReady();}
-    })();updateChartSaveControl();return intent.work;
-  }
   function saveShownChart():Promise<void> {
     if(getConnectionMode()==='offline'){toast(UI_MESSAGES.offline);return Promise.resolve();}
     const source=session.record;
     if(!source || accountLibrary.get(source.id))return Promise.resolve();
-    const publicSource=source as SavedChart & {revision?:number};
-    const action=chartActions.prepareSave(typeof publicSource.revision==='number'
-      ?{kind:'shared',chart:{...publicSource,revision:publicSource.revision}}
-      :{kind:'temporary',chart:source},()=>session.selectedId===source.id && session.record===source, {
-        intent: store.temporaryChart===source && temporaryChartSave?.sourceId===source.id ? temporaryChartSave : undefined,
-        onIntent: intent => {
-          if(store.temporaryChart!==source)return;
-          temporaryChartSave=intent?{...intent,sourceId:source.id}:null;
-          if(!intent)viewSession?.flush();
-        },
-      });
-    if(chartSave?.action!==action)chartSave={action,source,work:null};
-    return continueChartSave(chartSave);
+    return application!.requestSave(source);
   }
   function updateChartSaveControl() {
     const source=session.record,visible=Boolean(source && !accountLibrary.get(source.id));
@@ -398,7 +344,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const button=$<HTMLButtonElement>('saveShownChart'),wrap=$('saveShownChartWrap');
     $('saveShownChartGroup').hidden=!visible;
     const availability=actionAvailability({connection:getConnectionMode(),requiresConnection:true,
-      available:visible && (!calculationObsolete || source?.source === 'manual'),pending:Boolean(chartSave?.work && !chartSave.action.waitingForLogin)});
+      available:visible && (!calculationObsolete || source?.source === 'manual'),pending:Boolean(application?.write.busy && !application.write.waitingForLogin)});
     button.disabled=availability.disabled;button.setAttribute('aria-busy',String(availability.busy));
     const unavailable=Boolean(availability.reason);
     wrap.dataset.unavailable=String(unavailable);wrap.title=availability.reason;
@@ -431,8 +377,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       && !accountLibrary.get(priorPublic.id))store.clearPublic(priorPublic.id);
     // Account projection may replace the same ID with a private or not-yet-ready
     // record. It does not supersede the accepted source of an explicit save.
-    const preserveSaveSource = Boolean(chartSave && session.record === chartSave.source);
-    if(preserveSaveSource)store.showPublic(chartSave!.source);
+    const preserveSaveSource = Boolean(application?.write.source && session.record === application.write.source);
+    if(preserveSaveSource)store.showPublic(application!.write.source);
     const previous = session.record, editedId = birthForm.editedId;
     store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
       accountLibrary.charts.map(chart => chart.id));
@@ -587,46 +533,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         if(!snapshotReady)throw unavailable();
       },
       settled(){
-        if(account.getSession() && chartSave?.action.waitingForLogin)void continueChartSave(chartSave);
-        if(libraryInitialized){void recoverWrites();void accountLibrary.load().catch(()=>{});}
+        if(account.getSession())application!.send({type:'ResumeWrite'});
+        if(libraryInitialized){application!.send({type:'RecoverWrites'});void accountLibrary.load().catch(()=>{});}
       },
     };
-  }
-  async function recoverWrites() {
-    if (getConnectionMode() === 'offline') return;
-    const access = account.getSession(); if (!access) return;
-    const pending=[...chartActions.pending], binding=temporaryChartSave, source=store.temporaryChart;
-    // A confirmed write may still await its readable chart after the generic pointer settled.
-    if(binding && !pending.some(intent=>intent.operationId===binding.operationId && intent.expectedAccountId===binding.expectedAccountId))pending.push({operationId:binding.operationId,expectedAccountId:binding.expectedAccountId});
-    for (const intent of pending) {
-      if (intent.expectedAccountId !== access.accountId) continue;
-      try {
-        const result=await chartActions.recover(intent);
-        if(result.kind==='settled' && result.active && (result.receipt.outcome.kind==='deleted' || result.receipt.outcome.kind==='absent')) {
-          const id=result.receipt.outcome.chartId;
-          if(store.clearPublic(id)) {
-            if(session.selectedId===id && !accountLibrary.get(id)) {
-              if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
-            }
-            viewSession?.flush();
-          }
-        }
-        if(!binding || temporaryChartSave!==binding || binding.operationId!==intent.operationId
-          || binding.expectedAccountId!==intent.expectedAccountId || store.temporaryChart!==source
-          || result.kind!=='settled' || !result.active)continue;
-        if(result.receipt.outcome.kind==='rejected' || result.receipt.outcome.kind==='deleted' || result.receipt.outcome.kind==='absent') {
-          temporaryChartSave=null;viewSession?.flush();
-        } else if(result.chart && source) {
-          const selected=session.record===source;
-          if(selected && !session.adopt(result.chart.id,source.id))graph.changeChart(result.chart.id);
-          store.clearTemporary(source.id);temporaryChartSave=null;
-          if(chartSave?.source===source){store.showPublic(null);cancelChartSave();}
-          // Reconcile identity in place; a newer screen keeps its route and focus.
-          if(selected && workspace.screen==='chart')publishRoute({kind:'chart',id:result.chart.id},true);
-          updatePage();viewSession?.flush();
-        }
-      } catch { /* Keep unknown pointers; a later explicit/reconnect lookup can resolve them. */ }
-    }
   }
   const libraryReady = (async () => {
     try{await accountLibrary.restore();}catch(error){if((error as {code?:string})?.code!=='account_changed')throw error;}
@@ -949,7 +859,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   async function refreshPublicChart() {
     const previous=store.publicChart;
-    if(!previous || chartSave || !initialPage.restored || getConnectionMode()!=='online'
+    if(!previous || application?.write.source || !initialPage.restored || getConnectionMode()!=='online'
       || accountLibrary.get(previous.id) || publicRefreshRequest && !publicRefreshRequest.signal.aborted)return;
     const controller=publicRefreshRequest=new AbortController();
     const access=account.getSession(),accountKey=access?access.accountId+':'+access.sessionId:'';
@@ -976,7 +886,34 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updatePage();viewSession?.flush();
     } finally {if(publicRefreshRequest===controller)publicRefreshRequest=null;}
   }
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation, account:{
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation, write:{
+    actions:chartActions,online:()=>getConnectionMode()!=='offline',getSession:account.getSession,
+    async ready(){await libraryReady;if(account.getSession())await application!.requestSession(account.getSession());},
+    source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
+    binding:()=>temporaryChartSave,bind:value=>{temporaryChartSave=value;},
+    retire(source){store.clearTemporary(source.id);store.showPublic(null);},
+    public:chartClient.public,acceptPublic:store.acceptPublic,clearPublic:store.clearPublic,
+    view:{
+      signIn(){navigateWorkspace('account');},select(id){selectChart(id,{replace:true});},
+      adopt(chart,source,follow){
+        const selected=session.record===source;
+        if(selected && session.adopt(chart.id,source.id)) {
+          if(follow)workspace.setScreen('chart');
+          if(workspace.screen==='chart')publishRoute({kind:'chart',id:chart.id},true);
+        } else if(follow)selectChart(chart.id,{replace:true});
+        else if(selected)graph.changeChart(chart.id);
+        if(!follow)updatePage();
+      },
+      deleted(id){
+        if(session.selectedId===id && !accountLibrary.get(id)) {
+          if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
+        }
+      },
+      changed(){updateChartSaveControl();notifyOfflineReady();},checkpoint(){viewSession?.flush();},
+      report(kind,error){toast(error===undefined?kind==='unconfirmed'?UI_MESSAGES.chartSaveUnconfirmed
+        :kind==='unavailable'?UI_MESSAGES.chartUnavailable:UI_MESSAGES.chartSaveFailed:failureMessage(error,UI_MESSAGES.chartSaveFailed));},
+    },
+  }, account:{
     subscribeSession(listener){return account.subscribeSession(()=>listener(account.getSession()));},
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
     begin:beginAccountBoundary,
@@ -1044,7 +981,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if(!document.hidden)void journal?.wake();
     if (!document.hidden && libraryInitialized) {
       void accountLibrary.refreshLocal().catch(() => {});
-      void recoverWrites();
+      application!.send({type:'RecoverWrites'});
       if (getConnectionMode() === 'online') {void calculationUpdates?.refresh();void refreshPublicChart();}
     }
   });
@@ -1058,7 +995,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (returned) {void calculationUpdates?.refresh();void journal?.wake();void refreshPublicChart();}
     if (!libraryInitialized) return;
     if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
-    void recoverWrites(); void accountLibrary.load().catch(() => {});
+    application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
   });
   const restoration = (async () => {
     const initialRoute = navigation?.snapshot;
@@ -1089,7 +1026,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     viewSession!.flush();
     initialPage.restored = true; initialPresentation = null; updateTimelineTools(); updateLoading();
     restoreInitialInput();
-    void recoverWrites(); void accountLibrary.load().catch(() => {});
+    application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
   })();
   studio.dataset.panelsReady = 'true';
 
@@ -1290,7 +1227,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate() {
       const ready=()=>{
-      if(!offlineRestored() || chartSave?.work || birthForm.pending
+      if(!offlineRestored() || application?.write.busy || birthForm.pending
         || account.snapshot?.verificationPending || account.snapshot?.telegramPending)return false;
       // Do not discard a RAM-only temporary/shared chart or unfinished field.
       // Those owners join this transition only after their restore contract exists.

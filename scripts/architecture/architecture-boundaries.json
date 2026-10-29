@@ -1764,7 +1764,8 @@
         "src/application/ports.ts",
         "src/application/route.ts",
         "src/application/application-machine.ts",
-        "src/application/account-boundary.ts"
+        "src/application/account-boundary.ts",
+        "src/application/write-continuation.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
@@ -1775,10 +1776,13 @@
       ],
       "allowTypes": [
         "application",
-        "shared-contracts"
+        "shared-contracts",
+        "chart-actions",
+        "account-library"
       ],
       "privateEntryReasons": {
-        "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime."
+        "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime.",
+        "src/application/write-continuation.ts": "Own the page-local write continuation and outcome recovery as application child states."
       }
     }
   ],
@@ -1893,6 +1897,12 @@
         "from": "src/application/account-boundary.ts",
         "specifier": "xstate",
         "reason": "Account boundary actor uses the same pinned application runtime."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/write-continuation.ts",
+        "specifier": "xstate",
+        "reason": "Write continuation and read-only recovery share the pinned application runtime; record and browser operations remain explicit ports."
       }
     ]
   },

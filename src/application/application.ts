@@ -1,5 +1,7 @@
 import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xstate';
 import { createApplicationMachine } from './application-machine.ts';
+import { writeContinuationView } from './write-continuation.ts';
+import type { SavedChart } from '../../shared/chart-types.ts';
 import type { ApplicationEvent, ApplicationPorts, ApplicationView, NavigationSnapshot, AccountAccess } from './ports.ts';
 
 
@@ -36,12 +38,27 @@ export function createApplication(ports: ApplicationPorts) {
   });
   const actor = createActor(machine);
   const readView = () => applicationView(actor.getSnapshot());
+  const readWrite=()=>{
+    const write=actor.getSnapshot().children.write;
+    return write?writeContinuationView(write.getSnapshot()):{source:null,busy:false,waitingForLogin:false};
+  };
   actor.start();
   return {
     get view() { return readView(); },
+    get write() {return readWrite();},
     start() {
       if (!actor.getSnapshot().matches('created')) return;
       actor.send({type: 'Start'});
+      const write=actor.getSnapshot().children.write;
+      if(write){
+        let previous=readWrite();
+        const subscription=write.subscribe(()=>{
+          const next=readWrite();
+          if(next.source===previous.source && next.busy===previous.busy && next.waitingForLogin===previous.waitingForLogin)return;
+          previous=next;ports.write!.view.changed();
+        });
+        subscriptions.push(()=>subscription.unsubscribe());
+      }
       if(ports.navigation)subscriptions.push(ports.navigation.subscribe((snapshot, origin) => {
         if (origin !== 'publication') actor.send({type: 'RouteRequested', snapshot});
       }));
@@ -62,7 +79,12 @@ export function createApplication(ports: ApplicationPorts) {
       actor.send({type:'SessionChanged',access});
       await accountReady(actor);
     },
-    async stop() { actor.send({type: 'Stop'}); },
+    async requestSave(source:SavedChart) {
+      actor.send({type:'SaveRequested',source});
+      const write=actor.getSnapshot().children.write;
+      if(write)await waitFor(write,state=>!writeContinuationView(state).busy);
+    },
+    async stop() { actor.getSnapshot().children.write?.send({type:'Stop'});actor.send({type: 'Stop'}); },
   };
 }
 
