@@ -145,7 +145,8 @@
         "shared/client-report-contract.ts",
         "shared/app-metadata.ts",
         "shared/offline-contract.ts",
-        "shared/chart-return-contract.ts"
+        "shared/chart-return-contract.ts",
+        "shared/calculation-storage-transition.ts"
       ],
       "publicEntries": [
         "shared/account-contract.ts",
@@ -167,7 +168,8 @@
         "shared/client-report-contract.ts",
         "shared/app-metadata.ts",
         "shared/offline-contract.ts",
-        "shared/chart-return-contract.ts"
+        "shared/chart-return-contract.ts",
+        "shared/calculation-storage-transition.ts"
       ],
       "allowRuntime": [
         "shared-contracts"
@@ -342,7 +344,8 @@
         "src/data/return-storage.ts",
         "src/data/storage-pressure.ts",
         "src/data/transit-day-cache.ts",
-        "src/data/view-store.ts"
+        "src/data/view-store.ts",
+        "src/data/account-calculation-transition.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
@@ -368,7 +371,8 @@
       ],
       "privateEntryReasons": {
         "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
-        "src/data/calculation-migration.ts": "Legacy source reading, version fencing and deletion are internal to the single calculation-cache budget owner."
+        "src/data/calculation-migration.ts": "Legacy source reading, version fencing and deletion are internal to the single calculation-cache budget owner.",
+        "src/data/account-calculation-transition.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade."
       }
     },
     {
@@ -1210,7 +1214,8 @@
         "server/storage/accounts.ts",
         "server/storage/chart-records.ts",
         "server/storage/database.ts",
-        "server/storage/mail-queue.ts"
+        "server/storage/mail-queue.ts",
+        "server/storage/calculation-transition.ts"
       ],
       "publicEntries": [
         "server/storage/account-counters.ts",
@@ -1221,13 +1226,17 @@
       ],
       "allowRuntime": [
         "journal-policy",
-        "server-primary-storage"
+        "server-primary-storage",
+        "shared-contracts"
       ],
       "allowTypes": [
         "journal-policy",
         "server-primary-storage",
         "shared-contracts"
-      ]
+      ],
+      "privateEntryReasons": {
+        "server/storage/calculation-transition.ts": "One-time atomic schema transition preserving prepared values; invoked only by the coordinated storage cutover."
+      }
     },
     {
       "id": "mail-policy",
