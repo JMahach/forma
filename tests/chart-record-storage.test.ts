@@ -113,7 +113,7 @@ test('a backup without schema markers migrates outcome-only issued IDs, and fail
  const migrated=createChartRecordStorage(f.database,canonicalChartId);
  assert.equal(migrated.outcome(f.a,'a'.repeat(32))!.outcome.chartId,old.slice(0,10));
  assert.equal(migrated.identifierUsed(old.slice(0,10)),true);
- assert.equal(f.database.connection.prepare('SELECT count(*) n FROM chart_storage_migrations').get()!.n,2);
+ assert.equal(f.database.connection.prepare("SELECT count(*) n FROM chart_storage_migrations WHERE name IN ('issued_identifiers_v1','short_identifiers_v1')").get()!.n,2);
  // Old binaries ignore the additive markers. Their existing inserts still reserve every issued address.
  f.insert({...accountNatalChart(5,f.a),id:'3456789012'});
  assert.equal(createChartRecordStorage(f.database,canonicalChartId).identifierUsed('3456789012'),true);

@@ -30,5 +30,5 @@ export function createChartRuntime({report,database,accounts,cities,calculate,cy
   const returnReceipts=key ? createReturnReceipts({key}) : undefined;
   const returns = cycles ? createChartReturns({cycles,receipts:returnReceipts}) : undefined;
   const handler=createChartHandler({report,records,accounts,prepareBirth,returns,issueReturnReceipt:returnReceipts?.issue,origins,now});
-  return {handler,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue};
+  return {handler,packages:records.packages,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue};
 }

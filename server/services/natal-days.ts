@@ -4,6 +4,7 @@ import type { DayPacket } from '../packets/compression.ts';
 import type { ComputeQueue, QueueOptions } from '../runtime/compute-queue.ts';
 import type { JsonWorkerOptions } from '../runtime/json-worker.ts';
 import type { SharedJob } from '../runtime/job-consumers.ts';
+import type {NatalDaySource,PackagePlacement} from '../../shared/library-package-contract.ts';
 
 interface NatalWork extends SharedJob<DayPacket> {
   key: string;
@@ -24,6 +25,8 @@ interface GenerateNatalOptions extends QueueOptions {
   maxOutputBytes?: number;
 }
 interface NatalDayOptions {
+  packages?:{readDay(source:NatalDaySource):DayPacket|null;putDay(source:NatalDaySource,packet:DayPacket):PackagePlacement};
+  packDay?: (day:NatalDay)=>Promise<DayPacket>;
   report?: CalculationFailureReport;
   root?: string;
   computeQueue?: ComputeQueue;
@@ -85,9 +88,10 @@ export function encodeNatalDayPacket(day: NatalDay) {
   return encodePredictedDay(day, encodeNatalDayColumn, encodeNatalDay);
 }
 
-// Only bounded, short-lived RAM. No personal disk cache, persistent workers,
-// prewarming, request logging, or birth data in a public/cacheable URL.
-export function createNatalDays({ root, computeQueue, report, generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
+// RAM remains bounded. Saved sources additionally own exact prepared packets in the account database.
+export function createNatalDays({ root, computeQueue, report, packages,
+  packDay=async day=>({bytes:await compressDayPacket(await encodeNatalDayPacket(day),{quality:9})}),
+  generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
   now = Date.now, capacity = 10, ttlMs = 600_000, maxQueued = 3 }: NatalDayOptions = {}) {
   const failure = createCalculationFailureReporter('natal_day', report);
   const memory = new Map<string, { packet: DayPacket; expires: number }>(), pending = new Map<string, NatalWork>(), queue: NatalWork[] = [];
@@ -112,21 +116,22 @@ export function createNatalDays({ root, computeQueue, report, generateDay = (dat
       prune();
       if (memory.has(job.key)) {
         const entry = memory.get(job.key)!; memory.delete(job.key); memory.set(job.key, entry);
+        packages?.putDay(job,entry.packet);
         job.resolve(entry.packet); return;
       }
       const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
       if (job.controller.signal.aborted) throw aborted();
-      let raw: Buffer;
+      let packet:DayPacket;
       try {
         if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
-        raw = await encodeNatalDayPacket(day);
+        packet = await packDay(day);
       } catch (error) {
           if (job.controller.signal.aborted) throw error;
           failure('invalid_result'); throw new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
         }
-      const packet = { bytes: await compressDayPacket(raw, { quality: 9 }) };
       prune(); memory.set(job.key, { packet, expires: now() + ttlMs });
       while (memory.size > capacity) memory.delete(memory.keys().next().value!);
+      if(!job.controller.signal.aborted)packages?.putDay(job,packet);
       job.resolve(packet);
     } catch (error) { job.reject(error); }
     finally { if (pending.get(job.key) === job) pending.delete(job.key); running = false; void drain(); }
@@ -138,8 +143,11 @@ export function createNatalDays({ root, computeQueue, report, generateDay = (dat
     prune();
     if (memory.has(key)) {
       const entry = memory.get(key)!; memory.delete(key); memory.set(key, entry);
+      try {packages?.putDay({date,timezone},entry.packet);}catch(error){return Promise.reject(error);}
       return Promise.resolve(entry.packet);
     }
+    try {const stored=packages?.readDay({date,timezone});if(stored)return Promise.resolve(stored);}
+    catch(error){return Promise.reject(error);}
     if (pending.has(key)) return consume(pending.get(key)!, signal);
     if (queue.length >= maxQueued) return Promise.reject(new NatalDayError('natal_day_busy', 'Подождите завершения расчёта дня рождения и повторите попытку.', 503, 2));
     let resolve!: (packet: DayPacket) => void, reject!: (reason: unknown) => void;

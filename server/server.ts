@@ -66,8 +66,6 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     component='transit_day';
     const transitDays = await createTransitDays({ root, computeQueue, report: journal.report,
       cacheDir: env.TRANSIT_CACHE_DIR }); cleanup.push(() => transitDays.close());
-    component='natal_day';
-    const natalDays = createNatalDays({ root, computeQueue, report: journal.report });
     component='cycles';
     const cycles = createCycles({ root, computeQueue, report: journal.report }); cleanup.push(() => cycles.close());
     component='lifetime';
@@ -85,6 +83,8 @@ export async function startServer({ root = projectRoot, env = process.env, relea
       charts: { cities, calculate, cycles, onInvalidResult: () => invalidChartResult('invalid_result') },
       report: journal.report, handoffMailReport: journal.handoffMailReport,
     }); cleanup.push(() => account.close());
+    component='natal_day';
+    const natalDays = createNatalDays({ root, computeQueue, report: journal.report, packages:account.libraryPackages });
     component='routing';
     const diagnosticHandler = createDiagnosticHandler({accounts:account.accounts,origins:accountConfiguration.origins,
       trustLoopbackProxy:accountConfiguration.trustLoopbackProxy,

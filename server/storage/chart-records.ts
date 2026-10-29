@@ -1,4 +1,5 @@
 import { migrateStoredCalculations } from './calculation-transition.ts';
+import {createLibraryPackages} from './library-packages.ts';
 import type { Database } from './database.ts';
 import type { AccountChart, AccountChartContent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 
@@ -74,6 +75,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     // The marker commits with the renames; a collision/crash leaves the migration retryable.
     mark.run('short_identifiers_v1');
   });
+  const packages=createLibraryPackages(database);
   // Compile fixed SQL once per connection owner; each execution reads current rows.
   const statements = {
     identifier: sql.prepare('SELECT 1 FROM chart_identifiers WHERE id = ?'),
@@ -99,6 +101,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     cleanup: sql.prepare('DELETE FROM chart_operation_outcomes WHERE createdAt <= ?'),
   };
   return {
+    packages,
     identifierUsed(id:string) { return Boolean(statements.identifier.get(id)); },
     get(accountId: string, id: string) {
       return decode(statements.own.get(accountId, id) as unknown as Row | undefined);

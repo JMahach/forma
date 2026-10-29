@@ -193,6 +193,6 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
   }
   const api = withAuthorization(initialAuthorize);
   api.cleanup();
-  return {...api, withAuthorization};
+  return {...api, withAuthorization,packages:storage.packages};
 }
 export type ChartRecordAccess = ReturnType<ReturnType<typeof createChartRecords>['withAuthorization']>;

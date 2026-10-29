@@ -63,7 +63,7 @@ export async function createAccountRuntime({ configuration, charts, now = Date.n
     }, ACCOUNT_POLICY.cleanupMs); timer.unref();
     queue?.start();
     let closing: Promise<void> | undefined;
-    return { handler, chartHandler: chartRuntime?.handler, issueCalculationReceipt:chartRuntime?.issueCalculationReceipt, issueReturnReceipt:chartRuntime?.issueReturnReceipt, accounts, mailConfigured: !!configuration.postfix,
+    return { handler, chartHandler: chartRuntime?.handler, libraryPackages:chartRuntime?.packages, issueCalculationReceipt:chartRuntime?.issueCalculationReceipt, issueReturnReceipt:chartRuntime?.issueReturnReceipt, accounts, mailConfigured: !!configuration.postfix,
       close() {
         if (!closing) {
           controller.abort(); clearInterval(timer);

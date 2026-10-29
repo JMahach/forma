@@ -210,6 +210,8 @@ test('every interrupted SQL write restores old schema, values and references; th
 test('malformed SQL contents abort the transition without discarding the original row', () => {
   const {database} = storedLibrary();
   try {
+    // This fixture represents a damaged backup predating prepared-day references.
+    database.connection.exec('DROP TRIGGER library_natal_day_change');
     for (const content of ['not json', 'null', '42', '[]', '{"engine":23}']) {
       database.connection.prepare('UPDATE account_charts SET content=? WHERE id=(SELECT max(id) FROM account_charts)').run(content);
       const before = storedRows(database);
