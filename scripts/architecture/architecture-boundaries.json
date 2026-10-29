@@ -146,7 +146,8 @@
         "shared/app-metadata.ts",
         "shared/offline-contract.ts",
         "shared/chart-return-contract.ts",
-        "shared/calculation-storage-transition.ts"
+        "shared/calculation-storage-transition.ts",
+        "shared/library-package-contract.ts"
       ],
       "publicEntries": [
         "shared/account-contract.ts",
@@ -169,7 +170,8 @@
         "shared/app-metadata.ts",
         "shared/offline-contract.ts",
         "shared/chart-return-contract.ts",
-        "shared/calculation-storage-transition.ts"
+        "shared/calculation-storage-transition.ts",
+        "shared/library-package-contract.ts"
       ],
       "allowRuntime": [
         "shared-contracts"
@@ -1222,14 +1224,16 @@
         "server/storage/chart-records.ts",
         "server/storage/database.ts",
         "server/storage/mail-queue.ts",
-        "server/storage/calculation-transition.ts"
+        "server/storage/calculation-transition.ts",
+        "server/storage/library-packages.ts"
       ],
       "publicEntries": [
         "server/storage/account-counters.ts",
         "server/storage/accounts.ts",
         "server/storage/chart-records.ts",
         "server/storage/database.ts",
-        "server/storage/mail-queue.ts"
+        "server/storage/mail-queue.ts",
+        "server/storage/library-packages.ts"
       ],
       "allowRuntime": [
         "journal-policy",
@@ -1239,7 +1243,8 @@
       "allowTypes": [
         "journal-policy",
         "server-primary-storage",
-        "shared-contracts"
+        "shared-contracts",
+        "server-packets"
       ],
       "privateEntryReasons": {
         "server/storage/calculation-transition.ts": "One-time atomic schema transition preserving prepared values; invoked only by the coordinated storage cutover."
