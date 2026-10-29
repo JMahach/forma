@@ -70,6 +70,51 @@ test('a deletion from another tab invalidates a pending card response', async ()
   } finally { library.close(); other.close(); }
 });
 
+test('cancelling one open aborts its request without cancelling another open or accepting a late response', async () => {
+  const storage = createAccountLibraryStore({indexedDB: new IDBFactory()}), source = client();
+  const signals: AbortSignal[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  source.own = async ({chartId: id}, signal) => {
+    signals.push(signal!);
+    await gate; // Also exercise a transport which delivers a response after abort.
+    return id === chartId(1) ? accountChart(1) : accountChart(2);
+  };
+  const library = createAccountLibrary({storage, client:source, calculationVersion:'current', online:()=>true});
+  try {
+    await library.connect(session);
+    const cancelled = new AbortController();
+    const first = library.open(chartId(1), cancelled.signal), second = library.open(chartId(2));
+    const refused = assert.rejects(first, {name:'AbortError'});
+    cancelled.abort();
+    assert.equal(signals[0].aborted, true);
+    assert.equal(signals[1].aborted, false);
+    release(); await refused;
+    assert.equal((await second).id, chartId(2));
+    assert.deepEqual(library.charts.map(chart => chart.id), [chartId(2)]);
+    assert.deepEqual((await storage.read())!.charts.map(chart => chart.id), [chartId(2)]);
+  } finally { release(); library.close(); }
+});
+
+test('cancelled opens do no work and cannot apply a late deletion or cached fallback', async () => {
+  const storage = createAccountLibraryStore({indexedDB:new IDBFactory()}), source = client();
+  const library = createAccountLibrary({storage, client:source, calculationVersion:'current', online:()=>true});
+  try {
+    await library.connect(session); await library.load();
+    let calls = 0;
+    source.own = async () => { calls++; return accountChart(); };
+    await assert.rejects(library.open(chartId(1), AbortSignal.abort()), {name:'AbortError'});
+    assert.equal(calls, 0);
+    for (const code of ['not_found', 'connection_failed']) {
+      const cancelled = new AbortController();
+      source.own = async () => { cancelled.abort(); throw Object.assign(new Error(code), {code}); };
+      await assert.rejects(library.open(chartId(1), cancelled.signal), {name:'AbortError'});
+      assert.equal(library.get(chartId(1))!.id, chartId(1));
+      assert.equal((await storage.read())!.charts[0].id, chartId(1));
+    }
+  } finally { library.close(); }
+});
+
 test('a server card remains usable in memory if local storage is unavailable', async () => {
   const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: client(), calculationVersion: 'current', online: () => true});
   try {

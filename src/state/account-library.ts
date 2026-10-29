@@ -156,18 +156,21 @@ export function createAccountLibrary({client, storage, calculationVersion, onlin
       // The visible selection calls this; background acquisition never counts as use.
       await storage.touch(lease, chartId).catch(() => false);
     },
-    async open(chartId: string): Promise<AccountChart> {
+    async open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
+      consumerSignal?.throwIfAborted();
       const cached = charts.find(chart => chart.id === chartId);
       if (!online() || !current) {
         if (cached?.calculationVersion === version) return cached;
         throw failed(online() ? 'auth_required' : 'offline');
       }
       const seen = generation, target = lease;
+      const signal = consumerSignal ? AbortSignal.any([controller.signal, consumerSignal]) : controller.signal;
+      const valid = () => { check(seen); signal.throwIfAborted(); };
       try {
-        const chart = await client.own({chartId, expectedAccountId: current.accountId}, controller.signal);
-        check(seen); await accept([chart], seen, target); return charts.find(value => value.id === chartId)!;
+        const chart = await client.own({chartId, expectedAccountId: current.accountId}, signal);
+        valid(); await accept([chart], seen, target); valid(); return charts.find(value => value.id === chartId)!;
       } catch (error) {
-        check(seen);
+        valid();
         if (codeOf(error) === 'not_found') await forget(chartId);
         else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached?.calculationVersion === version) return cached;
         throw error;
