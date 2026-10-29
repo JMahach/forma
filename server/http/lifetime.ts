@@ -37,7 +37,7 @@ export function createLifetimeHandler(service?: Pick<LifetimeService, 'getMetada
       if (consumer.signal.aborted) return;
       const known = error instanceof LifetimeError;
       if (!known) reportServerFailure(report,{event:'http_request_failed',component:'lifetime',reason:'unexpected'});
-      json(res, known ? error.status : 503, { error: known ? error.code : 'lifetime_unavailable',
+      json(res, known ? error.status : 500, { error: known ? error.code : 'internal_error',
         message: known ? error.message : 'Данные летописи недоступны.' });
     } finally { consumer.close(); }
   };

@@ -112,7 +112,7 @@ test('the main router passes account paths to their owner and never serves HTML 
   assert.equal(JSON.parse(absent.body).error, 'account_unavailable');
 });
 
-test('database failure returns an unavailable response without clearing unverified cookies', async () => {
+test('database failure returns an internal error without clearing unverified cookies', async () => {
   const db = openDatabase(':memory:');
   const accounts = createAccounts({ database: db, key: Buffer.alloc(32, 7), mail: { async enqueue() {}, async cancel() {} } });
   const handler = createAccountHandler(accounts, { origins: ['http://localhost:3636'] });
@@ -121,8 +121,8 @@ test('database failure returns an unavailable response without clearing unverifi
     cookie: `forma_local_s_${'a'.repeat(32)}=${'b'.repeat(43)}` } } as IncomingMessage;
   const res = captureResponse();
   await assert.doesNotReject(handler(req, res, new URL('http://localhost:3636/api/account')));
-  assert.equal(res.status, 503);
-  assert.equal(JSON.parse(res.body).error, 'account_unavailable');
+  assert.equal(res.status, 500);
+  assert.equal(JSON.parse(res.body).error, 'internal_error');
   assert.equal(res.headers['Set-Cookie'], undefined);
 });
 

@@ -5,6 +5,7 @@ import { AccountError, type Accounts, type AccountCredentials } from '../service
 import { HttpInputError, readJSONObject, sendJSON } from './json.ts';
 import { requestSignal } from './request-signal.ts';
 import { createAccountSecurity } from './account-security.ts';
+import { rejectApiMethod } from './api-methods.ts';
 
 const CONTEXT = /^[a-f0-9]{32}$/;
 interface AccountHttpOptions { report?: ServerFailureReport; origins: string[]; trustLoopbackProxy?: boolean; now?: () => number; clientIp?: (req: IncomingMessage) => string }
@@ -35,7 +36,7 @@ export function createAccountHandler(accounts: Accounts, { origins, now = Date.n
       catch {
         unexpected();
         // A storage failure cannot prove that a browser credential is invalid.
-        sendJSON(res, 503, { error: 'account_unavailable' }, { 'Cache-Control': 'private, no-store' });
+        sendJSON(res, 500, { error: 'internal_error' }, { 'Cache-Control': 'private, no-store' });
         return;
       }
       sendJSON(res, status, body, { 'Cache-Control': 'private, no-store',
@@ -44,6 +45,7 @@ export function createAccountHandler(accounts: Accounts, { origins, now = Date.n
     }
     try {
       assertOrigin(req);
+      if (rejectApiMethod(req,res,endpoint)) return;
       proof = credentials(req.headers.cookie ?? '');
       if (req.method === 'GET' && endpoint === '/api/account') {
         const current = accounts.current(proof);
@@ -56,7 +58,6 @@ export function createAccountHandler(accounts: Accounts, { origins, now = Date.n
       const actions = new Set(['/api/auth/email/start', '/api/auth/email/resend', '/api/auth/email/verify',
         '/api/auth/confirm', '/api/auth/cancel', '/api/auth/logout', '/api/auth/telegram/start', '/api/auth/telegram/verify']);
       if (!actions.has(endpoint)) { reply(404, { error: 'not_found' }); return; }
-      if (req.method !== 'POST') { reply(405, { error: 'method_not_allowed' }); return; }
       const input = await readJSONObject(req, endpoint === '/api/auth/telegram/verify' ? 20 * 1024 : 4096);
       if (endpoint === '/api/auth/telegram/start') {
         const result = accounts.startTelegram({ credentials: proof,
@@ -100,7 +101,7 @@ export function createAccountHandler(accounts: Accounts, { origins, now = Date.n
       if (error instanceof AccountError || error instanceof HttpInputError) {
         const retryAt = error instanceof AccountError ? error.retryAt : undefined;
         reply(error.status, { error: error.code, ...(retryAt === undefined ? {} : { retryAt }) }, retryAt);
-      } else { unexpected(); reply(503, { error: 'account_unavailable' }); }
+      } else { unexpected(); reply(500, { error: 'internal_error' }); }
     }
   };
 }

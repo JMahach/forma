@@ -43,7 +43,10 @@ test('unexpected HTTP failures reach the unified journal with only a fixed compo
     ['/api/cycles/events',{birthUtc:'2000-01-01T00:00:00Z',body:'sun',fromAge:0,toAge:10},'cycles'],
   ] as const) {
     const before=f.rows.length;
-    await f.request(url,body);
+    const response=await f.request(url,body);
+    assert.equal(response.status,500,component);
+    assert.equal(JSON.parse(response.body).error,'internal_error');
+    assert.equal(response.headers['Retry-After'],undefined);
     assert.equal(f.rows.length,before+1,component);
     assert.deepEqual({...f.rows.at(-1),eventId:undefined,occurredAt:undefined},{schemaVersion:1,environment:'stand',
       eventId:undefined,occurredAt:undefined,source:'runtime',event:'http_request_failed',level:'error',outcome:'failed',component,reason:'unexpected'});
@@ -70,7 +73,7 @@ test('account response credential cleanup failure is recorded without discarding
   const handle=createAccountHandler(accounts,{origins:['http://localhost'],report:f.report});
   const res=captureResponse();
   await handle({method:'GET',headers:{host:'localhost'}} as IncomingMessage,res,new URL('http://localhost/api/account'));
-  assert.equal(res.status,503);assert.equal(res.headers['Set-Cookie'],undefined);
+  assert.equal(res.status,500);assert.equal(JSON.parse(res.body).error,'internal_error');assert.equal(res.headers['Set-Cookie'],undefined);
   assert.equal(f.rows.length,1);assert.equal(f.rows[0]!.event,'http_request_failed');
   assert.equal(f.rows[0]!.component,'account');assert.equal(JSON.stringify(f.rows).includes('PRIVATE'),false);
 });
@@ -135,7 +138,7 @@ test('disconnection is silent and a broken reporter cannot replace the HTTP resp
     const handler=createRequestHandler({root:'/unused',cities:f.cities,calculate:f.failure,report,publicFiles:f.failure});
     const res=captureResponse();
     await handler({method:'GET',url:'/asset',headers:{host:'localhost'}} as IncomingMessage,res);
-    assert.equal(JSON.parse(res.body).error,'invalid_request');
+    assert.equal(res.status,500);assert.equal(JSON.parse(res.body).error,'internal_error');
   }
   await new Promise<void>(resolve=>setImmediate(resolve));
 });
@@ -148,7 +151,7 @@ test('unexpected chart access failure reaches the journal before the public erro
     origins:['http://localhost'],report:f.report});
   const res=captureResponse();
   await handle({method:'GET',headers:{host:'localhost'}} as IncomingMessage,res,new URL('http://localhost/api/charts?accountId=1'));
-  assert.equal(res.status,503);assert.equal(JSON.parse(res.body).error,'chart_unavailable');
+  assert.equal(res.status,500);assert.equal(JSON.parse(res.body).error,'internal_error');
   assert.equal(f.rows.length,1);assert.equal(f.rows[0]!.component,'charts');
   assert.equal(JSON.stringify(f.rows).includes('PRIVATE'),false);
 });

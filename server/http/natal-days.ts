@@ -53,9 +53,9 @@ export function createNatalDayHandler({ get }: Pick<NatalDays, 'get'>, {report}:
       if (controller.signal.aborted) return;
       const known = error instanceof NatalDayError;
       if (!known) reportServerFailure(report,{event:'http_request_failed',component:'natal_day',reason:'unexpected'});
-      res.writeHead(known ? error.status : 503, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
-        ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 5) }) });
-      res.end(JSON.stringify({ error: known ? error.code : 'natal_day_unavailable', message: known ? error.message : 'Не удалось подготовить день рождения. Повторите попытку.' }));
+      res.writeHead(known ? error.status : 500, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
+        ...(known && error.retryAfter !== null ? { 'Retry-After': String(error.retryAfter) } : {}) });
+      res.end(JSON.stringify({ error: known ? error.code : 'internal_error', message: known ? error.message : 'Не удалось подготовить день рождения. Повторите попытку.' }));
     } finally { res.removeListener?.('close', disconnect); }
   }
 }

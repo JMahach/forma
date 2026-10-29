@@ -65,7 +65,7 @@ test('singleflight shares a day across requests and bounds the global queue to o
 
 test('a generation error releases the queue and is retriable without an error cache', async t => {
   let calls = 0;
-  const service = await cache(t, { generateDay: async (date: string) => { if (++calls === 1) throw new Error('temporary'); return makeDay(date); } });
+  const service = await cache(t, { generateDay: async (date: string) => { if (++calls === 1) throw new TransitDayError('transit_unavailable','temporary'); return makeDay(date); } });
   await assert.rejects(service.get('2026-09-24'), /temporary/);
   assert.equal(service.size, 0);
   assert.equal(decodeTransitDay((await service.get('2026-09-24')).bytes.identity).date, '2026-09-24');
@@ -246,7 +246,7 @@ test('encoding preference honors exclusions and transient HTTP failures remain r
   assert.equal(negotiateEncoding('br;q=0,gzip;q=0'), 'identity');
   assert.equal(negotiateEncoding('*'), 'br');
   let calls = 0;
-  const service = await cache(t, { generateDay: async (date: string) => { if (++calls === 1) throw new Error('temporary'); return makeDay(date); } });
+  const service = await cache(t, { generateDay: async (date: string) => { if (++calls === 1) throw new TransitDayError('transit_unavailable','temporary'); return makeDay(date); } });
   const url = `/api/transit/day?date=2026-09-24&v=2`;
   const failed = await request(service, url);
   assert.equal(failed.status, 503); assert.equal(failed.headers['Cache-Control'], 'no-store'); assert.equal(failed.headers['Retry-After'], '5');

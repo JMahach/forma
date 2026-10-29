@@ -1023,6 +1023,7 @@
       "id": "server-http",
       "responsibility": "Transport validation, request lifetime and response/static-file delivery; feature policy belongs to services.",
       "files": [
+        "server/http/api-methods.ts",
         "server/http/account-security.ts",
         "server/http/accounts.ts",
         "server/http/app.ts",

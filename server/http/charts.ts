@@ -11,6 +11,7 @@ import { ChartRecordError, type createChartRecords } from '../services/chart-rec
 import { createAccountSecurity } from './account-security.ts';
 import { HttpInputError, readJSONObject, sendJSON } from './json.ts';
 import { requestSignal } from './request-signal.ts';
+import { rejectApiMethod } from './api-methods.ts';
 
 interface ChartHttpOptions {
   report?: ServerFailureReport;
@@ -66,6 +67,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
     }
     try {
       security.assertOrigin(req);
+      if (rejectApiMethod(req,res,url.pathname)) return;
       proof = security.credentials(req.headers.cookie ?? '');
       const access = records.withAuthorization(() => {
         current = accounts.current(proof);
@@ -83,13 +85,11 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       }
       const publicMatch = /^\/api\/shared-charts\/([^/]+)$/.exec(url.pathname);
       if (publicMatch) {
-        if (req.method !== 'GET') { reply(405,{error:'method_not_allowed'}); return; }
         const chart = access.getPublic(identifier(publicMatch[1]));
         reply(chart ? 200 : 404, chart ? {chart} : {error:'not_found'}); return;
       }
       const outcomeMatch = /^\/api\/charts\/operations\/([^/]+)$/.exec(url.pathname);
       if (outcomeMatch) {
-        if (req.method !== 'GET') { reply(405,{error:'method_not_allowed'}); return; }
         const intent={operationId:operationIdentifier(outcomeMatch[1]), expectedAccountId:accountId(url.searchParams.get('accountId'))};
         reply(200,withCurrentChart(access.outcome(intent),intent.expectedAccountId)); return;
       }
@@ -103,7 +103,6 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       }
       const returnMatch = /^\/api\/charts\/([^/]+)\/returns\/(events|chart|accept)$/.exec(url.pathname);
       if (returnMatch) {
-        if (req.method !== 'POST') { reply(405,{error:'method_not_allowed'},{Allow:'POST'}); return; }
         if (!returns) { reply(503,{error:'chart_unavailable'}); return; }
         if (returnMatch[2] === 'accept') {
           const packet=await readJSONObject(req,64*1024);
@@ -135,9 +134,6 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
         reply(chart ? 200 : 404, chart ? {chart} : {error:'not_found'}); return;
       }
       if (!creating && !adding && !id) { reply(404,{error:'not_found'}); return; }
-      if ((creating || adding) ? req.method !== 'POST' : !['PATCH','DELETE'].includes(req.method ?? '')) {
-        reply(405,{error:'method_not_allowed'}); return;
-      }
       const input = await readJSONObject(req, 20_000);
       const base = ['operationId','expectedAccountId'];
       fields(input, [...base, ...(adding ? ['sourceId','seenRevision'] : req.method === 'DELETE' ? [] : ['name','note','birth','calculationReceipt'])]);
@@ -186,7 +182,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
         reply(error.code === 'auth_required' ? 401 : error.code === 'account_changed' || error.code === 'source_changed' ? 409 : error.code === 'not_found' ? 404 : error.code === 'chart_unavailable' ? 503 : 400,{error:error.code});
       } else {
         reportServerFailure(report,{event:'http_request_failed',component:'charts',reason:'unexpected'});
-        reply(503,{error:'chart_unavailable'});
+        reply(500,{error:'internal_error'});
       }
     } finally { consumer.close(); }
   };

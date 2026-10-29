@@ -7,6 +7,14 @@ import type { CityCatalog } from './cities.ts';
 import type { Calculator } from './calculate.ts';
 import type { createCalculationReceipts } from './calculation-receipt.ts';
 
+/** Both calculation entry points distinguish rejected input from unavailable work. */
+export function calculationFailureStatus(code: string): 422 | 503 | 500 {
+  if (['busy','engine_unavailable','timeout','calculation_failed','design_search_failed','ephemeris_unavailable'].includes(code)) return 503;
+  if (['invalid_request','invalid_mode','city_required','name_required','invalid_utc','invalid_datetime',
+    'invalid_date','invalid_timezone','unsupported_date','nonexistent_time','nonexistent_date','ambiguous_time'].includes(code)) return 422;
+  return 500;
+}
+
 export class ChartCalculationError extends Error {
   readonly code: string;
   readonly status: number;
@@ -82,7 +90,7 @@ export function createChartCalculation({cities, calculate, onInvalidResult, rece
           || new Set(choices.map(value => value.fold)).size !== 2) throw invalidResult();
         details.choices = choices.map(({fold,utc,label}) => ({fold,utc,label}));
       }
-      throw new ChartCalculationError(error.error,['busy','engine_unavailable','timeout','calculation_failed'].includes(error.error) ? 503 : 422,details);
+      throw new ChartCalculationError(error.error,calculationFailureStatus(error.error),details);
     }
     const chart = result && typeof result === 'object' && 'chart' in result ? result.chart as ChartRecord : null;
     const resolution = result && typeof result === 'object' && 'timeResolution' in result

@@ -37,9 +37,9 @@ export function createTransitDayHandler({ get }: Pick<TransitDays, 'get'>, { now
       if (consumer.signal.aborted) return;
       const known = error instanceof TransitDayError;
       if (!known) reportServerFailure(report,{event:'http_request_failed',component:'transit_day',reason:'unexpected'});
-      res.writeHead(known ? error.status : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
-        ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 5) }) });
-      res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ error: known ? error.code : 'transit_unavailable', message: known ? error.message : 'Не удалось подготовить дневной транзит. Повторите попытку.' }));
+      res.writeHead(known ? error.status : 500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+        ...(known && error.retryAfter !== null ? { 'Retry-After': String(error.retryAfter) } : {}) });
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ error: known ? error.code : 'internal_error', message: known ? error.message : 'Не удалось подготовить дневной транзит. Повторите попытку.' }));
     } finally { consumer.close(); }
   }
 }

@@ -67,7 +67,7 @@ test('HTTP handler resolves authoritative cities and retains response statuses a
     assert.equal(result.status, status); assert.equal(result.json().error, error);
   }
   assert.equal(inputs.length, 1, 'invalid requests never start a calculation');
-  for (const [error, expected] of [['busy', 503], ['engine_unavailable', 503], ['timeout', 422], ['ambiguous_time', 422]] as const) {
+  for (const [error, expected] of [['busy', 503], ['engine_unavailable', 503], ['timeout', 503], ['calculation_failed', 503], ['design_search_failed', 503], ['ephemeris_unavailable', 503], ['unknown_failure', 500], ['ambiguous_time', 422], ['invalid_datetime', 422]] as const) {
     const result = await request(handler, '/api/calculate', { method: 'POST', value: { mode: 'transit', result: { error } } });
     assert.equal(result.status, expected); assert.equal(result.json().error, error);
   }

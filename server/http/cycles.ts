@@ -41,9 +41,9 @@ export function createCyclesHandler(service: Pick<Cycles, 'events' | 'chart'>, {
       if (controller.signal.aborted) return;
       const known = error instanceof CycleError;
       if (!known) reportServerFailure(report,{event:'http_request_failed',component:'cycles',reason:'unexpected'});
-      res.writeHead(known ? error.status : 503, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
-        ...(known && error.retryAfter === null ? {} : { 'Retry-After': String(known ? error.retryAfter : 3) }) });
-      res.end(JSON.stringify({ error: known ? error.code : 'cycles_unavailable', message: known ? error.message : 'Не удалось подготовить циклы. Повторите попытку.', ...(known ? error.details : {}) }));
+      res.writeHead(known ? error.status : 500, { ...headers, 'Content-Type': 'application/json; charset=utf-8',
+        ...(known && error.retryAfter !== null ? { 'Retry-After': String(error.retryAfter) } : {}) });
+      res.end(JSON.stringify({ error: known ? error.code : 'internal_error', message: known ? error.message : 'Не удалось подготовить циклы. Повторите попытку.', ...(known ? error.details : {}) }));
     } finally { res.removeListener?.('close', disconnect); }
   };
 }

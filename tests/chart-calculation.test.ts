@@ -65,8 +65,10 @@ test('calculator refusals keep their reason and the ambiguity choices instead of
     assert.equal((error as {code:string}).code,'ambiguous_time');
     assert.deepEqual((error as {payload:unknown}).payload,{error:'ambiguous_time',message:'Choose offset',choices});return true;
   });
-  const busy=setup({error:'busy',message:'Busy'});
-  await assert.rejects(busy.prepare(natal,busy.options),{code:'busy',status:503});
+  for (const [code,status] of [['busy',503],['engine_unavailable',503],['timeout',503],['calculation_failed',503],['design_search_failed',503],['ephemeris_unavailable',503],['unknown_failure',500],['invalid_datetime',422]] as const) {
+    const failed=setup({error:code,message:'Failure'});
+    await assert.rejects(failed.prepare(natal,failed.options),{code,status});
+  }
 });
 
 test('an explicitly selected ambiguous fold cannot silently change in the prepared result',async()=>{

@@ -2,6 +2,7 @@ import { reportServerFailure, type ServerFailureReport, type HttpFailureComponen
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CityCatalog } from '../services/cities.ts';
 import type { Calculator } from '../services/calculate.ts';
+import { calculationFailureStatus } from '../services/chart-calculation.ts';
 import type { createChartHandler } from './charts.ts';
 import type { createDiagnosticHandler } from './diagnostics.ts';
 import type { createAccountHandler } from './accounts.ts';
@@ -25,6 +26,7 @@ interface RequestHandlerOptions {
 }
 
 import { requestSignal } from './request-signal.ts';
+import { rejectApiMethod } from './api-methods.ts';
 import { createTransitDayHandler } from './transit-days.ts';
 import { createNatalDayHandler } from './natal-days.ts';
 import { createPublicFileHandler } from './public-files.ts';
@@ -53,6 +55,7 @@ export function createRequestHandler({ root, report, cities, calculate, transitD
       if (originHost && originHost !== req.headers.host) {
         json(res, 403, { error: 'origin', message: 'Откройте сайт с адреса локального сервера.' }); return;
       }
+      if (rejectApiMethod(req,res,url.pathname)) return;
       if (url.pathname === '/api/diagnostics') {
         if (!diagnosticHandler) { json(res,503,{error:'diagnostics_unavailable'});return; }
         await diagnosticHandler(req,res);return;
@@ -107,7 +110,7 @@ export function createRequestHandler({ root, report, cities, calculate, transitD
         try {
           const result = await calculate(input, { signal: consumer.signal });
           if (consumer.signal.aborted) return;
-          const status = !result.error ? 200 : ['engine_unavailable', 'busy'].includes(result.error) ? 503 : 422;
+          const status = result.error ? calculationFailureStatus(result.error) : 200;
           const receipt=issueCalculationReceipt?.(input,result);
           const body=receipt && result && typeof result==='object' && 'chart' in result && result.chart && typeof result.chart==='object'
             ?{...result,chart:{...result.chart,calculationReceipt:receipt}}:result;
@@ -119,7 +122,7 @@ export function createRequestHandler({ root, report, cities, calculate, transitD
     } catch {
       if (req.aborted || res.destroyed) return;
       reportServerFailure(report, {event:'http_request_failed',component,reason:'unexpected'});
-      if (!res.headersSent) json(res, 400, { error: 'invalid_request', message: 'Не удалось обработать запрос.' }); else res.end();
+      if (!res.headersSent) json(res, 500, { error: 'internal_error', message: 'Не удалось обработать запрос.' }); else res.end();
     }
   };
 }
