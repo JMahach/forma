@@ -4,7 +4,7 @@ import {clientFailureReason,parseClientContextStep,CLIENT_REPORT_REASONS} from '
 import type {ClientActionContext,ClientContextStep,ClientObservation,ClientReportReason} from '../shared/client-report-contract.ts';
 import { createStoragePressure } from './data/storage-pressure.ts';
 import { createCalculationUpdates } from './data/calculation-updates.ts';
-import { createNavigation } from './state/navigation.ts';
+import { createNavigation } from './platform/browser/navigation.ts';
 import { viewForRoute } from './state/view-session.ts';
 import { attachAccount } from './account.ts';
 import { attachPanelKeyboard } from './views/side-panel-controls.ts';

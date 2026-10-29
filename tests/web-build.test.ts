@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { gunzipSync, brotliDecompressSync } from 'node:zlib';
 import { buildWeb } from '../scripts/build-web.ts';
+import { buildSync } from 'esbuild';
 import { LOVE_GATES, renderLoveDiagram } from '../src/stories/vessel-of-love.ts';
 import type { BinaryLike } from 'crypto';
 
@@ -28,10 +29,10 @@ async function fileDigests(root: string) {
 
 function moduleReferences(source: string) {
   assert.doesNotMatch(source, /\bimport\s*\(\s*[^"'\s]/, 'emitted dynamic imports have literal release dependencies');
-  return [
-    ...source.matchAll(/\b(?:from|import)\s*["']([^"']+)["']/g),
-    ...source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
-  ].map(match => match[1]);
+  // Parse actual imports: an error message such as `from '${actor.id}'` is not a dependency.
+  const {metafile} = buildSync({stdin: {contents: source, sourcefile: 'release.js'},
+    bundle: true, external: ['*'], write: false, metafile: true, format: 'esm', logLevel: 'silent'});
+  return Object.values(metafile!.inputs).flatMap(input => input.imports.map(reference => reference.path));
 }
 
 function stylesheetReferences(source: string) {

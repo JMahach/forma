@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import type { IncomingMessage,ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { readAppRoute,appRoutePath,type AppRoute } from '../shared/app-routes.ts';
-import { createNavigation } from '../src/state/navigation.ts';
+import { createNavigation } from '../src/platform/browser/navigation.ts';
 import { createPublicFileHandler } from '../server/http/public-files.ts';
 
 const id='12345678-1234-1234-1234-123456789012';

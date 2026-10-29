@@ -11,7 +11,8 @@ import {createStoragePressure} from '../src/data/storage-pressure.ts';
 import {createJournal} from '../src/journal.ts';
 import { chartId } from './helpers/account-chart.ts';
 import { createLocalDayTimeline } from '../src/domain/day-timeline.ts';
-import { createNavigation } from '../src/state/navigation.ts';
+import { createNavigation } from '../src/platform/browser/navigation.ts';
+import { createApplication } from '../src/application/application.ts';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import {createCalculationCache} from '../src/data/calculation-cache.ts';
 import { createChartClient } from '../src/data/chart-client.ts';
@@ -109,6 +110,7 @@ type AppPorts = Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'crea
   & Pick<typeof import('../src/scene/updates.ts'), 'createGraphController'>
   & Pick<typeof import('../src/state/chart-highlight.ts'), 'chartHighlight'>
   & Pick<typeof import('../src/views/camera-controls.ts'), 'attachCameraControls' | 'createCameraChangeHandler'>
+  & Pick<typeof import('../src/application/application.ts'), 'createApplication'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
   & Pick<typeof import('../src/state/view-session.ts'), 'createViewSession' | 'viewForRoute'>
@@ -284,6 +286,7 @@ function harness({copyText, actualStore, calculationVersion = '', accountReady =
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
+    createApplication,
     appRoutePath, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),

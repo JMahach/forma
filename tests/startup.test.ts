@@ -18,7 +18,7 @@ import type {ClientReport} from '../shared/client-report-contract.ts';
 import {accountNatalChart} from './helpers/account-chart.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
 const STORAGE_KEY = 'liniya.charts.v1';
-import { createNavigation } from '../src/state/navigation.ts';
+import { createNavigation } from '../src/platform/browser/navigation.ts';
 import { createStoragePressure } from '../src/data/storage-pressure.ts';
 import { viewForRoute } from '../src/state/view-session.ts';
 import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';

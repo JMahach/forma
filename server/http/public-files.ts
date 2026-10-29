@@ -32,14 +32,24 @@ export const PUBLIC_FILES = new Map<string, string>([
   ['love.html', 'public/love.html'],
   ['love', 'public/love.html'],
   ['love.css', 'public/love.css'],
+  // Exact ESM files of pinned XState 5.33.3 for the unbundled development stand.
+  // The release bundles the dependency and exposes none of node_modules.
+  ...['xstate.esm.js', 'xstate-actors.esm.js', 'xstate-dev.esm.js',
+    'raise-effbee0c.esm.js', 'StateMachine-ae06a22b.esm.js',
+    'assign-1f0d7720.esm.js', 'log-6a5e50a8.esm.js']
+    .map(filename => [`vendor/xstate/${filename}`, `node_modules/xstate/dist/${filename}`] as [string, string]),
   ...[
+    'src/application/application.ts',
+    'src/application/application-machine.ts',
+    'src/application/route.ts',
+    'src/application/ports.ts',
     'src/preview/control-colors.ts',
     'src/account.ts',
     'src/data/account-client.ts',
     'src/data/telegram-login.ts',
     'src/data/account-logout-store.ts',
     'src/state/account-session.ts',
-    'src/state/navigation.ts',
+    'src/platform/browser/navigation.ts',
     'shared/app-routes.ts',
     'src/state/account-flow.ts',
     'src/views/account.ts',
@@ -262,6 +272,7 @@ export function createPublicFileHandler({ root, files = PUBLIC_FILES, precompres
     }
     if (!['public/index.html', 'index.html'].includes(entry.file)) return bytes;
     let html = prepareLoadingPage(bytes.toString('utf8'));
+    if (!precompressed) html = html.replace('<head>', '<head>\n  <script type="importmap">{"imports":{"xstate":"/vendor/xstate/xstate.esm.js"}}</script>');
     html = html.replace(/<body\b/, `<body${metadataAttributes}`);
     return Buffer.from(html);
   } });

@@ -83,7 +83,8 @@
         "ui-layout",
         "ui-styles",
         "browser-journal",
-        "offline-page"
+        "offline-page",
+        "application"
       ],
       "allowTypes": [
         "account-flow",
@@ -114,7 +115,8 @@
         "ui-layout",
         "ui-styles",
         "browser-journal",
-        "offline-page"
+        "offline-page",
+        "application"
       ],
       "executionEntries": [
         "src/entry.ts"
@@ -1580,10 +1582,10 @@
       "id": "navigation",
       "responsibility": "Own the current browser route and history changes; page loading, access and view restoration remain with their respective owners.",
       "files": [
-        "src/state/navigation.ts"
+        "src/platform/browser/navigation.ts"
       ],
       "publicEntries": [
-        "src/state/navigation.ts"
+        "src/platform/browser/navigation.ts"
       ],
       "allowRuntime": [
         "navigation",
@@ -1591,7 +1593,8 @@
       ],
       "allowTypes": [
         "navigation",
-        "shared-contracts"
+        "shared-contracts",
+        "application"
       ]
     },
     {
@@ -1731,6 +1734,27 @@
       "allowTypes": [
         "request-lifetime"
       ]
+    },
+    {
+      "id": "application",
+      "responsibility": "Coordinate application lifecycle and route intent through narrow ports; no DOM, browser storage or copied chart data.",
+      "files": [
+        "src/application/application.ts",
+        "src/application/ports.ts",
+        "src/application/route.ts",
+        "src/application/application-machine.ts"
+      ],
+      "publicEntries": [
+        "src/application/application.ts",
+        "src/application/ports.ts"
+      ],
+      "allowRuntime": [
+        "application"
+      ],
+      "allowTypes": [
+        "application",
+        "shared-contracts"
+      ]
     }
   ],
   "cyclePolicy": {
@@ -1826,6 +1850,18 @@
         "from": "deploy/postfix/package-linux.ts",
         "specifier": "esbuild",
         "reason": "The mail-only packaging CLI uses the existing development bundler to prepare deployment artifacts; this permission does not extend to application runtime or other files."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/application.ts",
+        "specifier": "xstate",
+        "reason": "Pinned v5 interprets the approved state machine; platform and data access remain behind ports."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/application-machine.ts",
+        "specifier": "xstate",
+        "reason": "Pure application transition table and cancellable child operation in the approved v5 runtime."
       }
     ]
   },

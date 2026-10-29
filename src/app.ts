@@ -7,7 +7,9 @@ import type { CalculationClients } from './data/calculation-clients.ts';
 import type { AppRoute } from '../shared/app-routes.ts';
 import { appRoutePath } from '../shared/app-routes.ts';
 import { attachChartLink } from './views/chart-link.ts';
-import type { Navigation, NavigationSnapshot } from './state/navigation.ts';
+import type { Navigation } from './platform/browser/navigation.ts';
+import { createApplication } from './application/application.ts';
+import type { Application } from './application/application.ts';
 import type { AccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 import type { BirthSubmission } from './views/birth-form.ts';
@@ -90,6 +92,9 @@ import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 export function startApp({ journal, storagePressure, navigation, calculationClients, calculationUpdates, account, dayClient, layout, toast, viewStore, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+  let application: Application | null = null;
+  const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
+  const routeFailed = () => application?.view.destination === 'failed';
   let pendingBirthForm = savedView?.birthForm ?? null;
   // An operation is linked to this accepted tab source, never inferred from its content.
   let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
@@ -179,21 +184,20 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
     onRetry: () => {
       initialPage.restoreFailed = false;
-      if (routeFailed && navigation?.snapshot.route?.kind === 'chart') {void applyRoute(navigation.snapshot);return;}
+      if (routeFailed() && navigation?.snapshot.route?.kind === 'chart') {application?.send({type:'RetryRoute'});return;}
       if (lifetimeOwnsLoading()) {
         if (lifetimeLoadFailed) window.location.reload();
         else void lifetime?.retry();
       } else void transit?.retry();
     },
   });
-  let routePending = false, routeFailed = false;
   const updateLoading = () => {
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
     const firstFailed = initialPage.restored && initialPage.restoreFailed && !session.hasCurrent;
-    chartLoading.update({ hasChart: !routePending && !routeFailed && session.hasCurrent, holdLoading: initialPage.active,
+    chartLoading.update({ hasChart: !routePending() && !routeFailed() && session.hasCurrent, holdLoading: initialPage.active,
       preserveHeading: calculationObsolete,
-      failed: routeFailed || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
-      loading: routePending || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
+      failed: routeFailed() || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
+      loading: routePending() || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
     updateInitialPage();
   };
 
@@ -271,7 +275,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   // Explicit navigation reveals its destination on a phone. State projection
   // and restoration do not use this command, so a restored menu stays open.
-  let publishingRoute = false, routeRequest: AbortController | null = null;
   function routeForChart(id: string): AppRoute {
     return id === 'current-transit' ? {kind:'transit'}
       : accountLibrary.get(id) || store.get(id) && 'revision' in store.get(id)!
@@ -280,11 +283,9 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   function publishRoute(route: AppRoute, replace = false) {
     if (!navigation) return;
     publicRefreshRequest?.abort();
-    routeRequest?.abort(); routePending = routeFailed = false;
     viewSession?.interrupt();
     initialPage.restored = true; initialPresentation = null;
-    publishingRoute = true;
-    try { navigation.navigate(route, {replace}); } finally { publishingRoute = false; }
+    application?.send({type:'RoutePublished',route,replace});
     updateLoading();
   }
   function navigateWorkspace(screen: WorkspaceScreen, { keepMenuOpen = false, fromRoute = false } = {}) {
@@ -932,60 +933,61 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updatePage();viewSession?.flush();
     } finally {if(publicRefreshRequest===controller)publicRefreshRequest=null;}
   }
-  async function applyRoute(snapshot: NavigationSnapshot, initial = false) {
-    if (!navigation || !snapshot.route) return;
-    const observation=snapshot.route.kind==='chart'?journal?.begin({action:'chart_open',component:'chart'}):undefined;
-    publicRefreshRequest?.abort();
-    routeRequest?.abort();
-    const controller = routeRequest = new AbortController(), route = snapshot.route;
-    if (!initial) {cancelChartSave();viewSession?.interrupt();}
-    librarySelection++;
-    routePending = route.kind === 'chart'; routeFailed = false;
-    navigateWorkspace(route.kind === 'chart' || route.kind === 'temporary-chart' || route.kind === 'transit' ? 'chart' : route.kind, {fromRoute:true});
-    updateLoading();
-    try {
-      if (route.kind === 'chart') {
-        await libraryReady;
-        if (!navigation.isCurrent(snapshot) || controller.signal.aborted) return;
-        if (accountLibrary.get(route.id)) await accountLibrary.open(route.id);
-        else {
-          const cached=store.publicChart?.id===route.id && store.publicChart.calculationVersion===accountLibrary.calculationVersion
-            ? store.publicChart : null;
-          let chart;
-          try { chart=getConnectionMode()==='offline' && cached ? cached : await chartClient.public(route.id, controller.signal); }
-          catch(error) {
-            const code=(error as {code?:string})?.code;
-            if(!cached || !['offline','connection_failed','server_unavailable'].includes(code??''))throw error;
-            chart=cached;
+  if (navigation) {
+    application = createApplication({navigation, route(request) {
+      const route = request.snapshot.route!;
+      const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
+      return {
+        enter() {
+          publicRefreshRequest?.abort();
+          if (!request.initial) {cancelChartSave();viewSession?.interrupt();}
+          librarySelection++;
+          navigateWorkspace(route.kind === 'chart' || route.kind === 'temporary-chart' || route.kind === 'transit' ? 'chart' : route.kind, {fromRoute:true});
+        },
+        async prepare(signal, current) {
+          if (route.kind !== 'chart') return;
+          await libraryReady;
+          if (!current()) return;
+          if (accountLibrary.get(route.id)) await accountLibrary.open(route.id, signal);
+          else {
+            const cached=store.publicChart?.id===route.id && store.publicChart.calculationVersion===accountLibrary.calculationVersion
+              ? store.publicChart : null;
+            let chart;
+            try { chart=getConnectionMode()==='offline' && cached ? cached : await chartClient.public(route.id, signal); }
+            catch(error) {
+              const code=(error as {code?:string})?.code;
+              if(!cached || !['offline','connection_failed','server_unavailable'].includes(code??''))throw error;
+              chart=cached;
+            }
+            if (current()) store.acceptPublic(chart);
           }
-          if (!navigation.isCurrent(snapshot) || controller.signal.aborted) return;
-          store.acceptPublic(chart);
-        }
-        if (!navigation.isCurrent(snapshot) || controller.signal.aborted) return;
-        if (!initial) selectChart(route.id, {fromRoute:true});
-      } else if (!initial && route.kind === 'transit') selectChart('current-transit', {fromRoute:true});
-      else if (!initial && route.kind === 'temporary-chart') selectChart(store.temporaryChart?.id ?? 'current-transit', {fromRoute:true});
-    } catch (error) {
-      if (!navigation.isCurrent(snapshot) || controller.signal.aborted) return;
-      void observation?.reportError(error,{stage:'request'});
-      if(route.kind==='chart' && (error as {code?:string})?.code==='not_found') {
-        store.clearPublic(route.id);selectChart('current-transit',{replace:true});viewSession?.flush();
-        if(initial) {
-          const redirected=navigation.snapshot,ready=await transit!.start(null,{firstChart:true});
-          if(navigation.isCurrent(redirected)){initialPage.restoreFailed=ready===false;updateLoading();}
-        }
-      } else routeFailed = true;
-      toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
-    } finally {
-      observation?.finishSuccess();
-      if (navigation.isCurrent(snapshot) && !controller.signal.aborted) {
-        routePending = false;
-        if (!initial) { initialPage.restored = true; initialPresentation = null; }
-        updateLoading();
-      }
-    }
+        },
+        apply() {
+          if (request.initial) return;
+          if (route.kind === 'chart') selectChart(route.id, {fromRoute:true});
+          else if (route.kind === 'transit') selectChart('current-transit', {fromRoute:true});
+          else if (route.kind === 'temporary-chart') selectChart(store.temporaryChart?.id ?? 'current-transit', {fromRoute:true});
+        },
+        async failed(error) {
+          void observation?.reportError(error,{stage:'request'});
+          if (route.kind === 'chart' && (error as {code?:string})?.code === 'not_found') {
+            store.clearPublic(route.id);selectChart('current-transit',{replace:true});viewSession?.flush();
+            if (request.initial) {
+              const redirected=navigation.snapshot,ready=await transit!.start(null,{firstChart:true});
+              if(navigation.isCurrent(redirected)){initialPage.restoreFailed=ready===false;updateLoading();}
+            }
+          }
+          toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
+        },
+        settled() {
+          if (!request.initial) { initialPage.restored = true; initialPresentation = null; }
+        },
+        dispose() { observation?.finishSuccess(); },
+      };
+    }});
+    application.subscribe(updateLoading);
+    application.start();
   }
-  navigation?.subscribe(snapshot => { if (!publishingRoute) void applyRoute(snapshot); });
   accountLibrary.subscribe(projectAccountLibrary);
   if (libraryChannel) libraryChannel.onmessage = async event => {
     if (event.data?.kind === 'changed' && libraryInitialized) await accountLibrary.refreshLocal().catch(() => {});
@@ -1054,7 +1056,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       await libraryReady;
       if (!routeCurrent()) return;
       projectAccountLibrary();
-      if (initialRoute) await applyRoute(initialRoute, true);
+      if (initialRoute) await application!.requestRoute(initialRoute, true);
       if (!routeCurrent()) return;
       if (initialRoute?.route?.kind !== 'chart' && accountLibrary.get(savedView?.selectedId ?? '')) {
         try {await accountLibrary.open(savedView!.selectedId!);} catch { /* Only compatible downloaded charts may be restored. */ }
@@ -1265,7 +1267,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   // Exceptions, missing records/screens and unconfirmed writes still block it.
   const offlineRestored = () => initialPage.restored
     && (!initialPage.restoreFailed || (calculationObsolete || returnsObsolete) && !restorationException)
-    && !initialPage.screenPending && !initialPage.screenFailed && !routePending && !routeFailed;
+    && !initialPage.screenPending && !initialPage.screenFailed && !routePending() && !routeFailed();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
     invalidateCalculations({ calculation = true, returns: obsoleteReturns = true }: {calculation?:boolean;returns?:boolean} = {}) {
       calculationObsolete ||= calculation; returnsObsolete ||= obsoleteReturns || calculation;
@@ -1300,6 +1302,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         || !accountLibrary.get(selected) && selected===store.publicChart?.id && store.publicChart.calculationVersion===accountLibrary.calculationVersion ? finish()
         : accountLibrary.canRestore(selected).then(durable=>durable && finish(),()=>false);
     },
+    // P17 extends the shared lifetime to the remaining owners; this stops all P02 resources.
+    stopApplication: () => application?.stop() ?? Promise.resolve(),
     flushView: () => viewSession!.flush(),
     attachJournal(value:AppJournal){
       if(journal===value)return;

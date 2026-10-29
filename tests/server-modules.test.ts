@@ -84,6 +84,11 @@ test('static serving exposes the explicit public files and preserves private pat
   }
   const head = await request(handler, '/', { method: 'HEAD' });
   assert.equal(head.status, 200); assert.equal(head.body, '');
+  const html = (await request(handler, '/')).body;
+  const imports = JSON.parse(html.match(/<script type="importmap">(.*?)<\/script>/)![1]).imports;
+  assert.equal((await request(handler, imports.xstate)).status, 200);
+  assert.equal((await request(handler, '/src/application/application.ts')).status, 200);
+  assert.equal((await request(handler, '/node_modules/xstate/package.json')).status, 404);
   const post = await request(handler, '/', { method: 'POST' });
   assert.equal(post.status, 405); assert.equal(post.headers.Allow, 'GET, HEAD');
   for (const path of ['/server/http/app.ts', '/server/http/public-files.ts', '/server/services/cities.ts', '/server/services/calculate.ts', '/data/cities.json', '/.git/config', '/.venv/pyvenv.cfg', '/tests/previews/preview-harness.ts', '/src/../server/python/calculator.py', '/src/%2e%2e/server/python/calculator.py'] as const) {
