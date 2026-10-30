@@ -1,3 +1,7 @@
+import { readLibraryLocalNotice, readLibraryPackageKey } from '../src/domain/library-maintenance.ts';
+import {createNatalDayClient} from '../src/data/natal-day-client.ts';
+import {encodeNatalDay} from '../server/packets/encode.ts';
+import {natalDaySourceKey,returnSourceKey} from '../shared/library-package-contract.ts';
 import { createResourceScope } from '../src/runtime/resource-scope.ts';
 import {libraryRecordEntry} from '../src/state/library-reconciliation.ts';
 import type {LibraryListChart} from '../src/domain/library-catalog.ts';
@@ -91,6 +95,7 @@ interface HarnessOptions {
   personalCleanup?: Pick<ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>,'resetPersonal'|'retryPersonalCleanup'>;
   chartClient?: Partial<ChartClient>; accountSession?: (LibrarySession & {diagnosticProof?:string}) | null;
   libraryStorage?: ReturnType<typeof createAccountLibraryStore>;
+  storedNatalClient?:ReturnType<typeof createNatalDayClient>;
   realSummary?: boolean; realViewSession?: boolean; realTransit?: boolean; search?: string; restore?: () => Promise<boolean>; savedView?: TestStub<SavedView> | null;
   fonts?: Promise<unknown>; initialPresentation?: ReturnType<typeof studioPresentation> | null;
   studioSize?: { width: number; height: number } | null; metaError?: unknown;
@@ -126,6 +131,7 @@ type AppPorts = Pick<typeof import('../src/runtime/resource-scope.ts'), 'createR
   & Pick<typeof import('../src/application/application.ts'), 'createApplication'>
   & Pick<typeof import('../src/platform/browser/background-coordinator.ts'), 'createBackgroundCoordinator'>
   & Pick<typeof import('../src/platform/browser/lifecycle.ts'), 'createPageLifecycle'>
+  & Pick<typeof import('../src/domain/library-maintenance.ts'), 'readLibraryLocalNotice'|'readLibraryPackageKey'>
   & Pick<typeof import('../src/data/library-fill-transfer.ts'), 'createLibraryFillTransfer'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
@@ -246,7 +252,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,readyDay:unexpected,catalog:unexpected,confirmCatalog:async input=>({kind:'confirmed',accountId:input.expectedAccountId,marker:input.marker}),...overrides};
 }
-function harness({connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({storedNatalClient, connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   let backgroundTimeOffset=0;
   let hovered = false, notifyHover: () => void = noop;
@@ -302,13 +308,13 @@ function harness({connection, copyText, transitStart = async () => true, actualS
   let captionUpdates = 0, workspace!: ReturnType<typeof createWorkspaceState>, panels!: ReturnType<typeof createPanelState>;
   let knowledgeOptions!: PortOptions<'attachKnowledgeEntry'>, knowledgeLoads = 0, restoreInterrupted = false;
   const module = new Promise<unknown>((resolve, reject) => { finishModule = resolve; failModule = reject; });
-  const memory = {}, natalClient = {};
+  const memory = {}, natalClient = storedNatalClient??{};
   const copiedLinks: string[] = [];
   // Clipboard is external; the real link view and composition determine its address and availability.
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,
+    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
@@ -394,7 +400,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
     },
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value: boolean) { if (dimensions) panel.hidden = value; } }),
-    attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
+    attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: storedNatalClient??{ getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { performanceOptions = options; return {destroy:noop}; },
     attachChartLoading: options => {loadingOptions=options;return {update: (value: Record<string,unknown>) => {loadingState=value;}};}, createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
@@ -450,7 +456,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
     get cards() {return store.charts;},get rows(){return store.displayCharts;},
     prepareTemporary(chart: SavedChart) {const saved=birthOptions.saveChart(chart);birthOptions.onSave(chart.id);return saved;},
     submitPort(input: BirthSubmission) {return birthOptions.submitChart?.(input,new AbortController().signal);},
-    libraryChanged() {assert.ok(libraryChannel); return libraryChannel.onmessage?.({data: {kind: 'changed'}});},
+    libraryChanged(data:unknown={kind:'changed'}) {assert.ok(libraryChannel); return libraryChannel.onmessage?.({data});},
     logoutNotice(ids: string[]) {for (const listener of noticeListeners) listener({kind: 'logout', ids});},
     changeAccount(next: LibrarySession | null) {accountSession = next; for (const listener of accountListeners) listener();},
     async submit(input: BirthSubmission) {
@@ -2836,6 +2842,59 @@ test('30 application start-stop cycles release connection and projection subscri
   h.panels.setRight(!h.panels.right);h.workspace.setScreen('account');await tick();
   assert.equal(h.renders,renders,`cycle ${run}: closed projection stays closed`);
  }
+});
+
+test('a committed local day refreshes only its selected source and rejects stale peer hints',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),record=accountNatalChart(91);
+ const active=await storage.activate(record.accountId);assert.equal(active.status,'stored');if(active.status!=='stored')throw Error('owner');
+ await storage.put(active.lease,[record]);
+ const storedNatalClient=createNatalDayClient({library:storage,persistentCache:null,fetch:()=>assert.fail('readiness must not request a calculation')});
+ const h=harness({charts:[record],storedNatalClient,libraryStorage:storage,accountSession:{accountId:record.accountId,sessionId:'local-session'},
+  connection:{current:'offline',subscribe(){return()=>{};}},chartClient:deletionClient(record)});t.after(()=>h.stopApplication());
+ await h.restoration;h.select(record.id);for(let i=0;i<20;i++)await tick();
+ assert.equal(h.natalDay.state.original?.id,record.id);assert.equal(h.natalDay.state.canOpen,false);
+ let reads=0;const read=storage.readPackage.bind(storage);t.mock.method(storage,'readPackage',async(...args:Parameters<typeof read>)=>{reads++;return read(...args);});
+ const ref={kind:'day' as const,sourceKey:natalDaySourceKey({date:record.birthDate,timezone:record.timezone!})};
+ const bytes=encodeNatalDay(natalDayFixture({date:record.birthDate})).slice().buffer;
+ assert.equal(await storage.putPackage(active.lease,record,ref,bytes),'stored');
+ for(let i=0;i<20 && !h.natalDay.state.canOpen;i++)await tick();
+ assert.equal(h.natalDay.state.canOpen,true);assert.equal(reads,1,'one targeted read after the committed packet');
+ const hint={kind:'local-storage',sessionId:'local-session',lease:active.lease,keys:[JSON.stringify(ref),JSON.stringify(ref)]};
+ await h.libraryChanged({...hint,sessionId:'old'});await h.libraryChanged({...hint,lease:{...active.lease,generation:'old'}});
+ await h.libraryChanged({...hint,lease:{...active.lease,accountId:'2'}});
+ for(const malformed of [null,{}, {...hint,lease:null},{...hint,keys:null},{...hint,keys:[23]}])await h.libraryChanged(malformed);
+ await h.libraryChanged({...hint,keys:['invalid',JSON.stringify({...ref,sourceKey:'["2001-01-02","UTC"]'})]});await tick();
+ assert.equal(reads,1,'stale and unrelated keys do no numerical work');
+ await h.libraryChanged(hint);for(let i=0;i<10;i++)await tick();assert.equal(reads,2,'duplicate peer keys produce one read');
+ const received:unknown[]=[];const refresh=h.returns.refreshStoredPackage.bind(h.returns);
+ t.mock.method(h.returns,'refreshStoredPackage',async ref=>{received.push(ref);await refresh(ref);});
+ const family={kind:'major-returns' as const,sourceKey:returnSourceKey({birthUtc:record.utc,timezone:record.timezone!}),family:'saturn' as const};
+ await h.libraryChanged({...hint,keys:[JSON.stringify(family),JSON.stringify({...family,family:'moon'}),JSON.stringify({kind:'card',sourceKey:'card'})]});
+ assert.deepEqual(received,[family],'only a valid numerical package reaches its owner');
+ assert.equal(reads,2,'a family notice does not reread the day');
+ assert.equal(h.shown?.id,record.id);assert.equal(h.natalDay.state.opened,false);
+ await h.stopApplication();await h.libraryChanged(hint);await tick();assert.equal(reads,2,'closed root has no listener');
+});
+
+test('opening an owned card pauses background fill until its real-use placement settles',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),missing=accountNatalChart(91),opened=accountNatalChart(92),initial=accountNatalChart(93);
+ const active=await storage.activate(opened.accountId);if(active.status!=='stored')throw Error('owner');await storage.put(active.lease,[opened,initial]);
+ let releaseUse!:()=>void;let uses=0;const touch=storage.touch.bind(storage);
+ t.mock.method(storage,'touch',async(...args:Parameters<typeof touch>)=>{if(args[1]!==opened.id)return touch(...args);uses++;await new Promise<void>(resolve=>{releaseUse=resolve;});return touch(...args);});
+ let reply!:()=>void,fillSignal:AbortSignal|undefined,reads=0;
+ const h=harness({charts:[initial],libraryStorage:storage,
+  accountSession:{accountId:opened.accountId,sessionId:'use-session'},chartClient:deletionClient(missing,{
+   catalog:async input=>catalogPage([missing,opened,initial],input.expectedAccountId),
+   own:async(input,signal)=>{if(input.chartId!==missing.id)return {chart:input.chartId===opened.id?opened:initial,catalogMarker:'1'};reads++;fillSignal=signal;await new Promise<void>(resolve=>{reply=resolve;});return {chart:missing,catalogMarker:'1'};},
+  })});t.after(()=>h.stopApplication());await h.restoration;h.select(initial.id);
+ for(let i=0;i<100&&!fillSignal;i++)await tick();assert.equal(reads,1);
+ h.select(opened.id);for(let i=0;i<30&&!uses;i++)await tick();assert.equal(uses,1);
+ assert.equal(fillSignal!.aborted,true,'user placement cancels the background consumer before its local writes');
+ reply();await new Promise(resolve=>setTimeout(resolve,1100));assert.equal(reads,1,'no restart during the pending foreground touch, even after the retained retry delay');
+ assert.equal(h.cards.some(card=>card.id===missing.id),false);
+ releaseUse();for(let i=0;i<60&&reads<2;i++)await tick();assert.equal(reads,2,'the retained occasion resumes after foreground completion');
+ reply();for(let i=0;i<60&&!h.cards.some(card=>card.id===missing.id);i++)await tick();assert.ok(h.cards.some(card=>card.id===missing.id));
+ assert.equal(h.shown?.id,opened.id);
 });
 
 test('restored application fills one missing card once without changing the selected chart',async t=>{

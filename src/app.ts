@@ -1,3 +1,5 @@
+import { readLibraryLocalNotice, readLibraryPackageKey } from './domain/library-maintenance.ts';
+import type {LibraryLocalChange,LibraryLocalNotice} from './domain/library-maintenance.ts';
 import { createResourceScope } from './runtime/resource-scope.ts';
 import { chartPresentation } from './domain/chart-presentation.ts';
 import { createViewCheckpoint } from './state/view-checkpoint.ts';
@@ -109,7 +111,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const observeConnection = connection ? (listener: Parameters<ConnectionSource['subscribe']>[0]) => connection.subscribe(listener) : subscribeConnection;
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   let application: Application | null = null;
-  let lastLibraryWork='';
+  let lastLibraryWork='',pendingLibraryUses=0;
   let releaseCheck:ReleaseCheckPort|null=null,publicCheckKey='',publicCheckInstance='';
   let publicCheckSource:PublicAccountChart|null=null;
   let freshPublic:{source:PublicAccountChart;checkedAt:number;receivedAt:number}|null=null;
@@ -317,7 +319,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   function selectChart(id: string, { keepMenuOpen = false, fromRoute = false, replace = false } = {}) {
     navigateWorkspace('chart', { keepMenuOpen, fromRoute:true });
     graph.changeChart(id);
-    if (session.selectedId === id && accountLibrary.get(id)) void accountLibrary.markOpened(id).then(()=>wakeLibraryWork('use'));
+    if (session.selectedId === id && accountLibrary.get(id)) markLibraryOpened(id);
     gestures.reset();
     const destination = routeForChart(id);
     if (!fromRoute) publishRoute(destination, replace);
@@ -326,7 +328,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const chartClient = createChartClient({getSession: account.getSession});
   let libraryChannel: BroadcastChannel | null = null;
   try {libraryChannel = new window.BroadcastChannel('forma-library');} catch { /* Resuming a tab also checks its local library. */ }
-  const notifyLibrary = (notice:Parameters<NonNullable<Parameters<typeof createAccountLibrary>[0]['notify']>>[0]) => {try {libraryChannel?.postMessage(notice);} catch {}};
+  const notifyLibrary = (notice:Parameters<NonNullable<Parameters<typeof createAccountLibrary>[0]['notify']>>[0]|LibraryLocalNotice) => {try {libraryChannel?.postMessage(notice);} catch {}};
   const libraryStorage = calculationClients?.library ?? createAccountLibraryStore({pressure: storagePressure});
   let backgroundChannel:BroadcastChannel|null=null;
   try{backgroundChannel=new window.BroadcastChannel('forma-background-checks');}catch{/* Automatic work pauses without shared coordination. */}
@@ -889,10 +891,26 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
   const initialRoute=navigation?.snapshot;
+  function acceptLocalLibraryChange(change:LibraryLocalChange) {
+    for(const key of change.keys){
+      const ref=readLibraryPackageKey(key);
+      if(ref){void natalDay?.refreshStoredPackage(ref);void returns?.refreshStoredPackage(ref);}
+    }
+    if(change.keys.includes(session.selectedId))notifyOfflineReady();
+  }
+  function receiveLocalLibraryChange(value:unknown):boolean {
+    if(scope.stopped)return false;
+    const change=readLibraryLocalNotice(value,accountLibrary.workingLease,accountLibrary.session?.sessionId);
+    if(!change)return false;acceptLocalLibraryChange(change);return true;
+  }
+  function markLibraryOpened(id:string) {
+    pendingLibraryUses++;updateLibraryWork();
+    void accountLibrary.markOpened(id).finally(()=>{pendingLibraryUses--;wakeLibraryWork('use');});
+  }
   function libraryWorkScope():LibraryFillScope|null {
     const lease=accountLibrary.workingLease,access=accountLibrary.session;
     if(!lease || !access || !libraryInitialized || !startupRestored())return null;
-    const foreground=Boolean(initialPage.active || birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending
+    const foreground=Boolean(initialPage.active || pendingLibraryUses>0 || birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending
       || application?.view.destination==='preparing' || application?.write.busy && !application.write.waitingForLogin
       || transit?.state.loading || natalDay?.pending || returns?.pending || lifetimeLoading || lifetime?.pending);
     return {lease,sessionId:access.sessionId,catalogMarker:accountLibrary.completeCatalog?.marker??'',
@@ -938,9 +956,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       control:libraryStorage.fill,inventory:libraryStorage.maintenance.inventory,
       accepted(_candidate,payload,authority){
         const packet=payload as LibraryFillPacket;
-        if(packet.kind==='card')accountLibrary.acceptStored(packet.chart,packet.marker,authority.permit.lease,authority.permit.sessionId);
+        if(packet.kind==='card' && accountLibrary.acceptStored(packet.chart,packet.marker,authority.permit.lease,authority.permit.sessionId) && session.selectedId===packet.chart.id)notifyOfflineReady();
       }},
-    libraryAudit:{scope:libraryWorkScope,store:libraryStorage.maintenance,changed:notifyOfflineReady},
+    libraryAudit:{scope:libraryWorkScope,store:libraryStorage.maintenance},
     update:{
     restored:()=>!initialPage.contentFailed && !initialPage.screenPending && !initialPage.screenFailed,
     ready(){
@@ -1103,12 +1121,18 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     scope.own(application.subscribe(updateLoading));
     application.start();
   scope.own(accountLibrary.subscribe(projectAccountLibrary));
+  scope.own(libraryStorage.subscribeLocal(change=>{
+    const sessionId=accountLibrary.session?.sessionId;if(!sessionId)return;
+    const notice:LibraryLocalNotice={kind:'local-storage',sessionId,...change};
+    if(receiveLocalLibraryChange(notice))notifyLibrary(notice);
+  }));
   let pageVisible=pageLifecycle.visible;
   scope.own(pageLifecycle.subscribe(returned=>{
     const appeared=pageLifecycle.visible && !pageVisible;pageVisible=pageLifecycle.visible;
     updateLibraryWork();if(returned || appeared)wakeLibraryWork('lifecycle');
   }));
   if (libraryChannel) libraryChannel.onmessage = async event => {
+    if(scope.stopped || receiveLocalLibraryChange(event.data))return;
     if (libraryInitialized) {
       const prior=accountLibrary.completeCatalog;await accountLibrary.receive(event.data).catch(() => {});
       updateLibraryWork();if(accountLibrary.completeCatalog && accountLibrary.completeCatalog!==prior)wakeLibraryWork('library');
