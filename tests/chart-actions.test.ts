@@ -414,13 +414,19 @@ test('an outcome refusal for a restored pointer preserves its cause without clea
 });
 
 
+const unusedChartClient:Parameters<typeof createChartActions>[0]['client']={
+ async create(){assert.fail('unexpected creation');},async update(){assert.fail('unexpected edit');},
+ async remove(){assert.fail('unexpected removal');},async addFromSource(){assert.fail('unexpected copy');},
+ async outcome(){assert.fail('unexpected recovery');},
+};
+
 test('whenIdle waits for a cancelled ready save through late library acceptance',async()=>{
  let response!:()=>void,accept!:()=>void,opens=0,idle=false;
  const replying=new Promise<void>(resolve=>{response=resolve;}),accepting=new Promise<void>(resolve=>{accept=resolve;});
  const chart=accountChart(),controller=new AbortController();
  const actions=createChartActions({getSession:()=>access,
   saveReady:async intent=>{await replying;return {...intent,outcome:{kind:'created',chartId:chart.id,revision:1}};},
-  client:{} as Parameters<typeof createChartActions>[0]['client'],
+  client:unusedChartClient,
   library:{async open(){opens++;await accepting;return chart;},async forget(){}}});
  const work=actions.saveSource({kind:'temporary',chart:{...chart,source:'transit',createdAt:'',updatedAt:''}},options(controller.signal));
  controller.abort();const barrier=actions.whenIdle().then(()=>{idle=true;});
@@ -435,7 +441,7 @@ test('whenIdle retains shared recovery after its final consumer cancels and afte
  let respond!:()=>void,accept!:()=>void,opens=0,idle=false;
  const response=new Promise<void>(resolve=>{respond=resolve;}),acceptance=new Promise<void>(resolve=>{accept=resolve;});
  const actions=createChartActions({getSession:()=>access,initialPending:[intent],
-  client:{async outcome(value){await response;return {...value,outcome:{kind:'created',chartId:chart.id,revision:1}};}} as Parameters<typeof createChartActions>[0]['client'],
+  client:{...unusedChartClient,async outcome(value){await response;return {...value,outcome:{kind:'created',chartId:chart.id,revision:1}};}},
   library:{async open(){opens++;await acceptance;return chart;},async forget(){}}});
  const first=new AbortController(),second=new AbortController();
  const one=actions.recover(intent,first.signal),two=actions.recover(intent,second.signal);
@@ -459,7 +465,7 @@ test('whenIdle observes a write before its pending-pointer notification can star
  let finish!:()=>void,idle:Promise<void>|undefined,completed=false;
  const response=new Promise<void>(resolve=>{finish=resolve;});
  const actions=createChartActions({getSession:()=>access,
-  client:{async create(value){await response;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}} as Parameters<typeof createChartActions>[0]['client'],
+  client:{...unusedChartClient,async create(value){await response;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}},
   library:{async open(){return accountChart();},async forget(){}},
   onPending(pending){if(pending.length)idle=actions.whenIdle().then(()=>{completed=true;});}});
  const work=actions.create(input);await new Promise(setImmediate);assert.equal(completed,false);
@@ -471,7 +477,7 @@ test('cancelling whenIdle releases only its waiter and leaves the active write i
  let finish!:()=>void,opens=0;
  const response=new Promise<void>(resolve=>{finish=resolve;});
  const actions=createChartActions({getSession:()=>access,
-  client:{async create(value){await response;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}} as Parameters<typeof createChartActions>[0]['client'],
+  client:{...unusedChartClient,async create(value){await response;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}},
   library:{async open(){opens++;return accountChart();},async forget(){}}});
  const work=actions.create(input),control=new AbortController();
  const cancelled=assert.rejects(actions.whenIdle(control.signal),{name:'AbortError'});
@@ -489,10 +495,10 @@ test('whenIdle waits for every active write and recovery, not just the first com
  let finishWrite!:()=>void,finishRecovery!:()=>void,idle=false;
  const writeGate=new Promise<void>(resolve=>{finishWrite=resolve;}),recoveryGate=new Promise<void>(resolve=>{finishRecovery=resolve;});
  const intent={expectedAccountId:access.accountId,operationId:chartId(90)};
- const actions=createChartActions({getSession:()=>access,client:{
+ const actions=createChartActions({getSession:()=>access,client:{...unusedChartClient,
   async create(value){await writeGate;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};},
   async outcome(value){await recoveryGate;return {...value,outcome:{kind:'unknown'}};},
- } as Parameters<typeof createChartActions>[0]['client'],library:{async open(){return accountChart();},async forget(){}}});
+ },library:{async open(){return accountChart();},async forget(){}}});
  const write=actions.create(input),recovery=actions.recover(intent),barrier=actions.whenIdle().then(()=>{idle=true;});
  finishWrite();await write;await new Promise(setImmediate);assert.equal(idle,false);
  finishRecovery();await recovery;await barrier;assert.equal(idle,true);

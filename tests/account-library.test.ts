@@ -639,9 +639,9 @@ for(const stage of ['local','page','confirmation','authority'] as const)test(`ca
  await library.connect(session);
  const hold=async<T>(read:()=>Promise<T>)=>{begin();await gate;return read();};
  if(stage==='local'){const read=storage.readCatalog;t.mock.method(storage,'readCatalog',()=>hold(read));}
- if(stage==='page'){const read=source.catalog;t.mock.method(source,'catalog',(...args)=>hold(()=>read(...args)));}
- if(stage==='confirmation'){const read=source.confirmCatalog;t.mock.method(source,'confirmCatalog',(...args)=>hold(()=>read(...args)));}
- const put=storage.putCatalog;t.mock.method(storage,'putCatalog',(...args)=>{writes++;return put(...args);});
+ if(stage==='page'){const read=source.catalog;t.mock.method(source,'catalog',(...args:Parameters<typeof read>)=>hold(()=>read(...args)));}
+ if(stage==='confirmation'){const read=source.confirmCatalog;t.mock.method(source,'confirmCatalog',(...args:Parameters<typeof read>)=>hold(()=>read(...args)));}
+ const put=storage.putCatalog;t.mock.method(storage,'putCatalog',(...args:Parameters<typeof put>)=>{writes++;return put(...args);});
  const authority=stage==='authority'?{permit:{key:'library:1',owner:'A',token:'p',sessionId:session.sessionId,startedAt:1,expiresAt:999999},
   signal:new AbortController().signal,current:()=>hold(async()=>true)}:undefined;
  const pending=library.load(authority).then(result=>{finished=true;return result;});
@@ -660,7 +660,7 @@ test('catalog cancellation covers every distinct run and its joined readers with
  const prior=library.completeCatalog,lease=library.workingLease,card=library.get(rows[0]!.id);
  const calls:{signal:AbortSignal;release:()=>void}[]=[],read=source.catalog;
  let begin!:()=>void;const began=new Promise<void>(resolve=>{begin=resolve;});
- t.mock.method(source,'catalog',async(...args)=>{
+ t.mock.method(source,'catalog',async(...args:Parameters<typeof read>)=>{
   await new Promise<void>(resolve=>{calls.push({signal:args[1]!,release:resolve});if(calls.length===2)begin();});return read(...args);
  });
  t.after(()=>{for(const call of calls)call.release();});
@@ -686,12 +686,12 @@ test('catalog cancellation waits for an entered commit and its local publication
  const began=new Promise<void>(resolve=>{entered=resolve;}),commitGate=new Promise<void>(resolve=>{release=resolve;}),
   beganRead=new Promise<void>(resolve=>{reading=resolve;}),readGate=new Promise<void>(resolve=>{releaseRead=resolve;});
  t.after(()=>{release();releaseRead();});
- const put=storage.putCatalog;t.mock.method(storage,'putCatalog',async(...args)=>{entered();await commitGate;return put(...args);});
+ const put=storage.putCatalog;t.mock.method(storage,'putCatalog',async(...args:Parameters<typeof put>)=>{entered();await commitGate;return put(...args);});
  const commitSignal=new AbortController().signal;
  const committing=library.load(undefined,commitSignal).then(value=>{finished=true;return value;});
  await began;let joinedFinished=false;
  const joined=library.load(undefined,commitSignal).then(value=>{joinedFinished=true;return value;});
- const read=source.catalog;t.mock.method(source,'catalog',async(...args)=>{reading();await readGate;return read(...args);});
+ const read=source.catalog;t.mock.method(source,'catalog',async(...args:Parameters<typeof read>)=>{reading();await readGate;return read(...args);});
  const pending=library.load(undefined,new AbortController().signal).then(result=>{readFinished=true;return result;});
  await beganRead;library.cancelCatalogReads();library.cancelCatalogReads();await new Promise(setImmediate);
  assert.equal(readFinished,true);assert.deepEqual(await pending,{status:'superseded'});
