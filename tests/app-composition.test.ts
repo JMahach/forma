@@ -1,4 +1,3 @@
-import {createAccountBoundaryWork} from '../src/application/account-boundary.ts';
 import {createChartEditing} from '../src/application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from '../src/domain/library-maintenance.ts';
 import {createNatalDayClient} from '../src/data/natal-day-client.ts';
@@ -136,7 +135,6 @@ type AppPorts = Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice
   & Pick<typeof import('../src/platform/browser/background-coordinator.ts'), 'createBackgroundCoordinator'>
   & Pick<typeof import('../src/platform/browser/lifecycle.ts'), 'createPageLifecycle'>
   & Pick<typeof import('../src/application/chart-editing.ts'), 'createChartEditing'>
-  & Pick<typeof import('../src/application/account-boundary.ts'), 'createAccountBoundaryWork'>
   & Pick<typeof import('../src/domain/library-maintenance.ts'), 'readLibraryLocalNotice'|'readLibraryPackageKey'>
   & Pick<typeof import('../src/data/library-fill-transfer.ts'), 'createLibraryFillTransfer'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
@@ -321,7 +319,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   const copyNotice = {dispose() {copyNotice.close();}, revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,createChartEditing,createAccountBoundaryWork,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
+    createApplication,createChartEditing,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{

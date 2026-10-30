@@ -39,6 +39,11 @@ export function createViewCheckpoint({store,eventTarget,interactionTarget,schedu
  const pageHide=()=>{flush();},hidden=()=>{if(interactionTarget?.hidden)flush();};
  eventTarget?.addEventListener('pagehide',pageHide);
  interactionTarget?.addEventListener('visibilitychange',hidden);
+ const clear=(retained?:Partial<SavedView>):CheckpointResult=>{
+   cancelPending();
+   if(stopped)return {kind:'failed',cause:new Error('Snapshot writer is stopped')};
+   return clearSnapshot(store,retained);
+ };
  return {
   get pending(){return pending!==null;},
   claim(read:Source['read'],stored=()=>{}){
@@ -54,10 +59,10 @@ export function createViewCheckpoint({store,eventTarget,interactionTarget,schedu
   },
   flushForPageHide:flush,
   async checkpoint(_reason:CheckpointReason){return flush();},
-  clear(retained?:Partial<SavedView>):CheckpointResult {
-   cancelPending();
-   if(stopped)return {kind:'failed',cause:new Error('Snapshot writer is stopped')};
-   return clearSnapshot(store,retained);
+  clear,
+  clearPersonal({temporaryChart,publicChart,selectedId}:Pick<SavedView,'temporaryChart'|'publicChart'|'selectedId'>):boolean {
+   return clear(temporaryChart || publicChart?{version:1,temporaryChart,publicChart,
+    selectedId:selectedId===temporaryChart?.id || selectedId===publicChart?.id?selectedId:'current-transit'}:undefined).kind==='stored';
   },
   destroy(){cancelPending();stopped=true;source=null;
    eventTarget?.removeEventListener('pagehide',pageHide);interactionTarget?.removeEventListener('visibilitychange',hidden);},

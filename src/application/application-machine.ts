@@ -9,14 +9,14 @@ import {createLibraryFill} from './library-fill.ts';
 import {createLibraryLocalAudit} from './library-local-audit.ts';
 import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
 
-type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'AccountBoundaryStarted'};
+type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'AccountBoundaryStarted';reset:boolean};
 
 function routeChanged(request:RouteRequest|null,event:Event,navigation?:NavigationPort) {
   return event.type==='RouteRequested' && !!event.snapshot.route
     && !!navigation?.isCurrent(event.snapshot) && request?.snapshot!==event.snapshot;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void) {
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>) {
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
@@ -40,7 +40,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       libraryAudit:createLibraryLocalAudit(ports.libraryAudit!),
       startup: createStartupMachine(ports.startup!),
       publicRefresh: createPublicRefreshMachine(ports.publicRefresh!),
-      account: createAccountBoundaryMachine(ports.account!, runtimeId),
+      account: createAccountBoundaryMachine(ports.account!, runtimeId,sources),
       write: createWriteContinuationMachine(ports.write!),
       route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) =>
         prepareRoute(ports, input, signal)),
@@ -64,6 +64,11 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         if (event.type === 'RoutePublished') ports.navigation?.navigate(event.route, {replace: event.replace, origin: 'publication'});
       },
       clear: assign({request: null}),
+      boundary:({event,self})=>{
+        if(event.type!=='AccountBoundaryStarted')return;
+        self.getSnapshot().children.publicRefresh?.send({type:'CancelPublicRefresh'});
+        if(event.reset)self.getSnapshot().children.write?.send({type:'CancelWrite'});
+      },
       disconnect,
     },
   }).createMachine({
@@ -103,6 +108,8 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             guard: () => !!ports.publicRefresh,
             actions: sendTo('publicRefresh', ({event}) => event),
           },
+          AccountBoundaryStarted:{actions:'boundary'},
+          JournalAttached:{guard:()=>!!ports.account,actions:sendTo('account',({event})=>event)},
           SessionChanged: {
             guard: () => !!ports.account,
             actions: sendTo('account', ({event}) => event),
@@ -148,7 +155,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
               idle: {},
               preparing: {
                 on: {
-                  AccountBoundaryStarted: {target: 'preparing', reenter: true, actions: 'retried'},
+                  AccountBoundaryStarted: {target: 'preparing', reenter: true, actions: ['boundary','retried']},
                 },
                 invoke: {
                   id: 'route',

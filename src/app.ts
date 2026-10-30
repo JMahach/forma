@@ -6,8 +6,6 @@ import { createResourceScope } from './runtime/resource-scope.ts';
 import { chartPresentation } from './domain/chart-presentation.ts';
 import { createViewCheckpoint } from './state/view-checkpoint.ts';
 import type { ViewCheckpoint } from './state/view-checkpoint.ts';
-import type { AccountBoundaryRequest } from './application/ports.ts';
-import { createAccountBoundaryWork } from './application/account-boundary.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import type { StoragePressure } from './data/storage-pressure.ts';
@@ -134,18 +132,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   function cancelChartSave(){application?.send({type:'CancelWrite'});}
-  let lastJournalAccount=account.getSession()?.accountId??null,lastJournalSession=account.getSession()?.sessionId??null,lastJournalProof=account.getSession()?.diagnosticProof,journalBoundaryPending=false;
-  const journalBoundaryIds=new Set<string>();
-  journal?.setAccount(lastJournalAccount,lastJournalSession,lastJournalProof);
-  function syncJournalAccount() {
-    const access=account.getSession(),next=access?.accountId??null;
-    // Keep only the last known identity and whether a real boundary occurred.
-    // Expiry preserves A; A -> B -> A must still clear A's earlier queue.
-    if(!journal && next && lastJournalAccount && next!==lastJournalAccount){journalBoundaryPending=true;
-      if(lastJournalSession)journalBoundaryIds.add(lastJournalSession);}
-    if(next){lastJournalAccount=next;lastJournalSession=access!.sessionId;lastJournalProof=access!.diagnosticProof;}
-    journal?.setAccount(next,access?.sessionId,access?.diagnosticProof);return next;
-  }
   savedView = viewForRoute(navigation?.snapshot.route ?? null, savedView);
   let pendingLifetimeDraft = savedView?.lifetimeDraft ?? null, pendingInputRestore = true;
   function cancelInputRestore() { pendingInputRestore = false; }
@@ -372,7 +358,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
-  const chartEditing=createChartEditing({actions:chartActions,ready:()=>libraryReady,session:account.getSession,
+  const chartEditing=createChartEditing({actions:chartActions,ready:()=>application!.requireAccount(),session:account.getSession,
     durable:()=>accountLibrary.storageAvailable,online:()=>connectionMode()==='online',
     deleted(id){if(store.clearPublic(id))viewSession?.flush();},
     messages:{signIn:UI_MESSAGES.chartSaveSignIn,failed:UI_MESSAGES.chartSaveFailed,
@@ -472,46 +458,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       return result;
     }catch(error){void observation?.reportError(error,{stage:'request'});throw error;}
   }
-  let libraryInitialized = false;
-  function beginAccountBoundary(request:AccountBoundaryRequest) {
-    return createAccountBoundaryWork(request,{
-      library:accountLibrary,calculations:calculationClients,
-      get pendingWrites(){return chartActions.pending;},
-      get boundAccount(){return temporaryChartSave?.expectedAccountId??null;},
-      enter(){application?.send({type:'CancelPublicRefresh'});syncJournalAccount();chartLibrary?.closeDelete();},
-      logout(ids){
-        if(!journal){journalBoundaryPending=true;for(const id of ids)journalBoundaryIds.add(id);}
-        journal?.leave(ids);
-        cancelChartSave();pendingBirthForm=null;discardPendingInput();
-        temporaryChartSave=null;chartActions.clear();chartEditing.reset();exploration!.cancelSelection();birthForm.close();
-        // Retain only independent tab sources in the private checkpoint adapter.
-        return checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
-          temporaryChart:store.temporaryChart,publicChart:store.publicChart,
-          selectedId:session.selectedId===store.temporaryChart?.id || session.selectedId===store.publicChart?.id
-            ? session.selectedId:'current-transit'}:undefined).kind==='stored';
-      },
-      switchAccount(access){
-        if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
-        temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();exploration!.cancelSelection();
-        const draft=birthForm.snapshot;
-        if(birthForm.opened && (!draft || draft.accountId!==null && draft.accountId!==access.accountId))birthForm.close();
-      },
-      flushSnapshot:()=>viewSession!.flush(),
-      settled(){
-        if(account.getSession())application!.send({type:'ResumeWrite'});
-        if(libraryInitialized){application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});wakeLibraryWork('library');}
-      },
-    });
-  }
-  const libraryReady = (async () => {
-    try{await accountLibrary.restore();}catch(error){if((error as {code?:string})?.code!=='account_changed')throw error;}
-    await account.ready;
-    if(scope.stopped || application!.view.lifecycle!=='running')return;
-    await application!.requestSession(account.getSession());
-    if(scope.stopped || application!.view.lifecycle!=='running')return;
-    libraryInitialized=true;
-    if (!accountLibrary.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
-  })();
 
   chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
@@ -861,7 +807,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }
   function libraryWorkScope():LibraryFillScope|null {
     const lease=accountLibrary.workingLease,access=accountLibrary.session;
-    if(!lease || !access || !libraryInitialized || !startupRestored())return null;
+    if(!lease || !access || application?.account.status!=='ready' || !startupRestored())return null;
     const foreground=Boolean(initialPage.active || pendingLibraryUses>0 || birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending
       || application?.view.destination==='preparing' || application?.write.busy && !application.write.waitingForLogin
       || transit?.state.loading || natalDay?.pending || returns?.pending || lifetimeLoading || lifetime?.pending);
@@ -885,7 +831,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       async run(authority){void journal?.wake();await releaseCheck?.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
       initial:releaseCheck?.install?.bind(releaseCheck),
       receive(){releaseCheck?.observe();}});
-    if(libraryInitialized && startupRestored() && access)tasks.push({
+    if(application?.account.status==='ready' && startupRestored() && access)tasks.push({
       target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
       async run(authority){const result=await accountLibrary.load(authority);const ready=result.status==='complete'||result.status==='unchanged';
         if(ready)wakeLibraryWork('hourly');return {outcome:{kind:ready?'success':'cancelled'}};},
@@ -934,7 +880,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
     checkpoint:()=>viewSession!.flush(),
   },startup:{
-    ready:()=>libraryReady,
+    ready:()=>application!.requireAccount(),
     current:()=>!viewSession!.interrupted && (!initialRoute || navigation!.isCurrent(initialRoute)),
     async route(){
       projectAccountLibrary();
@@ -953,14 +899,11 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       const draft=pendingBirthForm;pendingBirthForm=null;
       if(draft && !birthForm.opened)birthForm.restore(draft);
       viewSession!.flush();
-      application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
     },
     report(){toast('Не удалось восстановить положение страницы.');},
     changed(){
       if(startupRestored())initialPresentation=null;
       updateTimelineTools();updateLoading();restoreInitialInput();notifyOfflineReady();
-      application?.send({type:'BackgroundChanged'});
-      if(startupRestored())wakeLibraryWork('lifecycle');
     },
   },publicRefresh:{
     source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
@@ -983,7 +926,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
   }, write:{
     actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,
-    async ready(){await libraryReady;if(account.getSession())await application!.requestSession(account.getSession());},
+    ready:()=>application!.requireAccount(),
     source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
     binding:()=>temporaryChartSave,bind:value=>{temporaryChartSave=value;},
     retire(source){store.clearTemporary(source.id);store.releasePublicSource(source);},
@@ -1011,8 +954,16 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }, account:{
     subscribeSession(listener){return account.subscribeSession(()=>listener(account.getSession()));},
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
-    begin:beginAccountBoundary,
-    stop(){application?.send({type:'CancelPublicRefresh'});},
+    ready:account.ready,getSession:account.getSession,journal,
+    library:accountLibrary,calculations:calculationClients,writes:chartActions,editing:chartEditing,
+    binding:{get accountId(){return temporaryChartSave?.expectedAccountId??null;},clear(){temporaryChartSave=null;}},
+    form:{get pending(){return pendingBirthForm;},get snapshot(){return birthForm.snapshot;},get opened(){return birthForm.opened;},
+      clearPending(){pendingBirthForm=null;},discardInput:discardPendingInput,close:()=>birthForm.close()},
+    selection:{cancel:()=>exploration!.cancelSelection()},
+    checkpoint:{clearPersonal:()=>checkpoint.clearPersonal({temporaryChart:store.temporaryChart,publicChart:store.publicChart,selectedId:session.selectedId}),
+      flush:()=>viewSession!.flush()},closeDelete:()=>chartLibrary?.closeDelete(),
+    changed:notifyOfflineReady,
+    storageUnavailable(){toast('Хранилище браузера недоступно. Изменения не будут сохранены.');},
   },route(request) {
       const route = request.snapshot.route!;
       const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
@@ -1025,9 +976,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         },
         async prepare(signal, current) {
           if (route.kind !== 'chart') return;
-          await libraryReady;
-          if (!current()) return;
-          await application!.requestSession(account.getSession());
+          await application!.requireAccount();
           if (!current()) return;
           if (accountLibrary.get(route.id)) await accountLibrary.open(route.id, signal);
           else {
@@ -1081,20 +1030,19 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   let pageVisible=pageLifecycle.visible;
   scope.own(pageLifecycle.subscribe(returned=>{
     const appeared=pageLifecycle.visible && !pageVisible;pageVisible=pageLifecycle.visible;
-    updateLibraryWork();if(returned || appeared)wakeLibraryWork('lifecycle');
+    application!.environmentChanged({recover:returned || appeared,wake:returned || appeared});
   }));
   if (libraryChannel) libraryChannel.onmessage = async event => {
     if(scope.stopped || receiveLocalLibraryChange(event.data))return;
-    if (libraryInitialized) {
+    if (application?.account.status==='ready') {
       const prior=accountLibrary.completeCatalog;await accountLibrary.receive(event.data).catch(() => {});
       updateLibraryWork();if(accountLibrary.completeCatalog && accountLibrary.completeCatalog!==prior)wakeLibraryWork('library');
     }
   };
   document.addEventListener('visibilitychange', () => {
     if(!document.hidden)void journal?.wake();
-    if (!document.hidden && libraryInitialized) {
+    if (!document.hidden && application?.account.status==='ready') {
       void accountLibrary.refreshLocal().catch(() => {});
-      application!.send({type:'RecoverWrites'});
       syncTransitCacheWindow(transit?.state.timeline, true);
     }
   }, {signal:scope.signal});
@@ -1106,9 +1054,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     void returns?.refreshAvailability();
     lifetime?.refreshAvailability(); updateTimelineTools();
     if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();}
-    if (!libraryInitialized) return;
-    if (connectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
-    application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
+    application!.environmentChanged({retryAccount:connectionMode()!=='offline'});
   }));
   const restoration = application.whenRestored();
   studio.dataset.panelsReady = 'true';
@@ -1315,11 +1261,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     attachJournal(value:AppJournal){
       if(scope.stopped){void value.close?.();return;}
       if(journal===value)return;
-      const current=syncJournalAccount();journal=value;
-      if(lastJournalAccount!==null)journal.setAccount(lastJournalAccount,lastJournalSession,lastJournalProof);
-      if(journalBoundaryPending)journal.leave([...journalBoundaryIds]);
-      if(lastJournalAccount===null || current!==lastJournalAccount || journalBoundaryPending)journal.setAccount(current,account.getSession()?.sessionId,account.getSession()?.diagnosticProof);
-      journalBoundaryPending=false;journalBoundaryIds.clear();application?.send({type:'BackgroundChanged'});
+      journal=value;application!.attachJournal(value);application!.send({type:'BackgroundChanged'});
     } };
   } catch(error) {
     void scope.stop().catch(cleanupError=>console.error('Application cleanup failed',cleanupError));

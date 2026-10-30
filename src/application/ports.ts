@@ -1,3 +1,5 @@
+import type {AccountLibrary} from '../state/account-library.ts';
+import type {SavedBirthForm} from '../domain/birth-form-draft.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
 import type { UpdatePort } from './update.ts';
 import type { StartupPorts, StartupEvent } from './startup.ts';
@@ -18,18 +20,39 @@ export interface AccountBoundaryRequest {
 export interface AccountBoundaryWork {
   readonly ready: Promise<void>;
   retry(): Promise<void>;
-  settled(): void;
+  readonly reset:boolean;
 }
-export interface AccountPort {
+export type AccountCleanupResult={status:'cleared'|'pending'|'unavailable'};
+export interface AccountBoundaryOperations {
+  library:Pick<AccountLibrary,'accountId'|'connect'|'clear'|'retryClear'|'restore'|'storageAvailable'>;
+  calculations?:{resetPersonal():Promise<AccountCleanupResult>;retryPersonalCleanup():Promise<AccountCleanupResult|null>};
+  writes:{readonly pending:readonly {expectedAccountId:string}[];clear():void};
+  binding:{readonly accountId:string|null;clear():void};
+  form:{readonly pending:SavedBirthForm|null|undefined;readonly snapshot:SavedBirthForm|null|undefined;readonly opened:boolean;
+    clearPending():void;discardInput():void;close():void};
+  editing:{reset():void};selection:{cancel():void};
+  checkpoint:{clearPersonal():boolean;flush():boolean};
+  closeDelete():void;
+}
+export interface AccountJournal {
+  setAccount(accountId:string|null,sessionId?:string|null,proof?:string):unknown;
+  leave(ids?:readonly string[]):unknown;
+}
+export type AccountBoundaryResult={status:'ready'|'failed'|'stopped'|'superseded'};
+export interface AccountPort extends AccountBoundaryOperations {
+  readonly ready:Promise<unknown>;
+  getSession():AccountAccess|null;
   subscribeSession(listener: (access: AccountAccess | null) => void): () => void;
   subscribeLogout(listener: (ids: readonly string[]) => void): () => void;
-  begin(request: AccountBoundaryRequest): AccountBoundaryWork;
-  stop(): void;
+  journal?:AccountJournal;
+  changed():void;
+  storageUnavailable():void;
 }
 export type AccountEvent =
   | {type: 'SessionChanged'; access: AccountAccess | null}
   | {type: 'LogoutObserved'; ids: readonly string[]}
-  | {type: 'RetryAccountBoundary'};
+  | {type: 'RetryAccountBoundary'}
+  | {type:'JournalAttached';journal:AccountJournal};
 
 export interface NavigationSnapshot { readonly route: AppRoute | null; readonly revision: number }
 export type NavigationOrigin = 'external' | 'publication';
