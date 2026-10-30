@@ -106,7 +106,9 @@ function reconcileBinding(ports:WriteContinuationPorts,source:SavedChart|null,re
   }
   return false;
 }
-function discardDeletedPublic(ports:WriteContinuationPorts,outcome:Extract<ChartActionResult,{kind:'settled'}>['receipt']['outcome']) {
+function discardDeletedPublic(ports:WriteContinuationPorts,result:Extract<ChartActionResult,{kind:'settled'}>) {
+  if(result.chart || result.readError)return;
+  const outcome=result.receipt.outcome;
   if((outcome.kind==='deleted' || outcome.kind==='absent') && ports.clearPublic(outcome.chartId)) {
     ports.view.deleted(outcome.chartId);ports.view.checkpoint();
   }
@@ -120,7 +122,7 @@ async function recover(ports:WriteContinuationPorts,signal:AbortSignal):Promise<
     try {
       const result=await ports.actions.recover(intent,signal);
       if(signal.aborted || result.kind!=='settled' || !result.active)continue;
-      discardDeletedPublic(ports,result.receipt.outcome);
+      discardDeletedPublic(ports,result);
       if(stillBound(ports,binding,source,intent) && reconcileBinding(ports,source,result))reconciled.push(source!);
     }catch { /* A later explicit/reconnect lookup can resolve an unknown pointer; never resend. */ }
   }

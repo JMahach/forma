@@ -1,218 +1,393 @@
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import type { ChartClient } from '../data/chart-client.ts';
-import type { AccountLibraryStore, LibraryLease } from '../data/account-library-store.ts';
+import type { AccountLibraryStore, LibraryLease,LibrarySnapshot,LibraryCatalogBase } from '../data/account-library-store.ts';
+import type {LibraryCatalogRead} from './library-reconciliation.ts';
+import type {LibraryCatalogSnapshot,LibraryCatalogEntry} from '../../shared/library-catalog-contract.ts';
+import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
+import {readCompleteLibraryCatalog,projectLibraryEntries,libraryRecordEntry,sameLibrarySession,sameWorkingLease,catalogIsOlder,mergeLibraryRecords,parseLibraryNotice,type LibrarySession,type LibraryNotice} from './library-reconciliation.ts';
 
-export interface LibrarySession { accountId: string; sessionId: string }
+export type {LibrarySession,LibraryNotice} from './library-reconciliation.ts';
 interface Options {
-  client: Pick<ChartClient, 'list' | 'own'>; storage: AccountLibraryStore;
-  online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: () => void;
+  client: Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'>; storage: AccountLibraryStore;
+  online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: (notice:LibraryNotice) => void;
 }
+interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal}
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
+export type LibraryRefreshResult={status:'complete'|'unchanged';durable:boolean}|{status:'inactive'|'unstable'|'superseded'};
 
 /** One working account library. Acquisition and persistence never choose the visible chart. */
-export function createAccountLibrary({client, storage, online, restoreAllowed = async () => true, notify = () => {}}: Options) {
-  let charts: AccountChart[] = [], ownerId: string | null = null, current: LibrarySession | null = null;
-  let lease: LibraryLease | null = null, generation = 0, available = true, closed = false;
-  let backgroundStopped = false;
-  let controller = new AbortController(), loading: Promise<void> | null = null;
-  let removals = {pending: new Map<string, Promise<void>>(), tail: Promise.resolve()};
-  const listeners = new Set<() => void>();
-  const observable = () => [charts, ownerId, available, current?.accountId, current?.sessionId, lease?.generation];
-  let published = observable();
-  const emit = (durableChanged = false) => {
-    const next = observable();
-    if (!durableChanged && next.every((value, index) => value === published[index])) return;
-    published = next;
-    for (const listener of listeners) listener();
-  };
-  function retainList(next: AccountChart[]) {
-    if (next.length !== charts.length || next.some((chart, index) => chart !== charts[index])) charts = next;
+class AccountLibraryOwner {
+ private options:Required<Options>;
+ private records:AccountChart[]=[];
+ private rows:readonly LibraryCatalogEntry[]=[];
+ private ownerId:string|null=null;
+ private current:LibrarySession|null=null;
+ private lease:LibraryLease|null=null;
+ private generation=0;
+ private available=true;
+ private closed=false;
+ private catalog:LibraryCatalogSnapshot|null=null;
+ private contentGeneration=0;
+ private minimumMarker='0';
+ private catalogComplete=false;
+ private controller=new AbortController();
+ private loading:Promise<LibraryRefreshResult>|null=null;
+ private removals={pending:new Map<string,Promise<void>>(),tail:Promise.resolve()};
+ private listeners=new Set<()=>void>();
+ private published:unknown[];
+ constructor(options:Options){
+  this.options={restoreAllowed:async()=>true,notify:()=>{},...options};
+  this.published=this.observable();
+  this.has=this.has.bind(this);
+  this.isReady=this.isReady.bind(this);
+  this.subscribe=this.subscribe.bind(this);
+  this.get=this.get.bind(this);
+  this.restore=this.restore.bind(this);
+  this.connect=this.connect.bind(this);
+  this.load=this.load.bind(this);
+  this.canRestore=this.canRestore.bind(this);
+  this.markOpened=this.markOpened.bind(this);
+  this.open=this.open.bind(this);
+  this.prepareAcceptance=this.prepareAcceptance.bind(this);
+  this.forget=this.forget.bind(this);
+  this.clear=this.clear.bind(this);
+  this.retryClear=this.retryClear.bind(this);
+  this.receive=this.receive.bind(this);
+  this.refreshLocal=this.refreshLocal.bind(this);
+  this.close=this.close.bind(this);
+ }
+ private advance(marker:string) {if(BigInt(marker)>BigInt(this.minimumMarker))this.minimumMarker=marker;}
+ private older(marker:string) {return BigInt(marker)<BigInt(this.minimumMarker);}
+ private announce(detail:Omit<Extract<LibraryNotice,{kind:'record'}>,'accountId'|'sessionId'>|Omit<Extract<LibraryNotice,{kind:'removed'}>,'accountId'|'sessionId'>|Omit<Extract<LibraryNotice,{kind:'catalog'}>,'accountId'|'sessionId'>){
+    if(this.current)this.options.notify({...this.current,...detail});
   }
-  function invalidate(keepRemovals = false) {
-    generation++; controller.abort(); controller = new AbortController(); loading = null;
-    if (!keepRemovals) removals = {pending: new Map(), tail: Promise.resolve()};
+ private observable() {return [this.records, this.rows, this.ownerId, this.available, this.current?.accountId, this.current?.sessionId, this.lease?.generation];}
+ private emit(durableChanged = false) {
+    this.rows=projectLibraryEntries(this.catalog,this.records,this.rows);
+    const next = this.observable();
+    if (!durableChanged && next.every((value, index) => value === this.published[index])) return;
+    this.published = next;
+    for (const listener of this.listeners) listener();
   }
-  function check(seen: number) { if (closed || seen !== generation) throw failed('account_changed'); }
-  async function readLocal(valid: () => void, accountId = current?.accountId) {
-    const snapshot = await storage.read(); valid();
-    if (!snapshot) { available = false; emit(); return false; }
-    available = true;
-    if (accountId && snapshot.lease?.accountId !== accountId) {
-      invalidate(); lease = null; ownerId = null; charts = []; emit(); return false;
-    }
-    const previous = new Map(charts.map(chart => [chart.id, chart]));
-    const sameGeneration = lease?.generation === snapshot.lease?.generation && lease?.accountId === snapshot.lease?.accountId;
-    const next = new Map(snapshot.charts.filter(chart => !removals.pending.has(chart.id)).map(chart => {
-      const prior = previous.get(chart.id);
-      return [chart.id, prior?.accountId === chart.accountId && (prior.revision > chart.revision
-        || prior.revision === chart.revision && prior.noteRevision === chart.noteRevision
-          && prior.publicRevision === chart.publicRevision) ? prior : chart] as const;
-    }));
-    if (sameGeneration) for (const chart of charts) if (!next.has(chart.id) && !removals.pending.has(chart.id)) next.set(chart.id, chart);
-    lease = snapshot.lease; ownerId = lease?.accountId ?? null; retainList([...next.values()]); emit(); return true;
+ private retainList(next: AccountChart[]) {
+    if (next.length !== this.records.length || next.some((chart, index) => chart !== this.records[index])) this.records = next;
   }
-  async function refreshLocal() {
-    const seen = generation; await readLocal(() => check(seen));
+ private invalidate(keepRemovals = false) {
+    this.generation++; this.controller.abort(); this.controller = new AbortController(); this.loading = null;
+    if (!keepRemovals) this.removals = {pending: new Map(), tail: Promise.resolve()};
   }
-  async function accept(values: readonly AccountChart[], seen: number, expectedLease: LibraryLease | null) {
-    check(seen);
-    if (values.some(chart => chart.accountId !== ownerId)) throw failed('account_changed');
-    let durableChanged = false;
-    if (expectedLease) {
-      const result = await storage.put(expectedLease, values); check(seen);
-      if (result.status === 'stale') { await refreshLocal(); throw failed('account_changed'); }
-      durableChanged = (result.status === 'stored' || result.status === 'partial') && result.changed !== false;
-      available = result.status === 'stored';
-      if (result.status === 'partial' || result.status === 'stored' && result.pressure) backgroundStopped = true;
-    }
-    const next = new Map(charts.map(chart => [chart.id, chart]));
-    for (const chart of values) {
-      if (!next.has(chart.id) || next.get(chart.id)!.revision < chart.revision) next.set(chart.id, chart);
-    }
-    retainList([...next.values()]); emit(durableChanged);
-    if (durableChanged) notify();
+ private check(seen: number) { if (this.closed || seen !== this.generation) throw failed('account_changed'); }
+ private resetWorking(accountId:string|null=null) {
+  this.ownerId=accountId;this.lease=null;this.records=[];this.catalog=null;this.minimumMarker='0';this.catalogComplete=false;
+ }
+ private readStoredCatalog(snapshot:LibrarySnapshot) {
+  const usable=snapshot.catalog && !this.older(snapshot.catalog.marker);
+  if(usable){this.catalog=snapshot.catalog!;this.catalogComplete=snapshot.catalogComplete!==false;this.advance(this.catalog.marker);}
+  this.advance(snapshot.minimumMarker??'0');
+  return usable && snapshot.catalogComplete?new Set(snapshot.catalog!.entries.map(row=>row.id)):null;
+ }
+ private storedRecords(snapshot:LibrarySnapshot,observedId?:string) {
+  if(!catalogIsOlder(snapshot.catalog,this.catalog) && !this.older(snapshot.minimumMarker??'0'))return snapshot.charts;
+  const known=new Set([...this.catalog?.entries??[],...this.records].map(row=>row.id));
+  if(observedId)known.add(observedId);
+  return snapshot.charts.filter(chart=>known.has(chart.id));
+ }
+ private mergeLocal(snapshot:LibrarySnapshot,memoryOnly:boolean,observedId?:string) {
+  const same=sameWorkingLease(this.lease,snapshot.lease);
+  const behind=this.older(snapshot.minimumMarker??'0'),retainMissing=same || memoryOnly || behind;
+  // Old disk content can enrich known rows, but cannot restore an ID already
+  // absent from the newer working projection after a failed catalog commit.
+  const stored=this.storedRecords(snapshot,observedId);
+  const present=this.readStoredCatalog(snapshot);
+  this.retainList(mergeLibraryRecords(this.records,stored,this.removals.pending,retainMissing,present));
+  this.lease=snapshot.lease;this.ownerId=this.lease?.accountId??null;
+ }
+ private async readLocal(valid:()=>void,accountId=this.current?.accountId,publish=true,observedId?:string) {
+  const memoryOnly=!this.available,snapshot=await this.options.storage.read();valid();
+  this.available=!!snapshot;
+  if(!snapshot){this.emit();return false;}
+  if(accountId && snapshot.lease?.accountId!==accountId){this.invalidate();this.resetWorking();this.emit();return false;}
+  this.mergeLocal(snapshot,memoryOnly,observedId);if(publish)this.emit();return true;
+ }
+ async refreshLocal() {
+    const seen = this.generation; await this.readLocal(() => this.check(seen));
   }
-  function forget(chartId: string): Promise<void> {
-    const scope = removals, accountId = ownerId, pending = scope.pending.get(chartId);
+ private newerRecord(chart:AccountChart) {const prior=this.get(chart.id);return !prior || prior.revision<chart.revision;}
+ private async accept(chart:AccountChart,seen:number,expectedLease:LibraryLease|null,marker:string) {
+  this.check(seen);
+  if(chart.accountId!==this.ownerId)throw failed('account_changed');
+  if(this.older(marker))throw failed('library_changed');this.advance(marker);
+  if(this.newerRecord(chart))this.contentGeneration++;
+  const durableChanged=await this.persistRecord(chart,seen,expectedLease,marker);
+  if(this.older(marker))throw failed('library_changed');
+  const changed=this.newerRecord(chart);
+  if(changed){const rows=new Map(this.records.map(row=>[row.id,row]));rows.set(chart.id,chart);this.retainList([...rows.values()]);}
+  this.emit(durableChanged);
+  if(changed || durableChanged)this.announce({kind:'record',entry:libraryRecordEntry(chart,this.rows.find(row=>row.id===chart.id)),marker,durable:this.available});
+ }
+ private async persistRecord(chart:AccountChart,seen:number,expectedLease:LibraryLease|null,marker:string) {
+  if(!expectedLease)return false;
+  let result=await this.options.storage.put(expectedLease,[chart],marker);this.check(seen);
+  if(result.status==='stale'){
+   await this.refreshLocal();this.check(seen);
+   if(!this.lease || !this.currentAcquisition(chart,marker))throw failed('library_changed');
+   result=await this.options.storage.put(this.lease,[chart],marker);this.check(seen);
+   if(result.status==='stale')throw failed('library_changed');
+  }
+  this.available=result.status==='stored';
+  return (result.status==='stored' || result.status==='partial') && result.changed!==false;
+ }
+ private currentAcquisition(chart:AccountChart,marker:string) {
+  if(BigInt(marker)>BigInt(this.minimumMarker))return true;
+  if(!this.catalogComplete || this.catalog?.marker!==marker || this.older(marker))return false;
+  const row=this.catalog.entries.find(row=>row.id===chart.id);
+  return !!row && row.revision<=chart.revision;
+ }
+ private checkRemoval(marker:string,proof:'absence'|'deleted') {
+  if(proof==='absence' && this.older(marker))throw failed('library_changed');
+ }
+ forget(chartId: string,marker=this.minimumMarker,proof:'absence'|'deleted'='absence'): Promise<void> {
+    // An issued ID is never reused. A committed deletion remains true even
+    // when an unrelated record advanced the library marker in the meantime.
+    try{this.checkRemoval(marker,proof);}catch(error){return Promise.reject(error);}
+    this.advance(marker);this.catalogComplete=false;
+    const scope = this.removals, accountId = this.ownerId, pending = scope.pending.get(chartId);
     if (pending) return pending;
     if (!accountId) return Promise.resolve();
     // Fence old reads immediately, while other confirmed deletions keep their
     // own work. Only account/session changes revoke this deletion scope.
-    invalidate(true);
+    this.invalidate(true);
+    this.contentGeneration++;
+    if(this.catalog)this.catalog={...this.catalog,entries:this.catalog.entries.filter(row=>row.id!==chartId)};
     const valid = () => {
-      if (closed || scope !== removals || ownerId !== accountId) throw failed('account_changed');
+      if (this.closed || scope !== this.removals || this.ownerId !== accountId) throw failed('account_changed');
     };
     const work = scope.tail.then(async () => {
-      valid();
-      while (lease) {
-        const result = await storage.remove(lease, chartId); valid();
-        if (result.status === 'stored') { lease = result.lease; break; }
-        if (result.status === 'unavailable') { available = false; lease = null; break; }
-        // Another deletion advanced the lease. Re-read the same account and
-        // retry this exact confirmed target; never acquire another account.
-        const refreshed = await readLocal(valid, accountId); valid();
-        if (!refreshed) { lease = null; break; }
+      valid();this.checkRemoval(marker,proof);
+      await this.removeStored(chartId,marker,accountId,valid,proof);
+      this.checkRemoval(marker,proof);
+      this.announce({kind:'removed',marker,chartId,durable:this.available});
+    }).catch(async error=>{
+      if(codeOf(error)==='library_changed'){
+        scope.pending.delete(chartId);valid();await this.readLocal(valid,accountId);
       }
-      notify();
+      throw error;
     }).finally(() => { scope.pending.delete(chartId); });
     scope.pending.set(chartId, work);
     scope.tail = work.catch(() => {});
-    charts = charts.filter(chart => chart.id !== chartId); emit();
+    this.records = this.records.filter(chart => chart.id !== chartId); this.emit();
     return work;
   }
-  async function open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
+ private async removeStored(chartId:string,marker:string,accountId:string,valid:()=>void,proof:'absence'|'deleted') {
+      while (this.lease) {
+        this.checkRemoval(marker,proof);
+        const result = await this.options.storage.remove(this.lease, chartId,marker,proof); valid();
+        if(result.status==='superseded')throw failed('library_changed');
+        if (result.status === 'stored') { this.lease = result.lease; break; }
+        if (result.status === 'unavailable') { this.available = false; this.lease = null; break; }
+        // Another deletion advanced the lease. Re-read the same account and
+        // retry this exact confirmed target; never acquire another account.
+        const refreshed = await this.readLocal(valid, accountId); valid();
+        if (!refreshed) { this.lease = null; break; }
+      }
+ }
+ isReady(id:string) {
+    const chart=this.records.find(row=>row.id===id),entry=this.rows.find(row=>row.id===id);
+    return !!chart && (!entry || chart.revision>=entry.revision);
+  }
+ async open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
     consumerSignal?.throwIfAborted();
-    const cached = charts.find(chart => chart.id === chartId);
-    if (!online() || !current) {
-      if (cached) return cached;
-      throw failed(online() ? 'auth_required' : 'offline');
+    const cached = this.records.find(chart => chart.id === chartId);
+    if (!this.options.online() || !this.current) {
+      if (cached && this.isReady(chartId)) return cached;
+      throw failed(this.options.online() ? 'auth_required' : 'offline');
     }
-    const seen = generation, target = lease;
-    const signal = consumerSignal ? AbortSignal.any([controller.signal, consumerSignal]) : controller.signal;
-    const valid = () => { check(seen); signal.throwIfAborted(); };
+    const signal = consumerSignal ? AbortSignal.any([this.controller.signal, consumerSignal]) : this.controller.signal;
+    return this.readOwn(chartId,signal,cached);
+  }
+ private async readOwn(chartId:string,signal:AbortSignal,cached:AccountChart|undefined):Promise<AccountChart> {
+    const seen=this.generation,target=this.lease;
+    const valid = () => { this.check(seen); signal.throwIfAborted(); };
     try {
-      const chart = await client.own({chartId, expectedAccountId: current.accountId}, signal);
-      valid(); await accept([chart], seen, target); valid(); return charts.find(value => value.id === chartId)!;
+      const read = await this.options.client.own({chartId, expectedAccountId: this.current!.accountId}, signal);
+      valid(); await this.accept(read.chart, seen, target,read.catalogMarker); valid(); return this.records.find(value => value.id === chartId)!;
     } catch (error) {
-      valid();
-      if (codeOf(error) === 'not_found') await forget(chartId);
-      else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached) return cached;
-      throw error;
+      valid();return this.failedOpen(error,chartId,cached);
     }
   }
-  return {
-    get charts(): readonly AccountChart[] { return charts; },
-    get accountId() { return ownerId; },
-    get session() { return current; },
-    get storageAvailable() { return available; },
-    subscribe(listener: () => void) { listeners.add(listener); listener(); return () => { listeners.delete(listener); }; },
-    get: (id: string) => charts.find(chart => chart.id === id),
-    async restore() {
-      const seen = generation;
-      if (!await restoreAllowed()) { check(seen); return; }
-      check(seen); await refreshLocal();
-    },
-    async connect(value: LibrarySession | null) {
-      if (current?.accountId === value?.accountId && current?.sessionId === value?.sessionId) return;
-      invalidate(); const seen = generation;
-      current = value ? {...value} : null;
-      if (!value) { emit(); return; } // Expiry is not an explicit logout.
-      if (ownerId !== value.accountId) { charts = []; ownerId = value.accountId; lease = null; emit(); }
-      const result = await storage.activate(value.accountId); check(seen);
-      available = result.status === 'stored';
-      lease = result.status === 'stored' ? result.lease : null;
-      if (lease) await refreshLocal();
-      else emit();
-    },
-    async load() {
-      if (!current || !online() || closed || backgroundStopped) return;
-      if (loading) return loading;
-      const seen = generation, access = {...current}, signal = controller.signal, target = lease;
-      const run = (async () => {
-        let after: string | undefined;
-        do {
-          check(seen);
-          const page = await client.list({expectedAccountId: access.accountId, ...(after ? {after} : {})}, signal);
-          check(seen);
-          await accept(page.charts, seen, target);
-          if (backgroundStopped || !available) { backgroundStopped = true; return; } // Retry background storage only after the next opening.
-          after = page.nextCursor ?? undefined;
-        } while (after);
-      })();
-      loading = run;
-      try { await run; } finally { if (loading === run) loading = null; }
-    },
-    async canRestore(chartId:string):Promise<boolean> {
-      const seen=generation,target=lease,chart=charts.find(value=>value.id===chartId);
-      if(closed || !target || !chart || removals.pending.has(chartId))return false;
-      const durable=await storage.canRestore(target,chart).catch(()=>false);
-      return durable && !closed && generation===seen && lease===target
-        && charts.find(value=>value.id===chartId)===chart && !removals.pending.has(chartId);
-    },
-    async markOpened(chartId: string): Promise<void> {
-      const chart=charts.find(chart=>chart.id===chartId);
-      if (closed || !lease || !chart) return;
+ private async failedOpen(error:unknown,chartId:string,cached:AccountChart|undefined):Promise<AccountChart> {
+      if (codeOf(error) === 'not_found') {
+        const marker=(error as {details?:{catalogMarker?:unknown}}).details?.catalogMarker;
+        if(isLibraryCatalogMarker(marker))await this.forget(chartId,marker);
+      }
+      else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached && this.isReady(chartId)) return cached;
+      throw error;
+  }
+ get charts(): readonly AccountChart[] { return this.records; }
+ get entries(){return this.rows;}
+ get readyIds() {
+  const revisions=new Map(this.rows.map(row=>[row.id,row.revision]));
+  return this.records.filter(chart=>chart.revision>=(revisions.get(chart.id)??0)).map(chart=>chart.id);
+ }
+ has(id:string) {return this.rows.some(row=>row.id===id);}
+ get accountId() { return this.ownerId; }
+ get session() { return this.current; }
+ get storageAvailable() { return this.available; }
+ subscribe(listener: () => void) { this.listeners.add(listener); listener(); return () => { this.listeners.delete(listener); }; }
+ get(id: string) {return this.records.find(chart => chart.id === id);}
+ async restore() {
+      const seen = this.generation;
+      if (!await this.options.restoreAllowed()) { this.check(seen); return; }
+      this.check(seen); await this.refreshLocal();
+    }
+ async connect(value: LibrarySession | null) {
+      if (sameLibrarySession(this.current,value)) return;
+      this.invalidate(); const seen = this.generation;
+      this.current = value ? {...value} : null;
+      if (!value) { this.emit(); return; } // Expiry is not an explicit logout.
+      if (this.ownerId !== value.accountId) { this.resetWorking(value.accountId); this.emit(); }
+      const result = await this.options.storage.activate(value.accountId); this.check(seen);
+      this.available = result.status === 'stored';
+      this.lease = result.status === 'stored' ? result.lease : null;
+      if (this.lease) await this.refreshLocal();
+      else this.emit();
+    }
+ private catalogRunCurrent(run:CatalogRun,marker:string) {
+  this.check(run.seen);return run.content===this.contentGeneration && !this.older(marker);
+ }
+ private async saveCatalog(base:LibraryCatalogBase|null,read:Exclude<LibraryCatalogRead,{status:'unstable'}>,run:CatalogRun):Promise<LibraryRefreshResult> {
+  const saved=base?await this.options.storage.putCatalog(base,read.catalog):{status:'unavailable' as const};
+  if(!this.catalogRunCurrent(run,read.catalog.marker))return {status:'superseded'};
+  if(saved.status==='stale' || saved.status==='superseded'){await this.refreshLocal();return {status:'superseded'};}
+  const durable=saved.status==='stored';this.available=durable;
+  if(saved.status==='stored')this.lease=saved.lease;
+  const changed=!this.catalogComplete || this.catalog?.marker!==read.catalog.marker;
+  this.applyCatalog(read.catalog);if(changed)this.announce({kind:'catalog',catalog:read.catalog,durable});
+  return {status:read.status,durable};
+ }
+ private async refreshCatalog(run:CatalogRun):Promise<LibraryRefreshResult> {
+  const base=await this.options.storage.readCatalog();this.check(run.seen);
+  if(base && base.lease.accountId!==run.access.accountId){await this.refreshLocal();throw failed('account_changed');}
+  const read=await readCompleteLibraryCatalog(this.options.client,run.access.accountId,base?.catalog??null,run.signal);this.check(run.seen);
+  if(read.status==='unstable')return read;
+  if(!this.catalogRunCurrent(run,read.catalog.marker))return {status:'superseded'};
+  return this.saveCatalog(base,read,run);
+ }
+ async load():Promise<LibraryRefreshResult> {
+  if(!this.current || !this.options.online() || this.closed)return {status:'inactive'};
+  if(this.loading)return this.loading;
+  const run=this.refreshCatalog({seen:this.generation,content:this.contentGeneration,access:{...this.current},signal:this.controller.signal});
+  this.loading=run;
+  try{return await run;}finally{if(this.loading===run)this.loading=null;}
+ }
+ async canRestore(chartId:string):Promise<boolean> {
+      const seen=this.generation,target=this.lease,chart=this.records.find(value=>value.id===chartId);
+      if(this.closed || !target || !chart || !this.isReady(chartId) || this.removals.pending.has(chartId))return false;
+      const durable=await this.options.storage.canRestore(target,chart).catch(()=>false);
+      return durable && !this.closed && this.generation===seen && this.lease===target
+        && this.records.find(value=>value.id===chartId)===chart && !this.removals.pending.has(chartId);
+    }
+ async markOpened(chartId: string): Promise<void> {
+      const chart=this.records.find(chart=>chart.id===chartId);
+      if (this.closed || !this.lease || !chart) return;
       // The visible selection lifts priority and can place a RAM-only card.
-      await storage.touch(lease, chartId, chart).catch(() => false);
-    },
-    open,
-    prepareAcceptance() {
-      const seen=generation, target=lease, access=current && {...current};
-      return async (chartId:string, chart?:AccountChart):Promise<AccountChart> => {
-        if(closed || !access || current?.accountId!==access.accountId || current.sessionId!==access.sessionId)
+      await this.options.storage.touch(this.lease, chartId, chart,this.minimumMarker).catch(() => false);
+    }
+ prepareAcceptance() {
+      const seen=this.generation, target=this.lease, access=this.current && {...this.current};
+      return async (chartId:string, chart?:AccountChart,marker?:string):Promise<AccountChart> => {
+        if(this.closed || !access || !sameLibrarySession(this.current,access))
           throw failed('account_changed');
         // A deletion fences responses already in flight. A fresh address read may
         // establish current data; the captured projection cannot restore it.
-        if(!chart || seen!==generation)return open(chartId);
-        await accept([chart],seen,target); check(seen);
-        return charts.find(value=>value.id===chartId)!;
+        if(!chart || !isLibraryCatalogMarker(marker) || seen!==this.generation)return this.open(chartId);
+        return this.acceptObservation(chart,seen,target,marker);
       };
-    },
-    forget,
-    async clear() {
-      let accountId = ownerId ?? current?.accountId ?? null;
+    }
+ private async acceptObservation(chart:AccountChart,seen:number,target:LibraryLease|null,marker:string):Promise<AccountChart> {
+  if(this.older(marker))return this.currentRecord(chart);
+  try{await this.accept(chart,seen,target,marker);}
+  catch(error){if(codeOf(error)==='library_changed')return this.currentRecord(chart);throw error;}
+  this.check(seen);return this.get(chart.id)!;
+ }
+ private currentRecord(observed:AccountChart):Promise<AccountChart> {
+  const current=this.get(observed.id);
+  if(current && current.revision>observed.revision && this.isReady(current.id))return Promise.resolve(current);
+  return this.open(observed.id);
+ }
+ async clear() {
+      let accountId = this.ownerId ?? this.current?.accountId ?? null;
       // Queue account-scoped deletion before observers may connect a new account.
-      const clearing = accountId ? storage.clearAccount(accountId)
-        : storage.read().then(snapshot => {
+      const clearing = accountId ? this.options.storage.clearAccount(accountId)
+        : this.options.storage.read().then(snapshot => {
           accountId=snapshot?.lease?.accountId??null;
-          return accountId ? storage.clearAccount(accountId) : snapshot ? 'cleared' as const : 'unavailable' as const;
+          return accountId ? this.options.storage.clearAccount(accountId) : snapshot ? 'cleared' as const : 'unavailable' as const;
         });
-      invalidate(); const seen = generation;
-      current = null; ownerId = null; lease = null; charts = []; emit();
+      this.invalidate(); const seen = this.generation;
+      this.current=null;this.resetWorking(); this.emit();
       const status = await clearing;
-      if (seen === generation) {available=status!=='unavailable';emit();}
-      if(status==='cleared')notify();
+      if (seen === this.generation) {this.available=status!=='unavailable';this.emit();}
+      if(status==='cleared')this.options.notify({kind:'changed'});
       return {accountId,status};
-    },
-    async retryClear(accountId:string) {
-      const seen=generation, status=await storage.clearAccount(accountId);
-      if(seen===generation && !ownerId && !current){available=status!=='unavailable';emit();}
-      if(status==='cleared')notify();
+    }
+ async retryClear(accountId:string) {
+      const seen=this.generation, status=await this.options.storage.clearAccount(accountId);
+      if(seen===this.generation && !this.ownerId && !this.current){this.available=status!=='unavailable';this.emit();}
+      if(status==='cleared')this.options.notify({kind:'changed'});
       return status;
-    },
-    refreshLocal,
-    close() { closed = true; invalidate(); listeners.clear(); storage.close(); },
-  };
+    }
+ private applyCatalog(incoming:LibraryCatalogSnapshot) {
+  this.catalog=incoming;this.catalogComplete=true;this.advance(incoming.marker);
+  const present=new Set(incoming.entries.map(row=>row.id));this.retainList(this.records.filter(row=>present.has(row.id)));this.emit();
+ }
+ private async readCatalogLease(seen:number) {
+  const base=await this.options.storage.readCatalog();this.check(seen);
+  if(base && base.lease.accountId!==this.ownerId)return false;
+  if(base){this.advance(base.minimumMarker??'0');if(base.catalog)this.advance(base.catalog.marker);this.lease=base.lease;}
+  return true;
+ }
+ private async receiveCatalog(notice:Extract<LibraryNotice,{kind:'catalog'}>) {
+  if(this.older(notice.catalog.marker))return;
+  if(notice.durable && !await this.readCatalogLease(this.generation))return;
+  if(!this.older(notice.catalog.marker))this.applyCatalog(notice.catalog);
+ }
+ private async receiveRecord(notice:Extract<LibraryNotice,{kind:'record'}>) {
+  if(this.older(notice.marker))return;
+  const seen=this.generation;this.advance(notice.marker);this.contentGeneration++;
+  if(notice.durable)await this.readLocal(()=>this.check(seen),notice.accountId,false,notice.entry.id);
+  if(seen!==this.generation)return;
+  if(!this.older(notice.marker))this.replaceEntry(notice.entry,notice.marker,notice.accountId);
+  this.emit();
+ }
+ private replaceEntry(row:LibraryCatalogEntry,marker:string,accountId:string) {
+  const rows=new Map(projectLibraryEntries(this.catalog,this.records,this.rows).map(entry=>[entry.id,entry]));
+  const prior=rows.get(row.id);if(!prior || prior.revision<=row.revision)rows.set(row.id,row);
+  this.catalog={accountId,marker,entries:[...rows.values()]};this.catalogComplete=false;
+ }
+ private removeWorking(chartId:string) {
+  this.contentGeneration++;this.catalogComplete=false;
+  if(this.catalog)this.catalog={...this.catalog,entries:this.catalog.entries.filter(row=>row.id!==chartId)};
+  this.records=this.records.filter(chart=>chart.id!==chartId);
+ }
+ private async receiveRemoval(notice:Extract<LibraryNotice,{kind:'removed'}>) {
+  if(this.older(notice.marker))return;
+  this.advance(notice.marker);this.invalidate(true);this.removeWorking(notice.chartId);
+  if(notice.durable)await this.readCatalogLease(this.generation);
+  this.emit();
+ }
+ async receive(value:unknown) {
+  if(this.closed)return;
+  const notice=parseLibraryNotice(value,this.current);
+  if(!notice || notice.kind!=='changed' && notice.accountId!==this.ownerId)return;
+  switch(notice.kind) {
+   case 'changed':return this.refreshLocal();
+   case 'catalog':return this.receiveCatalog(notice);
+   case 'record':return this.receiveRecord(notice);
+   case 'removed':return this.receiveRemoval(notice);
+  }
+ }
+ close() { this.closed = true; this.invalidate(); this.listeners.clear(); this.options.storage.close(); }
 }
-export type AccountLibrary = ReturnType<typeof createAccountLibrary>;
+export function createAccountLibrary(options:Options){return new AccountLibraryOwner(options);}
+export type AccountLibrary=ReturnType<typeof createAccountLibrary>;

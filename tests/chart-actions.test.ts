@@ -17,9 +17,9 @@ function fixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepar
   const client = {
     async create(value) { writes++; seen = value; afterWrite(); if (sendError) throw sendError; return {...value, outcome: {kind:'created', chartId:chartId(1),revision:1}}; },
     async update(value) { writes++; seen = value; return {...value,outcome:{kind:'updated',chartId:value.chartId,revision:2}}; },
-    async remove(value) { writes++; seen = value; afterWrite(); if (sendError) throw sendError; return {...value,outcome:{kind:'deleted',chartId:value.chartId}}; },
+    async remove(value) { writes++; seen = value; afterWrite(); if (sendError) throw sendError; return {...value,catalogMarker:'2',outcome:{kind:'deleted',chartId:value.chartId}}; },
     async addFromSource(value) { writes++; seen = value; return {...value,outcome:{kind:'created',chartId:chartId(2),revision:1}}; },
-    async outcome(value) { return {...value,outcome:lookup}; },
+    async outcome(value) { return {...value,outcome:lookup,catalogMarker:'2'}; },
   } satisfies Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>;
   const actions = createChartActions({client, getSession:()=>current, newId:()=>chartId(77),
     library:{async open(){opens++;return accountChart();},async forget(){}},
@@ -148,7 +148,7 @@ test('concurrent confirmations share one deletion while a different card remains
   let writes=0,finish!:()=>void;
   const done=new Promise<void>(resolve=>{finish=resolve;});
   const actions=createChartActions({getSession:()=>access,newId:()=>chartId(70+writes),calculate:async()=>accountChart(),
-    client:{async remove(intent: Parameters<ChartClient['remove']>[0]){writes++;await done;return {...intent,outcome:{kind:'deleted',chartId:intent.chartId}};}} as any,
+    client:{async remove(intent: Parameters<ChartClient['remove']>[0]){writes++;await done;return {...intent,catalogMarker:'2',outcome:{kind:'deleted',chartId:intent.chartId}};}} as any,
     library:{async open(){return accountChart();},async forget(){}}});
   const first=actions.remove(chartId(1)), second=actions.remove(chartId(1)), other=actions.remove(chartId(2));
   assert.equal(writes,2);finish();await Promise.all([first,second,other]);assert.equal(writes,2);
@@ -190,7 +190,7 @@ test('expanded decimal chart IDs remain distinct through deletion, lost replies 
       return Response.json({error:'server_error'},{status:504});
     }
     const operation=path.slice('/api/charts/operations/'.length).split('?')[0];
-    return Response.json({kind:'deleted',chartId:operations.get(operation)});
+    return Response.json({kind:'deleted',chartId:operations.get(operation),catalogMarker:'2'});
   }});
   const actions=createChartActions({client,getSession:()=>access,calculate:async()=>accountChart(),
     library:{async open(){return accountChart();},async forget(id){forgotten.push(id);}}});

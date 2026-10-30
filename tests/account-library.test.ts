@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import {createStoragePressure} from '../src/data/storage-pressure.ts';
 import { createAccountLibraryStore,type LibraryLease } from '../src/data/account-library-store.ts';
 import { createAccountLibrary } from '../src/state/account-library.ts';
 import { accountChart, chartId } from './helpers/account-chart.ts';
@@ -9,11 +8,27 @@ import type { ChartClient } from '../src/data/chart-client.ts';
 
 const session = {accountId: '1', sessionId: 'first-session'};
 const noNetwork = async (): Promise<never> => { throw new Error('offline data must not request a server'); };
-function client(rows = [accountChart()]): Pick<ChartClient, 'list' | 'own'> {
+function client(rows = [accountChart()]): Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'> {
+  let marker=1,signature=JSON.stringify(rows);
+  const current=()=>{const next=JSON.stringify(rows);if(next!==signature){marker++;signature=next;}return String(marker);};
+  const entry=(chart:ReturnType<typeof accountChart>)=>{const {id,revision,name,source,birthDate,birthTime}=chart;
+    return {id,revision,name,source,birthDate,birthTime,packages:{card:{kind:'card' as const,sourceKey:JSON.stringify([id,revision])},day:null,majorReturns:null}};};
   return {
-    async list() { return {charts: rows.map(chart => ({...chart})), nextCursor: null }; },
-    async own({chartId: id}) { const chart = rows.find(row => row.id === id); if (!chart) throw Object.assign(new Error(), {code: 'not_found'}); return chart; },
+    async catalog({expectedAccountId,knownMarker}) {const marker=current();return knownMarker===marker
+      ?{kind:'unchanged',accountId:expectedAccountId,marker}
+      :{kind:'page',accountId:expectedAccountId,marker,entries:rows.filter(row=>row.accountId===expectedAccountId).map(entry),nextCursor:null};},
+    async confirmCatalog({expectedAccountId,marker}) {return {kind:marker===current()?'confirmed':'restart',accountId:expectedAccountId,marker:current()};},
+    async own({chartId: id}) {const chart=rows.find(row=>row.id===id);if(!chart)throw Object.assign(new Error(),{code:'not_found',details:{catalogMarker:current()}});
+      return {chart,catalogMarker:current()};},
   };
+}
+// These scenarios need already acquired numerical fixtures. A catalogue refresh
+// alone intentionally does not perform that acquisition anymore.
+async function acceptFixtureCards(library:ReturnType<typeof createAccountLibrary>,marker='1') {
+  for(const entry of library.entries) {
+    const chart=accountChart(Number.parseInt(entry.id,16),library.accountId!,entry.revision);
+    await library.prepareAcceptance()(entry.id,{...chart,name:entry.name},marker);
+  }
 }
 async function placeUnderQuota(storage:ReturnType<typeof createAccountLibraryStore>,lease:LibraryLease,incoming=accountChart(3),victims=1) {
  const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,removed=new WeakMap<IDBTransaction,number>();
@@ -47,7 +62,7 @@ test('offline restore keeps the downloaded library after expiry without asking t
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const active = await storage.activate('1'); assert.equal(active.status, 'stored');
   await storage.put(active.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, online: () => false});
+  const library = createAccountLibrary({storage, client: {catalog:noNetwork,confirmCatalog:noNetwork,own:noNetwork}, online: () => false});
   try {
     await library.restore(); await library.connect(null);
     assert.equal(library.charts.length, 1);
@@ -63,7 +78,7 @@ test('a new account replaces the working library and expiry alone retains its do
     await library.restore();
     const changing = library.connect({accountId: '2', sessionId: 'second'});
     assert.equal(library.charts.length, 0);
-    await changing; await library.load();
+    await changing; await library.load();await acceptFixtureCards(library);
     assert.deepEqual(library.charts.map(chart => chart.accountId), ['2']);
     await library.connect(null); assert.equal(library.charts.length, 1);
   } finally { library.close(); }
@@ -72,8 +87,8 @@ test('a new account replaces the working library and expiry alone retains its do
 test('a late page after logout cannot repopulate memory or IndexedDB', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
-  const source = client(); const original = source.list;
-  source.list = async (...args) => { await gate; return original(...args); };
+  const source = client(); const original = source.catalog;
+  source.catalog = async (...args) => { await gate; return original(...args); };
   const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session);
@@ -91,7 +106,7 @@ test('a deletion from another tab invalidates a pending card response', async ()
   const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session); await library.load();
-    const pending = library.open(chartId(1)), refused = assert.rejects(pending, {code: 'account_changed'});
+    const pending = library.open(chartId(1)), refused = assert.rejects(pending, {code: 'library_changed'});
     const snapshot = await other.read(); await other.remove(snapshot!.lease!, chartId(1));
     release(); await refused;
     assert.deepEqual(library.charts, []); assert.deepEqual((await storage.read())!.charts, []);
@@ -106,7 +121,7 @@ test('cancelling one open aborts its request without cancelling another open or 
   source.own = async ({chartId: id}, signal) => {
     signals.push(signal!);
     await gate; // Also exercise a transport which delivers a response after abort.
-    return id === chartId(1) ? accountChart(1) : accountChart(2);
+    return {chart:id===chartId(1)?accountChart(1):accountChart(2),catalogMarker:'1'};
   };
   const library = createAccountLibrary({storage, client:source, online:()=>true});
   try {
@@ -128,9 +143,9 @@ test('cancelled opens do no work and cannot apply a late deletion or cached fall
   const storage = createAccountLibraryStore({indexedDB:new IDBFactory()}), source = client();
   const library = createAccountLibrary({storage, client:source, online:()=>true});
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     let calls = 0;
-    source.own = async () => { calls++; return accountChart(); };
+    source.own = async () => { calls++; return {chart:accountChart(),catalogMarker:'1'}; };
     await assert.rejects(library.open(chartId(1), AbortSignal.abort()), {name:'AbortError'});
     assert.equal(calls, 0);
     for (const code of ['not_found', 'connection_failed']) {
@@ -154,7 +169,7 @@ test('a server card remains usable in memory if local storage is unavailable', a
 test('a stored ready calculation remains usable offline without a calculation marker', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const active = await storage.activate('1'); assert.equal(active.status, 'stored'); await storage.put(active.lease, [accountChart()]);
-  const library = createAccountLibrary({storage, client: {list: noNetwork, own: noNetwork}, online: () => false});
+  const library = createAccountLibrary({storage, client: {catalog:noNetwork,confirmCatalog:noNetwork,own:noNetwork}, online: () => false});
   try {
     await library.restore(); assert.deepEqual(await library.open(chartId(1)), accountChart());
     assert.equal(library.charts[0]!.note, 'Личная заметка');
@@ -165,7 +180,7 @@ test('an older late open cannot return numbers older than the working record', a
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   let release!: () => void, count = 0; const gate = new Promise<void>(resolve => { release = resolve; });
   const source = client();
-  source.own = async () => { if (++count === 1) { await gate; return accountChart(1, '1', 2); } return accountChart(1, '1', 3); };
+  source.own = async () => { if (++count === 1) { await gate; return {chart:accountChart(1,'1',2),catalogMarker:'1'}; } return {chart:accountChart(1,'1',3),catalogMarker:'1'}; };
   const library = createAccountLibrary({storage, client: source, online: () => true});
   try {
     await library.connect(session);
@@ -174,13 +189,13 @@ test('an older late open cannot return numbers older than the working record', a
   } finally { library.close(); }
 });
 
-test('a failed background download is not repeated in the same page lifetime', async () => {
-  let calls = 0; const source = client(), list = source.list;
-  source.list = async (...args) => { calls++; return list(...args); };
+test('unavailable numeric storage does not stop subsequent light catalogue refreshes', async () => {
+  let calls = 0; const source = client(), list = source.catalog;
+  source.catalog = async (...args) => { calls++; return list(...args); };
   const library = createAccountLibrary({storage: createAccountLibraryStore({indexedDB: null}), client: source, online: () => true});
   try {
     await library.connect(session); await library.load(); await library.load();
-    assert.equal(calls, 1); assert.equal(library.charts.length, 1);
+    assert.equal(calls, 2); assert.equal(library.entries.length, 1);assert.equal(library.charts.length,0);
   } finally { library.close(); }
 });
 
@@ -249,7 +264,7 @@ test('concurrent confirmed deletions both leave memory and IndexedDB without dro
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), online: () => true});
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     const outcomes = await Promise.allSettled([library.forget(chartId(1)), library.forget(chartId(2))]);
     assert.deepEqual((await storage.read())!.charts.map(chart => chart.id), [chartId(3)]);
     assert.deepEqual(library.charts.map(chart => chart.id), [chartId(3)]);
@@ -261,7 +276,7 @@ test('a confirmed deletion renews a stale same-account lease and removes only it
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
   const library = createAccountLibrary({storage, client: client([accountChart(1), accountChart(2), accountChart(3)]), online: () => true});
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     const before = await other.read(); await other.remove(before!.lease!, chartId(1));
     await library.forget(chartId(2));
     assert.deepEqual((await storage.read())!.charts.map(chart => chart.id), [chartId(3)]);
@@ -273,7 +288,7 @@ test('a confirmed deletion cannot adopt the different account now held by Indexe
   const indexedDB = new IDBFactory(), storage = createAccountLibraryStore({indexedDB}), other = createAccountLibraryStore({indexedDB});
   const library = createAccountLibrary({storage, client: client(), online: () => true});
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     const next = await other.activate('2'); assert.equal(next.status, 'stored');
     await other.put(next.lease, [accountChart(1, '2')]);
     await library.forget(chartId(1)).catch(error => { assert.equal(error.code, 'account_changed'); });
@@ -291,7 +306,7 @@ test('a session change cancels queued deletions before they can acquire a new lo
   let calls = 0;
   storage.remove = async (...args) => { if (++calls === 1) { entered(); await gate; } return remove(...args); };
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     const first = library.forget(chartId(1)); await started;
     const second = library.forget(chartId(2));
     const completed = Promise.allSettled([first, second]);
@@ -304,26 +319,13 @@ test('a session change cancels queued deletions before they can acquire a new lo
 });
 
 
-test('a background page saved after quota relief stops downloading until a new page lifetime',async t=>{
-  const indexedDB=new IDBFactory(),pressure=createStoragePressure({locks:null});
-  const storage=createAccountLibraryStore({indexedDB,pressure});
-  const active=await storage.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
-  await storage.put(active.lease,[accountChart(1)]);
-  let full=true,calls=0;
-  pressure.setSources({diagnostics:async()=>{full=false;return 'released';}});
-  const source=client();
-  source.list=async()=>({charts:[{...accountChart(++calls+1)}],nextCursor:calls===1?'next':null});
-  const library=createAccountLibrary({storage,client:source,online:()=>true});
-  t.after(()=>library.close());await library.connect(session);
-  const original=IDBObjectStore.prototype.put;
-  IDBObjectStore.prototype.put=function(value:unknown,key?:IDBValidKey){
-    if(full && this.name==='charts')throw new DOMException('full','QuotaExceededError');
-    return key===undefined?original.call(this,value):original.call(this,value,key);
-  };
-  try{await library.load();await library.load();}finally{IDBObjectStore.prototype.put=original;}
-  assert.equal(calls,1,'quota recovery may retain this page but must not churn through the rest of the library');
-  assert.deepEqual((await storage.read())!.charts.map(c=>c.id),[chartId(1),chartId(2)]);
-  assert.equal(library.storageAvailable,true);
+test('catalogue refresh under numeric quota performs no card writes or quota cleanup',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client([accountChart(),accountChart(2)]);
+ const library=createAccountLibrary({storage,client:source,online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const original=IDBObjectStore.prototype.put;let cardWrites=0;
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts'){cardWrites++;throw new DOMException('full','QuotaExceededError');}return original.call(this,value,...args);};
+ try{await library.load();await library.load();}finally{IDBObjectStore.prototype.put=original;}
+ assert.equal(cardWrites,0);assert.equal(library.entries.length,2);assert.equal(library.charts.length,0);
 });
 
 test('twenty opened cards outrank eighty later background downloads across tabs',async t=>{
@@ -332,10 +334,10 @@ test('twenty opened cards outrank eighty later background downloads across tabs'
   const storage=createAccountLibraryStore({indexedDB,now:()=>++clock});
   const other=createAccountLibraryStore({indexedDB,now:()=>++clock});
   const library=createAccountLibrary({storage,client:client(rows),online:()=>true});
-  t.after(()=>{library.close();other.close();});await library.connect(session);await library.load();
+  t.after(()=>{library.close();other.close();});await library.connect(session);await library.load();await acceptFixtureCards(library);
   for(let id=1;id<=20;id++)await library.markOpened(chartId(id));
   rows.push(...Array.from({length:80},(_,i)=>accountChart(i+21)));
-  await library.load();
+  await library.load();await acceptFixtureCards(library,'2');
   assert.equal((await other.read())!.charts.length,100,'nothing is evicted while all cards fit');
   await placeUnderQuota(other,(await other.read())!.lease!,accountChart(101),51);
   const remaining=(await other.read())!.charts.map(chart=>chart.id);
@@ -348,7 +350,7 @@ test('reload permission checks durable ownership and revision, including another
  const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});
  const row=accountChart(),library=createAccountLibrary({storage,client:client([row]),online:()=>true});
  try{
-  await library.connect(session);await library.load();assert.equal(await library.canRestore(row.id),true);
+  await library.connect(session);await library.load();await acceptFixtureCards(library);assert.equal(await library.canRestore(row.id),true);
   await placeUnderQuota(other,(await other.read())!.lease!);
   assert.ok(library.get(row.id));assert.equal(library.storageAvailable,true);
   assert.equal(await library.canRestore(row.id),false);
@@ -373,7 +375,7 @@ test('logout during durable verification cannot authorize the previous account r
  const storage=createAccountLibraryStore({indexedDB:new IDBFactory()});
  const library=createAccountLibrary({storage,client:client(),online:()=>true});
  try{
-  await library.connect(session);await library.load();
+  await library.connect(session);await library.load();await acceptFixtureCards(library);
   let finish!:(value:boolean)=>void;storage.canRestore=()=>new Promise(resolve=>{finish=resolve;});
   const checking=library.canRestore(chartId(1));await library.clear();finish(true);
   assert.equal(await checking,false);
@@ -389,7 +391,7 @@ test('unchanged library reads retain records without notifications, while durabl
   const library = createAccountLibrary({storage, client: source, online: () => true, notify: () => { notices++; }});
   library.subscribe(() => { observations++; });
   try {
-    await library.connect(session); await library.load();
+    await library.connect(session); await library.load();await acceptFixtureCards(library);
     const first = library.charts, untouched = first[1];
     const before = observations, notified = notices;
     await library.open(chartId(1));
@@ -418,13 +420,12 @@ test('unavailable logout cleanup retains its exact account target and a retry pr
  const stored=createAccountLibraryStore({indexedDB:new IDBFactory()});let unavailable=true;
  const storage={...stored,clearAccount:async(id:string)=>unavailable?'unavailable' as const:stored.clearAccount(id)};
  const source=client([accountChart(),accountChart(2,'2')]);
- source.list=async({expectedAccountId})=>({charts:[{...accountChart(expectedAccountId==='1'?1:2,expectedAccountId)}],nextCursor:null});
  const library=createAccountLibrary({storage,client:source,online:()=>true});
  try{
-  await library.connect(session);await library.load();
+  await library.connect(session);await library.load();await acceptFixtureCards(library);
   const result=await library.clear();assert.equal(result.status,'unavailable');assert.equal(result.accountId,'1');
   assert.deepEqual(library.charts,[]);
-  await library.connect({accountId:'2',sessionId:'second-session'});await library.load();
+  await library.connect({accountId:'2',sessionId:'second-session'});await library.load();await acceptFixtureCards(library);
   unavailable=false;assert.equal(await library.retryClear(result.accountId!), 'stale');
   assert.deepEqual((await stored.read())!.charts.map(chart=>chart.accountId),['2']);
   assert.equal(library.accountId,'2');

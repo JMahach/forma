@@ -92,7 +92,7 @@ test('create receipt is separate from the current private and public chart', asy
   assert.equal(receipt.operationId, op(1));
   assert.equal(receipt.chart?.id, receipt.outcome.chartId);
   const chartId = receipt.outcome.chartId;
-  const own = await f.client.own({chartId, expectedAccountId: f.first.accountId});
+  const {chart:own} = await f.client.own({chartId, expectedAccountId: f.first.accountId});
   assert.equal(own.note, 'private');
   assert.equal(own.utc, '2000-01-01T12:00:32.789Z');
   assert.equal(own.activations.design.length, 13);
@@ -110,7 +110,7 @@ test('note compare-and-set preserves newer name and does not overwrite an unseen
   const conflict = await f.client.update({...f.intent(4), chartId, note: {value: 'old draft', seenRevision: 1}});
   assert.equal(conflict.outcome.kind, 'rejected');
   assert.equal(conflict.outcome.code, 'note_conflict');
-  const own = await f.client.own({chartId, expectedAccountId: f.first.accountId});
+  const {chart:own} = await f.client.own({chartId, expectedAccountId: f.first.accountId});
   assert.equal(own.name, 'Новое имя'); assert.equal(own.note, 'new note');
   assert.equal(own.utc, utc); assert.equal(f.preparations(), 1);
 });
@@ -121,7 +121,7 @@ test('copy reads the seen public revision and never carries a private note', asy
   f.switchAccount(await f.login('second@example.test'));
   const copy = await f.client.addFromSource({...f.intent(2), sourceId: source, seenRevision: seen.revision});
   assert.equal(copy.outcome.kind, 'created');
-  const own = await f.client.own({chartId: copy.outcome.chartId, expectedAccountId: copy.expectedAccountId});
+  const {chart:own} = await f.client.own({chartId: copy.outcome.chartId, expectedAccountId: copy.expectedAccountId});
   assert.equal(own.note, ''); assert.notEqual(own.id, source);
   assert.deepEqual(JSON.parse(String(f.calls.find(c => c.path === '/api/charts/add')!.options.body)),
     {...f.intent(2), sourceId: source, seenRevision: 1});
@@ -226,7 +226,7 @@ test('pages preserve account and cursor and all ready records remain readable wi
   assert.equal(last.charts.length, 1); assert.equal(last.nextCursor, null);
   assert.equal(new Set([...first.charts, ...last.charts].map(c => c.id)).size, 3);
   assert.equal(f.preparations(), 3);
-  const opened = await f.client.own({chartId: first.charts[0]!.id, expectedAccountId: f.first.accountId});
+  const {chart:opened} = await f.client.own({chartId: first.charts[0]!.id, expectedAccountId: f.first.accountId});
   assert.deepEqual(opened,first.charts[0]); assert.equal(f.preparations(),3);
 });
 
@@ -400,7 +400,7 @@ test('client and HTTP save a signed ready chart without recalculation or persist
     birth:{source:'transit',utc},calculationReceipt:proof});
   assert.equal(result.outcome.kind,'created');assert.equal(f.preparations(),1);
   assert.equal(JSON.parse(String(f.calls.at(-1)!.options.body)).calculationReceipt,proof);
-  const chart=await f.client.own({chartId:result.outcome.chartId,expectedAccountId:f.first.accountId});
+  const {chart}=await f.client.own({chartId:result.outcome.chartId,expectedAccountId:f.first.accountId});
   assert.equal(chart.name,'Another name');assert.equal(chart.note,'Own note');
   assert.equal(Object.hasOwn(chart,'calculationReceipt'),false);
   await assert.rejects(f.client.create({...f.intent(51),name:'Tampered',note:'',

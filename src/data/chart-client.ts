@@ -2,6 +2,8 @@ import { isChartIdentifier as identifier, isOperationIdentifier, MAX_CALCULATION
 import type { AccountChart, PublicAccountChart, AccountChartPage, ChartWriteIntent, ChartWriteOutcome, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart, validatePublicAccountChart } from '../domain/account-chart.ts';
 import { ConnectionError, fetchResource, responseError } from './http-transport.ts';
+import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
+import {validateLibraryCatalogReply,validateLibraryCatalogConfirmation,type CatalogQuery} from '../domain/library-catalog.ts';
 
 /** Source input may carry an opaque proof of server-calculated numbers; no unsigned activations cross the write boundary. */
 export type ChartBirthInput =
@@ -14,7 +16,8 @@ export interface ChartPatchInput extends ChartWriteIntent {
 /** An immutable command fact, never a current chart or permission to show one. */
 export interface ChartReceipt<T extends ChartOutcome = ChartOutcome> extends ChartWriteIntent { outcome: T }
 /** An optional current projection accompanies, but never changes, the immutable fact. */
-export interface ChartReply<T extends ChartOutcome = ChartOutcome> extends ChartReceipt<T> { chart?:AccountChart }
+export interface ChartReply<T extends ChartOutcome = ChartOutcome> extends ChartReceipt<T> { chart?:AccountChart;catalogMarker?:string }
+export interface OwnChartReply {chart:AccountChart;catalogMarker:string}
 interface Session { accountId: string; sessionId: string }
 interface Options { fetch?: typeof globalThis.fetch; getSession: () => Session | null }
 
@@ -31,6 +34,14 @@ const accountChanged = () => responseError(undefined, {error: 'account_changed'}
 function validated<T>(read: () => T): T { try { return read(); } catch { throw invalid(); } }
 function active(signal?: AbortSignal) { signal?.throwIfAborted(); }
 function id(value: unknown) { if (!identifier(value)) throw badInput(); return canonicalChartId(value); }
+function pageLimit(value=100) {
+  if(!Number.isInteger(value) || value<1 || value>100)throw badInput();
+  return value;
+}
+function catalogSelection(input:CatalogQuery) {
+  if(input.knownMarker!==undefined && input.marker!==undefined || input.after!==undefined && input.marker===undefined)throw badInput();
+  return {...input,limit:pageLimit(input.limit),after:input.after===undefined?undefined:id(input.after)};
+}
 function intent(input: ChartWriteIntent): ChartWriteIntent {
   if (!object(input) || !accountId(input.expectedAccountId) || !isOperationIdentifier(input.operationId)) throw badInput();
   return {operationId: input.operationId, expectedAccountId: input.expectedAccountId};
@@ -66,14 +77,15 @@ function outcome(value: unknown): ChartOutcome {
     ...(value.revision === undefined ? {} : {revision: value.revision as number})};
 }
 function reply<T extends ChartOutcome>(base:ChartWriteIntent, result:T, value:Record<string,unknown>):ChartReply<T> {
-  const fact={...base,outcome:result}, target=chartOutcomeTarget(result);
-  if(target && value.chart) {
-    try {
-      const chart=validateAccountChart(value.chart,base.expectedAccountId);
-      if(chart.id===target.id && chart.revision>=target.revision)return {...fact,chart};
-    } catch { /* An unusable optional projection leaves the receipt and normal read path intact. */ }
-  }
-  return fact;
+  const receipt={...base,outcome:result};
+  const fact={...receipt,...(isLibraryCatalogMarker(value.catalogMarker)?{catalogMarker:value.catalogMarker}:{})};
+  if(!Object.hasOwn(value,'chart'))return fact;
+  const target=chartOutcomeTarget(result)??('chartId' in result?{id:result.chartId,revision:0}:null);
+  try {
+    const chart=validateAccountChart(value.chart,base.expectedAccountId);
+    if(target && chart.id===target.id && chart.revision>=target.revision)return {...fact,chart};
+  } catch { /* The receipt survives; a damaged projection cannot prove current absence. */ }
+  return receipt;
 }
 
 /** No retries, queues, local storage, navigation or implicit account selection. */
@@ -165,12 +177,12 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       const value=await privateRead(seen, '/api/charts/operations/' + base.operationId + '?accountId=' + base.expectedAccountId, signal);
       return reply(base,outcome(value),value);
     },
-    async own(input: {chartId: string; expectedAccountId: string}, signal?: AbortSignal): Promise<AccountChart> {
+    async own(input: {chartId: string; expectedAccountId: string}, signal?: AbortSignal): Promise<OwnChartReply> {
       const chartId = id(input.chartId), seen = session(input.expectedAccountId);
       const value = await privateRead(seen, '/api/charts/' + chartId + '?accountId=' + seen.accountId, signal);
       const result = validated(() => validateAccountChart(value.chart, seen.accountId));
-      if (result.id !== chartId) throw invalid();
-      return result;
+      if (result.id !== chartId || !isLibraryCatalogMarker(value.catalogMarker)) throw invalid();
+      return {chart:result,catalogMarker:value.catalogMarker};
     },
     async public(chartId: string, signal?: AbortSignal): Promise<PublicAccountChart> {
       chartId=id(chartId);
@@ -179,9 +191,22 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       if (result.id !== chartId) throw invalid();
       return result;
     },
+    async catalog(input:CatalogQuery & {expectedAccountId:string},signal?:AbortSignal) {
+      const seen=session(input.expectedAccountId),selection=catalogSelection(input),{knownMarker,marker,after,limit}=selection;
+      for(const value of [knownMarker,marker])if(value!==undefined && !isLibraryCatalogMarker(value))throw badInput();
+      const query=new URLSearchParams({accountId:seen.accountId,limit:String(limit)});
+      for(const [key,value] of Object.entries({knownMarker,marker,after}))if(value!==undefined)query.set(key,value);
+      const value=await privateRead(seen,'/api/charts/catalog?'+query,signal);
+      return validated(()=>validateLibraryCatalogReply(value,seen.accountId,selection));
+    },
+    async confirmCatalog(input:{expectedAccountId:string;marker:string},signal?:AbortSignal) {
+      const seen=session(input.expectedAccountId);if(!isLibraryCatalogMarker(input.marker))throw badInput();
+      const query=new URLSearchParams({accountId:seen.accountId,marker:input.marker});
+      const value=await privateRead(seen,'/api/charts/catalog/confirm?'+query,signal);
+      return validated(()=>validateLibraryCatalogConfirmation(value,seen.accountId,input.marker));
+    },
     async list(input: {expectedAccountId: string; after?: string; limit?: number}, signal?: AbortSignal): Promise<AccountChartPage> {
-      const seen = session(input.expectedAccountId), limit = input.limit ?? 100, after = input.after;
-      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw badInput();
+      const seen = session(input.expectedAccountId), limit = pageLimit(input.limit), after = input.after;
       if (after !== undefined) id(after);
       const value = await privateRead(seen, '/api/charts?accountId=' + seen.accountId + '&limit=' + limit + (after ? '&after=' + after : ''), signal);
       if (!Array.isArray(value.charts) || value.charts.length > limit

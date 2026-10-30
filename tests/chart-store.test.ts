@@ -184,3 +184,18 @@ test('releasing a save source removes only that pin even behind the library proj
  store.showPublic(next);store.releasePublicSource(source);
  assert.equal(store.get(next.id),next,'another source keeps its working projection');
 });
+
+test('light catalogue rows show new metadata without replacing the current complete drawing',()=>{
+ const store=createChartStore(),chart=accountChart(1);
+ const light={id:chart.id,revision:2,name:'New name',source:chart.source,birthDate:chart.birthDate,birthTime:chart.birthTime,
+  packages:{card:{kind:'card' as const,sourceKey:JSON.stringify([chart.id,2])},day:null,majorReturns:null}};
+ store.projectLibrary([chart],true,[],[light]);
+ assert.equal(store.displayCharts[0],light);
+ assert.equal(store.get(chart.id)?.name,chart.name,'the accepted complete source remains separate');
+ assert.equal(store.has(chart.id),false,'old numbers cannot make a new catalogue revision ready');
+ const list=store.displayCharts;
+ store.projectLibrary([chart],false,[],[light]);assert.equal(store.displayCharts,list);
+ const ready={...chart,name:light.name,revision:2};
+ store.projectLibrary([ready],true,[chart.id],[light]);
+ assert.equal(store.has(chart.id),true);assert.equal(store.displayCharts[0],store.get(chart.id));
+});

@@ -308,7 +308,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const chartClient = createChartClient({getSession: account.getSession});
   let libraryChannel: BroadcastChannel | null = null;
   try {libraryChannel = new window.BroadcastChannel('forma-library');} catch { /* Resuming a tab also checks its local library. */ }
-  const notifyLibrary = () => {try {libraryChannel?.postMessage({kind: 'changed'});} catch {}};
+  const notifyLibrary = (notice:Parameters<NonNullable<Parameters<typeof createAccountLibrary>[0]['notify']>>[0]) => {try {libraryChannel?.postMessage(notice);} catch {}};
   const libraryStorage = calculationClients?.library ?? createAccountLibraryStore({pressure: storagePressure});
   storagePressure?.setSources({
     diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('unavailable'),
@@ -369,21 +369,21 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     // Confirmed disappearance within the same account also revokes a prior public view.
     // Logout/account switching have a different owner and preserve the public tab source.
     if(priorPublic && 'accountId' in priorPublic && priorPublic.accountId===accountLibrary.accountId
-      && !accountLibrary.get(priorPublic.id))store.clearPublic(priorPublic.id);
+      && !accountLibrary.has(priorPublic.id))store.clearPublic(priorPublic.id);
     // Account projection may replace the same ID with a private or not-yet-ready
     // record. It does not supersede the accepted source of an explicit save.
     const preserveSaveSource = Boolean(application?.write.source && session.record === application.write.source);
     if(preserveSaveSource)store.showPublic(application!.write.source);
     const previous = session.record, editedId = birthForm.editedId;
     store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
-      accountLibrary.charts.map(chart => chart.id));
+      accountLibrary.readyIds,accountLibrary.entries);
     birthForm.refresh();
     if (startupRestored() && !preserveSaveSource && editedId && !store.get(editedId)) {
       librarySelection++; selectChart('current-transit', {replace:true});
       return;
     } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
-      if (!next || !store.has(next.id)) { librarySelection++; selectChart('current-transit', {replace:true}); }
+      if (!next) { librarySelection++; selectChart('current-transit', {replace:true}); }
       else if (previous?.utc !== next.utc || JSON.stringify(previous?.activations) !== JSON.stringify(next.activations)) graph.changeChart(next.id);
       else session.refreshRecord();
       // The accepted session already updates every page projection.
@@ -395,8 +395,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const observation=journal?.begin({action:'chart_open',component:'chart'});
     const selection = ++librarySelection;
     try {
-      if (privateLibraryShown && id !== 'current-transit' && id !== store.temporaryChart?.id && !accountLibrary.get(id)) return;
-      if (accountLibrary.get(id)) await accountLibrary.open(id);
+      if (privateLibraryShown && id !== 'current-transit' && id !== store.temporaryChart?.id && !accountLibrary.has(id)) return;
+      if (accountLibrary.has(id)) await accountLibrary.open(id);
       if (selection !== librarySelection) return;
       if (edit) birthForm.open(true, id); else selectChart(id, options);
     } catch (error) {
@@ -472,7 +472,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     }
     if (result.kind === 'unknown') return {kind:'unknown', error:result.error};
     if (result.kind !== 'settled' || !result.active) return {kind:'inactive'};
-    const deleted=result.receipt.outcome.kind === 'deleted' || result.receipt.outcome.kind === 'absent';
+    const deleted=!result.chart && !result.readError
+      && (result.receipt.outcome.kind === 'deleted' || result.receipt.outcome.kind === 'absent');
     if(deleted && store.clearPublic(id))viewSession?.flush();
     return {kind:deleted ? 'deleted' : 'rejected'};
   }
@@ -543,7 +544,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (!accountLibrary.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
   })();
 
-  chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => Boolean(accountLibrary.get(id)), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
+  chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
     removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode, subscribeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
@@ -1016,7 +1017,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     application.start();
   accountLibrary.subscribe(projectAccountLibrary);
   if (libraryChannel) libraryChannel.onmessage = async event => {
-    if (event.data?.kind === 'changed' && libraryInitialized) await accountLibrary.refreshLocal().catch(() => {});
+    if (libraryInitialized) await accountLibrary.receive(event.data).catch(() => {});
   };
   document.addEventListener('visibilitychange', () => {
     if(!document.hidden)void journal?.wake();

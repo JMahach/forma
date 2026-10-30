@@ -5,6 +5,7 @@ import { createChartPreview } from '../src/views/chart-preview-canvas.ts';
 import { libraryDom } from './helpers/library-dom.ts';
 import { dateDom } from './helpers/date-dom.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
+import type {LibraryListChart} from '../src/domain/library-catalog.ts';
 
 const charts = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i), name: `Карта ${i}`, source: 'calculated' as const,
   birthDate: '1998-08-18', birthTime: '18:00', personality: [1], design: [2] }));
@@ -38,7 +39,7 @@ function harness({ observe = true, onOpen, raster = false, searchControls = fals
   list.replaceChildren = () => { for (const row of [...dom.children] as const) row.remove(); };
   list.contains = target => dom.children.some(row => row === target || row.querySelector('.chart-card') === target);
   let intersection, nextJob = 0, disconnects = 0;
-  const store = { charts: charts(300) as SavedChart[] }, session = { selectedId: '1' };
+  const store = { charts: charts(300) as LibraryListChart[] }, session = { selectedId: '1' };
   const view = attachAllCharts({ button, dialog, list, getCharts: () => store.charts, onOpen, initialView, onChange, onRowsChange, canEdit, document: dom.document,
     createObserver: observe ? (callback, options) => {
       assert.equal(options.root, list); assert.equal(options.rootMargin, '120px 0px');
@@ -347,7 +348,7 @@ test('fresh copies of unchanged records retain all rows and decoded previews', a
   for (const image of h.images) image.onload!();
   assert.equal(await ready, true);
   const rows = [...h.children], canvas = rows[0].querySelector('canvas');
-  h.store.charts = h.store.charts.map(chart => ({ ...chart, personality: [...chart.personality], design: [...chart.design] }));
+  h.store.charts = h.store.charts.map(chart => {assert.ok('personality' in chart);return {...chart,personality:[...chart.personality],design:[...chart.design]};});
   h.view.update(); h.tick();
   assert.ok(h.children.every((row, i) => row === rows[i]));
   assert.equal(h.children[0].querySelector('canvas'), canvas);
@@ -426,4 +427,16 @@ test('row availability is refreshed after catalogue creation and filtering, but 
   h.view.update();assert.equal(notified,1,'unchanged buttons need no repeated availability pass');
   h.find('missing');assert.equal(notified,1,'removed buttons need no availability pass');
   h.find('');assert.equal(notified,2);
+});
+
+test('light rows need no drawings and a complete arrival paints only its existing visible row',async()=>{
+ const h=harness(),ready=h.store.charts[0] as SavedChart;
+ const {id,name,source,birthDate,birthTime}=ready;
+ h.store.charts=[{id,name,source:'calculated',birthDate:birthDate!,birthTime:birthTime!,revision:1,
+  packages:{card:{kind:'card',sourceKey:JSON.stringify([id,1])},day:null,majorReturns:null}}];
+ h.view.show();const row=h.children[0];h.intersect(0,true);h.tick();
+ assert.equal(h.jobs.size,0);assert.equal(h.painted.length,0);assert.equal(await h.view.whenReady(),true);
+ h.store.charts=[ready];h.view.update();h.tick();
+ assert.equal(h.children[0],row);assert.deepEqual(h.painted,[id]);
+ h.view.close();
 });

@@ -1,3 +1,4 @@
+import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
 import type { AccountChart, PublicAccountChart, ChartWriteIntent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 import { chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
 import type { CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
@@ -63,6 +64,19 @@ export function createChartActions({client, library, getSession, calculate, save
   }
   function access() { const current = getSession(); if (!current) throw failed('auth_required'); return {...current}; }
   const prepareAcceptance=()=>library.prepareAcceptance?.()??((id:string)=>library.open(id));
+  async function applyObservation(reply:ChartReply<ChartWriteOutcome>,accept:ReturnType<typeof prepareAcceptance>):Promise<AccountChart|null> {
+    const {outcome,catalogMarker}=reply;
+    if(reply.chart)return accept(reply.chart.id,reply.chart,catalogMarker);
+    const absent=outcome.kind==='deleted' || outcome.kind==='absent' || outcome.kind==='rejected' && outcome.code==='not_found';
+    if(absent && isLibraryCatalogMarker(catalogMarker)){
+      try{await library.forget(outcome.chartId,catalogMarker,outcome.kind==='deleted'?'deleted':'absence');return null;}
+      catch(error){if((error as {code?:string}).code!=='library_changed')throw error;}
+    }
+    if(!absent && !chartOutcomeTarget(outcome))return null;
+    try{return await accept(outcome.chartId);}
+    catch(error){if(absent && (error as {code?:string}).code==='not_found'
+      && isLibraryCatalogMarker((error as {details?:{catalogMarker?:unknown}}).details?.catalogMarker))return null;throw error;}
+  }
   async function settle(reply: ChartReply<ChartWriteOutcome>, seen: LibrarySession, live:()=>boolean,
     accept:ReturnType<typeof prepareAcceptance>,acceptCurrent:()=>boolean): Promise<ChartActionResult> {
     const receipt={operationId:reply.operationId,expectedAccountId:reply.expectedAccountId,outcome:reply.outcome};
@@ -72,10 +86,7 @@ export function createChartActions({client, library, getSession, calculate, save
     if (!same(seen) || !acceptCurrent()) return {kind: 'settled', receipt, chart: null, active: false};
     let chart: AccountChart | null = null, readError: unknown;
     try {
-      if (receipt.outcome.kind === 'deleted' || receipt.outcome.kind === 'absent') await library.forget(receipt.outcome.chartId);
-      else if (chartOutcomeTarget(receipt.outcome)) {
-        chart = await accept(receipt.outcome.chartId,reply.chart);
-      }
+      chart=await applyObservation(reply,accept);
     } catch (error) { readError = error; }
     const active = same(seen) && live();
     return {kind: 'settled', receipt, chart: active ? chart : null, active, ...(!active || readError === undefined ? {} : {readError})};

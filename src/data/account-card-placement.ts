@@ -1,5 +1,6 @@
 import {TransactionPlacement} from './library-package-placement.ts';
 import {unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
+import {markLibraryMutation} from './library-catalog-store.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import type { createIndexedDatabase } from './indexed-db.ts';
@@ -7,18 +8,20 @@ import type { StoragePressure } from './storage-pressure.ts';
 
 interface Placement {
   database:Pick<ReturnType<typeof createIndexedDatabase>,'transactionResult'>;
-  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt?:number;pressure?:StoragePressure;
+  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt?:number;pressure?:StoragePressure;marker?:string;
 }
 function needsReplacement(value:unknown,chart:AccountChart) {
   try{return validateAccountChart(value,chart.accountId).revision<chart.revision;}catch{return true;}
 }
 function replaceWithinTransaction(tx:IDBTransaction,input:Placement,firstVictim:boolean,
-  state:{needsPayload:boolean},done:(value:boolean)=>void,fail:(cause?:unknown)=>void) {
+  state:{needsPayload:boolean},owner:Record<string,unknown>,done:(value:boolean)=>void,fail:(cause?:unknown)=>void) {
   const {chart,openedAt,isCurrent}=input,rows=tx.objectStore('charts'),usage=tx.objectStore('usage');
   const placement=new TransactionPlacement(tx,{id:chart.id,kind:'card',chartIds:[chart.id],openedAt},
     firstVictim && state.needsPayload,isCurrent,fail);
   const saveUse=()=>openedAt===undefined?done(true):placement.write(()=>usage.put({id:chart.id,openedAt}),()=>done(true));
-  const saveCard=()=>placement.write(()=>rows.put(chart),()=>{unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);saveUse();});
+  const saveCard=()=>placement.write(()=>rows.put(chart),()=>{
+    try{unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);markLibraryMutation(tx,owner,input.marker);saveUse();}catch(error){fail(error);}
+  });
   placement.start(state.needsPayload?saveCard:saveUse);
 }
 function placementAttempt(input:Placement,firstVictim:boolean) {
@@ -28,7 +31,7 @@ function placementAttempt(input:Placement,firstVictim:boolean) {
       if(!isOwner(owner.result) || !isCurrent()){done(false);return;}
       const prior=tx.objectStore('charts').get(chart.id);prior.onsuccess=()=>{
         state.needsPayload=needsReplacement(prior.result,chart);
-        replaceWithinTransaction(tx,input,firstVictim,state,done,fail);
+        replaceWithinTransaction(tx,input,firstVictim,state,owner.result,done,fail);
       };
     };
   });

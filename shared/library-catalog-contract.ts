@@ -19,6 +19,7 @@ export interface LibraryCatalogEntry extends Pick<AccountChart,'id'|'revision'|'
   };
 }
 interface CatalogState {accountId:string;marker:LibraryCatalogMarker}
+export interface LibraryCatalogSnapshot extends CatalogState {entries:LibraryCatalogEntry[]}
 export interface LibraryCatalogPage extends CatalogState {
   kind:'page';entries:LibraryCatalogEntry[];nextCursor:string|null;
 }

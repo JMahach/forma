@@ -424,7 +424,7 @@ for (const committed of [false, true]) test(`lost save response survives reload 
     const view = createViewStore({getStorage});
     const saved = view.read();
     return {view, actions: createChartActions({client, getSession: () => access,
-      library: {open: id => client.own({chartId: id, expectedAccountId: access.accountId}), async forget() {}},
+      library: {open: async id => (await client.own({chartId:id,expectedAccountId:access.accountId})).chart, async forget() {}},
       async calculate() {throw new Error('recovery must never calculate');}, newId: () => op(701),
       initialPending: saved?.pendingChartWrites,
       onPending: pendingChartWrites => {assert.equal(view.write({...saved, version: 1, pendingChartWrites}), true);},

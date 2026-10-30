@@ -1,6 +1,7 @@
 import {IDBFactory} from 'fake-indexeddb';
 import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
 import {createCyclesClient} from '../src/data/cycles-client.ts';
+import {createChartClient} from '../src/data/chart-client.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
@@ -81,6 +82,82 @@ test('empty, unchanged and forced catalogue reads use one existing session and r
   assert.equal((await f.request(`/api/charts/catalog/confirm?accountId=${f.accountId}&marker=${marker}`)).body.kind,'confirmed');
   assert.equal((await f.request(f.url,'GET',false)).status,401);
   assert.equal((await f.request('/api/charts/catalog?accountId=999')).status,409);
+});
+
+test('the real catalogue client reads ordered pages and confirms one marker without fetching calculations',async t=>{
+ const f=await fixture(t),ids=[f.add('First'),f.add('Second'),f.add('Third')],paths:string[]=[];
+ const client=createChartClient({getSession:()=>({accountId:f.accountId,sessionId:f.session.id}),fetch:async(path)=>{
+  paths.push(String(path));const reply=await f.request(String(path));return Response.json(reply.body,{status:reply.status});
+ }});
+ const first=await client.catalog({expectedAccountId:f.accountId,limit:2});assert.equal(first.kind,'page');if(first.kind!=='page')throw Error('page');
+ assert.deepEqual(first.entries.map(row=>row.id),ids.slice(0,2));
+ const last=await client.catalog({expectedAccountId:f.accountId,limit:2,marker:first.marker,after:first.nextCursor!});
+ assert.equal(last.kind,'page');if(last.kind!=='page')throw Error('page');assert.deepEqual(last.entries.map(row=>row.id),ids.slice(2));
+ assert.equal((await client.confirmCatalog({expectedAccountId:f.accountId,marker:first.marker})).kind,'confirmed');
+ assert.equal((await client.catalog({expectedAccountId:f.accountId,knownMarker:first.marker})).kind,'unchanged');
+ assert.equal(paths.length,4);assert.ok(paths.every(path=>path.startsWith('/api/charts/catalog')));
+ f.records.remove({...f.intent(),chartId:ids[0]!});
+ assert.equal((await client.confirmCatalog({expectedAccountId:f.accountId,marker:first.marker})).kind,'restart');
+});
+
+test('a confirmed HTTP walk joins the local catalogue; repeated server changes never remove local cards',async t=>{
+ const {readCompleteLibraryCatalog}=await import('../src/state/library-reconciliation.ts');
+ const f=await fixture(t),ids=[f.add('First'),f.add('Second'),f.add('Third')];let requests=0,change:'page'|'confirm'|null=null;
+ const client=createChartClient({getSession:()=>({accountId:f.accountId,sessionId:f.session.id}),fetch:async(path)=>{
+  requests++;
+  if(change==='confirm' && String(path).includes('/confirm?'))f.records.update({...f.intent(),chartId:ids[0]!,name:'Change '+requests});
+  const reply=await f.request(String(path));
+  if(change==='page' && reply.body.kind==='page')f.records.update({...f.intent(),chartId:ids[0]!,name:'Change '+requests});
+  return Response.json(reply.body,{status:reply.status});
+ }});
+ const local=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>local.close());
+ const active=await local.activate(f.accountId);if(active.status!=='stored')throw Error('owner');
+ await local.put(active.lease,ids.map(id=>f.records.getOwn(id)!));
+ const base=await local.readCatalog();assert.ok(base);
+ const complete=await readCompleteLibraryCatalog(client,f.accountId,null,new AbortController().signal,2);
+ assert.equal(complete.status,'complete');if(complete.status!=='complete')throw Error('complete');
+ assert.equal((await local.putCatalog(base,complete.catalog)).status,'stored');assert.equal(requests,3);
+ const unchanged=await readCompleteLibraryCatalog(client,f.accountId,complete.catalog,new AbortController().signal,2);
+ assert.equal(unchanged.status,'unchanged');assert.equal(requests,4);
+ f.records.remove({...f.intent(),chartId:ids[2]!});change='page';
+ const unstable=await readCompleteLibraryCatalog(client,f.accountId,complete.catalog,new AbortController().signal,1);
+ assert.equal(unstable.status,'unstable');assert.equal(requests,8,'two finite attempts: first page then restart, no loop');
+ change='confirm';
+ assert.equal((await readCompleteLibraryCatalog(client,f.accountId,complete.catalog,new AbortController().signal)).status,'unstable');
+ assert.equal(requests,12,'a changed final confirmation also has only two attempts');
+ assert.equal((await local.read())!.charts.length,3);assert.deepEqual((await local.readCatalog())?.catalog,complete.catalog);
+});
+
+test('catalogue transport rejects foreign or inconsistent metadata and preserves session and abort barriers',async t=>{
+ const f=await fixture(t);f.add('First');f.add('Second');let access={accountId:f.accountId,sessionId:f.session.id};
+ const original=(await f.request(f.url)).body;
+ let reply=structuredClone(original),afterRead=()=>{};
+ const client=createChartClient({getSession:()=>access,fetch:async()=>{afterRead();return Response.json(reply);}});
+ const bad=[
+  {...original,accountId:'999'}, {...original,marker:'01'}, {...original,entries:undefined},
+  {...original,entries:[original.entries[0],original.entries[0]]}, {...original,entries:[...original.entries].reverse()},
+  {...original,nextCursor:original.entries[0].id}, {...original,kind:'unchanged'},
+  ...[
+   (row:any)=>{row.source='manual';},
+   (row:any)=>{row.birthDate='2000-02-30';},
+   (row:any)=>{row.birthTime='24:00';},
+   (row:any)=>{row.packages.card.sourceKey='[]';},
+   (row:any)=>{row.packages.day.ref.sourceKey=JSON.stringify(['2001-01-01','UTC']);},
+   (row:any)=>{row.packages.majorReturns.sourceKey='broken';},
+   (row:any)=>{row.packages.majorReturns.readyFamilies=['sun'];},
+  ].map(alter=>{const value=structuredClone(original);alter(value.entries[0]);return value;}),
+ ];
+ for(const [index,value] of bad.entries()){reply=value;await assert.rejects(client.catalog({expectedAccountId:f.accountId}),{code:'invalid_response'},'invalid catalogue '+index);}
+ reply={...original,kind:'confirmed',marker:'999'};
+ await assert.rejects(client.confirmCatalog({expectedAccountId:f.accountId,marker:original.marker}),{code:'invalid_response'});
+ reply=structuredClone(original);reply.entries[0].note='must not cross light boundary';reply.entries[0].activations={private:true};
+ const valid=await client.catalog({expectedAccountId:f.accountId});assert.equal(valid.kind,'page');
+ if(valid.kind==='page'){assert.equal(Object.hasOwn(valid.entries[0]!,'note'),false);assert.equal(Object.hasOwn(valid.entries[0]!,'activations'),false);}
+ await assert.rejects(client.catalog({expectedAccountId:f.accountId,marker:'999'}),{code:'invalid_response'});
+ afterRead=()=>{access={...access,sessionId:'replacement'};};
+ await assert.rejects(client.catalog({expectedAccountId:f.accountId}),{code:'account_changed'});
+ const controller=new AbortController();afterRead=()=>controller.abort();
+ await assert.rejects(client.catalog({expectedAccountId:f.accountId},controller.signal),{name:'AbortError'});
 });
 
 test('only a complete main family advances readiness; whole reads preserve exact UTC and corruption invalidates it',async t=>{

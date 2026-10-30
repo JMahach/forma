@@ -1,11 +1,12 @@
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import type { SavedView } from '../data/view-store.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
+import type {LibraryListChart} from '../domain/library-catalog.ts';
 import { attachWorkspaceHeader } from './workspace-header.ts';
-interface PreviewEntry { key: string; row: HTMLElement; chart: SavedChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
+interface PreviewEntry { key: string; row: HTMLElement; chart: LibraryListChart; canvas: HTMLCanvasElement; visible: boolean; release: (() => void) | null; paint: object | null; painted: boolean; failed: boolean }
 interface AllChartsOptions {
   initialView?: SavedView['charts']; onChange?: () => void; onRowsChange?: () => void; canEdit?: () => boolean;
-  button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; getCharts: () => readonly SavedChart[]; onOpen?: (() => void) | null; document?: Document;
+  button: HTMLButtonElement; dialog: HTMLElement; list: HTMLElement; getCharts: () => readonly LibraryListChart[]; onOpen?: (() => void) | null; document?: Document;
   preview?: typeof createChartPreview; schedule?: (callback: () => void) => ReturnType<typeof setTimeout>; cancel?: typeof clearTimeout;
   createObserver?: ((callback: IntersectionObserverCallback, options: IntersectionObserverInit) => IntersectionObserver) | null;
 }
@@ -15,12 +16,13 @@ import { renderChartLibraryRow } from './library.ts';
 import { canManageLibraryRecord } from './chart-display.ts';
 import { createChartPreview, sameSavedChartPreview } from './chart-preview-canvas.ts';
 
+const complete=(chart:LibraryListChart):chart is SavedChart=>'personality' in chart && 'design' in chart;
+const samePreview=(a:LibraryListChart,b:LibraryListChart)=>complete(a) && complete(b)?sameSavedChartPreview(a,b):!complete(a) && !complete(b);
 const normalizeSearch = (value: string) => value.toLowerCase().replace(/ё/g, 'е').trim().replace(/\s+/g, ' ');
-function chartSearchText(chart: SavedChart) {
+function chartSearchText(chart: LibraryListChart) {
   const date = chart.birthDate ?? '';
   const formattedDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split('-').reverse().join('.') : '';
-  return normalizeSearch([chart.name, date, formattedDate, chart.birthPlace,
-    chart.city?.name, chart.city?.region, chart.city?.country].filter(Boolean).join(' '));
+  return normalizeSearch([chart.name, date, formattedDate, ...('birthPlace' in chart?[chart.birthPlace]:[]),...('city' in chart?[chart.city?.name,chart.city?.region,chart.city?.country]:[])].filter(Boolean).join(' '));
 }
 
 // This workspace page reads the same library; the existing document-level commands own
@@ -42,7 +44,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
   const inputFocus = () => dialog.hidden ? null : captureTextSelection(search);
   const restoreInputFocus = () => !dialog.hidden && restoreTextSelection(search, initialView?.focus);
   let query = normalizeSearch(search?.value ?? ''), renderedQuery = '';
-  let charts: readonly SavedChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
+  let charts: readonly LibraryListChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
   let renderedEditDisabled = false;
   function paint() {
     job = null;
@@ -50,7 +52,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     let count = 0;
     for (const entry of pending) {
       pending.delete(entry);
-      if (!entry.visible || !rows.has(entry.row)) continue;
+      if (!entry.visible || !rows.has(entry.row) || !complete(entry.chart)) continue;
       const request = entry.paint = {};
       try {
         entry.release = preview(entry.canvas, entry.chart, { onReady(success) {
@@ -71,7 +73,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
   function visible(entry: PreviewEntry, value: boolean) {
     if (entry.visible === value) return;
     entry.visible = value;
-    if (value) {
+    if (value && complete(entry.chart)) {
       entry.failed = false;
       pending.add(entry);
       if (job === null) job = schedule(paint);
@@ -145,9 +147,9 @@ export function attachAllCharts({ button, dialog, list, getCharts,
           buttonsChanged = true;
           entry = { key, row, chart, canvas: row.querySelector('canvas')!, visible: false, release: null, paint: null, painted: false, failed: false };
         } else {
-          if (!sameSavedChartPreview(entry.chart, chart)) {
+          if (!samePreview(entry.chart, chart)) {
             releaseEntry(entry);
-            if (entry.visible) {
+            if (entry.visible && complete(chart)) {
               pending.add(entry);
               if (job === null) job = schedule(paint);
             }
@@ -209,6 +211,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     if (dialog.hidden) return Promise.resolve(null);
     const bounds = list.getBoundingClientRect();
     const entries = [...rows.values()].filter(entry => {
+      if(!complete(entry.chart))return false;
       const rect = entry.row.getBoundingClientRect();
       return rect.bottom > bounds.top && rect.top < bounds.bottom;
     });

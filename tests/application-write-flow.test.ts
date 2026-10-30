@@ -89,3 +89,18 @@ test('unknown live save and simultaneous recovery reconcile one identity without
     assert.deepEqual(f.counts(),{writes:1,adoptions:1,reads:1});assert.deepEqual(f.actions.pending,[]);
   }finally{f.actor.send({type:'Stop'});}
 });
+
+test('recovery discards a public source only after current absence, never from an old receipt alone',async()=>{
+ const intent={expectedAccountId:'1',operationId:chartId(90)},own=accountChart(),outcome={kind:'absent' as const,chartId:own.id};
+ for(const current of ['present','unavailable','absent'] as const) {
+  let cleared=0,deleted=0;
+  const actor=createActor(createWriteContinuationMachine({
+   actions:{pending:[intent],prepareSave(){throw Error('no command');},async recover(){return {kind:'settled',receipt:{...intent,outcome},active:true,
+    chart:current==='present'?own:null,...(current==='unavailable'?{readError:Error('offline')}:{})};}},
+   online:()=>true,getSession:()=>({accountId:'1',sessionId:'one'}),ready:async()=>{},source:()=>null,temporary:()=>null,
+   hasOwn:()=>false,binding:()=>null,bind(){},retire(){},public:async()=>own,acceptPublic(){},clearPublic(){cleared++;return true;},
+   view:{signIn(){},select(){},adopt(){},deleted(){deleted++;},changed(){},checkpoint(){},report(){}},
+  }));actor.start();actor.send({type:'RecoverWrites'});await tick();
+  assert.equal(cleared,current==='absent'?1:0,current);assert.equal(deleted,cleared);actor.send({type:'Stop'});
+ }
+});

@@ -1,8 +1,8 @@
-import type { SavedChart } from '../../shared/chart-types.ts';
+import type {LibraryListChart} from '../domain/library-catalog.ts';
 import type { ChartSession } from '../state/chart-session.ts';
 import type { PanelState } from '../state/panels.ts';
 import type { WorkspaceScreen } from '../state/workspace.ts';
-interface LibraryRow { key: string; chart: SavedChart | null; row: HTMLElement; button?: HTMLButtonElement | null; actions?: HTMLDetailsElement | null }
+interface LibraryRow { key: string; chart: LibraryListChart | null; row: HTMLElement; button?: HTMLButtonElement | null; actions?: HTMLDetailsElement | null }
 export type ChartLibraryView = ReturnType<typeof createChartLibraryView>;
 export type ChartLibrary = ReturnType<typeof attachChartLibrary>;
 export interface LibraryDeletion {
@@ -16,7 +16,7 @@ interface LibraryOptions {
   canEdit?: () => boolean;
   getConnectionMode: () => Parameters<typeof actionAvailability>[0]['connection'];
   subscribeConnection: (listener: () => void) => () => void;
-  panels?: PanelState; document: Document; view?: ChartLibraryView | null; getCharts: () => readonly SavedChart[]; removeChart: (id: string) => void; session: ChartSession;
+  panels?: PanelState; document: Document; view?: ChartLibraryView | null; getCharts: () => readonly LibraryListChart[]; removeChart: (id: string) => void; session: ChartSession;
   onSelect: (id: string, options?: { keepMenuOpen: boolean }) => void; onEdit: (id: string) => void; onNew: () => void;
   onUpdate?: () => void; beforeOpen?: () => void; getSelectedId?: () => string | null;
 }
@@ -32,7 +32,7 @@ import { actionAvailability } from '../ui/action-state.ts';
 
 const sourceNames = { calculated: 'Расчёт по данным рождения', manual: 'Ручные активации', transit: 'Транзит' };
 
-export function renderChartLibraryRow(chart: SavedChart, selected: boolean, { preview = false, editDisabled = false } = {}) {
+export function renderChartLibraryRow(chart: LibraryListChart, selected: boolean, { preview = false, editDisabled = false } = {}) {
   const caption = chart.birthDate ? [formatDateInput(chart.birthDate), chart.birthTime].filter(Boolean).join(' · ') : sourceNames[chart.source] || 'Ручные активации';
   return `<button class="chart-card" data-chart-id="${esc(chart.id)}" data-active="${selected}" aria-pressed="${selected}">${preview ? '<canvas class="chart-preview" width="0" height="0" aria-hidden="true"></canvas>' : ''}<span class="chart-copy"><span class="chart-name">${esc(chart.name)}</span><span class="chart-caption">${esc(caption)}</span></span></button><details class="chart-actions"><summary title="Действия с картой" aria-label="Действия с картой «${esc(chart.name)}»"><span aria-hidden="true">⋯</span></summary><div class="chart-action-menu"><button data-chart-action="edit" ${editDisabled ? 'disabled' : ''} data-action-chart-id="${esc(chart.id)}">Редактировать</button><button class="danger-text" data-chart-action="delete" data-action-chart-id="${esc(chart.id)}">Удалить</button></div></details>`;
 }
@@ -41,7 +41,7 @@ export function renderChartLibraryRow(chart: SavedChart, selected: boolean, { pr
 // across selection and minute updates; a closed list defers reconciliation.
 export function createChartLibraryView({ chartList, libraryCount, nowButton, document = chartList.ownerDocument, canEdit = () => true }: { chartList: HTMLElement; libraryCount: HTMLElement; nowButton: HTMLElement; document?: Document; canEdit?: () => boolean }) {
   const rows = new Map<string, LibraryRow>();
-  let charts: readonly SavedChart[] = [], personal: SavedChart[] = [], renderedCharts: readonly SavedChart[] | null = null, selectedId: string | null | undefined, opened = false;
+  let charts: readonly LibraryListChart[] = [], personal: LibraryListChart[] = [], renderedCharts: readonly LibraryListChart[] | null = null, selectedId: string | null | undefined, opened = false;
   let selectedIds = new Set<string>();
   function markEntry(entry: LibraryRow, active: boolean, current: boolean) {
     entry.row.dataset.current = String(current);
@@ -97,7 +97,7 @@ export function createChartLibraryView({ chartList, libraryCount, nowButton, doc
     markSelection();
   }
   return {
-    update(nextCharts: readonly SavedChart[], nextSelectedId: string | null, selection: readonly string[] = nextSelectedId ? [nextSelectedId] : []) {
+    update(nextCharts: readonly LibraryListChart[], nextSelectedId: string | null, selection: readonly string[] = nextSelectedId ? [nextSelectedId] : []) {
       if (charts !== nextCharts) {
         charts = nextCharts; personal = charts.filter(canManageLibraryRecord);
         libraryCount.textContent = String(personal.length);
@@ -160,7 +160,7 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
   }
   const selection = createLibrarySelection(initialSelection);
   const chartList = $('chartList');
-  let selectionCharts: readonly SavedChart[] | null = null, selectionCurrent: string | undefined;
+  let selectionCharts: readonly LibraryListChart[] | null = null, selectionCurrent: string | undefined;
   function render() {
     const charts = getCharts(), changed = charts !== selectionCharts;
     if (changed && deletingId && !charts.some(chart => chart.id === deletingId)) closeDeleteChart();
@@ -283,7 +283,7 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
     $('confirmDeleteChart').textContent = deleteLabel;
     $<HTMLButtonElement>('confirmDeleteChart').disabled = false;
   }
-  function openDeleteChart(c: SavedChart) {
+  function openDeleteChart(c: LibraryListChart) {
     if (!canManageLibraryRecord(c)) return;
     deleteRevision++; deleteController?.abort(); deleteController = null; deleteBusy = false;
     deletingId = c.id; deletionError = undefined;

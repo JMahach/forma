@@ -1,6 +1,8 @@
 import {immutableSnapshot} from '../domain/immutable-snapshot.ts';
 import { validatePublicAccountChart } from '../domain/account-chart.ts';
 import type { AccountChart, PublicAccountChart } from '../../shared/chart-record-contract.ts';
+import type {LibraryCatalogEntry} from '../../shared/library-catalog-contract.ts';
+import type {LibraryListChart} from '../domain/library-catalog.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 export type ChartStore = ReturnType<typeof createChartStore>;
 
@@ -20,13 +22,14 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
   let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} = {sources: [], charts: [], storageAvailable: false, ready: new Set()};
   const working = () => projection.charts;
   const names = new Intl.Collator('ru', {sensitivity: 'base', numeric: true});
-  let navigationSource: readonly SavedChart[] | null = null, navigationCharts: readonly SavedChart[] = [];
+  let listCharts:readonly LibraryListChart[]=[];
+  let navigationSource: readonly LibraryListChart[] | null = null, navigationCharts: readonly LibraryListChart[] = [];
 
   return {
     get charts() { return working(); },
     // The tab's unsaved result remains addressable through /chart, never a library row.
     get displayCharts() {
-      const source = working();
+      const source = listCharts;
       if (navigationSource !== source) {
         navigationSource = source;
         navigationCharts = [...source].sort((a, b) => names.compare(a.name, b.name)
@@ -64,7 +67,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
     has(id: string) { if (temporaryChart?.id === id) return true; return working().some(chart => chart.id === id) ? projection.ready.has(id) : publicChart?.id === id; },
     get(id: string) { if (temporaryChart?.id === id) return temporaryChart; return working().find(chart => chart.id === id) ?? (publicChart?.id === id ? publicChart : undefined); },
     // Account-library owns these values. Local persistence must never write them.
-    projectLibrary(records: readonly (SavedChart | AccountChart)[], available: boolean, readyIds: readonly string[] = records.map(chart => chart.id)) {
+    projectLibrary(records: readonly (SavedChart | AccountChart)[], available: boolean, readyIds: readonly string[] = records.map(chart => chart.id), entries?:readonly LibraryCatalogEntry[]) {
       const previous = projection;
       const unchanged = records.length === previous.sources.length
         && records.every((record, index) => record === previous.sources[index]);
@@ -77,6 +80,12 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
           ?? ('accountId' in record ? {...record, createdAt: '', updatedAt: ''} : record)),
         storageAvailable: available, ready: new Set(readyIds),
       };
+      const full=new Map(projection.charts.map(chart=>[chart.id,chart]));
+      const next=entries?entries.map(row=>{
+        const chart=full.get(row.id);
+        return chart && 'revision' in chart && Number(chart.revision)>=row.revision?chart:row;
+      }):projection.charts;
+      if(next.length!==listCharts.length || next.some((row,index)=>row!==listCharts[index]))listCharts=next;
     },
   };
 }

@@ -211,7 +211,8 @@
         "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
-        "src/domain/variables.ts"
+        "src/domain/variables.ts",
+        "src/domain/library-catalog.ts"
       ],
       "publicEntries": [
         "src/domain/account-chart.ts",
@@ -238,7 +239,8 @@
         "src/domain/temporary-chart.ts",
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
-        "src/domain/variables.ts"
+        "src/domain/variables.ts",
+        "src/domain/library-catalog.ts"
       ],
       "allowRuntime": [
         "domain",
@@ -359,7 +361,8 @@
         "src/data/account-card-placement.ts",
         "src/data/library-package-store.ts",
         "src/data/library-package-placement.ts",
-        "src/data/calculation-cache-transition.ts"
+        "src/data/calculation-cache-transition.ts",
+        "src/data/library-catalog-store.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
@@ -388,7 +391,8 @@
         "src/data/calculation-migration.ts": "Legacy source reading and deletion are internal to the single calculation-cache budget owner.",
         "src/data/account-card-placement.ts": "Atomic admission of an opened card in the existing account database; no independent storage or account owner.",
         "src/data/account-library-schema.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
-        "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting."
+        "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting.",
+        "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner."
       }
     },
     {
@@ -1566,20 +1570,26 @@
       "id": "account-library",
       "responsibility": "Own the loaded private library and its account generation; accept current reads into the persistent lease without choosing the visible chart.",
       "files": [
-        "src/state/account-library.ts"
+        "src/state/account-library.ts",
+        "src/state/library-reconciliation.ts"
       ],
       "publicEntries": [
         "src/state/account-library.ts"
       ],
       "allowRuntime": [
-        "account-library"
+        "account-library",
+        "shared-contracts",
+        "domain"
       ],
       "allowTypes": [
         "account-library",
         "data-clients",
         "data-storage",
         "shared-contracts"
-      ]
+      ],
+      "privateEntryReasons": {
+        "src/state/library-reconciliation.ts": "Finite staged catalogue read used by the account-library owner; application scheduling remains a separate port."
+      }
     },
     {
       "id": "chart-actions",
