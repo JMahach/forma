@@ -4,7 +4,7 @@ import type {AppRoute} from '../../shared/app-routes.ts';
 import { createApplicationMachine } from './application-machine.ts';
 import { prepareUpdate } from './update.ts';
 import { startupView } from './startup.ts';
-import { writeContinuationView } from './write-continuation.ts';
+import { writeContinuationView, type TemporaryWriteBinding } from './write-continuation.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type {CheckAuthority} from '../domain/background-check.ts';
 import type {CheckResult} from './background-work.ts';
@@ -79,9 +79,9 @@ function wakeLibrary(actor:ApplicationActor,ports:ApplicationPorts) {
   actor.send({type:'FillWake',at,reason:'lifecycle'});actor.send({type:'AuditWake',at});
 }
 
-function readWrite(actor:ApplicationActor) {
+function readWrite(actor:ApplicationActor,initialBinding:TemporaryWriteBinding|null=null) {
   const write=actor.getSnapshot().children.write;
-  return write?writeContinuationView(write.getSnapshot()):{source:null,busy:false,waitingForLogin:false};
+  return write?writeContinuationView(write.getSnapshot()):{source:null,busy:false,waitingForLogin:false,binding:actor.getSnapshot().matches('created')?initialBinding:null};
 }
 function readStartup(actor:ApplicationActor) {
   const startup=actor.getSnapshot().children.startup;
@@ -179,7 +179,7 @@ export function createApplication(ports: ApplicationPorts) {
   actor.start();
   return {
     get view() { return readView(); },
-    get write() {return readWrite(actor);},
+    get write() {return readWrite(actor,ports.write?.initialBinding);},
     get startup() {return readStartup(actor);},
     get account(){return readAccount(actor);},
     isRestored(){return applicationRestored(actor,ports);},

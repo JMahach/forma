@@ -161,6 +161,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             guard: () => !!ports.write,
             actions: sendTo('write', ({event}) => event),
           },
+          ClearTemporaryWrite:{guard:()=>!!ports.write,actions:sendTo('write',({event})=>event)},
           CancelWrite: {
             guard: () => !!ports.write,
             actions: sendTo('write', ({event}) => event),

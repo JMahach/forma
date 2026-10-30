@@ -25,7 +25,6 @@ import type {LibraryFillPacket} from './data/library-fill-transfer.ts';
 import type {LibraryFillEvent,LibraryFillScope} from './application/library-fill.ts';
 import type { PublicAccountChart } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
-import type { BirthSubmission } from './domain/chart-record.ts';
 import type { AccountWorkspace } from './account.ts';
 import type { TransitDayClient } from './data/transit-day-client.ts';
 import type { SavedView, ViewStore } from './data/view-store.ts';
@@ -127,8 +126,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const routeFailed = () => application?.view.destination === 'failed' && !application.view.request?.selection;
   let pendingBirthForm = savedView?.birthForm ?? null;
   // An operation is linked to this accepted tab source, never inferred from its content.
-  let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
-    ? savedView?.temporaryChartSave ?? null : null;
   const offlineListeners=new Set<()=>void>();
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   function cancelChartSave(){application?.send({type:'CancelWrite'});}
@@ -331,10 +328,12 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   scope.own(chartLink.dispose);
   let privateLibraryShown = false;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
-    getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
+    getSession: account.getSession, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
   const chartEditing=createChartEditing({actions:chartActions,ready:()=>application!.requireAccount(),session:account.getSession,
+    accountId:()=>accountLibrary.accountId,temporaryId:()=>store.temporaryChart?.id??null,
+    observe:action=>journal?.begin({action,component:'chart'}),
     durable:()=>accountLibrary.storageAvailable,online:()=>connectionMode()==='online',
     deleted(id){if(store.clearPublic(id))viewSession?.flush();},
     messages:{signIn:UI_MESSAGES.chartSaveSignIn,failed:UI_MESSAGES.chartSaveFailed,
@@ -407,26 +406,10 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     if (startupRestored()) updatePage();
   }
   const openLibraryChart=(id:string,options?:{keepMenuOpen:boolean},edit=false)=>application!.openChart(id,{...options,edit});
-  async function submitAccountChart(input: BirthSubmission, signal: AbortSignal) {
-    const observation=journal?.begin({action:'chart_save',component:'chart'});
-    try {
-      const result=await chartEditing.submit(input,signal);
-      observation?.finishSuccess();return result;
-    }catch(error){void observation?.reportError(error,{stage:'commit'});throw error;}
-  }
-  async function removeAccountChart(id: string, signal: AbortSignal) {
-    const observation=journal?.begin({action:'chart_delete',component:'chart'});
-    try {
-      const result=await chartEditing.remove(id,signal);
-      if(result.kind==='unknown')void observation?.reportFailure({stage:'response',reason:'outcome_unknown',outcome:'unknown'});
-      else observation?.finishSuccess();
-      return result;
-    }catch(error){void observation?.reportError(error,{stage:'request'});throw error;}
-  }
 
-  chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
+  chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:chartEditing.remove}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
-    removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
+    removeChart: id => {if(store.clearTemporary(id)){application?.send({type:'ClearTemporaryWrite'});viewSession?.flush();}}, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
@@ -441,10 +424,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     getAccountId: () => accountLibrary.accountId,
     onDraftChange: () => { pendingBirthForm = null; viewSession?.schedule(); },
     document, getChart: id => id ? store.get(id) : undefined,
-    saveChart: chart => { store.setTemporary(chart);temporaryChartSave=null; return true; },
+    saveChart: chart => { store.setTemporary(chart);application?.send({type:'ClearTemporaryWrite'}); return true; },
     isCheckingSubmission: () => chartEditing.checking,
-    submitChart: (input, signal) => input.previous && input.previous.id === store.temporaryChart?.id
-      ? null : account.getSession() || accountLibrary.accountId ? submitAccountChart(input, signal) : null,
+    submitChart: chartEditing.submit,
     ...birthClient, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, toast,
     onSave: (id, { metadataOnly = false } = {}) => {
       if (id !== session.selectedId) selectChart(id, {replace: navigation?.snapshot.route?.kind === 'temporary-chart'});
@@ -741,7 +723,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       restore: enabled => mandalaMode.setEnabled(enabled, { animate: false }) }, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getBirthForm: () => pendingBirthForm ?? birthForm.snapshot,
     getLifetimeDraft: () => pendingLifetimeDraft ?? lifetimeControls?.snapshot ?? null, onPersisted:notifyOfflineReady,
-    getTemporaryChartSave: () => temporaryChartSave,
+    getTemporaryChartSave: () => application ? application.write.binding : savedView?.temporaryChartSave,
     getPendingChartWrites: () => [...chartActions.pending], getAccountView: () => inputSnapshot(account.snapshot,savedView?.account,'account'),
     getKnowledgeView: () => inputSnapshot(knowledge.snapshot,savedView?.knowledge,'knowledge'),
     getChartsView: () => inputSnapshot(allCharts.snapshot,savedView?.charts,'charts'), getLibrarySelection: () => chartLibrary?.selection,
@@ -892,26 +874,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }, write:{
     actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,
     ready:()=>application!.requireAccount(),
-    source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
-    binding:()=>temporaryChartSave,bind:value=>{temporaryChartSave=value;},
+    selection:session,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
+    initialBinding:savedView?.temporaryChartSave?.sourceId===store.temporaryChart?.id?savedView?.temporaryChartSave:null,
     retire(source){store.clearTemporary(source.id);store.releasePublicSource(source);},
     public:chartClient.public,acceptPublic:store.acceptPublic,clearPublic:store.clearPublic,
     view:{
       signIn(){navigateWorkspace('account');},select(id){selectChart(id,{replace:true});},
-      adopt(chart,source,follow){
-        const selected=session.record===source;
-        if(selected && session.adopt(chart.id,source.id)) {
-          if(follow)workspace.setScreen('chart');
-          if(workspace.screen==='chart')publishRoute({kind:'chart',id:chart.id},true);
-        } else if(follow)selectChart(chart.id,{replace:true});
-        else if(selected)graph.changeChart(chart.id);
-        if(!follow)updatePage();
-      },
-      deleted(id){
-        if(session.selectedId===id && !accountLibrary.get(id)) {
-          if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
-        }
-      },
+      isChartScreen:()=>workspace.screen==='chart',showChart:()=>workspace.setScreen('chart'),
+      publishChart:id=>publishRoute({kind:'chart',id},true),changeChart:id=>graph.changeChart(id),refresh:updatePage,
       changed(){updateChartSaveControl();notifyOfflineReady();updateLibraryWork();},checkpoint(){viewSession?.flush();},
       report(kind,error){toast(error===undefined?kind==='unconfirmed'?UI_MESSAGES.chartSaveUnconfirmed
         :kind==='unavailable'?UI_MESSAGES.chartUnavailable:UI_MESSAGES.chartSaveFailed:failureMessage(error,UI_MESSAGES.chartSaveFailed));},
@@ -921,7 +891,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
     ready:account.ready,getSession:account.getSession,journal,
     library:accountLibrary,calculations:calculationClients,writes:chartActions,editing:chartEditing,
-    binding:{get accountId(){return temporaryChartSave?.expectedAccountId??null;},clear(){temporaryChartSave=null;}},
+    binding:{get accountId(){return application?.write.binding?.expectedAccountId??null;},clear(){application?.send({type:'ClearTemporaryWrite'});}},
     form:{get pending(){return pendingBirthForm;},get snapshot(){return birthForm.snapshot;},get opened(){return birthForm.opened;},
       clearPending(){pendingBirthForm=null;},discardInput:discardPendingInput,close:()=>birthForm.close()},
     checkpoint:{clearPersonal:()=>checkpoint.clearPersonal({temporaryChart:store.temporaryChart,publicChart:store.publicChart,selectedId:session.selectedId}),
