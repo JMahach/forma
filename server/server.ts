@@ -17,11 +17,12 @@ import { createLifetimeService, LifetimeError } from './services/lifetime.ts';
 import { createComputeQueue } from './runtime/compute-queue.ts';
 import { accountEnvironment } from './runtime/account-environment.ts';
 import { createAccountRuntime } from './accounts.ts';
-import { journalEnvironment } from './runtime/journal-environment.ts';
+import { journalEnvironment,journalWriterMode } from './runtime/journal-environment.ts';
 import { createJournalRuntime } from './journal/runtime.ts';
+import {createJournalWriterClient} from './journal/writer-client.ts';
 
 import { reportServerFailure } from './journal/report.ts';
-import { createServiceInput, SERVICE_INPUT_RESERVED_BYTES } from './journal/service-input.ts';
+import { createServiceInput,serviceSocketPath,SERVICE_INPUT_RESERVED_BYTES } from './journal/service-input.ts';
 import type { StartupComponent } from './journal/events.ts';
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -35,7 +36,10 @@ export async function startServer({ root = projectRoot, env = process.env, relea
   // not silently create an alternative archive or report recursively to itself.
   const accountConfiguration = accountEnvironment(env, port);
   const journalConfiguration = journalEnvironment(env, accountConfiguration.stateDir);
-  const journal = createJournalRuntime({...journalConfiguration, clientReservedBytes:DIAGNOSTIC_HTTP_RESERVED_BYTES+SERVICE_INPUT_RESERVED_BYTES});
+  const writerMode=journalWriterMode(env);
+  const journal = createJournalRuntime({...journalConfiguration,
+    ...(writerMode==='external'?{writer:createJournalWriterClient({socketPath:serviceSocketPath(journalConfiguration.directory)})}
+      :{clientReservedBytes:DIAGNOSTIC_HTTP_RESERVED_BYTES+SERVICE_INPUT_RESERVED_BYTES})});
   const cleanup: Array<() => unknown> = [];
   let closing: Promise<void> | undefined, component: StartupComponent = 'configuration';
   function close() {
@@ -46,10 +50,12 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     return closing;
   }
   try {
-    const serviceInput=createServiceInput({directory:journalConfiguration.directory,report:journal.report});
-    cleanup.push(()=>serviceInput.close());
-    // Diagnostics remain best-effort; unavailable IPC cannot block the website.
-    await serviceInput.ready;
+    if(writerMode==='embedded') {
+      const serviceInput=createServiceInput({directory:journalConfiguration.directory,report:journal.report});
+      cleanup.push(()=>serviceInput.close());
+      // Diagnostics remain best-effort; unavailable IPC cannot block the website.
+      await serviceInput.ready;
+    }
     if(journalConfiguration.environment==='production' && !env.FORMA_APP_VERSION) {
       throw new TypeError('Set FORMA_APP_VERSION to the deployed version in production');
     }

@@ -19,6 +19,9 @@ export function createJournalWriter(options:JournalWriterOptions) {
   let sequence=0,pendingBytes=0,externalBytes:number|null=null;
   let lastUsage:JournalUsage|null=null;
   let idle:Promise<void>|undefined,resolveIdle:(()=>void)|undefined;
+  let resolveReady!:(value:boolean)=>void,resolveFailed!:()=>void;
+  const initialized=new Promise<boolean>(resolve=>{resolveReady=resolve;});
+  const failure=new Promise<void>(resolve=>{resolveFailed=resolve;});
   const pending=new Map<number,Pending>(),queue:Queued[]=[];
   const unavailable:JournalResult={status:'retryable',reason:'journal_unavailable'};
   function settle(id:number,result:JournalResult) {
@@ -27,7 +30,9 @@ export function createJournalWriter(options:JournalWriterOptions) {
     if(!pending.size){const resolve=resolveIdle;idle=undefined;resolveIdle=undefined;resolve?.();}
   }
   function fail() {
+    if(failed || closed)return;
     failed=true;ready=false;queue.length=0;
+    resolveReady(false);resolveFailed();
     for(const id of pending.keys())settle(id,unavailable);
     clearInterval(timer);void worker?.terminate();
   }
@@ -74,7 +79,7 @@ export function createJournalWriter(options:JournalWriterOptions) {
         if(closed || failed)return;
         if(message.kind==='failed'){fail();return;}
         lastUsage=message.usage;busy=false;
-        if(message.kind==='ready')ready=true;
+        if(message.kind==='ready'){ready=true;resolveReady(true);}
         if(message.kind==='ready' || message.kind==='maintained')cleanupPending=message.more;
         if(message.kind==='batch')for(const entry of message.results)settle(entry.id,entry.result);
         if(queue.length || maintenanceDue || cleanupPending)void dispatch();
@@ -84,6 +89,7 @@ export function createJournalWriter(options:JournalWriterOptions) {
   }
   void start();
   return {
+    ready:initialized,failed:failure,
     write(input:JournalEvent):Promise<JournalResult> {
       if(closed || failed)return Promise.resolve(unavailable);
       let event:JournalEvent|null;
@@ -111,7 +117,7 @@ export function createJournalWriter(options:JournalWriterOptions) {
     /** Unconfirmed work becomes retryable; recovery determines whether an interrupted append was durable. */
     close():Promise<void> {
       if(closing)return closing;
-      closed=true;ready=false;clearInterval(timer);queue.length=0;
+      closed=true;ready=false;resolveReady(false);clearInterval(timer);queue.length=0;
       for(const id of pending.keys())settle(id,unavailable);
       closing=worker?worker.terminate().then(()=>{}):Promise.resolve();
       return closing;

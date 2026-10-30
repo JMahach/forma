@@ -1,4 +1,10 @@
 import path from 'node:path';
+/** Writer ownership is explicit; an unavailable external service never selects embedded mode. */
+export function journalWriterMode(env:NodeJS.ProcessEnv):'embedded'|'external' {
+ const mode=env.FORMA_JOURNAL_WRITER;
+ if(mode!=='embedded' && mode!=='external')throw new TypeError('FORMA_JOURNAL_WRITER must be embedded or external');
+ return mode;
+}
 /** A separate journal zone; local release-bundle checks are still a stand. */
 export function journalEnvironment(env:NodeJS.ProcessEnv,stateDir:string): {directory:string; environment:'stand'|'production'} {
  const directory=env.FORMA_JOURNAL_DIR ?? path.join(stateDir,'journal');

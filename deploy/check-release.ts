@@ -7,7 +7,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs,parseEnv} from 'node:util';
 import {accountEnvironment} from '../server/runtime/account-environment.ts';
-import {journalEnvironment} from '../server/runtime/journal-environment.ts';
+import {journalEnvironment,journalWriterMode} from '../server/runtime/journal-environment.ts';
 import {pythonExecutable} from '../server/runtime/python.ts';
 import {parseAccountOrigins} from '../server/http/account-security.ts';
 import {readReleaseManifest} from '../server/http/public-files.ts';
@@ -41,6 +41,7 @@ export async function checkRelease({release,revision,environmentFile,mailEnviron
   if(env.FORMA_LOCAL_MAILBOX && env.FORMA_LOCAL_MAILBOX!=='0')throw new Error('Development mailbox must be disabled');
   if(env.HOST && env.HOST!=='127.0.0.1' || env.PORT && env.PORT!=='4173')throw new Error('Release listener must match the nginx upstream');
   const accounts=accountEnvironment(env,4173),journal=journalEnvironment(env,accounts.stateDir);
+  if(journalWriterMode(env)!=='external')throw new Error('Production requires an external writer for the journal');
   if(journal.environment!=='production' || !accounts.trustLoopbackProxy)throw new Error('Expected production environment behind loopback proxy');
   parseAccountOrigins(accounts.origins);
   if(!accounts.origins.length || accounts.origins.some(origin=>new URL(origin).protocol!=='https:'))throw new Error('Public account origins must use HTTPS');

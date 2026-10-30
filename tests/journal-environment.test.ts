@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { journalEnvironment } from '../server/runtime/journal-environment.ts';
+import { journalEnvironment,journalWriterMode } from '../server/runtime/journal-environment.ts';
+test('application writer selection is explicit, independent of path-only preparation sources',()=>{
+ assert.equal(journalWriterMode({FORMA_JOURNAL_WRITER:'external'}),'external');
+ assert.equal(journalWriterMode({FORMA_JOURNAL_WRITER:'embedded'}),'embedded');
+ for(const value of [undefined,'','auto','fallback'])assert.throws(()=>journalWriterMode({FORMA_JOURNAL_WRITER:value}),/FORMA_JOURNAL_WRITER/);
+ assert.doesNotThrow(()=>journalEnvironment({},'/state/forma'));
+});
 test('journal uses a distinct zone and an explicit environment independent of release assets',()=>{
  assert.deepEqual(journalEnvironment({},'/state/forma'),{directory:'/state/forma/journal',environment:'stand'});
  assert.deepEqual(journalEnvironment({FORMA_JOURNAL_DIR:'/var/log/forma',FORMA_ENVIRONMENT:'production'},'/state/forma'),{directory:'/var/log/forma',environment:'production'});

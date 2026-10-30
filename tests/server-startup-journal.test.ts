@@ -16,7 +16,7 @@ async function fixture(t:{after(fn:()=>Promise<void>):void}) {
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'forma-startup-'));
  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
  const env={FORMA_STATE_DIR:path.join(directory,'state'),FORMA_JOURNAL_DIR:path.join(directory,'journal'),
-  FORMA_ACCOUNT_ORIGINS:'http://localhost:3636',TRANSIT_CACHE_DIR:path.join(directory,'transit'),HOST:'127.0.0.1',PORT:'65536'};
+  FORMA_JOURNAL_WRITER:'embedded',FORMA_ACCOUNT_ORIGINS:'http://localhost:3636',TRANSIT_CACHE_DIR:path.join(directory,'transit'),HOST:'127.0.0.1',PORT:'65536'};
  async function records() {
   const archive=path.join(env.FORMA_JOURNAL_DIR,'archive');
   const names=await fs.readdir(archive);
@@ -38,6 +38,22 @@ test('startup facts accept a known stage and reject raw exception, paths and use
   for(const extra of [{error:Error('PRIVATE')},{path:'/PRIVATE'},{message:'PRIVATE'},{recipient:'private@example.test'},
    {accountId:'1'},{reason:'PRIVATE'},{component:'PRIVATE'}]) assert.equal(completeJournalEvent({...fact,...extra},defaults),null);
  }
+});
+
+test('writer mode is explicit before opening any archive',async t=>{
+ const f=await fixture(t);
+ await assert.rejects(startServer({root:f.root,env:{...f.env,FORMA_JOURNAL_WRITER:undefined}}),/FORMA_JOURNAL_WRITER/);
+ assert.equal(await fs.stat(path.join(f.env.FORMA_JOURNAL_DIR,'archive')).then(()=>true,()=>false),false);
+});
+
+test('an unavailable external writer does not stop HTTP or create an embedded archive or receiver',async t=>{
+ const f=await fixture(t);
+ const server=await startServer({root:f.root,env:{...f.env,FORMA_JOURNAL_WRITER:'external',PORT:'0'}});
+ try {
+  const port=(server.address() as import('node:net').AddressInfo).port;
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/cities?q=Moscow`)).status,200);
+  for(const name of ['archive','run'])assert.equal(await fs.stat(path.join(f.env.FORMA_JOURNAL_DIR,name)).then(()=>true,()=>false),false,name);
+ }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
 
 test('configuration and early file failures survive shutdown in the existing archive',async t=>{

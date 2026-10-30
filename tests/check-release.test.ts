@@ -25,7 +25,7 @@ async function fixture(t: test.TestContext) {
   }
   manifest.love=manifest['love.html'];await writeFile(path.join(release,'dist/manifest.json'),JSON.stringify(manifest));
   const environmentFile=path.join(root,'environment'),mailEnvironmentFile=path.join(mail,'environment'),mailControlFile=path.join(mail,'control.json');
-  await writeFile(environmentFile,`FORMA_APP_VERSION=${revision}\nFORMA_STATE_DIR=${state}\nFORMA_JOURNAL_DIR=${journal}\nFORMA_ENVIRONMENT=production\nFORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru\nFORMA_TRUST_PROXY=loopback\n`,{mode:0o600});
+  await writeFile(environmentFile,`FORMA_APP_VERSION=${revision}\nFORMA_STATE_DIR=${state}\nFORMA_JOURNAL_DIR=${journal}\nFORMA_JOURNAL_WRITER=external\nFORMA_ENVIRONMENT=production\nFORMA_ACCOUNT_ORIGINS=https://juxtaposition.ru\nFORMA_TRUST_PROXY=loopback\n`,{mode:0o600});
   const socket=path.join(mail,'control.sock');
   await writeFile(mailEnvironmentFile,`FORMA_POSTFIX_SOCKET=${socket}\nFORMA_POSTFIX_PORT=2525\n`);
   const control={database:path.join(state,'forma.sqlite'),socketPath:socket,clientUid:process.getuid!(),journalSocketPath:path.join(journal,'run/services.sock')};
@@ -80,4 +80,9 @@ test('release preflight refuses insecure origins, dev mailbox and conflicting ma
 test('release preflight checks the actual SMTP listener in the installed instance',async t=>{
   const f=await fixture(t);await writeFile(path.join(path.dirname(f.options.mailControlFile),'master.cf'),'127.0.0.1:2526 inet n - n - - smtpd\n');
   await assert.rejects(checkRelease(f.options),/SMTP/);
+});
+
+test('release preflight requires the independently owned journal writer',async t=>{
+ const f=await fixture(t);await f.envChange('FORMA_JOURNAL_WRITER=embedded');
+ await assert.rejects(checkRelease(f.options),/external writer/);
 });

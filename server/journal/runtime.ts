@@ -6,15 +6,17 @@ import { createServerReporter } from './report.ts';
 import { createJournalWriter } from './writer.ts';
 import { MAIL_BUFFER_LIMITS } from './mail-buffer.ts';
 import { createMailBufferClient } from './mail-buffer-client.ts';
+import type {JournalWriterPort} from './writer-protocol.ts';
 
 export interface JournalRuntimeOptions {
  clientReservedBytes?:number;
  directory:string; environment:JournalEvent['environment']; now?:()=>number;
+ writer?:JournalWriterPort;
 }
 /** Owns the handoff, not the mail or account outcome. Both durable stores run off the HTTP thread. */
-export function createJournalRuntime({directory,environment,clientReservedBytes=0,now=Date.now}:JournalRuntimeOptions) {
+export function createJournalRuntime({directory,environment,clientReservedBytes=0,now=Date.now,writer:destination}:JournalRuntimeOptions) {
  if(!Number.isSafeInteger(clientReservedBytes) || clientReservedBytes<0)throw new RangeError('Invalid client journal reservation');
- const writer=createJournalWriter({directory:path.join(directory,'archive'),now,
+ const writer=destination??createJournalWriter({directory:path.join(directory,'archive'),now,
   externalReservedBytes:MAIL_BUFFER_LIMITS.reservedBytes+clientReservedBytes});
  const buffer=createMailBufferClient({filename:path.join(directory,'mail-pending','pending.sqlite'),now});
  const report=createServerReporter({environment,now,write:writer.write});
