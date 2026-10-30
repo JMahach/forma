@@ -11,8 +11,8 @@ function fixture(){
  const timers=new Map<number,{at:number;run():void}>(),state:FillControl={flight:null,budgets:{}},lease={accountId:'1',generation:'g'};
  const entries:LibraryCatalogEntry[]=[{id:'1',revision:1,name:'one',birthDate:'2000-01-01',birthTime:'12:00',source:'calculated',packages:{card:{kind:'card',sourceKey:'one'},day:{ready:true,ref:{kind:'day',sourceKey:'day'}},majorReturns:null}}];
  const inventory:LibraryInventory={lease,cards:[],packages:[],usage:[]},received:FillCandidate[]=[],placed:FillCandidate[]=[],signals:AbortSignal[]=[];
- let release:((value:FillReceipt)=>void)|null=null,offlineOnReceive=false,errorValue:unknown=Error('unavailable'),controlUnavailable=false,notReady=false,leaveDuringPlace=false,leaveAfterReceive=false,leaveAfterGrant=false,holdPlacement=false;let releasePlacement:((value:FillPlacement)=>void)|null=null,notices=0;
- const control:FillControlStore={async read(){return structuredClone(state);},async update(_lease,change){if(controlUnavailable)return null;const before=JSON.stringify(state),result=change(state);if(before!==JSON.stringify(state))writes++;if(leaveAfterGrant && (result as {kind?:string})?.kind==='acquired')online=false;return structuredClone(result);}};
+ let release:((value:FillReceipt)=>void)|null=null,offlineOnReceive=false,errorValue:unknown=Error('unavailable'),controlUnavailable=false,notReady=false,leaveDuringPlace=false,leaveAfterReceive=false,leaveAfterGrant=false,holdPlacement=false,holdCleanup=false;let releaseCleanup:(()=>void)|null=null;let releasePlacement:((value:FillPlacement)=>void)|null=null,notices=0;
+ const control:FillControlStore={async read(){return structuredClone(state);},async update(_lease,change){if(controlUnavailable)return null;const before=JSON.stringify(state),flight=state.flight,result=change(state);if(holdCleanup&&flight&&!state.flight)await new Promise<void>(resolve=>{releaseCleanup=resolve;});if(before!==JSON.stringify(state))writes++;if(leaveAfterGrant && (result as {kind?:string})?.kind==='acquired')online=false;return structuredClone(result);}};
  const ports={scope:()=>({lease,sessionId,catalogMarker,visible,foreground,online}),entries:()=>entries,control,inventory:async()=>{inventoryReads++;return inventory;},present:async(candidate:FillCandidate)=>candidate.ref.kind==='card'?inventory.cards.some(row=>row.id===candidate.chartId && row.revision>=candidate.revision):inventory.packages.some(row=>row.id===candidate.key && row.present && !row.evicted),
   async receive(candidate:FillCandidate,signal:AbortSignal):Promise<FillReceipt>{received.push(candidate);signals.push(signal);active++;maxActive=Math.max(maxActive,active);
    try{if(hold)return await new Promise<FillReceipt>(resolve=>{release=resolve;});if(failing)throw errorValue;if(offlineOnReceive)online=false;if(leaveAfterReceive)visible=false;if(notReady)return {kind:'not-ready',retryAfterMs:2000};return {kind:'ready',payload:{key:candidate.key}};}finally{active--;}
@@ -26,7 +26,7 @@ function fixture(){
  async function advance(ms:number){const end=now+ms;for(let i=0;i<100;i++){await flush();const first=[...timers].filter(([,v])=>v.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!first){now=end;await flush();return;}timers.delete(first[0]);now=first[1].at;first[1].run();}throw Error('unbounded fill');}
  return {actor,entries,peer:make,received,placed,signals,state,inventory,advance,wake(reason:'lifecycle'|'hourly'|'library'|'use'|'space'='lifecycle'){actor.send({type:'FillWake',at:now,reason});},
   change(value:{visible?:boolean;foreground?:boolean;online?:boolean;sessionId?:string;catalogMarker?:string}){visible=value.visible??visible;foreground=value.foreground??foreground;online=value.online??online;sessionId=value.sessionId??sessionId;catalogMarker=value.catalogMarker??catalogMarker;actor.send({type:'FillChanged'});},
-  hold(){hold=true;},unhold(){hold=false;},release(value:FillReceipt){hold=false;release?.(value);},fail(error:unknown=Error('unavailable')){failing=true;errorValue=error;},recover(){failing=false;},failControl(){controlUnavailable=true;},holdPlacement(){holdPlacement=true;},releasePlacement(){holdPlacement=false;releasePlacement?.('stored');},leaveAfterReceive(){leaveAfterReceive=true;},leaveAfterGrant(){leaveAfterGrant=true;},leaveDuringPlace(){leaveDuringPlace=true;},notReady(){notReady=true;},placement(value:FillPlacement){placement=value;},quota(){placement='quota';},space(){placement='stored';},offlineAfterReceive(){offlineOnReceive=true;},
+  hold(){hold=true;},unhold(){hold=false;},release(value:FillReceipt){hold=false;release?.(value);},fail(error:unknown=Error('unavailable')){failing=true;errorValue=error;},recover(){failing=false;},failControl(){controlUnavailable=true;},holdCleanup(){holdCleanup=true;},releaseCleanup(){holdCleanup=false;releaseCleanup?.();},holdPlacement(){holdPlacement=true;},releasePlacement(){holdPlacement=false;releasePlacement?.('stored');},leaveAfterReceive(){leaveAfterReceive=true;},leaveAfterGrant(){leaveAfterGrant=true;},leaveDuringPlace(){leaveDuringPlace=true;},notReady(){notReady=true;},placement(value:FillPlacement){placement=value;},quota(){placement='quota';},space(){placement='stored';},offlineAfterReceive(){offlineOnReceive=true;},
   get inventoryReads(){return inventoryReads;},get notices(){return notices;},get writes(){return writes;},get maxActive(){return maxActive;},get timers(){return timers.size;},get now(){return now;}};
 }
 test('fill starts only on a shared external occasion, downloads one at a time, and visits cards before days',async()=>{
@@ -154,14 +154,42 @@ test('a newer complete catalogue revokes the pending fill plan before any late p
  f.release({kind:'ready',payload:{}});await f.advance(0);assert.equal(f.placed.length,0);assert.equal(f.received.length,1);f.actor.stop();
 });
 
-test('fill idle waits for an already started placement and its control write after cancellation',async()=>{
- const f=fixture();f.holdPlacement();f.wake();await f.advance(0);assert.equal(f.placed.length,1);
- let idle=0;f.change({foreground:true});f.actor.send({type:'FillIdle',complete(){idle++;}});
+for(const cancellation of ['foreground','stop'] as const)test(`fill idle waits for actual placement and control cleanup after ${cancellation}`,async()=>{
+ const f=fixture();f.holdPlacement();f.holdCleanup();f.wake();await f.advance(0);assert.equal(f.placed.length,1);
+ let idle=0;f.actor.send({type:'FillIdle',complete(){idle++;}});
  const cancelled=new AbortController();let released=0;
- f.actor.send({type:'FillIdle',signal:cancelled.signal,complete(){released++;}});cancelled.abort();
+ f.actor.send({type:'FillIdle',signal:cancelled.signal,complete(){released++;}});
+ if(cancellation==='stop')f.actor.stop();else f.change({foreground:true});
+ cancelled.abort();
  assert.equal(released,1,'cancelling one waiter releases it without waiting for the write');
  await f.advance(0);assert.equal(idle,0,'an aborted signal is not a settled placement');
- f.releasePlacement();await f.advance(0);assert.equal(idle,1);const writes=f.writes;
+ f.releasePlacement();await f.advance(0);assert.equal(idle,0,'control cleanup is still writing');
+ f.releaseCleanup();await f.advance(0);assert.equal(idle,1);const writes=f.writes;
  assert.equal(released,1,'the retired waiter is not retained for completion');
  await f.advance(100000);assert.equal(f.writes,writes);assert.equal(f.received.length,1);f.actor.stop();
+});
+
+test('a queued wake cannot overtake cancelled placement or its durable permit cleanup',async()=>{
+ const f=fixture();f.holdPlacement();f.holdCleanup();f.wake();await f.advance(0);
+ f.change({foreground:true});f.change({foreground:false});f.wake('hourly');await f.advance(0);
+ assert.equal(f.inventoryReads,1);assert.equal(f.received.length,1);
+ f.releasePlacement();await f.advance(0);assert.equal(f.inventoryReads,1,'cleanup still owns the pass');assert.equal(f.received.length,1);
+ f.releaseCleanup();await f.advance(0);
+ assert.equal(f.inventoryReads,2);assert.deepEqual(f.placed.map(row=>row.ref.kind),['card','day']);assert.equal(f.notices,1);
+ f.actor.stop();
+});
+
+test('offline during failed-request cleanup preserves the same bounded retry occasion',async()=>{
+ const f=fixture();f.fail();f.holdCleanup();f.wake();await f.advance(0);
+ const key=f.received[0].key;f.change({online:false});f.releaseCleanup();await f.advance(0);
+ f.change({online:true});await f.advance(10000);
+ assert.equal(f.received.length,3);assert.equal(f.state.budgets[key].occasion,10000);
+ assert.equal(f.state.budgets[key].attempts,3);assert.equal(f.placed.length,0);f.actor.stop();
+});
+
+test('cancelling a placement cannot report idle or start a queued pass before the write returns',async()=>{
+ const f=fixture();f.holdPlacement();f.wake();await f.advance(0);f.change({foreground:true});
+ let idle=0;f.actor.send({type:'FillIdle',complete(){idle++;}});await f.advance(0);assert.equal(idle,0);
+ f.change({foreground:false});f.wake();await f.advance(0);assert.equal(f.inventoryReads,1);assert.equal(idle,0);
+ f.releasePlacement();await f.advance(0);assert.equal(idle,1);assert.equal(f.inventoryReads,2);f.actor.stop();
 });

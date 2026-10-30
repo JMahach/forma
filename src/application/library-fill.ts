@@ -18,7 +18,14 @@ export interface LibraryFillPorts {
 }
 export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'}|{type:'FillIdle';complete():void;signal?:AbortSignal};
 type Wake=Extract<LibraryFillEvent,{type:'FillWake'}>;
-interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortController;phase:'planning'|'waiting'|'receiving'|'placing'}
+interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortController}
+type WorkMode='planning'|'waiting'|'receiving'|'placing';
+interface Continuation {key:string;wake:Wake}
+type FillState={mode:'idle'|'stopped'}|{mode:'paused';resume:Continuation}
+ | {mode:WorkMode;run:FillRun;next:Wake|null}
+ | {mode:'cleanup';run:FillRun;next:Wake|null;origin:'network'|'local'}
+ | {mode:'cancelling';run:FillRun;next:Wake|null;resume:Continuation|null}
+ | {mode:'stopping';run:FillRun};
 const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,scope.catalogMarker]);
 const eligible=(scope:LibraryFillScope|null):scope is LibraryFillScope=>!!scope && scope.visible && !scope.foreground;
 function aborted(){return new DOMException('Fill cancelled','AbortError');}
@@ -41,44 +48,66 @@ function failed(error:unknown):FillOutcome {
 /** One account permit and one transient packet. Catalog/number owners remain behind ports. */
 class LibraryFill {
  private ports:LibraryFillPorts;private clock:LibraryFillPorts['clock'];private owner:string;
- private active:FillRun|null=null;private pending:Wake|null=null;private paused:{key:string;wake:Wake}|null=null;private stopped=false;private idle=new Set<()=>void>();
- whenIdle(complete:()=>void,signal?:AbortSignal){waitForIdle(!!this.active,this.idle,complete,signal);}
- private settled(){if(!this.active){for(const complete of this.idle)complete();this.idle.clear();}}
+ private state:FillState={mode:'idle'};private idle=new Set<()=>void>();
+ whenIdle(complete:()=>void,signal?:AbortSignal){waitForIdle('run' in this.state,this.idle,complete,signal);}
+ private settled(){if(!('run' in this.state)){for(const complete of this.idle)complete();this.idle.clear();}}
  constructor(ports:LibraryFillPorts){
   this.ports=ports;this.clock=ports.clock;
   this.owner=ports.id();
  }
- private current(run:FillRun){const scope=this.ports.scope();return !this.stopped && !run.controller.signal.aborted && eligible(scope) && scopeKey(scope)===run.key;}
+ private current(run:FillRun){
+  const state=this.state,scope=this.ports.scope();
+  return 'run' in state && state.run===run && state.mode!=='cancelling' && state.mode!=='stopping'
+   && !run.controller.signal.aborted && eligible(scope) && scopeKey(scope)===run.key;
+ }
  private online(run:FillRun){return this.current(run) && this.ports.scope()?.online===true;}
- private canContinue(run:FillRun){return run.phase==='placing'?this.current(run):this.online(run);}
+ private enter(run:FillRun,mode:WorkMode|'cleanup'){
+  const state=this.state;
+  if(!('next' in state) || state.run!==run || state.mode==='cancelling')return;
+  const origin=state.mode==='cleanup'?state.origin:state.mode==='placing'?'local':'network';
+  this.state=mode==='cleanup'?{mode,run,next:state.next,origin}:{mode,run,next:state.next};
+ }
  private checkScope(){
-  const scope=this.ports.scope(),key=scope?scopeKey(scope):null;
-  if(this.paused?.key!==key)this.paused=null;
-  const run=this.active;if(!run || run.controller.signal.aborted)return;
-  if(this.canContinue(run))return;
-  this.paused=key===run.key?{key:run.key,wake:run.wake}:null;run.controller.abort();
+  const state=this.state,scope=this.ports.scope(),key=scope?scopeKey(scope):null;
+  if(state.mode==='paused'){if(state.resume.key!==key)this.state={mode:'idle'};return;}
+  if(!('run' in state) || state.mode==='stopping')return;
+  if(state.mode==='cancelling'){if(state.resume?.key!==key)this.state={...state,resume:null};return;}
+  const {run,next}=state;
+  const local=state.mode==='placing' || state.mode==='cleanup' && state.origin==='local';
+  if(local?this.current(run):this.online(run))return;
+  this.state={mode:'cancelling',run,next,resume:key===run.key?{key:run.key,wake:run.wake}:null};
+  run.controller.abort();
  }
  changed(){this.checkScope();this.resume();}
  private resume(){
-  if(this.stopped || this.active || !this.paused)return;
+  const state=this.state;if(state.mode!=='paused')return;
   const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
-  const paused=this.paused;this.paused=null;if(scopeKey(scope)===paused.key)this.wake(paused.wake);
+  this.state={mode:'idle'};if(scopeKey(scope)===state.resume.key)this.wake(state.resume.wake);
  }
- stop(){this.stopped=true;this.pending=null;this.paused=null;this.active?.controller.abort();}
+ stop(){
+  const state=this.state;
+  if('run' in state){this.state={mode:'stopping',run:state.run};state.run.controller.abort();}
+  else this.state={mode:'stopped'};
+ }
  wake(event:Wake){
-  if(this.stopped || !Number.isFinite(event.at))return;
-  this.checkScope();if(this.active){this.queue(event);return;}
+  if(this.state.mode==='stopped' || this.state.mode==='stopping' || !Number.isFinite(event.at))return;
+  this.checkScope();const state=this.state;
+  if('next' in state){if(!state.next || state.next.at<=event.at)this.state={...state,next:event};return;}
   const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
-  const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:event,controller:new AbortController(),phase:'planning'};
-  this.paused=null;this.active=run;void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
+  const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:event,controller:new AbortController()};
+  this.state={mode:'planning',run,next:null};void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
  }
  private finished(run:FillRun){
-  if(this.active===run)this.active=null;const next=this.pending;this.pending=null;
-  if(next)this.wake(next);else this.resume();this.settled();
+  const state=this.state;if(!('run' in state) || state.run!==run)return;
+  if(state.mode==='stopping')this.state={mode:'stopped'};
+  else {
+   this.state=state.mode==='cancelling' && state.resume?{mode:'paused',resume:state.resume}:{mode:'idle'};
+   if(state.next)this.wake(state.next);else this.resume();
+  }
+  this.settled();
  }
- private queue(event:Wake){if(!this.pending || this.pending.at<=event.at)this.pending=event;}
  private wait(run:FillRun,ms:number):Promise<boolean>{
-  run.phase='waiting';return new Promise(resolve=>{
+  this.enter(run,'waiting');return new Promise(resolve=>{
    if(!this.online(run)){resolve(false);return;}
    const signal=run.controller.signal,finish=()=>{cancel();signal.removeEventListener('abort',finish);resolve(this.online(run));};
    const cancel=this.clock.after(Math.max(0,ms),finish);signal.addEventListener('abort',finish,{once:true});
@@ -91,7 +120,7 @@ class LibraryFill {
  }
  private async place(run:FillRun,candidate:FillCandidate,receipt:FillReceipt,authority:FillAuthority):Promise<FillOutcome>{
   if(receipt.kind==='not-ready')return {kind:'failed',retryAfterMs:receipt.retryAfterMs};
-  run.phase='placing';if(!this.current(run) || authority.signal.aborted)return {kind:'cancelled'};
+  this.enter(run,'placing');if(!this.current(run) || authority.signal.aborted)return {kind:'cancelled'};
   const placed=await this.ports.place(candidate,receipt.payload,authority);
   if(!this.current(run) || authority.signal.aborted)return {kind:'cancelled'};
   if(placed==='stored')this.ports.accepted?.(candidate,receipt.payload,authority);
@@ -102,19 +131,21 @@ class LibraryFill {
   const cancel=this.clock.after(Math.max(0,permit.expiresAt-this.clock.now()),()=>timeout.abort());
   try{
    if(!this.online(run) || signal.aborted)return {kind:'cancelled'};
-   run.phase='receiving';const receipt=await cancellable(this.ports.receive(candidate,signal),signal);
+   this.enter(run,'receiving');const receipt=await cancellable(this.ports.receive(candidate,signal),signal);
    return await this.place(run,candidate,receipt,{permit,signal});
   }catch(error){return run.controller.signal.aborted?{kind:'cancelled'}:failed(error);}
   finally{cancel();}
  }
  private async attempt(run:FillRun,candidate:FillCandidate,permit:FillPermit){
   const outcome=await this.perform(run,candidate,permit);
+  this.enter(run,'cleanup');
   const saved=await this.ports.control.update(run.scope.lease,control=>finishFill(control,permit,outcome,this.clock.now()));
   if(!saved || !this.current(run))return 'stop';
   if(outcome.kind==='success')return 'next';
   return outcome.kind==='failed'?'retry':'stop';
  }
  private async candidate(run:FillRun,candidate:FillCandidate):Promise<boolean>{
+  this.enter(run,'planning');
   while(this.online(run)){
    if(await this.ports.present(candidate,run.scope.lease))return true;
    if(!this.online(run))return false;
