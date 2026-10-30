@@ -1,5 +1,19 @@
 import type {PackageRef} from '../../shared/library-package-contract.ts';
 import type {LibraryPackageMetadata} from './account-library-schema.ts';
+import type {IndexedResult} from './indexed-db.ts';
+
+export interface PlacementProgress {released:number;remaining:boolean;ready:boolean}
+/** Commit quota rolls back the whole prefix. Grow it geometrically, not 1+2+3+….
+ * Each attempt selects and checks current victims inside its own transaction. */
+export async function replaceAfterQuota<T>(attempt:(limit:number,progress:PlacementProgress)=>Promise<IndexedResult<T>>) {
+ let limit=1;
+ for(;;) {
+  const progress:PlacementProgress={released:0,remaining:false,ready:false};
+  const result=await attempt(limit,progress);
+  if(result.status!=='quota' || !progress.ready || !progress.remaining)return result;
+  limit=Math.max(limit,progress.released)*2;
+ }
+}
 
 interface Candidate {id:string;kind:PackageRef['kind'];chartIds:string[];openedAt?:number}
 interface Victim {id:string;kind:PackageRef['kind'];used:number;metadata?:LibraryPackageMetadata}
@@ -24,14 +38,15 @@ function selectVictims(keys:IDBValidKey[],packages:LibraryPackageMetadata[],mark
 export class TransactionPlacement {
  private victims:Victim[]|undefined;
  private next=0;
- private tx:IDBTransaction;private incoming:Candidate;private evict:boolean;
+ private tx:IDBTransaction;private incoming:Candidate;private limit:number;private progress:PlacementProgress;
  private isCurrent:()=>boolean;private fail:(cause?:unknown)=>void;
- constructor(tx:IDBTransaction,incoming:Candidate,evict:boolean,isCurrent:()=>boolean,fail:(cause?:unknown)=>void) {
-  this.tx=tx;this.incoming=incoming;this.evict=evict;this.isCurrent=isCurrent;this.fail=fail;
+ constructor(tx:IDBTransaction,incoming:Candidate,limit:number,isCurrent:()=>boolean,fail:(cause?:unknown)=>void,
+  progress:PlacementProgress={released:0,remaining:false,ready:false}) {
+  this.tx=tx;this.incoming=incoming;this.limit=limit;this.isCurrent=isCurrent;this.fail=fail;this.progress=progress;
  }
  private release(retry:()=>void) {
   if(!this.isCurrent()){this.fail();return;}
-  if(!this.evict){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
+  if(!this.limit){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
   if(!this.victims) {
    const keys=this.tx.objectStore('charts').getAllKeys(),metadata=this.tx.objectStore('packageMetadata').getAll();
    const marks=this.tx.objectStore('usage').getAll();marks.onsuccess=()=>{
@@ -39,11 +54,13 @@ export class TransactionPlacement {
    };return;
   }
   const victim=this.victims[this.next++];
+  this.progress.remaining=this.next<this.victims.length;
   if(!victim){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
   // Keep real-use ownership after payload eviction. Explicit removal of the
   // final card can then release the mark; an evicted row is never a new victim.
   const removed=this.tx.objectStore(victim.kind==='card'?'charts':'packages').delete(victim.id);
   removed.onsuccess=()=>{
+   this.progress.released++;
    try {
     if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=retry;
     else retry();
@@ -59,5 +76,11 @@ export class TransactionPlacement {
    request.onerror=event=>{event.preventDefault();event.stopPropagation();rejected(request.error);};
   }catch(error){rejected(error);}
  }
- start(save:()=>void){if(this.evict)this.release(save);else save();}
+ start(save:()=>void) {
+  if(!this.limit){save();return;}
+  const reserve=()=>this.release(()=>{
+   if(this.progress.released<this.limit && this.progress.remaining)reserve();else save();
+  });
+  reserve();
+ }
 }

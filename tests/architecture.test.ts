@@ -68,7 +68,8 @@ test('browser modules belong to real page entries or the generated worker, with 
     reachable.add(file);
     for (const dependency of graph.get(file) || []) {
       if (graph.has(dependency)) { visit(dependency); continue; }
-      const imported = importEvidence.imports.find(edge => edge.from === file && edge.to === dependency && edge.resolution === 'external');
+      const imported = importEvidence.imports.find((edge: {from:string;to:string;resolution:string}) =>
+        edge.from === file && edge.to === dependency && edge.resolution === 'external');
       const owner = policy.modules.find((module: { files: string[] }) => module.files.includes(file))?.id;
       assert.ok(imported && externalImportAllowed(imported, owner, policy.externalPolicy),
         `${file} imports a package outside its declared boundary: ${dependency}`);

@@ -9,12 +9,13 @@ import {encodeNatalDay} from '../server/packets/encode.ts';
 import {decodeNatalDay} from '../shared/day-packets/decode.ts';
 import {natalDayFixture} from './fixtures/natal-day.ts';
 import {accountNatalChart} from './helpers/account-chart.ts';
+import {commitQuota} from './helpers/commit-quota.ts';
 
 const chart={...accountNatalChart(),source:'calculated' as const,timezone:'UTC',designArcResidualDegrees:1e-9};
 const dayRef:PackageRef={kind:'day',sourceKey:natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone})};
 function dayBytes(){return encodeNatalDay(natalDayFixture({date:chart.birthDate})).slice().buffer;}
-function family(){
- const source={birthUtc:chart.utc,timezone:chart.timezone},body='saturn' as const;
+function family(body:MajorReturnsPackage['family']='saturn'){
+ const source={birthUtc:chart.utc,timezone:chart.timezone};
  const events=Array.from({length:5},(_,index)=>{
   const utc=`${2010+index*10}-01-01T12:00:00.123456Z`,cycle=index+1;
   return {utc,body,id:`${body}:${utc}`,age:cycleAge(utc,source.birthUtc),cycle,cycleId:`${body}:${cycle}`,pass:1,direction:'direct' as const};
@@ -31,6 +32,20 @@ async function setup(t:TestContext,indexedDB=new IDBFactory()){
  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')throw Error('owner');
  await store.put(active.lease,[chart]);return {store,lease:active.lease,indexedDB};
 }
+
+for(const required of [2,Infinity])test(`commit-time day quota preserves cards and atomically replaces whole families: ${required}`,async t=>{
+ const {store,lease}=await setup(t),families=[family('saturn'),family('chiron'),family('uranus')];
+ for(const {ref,value} of families)assert.equal(await store.putPackage(lease,chart,ref,value),'stored');
+ const attempts=commitQuota(t,{store:'packages',id:JSON.stringify(dayRef)},required),bytes=dayBytes();
+ assert.equal(await store.putPackage(lease,chart,dayRef,bytes),required===2?'stored':'quota');
+ assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,2]:[0,1,2,3]);
+ assert.deepEqual((await store.read())!.charts,[chart]);
+ assert.deepEqual(await store.readPackage(lease,dayRef),required===2?bytes:null);
+ for(const {ref,value} of families) {
+   const evicted=required===2 && attempts.at(-1)!.includes(JSON.stringify(ref));
+   assert.deepEqual(await store.readPackage(lease,ref),evicted?null:value);
+ }
+});
 
 test('only a complete validated family becomes durable and exact numbers survive reopening',async t=>{
  const {store,lease,indexedDB}=await setup(t),{ref,value}=family();

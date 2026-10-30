@@ -7,6 +7,18 @@ import {createIndexedDatabase} from '../src/data/indexed-db.ts';
 import {IDBFactory,IDBObjectStore,IDBIndex,forceCloseDatabase} from 'fake-indexeddb';
 import {createJournal} from '../src/journal.ts';
 import {accountChart,chartId} from './helpers/account-chart.ts';
+import {commitQuota} from './helpers/commit-quota.ts';
+
+for(const required of [2,Infinity])test(`commit-time card quota uses bounded atomic replacement: ${required}`,async t=>{
+ const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000});t.after(()=>store.close());
+ const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
+ const cards=Array.from({length:5},(_,i)=>accountChart(i+1));await store.put(active.lease,cards);
+ const incoming=accountChart(6),attempts=commitQuota(t,{store:'charts',id:incoming.id},required);
+ assert.equal(await store.touch(active.lease,incoming.id,incoming),Number.isFinite(required));
+ assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,2]:[0,1,2,4,5]);
+ const saved=(await store.read())!.charts;
+ assert.deepEqual(saved,required===2?[...cards.slice(2),incoming]:cards,'failed commits preserve every old payload');
+});
 
 test('pressure retries after one release and stops as soon as the original write fits',async()=>{
  const pressure=createStoragePressure({locks:null}),removed:string[]=[];let days=12,returns=12;
