@@ -8,7 +8,7 @@ interface PopoverPanel {
 interface PopoverEvent { target: unknown; defaultPrevented: boolean; preventDefault(): void; [key: string]: unknown }
 type Listener = (event: PopoverEvent) => void;
 type ViewportLayout = Parameters<typeof attachActivationPopover>[2]['viewportLayout'] & Partial<ReturnType<typeof createViewportLayout>>;
-interface PopoverOptions {
+interface PopoverOptions { signal?:AbortSignal;
   viewport?: ViewportRect; visual?: boolean; measurePanel?: (panel: PopoverPanel) => { width: number; height: number }; viewportLayout?: ViewportLayout;
 }
 interface Anchor {
@@ -103,7 +103,7 @@ const chartFixture = () => ({
 
 // The controller runs against a small DOM surface and synthetic chart data.
 // No browser storage, app bootstrap, real charts, timers, or network are used.
-function popoverHarness(t: test.TestContext, { viewport = { left: 0, top: 0, width: 1440, height: 900 }, visual = true, measurePanel, viewportLayout }: PopoverOptions = {}) {
+function popoverHarness(t: test.TestContext, { signal, viewport = { left: 0, top: 0, width: 1440, height: 900 }, visual = true, measurePanel, viewportLayout }: PopoverOptions = {}) {
   const originalGlobals = new Map(['document', 'window'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   t.after(() => {
     for (const [key, descriptor] of originalGlobals) {
@@ -113,6 +113,8 @@ function popoverHarness(t: test.TestContext, { viewport = { left: 0, top: 0, wid
   const listeners = new Map<string, { callback: Listener; options?: unknown }[]>(), anchors = new Map<string, Anchor>(), queries: string[] = [], focusCalls: { anchor: Anchor; options?: FocusOptions }[] = [], cameraMutations: unknown[][] = [];
   const addListener = (surface: string) => (type: string, callback: Listener, options?: unknown) => {
     const key = `${surface}:${type}`;
+    const signal=(options as AddEventListenerOptions|undefined)?.signal;if(signal?.aborted)return;
+    signal?.addEventListener('abort',()=>listeners.set(key,(listeners.get(key)??[]).filter(item=>item.callback!==callback)),{once:true});
     if (!listeners.has(key)) listeners.set(key, []);
     listeners.get(key)!.push({ callback, options });
   };
@@ -183,7 +185,7 @@ function popoverHarness(t: test.TestContext, { viewport = { left: 0, top: 0, wid
     for (const { callback } of listeners.get(`${surface}:${type}`) || []) callback(event);
     return event;
   }
-  const controller = attachActivationPopover(panel as unknown as HTMLElement, svg as unknown as SVGSVGElement, { viewportLayout });
+  const controller = attachActivationPopover(panel as unknown as HTMLElement, svg as unknown as SVGSVGElement, { viewportLayout,signal });
   return { controller, panel, panelChild, styleWrites, measurements, anchors, addAnchor, dispatch, listeners, queries, focusCalls, cameraMutations, window, viewportLayout };
 }
 
@@ -469,7 +471,7 @@ test('inside and current-anchor presses preserve the popup; outside presses dism
   const anchor = harness.addAnchor('personality-mercury');
   const otherAnchor = harness.addAnchor('design-mercury');
   harness.controller.show(chart, 'personality-mercury');
-  assert.equal(harness.listeners.get('document:pointerdown')![0].options, true, 'outside presses are observed before graph selection');
+  assert.equal((harness.listeners.get('document:pointerdown')![0].options as AddEventListenerOptions).capture, true, 'outside presses are observed before graph selection');
   for (const target of [harness.panel, harness.panelChild, anchor, { closest: () => anchor }] as const) {
     const event = harness.dispatch('document', 'pointerdown', { target });
     assert.equal(harness.controller.currentId, 'personality-mercury');
@@ -694,4 +696,16 @@ test('single composition popovers use the exact primary row without copying or r
   h.controller.show(createChartComposition(raw), 'personality-mercury');
   assert.equal(h.panel.hidden, false);
   assert.deepEqual(renderedRows(h.panel), expectedRows(raw.activations.personality[0]));
+});
+
+
+test('retired popover closes and cannot reacquire its viewport subscription',t=>{
+ const owner=new AbortController();let subscriptions=0;
+ const h=popoverHarness(t,{signal:owner.signal,viewportLayout:{readViewport:()=>({left:0,top:0,width:1440,height:900}),
+  subscribeViewport:()=>{subscriptions++;return()=>{subscriptions--;return true;};}}});
+ h.addAnchor('personality-mercury');const chart=chartFixture();h.controller.show(chart,'personality-mercury');
+ assert.equal(subscriptions,1);owner.abort();assert.equal(subscriptions,0);assert.equal(h.panel.hidden,true);
+ h.controller.show(chart,'personality-mercury');h.controller.refresh(chart);h.controller.reposition();
+ assert.equal(subscriptions,0);assert.equal(h.controller.currentId,null);
+ assert.equal([...h.listeners.values()].flat().length,0);
 });

@@ -29,7 +29,7 @@ interface GraphContext {
   liveWanted: boolean; chart(): ChartInput & { id: string }; render: GraphController['render']; select: GraphController['choose'];
   clear: GraphController['clear']; change: GraphController['changeChart'];
 }
-function hoverHarness(t: test.TestContext) {
+function hoverHarness(t: test.TestContext, options:Partial<Parameters<typeof attachHoverPreview>[1]>={}) {
   const originals = new Map(['document', 'window'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   t.after(() => {
     for (const [key, descriptor] of originals) {
@@ -38,10 +38,12 @@ function hoverHarness(t: test.TestContext) {
   });
   const listeners = new Map<string, ((event: HoverEvent) => void)[]>(), previews: (PreviewSelection | null)[] = [], classes = new Set<string>();
   let previewHandler: PreviewHandler | undefined;
-  const addListener = (surface: string) => (type: string, callback: (event: HoverEvent) => void) => {
+  const addListener = (surface: string) => (type: string, callback: (event: HoverEvent) => void, options?:AddEventListenerOptions) => {
+    if(options?.signal?.aborted)return;
     const key = `${surface}:${type}`;
     if (!listeners.has(key)) listeners.set(key, []);
     listeners.get(key)!.push(callback);
+    options?.signal?.addEventListener('abort',()=>listeners.set(key,(listeners.get(key)??[]).filter(fn=>fn!==callback)),{once:true});
   };
   let hit: HoverNode | null = null;
   const document = { elementFromPoint: () => hit, hidden: false, visibilityState: 'visible', addEventListener: addListener('document') };
@@ -78,7 +80,7 @@ function hoverHarness(t: test.TestContext) {
     for (const callback of listeners.get(`${surface}:${type}`) || []) callback(event);
     return event;
   }
-  const controller = attachHoverPreview(svg as unknown as SVGSVGElement, { onPreview(selection) { previews.push(selection); previewHandler?.(selection); } });
+  const controller = attachHoverPreview(svg as unknown as SVGSVGElement, { ...options,onPreview(selection) { previews.push(selection); previewHandler?.(selection); } });
   const move = (target: unknown, options: Partial<HoverEvent> = {}) => {
     hit = target as HoverNode;
     return send('svg', 'pointermove', { target, ...options });
@@ -814,4 +816,15 @@ test('touch, cancelled gestures and blur cannot resurrect a mouse center preview
     h.controller.refreshCenter();
     assert.equal(h.controller.currentSelection, null);
   }
+});
+
+
+test('retired preview releases listeners and its queued paint without publishing',t=>{
+ const owner=new AbortController();let queued:FrameRequestCallback|undefined,cancelled=0;
+ const h=hoverHarness(t,{signal:owner.signal,coalesceMandala:true,resolvePreview:()=>({type:'mandala-cross',id:1}),
+  requestFrame:callback=>{queued=callback;return 1;},cancelFrame:()=>{cancelled++;}});
+ h.move(h.target('gate',41));assert.ok(queued);assert.equal(h.previews.length,0);
+ owner.abort();assert.equal(cancelled,1);assert.equal([...h.listeners.values()].flat().length,0);
+ queued(0);h.controller.refreshCenter();h.controller.clear();h.move(h.target('gate',19));
+ assert.equal(h.previews.length,0);assert.equal(h.controller.currentSelection,null);
 });

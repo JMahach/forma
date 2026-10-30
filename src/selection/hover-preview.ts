@@ -1,5 +1,6 @@
 import type { PreviewSelection, SelectionType } from './selection-targets.ts';
 interface HoverPreviewOptions {
+  signal?:AbortSignal;
   surface?: Element;
   onPreview: (selection: PreviewSelection | null) => void;
   onClear?: () => void;
@@ -12,7 +13,7 @@ interface HoverPreviewOptions {
 
 // Preview is transient and never commits a selection or opens a data popover.
 export function attachHoverPreview(svg: SVGSVGElement, {
-  surface = svg, onPreview, onClear = () => {}, resolvePreview = () => null, resolveKeyboard = () => null,
+  signal,surface = svg, onPreview, onClear = () => {}, resolvePreview = () => null, resolveKeyboard = () => null,
   coalesceMandala = false,
   requestFrame = callback => window.requestAnimationFrame(callback),
   cancelFrame = handle => window.cancelAnimationFrame(handle),
@@ -27,6 +28,7 @@ export function attachHoverPreview(svg: SVGSVGElement, {
     cancelFrame(frame.handle!);
   }
   function set(value: PreviewSelection | null, defer = false) {
+    if(signal?.aborted)return;
     if (same(current, value)) {
       // Keyboard feedback stays immediate even when this angle was queued by
       // the pointer and has not yet been painted.
@@ -50,6 +52,7 @@ export function attachHoverPreview(svg: SVGSVGElement, {
     onPreview(value);
   }
   function clear({ notify = true, forgetPointer = true } = {}) {
+    if(signal?.aborted)return;
     if (forgetPointer) mousePoint = null;
     cancelPendingFrame();
     if (!current) return;
@@ -65,6 +68,7 @@ export function attachHoverPreview(svg: SVGSVGElement, {
   // cursor. Resolve its whole scope through the normal preview owner, not
   // only the center's CSS :hover outline. Capture targets are not hit targets.
   function refreshCenter({ clearOther = true } = {}) {
+    if(signal?.aborted)return;
     const target = mousePoint && document.elementFromPoint(mousePoint.x, mousePoint.y)
       ?.closest<HTMLElement | SVGElement>('[data-type]');
     if (target && svg.contains(target) && target.dataset.type === 'center') {
@@ -90,8 +94,8 @@ export function attachHoverPreview(svg: SVGSVGElement, {
     const id = type === 'gate' ? Number(target.dataset.id) : target.dataset.id!;
     if (type === 'gate' && (!Number.isInteger(id) || (id as number) < 1 || (id as number) > 64)) { clear(); return; }
     set({ type, id });
-  });
-  surface.addEventListener('pointerleave', () => clear());
+  },{signal});
+  surface.addEventListener('pointerleave', () => clear(),{signal});
   svg.addEventListener('keydown', event => {
     if (event.key === 'Escape') { clear(); return; }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -102,12 +106,12 @@ export function attachHoverPreview(svg: SVGSVGElement, {
     if (!target || !svg.contains(target)) return;
     const resolved = resolveKeyboard(target, current, direction);
     if (resolved) { event.preventDefault(); set(resolved); }
-  });
+  },{signal});
   surface.addEventListener('pointerdown', raw => {
     const event = raw as PointerEvent;
     rememberPointer(event);
     if (event.pointerType === 'touch') clear();
-  });
+  },{signal});
   // Attached after the gesture owner: selection and the last camera frame
   // have settled before we restore hover after a mouse release.
   surface.addEventListener('pointerup', raw => {
@@ -115,14 +119,15 @@ export function attachHoverPreview(svg: SVGSVGElement, {
     if (event.pointerType !== 'mouse') return;
     rememberPointer(event);
     refreshCenter({ clearOther: false });
-  });
-  surface.addEventListener('pointercancel', () => clear());
+  },{signal});
+  surface.addEventListener('pointercancel', () => clear(),{signal});
   surface.addEventListener('wheel', raw => {
     rememberPointer(raw as WheelEvent);
     // The camera's next painted frame performs the fresh hit-test.
     if (current?.type !== 'center') clear({ forgetPointer: false });
-  }, { passive: true });
-  window.addEventListener('blur', () => clear());
-  document.addEventListener('visibilitychange', () => { if (document.hidden) clear(); });
+  }, { passive: true,signal });
+  window.addEventListener('blur', () => clear(),{signal});
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clear(); },{signal});
+  signal?.addEventListener('abort',()=>{mousePoint=null;current=null;cancelPendingFrame();},{once:true});
   return { clear, refreshCenter, get currentSelection() { return current ? { ...current } : null; } };
 }

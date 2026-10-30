@@ -195,7 +195,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   let returnMarkers: ReturnType<typeof attachReturnMarkers> | null = null;
   let exploration: ReturnType<typeof createChartExploration> | null = null, timelineLayoutKey = '';
   let phoneLayout = layout.phone, mandalaColumns = layout.showMandalaColumns;
-  const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'), { viewportLayout: layout });
+  const activationPopover = attachActivationPopover($('activationPopover'), $('bodygraph'), { viewportLayout: layout,signal:scope.signal });
   const transitPlanets = createTransitPlanetFilter();
   const session = createChartSession({ store, initialSelectedId: savedView?.selectedId, getTransit: () => transit, getNatalDay: () => natalDay,
     getLifetime: () => lifetime, getReturns: () => returns,
@@ -274,7 +274,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   if (startupGestures) gestures.setHandlers(gestureHandlers);
   const activationHover = attachActivationHover($('bodygraph'));
   scope.own(activationHover.dispose);
-  hoverPreview = attachHoverPreview($('bodygraph'), {
+  hoverPreview = attachHoverPreview($('bodygraph'), { signal:scope.signal,
     surface: $('canvasWrap'),
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
     coalesceMandala: true, onPreview: previewGraph, onClear: activationHover.clear,

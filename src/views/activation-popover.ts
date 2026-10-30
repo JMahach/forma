@@ -32,7 +32,7 @@ export function placeActivationPopover(anchor: Pick<DOMRect, 'left' | 'top' | 'r
   return { left, top, side, arrow };
 }
 
-export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, { viewportLayout }: { viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'> }) {
+export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, { viewportLayout,signal }: { signal?:AbortSignal; viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'> }) {
   const document = panel.ownerDocument || globalThis.document;
   let currentId: string | null = null, maxHeight: string | null = null, arrowOffset: number | null = null, unsubscribeViewport: (() => void) | null = null;
   const anchor = () => currentId ? svg.querySelector<SVGElement>(`[data-activation="${currentId}"]`) : null;
@@ -46,6 +46,7 @@ export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, 
     if (restoreFocus) previous?.focus({ preventScroll: true });
   }
   function reposition() {
+    if(signal?.aborted)return;
     if (!currentId || panel.hidden) return;
     const trigger = anchor(), column = trigger?.closest<SVGElement>('.activation-column');
     const columnSide = column?.dataset.columnSide;
@@ -72,6 +73,7 @@ export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, 
     if (panel.dataset.side !== position.side) panel.dataset.side = position.side;
   }
   function refresh(chart: ChartView) {
+    if(signal?.aborted)return;
     if (!currentId) return;
     const [source, planet] = currentId.split('-');
     const owner = primaryChart(chart);
@@ -89,6 +91,7 @@ export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, 
     reposition();
   }
   function show(chart: ChartView, id: string) {
+    if(signal?.aborted)return;
     close();
     // IDs are a source and a known planetary key, never arbitrary selectors.
     if (!/^(?:(?:natal|cycle)-)?(design|personality)-(sun|earth|moon|north_node|south_node|mercury|venus|mars|jupiter|saturn|uranus|neptune|pluto)$/.test(id)) return;
@@ -98,9 +101,10 @@ export function attachActivationPopover(panel: HTMLElement, svg: SVGSVGElement, 
   document.addEventListener('pointerdown', event => {
     if (!currentId || panel.contains(event.target as Node | null) || (event.target as Element).closest?.<SVGElement>('[data-activation]')?.dataset.activation === currentId) return;
     close();
-  }, true);
+  }, {capture:true,signal});
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && currentId) { close(true); event.preventDefault(); }
-  });
+  },{signal});
+  signal?.addEventListener('abort',()=>close(),{once:true});
   return { show, close, refresh, reposition, get currentId() { return currentId; } };
 }
