@@ -8,11 +8,14 @@ import type {NatalDaySource,PackagePlacement} from '../../shared/library-package
 
 interface NatalWork extends SharedJob<DayPacket> {
   key: string;
+  priority:number;
   date: string;
   timezone: string;
   controller: AbortController;
   resolve: (packet: DayPacket) => void;
   reject: (reason: unknown) => void;
+  finished:Promise<void>;
+  finish:()=>void;
 }
 interface GenerateNatalOptions extends QueueOptions {
   report?: CalculationFailureReport;
@@ -89,73 +92,110 @@ export function encodeNatalDayPacket(day: NatalDay) {
 }
 
 // RAM remains bounded. Saved sources additionally own exact prepared packets in the account database.
-export function createNatalDays({ root, computeQueue, report, packages,
-  packDay=async day=>({bytes:await compressDayPacket(await encodeNatalDayPacket(day),{quality:9})}),
-  generateDay = (date, timezone, options) => generateNatalDay({ root: root!, date, timezone, computeQueue, report, ...options }),
-  now = Date.now, capacity = 10, ttlMs = 600_000, maxQueued = 3 }: NatalDayOptions = {}) {
-  const failure = createCalculationFailureReporter('natal_day', report);
-  const memory = new Map<string, { packet: DayPacket; expires: number }>(), pending = new Map<string, NatalWork>(), queue: NatalWork[] = [];
-  let running = false;
-  const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
-  function prune() { for (const [key, entry] of memory) if (entry.expires <= now()) memory.delete(key); }
-  function consume(job: NatalWork, signal?: AbortSignal) {
-    return consumeJob(job, signal, abandoned => {
-      const index = queue.indexOf(abandoned);
-      if (index >= 0) { queue.splice(index, 1); pending.delete(abandoned.key); abandoned.reject(aborted()); }
-      if (pending.get(abandoned.key) === abandoned) pending.delete(abandoned.key);
+const aborted=()=>new DOMException('Запрос отменён.','AbortError');
+class NatalDayOwner {
+  private memory=new Map<string,{packet:DayPacket;expires:number}>();
+  private pending=new Map<string,NatalWork>();
+  private queue:NatalWork[]=[];
+  private active:NatalWork|undefined;
+  private closed=false;
+  private closing:Promise<void>|undefined;
+  private options:Required<Pick<NatalDayOptions,'generateDay'|'packDay'|'now'|'capacity'|'ttlMs'|'maxQueued'>> & Pick<NatalDayOptions,'packages'>;
+  private failure:ReturnType<typeof createCalculationFailureReporter>;
+  constructor({root,computeQueue,report,packages,
+    packDay=async day=>({bytes:await compressDayPacket(await encodeNatalDayPacket(day),{quality:9})}),
+    generateDay=(date,timezone,options)=>generateNatalDay({root:root!,date,timezone,computeQueue,report,...options}),
+    now=Date.now,capacity=10,ttlMs=600_000,maxQueued=3}:NatalDayOptions) {
+    this.options={generateDay,packDay,now,capacity,ttlMs,maxQueued,packages};
+    this.failure=createCalculationFailureReporter('natal_day',report);
+  }
+  private prune() {
+    for(const [key,entry] of this.memory)if(entry.expires<=this.options.now())this.memory.delete(key);
+  }
+  private memoryPacket(key:string) {
+    this.prune();const entry=this.memory.get(key);
+    if(!entry)return null;
+    this.memory.delete(key);this.memory.set(key,entry);return entry.packet;
+  }
+  private consume(job:NatalWork,signal?:AbortSignal,background=false) {
+    const result=consumeJob(job,signal,abandoned=>{
+      const index=this.queue.indexOf(abandoned);
+      if(index>=0){this.queue.splice(index,1);abandoned.reject(aborted());abandoned.finish();}
+      if(this.pending.get(abandoned.key)===abandoned)this.pending.delete(abandoned.key);
       abandoned.controller.abort();
     });
+    return background?result.catch(async error=>{if(signal?.aborted)await job.finished;throw error;}):result;
   }
-
-  async function drain() {
-    if (running || !queue.length) return;
-    running = true;
-    const job = queue.shift()!;
+  private async pack(job:NatalWork,day:NatalDay) {
     try {
-      // Abandoned packing may finish while a retry is waiting in this queue.
-      prune();
-      if (memory.has(job.key)) {
-        const entry = memory.get(job.key)!; memory.delete(job.key); memory.set(job.key, entry);
-        packages?.putDay(job,entry.packet);
-        job.resolve(entry.packet); return;
-      }
-      const day = await generateDay(job.date, job.timezone, { signal: job.controller.signal });
-      if (job.controller.signal.aborted) throw aborted();
-      let packet:DayPacket;
-      try {
-        if (day.date !== job.date || day.timezone !== job.timezone) throw new Error('Unexpected natal day');
-        packet = await packDay(day);
-      } catch (error) {
-          if (job.controller.signal.aborted) throw error;
-          failure('invalid_result'); throw new NatalDayError('natal_day_unavailable', 'Не удалось подготовить день рождения. Повторите попытку.');
-        }
-      prune(); memory.set(job.key, { packet, expires: now() + ttlMs });
-      while (memory.size > capacity) memory.delete(memory.keys().next().value!);
-      if(!job.controller.signal.aborted)packages?.putDay(job,packet);
-      job.resolve(packet);
-    } catch (error) { job.reject(error); }
-    finally { if (pending.get(job.key) === job) pending.delete(job.key); running = false; void drain(); }
-  }
-  function get(date: string, timezone: string, { signal }: { signal?: AbortSignal } = {}): Promise<DayPacket> {
-    if (signal?.aborted) return Promise.reject(aborted());
-    try { validateNatalDayDate(date); validateNatalZone(timezone); } catch (error) { return Promise.reject(error); }
-    const key = `${date}@${timezone}`;
-    prune();
-    if (memory.has(key)) {
-      const entry = memory.get(key)!; memory.delete(key); memory.set(key, entry);
-      try {packages?.putDay({date,timezone},entry.packet);}catch(error){return Promise.reject(error);}
-      return Promise.resolve(entry.packet);
+      if(day.date!==job.date || day.timezone!==job.timezone)throw Error('Unexpected natal day');
+      return await this.options.packDay(day);
+    } catch(error) {
+      if(job.controller.signal.aborted)throw error;
+      this.failure('invalid_result');throw new NatalDayError('natal_day_unavailable','Не удалось подготовить день рождения. Повторите попытку.');
     }
-    try {const stored=packages?.readDay({date,timezone});if(stored)return Promise.resolve(stored);}
-    catch(error){return Promise.reject(error);}
-    if (pending.has(key)) return consume(pending.get(key)!, signal);
-    if (queue.length >= maxQueued) return Promise.reject(new NatalDayError('natal_day_busy', 'Подождите завершения расчёта дня рождения и повторите попытку.', 503, 2));
-    let resolve!: (packet: DayPacket) => void, reject!: (reason: unknown) => void;
-    const promise = new Promise<DayPacket>((yes, no) => { resolve = yes; reject = no; });
-    const job = { key, date, timezone, controller: new AbortController(), resolve, reject, promise };
-    pending.set(key, job); queue.push(job);
-    const result = consume(job, signal); void drain();
-    return result;
   }
-  return { get, get size() { prune(); return memory.size; }, get queued() { return queue.length; } };
+  private async prepare(job:NatalWork) {
+    // A cancelled packing can finish while a retry waits; its result still belongs to RAM.
+    const ready=this.memoryPacket(job.key);
+    if(ready){this.options.packages?.putDay(job,ready);return ready;}
+    const day=await this.options.generateDay(job.date,job.timezone,{signal:job.controller.signal,priority:()=>job.priority});
+    job.controller.signal.throwIfAborted();
+    const packet=await this.pack(job,day);
+    this.prune();this.memory.set(job.key,{packet,expires:this.options.now()+this.options.ttlMs});
+    while(this.memory.size>this.options.capacity)this.memory.delete(this.memory.keys().next().value!);
+    if(this.closed)throw aborted();
+    if(!job.controller.signal.aborted)this.options.packages?.putDay(job,packet);
+    return packet;
+  }
+  private async drain() {
+    if(this.closed || this.active || !this.queue.length)return;
+    this.queue.sort((a,b)=>b.priority-a.priority);
+    const job=this.queue.shift()!;this.active=job;
+    try {job.resolve(await this.prepare(job));}catch(error){job.reject(error);}
+    finally {
+      if(this.pending.get(job.key)===job)this.pending.delete(job.key);
+      this.active=undefined;job.finish();void this.drain();
+    }
+  }
+  private ready(date:string,timezone:string,key:string) {
+    validateNatalDayDate(date);validateNatalZone(timezone);
+    const ready=this.memoryPacket(key);
+    if(ready){this.options.packages?.putDay({date,timezone},ready);return ready;}
+    return this.options.packages?.readDay({date,timezone});
+  }
+  private enqueue(date:string,timezone:string,key:string,priority:number,signal?:AbortSignal) {
+    let resolve!:(packet:DayPacket)=>void,reject!:(reason:unknown)=>void,finish!:()=>void;
+    const promise=new Promise<DayPacket>((yes,no)=>{resolve=yes;reject=no;});
+    const finished=new Promise<void>(resolve=>{finish=resolve;});
+    const job={key,date,timezone,priority,controller:new AbortController(),resolve,reject,promise,finished,finish};
+    this.pending.set(key,job);this.queue.push(job);
+    const result=this.consume(job,signal,priority<0);void this.drain();return result;
+  }
+  get(date:string,timezone:string,{signal,priority=0}:{signal?:AbortSignal;priority?:number}={}):Promise<DayPacket> {
+    if(this.closed || signal?.aborted)return Promise.reject(aborted());
+    const key=`${date}@${timezone}`;
+    try {const ready=this.ready(date,timezone,key);if(ready)return Promise.resolve(ready);}
+    catch(error){return Promise.reject(error);}
+    const existing=this.pending.get(key);
+    if(existing){existing.priority=Math.max(existing.priority,priority);return this.consume(existing,signal,priority<0);}
+    if(this.queue.length>=this.options.maxQueued)return Promise.reject(new NatalDayError('natal_day_busy','Подождите завершения расчёта дня рождения и повторите попытку.',503,2));
+    return this.enqueue(date,timezone,key,priority,signal);
+  }
+  get size(){this.prune();return this.memory.size;}
+  get queued(){return this.queue.length;}
+  close() {
+    if(!this.closing) {
+      this.closed=true;
+      for(const job of this.queue.splice(0)){job.controller.abort();job.reject(aborted());job.finish();}
+      this.active?.controller.abort();this.pending.clear();
+      this.closing=Promise.resolve(this.active?.finished).then(()=>{this.memory.clear();});
+    }
+    return this.closing;
+  }
+}
+export function createNatalDays(options:NatalDayOptions={}) {
+  const owner=new NatalDayOwner(options);
+  return {get:(...args:Parameters<NatalDayOwner['get']>)=>owner.get(...args),close:()=>owner.close(),
+    get size(){return owner.size;},get queued(){return owner.queued;}};
 }

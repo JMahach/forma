@@ -7,6 +7,28 @@ import { createCycles, generateCycles } from '../server/services/cycles.ts';
 import { createCalculator } from '../server/services/calculate.ts';
 import { EventEmitter } from 'node:events';
 const tick = () => new Promise(setImmediate);
+
+test('live returns precede waiting library preparation and a shared live reader promotes the existing job',async()=>{
+  const queue=createComputeQueue({concurrency:1}),order:string[]=[];
+  let release!:()=>void;
+  const held=queue.run(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const cycles=createCycles({computeQueue:queue,generate:async input=>{
+    order.push(input.body);return {range:{fromAge:input.fromAge,toAge:input.toAge},events:[]};
+  }});
+  const input={birthUtc:'2000-01-01T12:00:00Z',fromAge:0,toAge:100};
+  const background=cycles.events({...input,body:'saturn'},{priority:-1});
+  const live=cycles.events({...input,body:'moon'});
+  release();await Promise.all([held,background,live]);
+  assert.deepEqual(order,['moon','saturn']);
+  order.length=0;
+  const heldAgain=queue.run(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const shared=cycles.events({...input,body:'saturn'},{priority:-1});
+  const another=cycles.events({...input,body:'moon'});
+  const joined=cycles.events({...input,body:'saturn'});
+  release();await Promise.all([heldAgain,shared,another,joined]);
+  assert.deepEqual(order,['saturn','moon'],'promotion reuses one pending calculation');
+  await cycles.close();queue.close();
+});
 const worker = () => {
   const value: EventEmitter & { killed?: boolean } = new EventEmitter();
   return Object.assign(value, {

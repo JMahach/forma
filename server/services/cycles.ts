@@ -8,6 +8,7 @@ type CycleAction = 'events' | 'chart';
 export interface CycleRequest extends CycleInput { action: CycleAction }
 interface CycleWork extends SharedJob<CycleResult> {
   key: string;
+  priority:number;
   controller: AbortController;
   started: boolean;
   resolve: (value: CycleResult) => void;
@@ -107,58 +108,74 @@ export function generateCycles({ root, input, spawnWorker, computeQueue, signal,
     timeoutError: () => new CycleError('cycles_timeout', 'Циклы не успели рассчитаться. Попробуйте меньший диапазон.') });
 }
 
-// This service shares unfinished work only; completed results belong to its consumers.
-// The server's compute queue owns admission; an exact chart precedes background dates.
-export function createCycles({ root, computeQueue, report, generate = (input, options) => generateCycles({ root: root!, input, report, ...options }), limits = {} }: CycleOptions = {}) {
-  const failure = createCalculationFailureReporter('cycles', report);
-  const { concurrency, maxQueued } = { ...CYCLE_LIMITS, ...limits };
-  const pending = new Map<string, CycleWork>(), jobs = new Set<CycleWork>();
-  const queue = computeQueue || createComputeQueue({ concurrency, maxQueued });
-  let accepting = true, closing: Promise<void> | null = null;
-  const aborted = () => new DOMException('Запрос отменён.', 'AbortError');
-  const stopped = () => new CycleError('cycles_unavailable', 'Расчёт циклов остановлен.');
-  function consume(job: CycleWork, signal?: AbortSignal) {
-    return consumeJob(job, signal, abandoned => {
-      if (pending.get(abandoned.key) === abandoned) pending.delete(abandoned.key);
+// Unfinished calculations have one owner. Completed results belong to their consumers.
+const abortedCycle=()=>new DOMException('Запрос отменён.','AbortError');
+const stoppedCycles=()=>new CycleError('cycles_unavailable','Расчёт циклов остановлен.');
+class CycleOwner {
+  private pending=new Map<string,CycleWork>();
+  private jobs=new Set<CycleWork>();
+  private queue:ComputeQueue;
+  private ownQueue:boolean;
+  private generate:NonNullable<CycleOptions['generate']>;
+  private failure:ReturnType<typeof createCalculationFailureReporter>;
+  private accepting=true;
+  private closing:Promise<void>|null=null;
+  constructor({root,computeQueue,report,generate=(input,options)=>generateCycles({root:root!,input,report,...options}),limits={}}:CycleOptions) {
+    const {concurrency,maxQueued}={...CYCLE_LIMITS,...limits};
+    this.queue=computeQueue||createComputeQueue({concurrency,maxQueued});this.ownQueue=!computeQueue;
+    this.generate=generate;this.failure=createCalculationFailureReporter('cycles',report);
+  }
+  private consume(job:CycleWork,signal?:AbortSignal,background=false) {
+    const result=consumeJob(job,signal,abandoned=>{
+      if(this.pending.get(abandoned.key)===abandoned)this.pending.delete(abandoned.key);
       abandoned.controller.abort();
     });
+    // Background cancellation settles the physical worker before another part starts.
+    // A live HTTP consumer still leaves immediately without cancelling other consumers.
+    return background?result.catch(async error=>{if(signal?.aborted)await job.work;throw error;}):result;
   }
-  function get(input: CycleInput, action: CycleAction, signal?: AbortSignal): Promise<CycleResult> {
-    if (signal?.aborted) return Promise.reject(aborted());
-    if (!accepting) return Promise.reject(stopped());
-    let request;
-    try { request = validateCycleRequest(input, action); } catch (error) { return Promise.reject(error); }
-    const key = JSON.stringify(request);
-    if (pending.has(key)) return consume(pending.get(key)!, signal);
-    let resolve!: (value: CycleResult) => void, reject!: (reason: unknown) => void;
-    const promise = new Promise<CycleResult>((yes, no) => { resolve = yes; reject = no; });
-    const job: CycleWork = { key, controller: new AbortController(), started: false, resolve, reject, promise, work: null };
-    pending.set(key, job); jobs.add(job);
-    const result = consume(job, signal);
-    job.work = queue.run(async () => {
-      job.started = true;
-      const value = await generate(request, { signal: job.controller.signal });
-      if (job.controller.signal.aborted) throw aborted();
-      return validateResult(value, request, () => failure('invalid_result'));
-    }, { signal: job.controller.signal, priority: action === 'chart' ? 1 : 0 }).finally(() => {
-      if (pending.get(key) === job) pending.delete(key);
-      jobs.delete(job);
-    }).then(resolve, error => {
-      reject(!accepting && !job.started ? stopped() : error.code === 'busy'
-        ? new CycleError('cycles_busy', 'Подождите завершения расчёта циклов и повторите попытку.') : error);
+  private launch(request:CycleRequest,job:CycleWork) {
+    job.work=this.queue.run(async()=>{
+      job.started=true;
+      const value=await this.generate(request,{signal:job.controller.signal});
+      if(job.controller.signal.aborted)throw abortedCycle();
+      return validateResult(value,request,()=>this.failure('invalid_result'));
+    },{signal:job.controller.signal,priority:()=>job.priority}).finally(()=>{
+      if(this.pending.get(job.key)===job)this.pending.delete(job.key);
+      this.jobs.delete(job);
+    }).then(job.resolve,error=>{
+      job.reject(!this.accepting && !job.started?stoppedCycles():error.code==='busy'
+        ?new CycleError('cycles_busy','Подождите завершения расчёта циклов и повторите попытку.'):error);
     });
-    return result;
   }
-  function close() {
-    if (closing) return closing;
-    accepting = false;
-    for (const job of jobs) if (!job.started) job.controller.abort();
-    // Active workers finish or hit their existing timeout. Closing one service
-    // never shuts down the server's queue used by other calculation services.
-    closing = Promise.allSettled([...jobs].map(job => job.work)).then(() => { if (!computeQueue) queue.close(); });
-    return closing;
+  get(input:CycleInput,action:CycleAction,signal?:AbortSignal,priority=action==='chart'?1:0):Promise<CycleResult> {
+    if(signal?.aborted)return Promise.reject(abortedCycle());
+    if(!this.accepting)return Promise.reject(stoppedCycles());
+    let request;
+    try {request=validateCycleRequest(input,action);}catch(error){return Promise.reject(error);}
+    const key=JSON.stringify(request),existing=this.pending.get(key);
+    if(existing){existing.priority=Math.max(existing.priority,priority);return this.consume(existing,signal,priority<0);}
+    let resolve!:(value:CycleResult)=>void,reject!:(reason:unknown)=>void;
+    const promise=new Promise<CycleResult>((yes,no)=>{resolve=yes;reject=no;});
+    const job:CycleWork={key,priority,controller:new AbortController(),started:false,resolve,reject,promise,work:null};
+    this.pending.set(key,job);this.jobs.add(job);
+    const result=this.consume(job,signal,priority<0);this.launch(request,job);return result;
   }
-  return { close, events: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'events', signal) as Promise<CycleEventsResult>, chart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get(input, 'chart', signal) as Promise<CycleChartResult>,
-    get queued() { return [...jobs].filter(job => !job.started && !job.controller.signal.aborted).length; },
-    get active() { return [...jobs].filter(job => job.started).length; } };
+  close() {
+    if(this.closing)return this.closing;
+    this.accepting=false;
+    for(const job of this.jobs)if(!job.started)job.controller.abort();
+    // Live workers finish or hit their existing timeout; the server's shared queue is not owned here.
+    this.closing=Promise.allSettled([...this.jobs].map(job=>job.work)).then(()=>{if(this.ownQueue)this.queue.close();});
+    return this.closing;
+  }
+  get queued(){return [...this.jobs].filter(job=>!job.started && !job.controller.signal.aborted).length;}
+  get active(){return [...this.jobs].filter(job=>job.started).length;}
+}
+export function createCycles(options:CycleOptions={}) {
+  const owner=new CycleOwner(options);
+  return {close:()=>owner.close(),
+    events:(input:CycleInput,{signal,priority}:{signal?:AbortSignal;priority?:number}={})=>owner.get(input,'events',signal,priority) as Promise<CycleEventsResult>,
+    chart:(input:CycleInput,{signal,priority}:{signal?:AbortSignal;priority?:number}={})=>owner.get(input,'chart',signal,priority) as Promise<CycleChartResult>,
+    get queued(){return owner.queued;},get active(){return owner.active;}};
 }

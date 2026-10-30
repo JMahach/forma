@@ -32,6 +32,48 @@ const makeDay = (date: string, timezone: string) => ({ date, timezone, startUtc:
   engine: 'Swiss Ephemeris test', ephemeris: 'Test ephemerides', timezoneDatabase: 'IANA test', nodeModel: 'true', zodiac: 'tropical-geocentric-apparent' });
 const tick = () => new Promise(setImmediate);
 
+test('close waits for abandoned packing before the database owner can close and rejects later reads',async()=>{
+  const packing=deferred(),release=deferred(),request=new AbortController();let writes=0,closed=false;
+  const service=createNatalDays({generateDay:async(date,timezone)=>makeDay(date,timezone),
+    packDay:async()=>{packing.resolve();await release.promise;return {bytes:{identity:Buffer.alloc(1),br:Buffer.alloc(1),gzip:Buffer.alloc(1)}};},
+    packages:{readDay:()=>null,putDay:()=>{writes++;return 'stored';}}});
+  const work=service.get('2000-01-01','UTC',{signal:request.signal});
+  await packing.promise;request.abort();await assert.rejects(work,{name:'AbortError'});
+  const stopped=service.close().then(()=>{closed=true;});await tick();assert.equal(closed,false);
+  release.resolve();await stopped;assert.equal(writes,0);
+  await assert.rejects(service.get('2000-01-01','UTC'),{name:'AbortError'});
+});
+
+test('a generated day for another source is rejected and a corrected retry still works',async()=>{
+  let wrong=true;const reports:unknown[]=[];
+  const service=createNatalDays({report:fact=>{reports.push(fact);},
+    generateDay:async(date,timezone)=>makeDay(wrong?'2000-01-02':date,timezone)});
+  await assert.rejects(service.get('2000-01-01','UTC'),{code:'natal_day_unavailable'});
+  assert.equal(service.size,0);assert.equal(reports.length,1);
+  wrong=false;assert.ok(await service.get('2000-01-01','UTC'));await service.close();
+});
+
+test('a waiting live day precedes background preparation and promotes a shared queued day',async()=>{
+  let release!:()=>void;
+  const order:string[]=[];
+  const service=createNatalDays({generateDay:async(date,timezone)=>{
+    order.push(date);if(order.length===1)await new Promise<void>(resolve=>{release=resolve;});
+    return makeDay(date,timezone);
+  }});
+  const first=service.get('2000-01-01','UTC');
+  const background=service.get('2000-01-02','UTC',{priority:-1});
+  const live=service.get('2000-01-03','UTC');
+  release();await Promise.all([first,background,live]);
+  assert.deepEqual(order,['2000-01-01','2000-01-03','2000-01-02']);
+  order.length=0;
+  const next=service.get('2000-01-04','UTC');
+  const shared=service.get('2000-01-05','UTC',{priority:-1});
+  const other=service.get('2000-01-06','UTC');
+  const joined=service.get('2000-01-05','UTC');
+  release();await Promise.all([next,shared,other,joined]);
+  assert.deepEqual(order,['2000-01-04','2000-01-05','2000-01-06']);
+});
+
 test('request uses only trusted city timezone and strictly validates date, city and version', () => {
   assert.deepEqual(validateNatalDayRequest({ birthDate: '1990-06-15', cityId: 'trusted', v: '1', timezone: 'UTC', city: { timezone: 'UTC' }, name: 'Never forwarded' }, cities), { date: '1990-06-15', timezone: 'Europe/Moscow' });
   for (const change of [{ birthDate: '1990-02-30' }, { birthDate: '1800-01-01' }, { birthDate: '2400-01-01' }, { cityId: 'forged' }, { cityId: {} }, { v: '2' }] as const) {
