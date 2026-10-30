@@ -743,17 +743,20 @@ function storedFamily(body:import('../shared/chart-return-contract.ts').MainRetu
 }
 const packageOwner=(chart:import('../shared/chart-types.ts').ChartRecord)=>({chartId:chart.id!,expectedAccountId:'1'});
 test('stored family notice reads only that family and publishes offline readiness once',async()=>{
- const reads:string[]=[],packets=new Map<string,ReturnType<typeof storedFamily>>();let updates=0,renders=0;
+ const reads:string[]=[],packets=new Map<string,ReturnType<typeof storedFamily>>();let updates=0,renders=0,observing=false;
  const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,onStateChange:()=>updates++,onRender:()=>renders++,client:{
-  events:async()=>assert.fail('no HTTP'),chart:async()=>assert.fail('no calculation'),readFamily:async(input,_owner,options)=>{reads.push(input.body);if(reads.length===1)assert.equal(options?.observeOnly,true);return packets.get(input.body)??null;},
+  events:async()=>assert.fail('no HTTP'),chart:async()=>assert.fail('no calculation'),readFamily:async(input,_owner,options)=>{reads.push(input.body);if(observing)assert.equal(options?.observeOnly,true);return packets.get(input.body)??null;},
  }});
  // Initial selection has its existing whole-library availability pass.
- reads.push('initial');await control.select(natal());reads.length=0;updates=0;renders=0;
+ await control.select(natal());reads.length=0;updates=0;renders=0;observing=true;
  await control.refreshStoredPackage?.({kind:'day',sourceKey:storedReturnsRef.sourceKey});await control.refreshStoredPackage?.({...storedReturnsRef,sourceKey:'foreign'});
  assert.deepEqual(reads,[]);assert.equal(updates,0);
  packets.set('saturn',storedFamily());await control.refreshStoredPackage?.(storedReturnsRef);
  assert.deepEqual(reads,['saturn']);assert.deepEqual(control.state.readyBodies,['saturn']);assert.deepEqual(control.state.readyEvents,[event().id]);assert.equal(updates,1);assert.equal(renders,0);
  await control.refreshStoredPackage(storedReturnsRef);assert.equal(updates,1);
+ observing=false;await control.select(natal({timezone:'Europe/Berlin'}));reads.length=0;updates=0;observing=true;
+ await control.refreshStoredPackage(storedReturnsRef);assert.deepEqual(reads,[],'UTC cannot stand in for the selected time zone');
+ await control.refreshStoredPackage({...storedReturnsRef,sourceKey:JSON.stringify(['2000-01-01T00:00:00Z','Europe/Berlin'])});assert.deepEqual(reads,['saturn']);
 });
 
 test('stored family removal disables its offline entry while preserving the shown return',async()=>{
@@ -766,17 +769,17 @@ test('stored family removal disables its offline entry while preserving the show
 });
 
 test('a late stored family cannot replace another source or the latest observation',async()=>{
- const waits:((value:ReturnType<typeof storedFamily>|null)=>void)[]=[];let delayed=false;
- const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,client:{readFamily:async()=>delayed?new Promise(resolve=>waits.push(resolve)):null}});
+ const waits:((value:ReturnType<typeof storedFamily>|null)=>void)[]=[];let delayed=false,updates=0;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,onStateChange:()=>updates++,client:{readFamily:async()=>delayed?new Promise(resolve=>waits.push(resolve)):null}});
  await control.select(natal());delayed=true;const old=control.refreshStoredPackage?.(storedReturnsRef);await tick();assert.equal(waits.length,1);
  delayed=false;await control.select(natal({id:'other',utc:'2001-01-01T00:00:00Z'}));waits[0](storedFamily());await old;assert.deepEqual(control.state.readyBodies,[]);
  await control.select(natal());delayed=true;const first=control.refreshStoredPackage(storedReturnsRef),last=control.refreshStoredPackage(storedReturnsRef);await tick();
- waits[2](null);await last;waits[1](storedFamily());await first;assert.deepEqual(control.state.readyBodies,[]);
+ updates=0;waits[2](null);await last;waits[1](storedFamily());await first;assert.deepEqual(control.state.readyBodies,[]);assert.equal(updates,0,'absent and superseded results do not notify');
 });
 
 test('a full availability scan cannot publish half a result or overwrite a newer family notice',async()=>{
- const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let bulk=false;
- const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,client:{readFamily:async(input,_owner,options)=>{
+ const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let bulk=false,account='1',updates=0,mode:'offline'|'online'='offline';
+ const control=createReturnsController({connection:()=>mode,getOwner:chart=>({...packageOwner(chart),expectedAccountId:account}),onStateChange:()=>updates++,client:{readFamily:async(input,_owner,options)=>{
   if(options?.observeOnly)return input.body==='saturn'?storedFamily():null;
   return bulk?new Promise(resolve=>waits.set(input.body,resolve)):null;
  }}});await control.select(natal());bulk=true;const scan=control.refreshAvailability();await tick();
@@ -784,28 +787,38 @@ test('a full availability scan cannot publish half a result or overwrite a newer
  await control.refreshStoredPackage(storedReturnsRef);assert.deepEqual(control.state.readyBodies,['saturn']);
  for(const [body,resolve] of waits)if(body!=='uranus')resolve(null);await scan;
  assert.deepEqual(control.state.readyBodies,['saturn','uranus'],'old absence cannot revoke the newer saturn packet');
+ const unchanged=control.refreshAvailability();await tick();waits.get('saturn')!(null);await tick();await control.refreshStoredPackage(storedReturnsRef);updates=0;
+ for(const [body,resolve] of waits)if(body!=='saturn')resolve(body==='uranus'?storedFamily('uranus'):null);await unchanged;
+ assert.equal(updates,0,'a superseded result is not a state change');
+ const retired=control.refreshAvailability();await tick();waits.get('chiron')!(storedFamily('chiron'));await tick();account='2';updates=0;
+ for(const [body,resolve] of waits)if(body!=='chiron')resolve(null);await retired;
+ assert.deepEqual(control.state.readyBodies,['saturn','uranus']);assert.equal(updates,0,'a partly completed scan cannot cross an account switch');
+ account='1';const disconnected=control.refreshAvailability();await tick();mode='online';await control.refreshAvailability();updates=0;
+ for(const resolve of waits.values())resolve(storedFamily('chiron'));await disconnected;
+ assert.deepEqual(control.state.readyBodies,['saturn','uranus']);assert.equal(updates,0,'a cancelled offline scan stays silent online');
 });
 
 test('independent family notices complete independently and late ownership changes are rejected',async()=>{
- const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let delayed=false,account='1';
- const control=createReturnsController({connection:()=> 'offline',getOwner:chart=>({...packageOwner(chart),expectedAccountId:account}),client:{
-  readFamily:async input=>delayed?new Promise(resolve=>waits.set(input.body,resolve)):null,
+ const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let delayed=false,account='1',reads=0;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:chart=>account?({...packageOwner(chart),expectedAccountId:account}):null,client:{
+  readFamily:async input=>{reads++;return delayed?new Promise(resolve=>waits.set(input.body,resolve)):null;},
  }});await control.select(natal());delayed=true;
  const saturn=control.refreshStoredPackage(storedReturnsRef),uranus=control.refreshStoredPackage({...storedReturnsRef,family:'uranus'});await tick();
  waits.get('uranus')!(storedFamily('uranus'));await uranus;assert.deepEqual(control.state.readyBodies,['uranus']);
  waits.get('saturn')!(storedFamily());await saturn;assert.deepEqual(control.state.readyBodies,['saturn','uranus']);
  const late=control.refreshStoredPackage({...storedReturnsRef,family:'chiron'});await tick();account='2';waits.get('chiron')!(storedFamily('chiron'));await late;
  assert.deepEqual(control.state.readyBodies,['saturn','uranus']);
+ account='';delayed=false;const before=reads;await control.refreshStoredPackage(storedReturnsRef);assert.equal(reads,before,'a matching source without an account cannot read its packages');
 });
 
 test('a stored online family supplies pending dates without requesting or rendering another chart',async()=>{
- let finish!:(value:CycleEventsResult)=>void,aborted=false,requests=0,renders=0;
+ let finish!:(value:CycleEventsResult)=>void,aborted=false,requests=0,renders=0,charts=0;
  const control=createReturnsController({getOwner:packageOwner,onRender:()=>renders++,client:{
   events:async(input,signal)=>{requests++;if(input.body!=='saturn')return packet(input);signal?.addEventListener('abort',()=>aborted=true);return new Promise(resolve=>finish=resolve);},
-  readFamily:async()=>storedFamily(),chart:async()=>assert.fail('no exact chart request'),
- }});const selecting=control.select(natal());await tick();const initial=requests;renders=0;
- await control.refreshStoredPackage(storedReturnsRef);assert.equal(aborted,true);assert.equal(requests,initial);assert.equal(renders,0);
+  readFamily:async()=>storedFamily(),chart:async input=>{charts++;return chartPacket(event(input.body,input.eventUtc));},
+ }});const selecting=control.select(natal());await tick();await control.selectEvent(event('uranus').id);const current=control.current,initial=requests;renders=0;
+ await control.refreshStoredPackage(storedReturnsRef);assert.equal(aborted,true);assert.equal(requests,initial);assert.equal(renders,0);assert.equal(charts,1);assert.deepEqual(control.state.readyEvents,[],'online publication has no offline-only event markers');
  assert.ok(control.state.events.some(value=>value.id===event().id));assert.ok(!control.state.pendingBodies.includes('saturn'));
  finish(packet({body:'saturn',fromAge:0,toAge:centuryAge},[]));await selecting;await control.open();
- assert.equal(requests,initial);assert.ok(control.state.events.some(value=>value.id===event().id));assert.equal(control.current,null);
+ assert.equal(requests,initial);assert.ok(control.state.events.some(value=>value.id===event().id));assert.equal(control.current,current);
 });

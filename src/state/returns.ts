@@ -108,14 +108,14 @@ export function createReturnsController({ observe, connection = getConnectionMod
   function cancelSearches() {
     for (const record of records.values()) { cancelSearch(record);record.availability++;record.probe?.abort();record.probe=null;record.release?.(); record.release = null; }
   }
-  function acceptStoredFamily(part:StoredFamily|null) {
-    if(!part || part.version!==part.record.availability)return false;
+  function acceptStoredFamily(part:StoredFamily) {
+    if(part.version!==part.record.availability)return false;
     const {body,input,packet,record}=part;
     const wasReady=readyWholeBodies.has(body);
     if(packet)readyWholeBodies.add(body);else readyWholeBodies.delete(body);
     let changed=offline() && wasReady!==!!packet;
     if(packet && record.events===null){record.release?.();record.release=client.retainEvents?.(input,packet.dates)??null;record.events=packet.dates.events;changed=true;}
-    if(packet && (record.error || record.job)){cancelSearch(record);record.error=null;changed=true;}
+    if(packet && (record.error || record.job)){cancelSearch(record);record.error=null;}
     return changed;
   }
   function publishStoredFamilies() {
@@ -124,17 +124,16 @@ export function createReturnsController({ observe, connection = getConnectionMod
     emit();
   }
   async function readStoredFamily(owner:ChartRecord,destination:CycleOwner,body:string,
-    options:{signal:AbortSignal;owns:()=>boolean;observeOnly?:boolean;probe?:AbortController}):Promise<StoredFamily|null> {
+    options:{signal:AbortSignal;observeOnly?:boolean;probe?:AbortController}):Promise<StoredFamily> {
     const record=recordFor(body),version=++record.availability;record.probe?.abort();record.probe=options.probe??null;
     const input={birthUtc:owner.utc!,timezone:owner.timezone||'UTC',body,...cycleRangeForChart(owner)!};
     let packet:MajorReturnsPackage|null=null;
-    try{packet=await client.readFamily?.(input,destination,{signal:options.signal,observeOnly:options.observeOnly})??null;}catch{/* Optional device read. */}
+    try{packet=await client.readFamily(input,destination,{signal:options.signal,observeOnly:options.observeOnly});}catch{/* Optional device read. */}
     finally{if(record.probe===options.probe)record.probe=null;}
-    if(!options.owns() || !sameOwner(destination,ownerSnapshot(natal)))return null;
     return {body,input,packet,record,version};
   }
   async function refreshOwnedFamilies(owner:ChartRecord,destination:CycleOwner,signal:AbortSignal,owns:()=>boolean) {
-    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(body=>readStoredFamily(owner,destination,body,{signal,owns})));
+    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(body=>readStoredFamily(owner,destination,body,{signal})));
     if(!owns() || !sameOwner(destination,ownerSnapshot(natal)))return;
     availabilityJob=null;const changed=parts.map(acceptStoredFamily);if(changed.some(Boolean))publishStoredFamilies();
   }
@@ -142,10 +141,9 @@ export function createReturnsController({ observe, connection = getConnectionMod
     const owner=natal,destination=ownerSnapshot(owner);
     if(ref.kind!=='major-returns' || !available() || !destination
       || ref.sourceKey!==returnSourceKey({birthUtc:owner!.utc!,timezone:owner!.timezone||'UTC'}))return;
-    const probe=new AbortController(),version=generation;
-    const owns=()=>!probe.signal.aborted && version===generation && sameOwner(destination,ownerSnapshot(natal));
-    const part=await readStoredFamily(owner!,destination,ref.family,{signal:probe.signal,owns,probe,observeOnly:true});
-    if(owns() && acceptStoredFamily(part))publishStoredFamilies();
+    const probe=new AbortController();
+    const part=await readStoredFamily(owner!,destination,ref.family,{signal:probe.signal,probe,observeOnly:true});
+    if(sameOwner(destination,ownerSnapshot(natal)) && acceptStoredFamily(part))publishStoredFamilies();
   }
   async function refreshReadyCharts() {
     availabilityJob?.abort(); availabilityJob = null;

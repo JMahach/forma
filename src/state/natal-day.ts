@@ -67,7 +67,7 @@ export function createNatalDayExplorer({
     let result:NatalDay|null|undefined;
     try{result=await dayClient.readStoredDay?.(chart,{signal:probe.signal,observeOnly:true});}catch{return;}
     finally{if(storedProbe===probe)storedProbe=null;}
-    if(probe.signal.aborted || version!==availabilitySequence || chart!==original)return;
+    if(version!==availabilitySequence || chart!==original)return;
     const wasOpenable=canOpen(),prepared=!!result && !day;readyOnDevice=!!result;
     if(prepared){sequence++;active?.controller.abort();active=null;acceptDay(result!,chart!);}
     if(prepared || wasOpenable!==canOpen())notify();

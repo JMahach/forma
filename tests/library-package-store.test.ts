@@ -410,6 +410,10 @@ test('observing an owned day reads only its durable packet without migration or 
  let legacyReads=0;const client=createNatalDayClient({library:store,fetch:async()=>assert.fail('no HTTP'),persistentCache:{
   get:async()=>{legacyReads++;return bytes;},put:async()=>assert.fail('no legacy write'),remove:async()=>assert.fail('no migration removal'),touch:async()=>assert.fail('no use'),close:()=>{},
  }});
+ assert.equal(await client.readStoredDay(null,{observeOnly:true}),null);
+ assert.equal(await client.readStoredDay({...chart,accountId:undefined},{observeOnly:true}),null);
+ const withoutLibrary=createNatalDayClient({persistentCache:null,fetch:async()=>assert.fail('no HTTP')});
+ assert.equal(await withoutLibrary.readStoredDay(chart,{observeOnly:true}),null);
  assert.equal(await client.readStoredDay(chart,{observeOnly:true,opened:true}),null);assert.equal(legacyReads,0);
  await store.putPackage(lease,chart,dayRef,bytes);let reads=0;const read=store.readPackage;
  t.mock.method(store,'readPackage',(...args:Parameters<typeof read>)=>{reads++;assert.deepEqual(args[2],{opened:false,observeOnly:true});return read(...args);});

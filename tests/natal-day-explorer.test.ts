@@ -511,19 +511,26 @@ test('a late offline day readiness lookup cannot enable a different selected cha
 
 const storedDayRef={kind:'day' as const,sourceKey:JSON.stringify(['2026-09-24','UTC'])};
 test('stored day notice ignores another source and adopts one ready day without an opening request',async()=>{
- let reads=0,notifications=0,renders=0;const ready=natalDayFixture(),source=personalChartFixture({accountId:'1'});
- const explorer=createNatalDayExplorer({dayClient:{getDay:async()=>assert.fail('no HTTP'),readStoredDay:async(chart,options)=>{reads++;assert.equal(chart,source);assert.equal(options?.observeOnly,true);return ready;}},
-  onStateChange:()=>notifications++,onRender:()=>renders++});explorer.select(source);notifications=0;
- await explorer.refreshStoredPackage?.({kind:'day',sourceKey:'another'});await explorer.refreshStoredPackage?.({kind:'major-returns',sourceKey:storedDayRef.sourceKey,family:'saturn'});
- assert.equal(reads,0);assert.equal(notifications,0);
- await explorer.refreshStoredPackage?.(storedDayRef);assert.equal(reads,1);assert.equal(explorer.state.day,ready);assert.equal(renders,0);assert.equal(notifications,1);
- assert.equal(await explorer.open(),true);assert.equal(reads,1);assert.equal(explorer.state.status,'ready');assert.equal(explorer.state.current?.utc,source.utc);
+ for(const timezone of ['UTC','Europe/Berlin']){
+  let reads=0,notifications=0,renders=0;const ready=natalDayFixture({timezone}),source=personalChartFixture({accountId:'1',timezone});
+  const ref={...storedDayRef,sourceKey:JSON.stringify(['2026-09-24',timezone])};
+  const explorer=createNatalDayExplorer({dayClient:{getDay:async()=>assert.fail('no HTTP'),readStoredDay:async(chart,options)=>{reads++;assert.equal(chart,source);assert.equal(options?.observeOnly,true);return ready;}},
+   onStateChange:()=>notifications++,onRender:()=>renders++});explorer.select(source);notifications=0;
+  await explorer.refreshStoredPackage({kind:'day',sourceKey:'another'});await explorer.refreshStoredPackage({kind:'major-returns',sourceKey:ref.sourceKey,family:'saturn'});
+  assert.equal(reads,0);assert.equal(notifications,0);
+  await explorer.refreshStoredPackage(ref);assert.equal(reads,1);assert.equal(explorer.state.day,ready);assert.equal(renders,0);assert.equal(notifications,1);
+  assert.equal(await explorer.open(),true);assert.equal(reads,1);assert.equal(explorer.state.status,'ready');assert.equal(explorer.state.current?.utc,source.utc);
+  const guest={...source,accountId:undefined};explorer.select(guest);notifications=0;await explorer.refreshStoredPackage(ref);
+  assert.equal(reads,1,'a matching guest source does not probe account storage');assert.equal(notifications,0);
+ }
 });
 
 test('deleting a stored day preserves the held minute and a repeated notice does not repaint it',async()=>{
  const ready=natalDayFixture();let stored:NatalDay|null=ready,renders=0,updates=0;
  const explorer=createNatalDayExplorer({connection:()=> 'offline',dayClient:{getDay:async()=>assert.fail('no HTTP'),readStoredDay:async()=>stored},onStateChange:()=>updates++,onRender:()=>renders++});
- explorer.select(personalChartFixture({accountId:'1'}));await settle();await explorer.open();explorer.scrub(600);const current=explorer.current;updates=0;renders=0;stored=null;
+ explorer.select(personalChartFixture({accountId:'1'}));await settle();assert.equal(explorer.state.canOpen,true);assert.equal(explorer.state.day,null);
+ stored=null;updates=0;await explorer.refreshStoredPackage(storedDayRef);assert.equal(explorer.state.canOpen,false);assert.equal(updates,1,'removal before opening revokes readiness');
+ stored=ready;await explorer.refreshAvailability();await explorer.open();explorer.scrub(600);const current=explorer.current;updates=0;renders=0;stored=null;
  await explorer.refreshStoredPackage?.(storedDayRef);assert.equal(explorer.current,current);assert.equal(explorer.state.index,600);assert.equal(renders,0);assert.equal(updates,0);
  explorer.close();await settle();assert.equal(explorer.state.canOpen,false);
 });
@@ -535,6 +542,7 @@ test('a delayed stored day cannot cross a new account or a newer packet observat
  explorer.select(personalChartFixture({accountId:'2'}));waiting[0](natalDayFixture());await old;assert.equal(explorer.state.day,null);
  const first=explorer.refreshStoredPackage(storedDayRef),last=explorer.refreshStoredPackage(storedDayRef);await settle();
  waiting[2](null);await last;waiting[1](natalDayFixture());await first;assert.equal(explorer.state.day,null);
+ const metadata=explorer.refreshStoredPackage(storedDayRef);await settle();explorer.updateMetadata(personalChartFixture({accountId:'3'}));waiting[3](natalDayFixture());await metadata;assert.equal(explorer.state.day,null,'metadata replacement is checked even without select');
 });
 
 test('a stored day supersedes a pending calculation without changing the shown minute',async()=>{
