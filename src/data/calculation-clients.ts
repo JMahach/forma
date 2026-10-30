@@ -1,3 +1,4 @@
+import {createLocalDayTimeline} from '../domain/day-timeline.ts';
 import {createAccountLibraryStore} from './account-library-store.ts';
 import { createCalculationCache, type CalculationCache, type TransitWindow } from './calculation-cache.ts';
 import { createMemoryCache, type MemoryCache } from './memory-cache.ts';
@@ -53,6 +54,13 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
   const transit=createTransitDayClient({...transitOptions,days,memory});
   let closed=false,nextGeneration=0,cleanupTail:Promise<unknown>=Promise.resolve();
 
+  let today:ReturnType<typeof createLocalDayTimeline>|null=null;
+  function syncTodayTransitWindow(timeZone:string,now:number,refresh=false) {
+    if(closed)return;
+    if(!refresh && today && now<today.endUtc && now>=today.startUtc && today.timeZone===timeZone)return;
+    today=createLocalDayTimeline(now,timeZone);
+    return syncTransitWindow({dates:today.packetDates,expiresAt:today.endUtc});
+  }
   let windowSequence=0,windowTail:Promise<unknown>=Promise.resolve();
   function syncTransitWindow(window:TransitWindow):Promise<TransitWindowUpdate> {
     const target={dates:[...window.dates],expiresAt:window.expiresAt},sequence=++windowSequence;
@@ -192,7 +200,7 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
     transit,natal,cycles,memory,library,
     status:()=>cache.status(),
     evictForSpace:(kind:'natal'|'return-charts',keep:number,exclude?:string,isCurrent?:()=>boolean)=>current.clients.evictForSpace(kind,keep,exclude,isCurrent),
-    syncTransitWindow,
+    syncTransitWindow,syncTodayTransitWindow,
     resetPersonal(){
       cacheOptions?.pressure?.invalidate();
       if(closed)return Promise.resolve({status:'unavailable' as const,generation:current.id});

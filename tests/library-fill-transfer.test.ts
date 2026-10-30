@@ -31,7 +31,7 @@ test('the real clients, account store and fill owner restore two cards, one shar
  const transfer=createLibraryFillTransfer({store,charts,cycles,lease:()=>lease});let numericPuts=0,controlPuts=0;
  const original=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...args){if(['charts','packages'].includes(this.name))numericPuts++;if(this.name==='context' && value.key==='library-fill')controlPuts++;return original.call(this,value,...args);};
  t.after(()=>{IDBObjectStore.prototype.put=original;});
- const actor=createActor(createLibraryFill({...transfer,scope:()=>({lease,sessionId:'s',catalogMarker:'1',visible:true,foreground:false,online:true}),entries:()=>entries,
+ const actor=createActor(createLibraryFill({...transfer,clock:{now:Date.now,after(ms,run){const t=setTimeout(run,ms);return()=>clearTimeout(t);}},id:()=>crypto.randomUUID(),scope:()=>({lease,sessionId:'s',catalogMarker:'1',visible:true,foreground:false,online:true}),entries:()=>entries,
   control:store.fill,inventory:store.maintenance.inventory,accepted(candidate){notices.push(candidate.key);}})).start();t.after(()=>actor.stop());
  actor.send({type:'FillWake',at:Date.now(),reason:'lifecycle'});
  for(let i=0;notices.length<4 && i<500;i++)await flush();assert.equal(notices.length,4);

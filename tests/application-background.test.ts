@@ -9,6 +9,10 @@ import {accountChart} from './helpers/account-chart.ts';
 import {libraryRecordEntry} from '../src/state/library-reconciliation.ts';
 import type {FillReceipt} from '../src/application/library-fill.ts';
 import type {LibraryAuditPage} from '../src/domain/library-maintenance.ts';
+const clock={now:Date.now,after(ms:number,run:()=>void){const t=setTimeout(run,ms);return()=>clearTimeout(t);}};
+const defaults={clock,id:()=>crypto.randomUUID(),environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},release:null,journal:null,local:{changed(){},broadcast(){}}};
+const libraryDefaults={session:null,workingLease:null,completeCatalog:null,async load(){return {status:'inactive' as const};},async markOpened(){},async receive(){},async refreshLocal(){}};
+const idleCoordinator={start(){},update(){},stop(){}};
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 test('application children pause fill and local audit and discard their late results after stop',async t=>{
  const store=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>store.close());
@@ -16,11 +20,11 @@ test('application children pause fill and local audit and discard their late res
  const scope={lease:active.lease,sessionId:'session',catalogMarker:'1',visible:true,foreground:false,online:true},chart=accountChart();
  let fillSignal:AbortSignal|undefined,auditSignal:AbortSignal|undefined,receives=0,pages=0;
  let finishFill!:(reply:FillReceipt)=>void,finishAudit!:(page:LibraryAuditPage)=>void;
- const app=createApplication({runtimeId:'A',libraryFill:{
-  scope:()=>scope,entries:()=>[libraryRecordEntry(chart)],control:store.fill,inventory:store.maintenance.inventory,
+ const app=createApplication({runtimeId:'A',background:{...defaults,coordinator:idleCoordinator,environment:{...defaults.environment,busy:()=>scope.foreground},library:{...libraryDefaults,session:{accountId:'1',sessionId:'session'},workingLease:active.lease,completeCatalog:null}},libraryFill:{clock,id:defaults.id,
+  entries:()=>[libraryRecordEntry(chart)],control:store.fill,inventory:store.maintenance.inventory,
   present:async()=>false,receive:async(_candidate,signal)=>{receives++;fillSignal=signal;return new Promise<FillReceipt>(resolve=>{finishFill=resolve;});},
   place:async()=>assert.fail('a retired child cannot place its late packet'),
- },libraryAudit:{scope:()=>scope,store:{...store.maintenance,
+ },libraryAudit:{clock,id:defaults.id,store:{...store.maintenance,
   auditPage:async(_lease,_cursor,_limit,signal)=>{pages++;auditSignal=signal;return new Promise<LibraryAuditPage>(resolve=>{finishAudit=resolve;});},
  }}});t.after(()=>app.stop());app.start();
  app.send({type:'FillWake',at:Date.now(),reason:'library'});app.send({type:'AuditWake',at:Date.now()});
@@ -34,14 +38,14 @@ test('application children pause fill and local audit and discard their late res
 });
 test('the application owns background lifetime and dispatches only a current admitted task',async()=>{
  let receive:(request:BackgroundRequest)=>void=()=>{},updates=0,stops=0,calls=0,answer:unknown;
- const target={key:'app',scope:{kind:'app' as const}},controller=new AbortController();
+ const target={key:'app',scope:{kind:'app' as const},instance:'release'},controller=new AbortController();
  const authority={permit:{key:'app',token:'t',owner:'A',startedAt:1,expiresAt:30001},signal:controller.signal,current:async()=>!controller.signal.aborted};
- const application=createApplication({runtimeId:'A',background:{
+ const application=createApplication({runtimeId:'A',background:{...defaults,
   coordinator:{start(listener){receive=listener;},update(){updates++;},stop(){controller.abort();stops++;}},
-  tasks:()=>[{target,async run(){calls++;return {outcome:{kind:'success'}};}}],
+  release:{async check(){calls++;},observe(){},stop(){}},
  }});
  application.start();receive({kind:'check',target,authority,finish(result){answer=result;}});await tick();
- assert.equal(calls,1);assert.deepEqual(answer,{outcome:{kind:'success'}});
+ assert.equal(calls,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});
  application.send({type:'BackgroundChanged'});assert.equal(updates,2);
  await application.stop();await application.stop();assert.equal(stops,1);
  receive({kind:'check',target,authority,finish(){}});await tick();assert.equal(calls,1);
@@ -49,10 +53,9 @@ test('the application owns background lifetime and dispatches only a current adm
 test('unavailable coordination admits one initial library read per confirmed session and no retry on resume',async()=>{
  let receive:(request:BackgroundRequest)=>void=()=>{},sessionId='first',reads=0;
  const signal=new AbortController().signal;
- const application=createApplication({runtimeId:'A',background:{
+ const application=createApplication({runtimeId:'A',background:{...defaults,
   coordinator:{start(listener){receive=listener;},update(){receive({kind:'unavailable',signal});},stop(){}},
-  tasks:()=>[{target:{key:'library:1',scope:{kind:'library',accountId:'1'},sessionId},run:async()=>assert.fail('no shared permission'),
-   initial:async()=>{reads++;throw new Error('unavailable');}}],
+  library:{...libraryDefaults,get session(){return {accountId:'1',sessionId};},load:async()=>{reads++;throw new Error('unavailable');}},
  }});
  application.start();await tick();assert.equal(reads,1);
  application.send({type:'BackgroundChanged'});receive({kind:'unavailable',signal});await tick();assert.equal(reads,1);
@@ -66,8 +69,8 @@ test('without BroadcastChannel initial offline installation waits for visibility
   store:{read:async()=>null,update:async()=>null},
   lifecycle:{get active(){return active;},subscribe(listener){notify=()=>listener(true);return()=>{};}},
  });
- const application=createApplication({runtimeId:'A',background:{coordinator,
-  tasks:()=>[{target:{key:'app',scope:{kind:'app'}},initial:async()=>{installs++;},run:async()=>assert.fail('no shared update')}],
+ const application=createApplication({runtimeId:'A',background:{...defaults,coordinator,
+  release:{async install(){installs++;},check:async()=>assert.fail('no shared update'),observe(){},stop(){}},
  }});
  application.start();await tick();assert.equal(installs,0);
  active=true;notify();await tick();assert.equal(installs,1);
@@ -77,17 +80,42 @@ test('without BroadcastChannel initial offline installation waits for visibility
 
 test('a pending first install excludes a simultaneous shared release check',async()=>{
  let receive:(request:BackgroundRequest)=>void=()=>{},finishInstall!:()=>void,updates=0;
- const target={key:'app',scope:{kind:'app' as const}},signal=new AbortController().signal;
+ const target={key:'app',scope:{kind:'app' as const},instance:'release'},signal=new AbortController().signal;
  const authority={permit:{key:'app',token:'t',owner:'A',startedAt:1,expiresAt:30001},signal,current:async()=>true};
- const application=createApplication({runtimeId:'A',background:{
+ const application=createApplication({runtimeId:'A',background:{...defaults,
   coordinator:{start(listener){receive=listener;},update(){receive({kind:'foreground',signal});},stop(){}},
-  tasks:()=>[{target,initial:()=>new Promise<void>(resolve=>{finishInstall=resolve;}),
-   run:async()=>{updates++;return {outcome:{kind:'success'}};}}],
+  release:{install:()=>new Promise<void>(resolve=>{finishInstall=resolve;}),check:async()=>{updates++;},observe(){},stop(){}},
  }});
  application.start();let answer:unknown;
  receive({kind:'check',target,authority,finish(result){answer=result;}});await tick();
  assert.equal(updates,0);assert.deepEqual(answer,{outcome:{kind:'cancelled'}});
  finishInstall();await tick();
  receive({kind:'check',target,authority,finish(result){answer=result;}});await tick();
- assert.equal(updates,1);assert.deepEqual(answer,{outcome:{kind:'success'}});await application.stop();
+ assert.equal(updates,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});await application.stop();
+});
+
+test('update preparation blocks new background work and waits for actual usage writes',async()=>{
+ let preparing=false,finish!:()=>void,uses=0,idle=false,checks=0,receive:(request:BackgroundRequest)=>void=()=>{};
+ const library={...libraryDefaults,session:{accountId:'1',sessionId:'s'},workingLease:{accountId:'1',generation:'g'},completeCatalog:null,
+  markOpened(){uses++;return new Promise<void>(resolve=>{finish=resolve;});},async load(){return {status:'unchanged' as const,durable:false};}};
+ const app=createApplication({runtimeId:'barrier',background:{...defaults,library,
+  coordinator:{start(fn){receive=fn;},update(){},stop(){}},release:{async check(){checks++;},observe(){},stop(){}}},
+  update:{get preparing(){return preparing;},restored:()=>true,ready:()=>true,selection:()=>'',canRestore:()=>true,checkpoint:()=>true}});
+ app.start();app.send({type:'LibraryUsed',id:'one'});assert.equal(uses,1);
+ preparing=true;app.send({type:'LibraryUsed',id:'two'});assert.equal(uses,1);const barrier=app.whenBackgroundIdle().then(()=>{idle=true;});await tick();assert.equal(idle,false);
+ const authority={permit:{key:'app',owner:'A',token:'p',startedAt:1,expiresAt:30000},signal:new AbortController().signal,current:async()=>true};
+ receive({kind:'check',target:{key:'app',scope:{kind:'app'},instance:'release'},authority,finish(){}});await tick();assert.equal(checks,0);
+ finish();await barrier;assert.equal(idle,true);await app.stop();
+});
+
+test('cancelling update preparation preserves the consumed first-install allowance',async()=>{
+ let preparing=false,installs=0,receive:(request:BackgroundRequest)=>void=()=>{};
+ const signal=new AbortController().signal;
+ const app=createApplication({runtimeId:'allowance',background:{...defaults,
+  coordinator:{start(fn){receive=fn;},update(){receive({kind:'unavailable',signal});},stop(){}},
+  release:{async install(){installs++;},async check(){},observe(){},stop(){}}},
+  update:{get preparing(){return preparing;},restored:()=>true,ready:()=>true,selection:()=>'',canRestore:()=>true,checkpoint:()=>true}});
+ app.start();await tick();assert.equal(installs,1);
+ preparing=true;await app.whenBackgroundIdle();receive({kind:'foreground',signal});await tick();assert.equal(installs,1);
+ preparing=false;app.backgroundChanged();await tick();assert.equal(installs,1);await app.stop();
 });

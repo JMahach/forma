@@ -13,9 +13,9 @@ export interface LibraryFillPorts {
  receive(candidate:FillCandidate,signal:AbortSignal):Promise<FillReceipt>;
  place(candidate:FillCandidate,payload:unknown,authority:FillAuthority):Promise<FillPlacement>;
  accepted?(candidate:FillCandidate,payload:unknown,authority:FillAuthority):void;
- clock?:{now():number;after(ms:number,run:()=>void):()=>void};id?:()=>string;
+ clock:{now():number;after(ms:number,run:()=>void):()=>void};id:()=>string;
 }
-export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'};
+export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'}|{type:'FillIdle';complete():void};
 type Wake=Extract<LibraryFillEvent,{type:'FillWake'}>;
 interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortController;phase:'planning'|'waiting'|'receiving'|'placing'}
 const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,scope.catalogMarker]);
@@ -39,11 +39,13 @@ function failed(error:unknown):FillOutcome {
 }
 /** One account permit and one transient packet. Catalog/number owners remain behind ports. */
 class LibraryFill {
- private ports:LibraryFillPorts;private clock:NonNullable<LibraryFillPorts['clock']>;private owner:string;
- private active:FillRun|null=null;private pending:Wake|null=null;private paused:{key:string;wake:Wake}|null=null;private stopped=false;
+ private ports:LibraryFillPorts;private clock:LibraryFillPorts['clock'];private owner:string;
+ private active:FillRun|null=null;private pending:Wake|null=null;private paused:{key:string;wake:Wake}|null=null;private stopped=false;private idle=new Set<()=>void>();
+ whenIdle(complete:()=>void){if(this.active)this.idle.add(complete);else complete();}
+ private settled(){if(!this.active){for(const complete of this.idle)complete();this.idle.clear();}}
  constructor(ports:LibraryFillPorts){
-  this.ports=ports;this.clock=ports.clock??{now:Date.now,after(ms,run){const timer=setTimeout(run,ms);return()=>clearTimeout(timer);}};
-  this.owner=ports.id?.()??crypto.randomUUID();
+  this.ports=ports;this.clock=ports.clock;
+  this.owner=ports.id();
  }
  private current(run:FillRun){const scope=this.ports.scope();return !this.stopped && !run.controller.signal.aborted && eligible(scope) && scopeKey(scope)===run.key;}
  private online(run:FillRun){return this.current(run) && this.ports.scope()?.online===true;}
@@ -71,7 +73,7 @@ class LibraryFill {
  }
  private finished(run:FillRun){
   if(this.active===run)this.active=null;const next=this.pending;this.pending=null;
-  if(next)this.wake(next);else this.resume();
+  if(next)this.wake(next);else this.resume();this.settled();
  }
  private queue(event:Wake){if(!this.pending || this.pending.at<=event.at)this.pending=event;}
  private wait(run:FillRun,ms:number):Promise<boolean>{
@@ -82,7 +84,7 @@ class LibraryFill {
   });
  }
  private reserve(run:FillRun,candidate:FillCandidate){
-  const token=this.ports.id?.()??crypto.randomUUID();
+  const token=this.ports.id();
   return this.ports.control.update(run.scope.lease,control=>reserveFill(control,{candidate,lease:run.scope.lease,sessionId:run.scope.sessionId,
    owner:this.owner,token,now:this.clock.now(),occasion:run.wake.at,spaceRelief:run.wake.reason==='space' || run.wake.reason==='use'}));
  }
@@ -138,6 +140,6 @@ class LibraryFill {
  }
 }
 export function createLibraryFill(ports:LibraryFillPorts){return fromCallback<LibraryFillEvent>(({receive})=>{
- const owner=new LibraryFill(ports);receive(event=>event.type==='FillWake'?owner.wake(event):owner.changed());return()=>owner.stop();
+ const owner=new LibraryFill(ports);receive(event=>event.type==='FillWake'?owner.wake(event):event.type==='FillIdle'?owner.whenIdle(event.complete):owner.changed());return()=>owner.stop();
 });}
 

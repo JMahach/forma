@@ -9,9 +9,10 @@ function fixture(){
  let unavailable=false,readCount=0,writes=0,changes=0;let broken:boolean|string=false;const lease={accountId:'1',generation:'g'};
  const timers=new Map<number,{at:number;run():void}>(),pages:{cursor:LibraryAuditCursor|null;signal:AbortSignal}[]=[];
  let held:((value:LibraryAuditPage|null)=>void)|null=null,hold=false;
+ let holdRelease=false,releaseWrite:(()=>void)|undefined;
  const store={
   async readAuditCheckpoint(){readCount++;return structuredClone(checkpoint);},
-  async saveAuditCheckpoint(_lease:unknown,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint){writes++;if(unavailable)return 'unavailable' as const;if(JSON.stringify(checkpoint)!==JSON.stringify(expected))return 'superseded' as const;checkpoint=structuredClone(next);return 'stored' as const;},
+  async saveAuditCheckpoint(_lease:unknown,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint){if(holdRelease && !next.lease)await new Promise<void>(resolve=>{releaseWrite=resolve;});writes++;if(unavailable)return 'unavailable' as const;if(JSON.stringify(checkpoint)!==JSON.stringify(expected))return 'superseded' as const;checkpoint=structuredClone(next);return 'stored' as const;},
   async auditPage(_lease:unknown,cursor:LibraryAuditCursor|null,_limit:number,signal:AbortSignal){pages.push({cursor,signal});if(hold)return new Promise<LibraryAuditPage|null>(resolve=>{held=resolve;});if(broken===true || broken===cursor?.after)return null;
    return {checked:2,removed:0,next:cursor?.after==='second'?null:{phase:'charts' as const,after:cursor?.after?'second':'first'}};
   },
@@ -24,7 +25,7 @@ function fixture(){
   timers.delete(first[0]);now=first[1].at;first[1].run();
  }throw Error('unbounded audit loop');}
  return {actor,pages,advance,lease,peer:make,setCheckpoint(value:LibraryAuditCheckpoint){checkpoint=value;},wake(){actor.send({type:'AuditWake',at:now});},change(value:{visible?:boolean;foreground?:boolean;sessionId?:string}){visible=value.visible??visible;foreground=value.foreground??foreground;sessionId=value.sessionId??sessionId;actor.send({type:'AuditChanged'});},
-  hold(){hold=true;},release(page:LibraryAuditPage|null){hold=false;held?.(page);},failWrites(){unavailable=true;},failPages(after?:string){broken=after??true;},
+  holdRelease(){holdRelease=true;},releaseWrite(){holdRelease=false;releaseWrite?.();},hold(){hold=true;},release(page:LibraryAuditPage|null){hold=false;held?.(page);},failWrites(){unavailable=true;},failPages(after?:string){broken=after??true;},
   get checkpoint(){return checkpoint;},get writes(){return writes;},get readCount(){return readCount;},get changes(){return changes;},get timers(){return timers.size;}};
 }
 test('the local audit waits for a real occasion, yields bounded pages, and has no daily timer',async()=>{
@@ -151,4 +152,12 @@ test('an unchanged audit scope notice cannot cancel a live page',async()=>{
 test('a successful resumed audit page restores the retry allowance for the next page',async()=>{
  const f=fixture();f.failPages();f.wake();await f.advance(0);f.change({foreground:true});f.change({foreground:false});
  f.failPages('first');await f.advance(10000);assert.equal(f.pages.length,5);assert.equal(f.timers,0);f.actor.stop();
+});
+
+test('audit idle waits for a pending page and lease release after cancellation',async()=>{
+ const f=fixture();f.hold();f.holdRelease();f.wake();await f.advance(0);let idle=0;
+ f.change({foreground:true});f.actor.send({type:'AuditIdle',complete(){idle++;}});
+ await f.advance(0);assert.equal(idle,0);
+ f.release({checked:2,removed:1,next:null});await f.advance(0);assert.equal(idle,0,'lease release is still writing');
+ f.releaseWrite();await f.advance(0);assert.equal(idle,1);assert.equal(f.checkpoint?.lease,undefined);assert.equal(f.changes,0);f.actor.stop();
 });

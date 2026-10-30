@@ -153,3 +153,11 @@ test('a newer complete catalogue revokes the pending fill plan before any late p
  f.change({catalogMarker:'2'});assert.equal(f.signals[0].aborted,true);
  f.release({kind:'ready',payload:{}});await f.advance(0);assert.equal(f.placed.length,0);assert.equal(f.received.length,1);f.actor.stop();
 });
+
+test('fill idle waits for an already started placement and its control write after cancellation',async()=>{
+ const f=fixture();f.holdPlacement();f.wake();await f.advance(0);assert.equal(f.placed.length,1);
+ let idle=0;f.change({foreground:true});f.actor.send({type:'FillIdle',complete(){idle++;}});
+ await f.advance(0);assert.equal(idle,0,'an aborted signal is not a settled placement');
+ f.releasePlacement();await f.advance(0);assert.equal(idle,1);const writes=f.writes;
+ await f.advance(100000);assert.equal(f.writes,writes);assert.equal(f.received.length,1);f.actor.stop();
+});

@@ -258,3 +258,15 @@ test('superseded and closed transit window work cannot commit later',async t=>{
   const pending=h.owner.syncTransitWindow(h.window);await h.owner.close();
   assert.equal((await pending).status,'cancelled');assert.equal(h.calls(),0);
 });
+
+test('today transit window belongs to the client owner and skips repeated UI updates',async t=>{
+ const now=Date.parse('2026-10-26T12:00:00Z'),indexedDB=new IDBFactory();let observations=0;
+ const owner=createCalculationClients({cacheOptions:{indexedDB,now:()=>now},observe:()=>{observations++;return undefined;}});t.after(()=>owner.close());
+ await owner.syncTodayTransitWindow('Europe/Moscow',now);const before=observations;
+ for(let i=0;i<100;i++)assert.equal(owner.syncTodayTransitWindow('Europe/Moscow',now+i),undefined);
+ assert.equal(observations,before);const snapshot=await owner.status();
+ assert.ok('window' in snapshot);assert.deepEqual(snapshot.window?.dates,['2026-10-25','2026-10-26']);
+ await owner.syncTodayTransitWindow('Europe/Moscow',now,true);assert.equal(observations,before+1);
+ await owner.syncTodayTransitWindow('Europe/Moscow',now+86400000);assert.equal(observations,before+2);
+ await owner.close();assert.equal(owner.syncTodayTransitWindow('UTC',now),undefined);
+});

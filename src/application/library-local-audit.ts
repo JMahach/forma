@@ -6,9 +6,9 @@ export interface LibraryAuditPorts {
  store:{auditPage(lease:LibraryLease,cursor:LibraryAuditCursor|null,limit:number,signal:AbortSignal,expectedAudit?:LibraryAuditCheckpoint):Promise<LibraryAuditPage|null>;
   readAuditCheckpoint(lease:LibraryLease):Promise<LibraryAuditCheckpoint|null>;
   saveAuditCheckpoint(lease:LibraryLease,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint,signal?:AbortSignal):Promise<LibraryCheckpointWrite>};
- clock?:{now():number;after(ms:number,callback:()=>void):()=>void};id?:()=>string;pageSize?:number;changed?():void;
+ clock:{now():number;after(ms:number,callback:()=>void):()=>void};id:()=>string;pageSize?:number;changed?():void;
 }
-export type LibraryAuditEvent={type:'AuditWake';at:number}|{type:'AuditChanged'};
+export type LibraryAuditEvent={type:'AuditWake';at:number}|{type:'AuditChanged'}|{type:'AuditIdle';complete():void};
 const DAY=24*3600000,LEASE=30000;
 const recent=(at:number,now:number)=>at>0 && now>=at && now-at<DAY;
 function occupied(value:LibraryAuditCheckpoint|null,now:number){
@@ -31,16 +31,18 @@ interface AuditMemory {key:string;completedAt:number;failures:number;blockedUnti
 /** One cursor, never a second library. Timers belong only to the finite current walk. */
 class LocalAudit {
  private ports:LibraryAuditPorts;
- private clock:NonNullable<LibraryAuditPorts['clock']>;
+ private clock:LibraryAuditPorts['clock'];
  private owner:string;
  private active:AuditRun|null=null;
  private memory:AuditMemory|null=null;
  private pending:number|null=null;
  private paused:AuditRun|null=null;
- private stopped=false;
+ private stopped=false;private idle=new Set<()=>void>();
+ whenIdle(complete:()=>void){if(this.active)this.idle.add(complete);else complete();}
+ private settled(){if(!this.active){for(const complete of this.idle)complete();this.idle.clear();}}
  constructor(ports:LibraryAuditPorts){
-  this.ports=ports;this.clock=ports.clock??{now:Date.now,after(ms,run){const timer=setTimeout(run,ms);return()=>clearTimeout(timer);}};
-  this.owner=ports.id?.()??crypto.randomUUID();
+  this.ports=ports;this.clock=ports.clock;
+  this.owner=ports.id();
  }
  private current(run:AuditRun){
   const scope=this.ports.scope();
@@ -80,7 +82,7 @@ class LocalAudit {
  private async finished(run:AuditRun){
   await this.release(run);
   if(this.active===run)this.active=null;
-  const next=this.pending;this.pending=null;if(next!==null)this.wake(next);else this.continue();
+  const next=this.pending;this.pending=null;if(next!==null)this.wake(next);else this.continue();this.settled();
  }
  private async release(run:AuditRun){
   if(!run.persistent || run.expected?.lease?.owner!==this.owner)return;
@@ -151,7 +153,7 @@ class LocalAudit {
 export function createLibraryLocalAudit(ports:LibraryAuditPorts){
  return fromCallback<LibraryAuditEvent>(({receive})=>{
   const owner=new LocalAudit(ports);
-  receive(event=>event.type==='AuditWake'?owner.wake(event.at):owner.changed());
+  receive(event=>event.type==='AuditWake'?owner.wake(event.at):event.type==='AuditIdle'?owner.whenIdle(event.complete):owner.changed());
   return()=>owner.stop();
  });
 }
