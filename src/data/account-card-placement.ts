@@ -1,3 +1,4 @@
+import type {ChangedLibraryKeys} from './library-local-changes.ts';
 import {LibrarySpaceRelease,replaceAfterQuota,restoreCardUsage,type PlacementProgress} from './library-package-placement.ts';
 import {unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
 import {markLibraryMutation} from './library-catalog-store.ts';
@@ -8,7 +9,7 @@ import type { StoragePressure } from './storage-pressure.ts';
 
 interface Placement {
   database:Pick<ReturnType<typeof createIndexedDatabase>,'transactionResult'>;
-  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt?:number;pressure?:StoragePressure;marker?:string;
+  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt?:number;pressure?:StoragePressure;marker?:string;changed?:ChangedLibraryKeys;
 }
 function needsReplacement(value:unknown,chart:AccountChart) {
   try{return validateAccountChart(value,chart.accountId).revision<chart.revision;}catch{return true;}
@@ -18,7 +19,7 @@ function replaceWithinTransaction(tx:IDBTransaction,input:Placement,limit:number
   const {chart,openedAt,isCurrent}=input,rows=tx.objectStore('charts'),usage=tx.objectStore('usage');
   if(limit){
     new LibrarySpaceRelease(tx,{id:chart.id,kind:'card',chartIds:[chart.id],openedAt},
-      state.needsPayload?limit:0,isCurrent,fail,progress).start(()=>done(true));return;
+      state.needsPayload?limit:0,isCurrent,fail,progress,input.changed).start(()=>done(true));return;
   }
   try {
     if(state.needsPayload){rows.put(chart);unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);

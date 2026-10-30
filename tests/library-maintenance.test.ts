@@ -34,9 +34,10 @@ test('inventory reads only keys, refs and use; retained eviction is not presente
 });
 test('audit is bounded, sees current replacements, and marks completion only after the full walk',async t=>{
  const f=await fixture(t);assert.ok(f.store.maintenance);
+ const changes:{keys:string[]}[]=[];f.store.subscribeLocal(change=>changes.push(change));
  await f.change(tx=>tx.objectStore('charts').put({...accountNatalChart(2),accountId:'foreign'}));
  const first=await f.store.maintenance.auditPage(f.lease,null,1);assert.equal(first?.checked,1);assert.ok(first?.next);
- assert.equal(await f.store.maintenance.readAuditCheckpoint(f.lease),null);
+ assert.equal(await f.store.maintenance.readAuditCheckpoint(f.lease),null);assert.deepEqual(changes,[]);
  // A valid replacement lands after the preceding page, before this row is examined.
  await f.change(tx=>tx.objectStore('charts').put({...accountNatalChart(2),revision:2}));
  let cursor:LibraryAuditCursor|null=first!.next,removed=0,checked=1;
@@ -49,10 +50,12 @@ test('audit is bounded, sees current replacements, and marks completion only aft
 });
 test('audit discards confirmed corruption while keeping intentional eviction and current-account data',async t=>{
  const f=await fixture(t);assert.ok(f.store.maintenance);
+ const changes:{keys:string[]}[]=[];f.store.subscribeLocal(change=>changes.push(change));
  await f.change(tx=>{tx.objectStore('packages').put({id:libraryPackageId(ref),payload:new ArrayBuffer(3)});tx.objectStore('charts').put({...accountNatalChart(2),accountId:'foreign'});});
  let cursor=null,removed=0;
  do{const page=await f.store.maintenance.auditPage(f.lease,cursor,2);assert.ok(page);removed+=page.removed;cursor=page.next;}while(cursor);
- assert.equal(removed,2);assert.equal(await f.store.readPackage(f.lease,ref),null);assert.equal((await f.store.read())?.charts.length,1);
+ assert.equal(removed,2);assert.deepEqual(changes.flatMap(change=>change.keys).sort(),[libraryPackageId(ref),accountNatalChart(2).id].sort());
+ assert.equal(await f.store.readPackage(f.lease,ref),null);assert.equal((await f.store.read())?.charts.length,1);
  const second=await f.store.activate('2');if(second.status!=='stored')throw Error('owner');await f.store.put(second.lease,[accountNatalChart(3,'2')]);
  assert.equal(await f.store.maintenance.auditPage(f.lease,null,20),null);assert.equal((await f.store.read())?.charts.length,1);
 });
@@ -71,12 +74,13 @@ test('quota eviction retains an explicit card marker and successful acquisition 
 
 test('a lost payload is repaired as a miss, an intentional miss stays marked, and orphan bytes are retired',async t=>{
  const f=await fixture(t),id=libraryPackageId(ref);const otherRef={kind:'day' as const,sourceKey:'["2000-01-02","UTC"]'},otherId=libraryPackageId(otherRef);
+ const changes:{keys:string[]}[]=[];f.store.subscribeLocal(change=>changes.push(change));
  await f.change(tx=>{
-  tx.objectStore('packages').delete(id);
   tx.objectStore('packageMetadata').put({id,ref,chartIds:[card.id,accountNatalChart(2).id],evicted:true});
   tx.objectStore('packages').put({id:otherId,payload:bytes()});
  });
  const page=await f.store.maintenance.auditPage(f.lease,null,100);assert.equal(page?.next,null);assert.equal(page?.removed,1);
+ assert.deepEqual(changes.flatMap(value=>value.keys).sort(),[id,otherId].sort(),'retiring leftover bytes is announced even while intentional eviction metadata survives');
  const inventory=await f.store.maintenance.inventory(f.lease);assert.equal(inventory?.packages[0]?.evicted,true);
  await f.change(tx=>tx.objectStore('packageMetadata').put({id,ref,chartIds:[card.id]}));
  const lost=await f.store.maintenance.auditPage(f.lease,null,100);assert.equal(lost?.removed,1);
@@ -127,14 +131,20 @@ test('invalid source references in eviction markers are removed instead of becom
 
 test('a corrupt card loses its package link in the same bounded page and invalid continuation cannot choose a store',async t=>{
  const f=await fixture(t);
+ const changes:{keys:string[]}[]=[];f.store.subscribeLocal(change=>changes.push(change));
  assert.throws(()=>f.store.maintenance.auditPage(f.lease,{phase:'elsewhere'} as never,1),TypeError);
  await f.change(tx=>tx.objectStore('charts').put({...card,accountId:'foreign'}));
  const page=await f.store.maintenance.auditPage(f.lease,null,1);assert.equal(page?.removed,1);
  const inventory=await f.store.maintenance.inventory(f.lease);assert.deepEqual(inventory?.packages[0]?.chartIds,[accountNatalChart(2).id]);
+ assert.deepEqual(changes.flatMap(value=>value.keys),[card.id],'a surviving shared packet has not changed');
+ changes.length=0;await f.change(tx=>tx.objectStore('charts').put({...accountNatalChart(2),accountId:'foreign'}));
+ await f.store.maintenance.auditPage(f.lease,null,100);
+ assert.deepEqual(changes.flatMap(value=>value.keys).sort(),[accountNatalChart(2).id,libraryPackageId(ref)].sort(),'removing the final owner also announces its retired packet');
 });
 
 test('audit cancellation aborts a queued transaction without deleting a corrupt record',async t=>{
  const f=await fixture(t);await f.change(tx=>tx.objectStore('charts').put({...card,accountId:'foreign'}));
+ const changes:unknown[]=[];f.store.subscribeLocal(change=>changes.push(change));
  const controller=new AbortController(),original=IDBObjectStore.prototype.get;
  IDBObjectStore.prototype.get=function(key){const request=original.call(this,key);if(this.name==='charts')queueMicrotask(()=>controller.abort());return request;};
  try{assert.equal(await f.store.maintenance.auditPage(f.lease,null,1,controller.signal),null);}finally{IDBObjectStore.prototype.get=original;}
@@ -142,7 +152,7 @@ test('audit cancellation aborts a queued transaction without deleting a corrupt 
  const value=await new Promise<any>(resolve=>{read.onsuccess=()=>resolve(read.result);});assert.equal(value.accountId,'foreign');
  const stopped=new AbortController();stopped.abort();
  assert.equal(await f.store.maintenance.saveAuditCheckpoint(f.lease,null,{runId:'late',cursor:null,completedAt:1234},stopped.signal),'unavailable');
- assert.equal(await f.store.maintenance.readAuditCheckpoint(f.lease),null);
+ assert.equal(await f.store.maintenance.readAuditCheckpoint(f.lease),null);assert.deepEqual(changes,[]);
 });
 test('audit ownership survives checkpoint persistence and malformed leases cannot be accepted',async t=>{
  const f=await fixture(t),value={runId:'r',cursor:{phase:'charts' as const},completedAt:0,lease:{owner:'tab',expiresAt:30000}};

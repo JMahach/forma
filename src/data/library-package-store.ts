@@ -1,3 +1,4 @@
+import {trackLibraryChanges,type ChangedLibraryKeys} from './library-local-changes.ts';
 import {LibrarySpaceRelease,replaceAfterQuota,type PlacementProgress} from './library-package-placement.ts';
 import type {FillAuthority} from '../domain/library-fill.ts';
 import {admitFillTransaction} from './library-fill-store.ts';
@@ -34,7 +35,7 @@ export function validLibraryPayload(ref:LibraryPartRef,payload:unknown):payload 
 }
 
 /** Links belong to explicit record identity. Removing one never removes another card's numbers. */
-export function unlinkLibraryPackages(tx:IDBTransaction,chartId:string,replacement?:AccountChart) {
+export function unlinkLibraryPackages(tx:IDBTransaction,chartId:string,replacement?:AccountChart,changed?:(key:string)=>void) {
  const metadata=tx.objectStore('packageMetadata'),cursor=metadata.index('cards').openCursor(chartId);
  cursor.onsuccess=()=>{
   const entry=cursor.result;if(!entry)return;
@@ -42,7 +43,7 @@ export function unlinkLibraryPackages(tx:IDBTransaction,chartId:string,replaceme
   if(!replacement || !matchesChart(row.ref,replacement)) {
    const chartIds=row.chartIds.filter(id=>id!==chartId);
    if(chartIds.length)entry.update({...row,chartIds});
-   else {entry.delete();tx.objectStore('packages').delete(row.id);tx.objectStore('usage').delete(row.id);}
+   else {entry.delete();tx.objectStore('packages').delete(row.id);tx.objectStore('usage').delete(row.id);changed?.(row.id);}
   }
   entry.continue();
  };
@@ -63,13 +64,13 @@ export function linkLibraryPackages(tx:IDBTransaction,chart:AccountChart) {
 
 // Only confirmed damage starts a write. Recheck inside that transaction so a
 // replacement from another tab cannot be removed after our earlier read.
-function discardBrokenPackage(database:Database,seen:LibraryLease,ref:LibraryPartRef) {
+function discardBrokenPackage(database:Database,seen:LibraryLease,ref:LibraryPartRef,changed?:ChangedLibraryKeys) {
  return database.transaction('readwrite',(tx)=>{
   const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
    if(!sameLibraryLease(owner.result,seen))return;
    const rows=tx.objectStore('packages'),id=libraryPackageId(ref),read=rows.get(id);read.onsuccess=()=>{
     if(!read.result || validLibraryPayload(ref,read.result.payload))return;
-    rows.delete(id);tx.objectStore('packageMetadata').delete(id);tx.objectStore('usage').delete(id);
+    rows.delete(id);tx.objectStore('packageMetadata').delete(id);tx.objectStore('usage').delete(id);trackLibraryChanges(tx,changed)(id);
    };
   };
  });
@@ -84,8 +85,9 @@ class LibraryPackageOwner {
  private database:Database;
  private pressure:StoragePressure|undefined;
  private now:()=>number;
- constructor(database:Database,pressure:StoragePressure|undefined,now:()=>number) {
-  this.database=database;this.pressure=pressure;this.now=now;
+ private changed:((lease:LibraryLease)=>ChangedLibraryKeys)|undefined;
+ constructor(database:Database,pressure:StoragePressure|undefined,now:()=>number,changed?:((lease:LibraryLease)=>ChangedLibraryKeys)) {
+  this.database=database;this.pressure=pressure;this.now=now;this.changed=changed;
  }
  private async read(seen:LibraryLease,ref:LibraryPartRef,openedAt?:number) {
   const id=libraryPackageId(ref);let validated=false;
@@ -101,12 +103,15 @@ class LibraryPackageOwner {
   });
   return {result,validated};
  }
- async readPackage(seen:LibraryLease,ref:LibraryPartRef,{opened=false}:{opened?:boolean}={}) {
+ async readPackage(seen:LibraryLease,ref:LibraryPartRef,{opened=false,observeOnly=false}:{opened?:boolean;observeOnly?:boolean}={}) {
   seen={...seen};ref={...ref};
+  if(observeOnly){
+   const read=await this.read(seen,ref);return read.result===null?null:read.result.payload;
+  }
   let {result,validated}=await this.read(seen,ref,opened?Math.max(1,this.now()):undefined);
   // A failed use mark must not hide numbers. Obtain fresh read-only proof once.
   if(!result && validated && opened)({result}=await this.read(seen,ref));
-  if(result?.broken)await discardBrokenPackage(this.database,seen,ref);
+  if(result?.broken)await discardBrokenPackage(this.database,seen,ref,this.changed?.(seen));
   return result?.payload??null;
  }
  async touchPackage(seen:LibraryLease,ref:LibraryPartRef):Promise<boolean> {
@@ -127,13 +132,14 @@ class LibraryPackageOwner {
   const {id,ref,payload,openedAt,isCurrent}=input;
   const linked=linksCurrent(prior,chartIds);
   if(limit){
-   new LibrarySpaceRelease(tx,{id,kind:ref.kind,chartIds,openedAt},input.needsPayload?limit:0,isCurrent,fail,progress)
+   new LibrarySpaceRelease(tx,{id,kind:ref.kind,chartIds,openedAt},input.needsPayload?limit:0,isCurrent,fail,progress,this.changed?.(input.seen))
     .start(()=>done('stored'));return;
   }
   try {
    if(input.needsPayload)tx.objectStore('packages').put({id,payload});
    if(!linked)tx.objectStore('packageMetadata').put({id,ref,chartIds});
    if(openedAt!==undefined)tx.objectStore('usage').put({id,openedAt});
+   if(input.needsPayload)trackLibraryChanges(tx,this.changed?.(input.seen))(id);
    done(linked && !input.needsPayload?'no-op':'stored');
   }catch(error){fail(error);}
  }
@@ -178,7 +184,7 @@ class LibraryPackageOwner {
 }
 
 /** Private facade over the account owner's transaction, never a second database. */
-export function createLibraryPackageStore(database:Database,{pressure,now=Date.now}:{pressure?:StoragePressure;now?:()=>number}={}) {
- const owner=new LibraryPackageOwner(database,pressure,now);
+export function createLibraryPackageStore(database:Database,{pressure,now=Date.now,changed}:{pressure?:StoragePressure;now?:()=>number;changed?:(lease:LibraryLease)=>ChangedLibraryKeys}={}) {
+ const owner=new LibraryPackageOwner(database,pressure,now,changed);
  return {readPackage:owner.readPackage.bind(owner),putPackage:owner.putPackage.bind(owner),touchPackage:owner.touchPackage.bind(owner)};
 }

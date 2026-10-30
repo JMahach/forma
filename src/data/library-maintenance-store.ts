@@ -1,3 +1,4 @@
+import {trackLibraryChanges,type ChangedLibraryKeys} from './library-local-changes.ts';
 import type {PackageRef} from '../../shared/library-package-contract.ts';
 import {validateAccountChart} from '../domain/account-chart.ts';
 import type {LibraryLease,LibraryInventory,LibraryUsage,LibraryAuditCursor,LibraryAuditPage,LibraryAuditCheckpoint,LibraryCheckpointWrite} from '../domain/library-maintenance.ts';
@@ -64,9 +65,9 @@ function readInventory(tx:IDBTransaction,seen:LibraryLease,done:(value:LibraryIn
 function removePackage(tx:IDBTransaction,id:IDBValidKey) {
  tx.objectStore('packages').delete(id);tx.objectStore('packageMetadata').delete(id);tx.objectStore('usage').delete(id);
 }
-function auditCard(tx:IDBTransaction,key:IDBValidKey,value:unknown,seen:LibraryLease,done:(removed:boolean)=>void) {
+function auditCard(tx:IDBTransaction,key:IDBValidKey,value:unknown,seen:LibraryLease,done:(removed:boolean)=>void,changed:(key:string)=>void) {
  try{const chart=validateAccountChart(value,seen.accountId);if(chart.id!==key)throw Error('identity');done(false);}
- catch{tx.objectStore('charts').delete(key);if(typeof key==='string')unlinkLibraryPackages(tx,key);done(true);}
+ catch{tx.objectStore('charts').delete(key);if(typeof key==='string')unlinkLibraryPackages(tx,key,undefined,changed);done(true);}
 }
 function matchingKeys(tx:IDBTransaction,ref:LibraryPackageMetadata['ref']):IDBRequest<IDBValidKey[]>|null {
  try{
@@ -95,26 +96,28 @@ function auditLinks(tx:IDBTransaction,row:LibraryPackageMetadata,done:(removed:b
   });
  };
 }
-function auditMetadata(tx:IDBTransaction,key:IDBValidKey,value:unknown,done:(removed:boolean)=>void) {
+function auditMetadata(tx:IDBTransaction,key:IDBValidKey,value:unknown,done:(removed:boolean)=>void,changed:(key:string)=>void) {
  if(!metadata(value) || value.id!==key){removePackage(tx,key);done(true);return;}
  const row=value,read=tx.objectStore('packages').get(row.id);
  read.onsuccess=()=>{
-  if(row.evicted){if(read.result)tx.objectStore('packages').delete(row.id);auditLinks(tx,row,done);return;}
+  if(row.evicted){if(read.result){tx.objectStore('packages').delete(row.id);changed(row.id);}auditLinks(tx,row,done);return;}
   if(!validLibraryPayload(row.ref,read.result?.payload)){removePackage(tx,row.id);done(true);return;}
   auditLinks(tx,row,done);
  };
 }
-function auditEntry(tx:IDBTransaction,phase:LibraryAuditCursor['phase'],key:IDBValidKey,seen:LibraryLease,done:(removed:boolean)=>void) {
+function auditEntry(tx:IDBTransaction,phase:LibraryAuditCursor['phase'],key:IDBValidKey,seen:LibraryLease,done:(removed:boolean)=>void,changed:(key:string)=>void) {
  if(phase==='packages') {
   const ref=tx.objectStore('packageMetadata').getKey(key);ref.onsuccess=()=>{const orphan=ref.result===undefined;if(orphan)tx.objectStore('packages').delete(key);done(orphan);};return;
  }
- const read=tx.objectStore(phase).get(key);read.onsuccess=()=>phase==='charts'?auditCard(tx,key,read.result,seen,done):auditMetadata(tx,key,read.result,done);
+ const read=tx.objectStore(phase).get(key);read.onsuccess=()=>phase==='charts'?auditCard(tx,key,read.result,seen,done,changed):auditMetadata(tx,key,read.result,done,changed);
 }
 const nextPhase=(phase:LibraryAuditCursor['phase']):LibraryAuditCursor|null=>phase==='charts'?{phase:'packageMetadata'}:phase==='packageMetadata'?{phase:'packages'}:null;
 class AuditWalk {
  private result:LibraryAuditPage;
+ private changed:(key:string)=>void;
  private tx:IDBTransaction;private seen:LibraryLease;private limit:number;private done:(value:LibraryAuditPage)=>void;
- constructor(tx:IDBTransaction,seen:LibraryLease,limit:number,done:(value:LibraryAuditPage)=>void,start:LibraryAuditCursor){
+ constructor(tx:IDBTransaction,seen:LibraryLease,limit:number,done:(value:LibraryAuditPage)=>void,start:LibraryAuditCursor,changed?:ChangedLibraryKeys){
+  this.changed=trackLibraryChanges(tx,changed);
   this.tx=tx;this.seen=seen;this.limit=limit;this.done=done;this.result={checked:0,removed:0,next:start};
  }
  private finishPhase(position:LibraryAuditCursor){
@@ -123,10 +126,10 @@ class AuditWalk {
  }
  private visit(position:LibraryAuditCursor,row:IDBCursor){
   auditEntry(this.tx,position.phase,row.primaryKey,this.seen,removed=>{
-   this.result.checked++;if(removed)this.result.removed++;
+   this.result.checked++;if(removed){this.result.removed++;if(typeof row.primaryKey==='string')this.changed(row.primaryKey);}
    const after=typeof row.key==='string'?row.key:position.after;this.result.next={phase:position.phase,...(after===undefined?{}:{after})};
    if(this.result.checked>=this.limit){this.done(this.result);return;}row.continue();
-  });
+  },this.changed);
  }
  scan(position:LibraryAuditCursor){
   const request=this.tx.objectStore(position.phase).openKeyCursor();request.onsuccess=()=>{
@@ -139,7 +142,8 @@ class AuditWalk {
 /** Small cursored reads use the same account transaction; no second library or cached readiness. */
 class LibraryMaintenanceStore {
  private database:Database;
- constructor(database:Database){this.database=database;}
+ private changed:((lease:LibraryLease)=>ChangedLibraryKeys)|undefined;
+ constructor(database:Database,changed?:((lease:LibraryLease)=>ChangedLibraryKeys)){this.database=database;this.changed=changed;}
   contains(seen:LibraryLease,ref:PackageRef,chartId:string,revision:number):Promise<boolean>{
    seen={...seen};
    if(ref.kind==='card')return this.readCard(seen,chartId).then(value=>!!value && value.revision>=revision);
@@ -156,7 +160,7 @@ class LibraryMaintenanceStore {
    if(!validCursor(cursor) || !Number.isInteger(limit) || limit<1 || limit>100)throw new TypeError('Invalid audit page');
    seen={...seen};const position=cursor?{...cursor}:{phase:'charts' as const};
    return owned(this.database,seen,'readwrite',(tx,done)=>{
-    const scan=()=>new AuditWalk(tx,seen,limit,done,position).scan(position);
+    const scan=()=>new AuditWalk(tx,seen,limit,done,position,this.changed?.(seen)).scan(position);
     if(expectedAudit===undefined){scan();return;}
     const read=tx.objectStore('context').get(AUDIT);read.onsuccess=()=>{
      if(sameLibraryLease(read.result,seen) && JSON.stringify(checkpoint(read.result.value))===JSON.stringify(expectedAudit))scan();
@@ -182,8 +186,8 @@ class LibraryMaintenanceStore {
    }).then(value=>value??'unavailable');
   }
 }
-export function createLibraryMaintenanceStore(database:Database) {
- const store=new LibraryMaintenanceStore(database);
+export function createLibraryMaintenanceStore(database:Database,changed?:((lease:LibraryLease)=>ChangedLibraryKeys)) {
+ const store=new LibraryMaintenanceStore(database,changed);
  return {contains:store.contains.bind(store),readCard:store.readCard.bind(store),inventory:store.inventory.bind(store),auditPage:store.auditPage.bind(store),
   readAuditCheckpoint:store.readAuditCheckpoint.bind(store),saveAuditCheckpoint:store.saveAuditCheckpoint.bind(store)};
 }

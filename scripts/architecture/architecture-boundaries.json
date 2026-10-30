@@ -377,6 +377,7 @@
         "src/data/library-catalog-store.ts",
         "src/data/background-check-store.ts",
         "src/data/library-maintenance-store.ts",
+        "src/data/library-local-changes.ts",
         "src/data/library-fill-store.ts"
       ],
       "publicEntries": [
@@ -409,6 +410,7 @@
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting.",
         "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner.",
         "src/data/background-check-store.ts": "Shared check control and atomic catalogue permission live in the existing library database; callers receive its narrow background store port.",
+        "src/data/library-local-changes.ts": "Committed storage key hints are emitted by the account library facade; no independent cache or transport.",
         "src/data/library-maintenance-store.ts": "Bounded account inventory and integrity scans are exposed only through the account library facade.",
         "src/data/library-fill-store.ts": "Shared fill permission and placement guards stay behind the existing account library facade."
       }

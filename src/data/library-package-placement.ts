@@ -1,3 +1,4 @@
+import {trackLibraryChanges,type ChangedLibraryKeys} from './library-local-changes.ts';
 import type {PackageRef} from '../../shared/library-package-contract.ts';
 import type {LibraryPackageMetadata} from './account-library-schema.ts';
 import type {IndexedResult} from './indexed-db.ts';
@@ -45,12 +46,14 @@ function selectVictims(keys:IDBValidKey[],packages:LibraryPackageMetadata[],mark
 /** This transaction contains only intentional eviction and its ownership marks.
  * Failure rolls back this batch; a later failed payload write cannot restore it. */
 export class LibrarySpaceRelease {
+ private changed:(key:string)=>void;
  private victims:Victim[]|undefined;
  private next=0;
  private tx:IDBTransaction;private incoming:Candidate;private limit:number;private progress:PlacementProgress;
  private isCurrent:()=>boolean;private fail:(cause?:unknown)=>void;
  constructor(tx:IDBTransaction,incoming:Candidate,limit:number,isCurrent:()=>boolean,fail:(cause?:unknown)=>void,
-  progress:PlacementProgress={released:0,remaining:false,ready:false}) {
+  progress:PlacementProgress={released:0,remaining:false,ready:false},changed?:ChangedLibraryKeys) {
+  this.changed=trackLibraryChanges(tx,changed);
   this.tx=tx;this.incoming=incoming;this.limit=limit;this.isCurrent=isCurrent;this.fail=fail;this.progress=progress;
  }
  private release(retry:()=>void) {
@@ -69,7 +72,7 @@ export class LibrarySpaceRelease {
   // final card can then release the mark; an evicted row is never a new victim.
   const removed=this.tx.objectStore(victim.kind==='card'?'charts':'packages').delete(victim.id);
   removed.onsuccess=()=>{
-   this.progress.released++;
+   this.progress.released++;this.changed(victim.id);
    try {
     if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=retry;
     else this.tx.objectStore('usage').put({id:victim.id,openedAt:victim.used,evicted:true}).onsuccess=retry;

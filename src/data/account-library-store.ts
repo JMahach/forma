@@ -1,3 +1,4 @@
+import {createLibraryLocalChanges} from './library-local-changes.ts';
 import type { StoragePressure } from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createRandomId } from '../domain/chart-record.ts';
@@ -27,12 +28,13 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
   const database = createIndexedDatabase({databaseName, version: 8, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
-  const catalog=createLibraryCatalogStore(database,now);
+  const catalog=createLibraryCatalogStore(database,now),local=createLibraryLocalChanges();
   return {
+    subscribeLocal:local.subscribeLocal,
     background:createBackgroundCheckStore(database),
     fill:createLibraryFillStore(database),
-    maintenance:createLibraryMaintenanceStore(database),
-    ...createLibraryPackageStore(database,{pressure,now}),
+    maintenance:createLibraryMaintenanceStore(database,local.changed),
+    ...createLibraryPackageStore(database,{pressure,now,changed:local.changed}),
     readCatalog:catalog.readCatalog,
     async putCatalog(base:LibraryCatalogBase,snapshot:LibraryCatalogSnapshot,authority?:CheckAuthority) {
       const saved=await catalog.putCatalog(base,snapshot,authority);
@@ -128,7 +130,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           if(stored)return {status:'partial',lease:{...seen},changed};
           if(pressure){result=await pressure.write(()=>write([chart]),{accountLibrary:true});recovered=true;}
           if(result.status==='quota') {
-            const replacement=await replaceCardAfterQuota({database,chart,isOwner:owner=>same(owner,seen),isCurrent:isCurrent??(()=>true),marker});
+            const replacement=await replaceCardAfterQuota({database,chart,isOwner:owner=>same(owner,seen),isCurrent:isCurrent??(()=>true),marker,changed:local.changed(seen)});
             if(replacement.saved){result={status:'complete',value:{status:'stored',lease:{...seen},changed:replacement.changed}};recovered=true;}
           }
         }
@@ -169,7 +171,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           };
         };
       });
-      return present==='stored' || present==='missing' && !!chart && await placeOpenedCard({database,isOwner:owner=>same(owner,seen),isCurrent,chart,openedAt,pressure,marker});
+      return present==='stored' || present==='missing' && !!chart && await placeOpenedCard({database,isOwner:owner=>same(owner,seen),isCurrent,chart,openedAt,pressure,marker,changed:local.changed(seen)});
     },
     async remove(seen: LibraryLease, chartId: string,marker?:string,proof:'absence'|'deleted'='absence'): Promise<LibraryStoreResult|{status:'superseded'}> {
       const saved=await database.transaction<LibraryStoreResult|{status:'superseded'}>('readwrite', (tx, result) => {
@@ -229,7 +231,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       if(cleared==='cleared' && admitted?.accountId===accountId)admitted=null;
       return cleared;
     },
-    close: database.close,
+    close(){local.close();database.close();},
   };
 }
 export type AccountLibraryStore = ReturnType<typeof createAccountLibraryStore>;
