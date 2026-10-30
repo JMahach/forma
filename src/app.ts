@@ -108,9 +108,15 @@ import { studioPresentation } from './ui/studio-presentation.ts';
 // Composition root: each feature owns its state; these callbacks connect them.
 export function startApp({ connection, journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
   const scope=createResourceScope();
+  try {
+  scope.own(()=>calculationClients?.close?.());
+  scope.own(()=>account.destroy?.());
+  scope.own(()=>journal?.close?.());
+  scope.own(()=>layout.destroy());
   const connectionMode = connection ? () => connection.current : getConnectionMode;
   const observeConnection = connection ? (listener: Parameters<ConnectionSource['subscribe']>[0]) => connection.subscribe(listener) : subscribeConnection;
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
+  if(!viewCheckpoint)scope.own(checkpoint.destroy);
   let application: Application | null = null;
   let lastLibraryWork='',pendingLibraryUses=0;
   let releaseCheck:ReleaseCheckPort|null=null,publicCheckKey='',publicCheckInstance='';
@@ -171,6 +177,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     leftControls: document.querySelector<HTMLElement>('.topbar-leading')!, rightControls: document.querySelector<HTMLElement>('.chart-tools')!,
     getMandalaTop: () => $('canvasWrap').getBoundingClientRect().top + layout.mandalaTop,
   });
+  scope.own(headingLayout.destroy);
   let hoverPreview: ReturnType<typeof attachHoverPreview> | null = null;
   let chartSummary: ReturnType<typeof attachChartSummary> | null = null;
   let mandalaMode: ReturnType<typeof attachMandalaMode> | null = null;
@@ -184,6 +191,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   let lifetimeLoading: Promise<LifetimeExplorer | null> | null = null, lifetimeLoadFailed = false;
   let returns: ReturnType<typeof createReturnsController> | null = null, returnsView: ReturnsPanel | null = null;
   let returnsViewLoading: Promise<ReturnsPanel | null> | null = null;
+  scope.own(()=>{transit?.stop();natalDay?.select(null);lifetime?.close();returns?.select(null);});
   let returnMarkers: ReturnType<typeof attachReturnMarkers> | null = null;
   let exploration: ReturnType<typeof createChartExploration> | null = null, timelineLayoutKey = '';
   let phoneLayout = layout.phone, mandalaColumns = layout.showMandalaColumns;
@@ -265,6 +273,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const gestures = startupGestures || attachGestures($('bodygraph'), gestureHandlers);
   if (startupGestures) gestures.setHandlers(gestureHandlers);
   const activationHover = attachActivationHover($('bodygraph'));
+  scope.own(activationHover.dispose);
   hoverPreview = attachHoverPreview($('bodygraph'), {
     surface: $('canvasWrap'),
     resolvePreview: mandalaPreviewFromPointer, resolveKeyboard: mandalaPreviewFromFocus,
@@ -290,6 +299,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     viewport: $('canvasWrap'), onUpdate: () => activationPopover.reposition(),
     onFinish: enabled => mandalaMode?.finishTransition(enabled),
   });
+  scope.own(mandalaMotion.dispose);
   mandalaMode = attachMandalaMode({
     button: $('mandalaSwitch'), canvas: $('canvasWrap'), gestures, render: renderGraph,
     motion: mandalaMotion, layout, onStateChange: () => viewSession?.schedule(),
@@ -333,6 +343,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const libraryStorage = calculationClients?.library ?? createAccountLibraryStore({pressure: storagePressure});
   let backgroundChannel:BroadcastChannel|null=null;
   try{backgroundChannel=new window.BroadcastChannel('forma-background-checks');}catch{/* Automatic work pauses without shared coordination. */}
+  scope.own(()=>{releaseCheck?.stop();releaseCheck=null;offlineListeners.clear();libraryChannel?.close();backgroundChannel?.close();});
   const pageLifecycle=createPageLifecycle({events:window,visibility:document,online:()=>connectionMode()==='online',subscribeConnection:observeConnection});
   const backgroundCoordinator=createBackgroundCoordinator({owner:crypto.randomUUID(),store:libraryStorage.background,channel:backgroundChannel,lifecycle:pageLifecycle});
   storagePressure?.setSources({
@@ -343,6 +354,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const accountLibrary = createAccountLibrary({client: chartClient, storage: libraryStorage,
     online: () => connectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
+  scope.own(()=>accountLibrary.close());
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   let privateLibraryShown = false, librarySelection = 0;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
@@ -487,9 +499,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const libraryReady = (async () => {
     try{await accountLibrary.restore();}catch(error){if((error as {code?:string})?.code!=='account_changed')throw error;}
     await account.ready;
-    if(application!.view.lifecycle!=='running')return;
+    if(scope.stopped || application!.view.lifecycle!=='running')return;
     await application!.requestSession(account.getSession());
-    if(application!.view.lifecycle!=='running')return;
+    if(scope.stopped || application!.view.lifecycle!=='running')return;
     libraryInitialized=true;
     if (!accountLibrary.storageAvailable) toast('Хранилище браузера недоступно. Изменения не будут сохранены.');
   })();
@@ -500,6 +512,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
+  scope.own(()=>chartLibrary?.dispose());
   const allCharts = attachAllCharts({ button: $('openAllCharts'), dialog: $('allChartsDialog'),
     list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => chartLibrary.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
@@ -590,6 +603,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     ranges: [$('transitTime'), $('natalDayTime'), $('lifetimeTime')],
     motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('natalDayReference')],
   });
+
+  scope.own(performanceMonitor.destroy);
 
   function updateChartCaption() {
     if (workspace.screen !== 'chart') { captionPending = true; return; }
@@ -793,6 +808,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     }
   }, {signal:scope.signal});
   const layoutObserver = createLayoutObserver(() => refreshStudioLayout());
+  scope.own(()=>layoutObserver.disconnect());
   layoutObserver.observe($('canvasWrap'));
   const savedChart=store.get(savedView?.selectedId!);
   const savedTarget=eligibleCycleChart(savedChart) && savedView?.lifetime?.opened?personalTimelineTarget(savedChart):null;
@@ -987,7 +1003,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     subscribeSession(listener){return account.subscribeSession(()=>listener(account.getSession()));},
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
     begin:beginAccountBoundary,
-    stop(){application?.send({type:'CancelPublicRefresh'});accountLibrary.close();},
+    stop(){application?.send({type:'CancelPublicRefresh'});},
   },route(request) {
       const route = request.snapshot.route!;
       const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
@@ -1044,6 +1060,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         dispose() { observation?.finishSuccess(); },
       };
     }});
+    scope.own(()=>application!.stop());
     scope.own(application.subscribe(updateLoading));
     application.start();
   scope.own(accountLibrary.subscribe(projectAccountLibrary));
@@ -1276,25 +1293,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
-  scope.own(()=>calculationClients?.close?.());
-  scope.own(()=>account.destroy?.());
-  scope.own(()=>journal?.close?.());
-  scope.own(()=>layout.destroy());
-  scope.own(checkpoint.destroy);
-  scope.own(headingLayout.destroy);
-  scope.own(()=>layoutObserver.disconnect());
-  scope.own(activationHover.dispose);
-  scope.own(mandalaMotion.dispose);
-  scope.own(performanceMonitor.destroy);
-  scope.own(()=>chartLibrary?.dispose());
-  scope.own(()=>{transit?.stop();natalDay?.select(null);lifetime?.close();returns?.select(null);});
-  scope.own(()=>{releaseCheck?.stop();releaseCheck=null;offlineListeners.clear();libraryChannel?.close();backgroundChannel?.close();});
+  // The startup owner keeps its checkpoint if assembly throws before handoff.
+  if(viewCheckpoint)scope.own(checkpoint.destroy);
   const offlineRestored = () => application!.isRestored();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
     attachReleaseCheck(port:ReleaseCheckPort){if(scope.stopped){port.stop();return;}releaseCheck?.stop();releaseCheck=port;application?.send({type:'BackgroundChanged'});},
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate:()=>application!.prepareUpdate(),
-    stopApplication: () => {const stopping=application?.stop();return Promise.all([stopping,scope.stop()]).then(()=>{});},
+    stopApplication: scope.stop,
     flushView: () => viewSession!.flush(),
     attachJournal(value:AppJournal){
       if(scope.stopped){void value.close?.();return;}
@@ -1305,4 +1311,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       if(lastJournalAccount===null || current!==lastJournalAccount || journalBoundaryPending)journal.setAccount(current,account.getSession()?.sessionId,account.getSession()?.diagnosticProof);
       journalBoundaryPending=false;journalBoundaryIds.clear();application?.send({type:'BackgroundChanged'});
     } };
+  } catch(error) {
+    void scope.stop().catch(cleanupError=>console.error('Application cleanup failed',cleanupError));
+    throw error;
+  }
 }

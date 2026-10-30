@@ -85,6 +85,7 @@ import type { ChartView, ChartComposition, ChartInput } from '../src/domain/char
 import type { attachLifetimeControls } from '../src/views/lifetime-controls.ts';
 import type { attachReturnsPanel, ReturnsPanelState } from '../src/views/returns-panel.ts';
 interface HarnessOptions {
+  failAtMonitor?:Error; onRelease?:(owner:string)=>void;
   connection?: ConnectionSource;
   copyText?: (text: string) => Promise<void>;
   transitStart?: () => Promise<boolean>;
@@ -256,7 +257,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,readyDay:unexpected,catalog:unexpected,confirmCatalog:async input=>({kind:'confirmed',accountId:input.expectedAccountId,marker:input.marker}),...overrides};
 }
-function harness({storedNatalClient, connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   let backgroundTimeOffset=0;
   let hovered = false, notifyHover: () => void = noop;
@@ -349,8 +350,8 @@ function harness({storedNatalClient, connection, copyText, transitStart = async 
         return { attachKnowledge: page => ({ snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('knowledge');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
       } });
     },
-    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop, destroy:noop }),
-    attachActivationHover: () => ({ clear: clearActivationHover, dispose: noop }),
+    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop, destroy:()=>onRelease('heading') }),
+    attachActivationHover: () => ({ clear: clearActivationHover, dispose: () => onRelease('hover') }),
     attachHoverPreview: (_svg, options) => {
       assert.equal(options.onClear, clearActivationHover, 'preview dismissal also clears its decorative activation highlight');
       notifyHover = () => options.onPreview?.({type: 'gate', id: 1});
@@ -390,7 +391,7 @@ function harness({storedNatalClient, connection, copyText, transitStart = async 
       Observer: class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} disconnect() {} } as unknown as typeof ResizeObserver,
       requestFrame: callback => {resizeFrames.set(++resizeFrameId, callback); return resizeFrameId;}, cancelFrame: id => {resizeFrames.delete(id);},
     }),
-    createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop, destroy:noop }),
+    createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop, destroy:()=>onRelease('heading') }),
     attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
     attachLiveTransit: (options) => {
       transitOptions = options;
@@ -405,7 +406,7 @@ function harness({storedNatalClient, connection, copyText, transitStart = async 
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value: boolean) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: storedNatalClient??{ getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { performanceOptions = options; return {destroy:noop}; },
+    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { if(failAtMonitor)throw failAtMonitor;performanceOptions = options; return {destroy:noop}; },
     attachChartLoading: options => {loadingOptions=options;return {update: (value: Record<string,unknown>) => {loadingState=value;}};}, createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
@@ -3003,4 +3004,14 @@ test('a late first install does not wait an hour after the journal already check
  await h.restoration;await tick();await tick();
  h.attachReleaseCheck({async install(){installs++;},async check(){},observe(){},stop(){}});
  await tick();assert.equal(installs,1);
+});
+
+
+test('a partial application start releases already acquired resources',async()=>{
+ const failure=new Error('monitor attach failed'),released:string[]=[];
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()});let closes=0;
+ const close=storage.close;storage.close=()=>{closes++;close();};
+ assert.throws(()=>harness({libraryStorage:storage,failAtMonitor:failure,onRelease:owner=>released.push(owner)}),failure);
+ await tick();await tick();
+ assert.deepEqual(released.sort(),['heading','hover']);assert.equal(closes,1);
 });
