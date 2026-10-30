@@ -5,6 +5,7 @@ import type { LiveTransit } from './live-transit.ts';
 import type { NatalDayExplorer } from './natal-day.ts';
 import type { MomentTimeline } from './moment-timeline.ts';
 import type { ReturnsController } from './returns.ts';
+export type ChartChange = 'moment' | 'record';
 export type ChartOwner = 'original' | 'natal-day' | 'transit' | 'lifetime' | 'return';
 export type ChartSession = ReturnType<typeof createChartSession>;
 interface ChartSessionOptions {
@@ -17,7 +18,7 @@ interface ChartSessionOptions {
   filterTransit?: (chart: ChartInput) => ChartInput;
   resetTransitFilter?: () => void;
   onSelect?: (record: SavedChart | null) => void;
-  onChange?: () => void;
+  onChange?: (change:ChartChange) => void;
 }
 
 import { createChartComposition } from '../domain/chart-composition.ts';
@@ -39,7 +40,7 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
   let baseChart = record ? extractChartData(record) : emptyMoment;
   let accepted = createChartComposition(baseChart, { id: selectedId, primaryLabel: record?.name || 'Транзит' }), hasCurrent = store.has(selectedId);
   let acceptedSource = baseChart, acceptedKind: ChartOwner = 'original';
-  function refresh() { if (!selecting) onChange(); }
+  function refresh(change:ChartChange='moment') { if (!selecting) onChange(change); }
   function expect(kind: ChartOwner) {
     if (!owners.has(kind)) throw new TypeError(`Unknown chart owner: ${kind}`);
     owner = kind; return owner;
@@ -87,7 +88,7 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
       getTransit()?.setWanted(id === 'current-transit');
       if (id === 'current-transit' && getTransit()?.current) accept('transit', getTransit()!.current);
     } finally { selecting = false; }
-    refresh();
+    refresh('record');
   }
   return {
     get selectedId() { return selectedId; },
@@ -113,12 +114,12 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
         selectedId=id;record=next;getNatalDay()?.updateMetadata(next);
         accept(acceptedKind,acceptedKind==='original'?baseChart:acceptedSource,accepted.event);
       }finally{selecting=false;}
-      refresh();return true;
+      refresh('record');return true;
     },
     refreshRecord(reselect:(id:string)=>void=select) {
       const next = store.get(selectedId);
       if (!next) return false;
-      if(next===record){refresh();return true;}
+      if(next===record)return true;
       if(!record || record.utc!==next.utc || record.activations!==next.activations
         && JSON.stringify(record.activations)!==JSON.stringify(next.activations)){reselect(selectedId);return true;}
       selecting = true;
@@ -130,7 +131,7 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
           : acceptedKind === 'natal-day' ? getNatalDay()!.state.current : acceptedSource;
         accept(acceptedKind, source, accepted.event);
       } finally { selecting = false; }
-      refresh(); return true;
+      refresh('record'); return true;
     },
     select,
   };

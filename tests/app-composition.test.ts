@@ -1,3 +1,4 @@
+import {createChartToolsView} from '../src/views/chart-tools-view.ts';
 import {createChartEditing} from '../src/application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from '../src/domain/library-maintenance.ts';
 import {createNatalDayClient} from '../src/data/natal-day-client.ts';
@@ -108,7 +109,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice'> & Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/views/chart-tools-view.ts'),'createChartToolsView'> & Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice'> & Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -310,6 +311,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   let finishModule!: (value: unknown) => void, failModule!: (error: unknown) => void;
   let loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   let performanceOptions!: PortOptions<'attachPerformanceMonitor'>;
+  let libraryUpdates=0, catalogUpdates=0;
   let captionUpdates = 0, workspace!: ReturnType<typeof createWorkspaceState>, panels!: ReturnType<typeof createPanelState>;
   let knowledgeOptions!: PortOptions<'attachKnowledgeEntry'>, knowledgeLoads = 0, restoreInterrupted = false;
   const module = new Promise<unknown>((resolve, reject) => { finishModule = resolve; failModule = reject; });
@@ -319,6 +321,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   const copyNotice = {dispose() {copyNotice.close();}, revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
+    createChartToolsView:options=>{const update=options.heading.updateText;options.heading.updateText=(...args)=>{captionUpdates++;return update(...args);};return createChartToolsView(options);},
     createApplication,createChartEditing,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
@@ -337,7 +340,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     createLocalDayTimeline, viewForRoute, createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent, commitLoadingLayout,
     attachAllCharts: (options) => {
       const view = attachAllCharts({ ...options, preview: (_canvas, _chart, { onReady } = {}) => { onReady!(true); return noop; } });
-      const traced={...view,restoreInputFocus(){inputRestores.push('charts');return view.restoreInputFocus();}};
+      const traced={...view,update(){catalogUpdates++;return view.update();},restoreInputFocus(){inputRestores.push('charts');return view.restoreInputFocus();}};
       return chartsReady ? { ...traced, whenReady: chartsReady } : traced;
     },
     createNatalDayClient: (options) => { assert.equal(options!.memory, memory); return natalClient; },
@@ -446,6 +449,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   camera.reset();
   const cameraView = { surface: element('canvasWrap'), paint: noop };
   const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document } as unknown as Parameters<typeof createChartLibraryView>[0]);
+  const updateLibrary=libraryView.update;libraryView.update=(...args)=>{libraryUpdates++;return updateLibrary(...args);};
   const calculationClients = onPersonalReset || personalCleanup || syncTransitWindow ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
     resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTransitWindow,...personalCleanup} : undefined;
   const application=startApp({ connection, journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
@@ -473,6 +477,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: (selector: string) => selector === '[data-chart-id]' ? button : null } });
     }, get shown() { return graph.getChart() as ChartComposition; }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
+    get libraryUpdates(){return libraryUpdates;},get catalogUpdates(){return catalogUpdates;},
     get interruptions() { return interruptions; }, get captionUpdates() { return captionUpdates; },
     filter: (id: string) => gestures.onSelect!({ type: 'planet-filter' as const, id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
@@ -644,7 +649,10 @@ test('clock updates, day and lifetime scrubs, and exact returns preserve the exp
   const exploring = h.camera.getView();
   h.clockTick();
   assert.deepEqual(h.camera.getView(), exploring);
+  const libraryBefore=h.libraryUpdates,catalogBefore=h.catalogUpdates;
   h.natalDay.scrub(800);
+  assert.equal(h.libraryUpdates-libraryBefore,0,'a moment change does not update library rows');
+  assert.equal(h.catalogUpdates-catalogBefore,0,'a moment change does not update the catalog');
   assert.equal(h.shown.utc, '2026-09-24T13:20:00Z');
   assert.deepEqual(h.camera.getView(), exploring);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();

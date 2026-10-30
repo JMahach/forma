@@ -654,12 +654,12 @@ test('record refresh owns source changes and skips unchanged personal consumers'
   getNatalDay:()=>({updateMetadata(){metadata++;},select(){},close(){},state:{current:null}}),
   getReturns:()=>({select(){returns++;},exit(){}}),onChange:()=>{changes++;}});
  assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
- assert.deepEqual({changes,metadata,returns},{changes:1,metadata:0,returns:0});
+ assert.deepEqual({changes,metadata,returns},{changes:0,metadata:0,returns:0});
  current={...current,name:'Changed name'};assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
- assert.deepEqual({changes,metadata,returns},{changes:2,metadata:1,returns:1});assert.equal(reselections.length,0);
+ assert.deepEqual({changes,metadata,returns},{changes:1,metadata:1,returns:1});assert.equal(reselections.length,0);
  current=structuredClone(current);assert.equal(session.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,0);
  current={...current,utc:'2000-01-01T00:00:00Z'};assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
- assert.deepEqual(reselections,[current.id]);assert.equal(changes,3,'source replacement belongs to the selection command');
+ assert.deepEqual(reselections,[current.id]);assert.equal(changes,2,'source replacement belongs to the selection command');
  assert.equal(metadata,2,'new numerical data must not enter the metadata-only path');
  current={...current,utc:libraryRecordAtMinute(natalDayFixture(),0).utc,activations:{...current.activations!,personality:[]}};
  assert.equal(session.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,2);assert.equal(metadata,2);

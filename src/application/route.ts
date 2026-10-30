@@ -14,7 +14,7 @@ export function showChart(port:RoutePort,id:string,keepMenuOpen=false) {
 }
 export function publishRoute(port:RoutePort,navigation:NavigationPort|undefined,route:AppRoute,replace=false) {
   if(!navigation)return;
-  port.view.interrupt();navigation.navigate(route,{replace,origin:'publication'});port.view.settled();
+  port.view.interrupt();navigation.navigate(route,{replace,origin:'publication'});
 }
 const unavailable=(error:unknown)=>['offline','connection_failed','server_unavailable'].includes((error as {code?:string})?.code??'');
 async function readPublicChart(port:RoutePort,id:string,signal:AbortSignal,current:()=>boolean) {
@@ -37,6 +37,7 @@ async function missing(ports:ApplicationPorts,request:RouteRequest,signal:AbortS
   port.sources.clearPublic(route.id);showChart(port,'current-transit');
   publishRoute(port,ports.navigation,{kind:'transit'},true);port.view.checkpoint();
   if(!request.initial)return;
+  port.view.settled();
   const redirected=ports.navigation!.snapshot,ready=await port.view.firstTransit();
   if(!signal.aborted && ports.navigation!.isCurrent(redirected))port.view.transitReady(ready!==false);
 }

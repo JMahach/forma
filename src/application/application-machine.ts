@@ -94,6 +94,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         if(!event.fromRoute)publishRoute(ports.route,ports.navigation,event.screen==='chart'
           ?routeForChart(ports.route,ports.route.session.selectedId):{kind:event.screen});
       },
+      settled:()=>ports.route?.view.settled(),
       clear: assign({request: null}),
       boundary:({event,self})=>{
         if(event.type!=='AccountBoundaryStarted')return;
@@ -182,9 +183,9 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
                 actions: 'requested',
               },
               OpenChartRequested:{guard:()=>!!ports.route,target:'.preparing',reenter:true,actions:'chosen'},
-              RoutePublished: {target: '.idle', actions: ['clear', 'published']},
-              ChartSelected:{target:'.idle',actions:['clear','selected']},
-              WorkspaceRequested:{target:'.idle',actions:['clear','workspace']},
+              RoutePublished: {target: '.idle', actions: ['clear', 'published', 'settled']},
+              ChartSelected:{target:'.idle',actions:['clear','selected','settled']},
+              WorkspaceRequested:{target:'.idle',actions:['clear','workspace','settled']},
             },
             states: {
               idle: {},

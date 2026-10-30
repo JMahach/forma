@@ -37,6 +37,7 @@ function fixture(adapter: 'memory' | 'browser', pathname = '/chart/1234567890',w
   const reads: {signal: AbortSignal; release: () => void;fail:(error:Error)=>void}[] = [];
   const applied: string[] = [], failures: unknown[] = [];
   const store=createChartStore();
+  let settled=0;
   let disposals=0,offline=false,selected='current-transit',ownReads=0,holdOwn=false;
   const edited:string[]=[];
   const own=new Map<string,ReturnType<typeof accountChart>>();
@@ -47,13 +48,13 @@ function fixture(adapter: 'memory' | 'browser', pathname = '/chart/1234567890',w
       const {accountId,note,noteRevision,publicRevision,...chart}=accountChart();resolve({...chart,id});
     }}));},
     session:{get selectedId(){return selected;}},
-    view:{workspace(){},select(id){selected=id;applied.push(id);},resetCamera(){},edit(id){edited.push(id);},interrupt(){},settled(){},checkpoint(){},
+    view:{workspace(){},select(id){selected=id;applied.push(id);},resetCamera(){},edit(id){edited.push(id);},interrupt(){},settled(){settled++;},checkpoint(){},
       report:error=>failures.push(error),firstTransit:async()=>true,transitReady(){},markOpened(){},publicRead(){}},
     observe:()=>({failed(){},finish(){disposals++;}}),
   }});
 
   const application = createRuntime();
-  return {application, createRuntime, navigation, reads, applied, failures, location, store,own,edited,holdOwn(){holdOwn=true;},offline(value:boolean){offline=value;},get ownReads(){return ownReads;},get disposals() {return disposals;}};
+  return {application, createRuntime, navigation, reads, applied, failures, location, store,own,edited,holdOwn(){holdOwn=true;},offline(value:boolean){offline=value;},get settled(){return settled;},get ownReads(){return ownReads;},get disposals() {return disposals;}};
 }
 
 for (const adapter of ['memory', 'browser'] as const) {
@@ -117,6 +118,7 @@ test(`${adapter}: the same core chooses an owned card or the exact offline publi
  h.store.acceptPublic({...publicChart,id:'2345678901'});h.offline(true);
  h.navigation.navigate({kind:'chart',id:'2345678901'});await h.application.requestRoute(h.navigation.snapshot);
  assert.equal(h.reads.length,0);assert.deepEqual(h.applied,[own.id,'2345678901']);
+ const completed=h.settled;await h.application.openChart(own.id);assert.equal(h.settled-completed,1,'one completion per library opening');
  await h.application.stop();h.navigation.destroy();
 });
 
