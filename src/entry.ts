@@ -51,13 +51,19 @@ try {
         void page.check();
       };
       await observe();
-      startup.connectReleaseCheck({async check(signal){
+      const install=async(signal:AbortSignal)=>{
+        if(stopped || signal.aborted)return;
+        registration??=await navigator.serviceWorker.getRegistration('/');
+        if(stopped || signal.aborted)return;
+        registration??=await navigator.serviceWorker.register('/service-worker.js',{scope:'/',updateViaCache:'none'});
+        if(!signal.aborted)await observe();
+      };
+      startup.connectReleaseCheck({install,async check(signal){
         if(stopped || signal.aborted)return;
         registration??=await navigator.serviceWorker.getRegistration('/');
         if(stopped || signal.aborted)return;
         if(registration){await observe();if(!stopped && !signal.aborted)await page?.refresh(signal);}
-        else registration=await navigator.serviceWorker.register('/service-worker.js',{scope:'/',updateViaCache:'none'});
-        if(!signal.aborted)await observe();
+        else await install(signal);
       },observe(){void observe().catch(()=>{});},stop(){stopped=true;page?.dispose();}});
       void startup.offlineReady().then(observe).catch(()=>{});
     })().catch(()=>{}); }

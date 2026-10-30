@@ -32,7 +32,7 @@ function fixture(unavailable=false){
    return result;
   }};
   const coordinator=createBackgroundCoordinator({owner,store:ownerStore,lifecycle,channel:channel(),clock:{...clock,after(ms,fn){return clock.after(ms,()=>{if(!frozen)fn();});}},id:()=>`${owner}-${++id}`});
-  coordinator.start(request=>{if(request.kind!=='check'){received.push(request);return;}counts[request.target.key]=(counts[request.target.key]??0)+1;
+  coordinator.start(request=>{if(request.kind==='foreground')return;if(request.kind!=='check'){received.push(request);return;}counts[request.target.key]=(counts[request.target.key]??0)+1;
    if(running.has(request.target.key)){running.set(request.target.key,request);return;}
    request.finish({outcome:{kind:'success'}});
   });

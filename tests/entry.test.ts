@@ -246,3 +246,18 @@ test('release discovers updates once without reloading before restoration',async
  assert.equal(h.shell.dataset.refreshes,'1','one application permission performs one release discovery');
  assert.ok(Number(h.shell.dataset.checks)>=1,'known worker is checked locally');assert.equal(h.reloads,0);
 });
+
+for(const existing of [false,true])test(`initial offline allowance only installs a missing worker: existing=${existing}`,async t=>{
+ let installs=0;
+ const registration={} as ServiceWorkerRegistration;
+ const h=await runEntry(t,`document.querySelector('.app-shell').dataset.shellReady='true';
+   export function connectReleaseCheck(port){void port.install(new AbortController().signal);}
+   export function offlineReady(){return new Promise(()=>{});}`,false,{
+  release:true,serviceWorkers:{getRegistration:async()=>existing?registration:undefined,register:async()=>{installs++;return registration;}},
+  offlineSource:`export function holdOfflineInput(){} export function attachOfflinePage(){
+   return {check:async()=>{const shell=document.querySelector('.app-shell');shell.dataset.checks=String(Number(shell.dataset.checks??0)+1);},
+    refresh:async()=>{throw Error('initial allowance must not update');},dispose(){}};}`,
+ });
+ assert.equal(installs,existing?0:1);assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.reloads,0);
+ assert.equal(h.shell.dataset.checks,existing?'2':'1','the initial port observes the installed worker locally');
+});

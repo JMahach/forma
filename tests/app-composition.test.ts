@@ -440,7 +440,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
     offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
-    attachJournal:application.attachJournal,saveShown:application.saveShownChart,cancelSave:application.cancelChartSave,
+    attachJournal:application.attachJournal,attachReleaseCheck:application.attachReleaseCheck,saveShown:application.saveShownChart,cancelSave:application.cancelChartSave,
     get pendingWrites() {return savedSnapshot?.pendingChartWrites;},
     setBirthDraft(value: SavedView['birthForm']) {birthDraft=value;birthOptions.onDraftChange?.();},
     flushView:application.flushView,get savedBirthDraft(){return savedSnapshot?.birthForm;},
@@ -2847,4 +2847,35 @@ test('a lazy moment module arriving after stop cannot create a new controller',a
  await h.element('lifetimeToggle').click();await h.stopApplication();
  h.finishModule();await tick();
  assert.equal(h.lifetime,undefined,'closed runtime cannot acquire late resources');
+});
+
+test('late offline installer receives one foreground allowance when shared storage is unavailable',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:null}),probe=journalProbe();
+ let mode:ConnectionSource['current']='offline',installs=0,checks=0,stops=0;
+ const listeners=new Set<(mode:ConnectionSource['current'])=>void>(),connection:ConnectionSource={get current(){return mode;},subscribe(fn){listeners.add(fn);return()=>{listeners.delete(fn);};}};
+ const h=harness({libraryStorage:storage,journal:probe.journal,connection});t.after(()=>h.stopApplication());
+ await h.restoration;await tick();
+ h.attachReleaseCheck({async install(){installs++;},async check(){checks++;},observe(){},stop(){stops++;}});
+ await tick();assert.equal(installs,0,'offline startup waits for an eligible foreground');
+ mode='online';for(const listener of listeners)listener(mode);await tick();await tick();
+ assert.equal(installs,1);assert.equal(checks,0,'the fallback does not authorize a release update');
+ for(let n=0;n<3;n++){h.userInput('visibilitychange');h.attachJournal(probe.journal);await tick();}
+ assert.equal(installs,1);assert.equal(checks,0);
+ await h.stopApplication();assert.equal(stops,1);
+});
+
+test('an installer attached after unavailable app coordination is already paused still receives its allowance',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:null}),probe=journalProbe();let installs=0;
+ const h=harness({libraryStorage:storage,journal:probe.journal});t.after(()=>h.stopApplication());
+ await h.restoration;await tick();await tick();
+ h.attachReleaseCheck({async install(){installs++;},async check(){assert.fail('no automatic update permission');},observe(){},stop(){}});
+ await tick();assert.equal(installs,1);
+});
+
+test('a late first install does not wait an hour after the journal already checked the app scope',async t=>{
+ const probe=journalProbe();let installs=0;
+ const h=harness({journal:probe.journal});t.after(()=>h.stopApplication());
+ await h.restoration;await tick();await tick();
+ h.attachReleaseCheck({async install(){installs++;},async check(){},observe(){},stop(){}});
+ await tick();assert.equal(installs,1);
 });

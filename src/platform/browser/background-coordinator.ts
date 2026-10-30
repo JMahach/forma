@@ -80,6 +80,7 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
   const wasActive=this.active;this.active=this.options.lifecycle.active;
   if(!this.active){this.withdraw();return;}
   if(!wasActive){this.epoch=this.id();this.eligibility=new AbortController();}
+  this.listener({kind:'foreground',signal:this.eligibility.signal});
   if(!this.options.channel){this.pause();return;}
   this.paused=false;this.present();this.post({kind:'hello'});
   this.wake(returned?'lifecycle':'changed');
@@ -90,12 +91,16 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
   this.disconnect=this.options.lifecycle.subscribe(this.lifecycle);this.lifecycle(true);
  }
  update(targets:readonly CheckTarget[]){
+  if(this.active && !this.stopped)this.listener({kind:'foreground',signal:this.eligibility.signal});
+  if(this.active && !this.stopped && this.paused){
+   this.targets=targets.map(value=>({...value}));
+   this.listener({kind:'unavailable',signal:this.eligibility.signal});return;
+  }
   if(JSON.stringify(this.targets)===JSON.stringify(targets))return;
   this.targets=targets.map(value=>({...value}));
   // Source/account owners cancel departed reads. A successful absence may
   // remove its own target synchronously before its result reaches peers.
   if(!this.active || this.stopped)return;
-  if(this.paused){this.listener({kind:'unavailable',signal:this.eligibility.signal});return;}
   this.present();this.wake('changed');
  }
  stop(){

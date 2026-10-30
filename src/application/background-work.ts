@@ -8,21 +8,21 @@ export interface BackgroundTask {
  initial?(signal:AbortSignal):Promise<void>;
 }
 export type BackgroundRequest={kind:'check';target:CheckTarget;authority:CheckAuthority;finish(result:CheckResult):void}
- | {kind:'result';key:string;instance:string;data:unknown}|{kind:'unavailable';signal:AbortSignal};
+ | {kind:'result';key:string;instance:string;data:unknown}|{kind:'unavailable';signal:AbortSignal}|{kind:'foreground';signal:AbortSignal};
 export interface BackgroundCoordinator {
  start(listener:(request:BackgroundRequest)=>void):void;
  update(targets:readonly CheckTarget[]):void;
  stop():void;
 }
 export interface BackgroundWorkPorts {coordinator:BackgroundCoordinator;tasks():readonly BackgroundTask[]}
-export interface ReleaseCheckPort {check(signal:AbortSignal):Promise<void>;observe():void;stop():void}
+export interface ReleaseCheckPort {install?(signal:AbortSignal):Promise<void>;check(signal:AbortSignal):Promise<void>;observe():void;stop():void}
 export type BackgroundWorkEvent={type:'BackgroundChanged'};
 function failure(error:unknown):CheckOutcome {
  const value=error as {status?:number;code?:string;retryAfterMs?:number};
  if(value?.status===401)return {kind:'unauthorized'};
  return {kind:'failed',retryAfterMs:value?.retryAfterMs};
 }
-async function perform(task:BackgroundTask|undefined,request:Extract<BackgroundRequest,{kind:'check'}>,initial:InitialLibraryRead) {
+async function perform(task:BackgroundTask|undefined,request:Extract<BackgroundRequest,{kind:'check'}>,initial:InitialForegroundWork) {
  if(!task || !await request.authority.current())return request.finish({outcome:{kind:'cancelled'}});
  if(initial.pending(task.target))return request.finish({outcome:{kind:'cancelled'}});
  initial.started(task.target);
@@ -30,31 +30,40 @@ async function perform(task:BackgroundTask|undefined,request:Extract<BackgroundR
  catch(error){request.finish({outcome:request.authority.signal.aborted?{kind:'cancelled'}:failure(error)});}
 }
 const sessionKey=(target:CheckTarget)=>`${target.key}/${target.sessionId}`;
-/** A failed shared coordinator must not turn an initial sign-in into an empty library.
- * This foreground allowance is consumed once, even when its read fails. */
-class InitialLibraryRead {
- private current:{key:string;issued:boolean;pending:boolean;run?:BackgroundTask['initial']}|null=null;
+/** Failed shared coordination must not block initial library access or offline installation.
+ * Each foreground allowance is consumed once; resumes never turn it into polling. */
+class InitialForegroundWork {
+ private current=new Map<string,{kind:'app'|'library';issued:boolean;pending:boolean;run?:BackgroundTask['initial']}>();
  configure(tasks:readonly BackgroundTask[]){
-  const task=tasks.find(value=>value.target.scope.kind==='library');if(!task)return;
-  const key=sessionKey(task.target);if(this.current?.key===key)return;
-  this.current={key,issued:false,pending:false,run:task.initial};
+  const next:typeof this.current=new Map();
+  for(const task of tasks) {
+   if(task.target.scope.kind!=='library' && task.target.scope.kind!=='app')continue;
+   const key=sessionKey(task.target),current=this.current.get(key)??{kind:task.target.scope.kind,issued:false,pending:false};
+   current.run=task.initial;next.set(key,current);
+  }
+  this.current=next;
  }
- pending(target:CheckTarget){return this.current?.key===sessionKey(target) && this.current.pending;}
- started(target:CheckTarget){if(this.current?.key===sessionKey(target))this.current.issued=true;}
- unavailable(signal:AbortSignal){
-  const current=this.current;if(!current || current.issued)return;
-  current.issued=true;if(!current.run || signal.aborted)return;
-  current.pending=true;void current.run(signal).catch(()=>{}).finally(()=>{current.pending=false;});
+ pending(target:CheckTarget){return this.current.get(sessionKey(target))?.pending;}
+ started(target:CheckTarget){const current=this.current.get(sessionKey(target));if(current?.run)current.issued=true;}
+ run(signal:AbortSignal,allowLibrary:boolean){
+  for(const current of this.current.values()) {
+   if(current.kind==='library' && !allowLibrary)continue;
+   if(current.issued || !current.run || signal.aborted)continue;
+   current.issued=true;current.pending=true;
+   void current.run(signal).catch(()=>{}).finally(()=>{current.pending=false;});
+  }
  }
 }
 /** The child dispatches only work admitted by the shared platform coordinator. */
 export function createBackgroundWork(ports:BackgroundWorkPorts) {
  return fromCallback<BackgroundWorkEvent>(({receive})=>{
   let tasks:readonly BackgroundTask[]=[];
-  const initial=new InitialLibraryRead();
+  const initial=new InitialForegroundWork();
   const update=()=>{tasks=ports.tasks();initial.configure(tasks);ports.coordinator.update(tasks.map(task=>task.target));};
   ports.coordinator.start(request=>{
-   if(request.kind==='unavailable'){initial.unavailable(request.signal);return;}
+   if(request.kind==='unavailable' || request.kind==='foreground'){
+    initial.run(request.signal,request.kind==='unavailable');return;
+   }
    if(request.kind==='check') {
     const task=tasks.find(task=>task.target.key===request.target.key && task.target.instance===request.target.instance && task.target.sessionId===request.target.sessionId);
     void perform(task,request,initial);return;

@@ -887,6 +887,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     const tasks:BackgroundTask[]=[],access=account.getSession();
     if(releaseCheck || journal)tasks.push({target:{key:'app',scope:{kind:'app'},instance:'release'},
       async run(authority){void journal?.wake();await releaseCheck?.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
+      initial:releaseCheck?.install?.bind(releaseCheck),
       receive(){releaseCheck?.observe();}});
     if(libraryInitialized && startupRestored() && access)tasks.push({
       target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
