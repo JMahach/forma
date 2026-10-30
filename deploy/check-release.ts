@@ -36,12 +36,13 @@ export async function checkRelease({release,revision,environmentFile,mailEnviron
   if(Object.keys(mailEnv).some(key=>!['FORMA_POSTFIX_SOCKET','FORMA_POSTFIX_PORT'].includes(key)))
     throw new Error('Unexpected settings in mail environment');
   const env:NodeJS.ProcessEnv={FORMA_STATE_DIR:'/var/lib/forma',FORMA_JOURNAL_DIR:'/var/log/forma',FORMA_ENVIRONMENT:'production',
-    FORMA_TRUST_PROXY:'loopback',...appEnv,...mailEnv};
+    FORMA_TRUST_PROXY:'loopback',FORMA_JOURNAL_NGINX_SOCKET:'/run/forma-journal/nginx.sock',...appEnv,...mailEnv};
   if(env.FORMA_APP_VERSION!==revision)throw new Error('Application revision does not match the expected release');
   if(env.FORMA_LOCAL_MAILBOX && env.FORMA_LOCAL_MAILBOX!=='0')throw new Error('Development mailbox must be disabled');
   if(env.HOST && env.HOST!=='127.0.0.1' || env.PORT && env.PORT!=='4173')throw new Error('Release listener must match the nginx upstream');
   const accounts=accountEnvironment(env,4173),journal=journalEnvironment(env,accounts.stateDir);
   if(journalWriterMode(env)!=='external')throw new Error('Production requires an external writer for the journal');
+  if(env.FORMA_JOURNAL_NGINX_SOCKET!=='/run/forma-journal/nginx.sock')throw new Error('Journal source socket must match the nginx template');
   if(journal.environment!=='production' || !accounts.trustLoopbackProxy)throw new Error('Expected production environment behind loopback proxy');
   parseAccountOrigins(accounts.origins);
   if(!accounts.origins.length || accounts.origins.some(origin=>new URL(origin).protocol!=='https:'))throw new Error('Public account origins must use HTTPS');
@@ -68,7 +69,8 @@ export async function checkRelease({release,revision,environmentFile,mailEnviron
   if(!listener.test(master))throw new Error('Installed Postfix SMTP listener does not match application port');
   const pkg=JSON.parse(await readFile(path.join(release,'package.json'),'utf8'));
   if(pkg.engines?.node!=='24.x' || process.versions.node.split('.')[0]!=='24')throw new Error('Release requires Node 24');
-  await access(path.join(release,'server/server.ts'),constants.R_OK);
+  for(const file of ['server/server.ts','server/journal-service.ts','server/python/system_journal.py'])
+    await access(path.join(release,file),constants.R_OK);
   await access(pythonExecutable(release,'linux'),constants.X_OK);
   const manifest=await readReleaseManifest(path.join(release,'dist'));
   if(!manifest.has('service-worker.js'))throw new Error('Missing release update worker');

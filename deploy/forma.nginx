@@ -2,6 +2,13 @@
 limit_req_zone $binary_remote_addr zone=forma_compute:1m rate=3r/s;
 limit_conn_zone $binary_remote_addr zone=forma_compute_connections:1m;
 limit_conn_zone $binary_remote_addr zone=forma_connections:1m;
+# Only final proxy failures before response headers. An application 502/504
+# with received headers is already the application's responsibility.
+map "$status:$upstream_header_time" $forma_proxy_failure {
+    default 0;
+    "~^(502|504):-(?:, -| : -)*$" 1;
+}
+log_format forma_proxy_status '$status';
 server {
     listen 80;
     server_name juxtaposition.ru;
@@ -22,7 +29,7 @@ server {
     client_max_body_size 20k;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
-    access_log off;
+    access_log syslog:server=unix:/run/forma-journal/nginx.sock,nohostname,tag=forma_proxy,severity=error forma_proxy_status if=$forma_proxy_failure;
     limit_conn forma_connections 12;
     limit_req_status 429;
     proxy_set_header Host $host;

@@ -10,10 +10,11 @@ async function fixture(t: test.TestContext) {
   const root=await mkdtemp(path.join(tmpdir(),'forma-release-check-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
   const release=path.join(root,'release'),state=path.join(root,'state'),journal=path.join(root,'journal'),mail=path.join(root,'mail');
-  for(const folder of ['server','dist','.venv/bin'])await mkdir(path.join(release,folder),{recursive:true});
+  for(const folder of ['server/python','dist','.venv/bin'])await mkdir(path.join(release,folder),{recursive:true});
   await mkdir(path.join(state,'keys'),{recursive:true,mode:0o700});await chmod(state,0o700);
   await mkdir(journal,{mode:0o700});await mkdir(mail,{mode:0o700});
-  await writeFile(path.join(release,'server/server.ts'),'// fixture');
+  for(const file of ['server/server.ts','server/journal-service.ts','server/python/system_journal.py'])
+    await writeFile(path.join(release,file),'// fixture');
   await writeFile(path.join(release,'package.json'),JSON.stringify({engines:{node:'24.x'}}));
   await writeFile(path.join(release,'.venv/bin/python'),'#!/bin/sh\n',{mode:0o700});
   await writeFile(path.join(state,'forma.sqlite'),'synthetic database',{mode:0o600});
@@ -85,4 +86,14 @@ test('release preflight checks the actual SMTP listener in the installed instanc
 test('release preflight requires the independently owned journal writer',async t=>{
  const f=await fixture(t);await f.envChange('FORMA_JOURNAL_WRITER=embedded');
  await assert.rejects(checkRelease(f.options),/external writer/);
+});
+
+test('release preflight rejects a journal source path that disagrees with nginx',async t=>{
+ const f=await fixture(t);await f.envChange('FORMA_JOURNAL_NGINX_SOCKET=/other/nginx.sock');
+ await assert.rejects(checkRelease(f.options),/match the nginx template/);
+});
+
+test('release preflight requires the sole writer and its fixed system source',async t=>{
+ const f=await fixture(t);await rm(path.join(f.options.release,'server/python/system_journal.py'));
+ await assert.rejects(checkRelease(f.options),{code:'ENOENT'});
 });

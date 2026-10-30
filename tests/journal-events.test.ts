@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {completeJournalEvent} from '../server/journal/events.ts';
 import assert from 'node:assert/strict';
 import { parseJournalEvent } from '../server/journal/events.ts';
 const id='a'.repeat(32);
@@ -152,4 +153,15 @@ test('library preparation failures contain only a bounded stage, never card data
  for(const reason of ['prepare','schedule'])assert.ok(parseJournalEvent({...fact,reason}));
  for(const extra of [{reason:'PRIVATE'},{chartId:'PRIVATE'},{error:Error('PRIVATE')},{accountId:'1'}])
   assert.equal(parseJournalEvent({...fact,...extra}),null);
+});
+
+test('system facts admit only fixed service and proxy failure reasons',()=>{
+ const defaults={environment:'production' as const,occurredAt:1000,eventId:'system'};
+ for(const component of ['application_service','nginx_service','postfix_service'])for(const reason of ['exit','signal','oom','timeout','resources','watchdog','protocol','start_limit']) {
+  assert.ok(completeJournalEvent({event:'service_failed',component,reason},defaults));
+ }
+ for(const reason of ['bad_gateway','gateway_timeout'])assert.ok(completeJournalEvent({event:'service_failed',component:'nginx_proxy',reason},defaults));
+ for(const extra of [{reason:'PRIVATE'},{message:'PRIVATE'},{url:'/PRIVATE'},{ip:'192.0.2.1'},{component:'PRIVATE'}])
+  assert.equal(completeJournalEvent({event:'service_failed',component:'application_service',reason:'exit',...extra},defaults),null);
+ assert.equal(completeJournalEvent({event:'service_failed',component:'nginx_proxy',reason:'oom'},defaults),null);
 });

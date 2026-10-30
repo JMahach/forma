@@ -1,7 +1,7 @@
 [Unit]
 Description=Forma private-source web application
-After=network.target forma-postfix.service
-Wants=forma-postfix.service
+After=network.target forma-postfix.service forma-journal.service
+Wants=forma-postfix.service forma-journal.service
 
 [Service]
 Type=simple
@@ -13,6 +13,7 @@ Environment=PORT=4173
 Environment=FORMA_STATE_DIR=/var/lib/forma
 Environment=FORMA_JOURNAL_DIR=/var/log/forma
 Environment=FORMA_ENVIRONMENT=production
+Environment=FORMA_JOURNAL_WRITER=external
 Environment=FORMA_TRUST_PROXY=loopback
 EnvironmentFile=/etc/forma/environment
 EnvironmentFile=/etc/forma-postfix/environment
@@ -20,13 +21,14 @@ StateDirectory=forma
 StateDirectoryMode=0700
 LogsDirectory=forma
 LogsDirectoryMode=0700
-# Packet filenames contain the calculation fingerprint; no manual v1/v2 path.
+# Prepared transit packets use the shared disposable cache zone.
 Environment=TRANSIT_CACHE_DIR=/var/cache/forma/transit
 # Before startup, deploy/prepare-storage.py links lifetime and return-index
 # directories into /var/cache/forma; prepared data survives release replacement.
 CacheDirectory=forma
 CacheDirectoryMode=0700
 ExecStart=/opt/forma/node/bin/node server/server.ts --release
+ExecStopPost=-/usr/bin/python3 /opt/forma/current/server/python/system_journal.py stop --component application_service --writer /var/log/forma/run/services.sock
 # Node drains active HTTP requests before closing its Python workers.
 # Only the main process gets SIGTERM; the whole group is killed on timeout.
 KillMode=mixed

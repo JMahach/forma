@@ -3,9 +3,13 @@ import { parseClientReport, type ClientReport } from '../../shared/client-report
 
 export type HttpFailureComponent = 'routing' | 'public_files' | 'cities' | 'calculator' | 'account' | 'charts' | 'cycles' | 'lifetime' | 'transit_day' | 'natal_day';
 export type StartupComponent = HttpFailureComponent | 'configuration' | 'listener';
-export type ServiceFailure =
- | {component:'lifetime_prepare'|'return_index_prepare';reason:'spawn'|'process'}
- | {component:'postfix';reason:'process'|'cleanup'};
+const systemReasons=['exit','signal','oom','timeout','resources','watchdog','protocol','start_limit'] as const;
+const serviceReasons={
+ lifetime_prepare:['spawn','process'],return_index_prepare:['spawn','process'],postfix:['process','cleanup'],
+ application_service:systemReasons,nginx_service:systemReasons,postfix_service:systemReasons,
+ nginx_proxy:['bad_gateway','gateway_timeout'],
+} as const;
+export type ServiceFailure = {[K in keyof typeof serviceReasons]:{component:K;reason:typeof serviceReasons[K][number]}}[keyof typeof serviceReasons];
 export type ServerFailure =
  | {event:'startup_failed'; component:StartupComponent; reason:'unexpected'}
  | {event:'http_request_failed'; component:HttpFailureComponent; reason:'unexpected'}
@@ -59,7 +63,6 @@ const opaqueId = (value: unknown): value is string => typeof value==='string'
  && /^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(value);
 const reasons: Record<string, RegExp> = {
  library_preparation_failed:/^(?:prepare|schedule)$/,
- service_failed:/^(?:spawn|process|cleanup)$/,
  startup_failed:/^unexpected$/,
  http_request_failed:/^unexpected$/,
  prepared_data_failed:/^(?:open|read)$/,
@@ -99,7 +102,7 @@ export function parseJournalEvent(value: unknown): JournalEvent | null {
   || v.recipient.trim()!==v.recipient || /[\s<>\x00-\x1f\x7f]/u.test(v.recipient)
   || v.recipient.length>254 || Buffer.byteLength(v.recipient,'utf8')>1024))return null;
  if(Object.hasOwn(v,'component')) {
-  const components = v.event==='service_failed' ? ['lifetime_prepare','return_index_prepare','postfix']
+  const components = v.event==='service_failed' ? Object.keys(serviceReasons)
    : v.event==='startup_failed'
    ? ['configuration','listener','routing','public_files','cities','calculator','account','charts','cycles','lifetime','transit_day','natal_day']
    : v.event==='http_request_failed'
@@ -107,8 +110,8 @@ export function parseJournalEvent(value: unknown): JournalEvent | null {
    : v.event==='prepared_data_failed' ? ['lifetime'] : ['calculator','transit_day','natal_day','cycles'];
   if(!components.includes(v.component as string))return null;
  }
- if(v.event==='service_failed' && !(v.component==='postfix' ? ['process','cleanup'] : ['spawn','process']).includes(v.reason as string))return null;
- if(Object.hasOwn(v,'reason') && (typeof v.reason!=='string'
+ if(v.event==='service_failed' && !(serviceReasons[v.component as keyof typeof serviceReasons] as readonly unknown[]).includes(v.reason))return null;
+ if(v.event!=='service_failed' && Object.hasOwn(v,'reason') && (typeof v.reason!=='string'
   || !reasons[v.event]?.test(v.reason)))return null;
  return Object.freeze({...v}) as unknown as JournalEvent;
 }
