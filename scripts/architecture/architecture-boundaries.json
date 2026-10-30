@@ -405,7 +405,8 @@
         "src/data/natal-day-client.ts",
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
-        "src/data/telegram-login.ts"
+        "src/data/telegram-login.ts",
+        "src/data/return-family-client.ts"
       ],
       "publicEntries": [
         "src/data/account-client.ts",
@@ -433,7 +434,10 @@
         "domain",
         "shared-contracts",
         "request-lifetime"
-      ]
+      ],
+      "privateEntryReasons": {
+        "src/data/return-family-client.ts": "Whole-family transfer and reuse behind cycles-client; shares existing account storage and bounded memory."
+      }
     },
     {
       "id": "selection",

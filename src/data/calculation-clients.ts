@@ -18,7 +18,7 @@ type Options = {
   memory?: MemoryCache;
   transit?: Omit<NonNullable<Parameters<typeof createTransitDayClient>[0]>, 'memory'|'days'>;
   natal?: Omit<NonNullable<Parameters<typeof createNatalDayClient>[0]>, 'memory'|'persistentCache'|'library'>;
-  cycles?: Omit<NonNullable<Parameters<typeof createCyclesClient>[0]>, 'memory'|'returnStorage'>;
+  cycles?: Omit<NonNullable<Parameters<typeof createCyclesClient>[0]>, 'memory'|'returnStorage'|'library'>;
 };
 export type TransitWindowUpdate={status:'applied';revision:number}|{status:'stale'|'unavailable'|'invalid'|'cancelled'};
 export interface PersonalCalculationCleanup {
@@ -84,7 +84,7 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
   function clients(port:MemoryCache,persistent:CalculationCache|null,ownsCache=false) {
     const binary=persistent?createNatalDayStorage({cache:persistent}):null;
     const returns=persistent?createReturnStorage({cache:persistent}):null;
-    const cycles=createCyclesClient({...cyclesOptions,memory:port,returnStorage:returns});
+    const cycles=createCyclesClient({...cyclesOptions,memory:port,returnStorage:returns,library});
     return {
       natal:createNatalDayClient({...natalOptions,memory:port,persistentCache:binary,library}),
       cycles,
@@ -144,6 +144,10 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
     retainDay(day){const owner=natalOwners.get(day);return owner && !owner.generation.closed?owner.client.retainDay(day):()=>{};},
   };
   const cycles:CyclesClient={
+    readFamily(input,owner,options){const value=current,client=value.clients.cycles;
+      return run(value,options?.signal,signal=>client.readFamily(input,owner,{signal,opened:options?.opened}));},
+    fetchFamily(input,owner,options){const value=current,client=value.clients.cycles;
+      return run(value,options?.signal,signal=>client.fetchFamily(input,owner,{signal}));},
     preparedChartInputs(input,options){const value=current,client=value.clients.cycles;
       return run(value,options?.signal,signal=>client.preparedChartInputs(input,{signal}));},
     close(){current.clients.cycles.close();},
@@ -152,11 +156,11 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
     events(input,signal,options){const value=current,client=value.clients.cycles;
       return run(value,signal,signal=>client.events(input,signal,options)).then(data=>rememberCycle(data,value,client,signal));},
     readEvents(input,options){const value=current,client=value.clients.cycles;
-      return run(value,options?.signal,signal=>client.readEvents(input,{signal})).then(data=>rememberCycle(data,value,client,options?.signal));},
+      return run(value,options?.signal,signal=>client.readEvents(input,{signal,owner:options?.owner})).then(data=>rememberCycle(data,value,client,options?.signal));},
     chart(input,signal,options){const value=current,client=value.clients.cycles;
       return run(value,signal,signal=>client.chart(input,signal,options)).then(data=>rememberCycle(data,value,client,signal));},
     readChart(input,options){const value=current,client=value.clients.cycles;
-      return run(value,options?.signal,signal=>client.readChart(input,{signal})).then(data=>rememberCycle(data,value,client,options?.signal));},
+      return run(value,options?.signal,signal=>client.readChart(input,{signal,owner:options?.owner,opened:options?.opened})).then(data=>rememberCycle(data,value,client,options?.signal));},
     retainChart(input,data){const owner=cycleOwners.get(data);return owner && !owner.generation.closed?owner.client.retainChart(input,data):()=>{};},
     retainEvents(input,data){const owner=cycleOwners.get(data);return owner && !owner.generation.closed?owner.client.retainEvents(input,data):()=>{};},
   };

@@ -97,7 +97,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/state/panels.ts',
     'src/state/library-selection.ts',
     'src/state/workspace.ts',
-    'src/data/cycles-client.ts',
+    'src/data/cycles-client.ts', 'src/data/return-family-client.ts',
     'src/data/return-storage.ts',
     'src/domain/cycles.ts',
     'src/domain/returns-window.ts',

@@ -1,11 +1,14 @@
+import {createReturnFamilyClient,type CycleOwner} from './return-family-client.ts';
+import type {AccountLibraryStore} from './account-library-store.ts';
+import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
+export type {CycleOwner} from './return-family-client.ts';
 import {MAX_RETURN_PROOF_LENGTH} from '../../shared/chart-return-contract.ts';
 import type { CycleInput, CycleEvent, CycleEventsResult, CycleChartResult, CycleResult } from '../../shared/cycles-format.ts';
 import type { ReturnStorage } from './return-storage.ts';
 import type { MemoryCache } from './memory-cache.ts';
 import type { SharedRequest } from '../runtime/shared-request.ts';
 type CycleAction = 'events' | 'chart';
-export interface CycleOwner { chartId: string; expectedAccountId: string }
-interface CycleOptions { event?: CycleEvent | null; owner?: CycleOwner | null; cacheOnly?: boolean; preserve?: boolean }
+interface CycleOptions { event?: CycleEvent | null; owner?: CycleOwner | null; cacheOnly?: boolean; preserve?: boolean; opened?:boolean }
 export type CachedCycleChart = CycleChartResult & { event?: CycleEvent; proof?: string };
 type ClientCycleResult = CycleResult & { event?: CycleEvent; proof?: string };
 interface CyclesClientOptions {
@@ -13,13 +16,13 @@ interface CyclesClientOptions {
   memory?: MemoryCache;
   timeoutMs?: number;
   returnStorage?: ReturnStorage | null;
+  library?:Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'|'touchPackage'>;
 }
 export type CyclesClient = ReturnType<typeof createCyclesClient>;
 
 import { requestJSON } from './api-client.ts';
 import { validCycleResult, validCycleEvent, cycleUtcDifference } from '../../shared/cycles-format.ts';
-import { LIFE_SPAN_YEARS } from '../../shared/date-limits.ts';
-import { createReturnStorage } from './return-storage.ts';
+import { createReturnStorage,normalizeReturnInput as normalized,returnStorageKey as identity } from './return-storage.ts';
 import { DEFAULT_CYCLE_BODIES } from '../domain/cycles.ts';
 import { createMemoryCache } from './memory-cache.ts';
 import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
@@ -27,22 +30,19 @@ import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 // Only default body dates and opened charts persist on the device. Other bodies
 // stay in shared tab memory; controllers pin active inputs within its byte budget.
 export function createCyclesClient({ request = requestJSON, memory = createMemoryCache(), timeoutMs = 60_000,
-  returnStorage }: CyclesClientOptions = {}) {
+  returnStorage,library }: CyclesClientOptions = {}) {
   const lifetime = new AbortController(), attachments = new Map<string, SharedRequest<unknown>>();
   const preservations = new Map<string, SharedRequest<void>>();
   const reads = new Map<string, SharedRequest<unknown>>(), pending = new Map<string, SharedRequest<ClientCycleResult>>();
   const device = returnStorage === undefined ? createReturnStorage() : returnStorage;
-  const normalized = (action: CycleAction, input: CycleInput): CycleInput => action === 'events'
-    ? { birthUtc: input.birthUtc, body: input.body, fromAge: input.fromAge ?? 0, toAge: input.toAge ?? LIFE_SPAN_YEARS }
-    : { birthUtc: input.birthUtc, body: input.body, eventUtc: input.eventUtc, timezone: input.timezone ?? 'UTC' };
-  const identity = (action: CycleAction, input: CycleInput) => JSON.stringify([action, ...Object.values(normalized(action, input))]);
+  const families=createReturnFamilyClient({library,memory,request,timeoutMs,legacy:device});
   const eventFields = ['id', 'body', 'utc', 'age', 'cycle', 'pass', 'cycleId', 'direction'] as const;
   const confirmsEvent = (event: CycleEvent | null | undefined, input: CycleInput): event is CycleEvent => validCycleEvent(event, input) && event!.utc === input.eventUtc;
   async function preserveReadyWork(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
     if (signal.aborted || !DEFAULT_CYCLE_BODIES.includes(input.body)) return;
     const writes: Promise<unknown>[] = [];
     if (!alreadyStored && typeof data.proof === 'string' && data.proof.length > 0 && data.proof.length <= MAX_RETURN_PROOF_LENGTH) {
-      const target = {...owner}, proof = data.proof;
+      const target = {chartId:owner.chartId,expectedAccountId:owner.expectedAccountId}, proof = data.proof;
       const key = JSON.stringify([action, target, input, proof]);
       writes.push(shareRequest(attachments,key,async ({controller}) => {
         const timer=setTimeout(()=>controller.abort(),timeoutMs);
@@ -75,7 +75,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     await Promise.allSettled(writes);
   }
   function preserveReady(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
-    const key=JSON.stringify([action,owner,input,data.proof,alreadyStored]);
+    const key=JSON.stringify([action,owner.chartId,owner.expectedAccountId,input,data.proof,alreadyStored]);
     return shareRequest(preservations,key,({controller})=>preserveReadyWork(action,input,data,owner,controller.signal,alreadyStored),{signal});
   }
   async function preparedChartInputs(input: {birthUtc:string;body?:string;timezone?:string}, {signal}:{signal?:AbortSignal}={}):Promise<CycleInput[]> {
@@ -96,7 +96,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     } catch { /* A malformed catalogue identity is not a candidate. */ }
     return found;
   }
-  async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false, preserve = true }: CycleOptions = {}): Promise<ClientCycleResult | null> {
+  async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false, preserve = true,opened = !cacheOnly && action==='chart' }: CycleOptions = {}): Promise<ClientCycleResult | null> {
     signal = signal ? AbortSignal.any([signal,lifetime.signal]) : lifetime.signal;
     if (signal.aborted) throw createAbortError();
     // Copy before the optional device read so callers cannot mutate identity.
@@ -105,10 +105,11 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     const key = identity(action, input);
     const memoryKey = `return-${action}:${key}`;
     const own = owner && (action==='events' || DEFAULT_CYCLE_BODIES.includes(input.body))
-      ? {chartId: owner.chartId, expectedAccountId: owner.expectedAccountId} : null;
+      ? {chartId: owner.chartId, expectedAccountId: owner.expectedAccountId,record:owner.record} : null;
     // Numerical reuse is common; a request that persists a result belongs to one card.
     const requestKey = own ? JSON.stringify([key, own.chartId, own.expectedAccountId, sourceTimezone]) : key;
     const persistent = device && DEFAULT_CYCLE_BODIES.includes(input.body);
+    const saveIndividual=persistent && !(library && owner);
     const confirmed = action === 'chart' && confirmsEvent(event, input)
       ? Object.fromEntries(eventFields.map(field => [field, event[field]])) as unknown as CycleEvent : null;
     const usable = (data: ClientCycleResult | null): data is ClientCycleResult => !!data && (!cacheOnly || action === 'events' || confirmsEvent(data.event, input));
@@ -116,7 +117,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       const enrich = confirmed && eventFields.some(field => confirmed[field] !== data.event?.[field]);
       const result = enrich ? { ...data, event: confirmed } : data;
       if (remember || enrich) memory.put(memoryKey, result);
-      if (persistent && (save || enrich)) Promise.resolve().then(() => action === 'events'
+      if (saveIndividual && (save || enrich)) Promise.resolve().then(() => action === 'events'
         ? device!.putEvents(key, input, result as CycleEventsResult) : device!.putChart(key, result)).catch(() => {});
       if (own && preserve) void preserveReady(action,{...input,timezone:sourceTimezone},result,own,signal!,save).catch(()=>{});
       return result;
@@ -126,7 +127,17 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       return accept(data,{remember:false});
     };
     const remembered = memory.get<ClientCycleResult>(memoryKey);
-    if (usable(remembered)) return reuse(remembered);
+    if(cacheOnly && library && owner && !isMainReturnBody(input.body))return null;
+    if (usable(remembered) && !(cacheOnly && library && owner)) return reuse(remembered);
+    if(library && own && isMainReturnBody(input.body)) {
+      const packet=await families.read({...input,timezone:sourceTimezone},own,{signal,durable:cacheOnly,opened});
+      if(packet) {
+        if(action==='events' && validCycleResult('events',packet.dates,input))return packet.dates;
+        const index=packet.dates.events.findIndex(event=>event.utc===input.eventUtc);
+        if(index>=0)return {...packet.charts[index],event:packet.dates.events[index]};
+      }
+      if(cacheOnly)return null;
+    }
     // A different tab may have finished this key while our network request
     // still waits. Read ready device data before joining that pending request.
     if (persistent) {
@@ -171,12 +182,17 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       } finally { clearTimeout(timeout); }
     }, { signal });
   }
-  return { preparedChartInputs, events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
-    readEvents: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('events', input, signal, { cacheOnly: true }) as Promise<CycleEventsResult | null>,
+  return {
+    readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false}:{signal?:AbortSignal;opened?:boolean}={})=>
+      families.read(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal,opened,durable:true}),
+    fetchFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
+      families.fetch(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
+    preparedChartInputs, events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,
+    readEvents: (input: CycleInput, { signal,owner }: { signal?: AbortSignal;owner?:CycleOwner|null } = {}) => get('events', input, signal, { cacheOnly: true,owner }) as Promise<CycleEventsResult | null>,
     chart: (input: CycleInput, signal?: AbortSignal, options?: Omit<CycleOptions, 'cacheOnly'>) => get('chart', input, signal, options) as Promise<CachedCycleChart>,
     // A confirmed cached chart carries its own exact event label.
     // This never joins numerical requests or asks for the body's dates.
-    readChart: (input: CycleInput, { signal }: { signal?: AbortSignal } = {}) => get('chart', input, signal, { cacheOnly: true }) as Promise<CachedCycleChart | null>,
+    readChart: (input: CycleInput, { signal,owner,opened=false }: { signal?: AbortSignal;owner?:CycleOwner|null;opened?:boolean } = {}) => get('chart', input, signal, { cacheOnly: true,owner,opened }) as Promise<CachedCycleChart | null>,
     retainChart: (input: CycleInput, data: CachedCycleChart) => memory.retain(`return-chart:${identity('chart', input)}`, data),
     retainEvents: (input: CycleInput, data: CycleEventsResult) => memory.retain(`return-events:${identity('events', input)}`, data),
     async syncPrepared(input: CycleInput, owner: CycleOwner, signal?: AbortSignal) {

@@ -590,9 +590,9 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       const access = account.getSession(), record = (chart.id ? accountLibrary.get(chart.id) : null);
       return access && record && record.accountId === access.accountId && record.source === 'calculated'
         && record.utc === chart.utc && record.timezone === chart.timezone
-        ? {chartId: record.id, expectedAccountId: access.accountId} : null;
+        ? {chartId: record.id, expectedAccountId: access.accountId,record} : null;
     },
-    client: calculationClients?.cycles ?? createCyclesClient({ memory: dayClient.memory }),
+    client: calculationClients?.cycles ?? createCyclesClient({ memory: dayClient.memory,library:libraryStorage }),
     onRequest: exploration!.requestReturn, onRender: exploration!.publishReturn,
     onStateChange() {
       updateTimelineTools(); viewSession?.schedule();

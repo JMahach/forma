@@ -53,7 +53,8 @@ export function createReturnsController({ observe, connection = getConnectionMod
   // chart cache. A changed selection cancels all outstanding device probes.
   let readyEvents = new Set<string>(), availabilityJob: AbortController | null = null;
   const offline = () => connection() === 'offline';
-  const readyBodies = () => BODY_IDS.filter(body => records.get(body)?.events != null);
+  const readyWholeBodies=new Set<string>();
+  const readyBodies = () => BODY_IDS.filter(body => records.get(body)?.events != null && (!offline() || !natalOwner || readyWholeBodies.has(body)));
   const available = () => eligibleCycleChart(natal);
   const wanted = () => opened || markersEnabled;
   const pendingJobs = (wantedBodies = bodies) => wantedBodies.flatMap(body => records.get(body)?.job ? [records.get(body)!.job!] : []);
@@ -97,11 +98,31 @@ export function createReturnsController({ observe, connection = getConnectionMod
   function cancelSearches() {
     for (const record of records.values()) { cancelSearch(record); record.release?.(); record.release = null; }
   }
+  async function refreshOwnedFamilies(owner:ChartRecord,destination:CycleOwner,signal:AbortSignal,owns:()=>boolean) {
+    const range=cycleRangeForChart(owner)!;
+    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(async body=>{
+      const input={birthUtc:owner.utc!,timezone:owner.timezone||'UTC',body,...range};
+      try{return {body,input,packet:await client.readFamily?.(input,destination,{signal})};}catch{return {body,input,packet:null};}
+    }));
+    if(!owns())return;
+    readyWholeBodies.clear();
+    for(const {body,input,packet} of parts) {
+      const record=records.get(body)??{events:null,error:null,job:null,release:null};
+      record.release?.();record.release=null;record.events=packet?.dates.events??null;
+      if(packet){readyWholeBodies.add(body);record.release=client.retainEvents?.(input,packet.dates)??null;}
+      records.set(body,record);
+    }
+    readyEvents=new Set(visibleEvents().filter(event=>readyWholeBodies.has(event.body)).map(event=>event.id));
+    if(current && selectedEvent)readyEvents.add(selectedEvent.id);
+    availabilityJob=null;emit();
+  }
   async function refreshReadyCharts() {
     availabilityJob?.abort(); availabilityJob = null;
-    if (!offline() || !available()) { const changed = readyEvents.size > 0; readyEvents.clear(); if (changed) emit(); return; }
+    if (!offline() || !available()) { const changed = readyEvents.size > 0; readyEvents.clear();readyWholeBodies.clear(); if (changed) emit(); return; }
     const controller = new AbortController(), version = generation, owner = natal!;
     availabilityJob = controller;
+    const destination=getOwner(owner);
+    if(destination)return refreshOwnedFamilies(owner,destination,controller.signal,()=>!controller.signal.aborted && version===generation && offline());
     const events = visibleEvents(), visible = new Map(events.map(event => [event.id,event]));
     readyEvents = new Set([...readyEvents].filter(id => visible.has(id)));
     if (current && selectedEvent) readyEvents.add(selectedEvent.id);
@@ -135,6 +156,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
   }
   function ensure({ waitBodies = bodies } = {}) {
     if (!available()) return Promise.resolve(false);
+    if(offline() && natal && getOwner(natal))return refreshReadyCharts().then(()=>[readyBodies().length>0]);
     const owner = natal, version = generation, range = cycleRangeForChart(owner)!;
     if (range.toAge <= range.fromAge) return Promise.resolve(false);
     let added = false,remaining=0,observation:ClientObservation|undefined;
@@ -150,7 +172,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
           if (!owns()) return false;
           const input = { birthUtc: owner!.utc!, timezone: owner!.timezone || 'UTC', body, ...range };
           const requestedOwner = getOwner(owner!);
-          const data = offline() ? await client.readEvents?.(input, {signal}) : await client.events(input, signal, {owner: requestedOwner});
+          const data = offline() ? await client.readEvents?.(input, {signal,owner:requestedOwner}) : await client.events(input, signal, {owner: requestedOwner});
           if (!owns()) return false;
           if (!data) return false;
           record.release = client.retainEvents?.(input, data);
@@ -195,7 +217,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     const same = available() && eligibleCycleChart(chart) && chart!.id === natal!.id && chart!.utc === natal!.utc && chart!.timezone === natal!.timezone;
     if (same && adopt(chart!)) return;
     const hadPreview = Boolean(current);
-    generation++; availabilityJob?.abort(); availabilityJob = null; readyEvents.clear(); cancelChart(); cancelSearches(); records.clear();
+    generation++; availabilityJob?.abort(); availabilityJob = null; readyEvents.clear();readyWholeBodies.clear(); cancelChart(); cancelSearches(); records.clear();
     natal = chart; natalOwner=ownerSnapshot(chart); opened = false; year = null; bodies = [...DEFAULT_CYCLE_BODIES];
     dropCurrent(); selectedEvent = failedEvent = null; chartError = ''; chartErrorCode = ''; calendarZone = 'UTC';
     if (available()) {
@@ -255,7 +277,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
       try {
         const input = { birthUtc: owner!.utc!, body: selected.body, eventUtc: selected.utc, timezone: owner!.timezone || 'UTC' };
         const requestedOwner=getOwner(owner!);
-        const data = offline() ? await client.readChart?.(input, {signal}) : await client.chart(input, signal, { event: selected, owner: requestedOwner });
+        const data = offline() ? await client.readChart?.(input, {signal,owner:requestedOwner,opened:true}) : await client.chart(input, signal, { event: selected, owner: requestedOwner });
         if (version !== chartGeneration || signal.aborted) return false;
         if (!data) { readyEvents.delete(selected.id); loadingChart = false; pendingEvent = null; chartJob = null; emit(); return false; }
         if (!valid()) { cancelChart(); emit(); return false; }
@@ -295,7 +317,8 @@ export function createReturnsController({ observe, connection = getConnectionMod
       // older ordinal is never needed to render ready data.
       cancelChart(); exactVersion = chartGeneration;
       const input = { birthUtc: natal!.utc!, body: eventBody!, eventUtc: eventUtc!, timezone: natal!.timezone || 'UTC' };
-      const job = start(signal => client.readChart(input, { signal }));
+      const requestedOwner=getOwner(natal!);
+      const job = start(signal => client.readChart(input, { signal,owner:requestedOwner,opened:true }));
       chartJob = job;
       let data = null;
       try { data = await job.promise; } catch { /* Optional cached data may be unavailable. */ }

@@ -1,3 +1,6 @@
+import {IDBFactory} from 'fake-indexeddb';
+import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
+import {createCyclesClient} from '../src/data/cycles-client.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Readable} from 'node:stream';
@@ -89,6 +92,14 @@ test('only a complete main family advances readiness; whole reads preserve exact
   const sourceKey=returnSourceKey({birthUtc:birth.utc,timezone:birth.timezone!});
   const url=`/api/charts/${id}/returns/${body}/package?accountId=${f.accountId}&sourceKey=${encodeURIComponent(sourceKey)}`;
   assert.equal((await f.request(url)).body.kind,'not-ready');
+  const local=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>local.close());
+  const active=await local.activate(f.accountId);assert.equal(active.status,'stored');if(active.status!=='stored')throw Error('local account');
+  await local.put(active.lease,[birth]);let requests=0;
+  const client=createCyclesClient({library:local,returnStorage:null,request:async(url,options)=>{
+    requests++;const reply=await f.request(url,options.method);assert.equal(reply.status,200);return reply.body;
+  }});t.after(()=>client.close());
+  const owner={chartId:id,expectedAccountId:f.accountId,record:birth};
+  assert.deepEqual(await client.fetchFamily({...input,timezone:birth.timezone!},owner),{status:'not-ready'});
   const marker=(await f.request(f.url)).body.marker;
   f.records.saveReturn({...query,action:'events'},{range,events:events.map((utc,index)=>({utc,body,id:`${body}:${utc}`,
     age:cycleAge(utc,birth.utc),cycle:index+1,cycleId:`${body}:${index+1}`,pass:1,direction:'direct'}))});
@@ -111,6 +122,9 @@ test('only a complete main family advances readiness; whole reads preserve exact
   const before=f.database.connection.prepare('SELECT total_changes() AS n').get()!.n;
   assert.deepEqual((await f.request(url)).body,ready.body);
   assert.equal(f.database.connection.prepare('SELECT total_changes() AS n').get()!.n,before);
+  const prepared=await client.fetchFamily({...input,timezone:birth.timezone!},owner);
+  assert.deepEqual(prepared,{status:'stored',payload:ready.body.payload});assert.equal(requests,2,'one not-ready and one ready transfer, no hidden POST');
+  assert.deepEqual(await client.fetchFamily({...input,timezone:birth.timezone!},owner),{status:'no-op',payload:ready.body.payload});assert.equal(requests,2,'a durable whole family never repeats HTTP');
   f.database.connection.prepare("UPDATE account_chart_returns SET content=x'00' WHERE chartId=? AND eventUtc=?").run(id,events[1]);
   assert.equal((await f.request(url)).body.kind,'not-ready');
   const invalidated=await f.request(`${f.url}&knownMarker=${catalog.body.marker}`);

@@ -1,7 +1,7 @@
 import {TransactionPlacement} from './library-package-placement.ts';
 import type {StoragePressure} from './storage-pressure.ts';
 import type {AccountChart} from '../../shared/chart-record-contract.ts';
-import {natalDaySourceKey,returnSourceKey,validMajorReturnsPackage,type PackageRef} from '../../shared/library-package-contract.ts';
+import {natalDaySourceKey,returnSourceKey,validMajorReturnsPackage,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
 import {decodeNatalDay} from '../../shared/day-packets/decode.ts';
 import {sameLibraryLease,type LibraryLease,type LibraryPackageMetadata} from './account-library-schema.ts';
 import type {createIndexedDatabase} from './indexed-db.ts';
@@ -17,7 +17,7 @@ function matchesChart(ref:LibraryPartRef,chart:AccountChart) {
   ?ref.sourceKey===natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone||'UTC'})
   :ref.sourceKey===returnSourceKey({birthUtc:chart.utc,timezone:chart.timezone||'UTC'}));
 }
-function validPayload(ref:LibraryPartRef,payload:unknown) {
+function validPayload(ref:LibraryPartRef,payload:unknown):payload is ArrayBuffer|MajorReturnsPackage {
  try {
   if(ref.kind==='major-returns')return validMajorReturnsPackage(ref,payload);
   const day=decodeNatalDay(payload);
@@ -81,25 +81,37 @@ class LibraryPackageOwner {
  }
  private async read(seen:LibraryLease,ref:LibraryPartRef,openedAt?:number) {
   const id=libraryPackageId(ref);let validated=false;
-  const result=await this.database.transaction<{payload:unknown;broken:boolean}>(openedAt===undefined?'readonly':'readwrite',(tx,done,fail)=>{
+  const result=await this.database.transaction<{payload:ArrayBuffer|MajorReturnsPackage|null;broken:boolean}>(openedAt===undefined?'readonly':'readwrite',(tx,done,fail)=>{
    const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
     if(!sameLibraryLease(owner.result,seen))return;
     const row=tx.objectStore('packages').get(id);row.onsuccess=()=>{
-     const payload=row.result?.payload;validated=validPayload(ref,payload);
+     const payload:unknown=row.result?.payload,valid=validPayload(ref,payload);validated=valid;
      try {if(validated && openedAt!==undefined)tx.objectStore('usage').put({id,openedAt});}catch(error){fail(error);return;}
-     done({payload:validated?payload:null,broken:!!row.result && !validated});
+     done({payload:valid?payload:null,broken:!!row.result && !validated});
     };
    };
   });
   return {result,validated};
  }
- async readPackage(seen:LibraryLease,ref:LibraryPartRef,{opened=false}:{opened?:boolean}={}):Promise<unknown|null> {
+ async readPackage(seen:LibraryLease,ref:LibraryPartRef,{opened=false}:{opened?:boolean}={}) {
   seen={...seen};ref={...ref};
   let {result,validated}=await this.read(seen,ref,opened?Math.max(1,this.now()):undefined);
   // A failed use mark must not hide numbers. Obtain fresh read-only proof once.
   if(!result && validated && opened)({result}=await this.read(seen,ref));
   if(result?.broken)await discardBrokenPackage(this.database,seen,ref);
   return result?.payload??null;
+ }
+ async touchPackage(seen:LibraryLease,ref:LibraryPartRef):Promise<boolean> {
+  seen={...seen};const id=libraryPackageId(ref),openedAt=Math.max(1,this.now());
+  return await this.database.transaction<boolean>('readwrite',(tx,done,fail)=>{
+   const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
+    if(!sameLibraryLease(owner.result,seen)){done(false);return;}
+    const present=tx.objectStore('packages').getKey(id);present.onsuccess=()=>{
+     if(present.result===undefined){done(false);return;}
+     try{tx.objectStore('usage').put({id,openedAt});done(true);}catch(error){fail(error);}
+    };
+   };
+  })??false;
  }
  private writePackage(tx:IDBTransaction,input:IncomingPackage,prior:LibraryPackageMetadata|undefined,
   chartIds:string[],evict:boolean,done:(value:LibraryPackageWrite)=>void,fail:(cause?:unknown)=>void) {
@@ -149,5 +161,5 @@ class LibraryPackageOwner {
 /** Private facade over the account owner's transaction, never a second database. */
 export function createLibraryPackageStore(database:Database,{pressure,now=Date.now}:{pressure?:StoragePressure;now?:()=>number}={}) {
  const owner=new LibraryPackageOwner(database,pressure,now);
- return {readPackage:owner.readPackage.bind(owner),putPackage:owner.putPackage.bind(owner)};
+ return {readPackage:owner.readPackage.bind(owner),putPackage:owner.putPackage.bind(owner),touchPackage:owner.touchPackage.bind(owner)};
 }

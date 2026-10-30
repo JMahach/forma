@@ -216,3 +216,101 @@ test('early calculation clients and the account library share one persistent pac
  const second=createCalculationClients({cacheOptions:{indexedDB},natal:{fetch:async()=>assert.fail('reopened library should reuse full day')}});t.after(()=>second.close());
  await second.library.read();assert.deepEqual(await second.natal.getDay(chart),ready);assert.equal(requests,1);
 });
+
+test('owned returns reuse a whole durable family and lose new offline permission when its durable owner is cleared',async t=>{
+ const {createCyclesClient}=await import('../src/data/cycles-client.ts');
+ const {store,lease}=await setup(t),{ref,value}=family();await store.putPackage(lease,chart,ref,value);
+ const client=createCyclesClient({library:store,returnStorage:null,request:async()=>assert.fail('a prepared owned family must not request HTTP')});t.after(()=>client.close());
+ const owner={chartId:chart.id,expectedAccountId:chart.accountId,record:chart};
+ const input={...value.source,body:value.family,...value.dates.range};
+ for(const invalid of [{...owner,chartId:'wrong'}, {...owner,expectedAccountId:'2'}, {...owner,record:undefined},
+  {...owner,record:{...chart,source:'transit' as const}}])assert.equal(await client.readFamily(input,invalid),null);
+ assert.deepEqual(await client.events(input,undefined,{owner}),value.dates);
+ const event=value.dates.events[0],exact={...input,eventUtc:event.utc};
+ assert.deepEqual((await client.chart(exact,undefined,{owner,event})).chart,value.charts[0].chart);
+ await store.read();
+ const put=IDBObjectStore.prototype.put;let uses=0;
+ IDBObjectStore.prototype.put=function(...args){if(this.name==='usage')uses++;return put.apply(this,args);};
+ try{assert.ok(await client.readChart(exact,{owner}));}finally{IDBObjectStore.prototype.put=put;}
+ assert.equal(uses,0,'technical durable proof is not another opening');
+ await store.clear(lease);
+ assert.equal(await client.readChart(exact,{owner}),null,'RAM and a formerly ready family cannot grant a new offline action');
+});
+
+test('legacy return parts authorize an owned offline family only after complete atomic migration',async t=>{
+ const {createCyclesClient}=await import('../src/data/cycles-client.ts');
+ const {createReturnStorage}=await import('../src/data/return-storage.ts');
+ const {store,indexedDB}=await setup(t),{value}=family(),legacy=createReturnStorage({indexedDB});t.after(()=>legacy.close());
+ const input={...value.source,body:value.family,...value.dates.range},event=value.dates.events[0];
+ const client=createCyclesClient({library:store,returnStorage:legacy,request:async()=>assert.fail('an offline probe never computes')});t.after(()=>client.close());
+ const owner={chartId:chart.id,expectedAccountId:chart.accountId,record:chart};
+ const datesKey=JSON.stringify(['events',input.birthUtc,input.body,input.fromAge,input.toAge]);
+ await legacy.putEvents(datesKey,input,{...value.dates,range:{...value.dates.range,toAge:value.dates.range.toAge+1}});
+ assert.equal(await client.readFamily(input,owner),null,'a wrong legacy manifest cannot describe this whole family');
+ await legacy.putEvents(datesKey,input,value.dates);
+ for(let i=0;i<2;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null);
+ assert.deepEqual((await client.chart({...input,eventUtc:event.utc},undefined,{owner,event})).chart,value.charts[0].chart,'a legacy partial result remains reusable online');
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null,'online RAM reuse still cannot grant offline permission');
+ for(let i=2;i<value.charts.length;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
+ const last=value.charts.length-1,lastKey=JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[last].utc,input.timezone]);
+ await legacy.putChart(lastKey,{chart:{...value.charts[last].chart,utc:'1990-01-01T00:00:00Z'},event:value.dates.events[last]});
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null,'a present but invalid part is not a whole family');
+ await legacy.putChart(lastKey,{...value.charts[last],event:value.dates.events[last]});
+ const put=IDBObjectStore.prototype.put;
+ IDBObjectStore.prototype.put=function(...args){if(this.name==='packages')throw new DOMException('full','QuotaExceededError');return put.apply(this,args);};
+ try{assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null);}finally{IDBObjectStore.prototype.put=put;}
+ assert.equal((await legacy.chartKeys())?.length,5,'failed migration preserves every old numerical part');
+ assert.deepEqual((await client.readChart({...input,eventUtc:event.utc},{owner}))?.chart,value.charts[0].chart);
+ assert.deepEqual(await legacy.chartKeys(),[],'the copied numerical parts are released after the whole packet commits');
+});
+
+test('owned offline readiness reads each whole family once, not once per visible event',async t=>{
+ const {createCyclesClient}=await import('../src/data/cycles-client.ts');
+ const {createReturnsController}=await import('../src/state/returns.ts');
+ const {store,lease}=await setup(t),{ref,value}=family();await store.putPackage(lease,chart,ref,value);
+ const client=createCyclesClient({library:store,returnStorage:null,request:async()=>assert.fail('offline family must not request HTTP')});t.after(()=>client.close());
+ const owner={chartId:chart.id,expectedAccountId:chart.accountId,record:chart};
+ const controller=createReturnsController({client,connection:()=> 'offline',getOwner:()=>owner});
+ const get=IDBObjectStore.prototype.get;let packetsRead=0;
+ IDBObjectStore.prototype.get=function(...args){if(this.name==='packages')packetsRead++;return get.apply(this,args);};
+ try{await controller.select({...chart,createdAt:'2026-10-30T00:00:00Z',updatedAt:'2026-10-30T00:00:00Z'});}finally{IDBObjectStore.prototype.get=get;}
+ assert.equal(packetsRead,5,'five family checks, irrespective of their event count');
+ assert.deepEqual(controller.state.readyBodies,['saturn']);
+ assert.deepEqual(controller.state.readyEvents,value.dates.events.map(event=>event.id));
+ assert.equal(await controller.selectEvent(value.dates.events[0]),true);
+ await store.clear(lease);await controller.refreshAvailability();
+ assert.equal(controller.state.canOpen,false);
+ assert.deepEqual(controller.state.readyEvents,[value.dates.events[0].id],'the displayed chart survives, new offline actions do not');
+});
+
+for(const scenario of ['corrupt','foreign','quota','retired','aborted','timeout','source'] as const)test(`whole-family transfer preserves its boundary on ${scenario}`,async t=>{
+ const {createCyclesClient}=await import('../src/data/cycles-client.ts');
+ const {store,lease}=await setup(t),{ref,value}=family(),abort=new AbortController();let requests=0;
+ const owner={chartId:chart.id,expectedAccountId:chart.accountId,record:chart},input={...value.source,body:value.family};
+ const client=createCyclesClient({library:store,returnStorage:null,timeoutMs:scenario==='timeout'?1:60000,request:async(_url,options)=>{
+  requests++;
+  if(scenario==='retired'){await store.clear(lease);const next=await store.activate('1');if(next.status!=='stored')throw Error('account');await store.put(next.lease,[chart]);}
+  if(scenario==='aborted')abort.abort();
+  if(scenario==='timeout')return new Promise<never>((_resolve,reject)=>options.signal!.addEventListener('abort',()=>reject(new DOMException('Cancelled','AbortError')),{once:true}));
+  return {kind:'ready',ref:scenario==='foreign'?{...ref,sourceKey:'foreign'}:ref,payload:scenario==='corrupt'?{...value,charts:value.charts.slice(0,2)}:value};
+ }});t.after(()=>client.close());
+ const put=IDBObjectStore.prototype.put;
+ if(scenario==='quota')IDBObjectStore.prototype.put=function(...args){if(this.name==='packages')throw new DOMException('full','QuotaExceededError');return put.apply(this,args);};
+ try{
+  const transfer=client.fetchFamily(scenario==='source'?{...input,birthUtc:'1999-01-01T00:00:00Z'}:input,owner,{signal:abort.signal});
+  if(scenario==='corrupt' || scenario==='foreign')await assert.rejects(transfer,{code:'invalid_response'});
+  else if(scenario==='aborted')await assert.rejects(transfer,{name:'AbortError'});
+  else if(scenario==='timeout')await assert.rejects(transfer,{code:'server_unavailable'});
+  else if(scenario==='quota')assert.deepEqual(await transfer,{status:'quota',payload:value});
+  else assert.deepEqual(await transfer,{status:'stale'});
+ }finally{IDBObjectStore.prototype.put=put;}
+ assert.equal(requests,scenario==='source'?0:1);
+ assert.equal(await client.readFamily(input,owner),null,'neither cached data nor a late response invents durable readiness');
+ assert.deepEqual((await store.read())!.charts,[chart]);
+ if(scenario==='quota') {
+  const event=value.dates.events[0];assert.deepEqual((await client.chart({...input,eventUtc:event.utc},undefined,{owner,event})).chart,value.charts[0].chart);
+  assert.deepEqual(await client.readFamily(input,owner),value,'a later opening saves the retained whole packet when quota is released');
+  assert.equal(requests,1);
+ }
+});

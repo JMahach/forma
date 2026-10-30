@@ -1,10 +1,17 @@
 import {MAX_RETURN_PROOF_LENGTH,type PreparedReturn} from '../../shared/chart-return-contract.ts';
+import {LIFE_SPAN_YEARS} from '../../shared/date-limits.ts';
 import type { CycleInput, CycleEvent, CycleEventsResult } from '../../shared/cycles-format.ts';
 export type ReturnStorage = ReturnType<typeof createReturnStorage>;
 
 import { createCalculationCache, type CalculationCache } from './calculation-cache.ts';
 import { cycleAge } from '../../shared/cycles-format.ts';
 import { DEFAULT_CYCLE_BODIES } from '../domain/cycles.ts';
+
+export function normalizeReturnInput(action:'events'|'chart',input:CycleInput):CycleInput {
+  return action==='events'?{birthUtc:input.birthUtc,body:input.body,fromAge:input.fromAge??0,toAge:input.toAge??LIFE_SPAN_YEARS}
+    :{birthUtc:input.birthUtc,body:input.body,eventUtc:input.eventUtc,timezone:input.timezone??'UTC'};
+}
+export const returnStorageKey=(action:'events'|'chart',input:CycleInput)=>JSON.stringify([action,...Object.values(normalizeReturnInput(action,input))]);
 
 // This gate classifies current persistent returns; numerical checks belong to the caller.
 function storedChart(key:string,value:unknown):unknown|null {
