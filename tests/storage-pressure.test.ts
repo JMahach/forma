@@ -58,7 +58,14 @@ test('library relief persists last use, preserves protected targets and does not
  const store=createAccountLibraryStore({indexedDB,now:()=>now++});t.after(()=>store.close());
  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
  await store.put(active.lease,Array.from({length:11},(_,n)=>accountChart(n+1)));
- await store.touch(active.lease,chartId(1));
+ const get=IDBObjectStore.prototype.get,put=IDBObjectStore.prototype.put;
+ let numericReads=0,numericWrites=0;
+ IDBObjectStore.prototype.get=function(...args){if(this.name==='charts')numericReads++;return get.apply(this,args);};
+ IDBObjectStore.prototype.put=function(...args){if(this.name==='charts')numericWrites++;return put.apply(this,args);};
+ try { assert.equal(await store.touch(active.lease,chartId(1)),true); }
+ finally {IDBObjectStore.prototype.get=get;IDBObjectStore.prototype.put=put;}
+ assert.equal(numericReads,0,'recording an opening does not read the numerical card');
+ assert.equal(numericWrites,0,'recording an opening does not rewrite its prepared numbers');
  assert.equal(await store.evictForSpace(10,[chartId(2)]),'released');
  const snapshot=await store.read();assert.equal(snapshot!.charts.length,10);assert.equal(snapshot!.charts.some(c=>c.id===chartId(3)),false);
  assert.deepEqual(snapshot!.lease,active.lease);assert.equal('_accessedAt' in snapshot!.charts[0]!,false);

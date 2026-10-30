@@ -356,7 +356,7 @@ test('source retirement is limited to local stand requests and preserves encodin
 
 test('source mode serves one-time storage transitions but no calculation-version owner',async()=>{
  const app=handler(fileURLToPath(new URL('../',import.meta.url)));
- for(const file of ['shared/calculation-storage-transition.ts','src/data/calculation-cache-transition.ts','src/data/account-calculation-transition.ts']){
+ for(const file of ['shared/calculation-storage-transition.ts','src/data/calculation-cache-transition.ts','src/data/account-library-schema.ts']){
   assert.equal((await request(app,'/'+file)).status,200,file);
  }
  assert.equal((await request(app,'/src/data/calculation-updates.ts')).status,404);

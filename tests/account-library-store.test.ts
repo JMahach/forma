@@ -105,9 +105,38 @@ test('the old browser library shortens existing keys without duplicating cards o
    const read=await store.read();assert.equal(read?.charts.length,1);
    assert.equal(read?.charts[0].id,id.slice(0,10));assert.equal(read?.charts[0].note,row.note);
    assert.deepEqual(read?.lease,{accountId:'1',generation:'before'});
+   await store.put(read!.lease!,[accountChart(2)]);
+   assert.equal(await store.evictForSpace(1),'released');
+   assert.deepEqual((await store.read())!.charts.map(chart=>chart.id),[id.slice(0,10)],'old opening survives the new metadata layout');
  }finally{store.close();}
  const keys=await new Promise<IDBValidKey[]>((resolve,reject)=>{const opening=indexedDB.open(databaseName);
    opening.onsuccess=()=>{const tx=opening.result.transaction('charts');const keys=tx.objectStore('charts').getAllKeys();
      tx.oncomplete=()=>{opening.result.close();resolve(keys.result);};tx.onerror=()=>reject(tx.error);};opening.onerror=()=>reject(opening.error);});
  assert.deepEqual(keys,[id.slice(0,10)]);
+});
+
+
+test('colliding historical addresses abort the upgrade without changing either card or its use',async()=>{
+  const indexedDB=new IDBFactory(),databaseName='colliding-ids',id='123456789012345678901234567890123456789';
+  const originals=[{...accountChart(1),id,_accessedAt:42},{...accountChart(2),id:id.slice(0,10),_accessedAt:7}];
+  await new Promise<void>((resolve,reject)=>{
+    const opening=indexedDB.open(databaseName,2);
+    opening.onupgradeneeded=()=>{
+      const charts=opening.result.createObjectStore('charts',{keyPath:'id'});
+      charts.createIndex('accessed','_accessedAt');for(const chart of originals)charts.put(chart);
+      opening.result.createObjectStore('context',{keyPath:'key'}).put({key:'owner',accountId:'1',generation:'before'});
+    };
+    opening.onsuccess=()=>{opening.result.close();resolve();};opening.onerror=()=>reject(opening.error);
+  });
+  const store=createAccountLibraryStore({indexedDB,databaseName});
+  try {assert.equal(await store.read(),null);}finally{store.close();}
+  const restored=await new Promise<unknown[]>((resolve,reject)=>{
+    const opening=indexedDB.open(databaseName,2);
+    opening.onsuccess=()=>{
+      const db=opening.result;assert.equal(db.objectStoreNames.contains('usage'),false);
+      const tx=db.transaction('charts'),rows=tx.objectStore('charts').getAll();
+      tx.oncomplete=()=>{db.close();resolve(rows.result);};tx.onabort=()=>reject(tx.error);
+    };opening.onerror=()=>reject(opening.error);
+  });
+  assert.deepEqual(restored,originals.sort((a,b)=>a.id.localeCompare(b.id)));
 });

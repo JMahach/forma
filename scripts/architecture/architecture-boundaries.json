@@ -353,7 +353,7 @@
         "src/data/storage-pressure.ts",
         "src/data/transit-day-cache.ts",
         "src/data/view-store.ts",
-        "src/data/account-calculation-transition.ts",
+        "src/data/account-library-schema.ts",
         "src/data/calculation-cache-transition.ts"
       ],
       "publicEntries": [
@@ -381,7 +381,7 @@
       "privateEntryReasons": {
         "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
         "src/data/calculation-migration.ts": "Legacy source reading and deletion are internal to the single calculation-cache budget owner.",
-        "src/data/account-calculation-transition.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
+        "src/data/account-library-schema.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting."
       }
     },

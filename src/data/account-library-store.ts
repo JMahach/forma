@@ -1,10 +1,9 @@
-import { canonicalChartId } from '../../shared/chart-record-contract.ts';
 import type { StoragePressure, StorageRelief } from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createRandomId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
-import { migrateAccountCalculations } from './account-calculation-transition.ts';
+import { upgradeAccountLibrary } from './account-library-schema.ts';
 
 export interface LibraryLease { accountId: string; generation: string }
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
@@ -21,26 +20,23 @@ const same = (current: unknown, seen: LibraryLease) => {
 };
 const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
 
+function leastUsedCard(keys:IDBValidKey[],usage:{id:string;openedAt:number}[],exclude:readonly string[]) {
+  const opened=new Map(usage.filter(row=>Number.isFinite(row.openedAt) && row.openedAt>0).map(row=>[row.id,row.openedAt]));
+  const protectedIds=new Set(exclude);
+  let selected:IDBValidKey|null=null,earliest=Infinity;
+  // IndexedDB keys provide a stable tie-break for cards never opened.
+  for(const key of keys) {
+    if(protectedIds.has(String(key)))continue;
+    const at=opened.get(String(key))??0;
+    if(at<earliest){selected=key;earliest=at;}
+  }
+  return selected;
+}
+
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
 export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
-  const database = createIndexedDatabase({databaseName, version: 4, stores: ['charts', 'context'], indexedDB,
-    upgrade(db,tx,oldVersion) {
-      const charts=db.objectStoreNames.contains('charts')?tx.objectStore('charts'):db.createObjectStore('charts',{keyPath:'id'});
-      if(!charts.indexNames.contains('accessed'))charts.createIndex('accessed','_accessedAt');
-      if(!db.objectStoreNames.contains('context'))db.createObjectStore('context',{keyPath:'key'});
-      if(oldVersion===0)return;
-      if(oldVersion>=3){migrateAccountCalculations(tx);return;}
-      const scan=charts.openCursor();scan.onsuccess=()=>{const cursor=scan.result;if(!cursor){migrateAccountCalculations(tx);return;}
-        const id=typeof cursor.value.id==='string'?canonicalChartId(cursor.value.id):cursor.value.id;
-        if(id!==cursor.value.id){
-          const existing=charts.get(id);existing.onsuccess=()=>{
-            if(existing.result){tx.abort();return;}
-            charts.put({...cursor.value,id,_accessedAt:Number.isFinite(cursor.value._accessedAt)?cursor.value._accessedAt:0});
-            cursor.delete();cursor.continue();
-          };return;
-        }
-        if(!Number.isFinite(cursor.value._accessedAt))cursor.update({...cursor.value,_accessedAt:0});cursor.continue();};
-    }});
+  const database = createIndexedDatabase({databaseName, version: 5, stores: ['charts', 'context', 'usage'], indexedDB,
+    upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
   return {
     async read(): Promise<LibrarySnapshot | null> {
@@ -73,6 +69,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           if (request.result && request.result.accountId !== null && !current) return;
           const next = {accountId, generation: createRandomId()};
           tx.objectStore('charts').clear();
+          tx.objectStore('usage').clear();
           contexts.put({key: 'owner', ...next});
           result({status: 'stored', lease: next});
         };
@@ -92,8 +89,8 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
             try{
               let current:AccountChart|null=null;try{current=validateAccountChart(prior.result,seen.accountId);}catch{}
               if(!current || current.revision<chart.revision){
-                // Acquisition is not use. Only the existing visible-opening path raises priority.
-                rows.put({...chart,_accessedAt:current && Number.isFinite(prior.result._accessedAt)?prior.result._accessedAt:0});
+                // Acquisition never creates or changes a real-use mark.
+                rows.put(chart);
                 outcome.changed=true;
               }
             }catch(error){fail(error);}
@@ -141,9 +138,9 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       return await database.transaction<boolean>('readwrite',(tx,result,fail)=>{
         const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
           if(!same(owner.result,seen)){result(false);return;}
-          const rows=tx.objectStore('charts'),read=rows.get(chartId);read.onsuccess=()=>{
+          const read=tx.objectStore('charts').getKey(chartId);read.onsuccess=()=>{
             if(!read.result){result(false);return;}
-            try{rows.put({...read.result,_accessedAt:now()});result(true);}catch(error){fail(error);}
+            try{tx.objectStore('usage').put({id:chartId,openedAt:now()});result(true);}catch(error){fail(error);}
           };
         };
       })===true;
@@ -153,15 +150,15 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       return await database.transaction<StorageRelief>('readwrite',(tx,result)=>{
         const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
           if(!isCurrent() || admitted===undefined || (admitted? !same(owner.result,admitted):lease(owner.result)!==null)){result('unavailable');return;}
-          const rows=tx.objectStore('charts'),count=rows.count();count.onsuccess=()=>{
-          if(count.result<=keep){result('empty');return;}
-          const request=rows.index('accessed').openCursor();request.onsuccess=()=>{
-            const cursor=request.result;if(!cursor){result('empty');return;}
-            if(exclude.includes(String(cursor.primaryKey))){cursor.continue();return;}
+          const rows=tx.objectStore('charts'),keys=rows.getAllKeys(),usage=tx.objectStore('usage').getAll();
+          usage.onsuccess=()=>{
+            if(keys.result.length<=keep){result('empty');return;}
+            const victim=leastUsedCard(keys.result,usage.result,exclude);
+            if(victim===null){result('empty');return;}
             if(!isCurrent()){result('unavailable');return;}
-            cursor.delete();result('released');
+            rows.delete(victim);result('released');
           };
-        };};
+        };
       })??'unavailable';
     },
     async remove(seen: LibraryLease, chartId: string): Promise<LibraryStoreResult> {
@@ -171,6 +168,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           if (!same(request.result, seen)) { result({status: 'stale'}); return; }
           const next = {...seen, generation: createRandomId()};
           tx.objectStore('charts').delete(chartId);
+          tx.objectStore('usage').delete(chartId);
           contexts.put({key: 'owner', ...next});
           result({status: 'stored', lease: next});
         };
@@ -184,6 +182,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         request.onsuccess = () => {
           if (!same(request.result, seen)) { result('stale'); return; }
           tx.objectStore('charts').clear();
+          tx.objectStore('usage').clear();
           contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };
@@ -200,6 +199,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         request.onsuccess = () => {
           if (request.result?.accountId !== accountId) {result('stale'); return;}
           tx.objectStore('charts').clear();
+          tx.objectStore('usage').clear();
           contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };
