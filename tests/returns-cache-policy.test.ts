@@ -3,12 +3,13 @@ import type { ChartInput } from '../src/domain/chart-composition.ts';
 import { deferred } from './helpers/deferred.ts';
 import type { CycleEvent, CycleEventsResult, CycleChartResult } from '../shared/cycles-format.ts';
 import type { TestCyclesOptions, TestReturnsOptions } from './fixtures/returns.ts';
-import type { ReturnStorage } from '../src/data/return-storage.ts';
+import type {LegacyReturnStorage as ReturnStorage} from './fixtures/returns.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
 import { createCyclesClient } from './fixtures/returns.ts';
 import { createReturnStorage } from '../src/data/return-storage.ts';
+import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
 import { createMemoryCache, estimateBytes } from '../src/data/memory-cache.ts';
 import { createReturnsController } from './fixtures/returns.ts';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
@@ -39,7 +40,7 @@ function device() {
   });
 }
 
-test('all body dates reuse RAM; only default body dates survive a fresh client memory', async () => {
+test('all standalone body dates reuse RAM without persistent writes', async () => {
   const storage = device(), calls: string[] = [];
   const options: TestCyclesOptions = { returnStorage: storage, request: async (_url, { body }) => {
     const value = JSON.parse(body as string); calls.push(value.body); return packet(value);
@@ -52,11 +53,11 @@ test('all body dates reuse RAM; only default body dates survive a fresh client m
   await tick();
   assert.equal(calls.length, 13);
   assert.deepEqual(new Set(storage.reads), new Set(DEFAULT_CYCLE_BODIES));
-  assert.deepEqual(new Set(storage.writes), new Set(DEFAULT_CYCLE_BODIES));
-  assert.equal(storage.records.size, DEFAULT_CYCLE_BODIES.length);
+  assert.deepEqual(storage.writes, []);
+  assert.equal(storage.records.size, 0);
   const reload = createCyclesClient(options);
   for (const { id: body } of CYCLE_BODIES) await reload.events({ ...input, body });
-  assert.equal(calls.length, 13 + CYCLE_BODIES.length - DEFAULT_CYCLE_BODIES.length);
+  assert.equal(calls.length, 13 + CYCLE_BODIES.length);
 });
 
 test('extra body dates share the byte LRU across clients and lose reuse only after eviction', async () => {
@@ -87,8 +88,9 @@ test('a pending device miss notices another client that populated common RAM dur
 
 test('all full return charts reuse RAM while only basic bodies survive fresh client memory', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
+  const library=createAccountLibraryStore({indexedDB});t.after(()=>library.close());
   let calls = 0;
-  const options: TestCyclesOptions = { returnStorage: storage, request: async (_url, { body }) => {
+  const options: TestCyclesOptions = { returnStorage: storage, library, request: async (_url, { body }) => {
     const value = JSON.parse(body as string); calls++;
     return { chart: { ...natal(), utc: value.eventUtc, timezone: value.timezone } };
   } };
@@ -126,8 +128,6 @@ test('migration removes old extra-body dates and charts while preserving basic c
   const storage=createReturnStorage({indexedDB});t.after(()=>storage.close());
   assert.equal(await storage.getEvents('old-moon'),null);assert.equal(await storage.getChart(chartKey('moon')),null);
   assert.deepEqual(await storage.getEvents('old-saturn'),packet(input));assert.deepEqual(await storage.getChart(JSON.stringify(['chart',input.birthUtc,'saturn',eventUtc,'UTC'])),chart);
-  for(const {id:body}of CYCLE_BODIES)await storage.putEvents(body,{...input,body},packet(input));
-  for(const {id:body}of CYCLE_BODIES)assert.deepEqual(await storage.getEvents(body),DEFAULT_CYCLE_BODIES.includes(body)?packet(input):null);
   const migrated=await new Promise<IDBDatabase>((resolve,reject)=>{
     const request=indexedDB.open('bodygraph-return-events',3);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
   });

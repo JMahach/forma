@@ -27,8 +27,8 @@ import { DEFAULT_CYCLE_BODIES } from '../domain/cycles.ts';
 import { createMemoryCache } from './memory-cache.ts';
 import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 
-// Only default body dates and opened charts persist on the device. Other bodies
-// stay in shared tab memory; controllers pin active inputs within its byte budget.
+// Standalone dates stay in bounded tab memory. Only opened basic charts may
+// enter the common device cache; owned families have their own whole-package store.
 export function createCyclesClient({ request = requestJSON, memory = createMemoryCache(), timeoutMs = 60_000,
   returnStorage,library }: CyclesClientOptions = {}) {
   const lifetime = new AbortController();
@@ -122,7 +122,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     // Numerical reuse is common; a request that persists a result belongs to one card.
     const requestKey = own ? JSON.stringify([key, own.chartId, own.expectedAccountId, sourceTimezone]) : key;
     const persistent = device && DEFAULT_CYCLE_BODIES.includes(input.body);
-    const saveIndividual=persistent && !(library && owner);
+    const saveIndividual=persistent && action==='chart' && !(library && owner);
     const confirmed = action === 'chart' && confirmsEvent(event, input)
       ? Object.fromEntries(eventFields.map(field => [field, event[field]])) as unknown as CycleEvent : null;
     const usable = (data: ClientCycleResult | null): data is ClientCycleResult => !!data && (!cacheOnly || action === 'events' || confirmsEvent(data.event, input));
@@ -132,14 +132,13 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       const owners=storedOwners.get(data);if(enrich && owners)storedOwners.set(result,owners);
       if(own && save)rememberStored(result,own);
       if (remember || enrich) memory.put(memoryKey, result);
-      if (saveIndividual && (save || enrich)) Promise.resolve().then(() => action === 'events'
-        ? device!.putEvents(key, input, result as CycleEventsResult) : device!.putChart(key, result)).catch(() => {});
+      if (saveIndividual && (save || enrich)) Promise.resolve().then(() => device!.putChart(key, result)).catch(() => {});
       if (own && !cacheOnly && (!storedFor(result,own) || save && action==='events'))
         void preserveReady(action,{...input,timezone:sourceTimezone},result,own,signal!).catch(()=>{});
       return result;
     };
     const reuse=(data:ClientCycleResult)=>{
-      if(persistent)Promise.resolve().then(()=>action==='events'?device!.touchEvents?.(key):device!.touchChart?.(key)).catch(()=>{});
+      if(saveIndividual)Promise.resolve().then(()=>device!.touchChart?.(key)).catch(()=>{});
       return accept(data,{remember:false});
     };
     const remembered = memory.get<ClientCycleResult>(memoryKey);

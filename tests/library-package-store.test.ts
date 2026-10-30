@@ -316,7 +316,7 @@ test('owned returns reuse a whole durable family and lose new offline permission
 
 test('legacy return parts authorize an owned offline family only after complete atomic migration',async t=>{
  const {createCyclesClient}=await import('../src/data/cycles-client.ts');
- const {createReturnStorage}=await import('../src/data/return-storage.ts');
+ const {createLegacyReturnStorage:createReturnStorage}=await import('./fixtures/returns.ts');
  const {store,indexedDB}=await setup(t),{value}=family(),legacy=createReturnStorage({indexedDB});t.after(()=>legacy.close());
  const input={...value.source,body:value.family,...value.dates.range},event=value.dates.events[0];
  const client=createCyclesClient({library:store,returnStorage:legacy,request:async()=>assert.fail('an offline probe never computes')});t.after(()=>client.close());
@@ -422,7 +422,7 @@ test('observing an owned day reads only its durable packet without migration or 
 });
 
 test('observing a return family never reads or migrates legacy individual results',async t=>{
- const {createReturnStorage}=await import('../src/data/return-storage.ts'),{store,indexedDB,lease}=await setup(t),{ref,value}=family();
+ const {createLegacyReturnStorage:createReturnStorage}=await import('./fixtures/returns.ts'),{store,indexedDB,lease}=await setup(t),{ref,value}=family();
  const legacy=createReturnStorage({indexedDB});t.after(()=>legacy.close());
  const input={birthUtc:chart.utc,timezone:chart.timezone,body:'saturn',...value.dates.range},owner={chartId:chart.id,expectedAccountId:'1',record:chart};
  await legacy.putEvents(JSON.stringify(['events',input.birthUtc,input.body,input.fromAge,input.toAge,input.timezone]),input,value.dates);

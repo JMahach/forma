@@ -25,8 +25,8 @@ function storedChart(key:string,value:unknown):unknown|null {
 
 const proofField=(value:unknown)=>typeof value==='string' && value.length>0 && value.length<=MAX_RETURN_PROOF_LENGTH ? {proof:value} : {};
 
-// Only basic return dates and charts participate in the shared persistent LRU.
-// Other return bodies remain in the caller's bounded memory cache.
+// Read legacy basic dates for migration, but never create new standalone lists.
+// Newly opened basic charts still participate in the common persistent LRU.
 export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache }: {
   indexedDB?: IDBFactory | null; timeoutMs?: number; cache?: CalculationCache;
 } = {}) {
@@ -45,14 +45,7 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
         }))};
       } catch{return null;}
     },
-    putEvents(key: string, input: CycleInput, data: PreparedReturn<CycleEventsResult>) {
-      if(closed || !DEFAULT_CYCLE_BODIES.includes(input.body))return Promise.resolve(null);
-      const record={key,birthUtc:input.birthUtc,body:input.body,range:data.range,...proofField(data.proof),
-        events:data.events.map(({utc,cycle,pass,direction})=>({utc,cycle,pass,direction}))};
-      return owner.put('return-events',key,record);
-    },
     removeEvents(key: string) { return closed?Promise.resolve(null):owner.remove('return-events',key); },
-    touchEvents(key:string) { return closed?Promise.resolve(null):owner.touch('return-events',key); },
     async getChart(key: string):Promise<unknown|null> {
       if(closed)return null;
       const data=await owner.get<unknown>('return-charts',key);

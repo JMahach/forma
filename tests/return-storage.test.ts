@@ -5,6 +5,7 @@ import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { chartAtMinute } from '../src/domain/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { createReturnStorage } from '../src/data/return-storage.ts';
+import {createLegacyReturnStorage} from './fixtures/returns.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createCyclesClient } from '../src/data/cycles-client.ts';
 const revision = 'a'.repeat(64), tick = () => new Promise(setImmediate);
@@ -14,8 +15,8 @@ event.id = `${event.body}:${event.utc}`; event.cycleId = 'saturn:1'; event.age =
 const data = { range: { fromAge: 0, toAge: 100 }, events: [event] };
 const chartKey=(index=0,body='saturn')=>JSON.stringify(['chart',new Date(Date.parse(input.birthUtc)+index*86400000).toISOString(),body,event.utc,'UTC']);
 
-test('device dates retain microseconds and more than forty complete or empty datasets across a new connection', async t => {
-  const indexedDB = new IDBFactory(),owner=createCalculationCache({indexedDB}), first = createReturnStorage({ cache:owner }); t.after(() => {first.close();owner.close();});
+test('legacy dates retain microseconds and complete or empty datasets across a new connection', async t => {
+  const indexedDB = new IDBFactory(),owner=createCalculationCache({indexedDB}), first = createLegacyReturnStorage({ cache:owner }); t.after(() => {first.close();owner.close();});
   for (let index = 0; index < 65; index++) await first.putEvents(`natal-${index}`, input, index % 2 ? { ...data, events: [] } : data);
   const reload = createReturnStorage({ indexedDB }); t.after(() => reload.close());
   for (let index = 0; index < 65; index++) assert.deepEqual(await reload.getEvents(`natal-${index}`), index % 2 ? { ...data, events: [] } : data);
@@ -24,17 +25,17 @@ test('device dates retain microseconds and more than forty complete or empty dat
   assert.equal(record.events[0].utc, event.utc); assert.equal(record.chart, undefined);
 });
 
-test('two tabs writing finished body packets keep each other’s records intact', async t => {
-  const indexedDB = new IDBFactory(), first = createReturnStorage({ indexedDB }), second = createReturnStorage({ indexedDB });
+test('two legacy date sources remain readable without dropping each other', async t => {
+  const indexedDB = new IDBFactory(), first = createLegacyReturnStorage({ indexedDB }), second = createLegacyReturnStorage({ indexedDB });
   t.after(() => { first.close(); second.close(); });
   await Promise.all([first.putEvents('saturn', input, data), second.putEvents('chiron', { ...input, body: 'chiron' }, { ...data, events: [] }), second.putEvents('saturn', input, data)]);
   assert.deepEqual(await first.getEvents('saturn'), data); assert.deepEqual(await first.getEvents('chiron'), { ...data, events: [] });
 });
 
-test('client reads a stored empty result without a new search across client replacements', async t => {
+test('client reuses a shared RAM empty result without persisting its dates', async t => {
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   let calls = 0; const request = async () => { calls++; return { ...data, events: [] }; };
-  const options = { returnStorage: storage, request };
+  const options = { returnStorage: storage, memory:createMemoryCache(), request };
   await createCyclesClient(options).events(input); await tick();
   await createCyclesClient(options).events({ ...input, timezone: 'Europe/Moscow', id: 'renamed' });
   assert.equal(calls, 1);
@@ -46,7 +47,7 @@ test('a ready body packet is read while another natal request is still unfinishe
   const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
   let finish; const waiting = new Promise(resolve => { finish = resolve; });
   let calls = 0;
-  const options = { returnStorage: storage, request: async (_url, { body }) => { calls++; return JSON.parse(body).body === 'moon' ? waiting : data; } };
+  const options = { returnStorage: storage, memory:createMemoryCache(), request: async (_url, { body }) => { calls++; return JSON.parse(body).body === 'moon' ? waiting : data; } };
   await createCyclesClient(options).events(input); await tick();
   const client = createCyclesClient(options), pending = client.events({ ...input, body: 'moon' });
   await tick(); assert.deepEqual(await client.events(input), data); assert.equal(calls, 2);
@@ -54,13 +55,13 @@ test('a ready body packet is read while another natal request is still unfinishe
 });
 
 test('unavailable storage remains optional', async () => {
-  const storage = createReturnStorage({ indexedDB: null });
+  const storage = createLegacyReturnStorage({ indexedDB: null });
   assert.equal(await storage.getEvents('missing'), null); await storage.putEvents('one', input, data); storage.close();
 });
 
 test('compact dates preserve valid ordering for two roots inside the same millisecond', async t => {
   const { validCycleResult } = await import('../shared/cycles-format.ts');
-  const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
+  const indexedDB = new IDBFactory(), storage = createLegacyReturnStorage({ indexedDB }); t.after(() => storage.close());
   const rows = ['2028-07-21T12:36:05.920100Z', '2028-07-21T12:36:05.920200Z'].map((utc, index) => ({ ...event, utc,
     id: `saturn:${utc}`, pass: index + 1, age: (Date.parse(utc) - Date.parse(input.birthUtc) + (index + 1) / 10) / (365.2425 * 86400000) }));
   const packet = { ...data, events: rows };
@@ -104,7 +105,7 @@ test('more than forty basic return charts survive a new connection while within 
 });
 
 test('an actual quota exception in the chart transaction does not prevent rendering or reuse in shared RAM', async t => {
-  const indexedDB = new IDBFactory(), storage = createReturnStorage({ indexedDB }); t.after(() => storage.close());
+  const indexedDB = new IDBFactory(), storage = createLegacyReturnStorage({ indexedDB }); t.after(() => storage.close());
   const originalPut = IDBObjectStore.prototype.put; let quotaFailures = 0;
   t.mock.method(IDBObjectStore.prototype, 'put', function (...args) {
     if (JSON.stringify(args[0]).includes('"chart":')) { quotaFailures++; throw new DOMException('Storage is full', 'QuotaExceededError'); }
@@ -139,8 +140,8 @@ test('a touched basic chart participates in the same byte LRU without closing th
 });
 
 
-test('compact event persistence retains bounded preparation proof across a new connection', async t => {
-  const indexedDB=new IDBFactory(),first=createReturnStorage({indexedDB});t.after(()=>first.close());
+test('legacy compact events retain bounded preparation proof across a new connection', async t => {
+  const indexedDB=new IDBFactory(),first=createLegacyReturnStorage({indexedDB});t.after(()=>first.close());
   const proof='v1.'+revision+'.'+'b'.repeat(43);
   await first.putEvents('proof',input,{...data,proof});
   await first.putEvents('oversize-proof',input,{...data,proof:'x'.repeat(1000)});

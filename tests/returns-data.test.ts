@@ -4,7 +4,7 @@ import type { CycleInput } from '../shared/cycles-format.ts';
 import { deferred } from './helpers/deferred.ts';
 import type { CycleEvent, CycleEventsResult, CycleChartResult } from '../shared/cycles-format.ts';
 import type { TestCyclesOptions, TestReturnsOptions } from './fixtures/returns.ts';
-import type { ReturnStorage } from '../src/data/return-storage.ts';
+import type {LegacyReturnStorage as ReturnStorage} from './fixtures/returns.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCyclesClient } from './fixtures/returns.ts';
@@ -32,16 +32,16 @@ function storageDouble<T extends StorageDouble>(value: T) {
 function device() { const records = new Map<string, unknown>(); return storageDouble({ records, getEvents: async (key: string) => records.get(key), putEvents: async (key: string, _input: CycleInput, data: CycleEventsResult) => { records.set(key, data); }, removeEvents: async (key: string) => { records.delete(key); },
   getChart: async (key: string) => records.get(key), putChart: async (key: string, data: unknown) => { records.set(key, data); }, removeChart: async (key: string) => { records.delete(key); } }); }
 
-test('both prepared dates and opened return charts persist across reloads', async () => {
+test('full return charts persist across reloads while standalone dates are requested again', async () => {
   const storage = device(), calls: string[] = [];
   const options: TestCyclesOptions = { returnStorage: storage, request: async (url: string) => { calls.push(url); return url.endsWith('/chart') ? chartResult : packet(); } };
   const first = createCyclesClient(options), chartInput = { birthUtc: input.birthUtc, body: 'saturn', eventUtc: event.utc, timezone: 'UTC' };
   await first.events(input); await tick(); await first.chart(chartInput);
   await first.chart(chartInput);
   const reload = createCyclesClient(options); await reload.events(input); await reload.chart(chartInput);
-  assert.equal(calls.filter(url => url.endsWith('/events')).length, 1);
+  assert.equal(calls.filter(url => url.endsWith('/events')).length, 2);
   assert.equal(calls.filter(url => url.endsWith('/chart')).length, 1);
-  assert.equal(storage.records.size, 2);
+  assert.equal(storage.records.size, 1);
 });
 
 test('two consumers share a dates lookup but cancel independently', async () => {
@@ -108,7 +108,8 @@ test('A to B to A ignores the abandoned response and keeps the last dates reques
   const latest = client.events(input); await tick();
   jobs[0].resolve(packet()); await tick(); assert.equal(storage.records.size, 0);
   assert.equal(jobs[1].signal!.aborted, false); jobs[1].resolve(packet());
-  await latest; await tick(); assert.equal(storage.records.size, 1);
+  await latest; await tick(); assert.equal(storage.records.size, 0);
+  assert.deepEqual(await client.readEvents(input),packet());assert.equal(jobs.length,2);
 });
 
 test('a RAM chart and a selected ready list never wait for other bodies being prepared', async () => {
@@ -217,13 +218,14 @@ test('accepted replacement retains the new return before releasing the previous 
   control.reset(); assert.deepEqual(order, ['retain', 'retain', 'release', 'release']);
 });
 
-test('cache-only return dates and charts survive a fresh client without entering calculation', async () => {
+test('cache-only lookup restores a full chart after reload but leaves absent standalone dates absent', async () => {
   const storage=device();let requests=0;
   const options:TestCyclesOptions={returnStorage:storage,request:async url=>{requests++;return url.endsWith('/chart')?chartResult:packet();}};
   const first=createCyclesClient(options),exact={birthUtc:input.birthUtc,body:'saturn',eventUtc:event.utc,timezone:'UTC'};
   await first.events(input);await first.chart(exact,undefined,{event});await tick();
   const before=requests,second=createCyclesClient(options);
-  assert.deepEqual((await second.readEvents(input))?.events,[event]);
+  assert.deepEqual((await first.readEvents(input))?.events,[event]);
+  assert.equal(await second.readEvents(input),null);
   assert.equal((await second.readChart(exact))?.chart.utc,event.utc);
   assert.equal(await second.readEvents({...input,body:'chiron'}),null);
   assert.equal(await second.readChart({...exact,eventUtc:'2029-01-01T00:00:00Z'}),null);

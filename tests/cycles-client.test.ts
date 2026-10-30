@@ -32,7 +32,7 @@ test('basic return RAM reuse touches persistent LRU without rewriting the payloa
   await new Promise(setImmediate);assert.deepEqual(touches,[]);
   assert.equal(await client.events(input),dates);assert.equal(await client.chart(chartInput),chart);
   await new Promise(setImmediate);
-  assert.deepEqual(touches,['events','chart']);assert.deepEqual(writes,['events','chart']);assert.equal(calls,2);
+  assert.deepEqual(touches,['chart']);assert.deepEqual(writes,['chart']);assert.equal(calls,2);
 });
 
 test('extra return charts use RAM without consulting or writing persistent storage',async()=>{
@@ -185,7 +185,7 @@ function deviceCache() {
     async getChart(key: string) { return records.get(key); }, async putChart(key: string, value: unknown) { records.set(key, value); }, async removeChart(key: string) { records.delete(key); } };
 }
 
-test('reload reads both dates and opened exact charts from device storage', async () => {
+test('reload reads opened exact charts from the device and obtains standalone dates again', async () => {
   const returnStorage = deviceCache(), calls: { url: string; options: RequestInit }[] = [];
   const request = async (url: string, options: RequestInit) => { calls.push({ url, options }); return url.endsWith('/chart') ? chartResult() : events(); };
   const first = createCyclesClient({ returnStorage, request });
@@ -193,23 +193,23 @@ test('reload reads both dates and opened exact charts from device storage', asyn
   const reload = createCyclesClient({ returnStorage, request });
   assert.deepEqual(await reload.events({ ...input, timezone: 'Europe/Moscow' }), events());
   assert.deepEqual(await reload.chart(chartInput), chartResult());
-  assert.equal(calls.length, 2); assert.equal(returnStorage.records.size, 2);
+  assert.equal(calls.length, 3); assert.equal(returnStorage.records.size, 1);
   assert.ok(calls.every(({ options }) => (options.headers as Record<string, string>)['X-Forma-Cycles-Version'] === undefined));
   const changed = createCyclesClient({ returnStorage, request });
-  await changed.events(input); await changed.chart(chartInput); assert.equal(calls.length, 2, 'replacing a client reuses the same prepared numbers');
+  await changed.events(input); await changed.chart(chartInput); assert.equal(calls.length, 4, 'only full prepared charts survive a new memory owner');
 });
 
-test('corrupt or mismatched device results are removed and recalculated; storage failure never blocks a result', async () => {
+test('corrupt legacy dates are removed and fetched again; unavailable storage does not block RAM dates', async () => {
   for (const bytes of [{}, { events: [] }, { ...events(), range: { fromAge: 0, toAge: 100 } }] as const) {
     let requests = 0, removed = 0;
     const client = createCyclesClient({ returnStorage: {
-      getEvents: async () => bytes, removeEvents: async () => { removed++; }, putEvents: async () => { throw Error('full'); },
+      getEvents: async () => bytes, removeEvents: async () => { removed++; },
     }, request: async () => { requests++; return events(); } });
     assert.deepEqual(await client.events(input), events()); await tick();
     assert.equal(requests, 1); assert.equal(removed, 1);
   }
-  const client = createCyclesClient({ returnStorage: { getEvents() { throw Error('denied'); }, putEvents() { return new Promise(() => {}); } }, request: async () => events() });
-  assert.deepEqual(await client.events(input), events(), 'an unfinished write does not delay the chart');
+  const client = createCyclesClient({ returnStorage: { getEvents() { throw Error('denied'); } }, request: async () => events() });
+  assert.deepEqual(await client.events(input), events());
 });
 
 test('cancellation while reading device data never publishes it, fetches or remembers it', async () => {

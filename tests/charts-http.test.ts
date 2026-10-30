@@ -340,7 +340,7 @@ test('HTTP accepts a proven prepared return without calculating it again', async
 });
 
 
-test('prepared returns survive HTTP and device reload, attach to the saved card, and reopen without calculation', async t => {
+test('a prepared full return survives reload and adoption without persisting standalone dates or recalculating the chart', async t => {
   const [{createChartRuntime},{createCyclesHandler},{createCyclesClient},{createReturnStorage},{IDBFactory},
     {accountNatalChart},{mainReturnRange},{cycleAge},{chartAtMinute},{natalDayFixture}] = await Promise.all([
     import('../server/charts.ts'),import('../server/http/cycles.ts'),import('../src/data/cycles-client.ts'),
@@ -369,9 +369,7 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
   };
   const indexedDB=new IDBFactory(),device=createReturnStorage({indexedDB});t.after(()=>device.close());
   const pendingWrites:Promise<unknown>[]=[];
-  const storage={...device,putEvents:(...args:Parameters<typeof device.putEvents>)=>{
-    const promise=device.putEvents(...args);pendingWrites.push(promise);return promise;
-  },putChart:(...args:Parameters<typeof device.putChart>)=>{
+  const storage={...device,putChart:(...args:Parameters<typeof device.putChart>)=>{
     const promise=device.putChart(...args);pendingWrites.push(promise);return promise;
   }};
   const input={birthUtc:content.utc,body:'saturn',timezone:content.timezone,...range};
@@ -384,15 +382,15 @@ test('prepared returns survive HTTP and device reload, attach to the saved card,
   const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
   assert.equal(saved.kind,'created');assert.ok('chartId' in saved);
   const owner={chartId:saved.chartId,expectedAccountId:f.accountId};
-  await restored.syncPrepared(input,owner);
+  await restored.syncPrepared(chartInput,owner);
   assert.deepEqual(requests,['/api/cycles/events','/api/cycles/chart',
-    `/api/charts/${saved.chartId}/returns/accept`,`/api/charts/${saved.chartId}/returns/accept`]);
-  assert.equal(f.database.connection.prepare('SELECT COUNT(*) AS count FROM account_chart_returns').get()!.count,2);
+    `/api/charts/${saved.chartId}/returns/accept`]);
+  assert.equal(f.database.connection.prepare('SELECT COUNT(*) AS count FROM account_chart_returns').get()!.count,1);
   connect();
   const fresh=createCyclesClient({returnStorage:null,request});t.after(()=>fresh.close());
   assert.equal((await fresh.events(input,undefined,{owner})).events[0]!.utc,utc);
   assert.equal((await fresh.chart(chartInput,undefined,{owner,event})).chart.utc,utc);
-  assert.equal(dateCalls,1);assert.equal(chartCalls,1);
+  assert.equal(dateCalls,2);assert.equal(chartCalls,1);
 });
 
 for (const committed of [false, true]) test(`lost save response survives reload and recovers through HTTP without another write (committed=${committed})`, async t => {

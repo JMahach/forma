@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
 import {normalizeMainReturn} from '../shared/chart-return-contract.ts';
 import {createReturnReceipts} from '../server/services/return-receipt.ts';
-import {createReturnStorage} from '../src/data/return-storage.ts';
+import {createLegacyReturnStorage as createReturnStorage} from './fixtures/returns.ts';
 import {IDBFactory} from 'fake-indexeddb';
 import {accountNatalChart} from './helpers/account-chart.ts';
 import type {CycleEventsResult,CycleChartResult} from '../shared/cycles-format.ts';
