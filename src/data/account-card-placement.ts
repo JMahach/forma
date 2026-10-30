@@ -1,3 +1,5 @@
+import {TransactionPlacement} from './library-package-placement.ts';
+import {unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import type { createIndexedDatabase } from './indexed-db.ts';
@@ -5,49 +7,19 @@ import type { StoragePressure } from './storage-pressure.ts';
 
 interface Placement {
   database:Pick<ReturnType<typeof createIndexedDatabase>,'transactionResult'>;
-  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt:number;pressure?:StoragePressure;
-}
-function candidates(keys:IDBValidKey[],marks:{id:string;openedAt:number}[],chart:AccountChart,openedAt:number) {
-  const used=new Map(marks.map(row=>[row.id,Number.isFinite(row.openedAt)?row.openedAt:0]));
-  return keys.filter(key=>{
-    const at=used.get(String(key))??0;
-    return key!==chart.id && (at<openedAt || at===openedAt && String(key)<chart.id);
-  }).sort((a,b)=>(used.get(String(a))??0)-(used.get(String(b))??0) || String(a).localeCompare(String(b)));
+  isOwner:(owner:unknown)=>boolean;isCurrent:()=>boolean;chart:AccountChart;openedAt?:number;pressure?:StoragePressure;
 }
 function needsReplacement(value:unknown,chart:AccountChart) {
   try{return validateAccountChart(value,chart.accountId).revision<chart.revision;}catch{return true;}
 }
-function writeRequest(write:()=>IDBRequest,accepted:()=>void,quota:()=>void,fail:(cause?:unknown)=>void) {
-  const rejected=(cause:unknown)=>{
-    if((cause as DOMException)?.name==='QuotaExceededError')quota();else fail(cause);
-  };
-  try {
-    const request=write();request.onsuccess=accepted;
-    request.onerror=event=>{event.preventDefault();event.stopPropagation();rejected(request.error);};
-  }catch(error){rejected(error);}
-}
 function replaceWithinTransaction(tx:IDBTransaction,input:Placement,firstVictim:boolean,
   state:{needsPayload:boolean},done:(value:boolean)=>void,fail:(cause?:unknown)=>void) {
   const {chart,openedAt,isCurrent}=input,rows=tx.objectStore('charts'),usage=tx.objectStore('usage');
-  let victims:IDBValidKey[]|undefined,next=0;
-  const noSpace=()=>fail(new DOMException('No admissible local replacement','QuotaExceededError'));
-  const releaseFor=(retry:()=>void)=>{
-    if(!isCurrent()){fail();return;}
-    if(!firstVictim){noSpace();return;}
-    if(!victims) {
-      const keys=rows.getAllKeys(),marks=usage.getAll();marks.onsuccess=()=>{
-        victims=candidates(keys.result,marks.result,chart,openedAt);releaseFor(retry);
-      };
-      return;
-    }
-    if(next===victims.length){noSpace();return;}
-    const remove=rows.delete(victims[next++]);remove.onsuccess=retry;
-  };
-  const saveUse=()=>writeRequest(()=>usage.put({id:chart.id,openedAt}),()=>done(true),
-    ()=>state.needsPayload?releaseFor(saveUse):noSpace(),fail);
-  const saveCard=()=>writeRequest(()=>rows.put(chart),saveUse,()=>releaseFor(saveCard),fail);
-  if(!state.needsPayload){saveUse();return;}
-  if(firstVictim)releaseFor(saveCard);else saveCard();
+  const placement=new TransactionPlacement(tx,{id:chart.id,kind:'card',chartIds:[chart.id],openedAt},
+    firstVictim && state.needsPayload,isCurrent,fail);
+  const saveUse=()=>openedAt===undefined?done(true):placement.write(()=>usage.put({id:chart.id,openedAt}),()=>done(true));
+  const saveCard=()=>placement.write(()=>rows.put(chart),()=>{unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);saveUse();});
+  placement.start(state.needsPayload?saveCard:saveUse);
 }
 function placementAttempt(input:Placement,firstVictim:boolean) {
   const {database,isOwner,chart,isCurrent}=input,state={needsPayload:true};
@@ -71,6 +43,13 @@ export async function placeOpenedCard(input:Placement):Promise<boolean> {
   const result=input.pressure?await input.pressure.write(first.write,{atomicLibrary:true}):await first.write();
   if(result.status==='complete')return result.value===true;
   if(result.status!=='quota' || !first.state.needsPayload || !input.isCurrent())return false;
-  const second=await placementAttempt(input,true).write();
-  return second.status==='complete' && second.value===true;
+  return (await replaceCardAfterQuota(input)).saved;
+}
+
+/** Caller has already tried the normal write and permitted service relief. */
+export async function replaceCardAfterQuota(input:Placement) {
+  if(!input.isCurrent())return {saved:false,changed:false};
+  const attempt=placementAttempt(input,true),result=await attempt.write();
+  const saved=result.status==='complete' && result.value===true;
+  return {saved,changed:saved && attempt.state.needsPayload};
 }

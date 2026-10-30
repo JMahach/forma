@@ -107,13 +107,11 @@ test('the old browser library shortens existing keys without duplicating cards o
    const read=await store.read();assert.equal(read?.charts.length,1);
    assert.equal(read?.charts[0].id,id.slice(0,10));assert.equal(read?.charts[0].note,row.note);
    assert.deepEqual(read?.lease,{accountId:'1',generation:'before'});
-   await store.put(read!.lease!,[accountChart(2)]);
-   assert.equal(await store.evictForSpace(1),'released');
-   assert.deepEqual((await store.read())!.charts.map(chart=>chart.id),[id.slice(0,10)],'old opening survives the new metadata layout');
  }finally{store.close();}
  const keys=await new Promise<IDBValidKey[]>((resolve,reject)=>{const opening=indexedDB.open(databaseName);
-   opening.onsuccess=()=>{const tx=opening.result.transaction('charts');const keys=tx.objectStore('charts').getAllKeys();
-     tx.oncomplete=()=>{opening.result.close();resolve(keys.result);};tx.onerror=()=>reject(tx.error);};opening.onerror=()=>reject(opening.error);});
+   opening.onsuccess=()=>{const tx=opening.result.transaction(['charts','usage']);const keys=tx.objectStore('charts').getAllKeys();
+     const use=tx.objectStore('usage').get(id.slice(0,10));
+     tx.oncomplete=()=>{opening.result.close();assert.equal(use.result.openedAt,42,'the migrated opening survives without rewriting numbers');resolve(keys.result);};tx.onerror=()=>reject(tx.error);};opening.onerror=()=>reject(opening.error);});
  assert.deepEqual(keys,[id.slice(0,10)]);
 });
 

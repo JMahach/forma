@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import {createStoragePressure} from '../src/data/storage-pressure.ts';
-import { createAccountLibraryStore } from '../src/data/account-library-store.ts';
+import { createAccountLibraryStore,type LibraryLease } from '../src/data/account-library-store.ts';
 import { createAccountLibrary } from '../src/state/account-library.ts';
 import { accountChart, chartId } from './helpers/account-chart.ts';
 import type { ChartClient } from '../src/data/chart-client.ts';
@@ -14,6 +14,16 @@ function client(rows = [accountChart()]): Pick<ChartClient, 'list' | 'own'> {
     async list() { return {charts: rows.map(chart => ({...chart})), nextCursor: null }; },
     async own({chartId: id}) { const chart = rows.find(row => row.id === id); if (!chart) throw Object.assign(new Error(), {code: 'not_found'}); return chart; },
   };
+}
+async function placeUnderQuota(storage:ReturnType<typeof createAccountLibraryStore>,lease:LibraryLease,incoming=accountChart(3),victims=1) {
+ const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,removed=new WeakMap<IDBTransaction,number>();
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')removed.set(this.transaction,(removed.get(this.transaction)??0)+1);return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){
+  if(this.name==='charts' && value.id===incoming.id && (removed.get(this.transaction)??0)<victims)throw new DOMException('full','QuotaExceededError');
+  return put.call(this,value,...args);
+ };
+ try {assert.equal(await storage.touch(lease,incoming.id,incoming),true);}
+ finally {IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
 }
 test('prepared acceptance cannot read or accept for a retired session, including retained offline data',async()=>{
   for(const transition of ['logout','session','account','close','guest']) {
@@ -327,7 +337,7 @@ test('twenty opened cards outrank eighty later background downloads across tabs'
   rows.push(...Array.from({length:80},(_,i)=>accountChart(i+21)));
   await library.load();
   assert.equal((await other.read())!.charts.length,100,'nothing is evicted while all cards fit');
-  for(let count=100;count>50;count--)assert.equal(await other.evictForSpace(50),'released');
+  await placeUnderQuota(other,(await other.read())!.lease!,accountChart(101),51);
   const remaining=(await other.read())!.charts.map(chart=>chart.id);
   assert.equal(remaining.length,50);
   for(let id=1;id<=20;id++)assert.ok(remaining.includes(chartId(id)),`opened card ${id} survives`);
@@ -339,7 +349,7 @@ test('reload permission checks durable ownership and revision, including another
  const row=accountChart(),library=createAccountLibrary({storage,client:client([row]),online:()=>true});
  try{
   await library.connect(session);await library.load();assert.equal(await library.canRestore(row.id),true);
-  await other.read();await other.evictForSpace(0);
+  await placeUnderQuota(other,(await other.read())!.lease!);
   assert.ok(library.get(row.id));assert.equal(library.storageAvailable,true);
   assert.equal(await library.canRestore(row.id),false);
   const saved=await storage.read();assert.ok(saved?.lease);await storage.put(saved.lease,[row]);
@@ -391,7 +401,7 @@ test('unchanged library reads retain records without notifications, while durabl
     assert.equal(observations, before);
     for (let repeat = 0; repeat < 10; repeat++) await library.load();
     assert.equal(notices, notified, 'identical pages do not publish durable changes');
-    assert.equal(await storage.evictForSpace(0), 'released');
+    await placeUnderQuota(storage,(await storage.read())!.lease!);
     await library.open(chartId(1));
     assert.ok(observations > before && notices > notified, 're-admitting an evicted row wakes observers');
     rows[0] = {...rows[0]!, revision: 2, noteRevision: 2, note: 'Updated note'};

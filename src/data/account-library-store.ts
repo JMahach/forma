@@ -1,45 +1,26 @@
-import type { StoragePressure, StorageRelief } from './storage-pressure.ts';
+import type { StoragePressure } from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createRandomId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
-import { upgradeAccountLibrary } from './account-library-schema.ts';
-import { placeOpenedCard } from './account-card-placement.ts';
+import {upgradeAccountLibrary,validLibraryAccountId as ownerId,readLibraryLease as lease,sameLibraryLease as same,type LibraryLease} from './account-library-schema.ts';
+export type {LibraryLease} from './account-library-schema.ts';
+import {createLibraryPackageStore,unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
+import { placeOpenedCard,replaceCardAfterQuota } from './account-card-placement.ts';
 
-export interface LibraryLease { accountId: string; generation: string }
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
 export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'};
 interface Options { indexedDB?: IDBFactory | null; databaseName?: string;now?:()=>number;pressure?:StoragePressure }
-const ownerId = (value: unknown): value is string => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
-const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-function lease(value: unknown): LibraryLease | null {
-  if (!object(value) || !ownerId(value.accountId) || typeof value.generation !== 'string' || !value.generation) return null;
-  return {accountId: value.accountId, generation: value.generation};
-}
-const same = (current: unknown, seen: LibraryLease) => {
-  const value = lease(current); return !!value && value.accountId === seen.accountId && value.generation === seen.generation;
-};
 const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
-
-function leastUsedCard(keys:IDBValidKey[],usage:{id:string;openedAt:number}[],exclude:readonly string[]) {
-  const opened=new Map(usage.filter(row=>Number.isFinite(row.openedAt) && row.openedAt>0).map(row=>[row.id,row.openedAt]));
-  const protectedIds=new Set(exclude);
-  let selected:IDBValidKey|null=null,earliest=Infinity;
-  // IndexedDB keys provide a stable tie-break for cards never opened.
-  for(const key of keys) {
-    if(protectedIds.has(String(key)))continue;
-    const at=opened.get(String(key))??0;
-    if(at<earliest){selected=key;earliest=at;}
-  }
-  return selected;
-}
 
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
 export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
-  const database = createIndexedDatabase({databaseName, version: 6, stores: ['charts', 'context', 'usage'], indexedDB,
+  const database = createIndexedDatabase({databaseName, version: 7, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
   return {
+    ...createLibraryPackageStore(database,{pressure,now}),
+    capture(accountId:string):LibraryLease|null {return admitted?.accountId===accountId?{...admitted}:null;},
     async read(): Promise<LibrarySnapshot | null> {
       const snapshot=await database.transaction<LibrarySnapshot>('readonly', (tx, result) => {
         const context = tx.objectStore('context').get('owner');
@@ -71,6 +52,8 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           const next = {accountId, generation: createRandomId()};
           tx.objectStore('charts').clear();
           tx.objectStore('usage').clear();
+          tx.objectStore('packages').clear();
+          tx.objectStore('packageMetadata').clear();
           contexts.put({key: 'owner', ...next});
           result({status: 'stored', lease: next});
         };
@@ -91,7 +74,9 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
               let current:AccountChart|null=null;try{current=validateAccountChart(prior.result,seen.accountId);}catch{}
               if(!current || current.revision<chart.revision){
                 // Acquisition never creates or changes a real-use mark.
+                if(current)unlinkLibraryPackages(tx,chart.id,chart);
                 rows.put(chart);
+                linkLibraryPackages(tx,chart);
                 outcome.changed=true;
               }
             }catch(error){fail(error);}
@@ -111,7 +96,11 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         if(result.status==='quota'){
           if(isCurrent && !isCurrent())return {status:'stale'};
           if(stored)return {status:'partial',lease:{...seen},changed};
-          if(pressure){result=await pressure.write(()=>write([chart]),{chartIds:[chart.id],atomicLibrary:true});recovered=true;}
+          if(pressure){result=await pressure.write(()=>write([chart]),{atomicLibrary:true});recovered=true;}
+          if(result.status==='quota') {
+            const replacement=await replaceCardAfterQuota({database,chart,isOwner:owner=>same(owner,seen),isCurrent:isCurrent??(()=>true)});
+            if(replacement.saved){result={status:'complete',value:{status:'stored',lease:{...seen},changed:replacement.changed}};recovered=true;}
+          }
         }
         if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen},changed}:unavailable();
         if(result.value.status!=='stored')return result.value;
@@ -152,28 +141,13 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       });
       return present==='stored' || present==='missing' && !!chart && await placeOpenedCard({database,isOwner:owner=>same(owner,seen),isCurrent,chart,openedAt,pressure});
     },
-    async evictForSpace(keep:number,exclude:readonly string[]=[],isCurrent:()=>boolean=()=>true):Promise<StorageRelief> {
-      if(!Number.isSafeInteger(keep)||keep<0)throw new RangeError('Invalid library minimum');
-      return await database.transaction<StorageRelief>('readwrite',(tx,result)=>{
-        const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
-          if(!isCurrent() || admitted===undefined || (admitted? !same(owner.result,admitted):lease(owner.result)!==null)){result('unavailable');return;}
-          const rows=tx.objectStore('charts'),keys=rows.getAllKeys(),usage=tx.objectStore('usage').getAll();
-          usage.onsuccess=()=>{
-            if(keys.result.length<=keep){result('empty');return;}
-            const victim=leastUsedCard(keys.result,usage.result,exclude);
-            if(victim===null){result('empty');return;}
-            if(!isCurrent()){result('unavailable');return;}
-            rows.delete(victim);result('released');
-          };
-        };
-      })??'unavailable';
-    },
     async remove(seen: LibraryLease, chartId: string): Promise<LibraryStoreResult> {
       const saved=await database.transaction<LibraryStoreResult>('readwrite', (tx, result) => {
         const contexts = tx.objectStore('context'), request = contexts.get('owner');
         request.onsuccess = () => {
           if (!same(request.result, seen)) { result({status: 'stale'}); return; }
           const next = {...seen, generation: createRandomId()};
+          unlinkLibraryPackages(tx,chartId);
           tx.objectStore('charts').delete(chartId);
           tx.objectStore('usage').delete(chartId);
           contexts.put({key: 'owner', ...next});
@@ -190,6 +164,8 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           if (!same(request.result, seen)) { result('stale'); return; }
           tx.objectStore('charts').clear();
           tx.objectStore('usage').clear();
+          tx.objectStore('packages').clear();
+          tx.objectStore('packageMetadata').clear();
           contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };
@@ -207,6 +183,8 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           if (request.result?.accountId !== accountId) {result('stale'); return;}
           tx.objectStore('charts').clear();
           tx.objectStore('usage').clear();
+          tx.objectStore('packages').clear();
+          tx.objectStore('packageMetadata').clear();
           contexts.put({key: 'owner', accountId: null, generation: createRandomId()});
           result('cleared');
         };

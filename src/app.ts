@@ -38,7 +38,7 @@ interface AppOptions {
   journal?:AppJournal;
   storagePressure?:StoragePressure;
   navigation?: Navigation;
-  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'>>;
+  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'|'library'>>;
   account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'>;
   dayClient: TransitDayClient; layout: StudioLayout; toast: Toast; viewStore: ViewStore;
   viewCheckpoint?: ViewCheckpoint;
@@ -309,12 +309,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let libraryChannel: BroadcastChannel | null = null;
   try {libraryChannel = new window.BroadcastChannel('forma-library');} catch { /* Resuming a tab also checks its local library. */ }
   const notifyLibrary = () => {try {libraryChannel?.postMessage({kind: 'changed'});} catch {}};
-  const libraryStorage = createAccountLibraryStore({pressure: storagePressure});
+  const libraryStorage = calculationClients?.library ?? createAccountLibraryStore({pressure: storagePressure});
   storagePressure?.setSources({
     diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('unavailable'),
     natalDays: (keep, exclude, guard) => calculationClients?.evictForSpace?.('natal', keep, exclude, guard) ?? Promise.resolve('unavailable'),
     returnCharts: (keep, exclude, guard) => calculationClients?.evictForSpace?.('return-charts', keep, exclude, guard) ?? Promise.resolve('unavailable'),
-    charts: (keep, ids, guard) => libraryStorage.evictForSpace(keep, ids, guard),
   });
   const accountLibrary = createAccountLibrary({client: chartClient, storage: libraryStorage,
     online: () => getConnectionMode() !== 'offline',
@@ -574,7 +573,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     },
     beforeOpen: () => { formIntent = null; returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
   });
-  const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory });
+  const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory,library:libraryStorage });
   natalDay = attachNatalDayExplorer({
     dayClient: natalDayClient,
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),

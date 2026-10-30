@@ -9,7 +9,7 @@ export interface NatalExplorerState {
   status: 'idle' | 'loading' | 'ready' | 'error'; error: string; exactOriginal: boolean; available: boolean; canOpen: boolean;
 }
 export interface NatalExplorerOptions {
-  dayClient?: Pick<NatalDayClient, 'getDay'> & Partial<Pick<NatalDayClient, 'retainDay' | 'readDay' | 'peekDay'>>;
+  dayClient?: Pick<NatalDayClient, 'getDay'> & Partial<Pick<NatalDayClient, 'retainDay' | 'readDay' | 'peekDay' | 'readStoredDay'>>;
   connection?: () => ConnectionMode;
   onStateChange?: (state: NatalExplorerState) => void;
   onRender?: () => void;
@@ -40,13 +40,14 @@ export function createNatalDayExplorer({
 
   const discardDay = () => { releaseDay?.(); releaseDay = null; day = null; index = 0; referenceIndex = null; };
 
+  const owned=(chart:ChartRecord|null)=>!!chart && 'accountId' in chart && typeof chart.accountId==='string';
   async function refreshAvailability() {
     const version = ++availabilitySequence, chart = original;
-    readyOnDevice = Boolean(day || dayClient.peekDay?.(chart));
+    readyOnDevice = Boolean(day || !owned(chart) && dayClient.peekDay?.(chart));
     notify();
-    if (connection() !== 'offline' || readyOnDevice || !canExploreNatalDay(chart) || !dayClient.readDay) return;
+    if (connection() !== 'offline' || readyOnDevice || !canExploreNatalDay(chart)) return;
     let ready = false;
-    try { ready = Boolean(await dayClient.readDay(chart)); } catch { /* Optional device lookup. */ }
+    try { ready = Boolean(await (owned(chart)?dayClient.readStoredDay?.(chart):dayClient.readDay?.(chart))); } catch { /* Optional device lookup. */ }
     if (version !== availabilitySequence || chart !== original) return;
     readyOnDevice = ready; notify();
   }
@@ -58,8 +59,11 @@ export function createNatalDayExplorer({
     status = 'loading'; error = ''; notify();
     const promise = (async () => {
       try {
-        const result = await dayClient.getDay(chart, { signal: controller.signal });
+        const result = connection()==='offline' && owned(chart)
+          ?await dayClient.readStoredDay?.(chart,{signal:controller.signal,opened:true})
+          :await dayClient.getDay(chart,{signal:controller.signal});
         if (requestSequence !== sequence || !opened) return false;
+        if(!result){readyOnDevice=false;opened=false;status='idle';return false;}
         const release = dayClient.retainDay?.(result);
         releaseDay?.(); releaseDay = release ?? null;
         day = result; referenceIndex = natalDayIndexAt(day, chart.utc!); index = referenceIndex; status = 'ready';

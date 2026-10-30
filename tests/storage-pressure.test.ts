@@ -9,23 +9,20 @@ import {createJournal} from '../src/journal.ts';
 import {accountChart,chartId} from './helpers/account-chart.ts';
 
 test('pressure retries after one release and stops as soon as the original write fits',async()=>{
- const pressure=createStoragePressure({locks:null}),removed:string[]=[];let days=12,returns=12,cards=11;
+ const pressure=createStoragePressure({locks:null}),removed:string[]=[];let days=12,returns=12;
  pressure.setSources({diagnostics:async()=>{if(removed.includes('diagnostics'))return 'empty';removed.push('diagnostics');return 'released';},
   natalDays:async keep=>{if(days<=keep)return 'empty';days--;removed.push('day');return 'released';},
-  returnCharts:async keep=>{if(returns<=keep)return 'empty';returns--;removed.push('return');return 'released';},
-  charts:async keep=>{if(cards<=keep)return 'empty';cards--;removed.push('card');return 'released';}});
+  returnCharts:async keep=>{if(returns<=keep)return 'empty';returns--;removed.push('return');return 'released';}});
  const result=await pressure.write(async()=>removed.length===4?{status:'complete',value:'written'}:{status:'quota'});
  assert.deepEqual(result,{status:'complete',value:'written'});
- assert.deepEqual(removed,['diagnostics','day','day','return']);assert.equal(returns,11);assert.equal(cards,11);
+ assert.deepEqual(removed,['diagnostics','day','day','return']);assert.equal(returns,11);
 });
-test('after ten days and ten returns only cards may fall below ten; an unavailable owner blocks later deletion',async()=>{
- const pressure=createStoragePressure({locks:null});let cards=11;const keeps:number[]=[];
- pressure.setSources({diagnostics:async()=> 'empty',natalDays:async keep=>{assert.equal(keep,10);return 'empty';},
-  returnCharts:async keep=>{assert.equal(keep,10);return 'empty';},charts:async keep=>{keeps.push(keep);if(cards<=keep)return 'empty';cards--;return 'released';}});
- assert.deepEqual(await pressure.write(async()=>cards===1?{status:'complete',value:true}:{status:'quota'}),{status:'complete',value:true});
- assert.equal(cards,1);assert.ok(keeps.includes(0));
- pressure.setSources({diagnostics:async()=> 'unavailable'});const before=keeps.length;
- assert.deepEqual(await pressure.write(async()=>({status:'quota'})),{status:'quota'});assert.equal(keeps.length,before);
+test('an exhausted calculation cache cannot release account cards outside atomic placement',async()=>{
+ const pressure=createStoragePressure({locks:null});let discarded=0;
+ const sources={diagnostics:async()=> 'empty' as const,natalDays:async()=> 'empty' as const,returnCharts:async()=> 'empty' as const,
+  charts:async()=>{discarded++;return 'released' as const;}};pressure.setSources(sources);
+ const result=await pressure.write(async()=>discarded?{status:'complete',value:true}:{status:'quota'});
+ assert.deepEqual(result,{status:'quota'});assert.equal(discarded,0);
 });
 test('ordinary refusal, success and blocked storage never remove unrelated data',async()=>{
  const pressure=createStoragePressure({locks:null});let calls=0;
@@ -53,26 +50,6 @@ test('calculation relief is atomic across owners, uses last access, keeps ten an
  assert.ok(await a.get('transit','today'));assert.ok(await a.get('return-events','dates'));
  assert.equal((await a.catalogue('natal'))!.length,10);
 });
-test('library relief persists last use, preserves protected targets and does not change server identity or notes',async t=>{
- const indexedDB=new IDBFactory();let now=10;
- const store=createAccountLibraryStore({indexedDB,now:()=>now++});t.after(()=>store.close());
- const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
- await store.put(active.lease,Array.from({length:11},(_,n)=>accountChart(n+1)));
- const get=IDBObjectStore.prototype.get,put=IDBObjectStore.prototype.put;
- let numericReads=0,numericWrites=0;
- IDBObjectStore.prototype.get=function(...args){if(this.name==='charts')numericReads++;return get.apply(this,args);};
- IDBObjectStore.prototype.put=function(...args){if(this.name==='charts')numericWrites++;return put.apply(this,args);};
- try { assert.equal(await store.touch(active.lease,chartId(1),accountChart(1)),true); }
- finally {IDBObjectStore.prototype.get=get;IDBObjectStore.prototype.put=put;}
- assert.equal(numericReads,0,'recording an opening does not read the numerical card');
- assert.equal(numericWrites,0,'recording an opening does not rewrite its prepared numbers');
- assert.equal(await store.evictForSpace(10,[chartId(2)]),'released');
- const snapshot=await store.read();assert.equal(snapshot!.charts.length,10);assert.equal(snapshot!.charts.some(c=>c.id===chartId(3)),false);
- assert.deepEqual(snapshot!.lease,active.lease);assert.equal('_accessedAt' in snapshot!.charts[0]!,false);
- assert.equal(await store.evictForSpace(10,[]),'empty');
- for(let i=0;i<9;i++)assert.equal(await store.evictForSpace(0,[chartId(1)]),'released');
- assert.equal(await store.evictForSpace(0,[chartId(1)]),'empty');assert.deepEqual((await store.read())!.charts.map(c=>c.id),[chartId(1)]);
-});
 test('indexed adapter reports quota only after rollback and separates arbitrary aborts from full storage',async t=>{
  const db=createIndexedDatabase({indexedDB:new IDBFactory(),databaseName:'quota',version:1,stores:['data'],upgrade(d){d.createObjectStore('data');}});
  t.after(()=>db.close());
@@ -92,7 +69,7 @@ test('a real failed calculation write releases diagnostics then one day, retries
  for(let n=0;n<11;n++){await cache.put('natal',String(n),new Uint8Array([n]));await cache.put('return-charts',String(n),new Uint8Array([n]));}
  let full=true;
  pressure.setSources({diagnostics:journal.discardForSpace,natalDays:async(keep,exclude)=>{const result=await cache.evictForSpace('natal',keep,exclude);if(result==='released')full=false;return result;},
-  returnCharts:async()=>assert.fail('returns must survive'),charts:async()=>assert.fail('library must survive')});
+  returnCharts:async()=>assert.fail('returns must survive')});
  const original=IDBObjectStore.prototype.put;
  IDBObjectStore.prototype.put=function(value:unknown,key?:IDBValidKey){
   if(full && this.name==='payloads' && (value as {id?:string}).id==='["natal","new"]')throw new DOMException('full','QuotaExceededError');
@@ -122,23 +99,6 @@ test('logout revokes queued pressure and an awaited owner must not delete data o
  assert.deepEqual(await write,{status:'quota'});assert.equal(deleted,0);
 });
 
-test('an older library owner cannot reclaim the replacement account after another tab signs in',async t=>{
- const indexedDB=new IDBFactory(),a=createAccountLibraryStore({indexedDB}),b=createAccountLibraryStore({indexedDB});
- t.after(()=>{a.close();b.close();});await a.activate('1');const active=await b.activate('2');assert.equal(active.status,'stored');if(active.status!=='stored')return;
- await b.put(active.lease,[accountChart(1,'2')]);assert.equal(await a.evictForSpace(0,[]),'unavailable');
- assert.equal((await b.read())!.charts.length,1);
-});
-
-test('library keeps its own deletion generation for pressure and clears admission on logout',async t=>{
- const store=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>store.close());
- const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
- await store.put(active.lease,[accountChart(1),accountChart(2)]);
- const removed=await store.remove(active.lease,chartId(1));assert.equal(removed.status,'stored');if(removed.status!=='stored')return;
- assert.equal(await store.evictForSpace(0),'released');
- assert.equal(await store.clear(removed.lease),'cleared');assert.equal(await store.evictForSpace(0),'empty');
- const next=await store.activate('1');assert.equal(next.status,'stored');
- assert.equal(await store.clearAccount('1'),'cleared');assert.equal(await store.evictForSpace(0),'empty');
-});
 test('library metadata upgrade preserves version-one charts, owner and notes',async t=>{
  const indexedDB=new IDBFactory(),databaseName='library-v1';
  await new Promise<void>((resolve,reject)=>{const request=indexedDB.open(databaseName,1);
@@ -149,7 +109,7 @@ test('library metadata upgrade preserves version-one charts, owner and notes',as
  });
  const store=createAccountLibraryStore({indexedDB,databaseName});t.after(()=>store.close());
  assert.deepEqual(await store.read(),{lease:{accountId:'1',generation:'legacy'},charts:[accountChart(1)]});
- assert.equal(await store.evictForSpace(0),'released');assert.deepEqual((await store.read())!.charts,[]);
+ assert.equal(await store.clear({accountId:'1',generation:'legacy'}),'cleared');assert.deepEqual((await store.read())!.charts,[]);
 });
 
 
@@ -169,8 +129,7 @@ test('a library write recovers through the shared pressure owner when reopening 
   await new Promise(resolve => setImmediate(resolve)); full = true;
   pressure.setSources({diagnostics: async () => { released++; full = false; return 'released'; },
     natalDays: async () => assert.fail('enough space has already been released'),
-    returnCharts: async () => assert.fail('returns must remain untouched'),
-    charts: async () => assert.fail('saved cards must remain untouched')});
+    returnCharts: async () => assert.fail('returns must remain untouched')});
   const result = await store.put(active.lease, [accountChart(2)]);
   assert.equal(result.status, 'stored'); assert.equal(released, 1);
   assert.deepEqual((await store.read())!.charts.map(chart => chart.id).sort(), [chartId(1), chartId(2)].sort());
@@ -212,8 +171,7 @@ for (const waitingAttempt of [1, 2]) test(`logout before pressure admission revo
 
 for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'call'],[1,true,'call'],[1,true,'request'],[1,false,'unavailable']] as const)test(`opening an absent card replaces a lower-priority card atomically: cards=${total}, fits=${fitsAfterDeletion}, failure=${failureMode}`,async t=>{
   const pressure=createStoragePressure({locks:null}),order:string[]=[];
-  pressure.setSources({diagnostics:async()=>{order.push('diagnostics');return 'empty';},
-    charts:async()=>assert.fail('victims must belong to the placement transaction')});
+  pressure.setSources({diagnostics:async()=>{order.push('diagnostics');return 'empty';}});
   const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000,pressure});t.after(()=>store.close());
   const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
   const cards=Array.from({length:total},(_,n)=>accountChart(n+1));await store.put(active.lease,cards);

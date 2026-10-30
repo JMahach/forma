@@ -21,7 +21,7 @@ import { createIndexedDatabase } from '../src/data/indexed-db.ts';
 import { upgradeAccountLibrary } from '../src/data/account-library-schema.ts';
 import { migrateCalculationCache } from '../src/data/calculation-cache-transition.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
-import { createBinaryCache } from '../src/data/binary-cache.ts';
+import { createNatalDayStorage } from '../src/data/natal-day-storage.ts';
 import { createNatalDayClient } from '../src/data/natal-day-client.ts';
 import { estimateBytes } from '../src/data/memory-cache.ts';
 import fs from 'node:fs/promises';
@@ -211,7 +211,7 @@ test('malformed SQL contents abort the transition without discarding the origina
   const {database} = storedLibrary();
   try {
     // This fixture represents a damaged backup predating prepared-day references.
-    database.connection.exec('DROP TRIGGER library_natal_day_change');
+    database.connection.exec('DROP TRIGGER library_natal_day_change; DROP INDEX account_charts_return_source');
     for (const content of ['not json', 'null', '42', '[]', '{"engine":23}']) {
       database.connection.prepare('UPDATE account_charts SET content=? WHERE id=(SELECT max(id) FROM account_charts)').run(content);
       const before = storedRows(database);
@@ -388,7 +388,7 @@ test('real SQL and account IDB owners activate the transition and read ready car
     const read = await library.read();
     assert.deepEqual(read!.charts, [accountChart(1), accountChart(2)]);
     assert.equal(scans,1,'one schema pass migrates numerical metadata and lightweight use together');
-    const raw = deviceDatabase(indexedDB, 6);
+    const raw = deviceDatabase(indexedDB, 7);
     try {
       const after = (await deviceRows(raw))!;
       assert.deepEqual(after.context, before.context);
@@ -402,7 +402,7 @@ test('real SQL and account IDB owners activate the transition and read ready car
 test('an IndexedDB schema transition retains card numbers, recency and account lease, and fences the old writer', async () => {
   const indexedDB = await storedDevice(), old = deviceDatabase(indexedDB, 3);
   const before = await deviceRows(old) as {charts:unknown[];context:unknown[]}; old.close();
-  const current = deviceDatabase(indexedDB, 6);
+  const current = deviceDatabase(indexedDB, 7);
   try {
     const after = await deviceRows(current) as typeof before;
     assert.deepEqual(after.context, before.context);
@@ -418,7 +418,7 @@ test('an interrupted IndexedDB card upgrade retains the original schema and ever
   for (const at of [1, 2]) {
     const indexedDB = await storedDevice(), old = deviceDatabase(indexedDB, 3);
     const before = await deviceRows(old); old.close();
-    const next = deviceDatabase(indexedDB, 6);
+    const next = deviceDatabase(indexedDB, 7);
     let writes = 0;
     IDBCursorWithValue.prototype.update = function(...args) {
       const result = update.apply(this, args);
@@ -429,7 +429,7 @@ test('an interrupted IndexedDB card upgrade retains the original schema and ever
     finally { IDBCursorWithValue.prototype.update = update; next.close(); }
     const rollback = deviceDatabase(indexedDB, 3);
     assert.deepEqual(await deviceRows(rollback), before); rollback.close();
-    const retry = deviceDatabase(indexedDB, 6);
+    const retry = deviceDatabase(indexedDB, 7);
     try { assert.ok(await deviceRows(retry)); } finally { retry.close(); }
   }
 });
@@ -488,7 +488,7 @@ test('the real cache owner upgrades an unfinished old cache and the new natal cl
   const {indexedDB,before,natal}=await storedCache();
   const cache=createCalculationCache({indexedDB,databaseName:cacheName,now:()=>100});t.after(()=>cache.close());
   let requests=0;
-  const client=createNatalDayClient({persistentCache:createBinaryCache({cache}),fetch:async()=>{requests++;throw new Error('network must not run');}});
+  const client=createNatalDayClient({persistentCache:createNatalDayStorage({cache}),fetch:async()=>{requests++;throw new Error('network must not run');}});
   const day=await client.getDay({birthDate:'2026-09-24',cityId:'city',timezone:'UTC'});
   const previous=decodeNatalDay(before.payloads.find(row=>row.id===cacheId('natal',natal))!.value);
   assert.deepEqual(day.columns,previous.columns);assert.deepEqual(day.segments,previous.segments);

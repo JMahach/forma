@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory } from 'fake-indexeddb';
-import { createBinaryCache, type BinaryCache } from '../src/data/binary-cache.ts';
+import { createNatalDayStorage, type NatalDayStorage } from '../src/data/natal-day-storage.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { createNatalDayClient } from '../src/data/natal-day-client.ts';
@@ -15,9 +15,9 @@ const key = `natal-day:${NATAL_DAY_VERSION}:${chart.birthDate}:${chart.cityId}`;
 const day = natalDayFixture();
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
-function readyClient(touch: BinaryCache['touch'], memory = createMemoryCache()) {
+function readyClient(touch: NatalDayStorage['touch'], memory = createMemoryCache()) {
   memory.put(key, day);
-  const persistentCache: BinaryCache = {
+  const persistentCache: NatalDayStorage = {
     get: async () => { throw new Error('ready day must not read storage'); },
     put: async () => { throw new Error('ready day must not rewrite its payload'); },
     remove: async () => { throw new Error('ready day must not remove its payload'); },
@@ -29,7 +29,7 @@ function readyClient(touch: BinaryCache['touch'], memory = createMemoryCache()) 
 
 test('ready natal reads share pending LRU work per key and later use touches again', async t => {
   const owner = createCalculationCache({ indexedDB: new IDBFactory(), legacySources: [] });
-  const persistent = createBinaryCache({ cache: owner });
+  const persistent = createNatalDayStorage({ cache: owner });
   t.after(() => { persistent.close(); owner.close(); });
   const bytes = encodeNatalDay(day).buffer;
   const otherChart = { ...chart, cityId: 'other-city' };

@@ -147,7 +147,8 @@
         "shared/offline-contract.ts",
         "shared/chart-return-contract.ts",
         "shared/calculation-storage-transition.ts",
-        "shared/library-package-contract.ts"
+        "shared/library-package-contract.ts",
+        "shared/library-catalog-contract.ts"
       ],
       "publicEntries": [
         "shared/account-contract.ts",
@@ -171,7 +172,8 @@
         "shared/offline-contract.ts",
         "shared/chart-return-contract.ts",
         "shared/calculation-storage-transition.ts",
-        "shared/library-package-contract.ts"
+        "shared/library-package-contract.ts",
+        "shared/library-catalog-contract.ts"
       ],
       "allowRuntime": [
         "shared-contracts"
@@ -343,7 +345,7 @@
       "files": [
         "src/data/account-library-store.ts",
         "src/data/account-logout-store.ts",
-        "src/data/binary-cache.ts",
+        "src/data/natal-day-storage.ts",
         "src/data/calculation-cache.ts",
         "src/data/calculation-migration.ts",
         "src/data/chart-store.ts",
@@ -355,12 +357,14 @@
         "src/data/view-store.ts",
         "src/data/account-library-schema.ts",
         "src/data/account-card-placement.ts",
+        "src/data/library-package-store.ts",
+        "src/data/library-package-placement.ts",
         "src/data/calculation-cache-transition.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
         "src/data/account-logout-store.ts",
-        "src/data/binary-cache.ts",
+        "src/data/natal-day-storage.ts",
         "src/data/calculation-cache.ts",
         "src/data/chart-store.ts",
         "src/data/memory-cache.ts",
@@ -1229,7 +1233,8 @@
         "server/storage/mail-queue.ts",
         "server/storage/calculation-transition.ts",
         "server/storage/library-packages.ts",
-        "server/storage/library-preparation.ts"
+        "server/storage/library-preparation.ts",
+        "server/storage/library-catalog.ts"
       ],
       "publicEntries": [
         "server/storage/account-counters.ts",

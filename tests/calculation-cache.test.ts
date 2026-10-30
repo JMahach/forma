@@ -338,11 +338,11 @@ test('physical quota during migration leaves the original day readable and resum
 
 
 test('a saved birth day opens through the real client without network when access bookkeeping hits quota',async t=>{
-  const [{createNatalDayClient},{createBinaryCache},{encodeNatalDay},{natalDayFixture,personalChartFixture}]=await Promise.all([
-    import('../src/data/natal-day-client.ts'),import('../src/data/binary-cache.ts'),
+  const [{createNatalDayClient},{createNatalDayStorage},{encodeNatalDay},{natalDayFixture,personalChartFixture}]=await Promise.all([
+    import('../src/data/natal-day-client.ts'),import('../src/data/natal-day-storage.ts'),
     import('../server/packets/encode.ts'),import('./fixtures/natal-day.ts')]);
   const indexedDB=new IDBFactory(),version='a'.repeat(64),chart=personalChartFixture();
-  const cache=createCalculationCache({indexedDB,legacySources:[]}),binary=createBinaryCache({cache});
+  const cache=createCalculationCache({indexedDB,legacySources:[]}),binary=createNatalDayStorage({cache});
   t.after(()=>{binary.close();cache.close();});
   const bytes=encodeNatalDay(natalDayFixture()).buffer;
   await binary.put(`natal-day:1:${chart.birthDate}:${chart.cityId}`,bytes);

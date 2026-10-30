@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
-import { createBinaryCache } from '../src/data/binary-cache.ts';
+import { createNatalDayStorage } from '../src/data/natal-day-storage.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createNatalDayClient } from '../src/data/natal-day-client.ts';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
@@ -14,7 +14,7 @@ import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 const tick = () => new Promise(setImmediate);
 const packet = (day = natalDayFixture()) => encodeNatalDay(day).buffer;
 const response = (bytes: ArrayBuffer) => ({ ok: true, arrayBuffer: async () => bytes });
-const disk = (indexedDB: IDBFactory) => createBinaryCache({ indexedDB, legacyDatabaseName: 'bodygraph-chart-days' });
+const disk = (indexedDB: IDBFactory) => createNatalDayStorage({ indexedDB, legacyDatabaseName: 'bodygraph-chart-days' });
 
 test('natal device days survive count, byte and old timestamp limits across connections', async () => {
   const indexedDB = new IDBFactory(), first = disk(indexedDB);
@@ -62,7 +62,7 @@ test('a real quota exception leaves the loaded day usable in the common memory b
 
 test('a natal RAM hit refreshes the shared persistent LRU without fetching or rewriting payload', async t => {
   const indexedDB=new IDBFactory(),owner=createCalculationCache({indexedDB,maxBytes:9500});t.after(()=>owner.close());
-  const persistent=createBinaryCache({cache:owner}),memory=createMemoryCache(),chart=personalChartFixture();
+  const persistent=createNatalDayStorage({cache:owner}),memory=createMemoryCache(),chart=personalChartFixture();
   const key=`natal-day:1:${chart.birthDate}:${chart.cityId}`;
   await persistent.put(key,new ArrayBuffer(1500));await owner.put('return-charts','older',new ArrayBuffer(1500));
   const value=natalDayFixture();memory.put(key,value);

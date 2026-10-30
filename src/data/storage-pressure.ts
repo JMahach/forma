@@ -1,12 +1,11 @@
 import type { IndexedResult } from './indexed-db.ts';
 export type ReliefGuard=()=>boolean;
 export type StorageRelief = 'released' | 'empty' | 'unavailable';
-export interface ProtectedWrite { calculation?:{kind:string;key:string}; chartIds?:readonly string[]; atomicLibrary?:boolean }
+export interface ProtectedWrite { calculation?:{kind:string;key:string}; atomicLibrary?:boolean }
 export interface PressureSources {
  diagnostics:(isCurrent:ReliefGuard)=>Promise<StorageRelief>;
  natalDays:(keep:number,exclude:string|undefined,isCurrent:ReliefGuard)=>Promise<StorageRelief>;
  returnCharts:(keep:number,exclude:string|undefined,isCurrent:ReliefGuard)=>Promise<StorageRelief>;
- charts:(keep:number,exclude:readonly string[],isCurrent:ReliefGuard)=>Promise<StorageRelief>;
 }
 function browserLocks():Pick<LockManager,'request'>|null {
  try{return typeof navigator==='undefined'?null:navigator.locks??null;}catch{return null;}
@@ -26,7 +25,7 @@ export function createStoragePressure({locks=browserLocks()}:{locks?:Pick<LockMa
   async write<T>(write:()=>Promise<IndexedResult<T>>,protect:ProtectedWrite={}):Promise<IndexedResult<T>> {
    const isCurrent=capture(),atomicLibrary=protect.atomicLibrary===true;
    const initial=await attempt(write);if(initial.status!=='quota')return initial;
-   const calculation=protect.calculation?{...protect.calculation}:undefined,ids=[...protect.chartIds??[]];
+   const calculation=protect.calculation?{...protect.calculation}:undefined;
    const recover=async():Promise<IndexedResult<T>>=>{
     // Another writer may already have released enough while we waited.
     if(!isCurrent())return initial;
@@ -34,8 +33,7 @@ export function createStoragePressure({locks=browserLocks()}:{locks?:Pick<LockMa
     while(result.status==='quota' && isCurrent()){
      const steps=[()=>sources.diagnostics?.(isCurrent),
       ()=>sources.natalDays?.(10,calculation?.kind==='natal'?calculation.key:undefined,isCurrent),
-      ()=>sources.returnCharts?.(10,calculation?.kind==='return-charts'?calculation.key:undefined,isCurrent),
-      ()=>sources.charts?.(10,ids,isCurrent),()=>sources.charts?.(0,ids,isCurrent)];
+      ()=>sources.returnCharts?.(10,calculation?.kind==='return-charts'?calculation.key:undefined,isCurrent)];
      // This owner commits its victims together with the candidate. Only
      // disposable diagnostics may be removed outside that transaction.
      if(atomicLibrary)steps.splice(1);

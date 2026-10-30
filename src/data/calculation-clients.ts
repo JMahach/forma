@@ -1,6 +1,7 @@
+import {createAccountLibraryStore} from './account-library-store.ts';
 import { createCalculationCache, type CalculationCache, type TransitWindow } from './calculation-cache.ts';
 import { createMemoryCache, type MemoryCache } from './memory-cache.ts';
-import { createBinaryCache } from './binary-cache.ts';
+import { createNatalDayStorage } from './natal-day-storage.ts';
 import { createReturnStorage } from './return-storage.ts';
 import { createTransitDayCache } from './transit-day-cache.ts';
 import { createTransitDayClient } from './transit-day-client.ts';
@@ -13,9 +14,10 @@ import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 type Options = {
   observe?:ObserveClientAction;
   cacheOptions?: Parameters<typeof createCalculationCache>[0];
+  libraryOptions?:Parameters<typeof createAccountLibraryStore>[0];
   memory?: MemoryCache;
   transit?: Omit<NonNullable<Parameters<typeof createTransitDayClient>[0]>, 'memory'|'days'>;
-  natal?: Omit<NonNullable<Parameters<typeof createNatalDayClient>[0]>, 'memory'|'persistentCache'>;
+  natal?: Omit<NonNullable<Parameters<typeof createNatalDayClient>[0]>, 'memory'|'persistentCache'|'library'>;
   cycles?: Omit<NonNullable<Parameters<typeof createCyclesClient>[0]>, 'memory'|'returnStorage'>;
 };
 export type TransitWindowUpdate={status:'applied';revision:number}|{status:'stale'|'unavailable'|'invalid'|'cancelled'};
@@ -43,9 +45,10 @@ function privateMemory(memory:MemoryCache) {
 }
 
 /** One early owner of calculation clients, local transit storage and account cleanup. */
-export function createCalculationClients({cacheOptions,memory=createMemoryCache(),transit:transitOptions,
+export function createCalculationClients({cacheOptions,libraryOptions,memory=createMemoryCache(),transit:transitOptions,
   natal:natalOptions,cycles:cyclesOptions,observe}:Options={}) {
   const cache=createCalculationCache(cacheOptions);
+  const library=createAccountLibraryStore({indexedDB:cacheOptions?.indexedDB,pressure:cacheOptions?.pressure,...libraryOptions});
   const days=createTransitDayCache({cache,memory});
   const transit=createTransitDayClient({...transitOptions,days,memory});
   let closed=false,nextGeneration=0,cleanupTail:Promise<unknown>=Promise.resolve();
@@ -79,11 +82,11 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
   }
 
   function clients(port:MemoryCache,persistent:CalculationCache|null,ownsCache=false) {
-    const binary=persistent?createBinaryCache({cache:persistent}):null;
+    const binary=persistent?createNatalDayStorage({cache:persistent}):null;
     const returns=persistent?createReturnStorage({cache:persistent}):null;
     const cycles=createCyclesClient({...cyclesOptions,memory:port,returnStorage:returns});
     return {
-      natal:createNatalDayClient({...natalOptions,memory:port,persistentCache:binary}),
+      natal:createNatalDayClient({...natalOptions,memory:port,persistentCache:binary,library}),
       cycles,
       evictForSpace:(kind:'natal'|'return-charts',keep:number,exclude?:string,isCurrent?:()=>boolean)=>persistent?.evictForSpace(kind,keep,exclude,isCurrent)??Promise.resolve('unavailable' as const),
       close(){cycles.close();binary?.close();returns?.close();if(ownsCache)persistent?.close();},
@@ -131,6 +134,8 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
   // Each call captures both generation and client. Promoting RAM-only service
   // after durable cleanup never changes the port of an already running call.
   const natal:NatalDayClient={
+    readStoredDay(input,options){const value=current,client=value.clients.natal;
+      return run(value,options?.signal,signal=>client.readStoredDay(input,{signal,opened:options?.opened})).then(day=>rememberNatal(day,value,client,options?.signal));},
     getDay(input,options){const value=current,client=value.clients.natal;
       return run(value,options?.signal,signal=>client.getDay(input,{signal})).then(day=>{rememberNatal(day,value,client,options?.signal);return day;});},
     readDay(input,options){const value=current,client=value.clients.natal;
@@ -178,7 +183,7 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
     return value.cleanup;
   }
   return {
-    transit,natal,cycles,memory,
+    transit,natal,cycles,memory,library,
     status:()=>cache.status(),
     evictForSpace:(kind:'natal'|'return-charts',keep:number,exclude?:string,isCurrent?:()=>boolean)=>current.clients.evictForSpace(kind,keep,exclude,isCurrent),
     syncTransitWindow,
@@ -192,6 +197,6 @@ export function createCalculationClients({cacheOptions,memory=createMemoryCache(
       if(current.id===0)return Promise.resolve(null); // No previous reset to retry.
       return closed?Promise.resolve({status:'unavailable' as const,generation:current.id}):cleanup(current);
     },
-    async close(){if(closed)return;closed=true;revoke(current);memory.clearExcept('transit-day:');await days.close();cache.close();},
+    async close(){if(closed)return;closed=true;revoke(current);memory.clearExcept('transit-day:');await days.close();cache.close();library.close();},
   };
 }
