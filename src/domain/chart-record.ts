@@ -1,4 +1,8 @@
-import type { ChartRecord } from '../../shared/chart-types.ts';
+import type { ChartRecord, SavedChart } from '../../shared/chart-types.ts';
+export interface BirthSubmission {
+  previous?: SavedChart; name: string; note: string;
+  birth?: {source: 'calculated'; date: string; time: string; cityId: string; cityName?: string; fold?: 0 | 1};
+}
 export type ChartCalculation = Omit<ChartRecord, 'id' | 'note' | 'createdAt' | 'updatedAt'> & Partial<Pick<ChartRecord, 'id' | 'note' | 'createdAt' | 'updatedAt'>>;
 // Stable names and random identifiers for records, write operations and local leases.
 export function normalizeChartName(value: unknown) {

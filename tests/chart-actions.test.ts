@@ -1,3 +1,4 @@
+import {createChartEditing} from '../src/application/chart-editing.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createChartActions } from '../src/state/chart-actions.ts';
@@ -390,5 +391,17 @@ for(const change of ['session','source','abort','failed'] as const)test(`an unse
   const direct=fixture(async()=>({kind:'failed',cause:new Error('snapshot')}));
   await assert.rejects(direct.actions.create(input),{code:'checkpoint_failed'});
   assert.equal(direct.writes(),0);assert.deepEqual(direct.actions.pending,[]);
+ }
+});
+
+// Exercise the application result before a view disposes its completed request.
+test('editing accepts confirmed deletion and recovered absence without another write',async()=>{
+ for(const kind of ['deleted','absent'] as const){
+  const f=fixture(),deleted:string[]=[];
+  if(kind==='absent'){f.fail(new TypeError('lost response'));f.lookup({kind,chartId:chartId(1)});}
+  const editing=createChartEditing({actions:f.actions,ready:async()=>{},session:()=>access,durable:()=>true,online:()=>true,
+   deleted:id=>{deleted.push(id);},messages:{signIn:'sign-in',failed:'failed',unconfirmed:'unconfirmed',unavailable:'unavailable'}});
+  assert.deepEqual(await editing.remove(chartId(1),new AbortController().signal),{kind:'deleted'});
+  assert.deepEqual(deleted,[chartId(1)]);assert.equal(f.writes(),1);assert.equal(f.calculations(),0);assert.equal(f.opens(),0);
  }
 });

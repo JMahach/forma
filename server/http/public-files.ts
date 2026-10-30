@@ -40,7 +40,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/application/application.ts',
     'src/application/application-machine.ts',
     'src/application/account-boundary.ts',
-    'src/application/write-continuation.ts',
+    'src/application/write-continuation.ts', 'src/application/chart-editing.ts',
     'src/application/public-refresh.ts',
     'src/application/startup.ts',
     'src/application/update.ts',

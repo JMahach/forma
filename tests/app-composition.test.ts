@@ -1,3 +1,4 @@
+import {createChartEditing} from '../src/application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from '../src/domain/library-maintenance.ts';
 import {createNatalDayClient} from '../src/data/natal-day-client.ts';
 import {encodeNatalDay} from '../server/packets/encode.ts';
@@ -37,7 +38,7 @@ import { accountNatalChart } from './helpers/account-chart.ts';
 import type { AccountChart, PublicAccountChart } from '../shared/chart-record-contract.ts';
 import type { ChartClient } from '../src/data/chart-client.ts';
 import type { LibrarySession } from '../src/state/account-library.ts';
-import type { BirthSubmission } from '../src/views/birth-form.ts';
+import type { BirthSubmission } from '../src/domain/chart-record.ts';
 import { createBirthClient } from '../src/data/birth-client.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
 import { getConnectionMode, subscribeConnection, type ConnectionSource } from '../src/data/http-transport.ts';
@@ -131,6 +132,7 @@ type AppPorts = Pick<typeof import('../src/runtime/resource-scope.ts'), 'createR
   & Pick<typeof import('../src/application/application.ts'), 'createApplication'>
   & Pick<typeof import('../src/platform/browser/background-coordinator.ts'), 'createBackgroundCoordinator'>
   & Pick<typeof import('../src/platform/browser/lifecycle.ts'), 'createPageLifecycle'>
+  & Pick<typeof import('../src/application/chart-editing.ts'), 'createChartEditing'>
   & Pick<typeof import('../src/domain/library-maintenance.ts'), 'readLibraryLocalNotice'|'readLibraryPackageKey'>
   & Pick<typeof import('../src/data/library-fill-transfer.ts'), 'createLibraryFillTransfer'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
@@ -314,7 +316,7 @@ function harness({storedNatalClient, connection, copyText, transitStart = async 
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
+    createApplication,createChartEditing,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
@@ -1654,12 +1656,23 @@ test('a lost delete response is recovered by lookup and never by a second delete
   const record=accountNatalChart();let writes=0,reads=0;
   const client=deletionClient(record,{
     async remove(){writes++;throw Object.assign(new Error('lost'),{code:'connection_failed'});},
-    async outcome(input){reads++;return {...input,catalogMarker:'2',outcome:{kind:'deleted',chartId:record.id}};},
+    async outcome(input){reads++;return {...input,catalogMarker:'2',outcome:{kind:'absent',chartId:record.id}};},
   });
   const h=harness({chartClient:client,accountSession:{accountId:record.accountId,sessionId:'one'}});
   await tick();h.select(record.id);await tick();await h.removeChart(record.id);await tick();
   assert.equal(writes,1);assert.equal(reads,1);assert.equal(h.cards.length,0);assert.equal(h.shown.id,'current-transit');
 });
+test('an older absence receipt cannot erase the newer accepted chart projection',async t=>{
+ const record=accountNatalChart(96);let writes=0;
+ const h=harness({accountSession:{accountId:record.accountId,sessionId:'present'},chartClient:deletionClient(record,{
+  remove:async input=>{writes++;return {...input,catalogMarker:'0',outcome:{kind:'absent',chartId:record.id}};},
+ })});t.after(()=>h.stopApplication());await h.restoration;for(let i=0;i<30&&!h.rows.some(row=>row.id===record.id);i++)await tick();
+ h.select(record.id);for(let i=0;i<20;i++)await tick();
+ assert.equal(h.shown?.id,record.id);await h.removeChart(record.id);await tick();
+ assert.equal(writes,1);assert.ok(h.cards.some(chart=>chart.id===record.id));assert.equal(h.shown?.id,record.id);
+ assert.equal(h.element('deleteChartDialog').open,true,'a current record is not mistaken for a completed deletion');
+});
+
 test('logout closes the delete dialog and a late result cannot change the new account', async () => {
   const record=accountNatalChart();let finish!:()=>void;
   const client=deletionClient(record,{remove: input=>new Promise(resolve=>{finish=()=>resolve({...input,catalogMarker:'2',outcome:{kind:'deleted',chartId:record.id}});})});
@@ -1708,6 +1721,38 @@ test('diagnostic scope follows access changes and only the matching explicit log
  h.changeAccount({accountId:'2',sessionId:'two'});assert.equal(accounts.at(-1),'2');
  h.logoutNotice(['one']);assert.equal(exits,0);
  h.logoutNotice(['two']);assert.equal(exits,1);
+});
+
+test('connected metadata editing skips unchanged input and sends only the changed fields',async t=>{
+ const record={...accountNatalChart(94),createdAt:'',updatedAt:''};let current=record,reads=0;const writes:unknown[]=[];
+ const h=harness({charts:[record],accountSession:{accountId:record.accountId,sessionId:'metadata'},chartClient:deletionClient(record,{
+  own:async()=>{reads++;return {chart:current,catalogMarker:'1'};},
+  update:async input=>{writes.push(input);assert.equal(input.birth,undefined,'metadata editing never requests a birth calculation');
+   current={...current,name:input.name??current.name,note:input.note?.value??current.note,revision:current.revision+1,noteRevision:input.note?current.noteRevision+1:current.noteRevision};
+   return {...input,chart:current,catalogMarker:String(current.revision),outcome:{kind:'updated',chartId:record.id,revision:current.revision}};
+  },
+ })});t.after(()=>h.stopApplication());await h.restoration;
+ const unchanged=await h.submitPort({previous:record,name:record.name,note:record.note});assert.ok(unchanged?.metadataOnly);
+ assert.equal(writes.length,0);assert.equal(reads,0);
+ await h.submitPort({previous:current,name:'renamed',note:current.note});
+ const first=writes[0] as {name:string;note?:unknown};assert.equal(first.name,'renamed');assert.equal(first.note,undefined);
+ const previous=current;await h.submitPort({previous,name:previous.name,note:'new note'});
+ const second=writes[1] as {name?:string;note:{value:string;seenRevision:number}};assert.equal(second.name,undefined);assert.deepEqual(second.note,{value:'new note',seenRevision:previous.noteRevision});
+ assert.equal(writes.length,2);assert.equal(reads,0,'attached confirmed records require no follow-up read');
+ for(const previous of [{...current,accountId:'2'},{...current,noteRevision:0}])await assert.rejects(h.submitPort({previous,name:previous.name,note:previous.note})!,{code:'auth_required'});
+ assert.equal(writes.length,2,'invalid ownership/base never reaches the write API');
+});
+
+test('a late uncertain submission cannot turn a newly opened form into recovery of the old command',async t=>{
+ const record=accountNatalChart(95);let writes=0,checks=0,rejectOld!:(error:unknown)=>void;
+ const h=harness({accountSession:{accountId:record.accountId,sessionId:'editing'},chartClient:deletionClient(record,{
+  create:async input=>{writes++;if(writes===1)return new Promise((_resolve,reject)=>{rejectOld=reject;});return {...input,chart:record,catalogMarker:'1',outcome:{kind:'created',chartId:record.id,revision:1}};},
+  outcome:async input=>{checks++;return {...input,outcome:{kind:'unknown'}};},
+ })});t.after(()=>h.stopApplication());await h.restoration;
+ const input:BirthSubmission={name:'new',note:'',birth:{source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'}};
+ const old=h.submitPort(input);assert.ok(old);const oldResult=assert.rejects(old);for(let i=0;i<30&&!rejectOld;i++)await tick();
+ h.edit();rejectOld(Object.assign(new Error('lost reply'),{code:'connection_failed'}));await oldResult;
+ const result=await h.submitPort(input);assert.ok(result);assert.equal(result.id,record.id);assert.equal(writes,2);assert.equal(checks,0,'new input is not a retry of the retired form');
 });
 
 test('an unknown save outcome reaches the diagnostic owner without changing write recovery',async()=>{
@@ -2867,7 +2912,7 @@ test('a committed local day refreshes only its selected source and rejects stale
  assert.equal(reads,1,'stale and unrelated keys do no numerical work');
  await h.libraryChanged(hint);for(let i=0;i<10;i++)await tick();assert.equal(reads,2,'duplicate peer keys produce one read');
  const received:unknown[]=[];const refresh=h.returns.refreshStoredPackage.bind(h.returns);
- t.mock.method(h.returns,'refreshStoredPackage',async ref=>{received.push(ref);await refresh(ref);});
+ t.mock.method(h.returns,'refreshStoredPackage',async (ref:Parameters<typeof refresh>[0])=>{received.push(ref);await refresh(ref);});
  const family={kind:'major-returns' as const,sourceKey:returnSourceKey({birthUtc:record.utc,timezone:record.timezone!}),family:'saturn' as const};
  await h.libraryChanged({...hint,keys:[JSON.stringify(family),JSON.stringify({...family,family:'moon'}),JSON.stringify({kind:'card',sourceKey:'card'})]});
  assert.deepEqual(received,[family],'only a valid numerical package reaches its owner');

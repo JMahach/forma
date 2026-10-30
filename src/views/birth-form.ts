@@ -2,14 +2,10 @@ import { BIRTH_DRAFT_FIELDS, normalizeBirthFormDraft, type SavedBirthForm, type 
 import type { City, CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
 import type { ChartSession } from '../state/chart-session.ts';
 import type { Toast } from '../ui/toast.ts';
-import type { ChartCalculation } from '../domain/chart-record.ts';
+import type { ChartCalculation, BirthSubmission } from '../domain/chart-record.ts';
 type FormError = Error & { code?: string; choices?: unknown };
 type ConnectionMode = Parameters<typeof actionAvailability>[0]['connection'];
 export interface RandomBirth { name: string; date: string; time: string; utc: string; fold: number }
-export interface BirthSubmission {
-  previous?: SavedChart; name: string; note: string;
-  birth?: {source: 'calculated'; date: string; time: string; cityId: string; cityName?: string; fold?: 0 | 1};
-}
 interface BirthFormOptions {
   /** The account whose personal input may be restored; independent temporary input has no account. */
   getAccountId?: () => string|null; onDraftChange?: () => void;

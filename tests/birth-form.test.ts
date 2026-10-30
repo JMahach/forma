@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type {BirthSubmission} from '../src/views/birth-form.ts';
+import type {BirthSubmission} from '../src/domain/chart-record.ts';
 import { attachBirthForm } from '../src/views/birth-form.ts';
 import { getConnectionMode, subscribeConnection, type ConnectionSource } from '../src/data/http-transport.ts';
 import { createBirthClient } from '../src/data/birth-client.ts';

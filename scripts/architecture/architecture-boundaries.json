@@ -1823,6 +1823,7 @@
         "src/application/application-machine.ts",
         "src/application/account-boundary.ts",
         "src/application/write-continuation.ts",
+        "src/application/chart-editing.ts",
         "src/application/public-refresh.ts",
         "src/application/startup.ts",
         "src/application/update.ts",
@@ -1831,6 +1832,7 @@
         "src/application/library-fill.ts"
       ],
       "publicEntries": [
+        "src/application/chart-editing.ts",
         "src/application/application.ts",
         "src/application/ports.ts",
         "src/application/background-work.ts",

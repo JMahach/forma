@@ -1,3 +1,4 @@
+import { createChartEditing } from './application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from './domain/library-maintenance.ts';
 import type {LibraryLocalChange,LibraryLocalNotice} from './domain/library-maintenance.ts';
 import { createResourceScope } from './runtime/resource-scope.ts';
@@ -22,10 +23,9 @@ import { createPageLifecycle } from './platform/browser/lifecycle.ts';
 import { createLibraryFillTransfer } from './data/library-fill-transfer.ts';
 import type {LibraryFillPacket} from './data/library-fill-transfer.ts';
 import type {LibraryFillEvent,LibraryFillScope} from './application/library-fill.ts';
-import type { AccountChart, PublicAccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
+import type { PublicAccountChart } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
-import type { BirthSubmission } from './views/birth-form.ts';
-import type { ChartActionResult } from './state/chart-actions.ts';
+import type { BirthSubmission } from './domain/chart-record.ts';
 import type { AccountWorkspace } from './account.ts';
 import type { TransitDayClient } from './data/transit-day-client.ts';
 import type { SavedView, ViewStore } from './data/view-store.ts';
@@ -343,11 +343,17 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     online: () => connectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
-  let formIntent: ChartWriteIntent | null = null, privateLibraryShown = false, librarySelection = 0;
+  let privateLibraryShown = false, librarySelection = 0;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
+  const chartEditing=createChartEditing({actions:chartActions,ready:()=>libraryReady,session:account.getSession,
+    durable:()=>accountLibrary.storageAvailable,online:()=>connectionMode()==='online',
+    deleted(id){if(store.clearPublic(id))viewSession?.flush();},
+    messages:{signIn:UI_MESSAGES.chartSaveSignIn,failed:UI_MESSAGES.chartSaveFailed,
+      unconfirmed:UI_MESSAGES.chartSaveUnconfirmed,unavailable:UI_MESSAGES.chartUnavailable}});
+  scope.own(chartEditing.reset);
   function saveShownChart():Promise<void> {
     if(connectionMode()==='offline'){toast(UI_MESSAGES.offline);return Promise.resolve();}
     const source=session.record;
@@ -433,73 +439,18 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   async function submitAccountChart(input: BirthSubmission, signal: AbortSignal) {
     const observation=journal?.begin({action:'chart_save',component:'chart'});
     try {
-      const result=await performAccountChartSubmission(input,signal);
+      const result=await chartEditing.submit(input,signal);
       observation?.finishSuccess();return result;
     }catch(error){void observation?.reportError(error,{stage:'commit'});throw error;}
-  }
-  async function performAccountChartSubmission(input: BirthSubmission, signal: AbortSignal) {
-    const access = account.getSession();
-    await libraryReady; signal.throwIfAborted();
-    if (!access || account.getSession()?.accountId !== access.accountId || account.getSession()?.sessionId !== access.sessionId)
-      throw actionError('account_changed', UI_MESSAGES.chartSaveSignIn);
-    let result: ChartActionResult;
-    if (formIntent) result = await chartActions.recover(formIntent, signal);
-    else {
-      const previous = input.previous as (SavedChart & Partial<AccountChart>) | undefined;
-      if (previous) {
-        if (previous.accountId !== access.accountId || !previous.noteRevision) throw actionError('auth_required', UI_MESSAGES.chartSaveSignIn);
-        const name = previous.name === input.name ? {} : {name: input.name};
-        const note = previous.note === input.note ? {} : {note: {value: input.note, seenRevision: previous.noteRevision}};
-        if (!input.birth && !Object.keys(name).length && !Object.keys(note).length)
-          return {id: previous.id, persisted: accountLibrary.storageAvailable, metadataOnly: true};
-        result = await chartActions.update({chartId: previous.id, ...name, ...note, ...(input.birth ? {birth: input.birth} : {})}, signal);
-      } else {
-        if (!input.birth) throw actionError('invalid_request', UI_MESSAGES.chartSaveFailed);
-        result = await chartActions.create({name: input.name, note: input.note, birth: input.birth}, signal);
-      }
-    }
-    if (result.kind === 'unknown') {
-      formIntent = result.intent;
-      throw actionError('write_unknown', UI_MESSAGES.chartSaveUnconfirmed);
-    }
-    if (result.kind !== 'settled' || !result.active) throw actionError('account_changed', UI_MESSAGES.chartSaveSignIn);
-    const outcome = result.receipt.outcome;
-    if (outcome.kind === 'rejected') throw actionError(outcome.code, UI_MESSAGES.chartSaveFailed);
-    if (!result.chart) {
-      formIntent = {operationId: result.receipt.operationId, expectedAccountId: result.receipt.expectedAccountId};
-      throw actionError('chart_unavailable', UI_MESSAGES.chartUnavailable);
-    }
-    formIntent = null;
-    return {id: result.chart.id, persisted: accountLibrary.storageAvailable, metadataOnly: Boolean(input.previous && !input.birth)};
   }
   async function removeAccountChart(id: string, signal: AbortSignal) {
     const observation=journal?.begin({action:'chart_delete',component:'chart'});
     try {
-      const result=await performAccountChartRemoval(id,signal);
+      const result=await chartEditing.remove(id,signal);
       if(result.kind==='unknown')void observation?.reportFailure({stage:'response',reason:'outcome_unknown',outcome:'unknown'});
       else observation?.finishSuccess();
       return result;
     }catch(error){void observation?.reportError(error,{stage:'request'});throw error;}
-  }
-  async function performAccountChartRemoval(id: string, signal: AbortSignal): Promise<{kind:'deleted'|'unknown'|'inactive'|'rejected'; error?:unknown}> {
-    const access = account.getSession();
-    if (!access) return {kind:'inactive'};
-    let result = await chartActions.remove(id, signal);
-    const active = () => !signal.aborted && account.getSession()?.accountId === access.accountId
-      && account.getSession()?.sessionId === access.sessionId;
-    if (!active()) return {kind:'inactive'};
-    // A lost response permits only a GET of the receipt, never another delete.
-    if (result.kind === 'unknown' && connectionMode() === 'online') {
-      try {result = await chartActions.recover(result.intent, signal);}
-      catch (error) {return active() ? {kind:'unknown',error} : {kind:'inactive'};}
-      if (!active()) return {kind:'inactive'};
-    }
-    if (result.kind === 'unknown') return {kind:'unknown', error:result.error};
-    if (result.kind !== 'settled' || !result.active) return {kind:'inactive'};
-    const deleted=!result.chart && !result.readError
-      && (result.receipt.outcome.kind === 'deleted' || result.receipt.outcome.kind === 'absent');
-    if(deleted && store.clearPublic(id))viewSession?.flush();
-    return {kind:deleted ? 'deleted' : 'rejected'};
   }
   let libraryInitialized = false;
   function beginAccountBoundary(request:AccountBoundaryRequest):AccountBoundaryWork {
@@ -519,7 +470,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       if(!journal){journalBoundaryPending=true;for(const id of logout)journalBoundaryIds.add(id);}
       journal?.leave(logout);
       cancelChartSave();pendingBirthForm=null;discardPendingInput();
-      temporaryChartSave=null;chartActions.clear();formIntent=null;librarySelection++;birthForm.close();
+      temporaryChartSave=null;chartActions.clear();chartEditing.reset();librarySelection++;birthForm.close();
       // Replace the private snapshot once, retaining only independent tab sources.
       snapshotReady=checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
         temporaryChart:store.temporaryChart,publicChart:store.publicChart,
@@ -527,7 +478,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
           ? session.selectedId:'current-transit'}:undefined).kind==='stored';
     }else if(resetPersonal && access){
       if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
-      temporaryChartSave=null;cancelChartSave();chartActions.clear();formIntent=null;librarySelection++;
+      temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();librarySelection++;
       const draft=birthForm.snapshot;
       if(birthForm.opened && (!draft || draft.accountId!==null && draft.accountId!==access.accountId))birthForm.close();
     }
@@ -584,7 +535,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     onDraftChange: () => { pendingBirthForm = null; viewSession?.schedule(); },
     document, getChart: id => id ? store.get(id) : undefined,
     saveChart: chart => { store.setTemporary(chart);temporaryChartSave=null; return true; },
-    isCheckingSubmission: () => Boolean(formIntent),
+    isCheckingSubmission: () => chartEditing.checking,
     submitChart: (input, signal) => input.previous && input.previous.id === store.temporaryChart?.id
       ? null : account.getSession() || accountLibrary.accountId ? submitAccountChart(input, signal) : null,
     ...birthClient, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, toast,
@@ -596,7 +547,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       publishRoute(routeForChart(id), navigation?.snapshot.route?.kind === 'temporary-chart');
       viewSession?.flush();
     },
-    beforeOpen: () => { formIntent = null; returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
+    beforeOpen: () => { chartEditing.reset(); returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
   });
   const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory,library:libraryStorage });
   natalDay = attachNatalDayExplorer({
