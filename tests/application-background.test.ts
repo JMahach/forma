@@ -3,7 +3,35 @@ import assert from 'node:assert/strict';
 import {createApplication} from '../src/application/application.ts';
 import type {BackgroundRequest} from '../src/application/background-work.ts';
 import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
+import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
+import {IDBFactory} from 'fake-indexeddb';
+import {accountChart} from './helpers/account-chart.ts';
+import {libraryRecordEntry} from '../src/state/library-reconciliation.ts';
+import type {FillReceipt} from '../src/application/library-fill.ts';
+import type {LibraryAuditPage} from '../src/domain/library-maintenance.ts';
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
+test('application children pause fill and local audit and discard their late results after stop',async t=>{
+ const store=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>store.close());
+ const active=await store.activate('1');if(active.status!=='stored')throw Error('owner');
+ const scope={lease:active.lease,sessionId:'session',catalogMarker:'1',visible:true,foreground:false,online:true},chart=accountChart();
+ let fillSignal:AbortSignal|undefined,auditSignal:AbortSignal|undefined,receives=0,pages=0;
+ let finishFill!:(reply:FillReceipt)=>void,finishAudit!:(page:LibraryAuditPage)=>void;
+ const app=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),libraryFill:{
+  scope:()=>scope,entries:()=>[libraryRecordEntry(chart)],control:store.fill,inventory:store.maintenance.inventory,
+  present:async()=>false,receive:async(_candidate,signal)=>{receives++;fillSignal=signal;return new Promise<FillReceipt>(resolve=>{finishFill=resolve;});},
+  place:async()=>assert.fail('a retired child cannot place its late packet'),
+ },libraryAudit:{scope:()=>scope,store:{...store.maintenance,
+  auditPage:async(_lease,_cursor,_limit,signal)=>{pages++;auditSignal=signal;return new Promise<LibraryAuditPage>(resolve=>{finishAudit=resolve;});},
+ }}});t.after(()=>app.stop());app.start();
+ app.send({type:'FillWake',at:Date.now(),reason:'library'});app.send({type:'AuditWake',at:Date.now()});
+ for(let i=0;i<50 && (!fillSignal || !auditSignal);i++)await tick();
+ assert.equal(receives,1);assert.equal(pages,1);
+ scope.foreground=true;app.send({type:'FillChanged'});app.send({type:'AuditChanged'});
+ assert.equal(fillSignal?.aborted,true);assert.equal(auditSignal?.aborted,true);
+ await app.stop();scope.foreground=false;finishFill({kind:'ready',payload:chart});finishAudit({checked:0,removed:0,next:null});
+ app.send({type:'FillChanged'});app.send({type:'AuditWake',at:Date.now()});await tick();await tick();
+ assert.equal(receives,1);assert.equal(pages,1);assert.deepEqual((await store.read())?.charts,[]);
+});
 test('the application owns background lifetime and dispatches only a current admitted task',async()=>{
  let receive:(request:BackgroundRequest)=>void=()=>{},updates=0,stops=0,calls=0,answer:unknown;
  const target={key:'app',scope:{kind:'app' as const}},controller=new AbortController();

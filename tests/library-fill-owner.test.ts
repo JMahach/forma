@@ -7,13 +7,13 @@ import type {LibraryInventory} from '../src/domain/library-maintenance.ts';
 import type {LibraryCatalogEntry} from '../shared/library-catalog-contract.ts';
 const flush=()=>new Promise<void>(resolve=>setImmediate(resolve));
 function fixture(){
- let now=10000,serial=0,visible=true,foreground=false,online=true,sessionId='s',writes=0,inventoryReads=0,maxActive=0,active=0,hold=false,failing=false,placement:FillPlacement='stored';
+ let now=10000,serial=0,visible=true,foreground=false,online=true,sessionId='s',catalogMarker='1',writes=0,inventoryReads=0,maxActive=0,active=0,hold=false,failing=false,placement:FillPlacement='stored';
  const timers=new Map<number,{at:number;run():void}>(),state:FillControl={flight:null,budgets:{}},lease={accountId:'1',generation:'g'};
  const entries:LibraryCatalogEntry[]=[{id:'1',revision:1,name:'one',birthDate:'2000-01-01',birthTime:'12:00',source:'calculated',packages:{card:{kind:'card',sourceKey:'one'},day:{ready:true,ref:{kind:'day',sourceKey:'day'}},majorReturns:null}}];
  const inventory:LibraryInventory={lease,cards:[],packages:[],usage:[]},received:FillCandidate[]=[],placed:FillCandidate[]=[],signals:AbortSignal[]=[];
  let release:((value:FillReceipt)=>void)|null=null,offlineOnReceive=false,errorValue:unknown=Error('unavailable'),controlUnavailable=false,notReady=false,leaveDuringPlace=false,leaveAfterReceive=false,leaveAfterGrant=false,holdPlacement=false;let releasePlacement:((value:FillPlacement)=>void)|null=null,notices=0;
  const control:FillControlStore={async read(){return structuredClone(state);},async update(_lease,change){if(controlUnavailable)return null;const before=JSON.stringify(state),result=change(state);if(before!==JSON.stringify(state))writes++;if(leaveAfterGrant && (result as {kind?:string})?.kind==='acquired')online=false;return structuredClone(result);}};
- const ports={scope:()=>({lease,sessionId,visible,foreground,online}),entries:()=>entries,control,inventory:async()=>{inventoryReads++;return inventory;},present:async(candidate:FillCandidate)=>candidate.ref.kind==='card'?inventory.cards.some(row=>row.id===candidate.chartId && row.revision>=candidate.revision):inventory.packages.some(row=>row.id===candidate.key && row.present && !row.evicted),
+ const ports={scope:()=>({lease,sessionId,catalogMarker,visible,foreground,online}),entries:()=>entries,control,inventory:async()=>{inventoryReads++;return inventory;},present:async(candidate:FillCandidate)=>candidate.ref.kind==='card'?inventory.cards.some(row=>row.id===candidate.chartId && row.revision>=candidate.revision):inventory.packages.some(row=>row.id===candidate.key && row.present && !row.evicted),
   async receive(candidate:FillCandidate,signal:AbortSignal):Promise<FillReceipt>{received.push(candidate);signals.push(signal);active++;maxActive=Math.max(maxActive,active);
    try{if(hold)return await new Promise<FillReceipt>(resolve=>{release=resolve;});if(failing)throw errorValue;if(offlineOnReceive)online=false;if(leaveAfterReceive)visible=false;if(notReady)return {kind:'not-ready',retryAfterMs:2000};return {kind:'ready',payload:{key:candidate.key}};}finally{active--;}
   },
@@ -25,7 +25,7 @@ function fixture(){
  const make=()=>createActor(createLibraryFill(ports)).start(),actor=make();
  async function advance(ms:number){const end=now+ms;for(let i=0;i<100;i++){await flush();const first=[...timers].filter(([,v])=>v.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!first){now=end;await flush();return;}timers.delete(first[0]);now=first[1].at;first[1].run();}throw Error('unbounded fill');}
  return {actor,entries,peer:make,received,placed,signals,state,inventory,advance,wake(reason:'lifecycle'|'hourly'|'library'|'use'|'space'='lifecycle'){actor.send({type:'FillWake',at:now,reason});},
-  change(value:{visible?:boolean;foreground?:boolean;online?:boolean;sessionId?:string}){visible=value.visible??visible;foreground=value.foreground??foreground;online=value.online??online;sessionId=value.sessionId??sessionId;actor.send({type:'FillChanged'});},
+  change(value:{visible?:boolean;foreground?:boolean;online?:boolean;sessionId?:string;catalogMarker?:string}){visible=value.visible??visible;foreground=value.foreground??foreground;online=value.online??online;sessionId=value.sessionId??sessionId;catalogMarker=value.catalogMarker??catalogMarker;actor.send({type:'FillChanged'});},
   hold(){hold=true;},unhold(){hold=false;},release(value:FillReceipt){hold=false;release?.(value);},fail(error:unknown=Error('unavailable')){failing=true;errorValue=error;},recover(){failing=false;},failControl(){controlUnavailable=true;},holdPlacement(){holdPlacement=true;},releasePlacement(){holdPlacement=false;releasePlacement?.('stored');},leaveAfterReceive(){leaveAfterReceive=true;},leaveAfterGrant(){leaveAfterGrant=true;},leaveDuringPlace(){leaveDuringPlace=true;},notReady(){notReady=true;},placement(value:FillPlacement){placement=value;},quota(){placement='quota';},space(){placement='stored';},offlineAfterReceive(){offlineOnReceive=true;},
   get inventoryReads(){return inventoryReads;},get notices(){return notices;},get writes(){return writes;},get maxActive(){return maxActive;},get timers(){return timers.size;},get now(){return now;}};
 }
@@ -146,4 +146,10 @@ test('invalid occasions and an offline scope do not even read fill inventory',as
  const f=fixture();f.actor.send({type:'FillWake',at:NaN,reason:'hourly'});await f.advance(0);
  assert.equal(f.inventoryReads,0);f.change({online:false});f.wake();await f.advance(0);
  assert.equal(f.inventoryReads,0);assert.equal(f.received.length,0);f.actor.stop();
+});
+
+test('a newer complete catalogue revokes the pending fill plan before any late packet placement',async()=>{
+ const f=fixture();f.hold();f.wake();await f.advance(0);assert.equal(f.received.length,1);
+ f.change({catalogMarker:'2'});assert.equal(f.signals[0].aborted,true);
+ f.release({kind:'ready',payload:{}});await f.advance(0);assert.equal(f.placed.length,0);assert.equal(f.received.length,1);f.actor.stop();
 });

@@ -97,6 +97,7 @@ export function createNatalDayExplorer({
 
   return {
     get current() { return opened ? current : null; },
+    get pending() { return status==='loading'; },
     get state() { return state(); },
     select(record: ChartRecord | null, chart: ChartInput | null = record ? extractChartData(record) : null) {
       if (record === original) return;

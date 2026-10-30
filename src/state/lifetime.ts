@@ -400,6 +400,7 @@ export function createLifetimeExplorer({
   }
   return {
     get current() { return opened ? current() : null; },
+    get pending() { return status==='loading' || status==='preparing'; },
     get state() { return state(); },
     open, close, syncDay, scrub, restore, alignMoment,
     refreshAvailability: notify,

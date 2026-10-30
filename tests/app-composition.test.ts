@@ -20,6 +20,7 @@ import { createNavigation } from '../src/platform/browser/navigation.ts';
 import { createApplication } from '../src/application/application.ts';
 import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
 import {createPageLifecycle} from '../src/platform/browser/lifecycle.ts';
+import {createLibraryFillTransfer} from '../src/data/library-fill-transfer.ts';
 import type {BackgroundControl,BackgroundStore} from '../src/domain/background-check.ts';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import {createCalculationCache} from '../src/data/calculation-cache.ts';
@@ -125,6 +126,7 @@ type AppPorts = Pick<typeof import('../src/runtime/resource-scope.ts'), 'createR
   & Pick<typeof import('../src/application/application.ts'), 'createApplication'>
   & Pick<typeof import('../src/platform/browser/background-coordinator.ts'), 'createBackgroundCoordinator'>
   & Pick<typeof import('../src/platform/browser/lifecycle.ts'), 'createPageLifecycle'>
+  & Pick<typeof import('../src/data/library-fill-transfer.ts'), 'createLibraryFillTransfer'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
   & Pick<typeof import('../src/state/view-session.ts'), 'createViewSession' | 'viewForRoute'>
@@ -306,7 +308,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,
+    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
@@ -2834,6 +2836,19 @@ test('30 application start-stop cycles release connection and projection subscri
   h.panels.setRight(!h.panels.right);h.workspace.setScreen('account');await tick();
   assert.equal(h.renders,renders,`cycle ${run}: closed projection stays closed`);
  }
+});
+
+test('restored application fills one missing card once without changing the selected chart',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),record=accountNatalChart(91);
+ let reads=0,writes=0;const put=storage.put.bind(storage);
+ t.mock.method(storage,'put',async(...args:Parameters<typeof put>)=>{writes+=args[1].filter(chart=>chart.id===record.id).length;return put(...args);});
+ const h=harness({charts:[{id:'current-transit',source:'transit',personality:[1],design:[]}],libraryStorage:storage,chartClient:deletionClient(record,{own:async()=>{reads++;return {chart:record,catalogMarker:'1'};}}),
+  accountSession:{accountId:record.accountId,sessionId:'fill-session'}});t.after(()=>h.stopApplication());
+ await h.restoration;
+ for(let i=0;i<100 && !h.cards.some(chart=>chart.id===record.id);i++)await tick();
+ assert.equal(reads,1);assert.equal(writes,1,'already committed fill must not persist a second time during acceptance');
+ assert.ok(h.cards.some(chart=>chart.id===record.id));assert.notEqual(h.shown?.id,record.id);
+ await tick();assert.equal(reads,1);assert.equal(writes,1);
 });
 
 test('stopping one tab releases its resources without revoking a live peer library',async t=>{

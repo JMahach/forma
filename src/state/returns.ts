@@ -356,5 +356,6 @@ export function createReturnsController({ observe, connection = getConnectionMod
 
     get available() { return available(); }, get natal() { return natal; }, get opened() { return opened; },
     get year() { return year; }, get selectedEvent() { return selectedEvent; },
+    get pending() { return loadingChart || bodies.some(body=>Boolean(records.get(body)?.job)); },
     get state() { return state(); }, get current() { return current; } };
 }

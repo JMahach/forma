@@ -2,7 +2,7 @@ import {fromCallback} from 'xstate';
 import type {LibraryCatalogEntry} from '../../shared/library-catalog-contract.ts';
 import type {LibraryInventory,LibraryLease} from '../domain/library-maintenance.ts';
 import {planLibraryFill,reserveFill,finishFill,pruneFillBudgets,type FillCandidate,type FillAuthority,type FillControlStore,type FillPermit,type FillOutcome,type FillReceipt,type FillPlacement} from '../domain/library-fill.ts';
-export interface LibraryFillScope {lease:LibraryLease;sessionId:string;visible:boolean;foreground:boolean;online:boolean}
+export interface LibraryFillScope {lease:LibraryLease;sessionId:string;catalogMarker:string;visible:boolean;foreground:boolean;online:boolean}
 export type {FillReceipt,FillPlacement} from '../domain/library-fill.ts';
 export interface LibraryFillPorts {
  scope():LibraryFillScope|null;/** Return only the complete accepted catalogue; null means it is not available yet. */
@@ -18,7 +18,7 @@ export interface LibraryFillPorts {
 export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'};
 type Wake=Extract<LibraryFillEvent,{type:'FillWake'}>;
 interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortController;phase:'planning'|'waiting'|'receiving'|'placing'}
-const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId]);
+const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,scope.catalogMarker]);
 const eligible=(scope:LibraryFillScope|null):scope is LibraryFillScope=>!!scope && scope.visible && !scope.foreground;
 function aborted(){return new DOMException('Fill cancelled','AbortError');}
 function cancellable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{

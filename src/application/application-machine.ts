@@ -5,6 +5,8 @@ import { createStartupMachine } from './startup.ts';
 import { createPublicRefreshMachine } from './public-refresh.ts';
 import { createWriteContinuationMachine } from './write-continuation.ts';
 import {createBackgroundWork} from './background-work.ts';
+import {createLibraryFill} from './library-fill.ts';
+import {createLibraryLocalAudit} from './library-local-audit.ts';
 import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
 
 type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'AccountBoundaryStarted'};
@@ -26,12 +28,16 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         publicRefresh: 'publicRefresh';
         startup: 'startup';
         background:'background';
+        libraryFill:'libraryFill';
+        libraryAudit:'libraryAudit';
       },
       context: {} as {request: RouteRequest | null},
       events: {} as Event,
     },
     actors: {
       background:createBackgroundWork(ports.background!),
+      libraryFill:createLibraryFill(ports.libraryFill!),
+      libraryAudit:createLibraryLocalAudit(ports.libraryAudit!),
       startup: createStartupMachine(ports.startup!),
       publicRefresh: createPublicRefreshMachine(ports.publicRefresh!),
       account: createAccountBoundaryMachine(ports.account!, runtimeId),
@@ -74,10 +80,16 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
           ...(ports.publicRefresh ? [{id: 'publicRefresh', src: 'publicRefresh'} as const] : []),
           ...(ports.startup ? [{id: 'startup', src: 'startup'} as const] : []),
           ...(ports.background ? [{id:'background',src:'background'} as const]:[]),
+          ...(ports.libraryFill ? [{id:'libraryFill',src:'libraryFill'} as const]:[]),
+          ...(ports.libraryAudit ? [{id:'libraryAudit',src:'libraryAudit'} as const]:[]),
         ],
         on: {
           Stop: '#application.stopping',
           BackgroundChanged:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          FillWake:{guard:()=>!!ports.libraryFill,actions:sendTo('libraryFill',({event})=>event)},
+          FillChanged:{guard:()=>!!ports.libraryFill,actions:sendTo('libraryFill',({event})=>event)},
+          AuditWake:{guard:()=>!!ports.libraryAudit,actions:sendTo('libraryAudit',({event})=>event)},
+          AuditChanged:{guard:()=>!!ports.libraryAudit,actions:sendTo('libraryAudit',({event})=>event)},
           StartupInterrupted: {
             guard: () => !!ports.startup,
             actions: sendTo('startup', ({event}) => event),

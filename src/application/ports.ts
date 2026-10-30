@@ -4,6 +4,8 @@ import type { StartupPorts, StartupEvent } from './startup.ts';
 import type { PublicRefreshPorts, PublicRefreshEvent } from './public-refresh.ts';
 import type { WriteContinuationPorts, WriteEvent } from './write-continuation.ts';
 import type {BackgroundWorkPorts,BackgroundWorkEvent} from './background-work.ts';
+import type {LibraryFillPorts,LibraryFillEvent} from './library-fill.ts';
+import type {LibraryAuditPorts,LibraryAuditEvent} from './library-local-audit.ts';
 
 export interface AccountAccess { readonly accountId: string; readonly sessionId: string; readonly diagnosticProof?: string }
 export interface AccountBoundaryRequest {
@@ -51,12 +53,12 @@ export interface RoutePort {
   settled(): void;
   dispose(): void;
 }
-export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts }
+export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}
   | {type: 'RetryRoute'}
-  | AccountEvent | Exclude<StartupEvent,{type:'Stop'}> | PublicRefreshEvent | BackgroundWorkEvent | Exclude<WriteEvent,{type:'Stop'|'SourcesReconciled'}>;
+  | AccountEvent | Exclude<StartupEvent,{type:'Stop'}> | PublicRefreshEvent | BackgroundWorkEvent | LibraryFillEvent | LibraryAuditEvent | Exclude<WriteEvent,{type:'Stop'|'SourcesReconciled'}>;
 export interface ApplicationView {
   lifecycle: 'created' | 'running' | 'stopping' | 'stopped';
   destination: 'idle' | 'preparing' | 'ready' | 'failed';
