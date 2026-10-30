@@ -36,6 +36,7 @@ class LocalAudit {
  private active:AuditRun|null=null;
  private memory:AuditMemory|null=null;
  private pending:number|null=null;
+ private paused:AuditRun|null=null;
  private stopped=false;
  constructor(ports:LibraryAuditPorts){
   this.ports=ports;this.clock=ports.clock??{now:Date.now,after(ms,run){const timer=setTimeout(run,ms);return()=>clearTimeout(timer);}};
@@ -45,17 +46,29 @@ class LocalAudit {
   const scope=this.ports.scope();
   return !this.stopped && !run.control.signal.aborted && eligible(scope) && scopeKey(scope)===run.key;
  }
- changed(){if(this.active && !this.current(this.active))this.active.control.abort();}
- stop(){this.stopped=true;this.pending=null;this.active?.control.abort();}
- wake(at:number){
+ private checkScope(){
+  const scope=this.ports.scope(),key=scope?scopeKey(scope):null;
+  if(this.paused?.key!==key)this.paused=null;
+  const run=this.active;if(!run || run.control.signal.aborted || this.current(run))return;
+  this.paused=key===run.key?run:null;run.control.abort();
+ }
+ changed(){this.checkScope();this.continue();}
+ private continue(){
+  if(this.stopped || this.active || !this.paused)return;
+  const scope=this.ports.scope();if(!eligible(scope))return;
+  const paused=this.paused;this.paused=null;if(scopeKey(scope)===paused.key)this.wake(paused.occasion,paused);
+ }
+ stop(){this.stopped=true;this.pending=null;this.paused=null;this.active?.control.abort();}
+ wake(at:number,paused?:AuditRun){
   if(this.stopped || !Number.isFinite(at))return;
-  this.changed();
+  this.checkScope();
   if(this.active){this.pending=Math.max(this.pending??at,at);return;}
   const scope=this.ports.scope();if(!eligible(scope))return;
   const key=scopeKey(scope);if(!this.admitted(key,at))return;
   const run:AuditRun={scope:{...scope,lease:{...scope.lease}},key,control:new AbortController(),expected:null,
    value:{runId:this.owner,cursor:{phase:'charts'},completedAt:0},persistent:true,occasion:at};
-  this.active=run;void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
+  if(paused && !paused.persistent){run.value=paused.value;run.persistent=false;}
+  this.paused=null;this.active=run;void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
  }
  private admitted(key:string,at:number){
   const now=this.clock.now();
@@ -67,7 +80,7 @@ class LocalAudit {
  private async finished(run:AuditRun){
   await this.release(run);
   if(this.active===run)this.active=null;
-  const next=this.pending;this.pending=null;if(next!==null)this.wake(next);
+  const next=this.pending;this.pending=null;if(next!==null)this.wake(next);else this.continue();
  }
  private async release(run:AuditRun){
   if(!run.persistent || run.expected?.lease?.owner!==this.owner)return;
@@ -75,6 +88,7 @@ class LocalAudit {
   try{await this.ports.store.saveAuditCheckpoint(run.scope.lease,run.expected,next);}catch{/* Lease expires without a cleanup loop. */}
  }
  private async claim(run:AuditRun){
+  if(!run.persistent)return this.current(run);
   run.expected=await this.ports.store.readAuditCheckpoint(run.scope.lease);
   if(!this.current(run))return false;
   const prior=run.expected,now=this.clock.now();
@@ -108,12 +122,13 @@ class LocalAudit {
  private async page(run:AuditRun):Promise<LibraryAuditPage|null>{
   const memory=this.memory!;
   while(this.current(run)){
+   if(memory.blockedUntil>this.clock.now() && !await this.wait(run,memory.blockedUntil-this.clock.now()))return null;
    const page=await this.readPage(run);
    if(!this.current(run))return null;
    if(page){memory.failures=0;return page;}
    memory.failures++;
-   if(memory.failures>=3){memory.blockedUntil=this.clock.now()+60000;return null;}
-   if(!await this.wait(run,memory.failures===1?1000:5000))return null;
+   memory.blockedUntil=this.clock.now()+(memory.failures>=3?60000:memory.failures===1?1000:5000);
+   if(memory.failures>=3)return null;
   }
   return null;
  }

@@ -40,23 +40,38 @@ function failed(error:unknown):FillOutcome {
 /** One account permit and one transient packet. Catalog/number owners remain behind ports. */
 class LibraryFill {
  private ports:LibraryFillPorts;private clock:NonNullable<LibraryFillPorts['clock']>;private owner:string;
- private active:FillRun|null=null;private pending:Wake|null=null;private stopped=false;
+ private active:FillRun|null=null;private pending:Wake|null=null;private paused:{key:string;wake:Wake}|null=null;private stopped=false;
  constructor(ports:LibraryFillPorts){
   this.ports=ports;this.clock=ports.clock??{now:Date.now,after(ms,run){const timer=setTimeout(run,ms);return()=>clearTimeout(timer);}};
   this.owner=ports.id?.()??crypto.randomUUID();
  }
  private current(run:FillRun){const scope=this.ports.scope();return !this.stopped && !run.controller.signal.aborted && eligible(scope) && scopeKey(scope)===run.key;}
  private online(run:FillRun){return this.current(run) && this.ports.scope()?.online===true;}
- changed(){const run=this.active;if(run && (!this.current(run) || run.phase!=='placing' && !this.ports.scope()?.online))run.controller.abort();}
- stop(){this.stopped=true;this.pending=null;this.active?.controller.abort();}
+ private canContinue(run:FillRun){return run.phase==='placing'?this.current(run):this.online(run);}
+ private checkScope(){
+  const scope=this.ports.scope(),key=scope?scopeKey(scope):null;
+  if(this.paused?.key!==key)this.paused=null;
+  const run=this.active;if(!run || run.controller.signal.aborted)return;
+  if(this.canContinue(run))return;
+  this.paused=key===run.key?{key:run.key,wake:run.wake}:null;run.controller.abort();
+ }
+ changed(){this.checkScope();this.resume();}
+ private resume(){
+  if(this.stopped || this.active || !this.paused)return;
+  const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
+  const paused=this.paused;this.paused=null;if(scopeKey(scope)===paused.key)this.wake(paused.wake);
+ }
+ stop(){this.stopped=true;this.pending=null;this.paused=null;this.active?.controller.abort();}
  wake(event:Wake){
   if(this.stopped || !Number.isFinite(event.at))return;
-  this.changed();if(this.active){this.queue(event);return;}
+  this.checkScope();if(this.active){this.queue(event);return;}
   const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
   const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:event,controller:new AbortController(),phase:'planning'};
-  this.active=run;void this.run(run).catch(()=>{}).finally(()=>{
-   if(this.active===run)this.active=null;const next=this.pending;this.pending=null;if(next)this.wake(next);
-  });
+  this.paused=null;this.active=run;void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
+ }
+ private finished(run:FillRun){
+  if(this.active===run)this.active=null;const next=this.pending;this.pending=null;
+  if(next)this.wake(next);else this.resume();
  }
  private queue(event:Wake){if(!this.pending || this.pending.at<=event.at)this.pending=event;}
  private wait(run:FillRun,ms:number):Promise<boolean>{
