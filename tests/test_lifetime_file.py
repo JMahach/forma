@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -87,6 +88,21 @@ class LifetimeFileTests(unittest.TestCase):
                 lifetime.publish_new(temporary, destination)
             self.assertEqual(destination.read_bytes(), b'existing')
             self.assertEqual(temporary.read_bytes(), b'new')
+
+    def test_publication_synchronizes_the_parent_before_reporting_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            temporary, destination = Path(directory) / 'temporary', Path(directory) / 'final'
+            temporary.write_bytes(b'complete')
+            sync = lifetime.os.fsync
+            synchronized = []
+            def record_sync(fd):
+                synchronized.append(os.fstat(fd).st_ino)
+                sync(fd)
+            with mock.patch.object(lifetime.os, 'fsync', side_effect=record_sync):
+                lifetime.publish_new(temporary, destination)
+            self.assertIn(Path(directory).stat().st_ino, synchronized)
+            self.assertEqual(destination.read_bytes(), b'complete')
+            self.assertFalse(temporary.exists())
 
     def test_concurrent_generators_publish_one_complete_matching_pair(self):
         with tempfile.TemporaryDirectory() as directory:

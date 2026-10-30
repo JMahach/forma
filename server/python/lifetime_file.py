@@ -88,6 +88,11 @@ def publish_new(temporary, destination):
     # a completed lifetime file from a concurrent preparation run.
     os.link(temporary, destination)
     os.unlink(temporary)
+    directory = os.open(Path(destination).parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def generate_lifetime_file(file, start=MIN_DATE.isoformat(), end=MAX_DATE.isoformat(), workers=3, progress=None):

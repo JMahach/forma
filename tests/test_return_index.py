@@ -235,6 +235,34 @@ class FileTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(),previous)
         self.assertEqual(list(self.path.parent.iterdir()),[self.path])
 
+    def test_written_candidate_is_verified_before_replacing_previous_index(self):
+        self.build(); previous = self.path.read_bytes()
+        sync = engine.os.fsync
+        def damage_candidate(fd):
+            sync(fd)
+            size = os.fstat(fd).st_size
+            os.pwrite(fd, b'\xff', size-1)
+            sync(fd)
+        with patch.object(engine.os, 'fsync', side_effect=damage_candidate):
+            with self.assertRaises(engine.InvalidIndex):
+                engine.prepare_index(self.path, start=self.start, end=self.end+1, bodies=('north_node',))
+        self.assertEqual(self.path.read_bytes(), previous)
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+    def test_successful_replacement_synchronizes_its_directory(self):
+        self.build()
+        sync = engine.os.fsync
+        parent_inode = self.path.parent.stat().st_ino
+        synchronized = []
+        def record_sync(fd):
+            synchronized.append(os.fstat(fd).st_ino)
+            sync(fd)
+        with patch.object(engine.os, 'fsync', side_effect=record_sync):
+            engine.prepare_index(self.path, start=self.start, end=self.end+1, bodies=('north_node',))
+        self.assertIn(parent_inode, synchronized)
+        with engine.load_index(self.path) as index:
+            self.assertEqual(index.header['end'], self.end+1)
+
     def test_missing_file_falls_back_without_creating_any_files(self):
         roots=engine.find_crossings('north_node',self.start,self.end,index_path=self.path)
         self.assertEqual(roots,[])

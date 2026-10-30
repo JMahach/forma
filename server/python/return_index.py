@@ -566,7 +566,11 @@ def prepare_index(path=DEFAULT_FILE, *, start=None, end=None, bodies=PHYSICAL_BO
                 while chunk := payload.read(1024*1024):
                     output.write(chunk)
                 output.flush(); os.fsync(output.fileno())
+        # Verify the actual written candidate before retiring the previous file.
+        with load_index(temporary):
+            pass
         os.replace(temporary, path)
+        _sync_index_directory(path)
         return dict(header, reused=False)
     finally:
         if descriptor is not None:
