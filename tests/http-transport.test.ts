@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHttpTransport, configureTransportSimulation, fetchResource, getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
+import { createHttpTransport, fetchResource, getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
 import { createStandConnection } from './helpers/preview/stand-connection.ts';
 
 test('offline prevents a request; returning online permits it without replaying the rejected call', async () => {
@@ -56,20 +56,12 @@ test('completed read releases the observer and later mode changes do not invalid
   assert.deepEqual(payload, {ready:true});
 });
 
-test('the shared mode observer exposes the stand source to forms without replaying actions', () => {
- const connection=createStandConnection(); configureTransportSimulation(connection);
- const modes:string[]=[]; const stop=subscribeConnection(mode=>modes.push(mode));
- connection.set('offline'); assert.equal(getConnectionMode(),'offline'); stop(); connection.set('online');
- assert.deepEqual(modes,['online','offline']); configureTransportSimulation(null);
-});
-
 function browserConnection(t: test.TestContext) {
  const previous = Object.getOwnPropertyDescriptors(globalThis);
  const events = new EventTarget(), network = {onLine: true};
  Object.defineProperty(globalThis, 'window', {configurable:true, value:events});
  Object.defineProperty(globalThis, 'navigator', {configurable:true, value:network});
  t.after(() => {
-  configureTransportSimulation(null);
   for (const name of ['window','navigator','fetch']) {
    if (previous[name]) Object.defineProperty(globalThis, name, previous[name]);
    else Reflect.deleteProperty(globalThis, name);
@@ -78,34 +70,30 @@ function browserConnection(t: test.TestContext) {
  return {set(online:boolean) {network.onLine=online;events.dispatchEvent(new Event(online?'online':'offline'));}};
 }
 
-test('real offline and the stand use one mode, without duplicate transitions or automatic writes', async t => {
+test('browser connectivity ignores other transport sources and never replays a write', async t => {
  const browser=browserConnection(t), stand=createStandConnection();let writes=0;
- configureTransportSimulation(stand, async()=>{writes++;return new Response('saved');});
+ Object.defineProperty(globalThis,'fetch',{configurable:true,writable:true,value:async()=>{writes++;return new Response('saved');}});
+ const isolated=createHttpTransport({connection:stand,fetch:async()=>new Response('isolated')});
  const modes:string[]=[];const stop=subscribeConnection(mode=>modes.push(mode));t.after(stop);
  browser.set(false);assert.equal(getConnectionMode(),'offline');
  await assert.rejects(fetchResource('/api/save',{method:'POST'}),{code:'offline'});
- stand.set('server');assert.equal(getConnectionMode(),'offline');
- browser.set(true);assert.equal(getConnectionMode(),'server');
+ assert.equal(await (await isolated('/api/read')).text(),'isolated');
+ stand.set('server');browser.set(true);assert.equal(getConnectionMode(),'online');
+ await assert.rejects(isolated('/api/read'),{code:'server_unavailable'});
  assert.equal(writes,0);
- await assert.rejects(fetchResource('/api/save',{method:'POST'}),{code:'server_unavailable'});
- stand.set('online');browser.set(true);assert.equal(writes,0);
  assert.equal(await (await fetchResource('/api/save',{method:'POST'})).text(),'saved');
- assert.equal(writes,1);assert.deepEqual(modes,['online','offline','server','online']);
- stop();browser.set(false);stand.set('offline');assert.deepEqual(modes,['online','offline','server','online']);
+ browser.set(true);assert.equal(writes,1);assert.deepEqual(modes,['online','offline','online']);
+ stop();browser.set(false);stand.set('offline');assert.deepEqual(modes,['online','offline','online']);
 });
 
-for (const simulated of [false,true]) {
- test(`real connection loss rejects a late response with stand=${simulated}`, async t => {
-  const browser=browserConnection(t);let reply!:(value:Response)=>void,calls=0;
-  const send:typeof fetch=async()=>{calls++;return new Promise<Response>(resolve=>{reply=resolve;});};
-  if (simulated) configureTransportSimulation(createStandConnection(),send);
-  else Object.defineProperty(globalThis,'fetch',{configurable:true,writable:true,value:send});
-  const work=fetchResource('/api/save',{method:'POST'});
-  browser.set(false);reply(new Response('late'));
-  await assert.rejects(work,{code:'offline'});
-  browser.set(true);assert.equal(calls,1,'connectivity never repeats an unknown write');
- });
-}
+test('real connection loss rejects a late response without replaying an unknown write', async t => {
+ const browser=browserConnection(t);let reply!:(value:Response)=>void,calls=0;
+ Object.defineProperty(globalThis,'fetch',{configurable:true,writable:true,value:async()=>{calls++;return new Promise<Response>(resolve=>{reply=resolve;});}});
+ const work=fetchResource('/api/save',{method:'POST'});
+ browser.set(false);reply(new Response('late'));
+ await assert.rejects(work,{code:'offline'});
+ browser.set(true);assert.equal(calls,1);
+});
 
 test('a real offline event interrupts body reading and reconnect leaves the failed read stopped', async t => {
  const browser=browserConnection(t);let calls=0;
@@ -118,9 +106,8 @@ test('a real offline event interrupts body reading and reconnect leaves the fail
 });
 
 test('a failed server request does not invent an offline mode for local actions', async t => {
- browserConnection(t);const stand=createStandConnection();
- configureTransportSimulation(stand,async()=>{throw new TypeError('unreachable server');});
+ browserConnection(t);
+ Object.defineProperty(globalThis,'fetch',{configurable:true,writable:true,value:async()=>{throw new TypeError('unreachable server');}});
  await assert.rejects(fetchResource('/api/chart'),TypeError);
  assert.equal(getConnectionMode(),'online');
- stand.set('server');assert.equal(getConnectionMode(),'server');
 });

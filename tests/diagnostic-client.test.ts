@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDiagnosticClient, type DiagnosticRequest } from '../src/data/diagnostic-client.ts';
-import { configureTransportSimulation, type ConnectionSource, type ConnectionMode } from '../src/data/http-transport.ts';
+import { createHttpTransport, type ConnectionSource, type ConnectionMode } from '../src/data/http-transport.ts';
 import { DIAGNOSTIC_BATCH_MAX_BYTES, type ClientReport, type ClientContextStep } from '../shared/client-report-contract.ts';
 
 const id=(n:number)=>`${n.toString(16).padStart(8,'0')}-1111-4111-8111-111111111111`;
@@ -101,13 +101,10 @@ test('abort arriving with the last body chunk prevents publication',async()=>{
   }}))});
   await assert.rejects(client(body(),{signal:controller.signal,exit:false}),value=>value===reason);
 });
-test('the default shared transport respects stand modes and releases its subscription after streaming',async()=>{
+test('an injected transport respects its connection and releases its subscription after streaming',async()=>{
   const listeners=new Set<Parameters<ConnectionSource['subscribe']>[0]>(),connection:ConnectionSource & {current:ConnectionMode}={current:'online',subscribe(listener){listeners.add(listener);return ()=>listeners.delete(listener);}};
-  let calls=0;configureTransportSimulation(connection,async()=>{calls++;return reply();});
-  try {
-    const client=createDiagnosticClient();await client(body(),options());assert.equal(calls,1);assert.equal(listeners.size,0);
+  let calls=0;const client=createDiagnosticClient({fetch:createHttpTransport({connection,fetch:async()=>{calls++;return reply();}})});await client(body(),options());assert.equal(calls,1);assert.equal(listeners.size,0);
     connection.current='offline';await assert.rejects(client(body(),options()),{code:'offline'});assert.equal(calls,1);
-  }finally{configureTransportSimulation(null);}
 });
 
 

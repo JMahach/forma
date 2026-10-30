@@ -1,4 +1,4 @@
-/** Optional stand gate at the request boundary. Ready caches never pass here. */
+/** Connectivity at the request boundary. Ready caches never pass here. */
 export type ConnectionMode = 'online' | 'offline' | 'server';
 export interface ConnectionSource {
   readonly current: ConnectionMode;
@@ -41,22 +41,15 @@ export function createHttpTransport({ connection, fetch: send = (...args) => glo
     } catch (error) { stop(); throw error; }
   };
 }
-let simulatedFetch: typeof globalThis.fetch | null = null;
-let connectionSource: ConnectionSource | null = null;
-export function configureTransportSimulation(connection: ConnectionSource | null, fetch?: typeof globalThis.fetch) {
-  connectionSource = connection;
-  simulatedFetch = connection ? fetch ?? null : null;
-}
-// Browser connectivity and the optional stand mode share the same gate. Ready
-// data never reaches this boundary; reconnecting does not replay a request.
+// Browser connectivity is the default. Alternate sources belong to an explicit
+// transport instance and cannot change another caller.
 export const fetchResource: typeof globalThis.fetch = createHttpTransport({
   connection: { get current() { return getConnectionMode(); }, subscribe: subscribeConnection },
-  fetch: (input, options) => (simulatedFetch ?? globalThis.fetch)(input, options),
 });
 
 export function getConnectionMode(): ConnectionMode {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
-  return connectionSource?.current ?? 'online';
+  return 'online';
 }
 export function subscribeConnection(listener: (mode: ConnectionMode) => void): () => void {
   let previous: ConnectionMode | undefined;
@@ -64,12 +57,10 @@ export function subscribeConnection(listener: (mode: ConnectionMode) => void): (
     const mode = getConnectionMode();
     if (mode !== previous) { previous = mode; listener(mode); }
   };
-  const stopSimulation = connectionSource?.subscribe(update);
   const events = typeof window === 'undefined' ? null : window;
   events?.addEventListener('online', update); events?.addEventListener('offline', update);
   update();
   return () => {
-    stopSimulation?.();
     events?.removeEventListener('online', update); events?.removeEventListener('offline', update);
   };
 }

@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { configureTransportSimulation } from '../src/data/http-transport.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const html = await fs.readFile(path.join(root, 'public/index.html'), 'utf8');
@@ -57,8 +56,8 @@ function installGlobals(values: Record<string, unknown>) {
 
 async function runEntry(t: test.TestContext, startup: string, withArt = false,
   {stand = false, devSource = '', release, preloadStand = false, offlineSource,
-    journalSource, serviceWorkers, transportSource = `export {configureTransportSimulation, fetchResource} from ${JSON.stringify(transportURL)};`}: {
-      serviceWorkers?: Pick<ServiceWorkerContainer,'register'>; stand?: boolean; devSource?: string; release?: boolean; journalSource?: string; preloadStand?: boolean; transportSource?: string; offlineSource?: string;
+    journalSource, serviceWorkers, transportSource = `export {fetchResource} from ${JSON.stringify(transportURL)};`}: {
+      serviceWorkers?: Pick<ServiceWorkerContainer,'register'> & Partial<Pick<ServiceWorkerContainer,'getRegistration'>>; stand?: boolean; devSource?: string; release?: boolean; journalSource?: string; preloadStand?: boolean; transportSource?: string; offlineSource?: string;
     } = {}) {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'forma-entry-'));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
@@ -80,7 +79,6 @@ async function runEntry(t: test.TestContext, startup: string, withArt = false,
   if(offlineSource!==undefined)h.document.body.dataset.offlineVersion='a'.repeat(64);
   const restoreGlobals = installGlobals({ document: h.document, location: h.location,
     fetch: async () => new Response('ordinary'), window:new EventTarget(), navigator:{serviceWorker:serviceWorkers}, __FORMA_RELEASE__: release });
-  configureTransportSimulation(null);
   try {
     const preloaded = preloadStand ? import(pathToFileURL(standFile).href) : null;
     await import(pathToFileURL(path.join(temporary, 'entry.ts')).href);
@@ -88,8 +86,7 @@ async function runEntry(t: test.TestContext, startup: string, withArt = false,
     if(journalSource!==undefined||offlineSource!==undefined){await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));}
   }
   finally {
-    configureTransportSimulation(null);
-    restoreGlobals();
+      restoreGlobals();
   }
   return h;
 }
@@ -201,21 +198,29 @@ test('normal startup receives the same journal owner once after both modules are
 });
 
 
-test('release prepares the offline worker without waiting for installation or activating an update',async t=>{
+test('release registers only on application permission without waiting for installation',async t=>{
   const calls:unknown[]=[];
-  const serviceWorkers={register:((...args:unknown[])=>{calls.push(args);return new Promise(()=>{});}) as ServiceWorkerContainer['register']};
-  const startup='document.querySelector(".app-shell").dataset.shellReady="true";';
-  const h=await runEntry(t,startup,false,{release:true,serviceWorkers});
+  const serviceWorkers={getRegistration:async()=>undefined,register:((...args:unknown[])=>{calls.push(args);return new Promise(()=>{});}) as ServiceWorkerContainer['register']};
+  const base='document.querySelector(".app-shell").dataset.shellReady="true";';
+  const offlineSource='export function attachOfflinePage(){throw Error("No registration exists");} export function holdOfflineInput(){}';
+  const dormant=base+' export function connectReleaseCheck(){} export function offlineReady(){return new Promise(()=>{});}';
+  const initial=await runEntry(t,dormant,false,{release:true,serviceWorkers,offlineSource});
+  assert.equal(initial.shell.dataset.shellReady,'true');assert.equal(calls.length,0,'startup alone does not authorize HTTP');
+  const permitted=base+' export function connectReleaseCheck(port){void port.check(new AbortController().signal);} export function offlineReady(){return new Promise(()=>{});}';
+  const h=await runEntry(t,permitted,false,{release:true,serviceWorkers,offlineSource});
   assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.reloads,0);
   assert.deepEqual(calls,[['/service-worker.js',{scope:'/',updateViaCache:'none'}]]);
-  await runEntry(t,startup,false,{release:false,serviceWorkers});assert.equal(calls.length,1,'Source stand never installs a release worker');
+  await runEntry(t,permitted,false,{release:false,serviceWorkers,offlineSource});assert.equal(calls.length,1,'Source stand never installs a release worker');
 });
 
 test('offline registration failure never replaces the working application with startup recovery',async t=>{
-  const h=await runEntry(t,'document.querySelector(".app-shell").dataset.shellReady="true";',false,
-    {release:true,serviceWorkers:{register:()=>Promise.reject(new Error('Browser denied offline storage'))}});
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.nodes.get('chartLoadingRetry')!.hidden,true);
+  let calls=0;
+  const h=await runEntry(t,`document.querySelector('.app-shell').dataset.shellReady='true';
+    export function connectReleaseCheck(port){void port.check(new AbortController().signal).catch(()=>{});}
+    export function offlineReady(){return new Promise(()=>{});}`,false,
+    {release:true,serviceWorkers:{getRegistration:async()=>undefined,register:()=>{calls++;return Promise.reject(new Error('Browser denied offline storage'));}},
+     offlineSource:'export function attachOfflinePage(){throw Error("No registration");} export function holdOfflineInput(){}'});
+  assert.equal(calls,1);assert.equal(h.shell.dataset.shellReady,'true');assert.equal(h.nodes.get('chartLoadingRetry')!.hidden,true);
 });
 
 test('release discovers updates once without reloading before restoration',async t=>{
@@ -224,8 +229,9 @@ test('release discovers updates once without reloading before restoration',async
   export function offlineRestored(){return false;}
   export function subscribeOfflineReady(){return()=>{};}
   export function offlineReady(){return Promise.resolve();}
+  export function connectReleaseCheck(port){void port.check(new AbortController().signal);}
   document.querySelector('.app-shell').dataset.shellReady='true';`,false,{
-  release:true,serviceWorkers:{register:async()=>({} as ServiceWorkerRegistration)},
+  release:true,serviceWorkers:{getRegistration:async()=>({} as ServiceWorkerRegistration),register:async()=>{throw Error('Must reuse existing registration');}},
   offlineSource:`
    export function holdOfflineInput(){throw new Error('Discovery must not hold input');}
    export function attachOfflinePage(options){
@@ -237,6 +243,6 @@ test('release discovers updates once without reloading before restoration',async
  });
  assert.equal(h.shell.dataset.shellReady,'true');
  assert.equal(h.shell.dataset.prepared,'false');
- assert.equal(h.shell.dataset.refreshes,'1','startup performs one ordinary release discovery');
- assert.equal(h.shell.dataset.checks,'1');assert.equal(h.reloads,0);
+ assert.equal(h.shell.dataset.refreshes,'1','one application permission performs one release discovery');
+ assert.ok(Number(h.shell.dataset.checks)>=1,'known worker is checked locally');assert.equal(h.reloads,0);
 });

@@ -38,6 +38,7 @@ import type { LifetimeControls } from './views/lifetime-controls.ts';
 import type { ReturnsPanel } from './views/returns-panel.ts';
 type AppJournal=Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'> & Partial<Pick<ReturnType<typeof createJournal>,'discardForSpace'>> & {leave(ids?:readonly string[]):unknown;wake():unknown};
 interface AppOptions {
+  connection?: ConnectionSource;
   journal?:AppJournal;
   storagePressure?:StoragePressure;
   navigation?: Navigation;
@@ -58,6 +59,7 @@ import { createChartActions } from './state/chart-actions.ts';
 import { UI_MESSAGES, failureMessage } from './ui/messages.ts';
 import { createBirthClient } from './data/birth-client.ts';
 import { getConnectionMode, subscribeConnection } from './data/http-transport.ts';
+import type { ConnectionSource } from './data/http-transport.ts';
 import { actionAvailability } from './ui/action-state.ts';
 import { attachKnowledgeEntry } from './views/knowledge-entry.ts';
 import { attachActivationPopover } from './views/activation-popover.ts';
@@ -97,7 +99,9 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+export function startApp({ connection, journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+  const connectionMode = connection ? () => connection.current : getConnectionMode;
+  const observeConnection = connection ? (listener: Parameters<ConnectionSource['subscribe']>[0]) => connection.subscribe(listener) : subscribeConnection;
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   let application: Application | null = null;
   let releaseCheck:ReleaseCheckPort|null=null,publicCheckKey='',publicCheckInstance='';
@@ -180,7 +184,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     getLifetime: () => lifetime, getReturns: () => returns,
     filterTransit: transitPlanets.filter, resetTransitFilter: transitPlanets.reset,
     onSelect: () => exploration?.selected(), onChange: updatePage });
-  exploration = createChartExploration({ session, getTransit: () => transit, getNatalDay: () => natalDay!,
+  exploration = createChartExploration({ connection: connectionMode, session, getTransit: () => transit, getNatalDay: () => natalDay!,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
     onTimelineReady: () => { updateTimelineTools(); refreshStudioLayout(); },
     onModeChange: updateTimelineTools, onChange: () => { syncLifetimeTransit(); viewSession?.schedule(); } });
@@ -319,14 +323,14 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   let backgroundChannel:BroadcastChannel|null=null;
   try{backgroundChannel=new window.BroadcastChannel('forma-background-checks');}catch{/* Automatic work pauses without shared coordination. */}
   const backgroundCoordinator=createBackgroundCoordinator({owner:crypto.randomUUID(),store:libraryStorage.background,channel:backgroundChannel,
-    lifecycle:createPageLifecycle({events:window,visibility:document,online:()=>getConnectionMode()==='online',subscribeConnection})});
+    lifecycle:createPageLifecycle({events:window,visibility:document,online:()=>connectionMode()==='online',subscribeConnection: observeConnection})});
   storagePressure?.setSources({
     diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('unavailable'),
     natalDays: (keep, exclude, guard) => calculationClients?.evictForSpace?.('natal', keep, exclude, guard) ?? Promise.resolve('unavailable'),
     returnCharts: (keep, exclude, guard) => calculationClients?.evictForSpace?.('return-charts', keep, exclude, guard) ?? Promise.resolve('unavailable'),
   });
   const accountLibrary = createAccountLibrary({client: chartClient, storage: libraryStorage,
-    online: () => getConnectionMode() !== 'offline',
+    online: () => connectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   let formIntent: ChartWriteIntent | null = null, privateLibraryShown = false, librarySelection = 0;
@@ -335,7 +339,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     prepareWrite: () => viewSession!.checkpoint('write'),
     onPending: () => {viewSession?.flush();}});
   function saveShownChart():Promise<void> {
-    if(getConnectionMode()==='offline'){toast(UI_MESSAGES.offline);return Promise.resolve();}
+    if(connectionMode()==='offline'){toast(UI_MESSAGES.offline);return Promise.resolve();}
     const source=session.record;
     if(!source || accountLibrary.get(source.id))return Promise.resolve();
     return application!.requestSave(source);
@@ -348,7 +352,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       ? new URL(appRoutePath({kind: 'chart', id: source.id}), location.href).href : null);
     const button=$<HTMLButtonElement>('saveShownChart'),wrap=$('saveShownChartWrap');
     $('saveShownChartGroup').hidden=!visible;
-    const availability=actionAvailability({connection:getConnectionMode(),requiresConnection:true,
+    const availability=actionAvailability({connection:connectionMode(),requiresConnection:true,
       available:visible,pending:Boolean(application?.write.busy && !application.write.waitingForLogin)});
     button.disabled=availability.disabled;button.setAttribute('aria-busy',String(availability.busy));
     const unavailable=Boolean(availability.reason);
@@ -371,7 +375,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const actionError = (code: string, message: string) => Object.assign(new Error(message), {code});
   const canAccessCharts = () => !accountLibrary.accountId || Boolean(account.getSession());
   const canEditCharts = () => canAccessCharts()
-    && !actionAvailability({ connection: getConnectionMode(), requiresConnection: true }).disabled;
+    && !actionAvailability({ connection: connectionMode(), requiresConnection: true }).disabled;
   function projectAccountLibrary() {
     if (!privateLibraryShown && !accountLibrary.accountId) return;
     privateLibraryShown = true;
@@ -475,7 +479,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       && account.getSession()?.sessionId === access.sessionId;
     if (!active()) return {kind:'inactive'};
     // A lost response permits only a GET of the receipt, never another delete.
-    if (result.kind === 'unknown' && getConnectionMode() === 'online') {
+    if (result.kind === 'unknown' && connectionMode() === 'online') {
       try {result = await chartActions.recover(result.intent, signal);}
       catch (error) {return active() ? {kind:'unknown',error} : {kind:'inactive'};}
       if (!active()) return {kind:'inactive'};
@@ -556,7 +560,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
 
   chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:removeAccountChart}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
-    removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode, subscribeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
+    removeChart: id => {if(store.clearTemporary(id)){temporaryChartSave=null;viewSession?.flush();}}, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, onSelect: (id, options) => {void openLibraryChart(id, options);}, onUpdate: updatePage, canEdit: canAccessCharts,
     onEdit: id => {void openLibraryChart(id, undefined, true);}, onNew: () => birthForm.open(),
     beforeOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
@@ -573,7 +577,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     isCheckingSubmission: () => Boolean(formIntent),
     submitChart: (input, signal) => input.previous && input.previous.id === store.temporaryChart?.id
       ? null : account.getSession() || accountLibrary.accountId ? submitAccountChart(input, signal) : null,
-    ...birthClient, getConnectionMode, subscribeConnection, session, toast,
+    ...birthClient, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, toast,
     onSave: (id, { metadataOnly = false } = {}) => {
       if (id !== session.selectedId) selectChart(id, {replace: navigation?.snapshot.route?.kind === 'temporary-chart'});
       else if (metadataOnly) session.refreshRecord();
@@ -586,6 +590,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   });
   const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory,library:libraryStorage });
   natalDay = attachNatalDayExplorer({
+    connection: connectionMode,
     dayClient: natalDayClient,
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
     status: $('natalDayStatus'), retryButton: $('natalDayRetry'), hourMarks: $('natalDayHourMarks'),
@@ -596,6 +601,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     onTargetsChange: () => lifetimeControls?.refreshTargets(),
     onSelect: event => { viewSession?.interrupt(); return returns!.selectEvent(event.id); } });
   returns = createReturnsController({
+    connection: connectionMode,
     observe: action => journal?.begin(action),
     getOwner(chart) {
       const access = account.getSession(), record = (chart.id ? accountLibrary.get(chart.id) : null);
@@ -879,7 +885,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if(libraryInitialized && startupRestored() && access)tasks.push({
       target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
       async run(authority){const result=await accountLibrary.load(authority);return {outcome:{kind:result.status==='complete'||result.status==='unchanged'?'success':'cancelled'}};},
-      initial:!document.hidden && getConnectionMode()==='online'?async signal=>{await accountLibrary.load(undefined,signal);}:undefined,
+      initial:!document.hidden && connectionMode()==='online'?async signal=>{await accountLibrary.load(undefined,signal);}:undefined,
     });
     const source=store.publicChart?.id===session.selectedId && !accountLibrary.has(session.selectedId)?store.publicChart:null;
     const key=source?`${source.id}/${access?.sessionId??'guest'}`:'';
@@ -945,7 +951,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     },
   },publicRefresh:{
     source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
-    available:()=>store.publicChart?.id===session.selectedId && !application?.write.source && startupRestored() && getConnectionMode()==='online'
+    available:()=>store.publicChart?.id===session.selectedId && !application?.write.source && startupRestored() && connectionMode()==='online'
       && !accountLibrary.get(store.publicChart!.id),
     accept(previous,next){
       store.acceptPublic(next);
@@ -964,7 +970,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       updatePage();viewSession?.flush();
     },
   }, write:{
-    actions:chartActions,online:()=>getConnectionMode()!=='offline',getSession:account.getSession,
+    actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,
     async ready(){await libraryReady;if(account.getSession())await application!.requestSession(account.getSession());},
     source:()=>session.record,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
     binding:()=>temporaryChartSave,bind:value=>{temporaryChartSave=value;},
@@ -1017,7 +1023,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
               ? store.publicChart : null;
             let chart,checkedAt:number|undefined;
             try {
-              if(getConnectionMode()==='offline' && cached)chart=cached;
+              if(connectionMode()==='offline' && cached)chart=cached;
               else {checkedAt=Date.now();chart=await chartClient.public(route.id,signal);}
             }
             catch(error) {
@@ -1065,16 +1071,16 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       syncTransitCacheWindow(transit?.state.timeline, true);
     }
   });
-  let previousConnection = getConnectionMode();
-  subscribeConnection(() => {
-    const connection = getConnectionMode(), returned = previousConnection !== 'online' && connection === 'online';
+  let previousConnection = connectionMode();
+  observeConnection(() => {
+    const connection = connectionMode(), returned = previousConnection !== 'online' && connection === 'online';
     previousConnection = connection;updateChartSaveControl();
     void natalDay?.refreshAvailability();
     void returns?.refreshAvailability();
     lifetime?.refreshAvailability(); updateTimelineTools();
     if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();}
     if (!libraryInitialized) return;
-    if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
+    if (connectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
     application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
   });
   const restoration = application.whenRestored();
@@ -1126,13 +1132,13 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     const chart = currentChart();
     const viewState = { ...state, visible: view.returnsVisible,
       birthSelected: !exploration!.live && chart.primary === session.baseChart && !chart.secondary, live: exploration!.live,
-      nowAvailable: getConnectionMode() !== 'offline' || transit?.state.referenceIndex != null };
+      nowAvailable: connectionMode() !== 'offline' || transit?.state.referenceIndex != null };
     chartSummary!.setReturnsVisible(view.returnsVisible);
     if (returnsView) returnsView!.update(viewState);
     else if (view.returnsVisible) void loadReturnsView();
     const lifetimeToggle = $('lifetimeToggle');
     lifetimeToggle.hidden = !view.lifetimeAvailable;
-    (lifetimeToggle as HTMLButtonElement).disabled = !view.toggleEnabled && (getConnectionMode() === 'offline'
+    (lifetimeToggle as HTMLButtonElement).disabled = !view.toggleEnabled && (connectionMode() === 'offline'
       && !lifetimeState?.metadata && (session.selectedId !== 'current-transit' || !transit?.state.current));
     lifetimeToggle.title = view.toggleLabel;
     lifetimeToggle.setAttribute('aria-label', view.toggleLabel);
@@ -1169,6 +1175,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         const getPersonalRecord = () => returns!.available ? returns!.natal : null;
         let controls: LifetimeControls | undefined;
         const controller = createLifetimeExplorer({
+          connection: connectionMode,
           visible:()=>!document.hidden,
           observe: action => journal?.begin(action),
           dayClient, natalDayClient, planetFilter: transitPlanets,

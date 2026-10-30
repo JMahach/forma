@@ -331,12 +331,11 @@ test('cancellation before sending or during body read prevents publishing and ne
   assert.equal(f.calls.length, 1);
 });
 
-test('default client obeys the common connection gate before sending a command', async t => {
-  const {configureTransportSimulation} = await import('../src/data/http-transport.ts');
+test('client obeys its injected connection gate before sending a command', async t => {
+  const {createHttpTransport} = await import('../src/data/http-transport.ts');
   const f = await fixture(t);
-  t.after(() => configureTransportSimulation(null));
-  configureTransportSimulation({current: 'offline', subscribe: () => () => {}}, f.send);
-  const client = createChartClient({getSession: f.getSession});
+  const send=createHttpTransport({connection:{current: 'offline', subscribe: () => () => {}}, fetch:f.send});
+  const client = createChartClient({getSession: f.getSession,fetch:send});
   await assert.rejects(client.create({...f.intent(), name: 'A', note: '', birth: {source: 'transit', utc}}), {code: 'offline'});
   assert.equal(f.calls.length, 0);
 });

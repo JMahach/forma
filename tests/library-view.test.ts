@@ -72,9 +72,8 @@ test('library presentation preserves repeated existing IDs without deduplicating
 
 test('edit availability is identical in menu and card-catalog rows while ready cards stay openable', async t => {
  const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
- const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
  const {renderChartLibraryRow}=await import('../src/views/library.ts');
- const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ const connection=createStandConnection();
  for(const mode of ['offline','server','online'] as const){
   connection.set(mode);
   for(const preview of [false,true]){
@@ -89,13 +88,12 @@ test('edit availability is identical in menu and card-catalog rows while ready c
 test('live connection changes update New and every Edit without resetting the list or bypassing guards', async t=>{
  const {attachChartLibrary}=await import('../src/views/library.ts');
  const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
- const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
- const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
+ const connection=createStandConnection();
  const nodes=new Map(), handlers=new Map();let newCalls=0,editCalls=0;
  function node(id){if(!nodes.has(id))nodes.set(id,{id,disabled:false,dataset:{},classList:{toggle(){}},setAttribute(){},contains(){return false;},focus(){},addEventListener(type,fn){handlers.set(id+':'+type,fn);}});return nodes.get(id);}
  const edits=[node('menuEdit'),node('catalogEdit')];for(const edit of edits){edit.dataset={chartAction:'edit',actionChartId:'0'};edit.closest=selector=>selector==='[data-chart-action]'?edit:{open:true};}
  const document={getElementById:node,querySelectorAll:selector=>selector==='[data-chart-action="edit"]'?edits:[],querySelector:()=>null,addEventListener(type,fn){handlers.set('document:'+type,fn);}};
- attachChartLibrary({getConnectionMode, subscribeConnection, document,getCharts: () => charts(1), removeChart() {},session:{selectedId:'0'},view:{update(){},show(){},hide(){}},onNew(){newCalls++;},onEdit(){editCalls++;},onSelect(){}});
+ attachChartLibrary({getConnectionMode:()=>connection.current, subscribeConnection:fn=>connection.subscribe(fn), document,getCharts: () => charts(1), removeChart() {},session:{selectedId:'0'},view:{update(){},show(){},hide(){}},onNew(){newCalls++;},onEdit(){editCalls++;},onSelect(){}});
  connection.set('offline');assert.equal(node('newChartButton').disabled,true);assert.ok(edits.every(x=>x.disabled));
  handlers.get('newChartButton:click')();handlers.get('document:click')({target:edits[0]});assert.equal(newCalls,0);assert.equal(editCalls,0);
  connection.set('server');assert.equal(node('newChartButton').disabled,false);assert.ok(edits.every(x=>!x.disabled));

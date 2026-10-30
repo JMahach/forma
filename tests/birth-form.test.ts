@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {BirthSubmission} from '../src/views/birth-form.ts';
 import { attachBirthForm } from '../src/views/birth-form.ts';
-import { getConnectionMode, subscribeConnection } from '../src/data/http-transport.ts';
+import { getConnectionMode, subscribeConnection, type ConnectionSource } from '../src/data/http-transport.ts';
 import { createBirthClient } from '../src/data/birth-client.ts';
 import { RANDOM_CHART_NAMES } from '../src/views/random-chart.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
@@ -166,11 +166,10 @@ test('a mismatched server UTC is never saved and a late random calculation canno
 
 test('random generation cancels offline without saving a late result and permits a server retry', async t => {
   const {createStandConnection} = await import('./helpers/preview/stand-connection.ts');
-  const {configureTransportSimulation} = await import('../src/data/http-transport.ts');
   const connection = createStandConnection();
-  configureTransportSimulation(connection); t.after(() => configureTransportSimulation(null));
+
   connection.set('offline');
-  const h = formHarness(t);
+  const h = formHarness(t,{connection});
   await h.element('randomChartButton').emit('click');
   assert.equal(h.requests.length, 0);
   assert.equal(h.element('randomChartButton').disabled, true);
@@ -197,7 +196,7 @@ function projectedStore(charts: readonly TestRecord[]) {
   return chartStore;
 }
 
-function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, reuseTimers=false }: { charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; reuseTimers?:boolean } = {}) {
+function formHarness(t: test.TestContext, { connection, charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, reuseTimers=false }: { connection?: ConnectionSource; charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; reuseTimers?:boolean } = {}) {
   if(!reuseTimers)t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map<string, FormNode>(), requests: RequestRecord[] = [];
   const documentHandlers=new Map<string,(()=>void)[]>();
@@ -273,7 +272,7 @@ function formHarness(t: test.TestContext, { charts = [], selectedId = charts[0]?
       else replaceRecords(next);
       return persist;
     }),
-    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode, subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
+    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode: connection ? () => connection.current : getConnectionMode, subscribeConnection: connection ? fn => connection.subscribe(fn) : subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
     onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])) as unknown as FormData,
     ...createBirthClient(function requestJSON<T = unknown>(url: string, options: RequestInit = {}) {
@@ -680,18 +679,16 @@ test('city transport failure uses the agreed copy and clears on the next query',
 
 test('offline blocks new requests and preserves an open draft until explicit retry', async t => {
  const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
- const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
- const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
- const h=formHarness(t);h.form.open();h.element('chartName').value='Анна';
+ const connection=createStandConnection();
+ const h=formHarness(t,{connection});h.form.open();h.element('chartName').value='Анна';
  connection.set('offline');assert.equal(h.element('chartName').disabled,true);assert.equal(h.element('saveChartButton').disabled,true);
  await h.submit();assert.equal(h.requests.length,0);assert.equal(h.element('chartName').value,'Анна');
  connection.set('online');assert.equal(h.element('chartName').disabled,false);assert.equal(h.requests.length,0);assert.equal(h.element('chartName').value,'Анна');
 });
 test('offline while city search waits invalidates late options; server mode explains its failure', async t => {
  const {createStandConnection}=await import('./helpers/preview/stand-connection.ts');
- const {configureTransportSimulation}=await import('../src/data/http-transport.ts');
- const connection=createStandConnection();configureTransportSimulation(connection);t.after(()=>configureTransportSimulation(null));
- const h=formHarness(t);h.form.open();const pending=await h.search('Москва');connection.set('offline');
+ const connection=createStandConnection();
+ const h=formHarness(t,{connection});h.form.open();const pending=await h.search('Москва');connection.set('offline');
  pending!.resolve({cities:[city(1,'Москва')]});await settle();assert.equal(h.element('cityResults').hidden,true);
  connection.set('server');const retry=await h.search('Москва');retry!.reject({code:'server_unavailable'});await settle();
  assert.equal(h.element('cityStatus').textContent,'Нет соединения. Не можем найти город');

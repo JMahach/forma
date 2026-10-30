@@ -8,6 +8,7 @@ import type { LifetimeExplorer, LifetimeState, LifetimeTarget, MomentState } fro
 import type { ReturnsController } from './returns.ts';
 export type ChartExploration = ReturnType<typeof createChartExploration>;
 interface ExplorationOptions {
+  connection?: () => ConnectionMode;
   session: ChartSession;
   getTransit: () => LiveTransit | null;
   getNatalDay: () => NatalDayExplorer;
@@ -20,12 +21,12 @@ interface ExplorationOptions {
 }
 
 import { personalTimelineTarget } from '../domain/cycles.ts';
-import { getConnectionMode } from '../data/http-transport.ts';
+import { getConnectionMode, type ConnectionMode } from '../data/http-transport.ts';
 
 // One owner for chart navigation and moment commands. Tools retain their
 // ranges, jobs and local cancellation; the session accepts their visible result.
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
-  loadLifetime, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
+  loadLifetime, connection = getConnectionMode, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
   let timelineOpening: { target: LifetimeTarget } | null = null, restoreBirthBoundary: Partial<SavedLifetimeView> | false = false, returnsPreferred = false;
   const personal = () => Boolean(getReturns()?.available);
   const returnsEnabled = () => personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened);
@@ -113,7 +114,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     // during that load cannot reopen the list when it eventually completes.
     const opening = returns!.open();
     // Ready return dates/charts do not depend on downloading lifetime metadata.
-    if (getConnectionMode() === 'offline' && !getLifetime()?.state.metadata) return opening;
+    if (connection() === 'offline' && !getLifetime()?.state.metadata) return opening;
     if (!returnsEnabled()) {
       session.showOriginal();
       await openTimeline();

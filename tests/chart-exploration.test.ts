@@ -377,20 +377,17 @@ test('entering returns from a birthday-minute preview restores the natal chart b
 });
 
 test('cold offline ready returns open and select without lifetime metadata', async t => {
-  const { configureTransportSimulation } = await import('../src/data/http-transport.ts');
   const { studioPresentation } = await import('../src/ui/studio-presentation.ts');
-  configureTransportSimulation({current:'offline',subscribe(){return()=>{};}});
-  t.after(()=>configureTransportSimulation(null));
   const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   let exploration: ChartExploration, metadataLoads = 0;
-  const returns = createReturnsController({client:{
+  const returns = createReturnsController({connection:()=> 'offline',client:{
     readEvents: async input => ({events:input.body === event.body ? [event] : [],range:{fromAge:input.fromAge!,toAge:input.toAge!}}),
     readChart: async input => ({chart:{...natal,utc:input.eventUtc!} as CycleChartResult['chart'],event}),
     events: async () => {throw Error('must not calculate dates');},chart:async()=>{throw Error('must not calculate chart');},
   },onRequest:()=>exploration.requestReturn(),onRender:(chart,selected)=>exploration.publishReturn(chart,selected)});
   const natalDay = createNatalDayExplorer({dayClient:{getDay:async()=>natalDayFixture()}});
   const session = createChartSession({store:{get:id=>id===natal.id?natal:null,has:id=>id===natal.id},getReturns:()=>returns,getNatalDay:()=>natalDay});
-  exploration=createChartExploration({session,getTransit:()=>null,getLifetime:()=>null,getNatalDay:()=>natalDay,getReturns:()=>returns,
+  exploration=createChartExploration({connection:()=> 'offline',session,getTransit:()=>null,getLifetime:()=>null,getNatalDay:()=>natalDay,getReturns:()=>returns,
     loadLifetime:async()=>{metadataLoads++;throw Error('metadata unavailable');}});
   session.select(natal.id); await returns.refreshAvailability();
   await exploration.openReturnsList();
