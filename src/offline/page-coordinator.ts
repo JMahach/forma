@@ -18,7 +18,7 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
  let reloadRelease:(()=>void)|null=null,reloadTimer:ReturnType<typeof setTimeout>|null=null;
  function releaseReload(){if(reloadTimer!==null)clearTimeout(reloadTimer);reloadTimer=null;reloadRelease?.();reloadRelease=null;}
  function navigationHidden(){releasePreparation();releaseReload();}
- function navigationShown(){releaseReload();reloading=false;void refresh();}
+ function navigationShown(){releaseReload();reloading=false;void check();}
  const pending=new Set<()=>void>(),observedWorkers=new Set<ServiceWorker>(),askingWorkers=new Map<ServiceWorker,number>();
  function releasePreparation(){if(!prepared)return;const old=prepared;prepared=null;clearTimeout(old.timer);old.release();observeWorkers();}
  function known(worker:ServiceWorker|null){return !!worker&&[registration.waiting,registration.active,serviceWorker.controller].includes(worker);}
@@ -118,12 +118,10 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
   if(disposed)return Promise.resolve();
   wake();
   // Checking a known worker does not discover a release on the server.
-  // Refresh only on startup/resume/connectivity, never on every button press.
-  if(!refreshing)refreshing=Promise.resolve().then(async()=>{await registration.update();}).catch(()=>{}).finally(()=>{refreshing=null;if(!disposed)wake();});
+  // The application background child is the only caller that discovers releases.
+  if(!refreshing)refreshing=Promise.resolve().then(async()=>{await registration.update();}).finally(()=>{refreshing=null;if(!disposed)wake();});
   return refreshing;
  }
- const online=()=>{void refresh();};
- const visible=()=>{if(!visibility.hidden)void refresh();};
  // The state owner wakes a refused transition after an operation/restore or
  // durable input save. Preparing that very snapshot must not trigger a loop.
  const stopOwner=owner.subscribe?.(()=>{if(deferred&&!prepared&&!reloading&&!disposed)wake();});
@@ -141,14 +139,13 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
  serviceWorker.addEventListener('message',onMessage);
  serviceWorker.addEventListener('controllerchange',wake);
  registration.addEventListener('updatefound',observeWorkers);observeWorkers();
- visibility.addEventListener('visibilitychange',visible);
- events.addEventListener('pageshow',navigationShown);events.addEventListener('pagehide',navigationHidden);events.addEventListener('online',online);
+ events.addEventListener('pageshow',navigationShown);events.addEventListener('pagehide',navigationHidden);
  return {check,refresh,dispose(){
   disposed=true;stopOwner?.();releasePreparation();releaseReload();for(const cancel of pending)cancel();
   serviceWorker.removeEventListener('message',onMessage);serviceWorker.removeEventListener('controllerchange',wake);
   registration.removeEventListener('updatefound',observeWorkers);
   for(const worker of observedWorkers)worker.removeEventListener('statechange',wake);observedWorkers.clear();
-  visibility.removeEventListener('visibilitychange',visible);events.removeEventListener('pageshow',navigationShown);events.removeEventListener('pagehide',navigationHidden);events.removeEventListener('online',online);
+  events.removeEventListener('pageshow',navigationShown);events.removeEventListener('pagehide',navigationHidden);
  }};
 }
 

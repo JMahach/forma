@@ -97,7 +97,8 @@ test('cancelled navigation releases the input fence and permits another explicit
 test('waking a tab checks the server for a new worker, rather than only asking the cached one',async t=>{
  const f=fixture();t.after(()=>f.page.dispose());let updates=0;
  Object.assign(f.registration,{async update(){updates++;f.registration.waiting=f.worker(next);}});
- f.visibility.dispatchEvent(new Event('visibilitychange'));await settle();
+ f.visibility.dispatchEvent(new Event('visibilitychange'));await settle();assert.equal(updates,0);
+ await f.page.refresh();await settle();
  assert.equal(updates,1);assert.ok(f.calls.some(c=>c.action==='activate-approved-version'&&c.worker===next));
 });
 

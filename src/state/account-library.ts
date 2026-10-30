@@ -12,7 +12,7 @@ interface Options {
   client: Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'>; storage: AccountLibraryStore;
   online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: (notice:LibraryNotice) => void;
 }
-interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal;authority?:CheckAuthority}
+interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal;authority?:CheckAuthority;foregroundSignal?:AbortSignal}
 interface CatalogLoading {run:CatalogRun;promise:Promise<LibraryRefreshResult>}
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
@@ -258,14 +258,15 @@ class AccountLibraryOwner {
  private catalogRunCurrent(run:CatalogRun,marker:string) {
   this.check(run.seen);return run.content===this.contentGeneration && !this.older(marker);
  }
- private async checkCatalogRun(run:CatalogRun) {
+ private checkCatalogRunLocal(run:CatalogRun) {
   this.check(run.seen);run.signal.throwIfAborted();
-  if(run.authority){
-   if(run.authority.permit.sessionId!==run.access.sessionId)throw new DOMException('Background check cancelled','AbortError');
-   const current=await run.authority.current();
-   this.check(run.seen);run.signal.throwIfAborted();
-   if(!current)throw new DOMException('Background check cancelled','AbortError');
-  }
+  if(run.authority && run.authority.permit.sessionId!==run.access.sessionId)throw new DOMException('Background check cancelled','AbortError');
+ }
+ private async checkCatalogRun(run:CatalogRun) {
+  this.checkCatalogRunLocal(run);
+  if(!run.authority)return;
+  const current=await run.authority.current();this.checkCatalogRunLocal(run);
+  if(!current)throw new DOMException('Background check cancelled','AbortError');
  }
  private async saveCatalog(base:LibraryCatalogBase|null,read:Exclude<LibraryCatalogRead,{status:'unstable'}>,run:CatalogRun):Promise<LibraryRefreshResult> {
   const authority=run.authority && {...run.authority,signal:run.signal};
@@ -287,12 +288,12 @@ class AccountLibraryOwner {
   return {status:read.status,durable};
  }
  private async refreshCatalog(run:CatalogRun):Promise<LibraryRefreshResult> {
-  await this.checkCatalogRun(run);
-  const base=await this.options.storage.readCatalog();await this.checkCatalogRun(run);
+  this.checkCatalogRunLocal(run);
+  const base=await this.options.storage.readCatalog();this.checkCatalogRunLocal(run);
   if(base && base.lease.accountId!==run.access.accountId){await this.refreshLocal();throw failed('account_changed');}
   const client={catalog:(...args:Parameters<ChartClient['catalog']>)=>this.readCatalogStep(run,()=>this.options.client.catalog(...args)),
    confirmCatalog:(...args:Parameters<ChartClient['confirmCatalog']>)=>this.readCatalogStep(run,()=>this.options.client.confirmCatalog(...args))};
-  const read=await readCompleteLibraryCatalog(client,run.access.accountId,base?.catalog??null,run.signal);await this.checkCatalogRun(run);
+  const read=await readCompleteLibraryCatalog(client,run.access.accountId,base?.catalog??null,run.signal);this.checkCatalogRunLocal(run);
   if(read.status==='unstable')return read;
   if(!this.catalogRunCurrent(run,read.catalog.marker))return {status:'superseded'};
   return this.saveCatalog(base,read,run);
@@ -302,18 +303,20 @@ class AccountLibraryOwner {
  }
  private canJoinCatalog(run:CatalogRun,loading:CatalogRun) {
   if(loading.signal.aborted)return false;
+  if(run.foregroundSignal!==loading.foregroundSignal)return false;
   if(!run.authority || !loading.authority)return run.authority===loading.authority;
   const a=run.authority.permit,b=loading.authority.permit;
   return run.authority.signal===loading.authority.signal && (['key','token','owner','sessionId'] as const).every(key=>a[key]===b[key]);
  }
- private createCatalogRun(authority?:CheckAuthority):CatalogRun {
-  const signal=authority?AbortSignal.any([this.controller.signal,authority.signal]):this.controller.signal;
+ private createCatalogRun(authority?:CheckAuthority,foregroundSignal?:AbortSignal):CatalogRun {
+  let signal=authority?AbortSignal.any([this.controller.signal,authority.signal]):this.controller.signal;
+  if(foregroundSignal)signal=AbortSignal.any([signal,foregroundSignal]);
   return {seen:this.generation,content:this.contentGeneration,access:{...this.current!},signal,
-   authority:authority && {...authority,permit:{...authority.permit}}};
+   foregroundSignal,authority:authority && {...authority,permit:{...authority.permit}}};
  }
- async load(authority?:CheckAuthority):Promise<LibraryRefreshResult> {
+ async load(authority?:CheckAuthority,foregroundSignal?:AbortSignal):Promise<LibraryRefreshResult> {
   if(!this.current || !this.options.online() || this.closed)return {status:'inactive'};
-  const run=this.createCatalogRun(authority);
+  const run=this.createCatalogRun(authority,foregroundSignal);
   const shared=this.loading;
   if(shared && this.canJoinCatalog(run,shared.run)){await this.checkCatalogRun(run);return shared.promise;}
   const loading={run,promise:this.refreshCatalog(run)};this.loading=loading;

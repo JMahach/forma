@@ -4,6 +4,8 @@ import { prepareUpdate } from './update.ts';
 import { startupView } from './startup.ts';
 import { writeContinuationView } from './write-continuation.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
+import type {CheckAuthority} from '../domain/background-check.ts';
+import type {CheckResult} from './background-work.ts';
 import type { ApplicationEvent, ApplicationPorts, ApplicationView, NavigationSnapshot, AccountAccess } from './ports.ts';
 
 
@@ -79,8 +81,8 @@ function connectInputs(actor:ApplicationActor,ports:ApplicationPorts) {
 }
 
 function stopRuntime(actor:ApplicationActor) {
-  const {startup,write}=actor.getSnapshot().children;
-  startup?.send({type:'Stop'});write?.send({type:'Stop'});actor.send({type:'Stop'});
+  const {startup,write,publicRefresh}=actor.getSnapshot().children;
+  startup?.send({type:'Stop'});write?.send({type:'Stop'});publicRefresh?.send({type:'CancelPublicRefresh'});actor.send({type:'Stop'});
 }
 
 function applicationRestored(actor:ApplicationActor,ports:ApplicationPorts) {
@@ -114,6 +116,10 @@ export function createApplication(ports: ApplicationPorts) {
       subscriptions.push(...connectViews(actor,ports),...connectInputs(actor,ports));
     },
     send(event: ApplicationEvent) { actor.send(event); },
+    refreshPublic(authority:CheckAuthority):Promise<CheckResult> {
+      if(!ports.publicRefresh || readView().lifecycle!=='running')return Promise.resolve({outcome:{kind:'cancelled'}});
+      return new Promise(resolve=>actor.send({type:'RefreshPublicSource',authority,completed:resolve}));
+    },
     subscribe(listener:(view:ApplicationView)=>void) {return subscribeView(actor,listener);},
     async whenRestored() {
       const startup=actor.getSnapshot().children.startup;

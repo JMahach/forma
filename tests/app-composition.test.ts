@@ -17,6 +17,9 @@ import { chartId } from './helpers/account-chart.ts';
 import { createLocalDayTimeline } from '../src/domain/day-timeline.ts';
 import { createNavigation } from '../src/platform/browser/navigation.ts';
 import { createApplication } from '../src/application/application.ts';
+import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
+import {createPageLifecycle} from '../src/platform/browser/lifecycle.ts';
+import type {BackgroundControl,BackgroundStore} from '../src/domain/background-check.ts';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import {createCalculationCache} from '../src/data/calculation-cache.ts';
 import { createChartClient } from '../src/data/chart-client.ts';
@@ -60,6 +63,7 @@ interface BrowserDocument {
   createElement(tag: string): BrowserElement; getElementById(id: string): BrowserElement | null;
   querySelector(selector: string): BrowserElement | null; querySelectorAll(): BrowserElement[];
   addEventListener(type: string, handler: BrowserListener): void;
+  removeEventListener(type:string,handler:BrowserListener):void;
   dispatch(type: string, event: Record<string, unknown>): unknown;
 }
 import type { SavedChart } from '../shared/chart-types.ts';
@@ -117,6 +121,8 @@ type AppPorts = Pick<typeof import('../src/domain/chart-presentation.ts'), 'char
   & Pick<typeof import('../src/state/chart-highlight.ts'), 'chartHighlight'>
   & Pick<typeof import('../src/views/camera-controls.ts'), 'attachCameraControls' | 'createCameraChangeHandler'>
   & Pick<typeof import('../src/application/application.ts'), 'createApplication'>
+  & Pick<typeof import('../src/platform/browser/background-coordinator.ts'), 'createBackgroundCoordinator'>
+  & Pick<typeof import('../src/platform/browser/lifecycle.ts'), 'createPageLifecycle'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
   & Pick<typeof import('../src/state/view-session.ts'), 'createViewSession' | 'viewForRoute'>
@@ -185,12 +191,13 @@ const imports = [...source.matchAll(/^import \{ (.*?) \} from .*;$/gm)].flatMap(
 const body = source.replace(/^import .*;\n/gm, '').replace('export function startApp', 'function startApp');
 const noop = () => {};
 function browser() {
-  const elements = new Map<string, BrowserElement>(), listeners = new Map<string, BrowserListener>(); let created = 0;
+  const elements = new Map<string, BrowserElement>(), listeners = new Map<string, Set<BrowserListener>>(); let created = 0;
   const document: BrowserDocument = { body: { dataset: {} }, activeElement: null,
     createElement: tag => element(`${tag}-${++created}`),
     getElementById: (id: string) => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: (selector: string) => selector === '.app-shell' ? element('shell') : null, querySelectorAll: () => [],
-    addEventListener(type, handler) { listeners.set(type, handler); },
-    dispatch(type, event) { return listeners.get(type)?.(event); } };
+    addEventListener(type, handler) { if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type)!.add(handler); },
+    removeEventListener(type,handler){listeners.get(type)?.delete(handler);},
+    dispatch(type, event) { for(const handler of listeners.get(type)??[])handler(event); } };
   function element(id: string): BrowserElement {
     if (!elements.has(id)) {
       const classes = new Set<string>(), attributes = new Map<string, string>(), handlers = new Map<string, { handler: BrowserListener; capture: boolean }[]>(), children: BrowserElement[] = [];
@@ -237,6 +244,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
 }
 function harness({copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
+  let backgroundTimeOffset=0;
   let hovered = false, notifyHover: () => void = noop;
   const inputRestores: string[] = [];
   const notices:string[]=[];
@@ -295,7 +303,16 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
   const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
-    createApplication,createViewCheckpoint,chartPresentation,
+    createApplication,createViewCheckpoint,chartPresentation,createPageLifecycle,
+    createBackgroundCoordinator:options=>{
+      let control:BackgroundControl={leader:null,checks:{}};
+      const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
+        const next=structuredClone(control),result=change(next);control=next;return result;
+      }};
+      return createBackgroundCoordinator({...options,store:libraryStorage?.background??coordination,clock:{now:()=>Date.now()+backgroundTimeOffset,after(ms,callback){
+      if(ms===25){let cancelled=false;queueMicrotask(()=>{if(!cancelled)callback();});return()=>{cancelled=true;};}
+      const timer=setTimeout(callback,ms);timer.unref();return()=>clearTimeout(timer);
+    }}});},
     appRoutePath, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
@@ -383,11 +400,11 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
       .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')
       .replace("import('./views/returns-panel.ts')", 'loadReturnsViewModule()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name as keyof AppPorts]), document, class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} }, { search, href: 'https://forma.example.test/chart?obsolete=1#old' },
-    { location: { reload() { reloads++; } }, BroadcastChannel: class {
+    Object.assign(new EventTarget(),{ location: { reload() { reloads++; } }, BroadcastChannel: class extends EventTarget {
       onmessage: ((event: {data: unknown}) => void | Promise<void>) | null = null;
-      constructor(name: string) {assert.equal(name, 'forma-library'); libraryChannel = this;}
+      constructor(name: string) {super();if(name==='forma-library')libraryChannel = this;else assert.equal(name,'forma-background-checks');}
       postMessage() {} close() {}
-    } }, () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
+    } }), () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
       stateLoads++;
       return { createLifetimeExplorer(options: NonNullable<Parameters<typeof createLifetimeExplorer>[0]>) {
         lifetimeStateOptions = options;
@@ -417,6 +434,7 @@ function harness({copyText, transitStart = async () => true, actualStore, accoun
     resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTransitWindow,...personalCleanup} : undefined;
   const application=startApp({ journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
   return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
+    advanceBackground(ms:number){backgroundTimeOffset+=ms;},
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
     offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
     userInput(type='pointerdown'){document.dispatch(type,{target:element('openAccount')});}, get loading(){return loadingState;}, retryLoading(){loadingOptions.onRetry();},
@@ -1470,15 +1488,14 @@ test('a confirmed library update from another tab refreshes the current chart me
   await local.put(lease.lease, [record]);
   const client = {
     async own() {return {chart:record,catalogMarker:'1'};},
-    async catalog(input){return catalogPage([],input.expectedAccountId);},
+    async catalog(input){return catalogPage([record],input.expectedAccountId);},
   } satisfies Partial<ChartClient>;
   const h = harness({libraryStorage: local, realViewSession: true, chartClient: client,
     accountSession: {accountId: record.accountId, sessionId: 'real'}, savedView: {selectedId: record.id}});
-  await tick();
-  for (let i = 0; i < 20 && h.element('shell').dataset.pageState !== 'ready'; i++) await tick();
+  await h.restoration;await waitForLibraryCheck(local,record.accountId);
   assert.equal(h.element('shell').dataset.pageState, 'ready');
   const latest = {...record, revision: 2, name: 'Обновлённое имя'};
-  await other.put(lease.lease, [latest]); await h.libraryChanged(); await tick();
+  await other.put((await other.read())!.lease!, [latest]); await h.libraryChanged(); await tick();
   assert.equal(h.cards[0]?.name, latest.name);
   assert.equal(h.element('chartTitle').textContent, latest.name);
 });
@@ -2041,6 +2058,14 @@ test('ordinary login keeps a temporary card local and only explicit add moves it
 async function waitForOwnLink(check:()=>boolean) {
   for(let i=0;i<100 && !check();i++)await tick();
   assert.ok(check(),'the requested account projection did not settle');
+}
+async function waitForLibraryCheck(storage:ReturnType<typeof createAccountLibraryStore>,accountId:string) {
+ for(let i=0;i<100;i++){
+  const record=(await storage.background.read())?.checks[`library:${accountId}`];
+  if(record?.lastSuccessAt!=null && !record.permit)return;
+  await tick();
+ }
+ assert.fail('the admitted library check did not complete');
 }
 
 async function ownLinkLoginContinuation(staleProjection=false) {
@@ -2639,7 +2664,7 @@ test('unchanged peer library notifications do not redraw the selected chart', as
   savedView:{selectedId:own.id},chartClient:{async own(){return {chart:own,catalogMarker:'1'};},
    async catalog(input){return catalogPage([{...own}],input.expectedAccountId);}}});
  try {
-  await h.restoration;for(let i=0;i<30;i++)await tick();
+  await h.restoration;await waitForLibraryCheck(storage,own.accountId);
   const renders=h.renders,captions=h.captionUpdates;
   for(let i=0;i<5;i++)await h.libraryChanged();
   assert.equal(h.renders,renders);assert.equal(h.captionUpdates,captions);
@@ -2665,7 +2690,7 @@ test('unchanged account form notification does not abort a public refresh', asyn
   navigation:addressHarness('/chart/'+foreign.id).navigation,savedView:{selectedId:foreign.id,publicChart:foreign},
   chartClient:{async public(_id,signal){reads++;if(reads===1)return foreign;refreshSignal=signal;return new Promise(resolve=>{finish=resolve;});}}});
  await h.restoration;for(let i=0;i<10;i++)await tick();await h.element('openAccount').click();
- h.userInput('visibilitychange');await tick();assert.equal(reads,2);assert.equal(refreshSignal?.aborted,false);
+ h.advanceBackground(50*60000);h.userInput('visibilitychange');await tick();assert.equal(reads,2);assert.equal(refreshSignal?.aborted,false);
  h.changeAccount(null);assert.equal(refreshSignal?.aborted,false);
  finish({...foreign,name:'Updated original',revision:foreign.revision+1});await tick();await tick();
  assert.equal(store.publicChart?.name,'Updated original');
@@ -2748,7 +2773,7 @@ for(const sample of [{error:{code:'not_found'},replaced:false},{error:{code:'off
  const h=harness({actualStore:store,realViewSession:true,
   navigation:addressHarness('/chart/'+foreign.id).navigation,savedView:{selectedId:foreign.id,publicChart:foreign},
   chartClient:{async public(){reads++;if(reads===1)return foreign;return new Promise((_,fail)=>{reject=fail;});}}});
- await h.restoration;await tick();h.userInput('visibilitychange');await tick();h.userInput('visibilitychange');
+ await h.restoration;await tick();h.advanceBackground(50*60000);h.userInput('visibilitychange');await tick();h.userInput('visibilitychange');
  assert.equal(reads,2,'another trigger shares the running refresh');
  if(sample.replaced)store.acceptPublic({...foreign,name:'New source',revision:foreign.revision+1});
  reject(sample.error);await tick();await tick();

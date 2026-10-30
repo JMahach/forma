@@ -35,15 +35,32 @@ try {
   // Only a built, complete public bundle is eligible for offline installation.
   // Installation stays optional/background; updates wait for restoration approval.
   if(typeof __FORMA_RELEASE__!=='undefined' && __FORMA_RELEASE__) {
-    try { void navigator.serviceWorker?.register('/service-worker.js',{scope:'/',updateViaCache:'none'}).then(async registration=>{
+    try { void (async()=>{
+      if(!navigator.serviceWorker)return;
       const loadedVersion=document.body.dataset.offlineVersion;
       if(!loadedVersion)return;
       const {attachOfflinePage,holdOfflineInput}=await import('./offline/page-coordinator.ts');
-      const page=attachOfflinePage({registration,serviceWorker:navigator.serviceWorker,loadedVersion,
-        owner:{prepare:startup.prepareOfflineUpdate,restored:startup.offlineRestored,subscribe:startup.subscribeOfflineReady},
-        hold:()=>holdOfflineInput(window),reload:()=>location.reload()});
-      void page.refresh();void startup.offlineReady().then(()=>page.check()).catch(()=>{});
-    }).catch(()=>{}); }
+      let stopped=false,registration:ServiceWorkerRegistration|undefined,page:ReturnType<typeof attachOfflinePage>|undefined;
+      const observe=async()=>{
+        const current=registration??await navigator.serviceWorker.getRegistration('/');
+        if(stopped || !current)return;
+        registration=current;
+        page??=attachOfflinePage({registration,serviceWorker:navigator.serviceWorker,loadedVersion,
+          owner:{prepare:startup.prepareOfflineUpdate,restored:startup.offlineRestored,subscribe:startup.subscribeOfflineReady},
+          hold:()=>holdOfflineInput(window),reload:()=>location.reload()});
+        void page.check();
+      };
+      await observe();
+      startup.connectReleaseCheck({async check(signal){
+        if(stopped || signal.aborted)return;
+        registration??=await navigator.serviceWorker.getRegistration('/');
+        if(stopped || signal.aborted)return;
+        if(registration){await observe();await page?.refresh();}
+        else registration=await navigator.serviceWorker.register('/service-worker.js',{scope:'/',updateViaCache:'none'});
+        if(!signal.aborted)await observe();
+      },observe(){void observe().catch(()=>{});},stop(){stopped=true;page?.dispose();}});
+      void startup.offlineReady().then(observe).catch(()=>{});
+    })().catch(()=>{}); }
     catch { /* Browser storage/security restrictions must not hide the working app. */ }
   }
   void prepareJournal().then(journal=>{if(journal)startup.connectJournal(journal);}).catch(()=>{});

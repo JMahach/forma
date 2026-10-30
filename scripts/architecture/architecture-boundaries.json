@@ -84,7 +84,8 @@
         "ui-styles",
         "browser-journal",
         "offline-page",
-        "application"
+        "application",
+        "background-platform"
       ],
       "allowTypes": [
         "account-flow",
@@ -116,7 +117,8 @@
         "ui-styles",
         "browser-journal",
         "offline-page",
-        "application"
+        "application",
+        "background-platform"
       ],
       "executionEntries": [
         "src/entry.ts"
@@ -212,7 +214,9 @@
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
         "src/domain/variables.ts",
-        "src/domain/library-catalog.ts"
+        "src/domain/library-catalog.ts",
+        "src/domain/background-check.ts",
+        "src/domain/background-policy.ts"
       ],
       "publicEntries": [
         "src/domain/account-chart.ts",
@@ -240,7 +244,9 @@
         "src/domain/topology.ts",
         "src/domain/transit-day.ts",
         "src/domain/variables.ts",
-        "src/domain/library-catalog.ts"
+        "src/domain/library-catalog.ts",
+        "src/domain/background-check.ts",
+        "src/domain/background-policy.ts"
       ],
       "allowRuntime": [
         "domain",
@@ -362,7 +368,8 @@
         "src/data/library-package-store.ts",
         "src/data/library-package-placement.ts",
         "src/data/calculation-cache-transition.ts",
-        "src/data/library-catalog-store.ts"
+        "src/data/library-catalog-store.ts",
+        "src/data/background-check-store.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
@@ -392,7 +399,8 @@
         "src/data/account-card-placement.ts": "Atomic admission of an opened card in the existing account database; no independent storage or account owner.",
         "src/data/account-library-schema.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting.",
-        "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner."
+        "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner.",
+        "src/data/background-check-store.ts": "Shared check control and atomic catalogue permission live in the existing library database; callers receive its narrow background store port."
       }
     },
     {
@@ -1585,7 +1593,8 @@
         "account-library",
         "data-clients",
         "data-storage",
-        "shared-contracts"
+        "shared-contracts",
+        "domain"
       ],
       "privateEntryReasons": {
         "src/state/library-reconciliation.ts": "Finite staged catalogue read used by the account-library owner; application scheduling remains a separate port."
@@ -1800,20 +1809,24 @@
         "src/application/write-continuation.ts",
         "src/application/public-refresh.ts",
         "src/application/startup.ts",
-        "src/application/update.ts"
+        "src/application/update.ts",
+        "src/application/background-work.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
-        "src/application/ports.ts"
+        "src/application/ports.ts",
+        "src/application/background-work.ts"
       ],
       "allowRuntime": [
-        "application"
+        "application",
+        "domain"
       ],
       "allowTypes": [
         "application",
         "shared-contracts",
         "chart-actions",
-        "account-library"
+        "account-library",
+        "domain"
       ],
       "privateEntryReasons": {
         "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime.",
@@ -1847,6 +1860,28 @@
         "journal-transport",
         "journal-policy",
         "journal-events"
+      ]
+    },
+    {
+      "id": "background-platform",
+      "responsibility": "Origin-scoped deadlines, bounded check permits, lifecycle and peer transport. Executes application task ports, owns no chart collection.",
+      "files": [
+        "src/platform/browser/background-coordinator.ts",
+        "src/platform/browser/lifecycle.ts"
+      ],
+      "publicEntries": [
+        "src/platform/browser/background-coordinator.ts",
+        "src/platform/browser/lifecycle.ts"
+      ],
+      "allowRuntime": [
+        "background-platform",
+        "domain",
+        "shared-contracts"
+      ],
+      "allowTypes": [
+        "background-platform",
+        "domain",
+        "application"
       ]
     }
   ],
@@ -1984,6 +2019,12 @@
         "from": "src/application/startup.ts",
         "specifier": "xstate",
         "reason": "Initial restoration is a cancellable child of the pinned application runtime."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/background-work.ts",
+        "specifier": "xstate",
+        "reason": "Shared checks are a cancellable application child; lifecycle and storage remain behind ports."
       }
     ]
   },

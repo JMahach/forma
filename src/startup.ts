@@ -340,3 +340,6 @@ export function prepareOfflineUpdate(){return application?.prepareOfflineUpdate(
 export function offlineRestored(){return application?.offlineRestored()??false;}
 export function offlineReady(){return application?.restoration??Promise.resolve();}
 export function subscribeOfflineReady(listener:()=>void){return application?.subscribeOfflineReady(listener)??(()=>{});}
+export function connectReleaseCheck(port:import('./application/background-work.ts').ReleaseCheckPort){
+  if(application)application.attachReleaseCheck(port);else port.stop();
+}

@@ -13,7 +13,10 @@ import { attachChartLink } from './views/chart-link.ts';
 import type { Navigation } from './platform/browser/navigation.ts';
 import { createApplication } from './application/application.ts';
 import type { Application } from './application/application.ts';
-import type { AccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
+import type {BackgroundTask,ReleaseCheckPort} from './application/background-work.ts';
+import { createBackgroundCoordinator } from './platform/browser/background-coordinator.ts';
+import { createPageLifecycle } from './platform/browser/lifecycle.ts';
+import type { AccountChart, PublicAccountChart, ChartWriteIntent } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 import type { BirthSubmission } from './views/birth-form.ts';
 import type { ChartActionResult } from './state/chart-actions.ts';
@@ -97,6 +100,9 @@ import { studioPresentation } from './ui/studio-presentation.ts';
 export function startApp({ journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   let application: Application | null = null;
+  let releaseCheck:ReleaseCheckPort|null=null,publicCheckKey='',publicCheckInstance='';
+  let publicCheckSource:PublicAccountChart|null=null;
+  let freshPublic:{source:PublicAccountChart;checkedAt:number;receivedAt:number}|null=null;
   const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
   const routeFailed = () => application?.view.destination === 'failed';
   let pendingBirthForm = savedView?.birthForm ?? null;
@@ -310,6 +316,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   try {libraryChannel = new window.BroadcastChannel('forma-library');} catch { /* Resuming a tab also checks its local library. */ }
   const notifyLibrary = (notice:Parameters<NonNullable<Parameters<typeof createAccountLibrary>[0]['notify']>>[0]) => {try {libraryChannel?.postMessage(notice);} catch {}};
   const libraryStorage = calculationClients?.library ?? createAccountLibraryStore({pressure: storagePressure});
+  let backgroundChannel:BroadcastChannel|null=null;
+  try{backgroundChannel=new window.BroadcastChannel('forma-background-checks');}catch{/* Automatic work pauses without shared coordination. */}
+  const backgroundCoordinator=createBackgroundCoordinator({owner:crypto.randomUUID(),store:libraryStorage.background,channel:backgroundChannel,
+    lifecycle:createPageLifecycle({events:window,visibility:document,online:()=>getConnectionMode()==='online',subscribeConnection})});
   storagePressure?.setSources({
     diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('unavailable'),
     natalDays: (keep, exclude, guard) => calculationClients?.evictForSpace?.('natal', keep, exclude, guard) ?? Promise.resolve('unavailable'),
@@ -530,7 +540,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       },
       settled(){
         if(account.getSession())application!.send({type:'ResumeWrite'});
-        if(libraryInitialized){application!.send({type:'RecoverWrites'});void accountLibrary.load().catch(()=>{});}
+        if(libraryInitialized){application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});}
       },
     };
   }
@@ -717,6 +727,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     if (!layoutRendered) renderGraph();
     updateLoading();
     viewSession?.schedule();
+    application?.send({type:'BackgroundChanged'});
   }
 
   function updateWorkspaceNavigation() {
@@ -860,7 +871,29 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
   const initialRoute=navigation?.snapshot;
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation,update:{
+  function backgroundTasks():BackgroundTask[] {
+    const tasks:BackgroundTask[]=[],access=account.getSession();
+    if(releaseCheck)tasks.push({target:{key:'app',scope:{kind:'app'},instance:'release'},
+      async run(authority){await releaseCheck!.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
+      receive(){releaseCheck?.observe();}});
+    if(libraryInitialized && startupRestored() && access)tasks.push({
+      target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
+      async run(authority){const result=await accountLibrary.load(authority);return {outcome:{kind:result.status==='complete'||result.status==='unchanged'?'success':'cancelled'}};},
+      initial:!document.hidden && getConnectionMode()==='online'?async signal=>{await accountLibrary.load(undefined,signal);}:undefined,
+    });
+    const source=store.publicChart?.id===session.selectedId && !accountLibrary.has(session.selectedId)?store.publicChart:null;
+    const key=source?`${source.id}/${access?.sessionId??'guest'}`:'';
+    if(freshPublic?.source!==source)freshPublic=null;
+    if(key!==publicCheckKey || source!==publicCheckSource){publicCheckKey=key;publicCheckSource=source;publicCheckInstance=crypto.randomUUID();}
+    if(source && startupRestored())tasks.push({target:{key:`public:${source.id}`,scope:{kind:'public',chartId:source.id},instance:publicCheckInstance},
+      run:authority=>freshPublic?.source===source && authority.permit.startedAt>=freshPublic.receivedAt && authority.permit.startedAt-freshPublic.receivedAt<2000
+        ?Promise.resolve({outcome:{kind:'success',checkedAt:freshPublic.checkedAt},data:{chart:source}})
+        :application!.refreshPublic(authority),
+      receive:data=>application!.send({type:'PublicSourceObserved',source,access,data}),
+    });
+    return tasks;
+  }
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation,background:{coordinator:backgroundCoordinator,tasks:backgroundTasks},update:{
     restored:()=>!initialPage.contentFailed && !initialPage.screenPending && !initialPage.screenFailed,
     ready(){
       if(birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending)return false;
@@ -902,19 +935,21 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       const draft=pendingBirthForm;pendingBirthForm=null;
       if(draft && !birthForm.opened)birthForm.restore(draft);
       viewSession!.flush();
-      application!.send({type:'RecoverWrites'});void accountLibrary.load().catch(()=>{});
+      application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
     },
     report(){toast('Не удалось восстановить положение страницы.');},
     changed(){
       if(startupRestored())initialPresentation=null;
       updateTimelineTools();updateLoading();restoreInitialInput();notifyOfflineReady();
+      application?.send({type:'BackgroundChanged'});
     },
   },publicRefresh:{
     source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
-    available:()=>!application?.write.source && startupRestored() && getConnectionMode()==='online'
+    available:()=>store.publicChart?.id===session.selectedId && !application?.write.source && startupRestored() && getConnectionMode()==='online'
       && !accountLibrary.get(store.publicChart!.id),
     accept(previous,next){
       store.acceptPublic(next);
+      if(publicCheckSource===previous)publicCheckSource=store.publicChart;
       if(session.selectedId===next.id && !accountLibrary.get(next.id)) {
         if(previous.utc!==next.utc || JSON.stringify(previous.activations)!==JSON.stringify(next.activations))graph.changeChart(next.id);
         else session.refreshRecord();
@@ -980,14 +1015,17 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
           else {
             const cached=store.publicChart?.id===route.id
               ? store.publicChart : null;
-            let chart;
-            try { chart=getConnectionMode()==='offline' && cached ? cached : await chartClient.public(route.id, signal); }
+            let chart,checkedAt:number|undefined;
+            try {
+              if(getConnectionMode()==='offline' && cached)chart=cached;
+              else {checkedAt=Date.now();chart=await chartClient.public(route.id,signal);}
+            }
             catch(error) {
               const code=(error as {code?:string})?.code;
               if(!cached || !['offline','connection_failed','server_unavailable'].includes(code??''))throw error;
-              chart=cached;
+              chart=cached;checkedAt=undefined;
             }
-            if (current()) store.acceptPublic(chart);
+            if (current()) {store.acceptPublic(chart);if(checkedAt!==undefined)freshPublic={source:store.publicChart!,checkedAt,receivedAt:Date.now()};}
           }
         },
         apply() {
@@ -1025,7 +1063,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       void accountLibrary.refreshLocal().catch(() => {});
       application!.send({type:'RecoverWrites'});
       syncTransitCacheWindow(transit?.state.timeline, true);
-      if (getConnectionMode() === 'online') application!.send({type:'RefreshPublicSource'});
     }
   });
   let previousConnection = getConnectionMode();
@@ -1035,10 +1072,10 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
     void natalDay?.refreshAvailability();
     void returns?.refreshAvailability();
     lifetime?.refreshAvailability(); updateTimelineTools();
-    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();application!.send({type:'RefreshPublicSource'});}
+    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();}
     if (!libraryInitialized) return;
     if (getConnectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
-    application!.send({type:'RecoverWrites'}); void accountLibrary.load().catch(() => {});
+    application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
   });
   const restoration = application.whenRestored();
   studio.dataset.panelsReady = 'true';
@@ -1224,10 +1261,11 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   commitLoadingLayout(document);
   const offlineRestored = () => application!.isRestored();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
+    attachReleaseCheck(port:ReleaseCheckPort){releaseCheck?.stop();releaseCheck=port;application?.send({type:'BackgroundChanged'});},
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate:()=>application!.prepareUpdate(),
     // P17 extends the shared lifetime to the remaining owners; this stops all P02 resources.
-    stopApplication: () => application?.stop() ?? Promise.resolve(),
+    stopApplication: () => {releaseCheck?.stop();releaseCheck=null;return application?.stop() ?? Promise.resolve();},
     flushView: () => viewSession!.flush(),
     attachJournal(value:AppJournal){
       if(journal===value)return;

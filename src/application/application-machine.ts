@@ -4,6 +4,7 @@ import { createAccountBoundaryMachine } from './account-boundary.ts';
 import { createStartupMachine } from './startup.ts';
 import { createPublicRefreshMachine } from './public-refresh.ts';
 import { createWriteContinuationMachine } from './write-continuation.ts';
+import {createBackgroundWork} from './background-work.ts';
 import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
 
 type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'AccountBoundaryStarted'};
@@ -24,11 +25,13 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         write: 'write';
         publicRefresh: 'publicRefresh';
         startup: 'startup';
+        background:'background';
       },
       context: {} as {request: RouteRequest | null},
       events: {} as Event,
     },
     actors: {
+      background:createBackgroundWork(ports.background!),
       startup: createStartupMachine(ports.startup!),
       publicRefresh: createPublicRefreshMachine(ports.publicRefresh!),
       account: createAccountBoundaryMachine(ports.account!, runtimeId),
@@ -70,9 +73,11 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
           ...(ports.write ? [{id: 'write', src: 'write'} as const] : []),
           ...(ports.publicRefresh ? [{id: 'publicRefresh', src: 'publicRefresh'} as const] : []),
           ...(ports.startup ? [{id: 'startup', src: 'startup'} as const] : []),
+          ...(ports.background ? [{id:'background',src:'background'} as const]:[]),
         ],
         on: {
           Stop: '#application.stopping',
+          BackgroundChanged:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
           StartupInterrupted: {
             guard: () => !!ports.startup,
             actions: sendTo('startup', ({event}) => event),
@@ -81,6 +86,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             guard: () => !!ports.publicRefresh,
             actions: sendTo('publicRefresh', ({event}) => event),
           },
+          PublicSourceObserved:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
           CancelPublicRefresh: {
             guard: () => !!ports.publicRefresh,
             actions: sendTo('publicRefresh', ({event}) => event),
