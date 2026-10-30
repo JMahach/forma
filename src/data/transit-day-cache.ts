@@ -25,7 +25,6 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     legacySources:LEGACY_CALCULATION_SOURCES.map(source=>source.family==='transit'?{...source,legacyDatabaseName}:source)});
   const reads = new Map<string, { latest: TransitDay | null; promise: Promise<TransitDay | null> }>();
   const writes = new Map<string, { day: TransitDay; promise: Promise<boolean | null> }>();
-  const touches = new Map<string, Promise<boolean|null>>();
   const coverage = new Uint8Array(Math.ceil((SUPPORTED_END_EXCLUSIVE - SUPPORTED_START) / DAY_MS));
   let observed = false, preparing: Promise<void> | null = null, prepared = false, closed = false, generation=0;
   function mark(date: string, present: boolean) {
@@ -54,11 +53,6 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     generation++;coverage.fill(0);prepared=false;
     if(observed && !closed)void prepare();
   });
-  function touch(key:string) {
-    if(closed || touches.has(key))return;
-    const work=owner.touch('transit',key).catch(()=>null).finally(()=>{if(touches.get(key)===work)touches.delete(key);});
-    touches.set(key,work);
-  }
   function validDay(day: TransitDay | null | undefined, date: string | undefined): day is TransitDay {
     return !!day && day.date === date
       && day.version === TRANSIT_DAY_VERSION && day.startUtc === `${date}T00:00:00Z`
@@ -76,8 +70,7 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
   }
   function peekDay(date: string) {
     if(closed)return null;
-    const key=date,day=memory.get<TransitDay>(memoryKey(key));
-    if(day)touch(key);return day;
+    return memory.get<TransitDay>(memoryKey(date));
   }
   async function getDay(date: string) {
     if(closed)return null;
@@ -124,13 +117,13 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     },
     retainDay(day: TransitDay) {
       if(closed)return ()=>{};
-      const key=day.date;touch(key);return memory.retain(memoryKey(key),day);
+      return memory.retain(memoryKey(day.date),day);
     },
     async flush() { await Promise.all([...writes.values()].map(entry => entry.promise)); },
     async close() {
       closed=true;unsubscribe();coverage.fill(0);
       await Promise.all([...writes.values()].map(entry=>entry.promise));
-      await Promise.all(touches.values());if(!cache)owner.close();
+      if(!cache)owner.close();
     },
   };
 }

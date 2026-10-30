@@ -139,12 +139,20 @@ test('fresh overlapping data wins an older disk read even with no spare RAM',asy
   assert.equal(await pending,value);
 });
 
-test('RAM hits touch the common LRU and coalesce concurrent touches',async t=>{
+test('current transit reads and RAM use need no persistent LRU writes',async t=>{
   const shared=owner(t);await shared.setTransitWindow(windowFor());const first=cache(t,{cache:shared}),value=day();
-  first.putDay(value);await first.flush();const original=shared.touch.bind(shared),calls=[];
-  t.mock.method(shared,'touch',(...args)=>{calls.push(args);return original(...args);});
-  for(let i=0;i<10;i++)assert.equal(first.peekDay(value.date),value);
-  assert.deepEqual(calls,[['transit',value.date]]);
+  first.putDay(value);await first.flush();const original=IDBObjectStore.prototype.put,writes:string[]=[];
+  t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof original>){
+    const result=original.apply(this,args);
+    if(this.transaction.db.name==='forma-calculation-cache')this.transaction.addEventListener('complete',()=>writes.push(this.name),{once:true});
+    return result;
+  });
+  assert.ok(await shared.get('transit',value.date));
+  for(let i=0;i<10;i++){
+    assert.equal(first.peekDay(value.date),value);assert.equal(first.hasMinute(start),true);
+    const release=first.retainDay(value);release();
+  }
+  await first.close();assert.deepEqual(writes,[]);
 });
 
 test('equal concurrent day admissions share pending storage work and retry after a failed write',async t=>{

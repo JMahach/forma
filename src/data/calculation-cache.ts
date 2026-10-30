@@ -275,7 +275,9 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
       if(meta.location==='legacy')return {legacy:meta};
       const data=await request(tx.objectStore('payloads').get(meta.id));return {value:data?.value as T??null};
     };
-    const accessed=await atomicResult(tx=>lookup(tx,true));
+    // Transit retention is determined by the current window, never by recency.
+    const updateAccess=kind!=='transit';
+    const accessed=await atomicResult(tx=>lookup(tx,updateAccess),updateAccess?'readwrite':'readonly');
     // Failed bookkeeping must not hide a saved calculation. Re-read the live
     // window and owner in the fallback transaction; never reuse a stale value.
     const found=accessed.status==='complete'?accessed.value
@@ -289,7 +291,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     return atomic(async tx=>{
       const value=(await state(tx))!,current=await request(tx.objectStore('catalogue').get(meta.id)) as Catalogue|undefined;
       return current?.stage==='pending' && allowed(kind,value) && eligible(current,value)?description.value as T:null;
-    });
+    },'readonly');
   }
   async function expire() {
     if(!await setup() || closed)return;
