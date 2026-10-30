@@ -1832,6 +1832,7 @@
         "src/application/library-fill.ts"
       ],
       "publicEntries": [
+        "src/application/account-boundary.ts",
         "src/application/chart-editing.ts",
         "src/application/application.ts",
         "src/application/ports.ts",
@@ -1851,7 +1852,6 @@
         "domain"
       ],
       "privateEntryReasons": {
-        "src/application/account-boundary.ts": "Account transitions and safe cleanup retry are scoped to the application lifetime.",
         "src/application/write-continuation.ts": "Own the page-local write continuation and outcome recovery as application child states.",
         "src/application/public-refresh.ts": "Cancellable public-source refresh belongs to the application lifetime, independent of workspace.",
         "src/application/startup.ts": "Coordinate initial restore with the application lifetime, existing route and snapshot owners.",

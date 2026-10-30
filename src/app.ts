@@ -5,7 +5,8 @@ import { createResourceScope } from './runtime/resource-scope.ts';
 import { chartPresentation } from './domain/chart-presentation.ts';
 import { createViewCheckpoint } from './state/view-checkpoint.ts';
 import type { ViewCheckpoint } from './state/view-checkpoint.ts';
-import type { AccountBoundaryRequest, AccountBoundaryWork } from './application/ports.ts';
+import type { AccountBoundaryRequest } from './application/ports.ts';
+import { createAccountBoundaryWork } from './application/account-boundary.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import type { StoragePressure } from './data/storage-pressure.ts';
@@ -453,61 +454,35 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     }catch(error){void observation?.reportError(error,{stage:'request'});throw error;}
   }
   let libraryInitialized = false;
-  function beginAccountBoundary(request:AccountBoundaryRequest):AccountBoundaryWork {
-    const access=request.access, previousAccount=accountLibrary.accountId, logout=request.logoutIds;
-    // These owners fence the old generation before any asynchronous continuation.
-    const clearing=logout?accountLibrary.clear():null;
-    const connecting=logout?Promise.resolve():accountLibrary.connect(access);
-    application?.send({type:'CancelPublicRefresh'});syncJournalAccount();
-    chartLibrary?.closeDelete();
-    const resetPersonal=!!logout || !!access && (previousAccount!==null && previousAccount!==access.accountId
-      || chartActions.pending.some(intent=>intent.expectedAccountId!==access.accountId)
-      || !!temporaryChartSave && temporaryChartSave.expectedAccountId!==access.accountId);
-    // The calculation owner retains failed cleanup across session boundaries.
-    const cleanup=resetPersonal?calculationClients?.resetPersonal():calculationClients?.retryPersonalCleanup();
-    let snapshotReady=true;
-    if(logout){
-      if(!journal){journalBoundaryPending=true;for(const id of logout)journalBoundaryIds.add(id);}
-      journal?.leave(logout);
-      cancelChartSave();pendingBirthForm=null;discardPendingInput();
-      temporaryChartSave=null;chartActions.clear();chartEditing.reset();librarySelection++;birthForm.close();
-      // Replace the private snapshot once, retaining only independent tab sources.
-      snapshotReady=checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
-        temporaryChart:store.temporaryChart,publicChart:store.publicChart,
-        selectedId:session.selectedId===store.temporaryChart?.id || session.selectedId===store.publicChart?.id
-          ? session.selectedId:'current-transit'}:undefined).kind==='stored';
-    }else if(resetPersonal && access){
-      if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
-      temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();librarySelection++;
-      const draft=birthForm.snapshot;
-      if(birthForm.opened && (!draft || draft.accountId!==null && draft.accountId!==access.accountId))birthForm.close();
-    }
-    let clearResult:Awaited<ReturnType<typeof accountLibrary.clear>>|null=null;
-    const unavailable=()=>actionError('storage_unavailable','Account cleanup is not complete');
-    const checkCleanup=(result:{status:string}|null|undefined)=>{if(result && result.status!=='cleared')throw unavailable();};
-    const ready=(async()=>{
-      await connecting;clearResult=await clearing;
-      checkCleanup(await cleanup);
-      if(clearResult?.status==='unavailable' || !snapshotReady)throw unavailable();
-    })();
-    return {ready,
-      async retry(){
-        await connecting;
-        if(clearResult?.status==='unavailable'){
-          if(!clearResult.accountId)throw unavailable();
-          clearResult={...clearResult,status:await accountLibrary.retryClear(clearResult.accountId)};
-          if(clearResult.status==='unavailable')throw unavailable();
-        }
-        checkCleanup(await calculationClients?.retryPersonalCleanup());
-        // A later checkpoint reads current tab state; it never replays an old snapshot.
-        if(!snapshotReady)snapshotReady=viewSession!.flush();
-        if(!snapshotReady)throw unavailable();
+  function beginAccountBoundary(request:AccountBoundaryRequest) {
+    return createAccountBoundaryWork(request,{
+      library:accountLibrary,calculations:calculationClients,
+      get pendingWrites(){return chartActions.pending;},
+      get boundAccount(){return temporaryChartSave?.expectedAccountId??null;},
+      enter(){application?.send({type:'CancelPublicRefresh'});syncJournalAccount();chartLibrary?.closeDelete();},
+      logout(ids){
+        if(!journal){journalBoundaryPending=true;for(const id of ids)journalBoundaryIds.add(id);}
+        journal?.leave(ids);
+        cancelChartSave();pendingBirthForm=null;discardPendingInput();
+        temporaryChartSave=null;chartActions.clear();chartEditing.reset();librarySelection++;birthForm.close();
+        // Retain only independent tab sources in the private checkpoint adapter.
+        return checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
+          temporaryChart:store.temporaryChart,publicChart:store.publicChart,
+          selectedId:session.selectedId===store.temporaryChart?.id || session.selectedId===store.publicChart?.id
+            ? session.selectedId:'current-transit'}:undefined).kind==='stored';
       },
+      switchAccount(access){
+        if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
+        temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();librarySelection++;
+        const draft=birthForm.snapshot;
+        if(birthForm.opened && (!draft || draft.accountId!==null && draft.accountId!==access.accountId))birthForm.close();
+      },
+      flushSnapshot:()=>viewSession!.flush(),
       settled(){
         if(account.getSession())application!.send({type:'ResumeWrite'});
         if(libraryInitialized){application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});wakeLibraryWork('library');}
       },
-    };
+    });
   }
   const libraryReady = (async () => {
     try{await accountLibrary.restore();}catch(error){if((error as {code?:string})?.code!=='account_changed')throw error;}

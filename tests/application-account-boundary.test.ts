@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createApplication} from '../src/application/application.ts';
 import {createNavigation} from '../src/platform/browser/navigation.ts';
 import type {AccountAccess,AccountBoundaryRequest} from '../src/application/ports.ts';
+import {createAccountBoundaryWork} from '../src/application/account-boundary.ts';
 
 const a={accountId:'A',sessionId:'a'},b={accountId:'B',sessionId:'b'};
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
@@ -50,4 +51,28 @@ test('failed logout cleanup retries its existing work and cannot complete after 
  h.logout(['a']);assert.equal(h.requests.length,3,'completed logout is idempotent');
  h.session(b);await h.app.stop();await h.app.stop();h.releases[3]();await turn();
  assert.deepEqual(h.completed,['guest','A','logout']);assert.equal(h.stops,1);
+});
+
+test('cleanup retries only unfinished stores and writes the current snapshot without another reset',async()=>{
+ let clears=0,connections=0,resets=0,retries=0,libraryRetries=0,logouts=0,flushes=0;
+ let libraryAvailable=false,personalAvailable=false,snapshotAvailable=false,current='old';
+ const written:string[]=[];
+ const work=createAccountBoundaryWork({runtimeId:'cleanup',generation:1,access:null,previous:a,logoutIds:['a']},{
+  library:{accountId:'A',async connect(){connections++;},async clear(){clears++;return {accountId:'A',status:'unavailable'};},
+   async retryClear(id){assert.equal(id,'A');libraryRetries++;return libraryAvailable?'cleared':'unavailable';}},
+  calculations:{async resetPersonal(){resets++;return {status:'unavailable'};},
+   async retryPersonalCleanup(){retries++;return {status:personalAvailable?'cleared':'unavailable'};}},
+  pendingWrites:[],boundAccount:null,enter(){},logout(){logouts++;return false;},
+  switchAccount(){assert.fail('logout must not repeat account switching');},
+  flushSnapshot(){flushes++;written.push(current);return snapshotAvailable;},settled(){},
+ });
+ await assert.rejects(work.ready,{code:'storage_unavailable'});
+ await assert.rejects(work.retry(),{code:'storage_unavailable'});
+ assert.equal(retries,0);assert.equal(flushes,0,'later stages wait for successful library cleanup');
+ libraryAvailable=true;await assert.rejects(work.retry(),{code:'storage_unavailable'});
+ personalAvailable=true;current='new';await assert.rejects(work.retry(),{code:'storage_unavailable'});
+ snapshotAvailable=true;await work.retry();
+ assert.deepEqual({clears,connections,resets,retries,libraryRetries,logouts,flushes},
+  {clears:1,connections:0,resets:1,retries:3,libraryRetries:2,logouts:1,flushes:2});
+ assert.deepEqual(written,['new','new'],'retry reads current tab state instead of replaying the logout snapshot');
 });
