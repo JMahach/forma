@@ -94,28 +94,44 @@ test('a pending first install excludes a simultaneous shared release check',asyn
  assert.equal(updates,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});await application.stop();
 });
 
-test('update preparation blocks new background work and waits for actual usage writes',async()=>{
- let preparing=false,finish!:()=>void,uses=0,idle=false,checks=0,receive:(request:BackgroundRequest)=>void=()=>{};
+test('update preparation blocks new background work and waits for actual usage writes',async t=>{
+ let finish!:()=>void,uses=0,prepared=false,checkpoints=0,checks=0,receive:(request:BackgroundRequest)=>void=()=>{};
+ const control=new AbortController();
  const library={...libraryDefaults,session:{accountId:'1',sessionId:'s'},workingLease:{accountId:'1',generation:'g'},completeCatalog:null,
   markOpened(){uses++;return new Promise<void>(resolve=>{finish=resolve;});},async load(){return {status:'unchanged' as const,durable:false};}};
- const app=createApplication({runtimeId:'barrier',background:{...defaults,library,
+ const app=createApplication({runtimeId:'barrier',startup:{
+  library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,restore:async()=>true,resume(){},flush(){}},
+  form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
+ },background:{...defaults,library,
   coordinator:{start(fn){receive=fn;},update(){},stop(){}},release:{async check(){checks++;},observe(){},stop(){}}},
-  update:{get preparing(){return preparing;},restored:()=>true,ready:()=>true,selection:()=>'',canRestore:()=>true,checkpoint:()=>true}});
- app.start();app.send({type:'LibraryUsed',id:'one'});assert.equal(uses,1);
- preparing=true;app.send({type:'LibraryUsed',id:'two'});assert.equal(uses,1);const barrier=app.whenBackgroundIdle().then(()=>{idle=true;});await tick();assert.equal(idle,false);
+  update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',
+   sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint(){checkpoints++;return true;}}});
+ t.after(async()=>{finish?.();control.abort();await app.stop();});
+ app.start();await app.whenRestored();app.send({type:'LibraryUsed',id:'one'});assert.equal(uses,1);
+ const preparation=Promise.resolve(app.prepareUpdate(control.signal)).then(value=>{prepared=true;return value;});
+ app.send({type:'LibraryUsed',id:'two'});assert.equal(uses,1);await tick();assert.equal(prepared,false);assert.equal(checkpoints,0);
  const authority={permit:{key:'app',owner:'A',token:'p',startedAt:1,expiresAt:30000},signal:new AbortController().signal,current:async()=>true};
- receive({kind:'check',target:{key:'app',scope:{kind:'app'},instance:'release'},authority,finish(){}});await tick();assert.equal(checks,0);
- finish();await barrier;assert.equal(idle,true);await app.stop();
+ const check=()=>receive({kind:'check',target:{key:'app',scope:{kind:'app'},instance:'release'},authority,finish(){}});
+ check();await tick();assert.equal(checks,0);
+ finish();assert.equal(await preparation,true);assert.equal(checkpoints,1);
+ app.send({type:'LibraryUsed',id:'two'});check();await tick();assert.equal(uses,1);assert.equal(checks,0);
+ control.abort();app.send({type:'LibraryUsed',id:'two'});assert.equal(uses,2);finish();
 });
 
-test('cancelling update preparation preserves the consumed first-install allowance',async()=>{
- let preparing=false,installs=0,receive:(request:BackgroundRequest)=>void=()=>{};
- const signal=new AbortController().signal;
- const app=createApplication({runtimeId:'allowance',background:{...defaults,
-  coordinator:{start(fn){receive=fn;},update(){receive({kind:'unavailable',signal});},stop(){}},
+test('cancelling update preparation preserves the consumed first-install allowance',async t=>{
+ let installs=0,updates=0,receive:(request:BackgroundRequest)=>void=()=>{};
+ const signal=new AbortController().signal,control=new AbortController();
+ const app=createApplication({runtimeId:'allowance',startup:{
+  library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,restore:async()=>true,resume(){},flush(){}},
+  form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
+ },background:{...defaults,
+  coordinator:{start(fn){receive=fn;},update(){updates++;receive({kind:'unavailable',signal});},stop(){}},
   release:{async install(){installs++;},async check(){},observe(){},stop(){}}},
-  update:{get preparing(){return preparing;},restored:()=>true,ready:()=>true,selection:()=>'',canRestore:()=>true,checkpoint:()=>true}});
- app.start();await tick();assert.equal(installs,1);
- preparing=true;await app.whenBackgroundIdle();receive({kind:'foreground',signal});await tick();assert.equal(installs,1);
- preparing=false;app.backgroundChanged();await tick();assert.equal(installs,1);await app.stop();
+  update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',
+   sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint:()=>true}});
+ t.after(async()=>{control.abort();await app.stop();});
+ app.start();await app.whenRestored();await tick();assert.equal(installs,1);
+ assert.equal(await app.prepareUpdate(control.signal),true);
+ receive({kind:'foreground',signal});await tick();assert.equal(installs,1);
+ const before=updates;control.abort();await tick();assert.ok(updates>before);assert.equal(installs,1);
 });
