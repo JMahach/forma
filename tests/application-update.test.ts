@@ -57,25 +57,39 @@ test('preparation waits for the active write, then holds its own permission unti
 
 test('update waits for real recovery acceptance, then blocks new recovery without waiting for unknown intents',async t=>{
  const chart=accountChart(),intent={expectedAccountId:chart.accountId,operationId:chartId(80)},unknown={...intent,operationId:chartId(81)};
- let release!:()=>void,reads=0,placements=0,checkpoints=0,prepared=false;
+ let release!:()=>void,restore!:()=>void,reads=0,placements=0,checkpoints=0,prepared=false,restoring=false;
+ const restoration=new Promise<void>(resolve=>{restore=resolve;});
  const placement=new Promise<void>(resolve=>{release=resolve;}),control=new AbortController(),session={accountId:chart.accountId,sessionId:'update'};
  const actions=createChartActions({getSession:()=>session,initialPending:[intent,unknown],
   library:{async open(){placements++;await placement;return chart;},async forget(){}},
   client:{async outcome(value){reads++;return {...value,outcome:value.operationId===unknown.operationId?{kind:'unknown'}:{kind:'created',chartId:chart.id,revision:1}};},
    create:async()=>assert.fail('recovery cannot POST'),update:async()=>assert.fail('recovery cannot update'),remove:async()=>assert.fail('recovery cannot remove'),addFromSource:async()=>assert.fail('recovery cannot add')},
  });
- const app=createApplication({runtimeId:'recovery-update',startup:{
-  library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,restore:async()=>true,resume(){},flush(){}},
+ const app=createApplication({runtimeId:'recovery-update',account:{
+  ready:Promise.resolve(),getSession:()=>session,subscribeSession:()=>()=>{},subscribeLogout:()=>()=>{},
+  library:{storageAvailable:true,accountId:session.accountId,restore:async()=>{},connect:async()=>{},clear:async()=>({accountId:session.accountId,status:'cleared'}),retryClear:async()=> 'cleared'},
+  writes:actions,binding:{accountId:null,clear(){}},form:{pending:null,snapshot:null,opened:false,clearPending(){},discardInput(){},close(){}},
+  editing:{reset(){}},checkpoint:{clearPersonal:()=>true,flush:()=>true},changed(){},storageUnavailable(){assert.fail('no storage failure');},
+ },background:{coordinator:{start(){},update(){},stop(){}},clock:{now:()=>0},release:null,journal:null,
+  environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},local:{changed(){},broadcast(){}},
+ },startup:{
+  library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,async restore(){restoring=true;await restoration;return true;},resume(){},flush(){}},
   form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
  },write:{actions,online:()=>true,getSession:()=>session,selection:{record:null,selectedId:'current-transit',adopt:()=>false},
   temporary:()=>null,hasOwn:()=>false,retire(){},public:async()=>assert.fail('no public read'),acceptPublic(){},clearPublic:()=>false,
   view:{isChartScreen:()=>true,showChart(){},changeChart(){},refresh(){},changed(){},checkpoint(){},report(){}},
  },update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint(){checkpoints++;return true;}}});
- t.after(async()=>{release();control.abort();await app.stop();});app.start();await app.whenRestored();app.send({type:'RecoverWrites'});
+ t.after(async()=>{restore();release();control.abort();await app.stop();});app.start();
+ for(let turn=0;turn<20 && !restoring;turn++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(restoring,true);assert.equal(reads,0,'account readiness alone must not recover before the tab restores');
+ restore();await app.whenRestored();
  await new Promise(resolve=>setImmediate(resolve));assert.equal(placements,1);
  const preparing=Promise.resolve(app.prepareUpdate(control.signal)).then(value=>{prepared=true;return value;});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(prepared,false);assert.equal(checkpoints,0);
  release();assert.equal(await preparing,true);assert.equal(checkpoints,1);assert.equal(reads,2);assert.deepEqual(actions.pending,[unknown]);
- app.send({type:'RecoverWrites'});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2);
- control.abort();app.send({type:'RecoverWrites'});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,3);
+ app.environmentChanged({reason:'lifecycle',returned:true});app.send({type:'RecoverWrites'});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2,'update permission blocks both automatic and explicit recovery');
+ control.abort();app.environmentChanged({reason:'connection'});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2,'an unchanged online status must not poll unknown outcomes');
+ app.environmentChanged({reason:'lifecycle',returned:true});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,3);
 });
