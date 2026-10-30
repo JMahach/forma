@@ -1,9 +1,9 @@
 import { assign, fromPromise, sendTo, setup } from 'xstate';
-import { prepareRoute } from './route.ts';
+import {prepareRoute,chartDestination,showChart,routeForChart,publishRoute} from './route.ts';
 import { createAccountBoundaryMachine } from './account-boundary.ts';
 import { createStartupMachine } from './startup.ts';
 import { createPublicRefreshMachine } from './public-refresh.ts';
-import { createWriteContinuationMachine } from './write-continuation.ts';
+import {createWriteContinuationMachine,writeContinuationView} from './write-continuation.ts';
 import {createBackgroundWork} from './background-work.ts';
 import {createLibraryFill} from './library-fill.ts';
 import {createLibraryLocalAudit} from './library-local-audit.ts';
@@ -16,7 +16,7 @@ function routeChanged(request:RouteRequest|null,event:Event,navigation?:Navigati
     && !!navigation?.isCurrent(event.snapshot) && request?.snapshot!==event.snapshot;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>) {
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void) {
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
@@ -43,10 +43,10 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       account: createAccountBoundaryMachine(ports.account!, runtimeId,sources),
       write: createWriteContinuationMachine(ports.write!),
       route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) =>
-        prepareRoute(ports, input, signal)),
+        prepareRoute(ports,input,signal,ready)),
     },
     guards: {
-      changed: ({context,event})=>routeChanged(context.request,event,ports.navigation),
+      changed: ({context,event})=>!!ports.route && routeChanged(context.request,event,ports.navigation),
     },
     actions: {
       requested: assign({
@@ -60,8 +60,39 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
           ? {...context.request, initial: event.type === 'RetryRoute' ? false : context.request.initial, processId: ++processId}
           : null,
       }),
-      published: ({event}) => {
-        if (event.type === 'RoutePublished') ports.navigation?.navigate(event.route, {replace: event.replace, origin: 'publication'});
+      chosen:assign({request:({event})=>event.type==='OpenChartRequested'?{
+        snapshot:ports.navigation?.snapshot??{route:null,revision:0},initial:false,runtimeId,processId:++processId,
+        selection:{id:event.id,edit:event.edit,keepMenuOpen:event.keepMenuOpen},
+      }:null}),
+      opening:({context,self})=>{
+        if(!context.request || !ports.route)return;
+        const route=context.request.selection?routeForChart(ports.route,context.request.selection.id):context.request.snapshot.route!;
+        if(chartDestination(route))self.getSnapshot().children.publicRefresh?.send({type:'CancelPublicRefresh'});
+        if(!context.request.selection)ports.route.view.workspace(chartDestination(route)?'chart':route.kind as 'account'|'charts'|'knowledge');
+        if(!context.request.initial){
+          self.getSnapshot().children.write?.send({type:'CancelWrite'});
+          if(!context.request.selection)ports.route.view.interrupt();
+        }
+      },
+      published:({event,self})=>{
+        if(event.type!=='RoutePublished' || !ports.route)return;
+        if(chartDestination(event.route))self.getSnapshot().children.publicRefresh?.send({type:'CancelPublicRefresh'});
+        publishRoute(ports.route,ports.navigation,event.route,event.replace);
+      },
+      selected:({event,self})=>{
+        if(event.type!=='ChartSelected' || !ports.route)return;
+        self.getSnapshot().children.write?.send({type:'CancelWrite'});
+        self.getSnapshot().children.publicRefresh?.send({type:'CancelPublicRefresh'});
+        showChart(ports.route,event.id,event.keepMenuOpen);
+        if(!event.fromRoute)publishRoute(ports.route,ports.navigation,routeForChart(ports.route,event.id),event.replace);
+      },
+      workspace:({event,self})=>{
+        if(event.type!=='WorkspaceRequested' || !ports.route)return;
+        const write=self.getSnapshot().children.write;
+        if(write && !(event.screen==='account' && writeContinuationView(write.getSnapshot()).waitingForLogin))write.send({type:'CancelWrite'});
+        ports.route.view.workspace(event.screen,event.keepMenuOpen);
+        if(!event.fromRoute)publishRoute(ports.route,ports.navigation,event.screen==='chart'
+          ?routeForChart(ports.route,ports.route.session.selectedId):{kind:event.screen});
       },
       clear: assign({request: null}),
       boundary:({event,self})=>{
@@ -149,11 +180,15 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
                 reenter: true,
                 actions: 'requested',
               },
+              OpenChartRequested:{guard:()=>!!ports.route,target:'.preparing',reenter:true,actions:'chosen'},
               RoutePublished: {target: '.idle', actions: ['clear', 'published']},
+              ChartSelected:{target:'.idle',actions:['clear','selected']},
+              WorkspaceRequested:{target:'.idle',actions:['clear','workspace']},
             },
             states: {
               idle: {},
               preparing: {
+                entry:'opening',
                 on: {
                   AccountBoundaryStarted: {target: 'preparing', reenter: true, actions: ['boundary','retried']},
                 },

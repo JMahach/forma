@@ -6,7 +6,7 @@ function foreignDraft(draft:AccountBoundaryOperations['form']['snapshot'],accoun
 function resetContinuation(ports:AccountBoundaryOperations,access:AccountAccess|null) {
   const form=ports.form;
   if(!access || foreignDraft(form.pending,access.accountId))form.clearPending();
-  ports.binding.clear();ports.writes.clear();ports.editing.reset();ports.selection.cancel();
+  ports.binding.clear();ports.writes.clear();ports.editing.reset();
   if(!access){form.discardInput();form.close();return ports.checkpoint.clearPersonal();}
   if(form.opened && (!form.snapshot || foreignDraft(form.snapshot,access.accountId)))form.close();
   return true;

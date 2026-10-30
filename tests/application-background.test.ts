@@ -16,7 +16,7 @@ test('application children pause fill and local audit and discard their late res
  const scope={lease:active.lease,sessionId:'session',catalogMarker:'1',visible:true,foreground:false,online:true},chart=accountChart();
  let fillSignal:AbortSignal|undefined,auditSignal:AbortSignal|undefined,receives=0,pages=0;
  let finishFill!:(reply:FillReceipt)=>void,finishAudit!:(page:LibraryAuditPage)=>void;
- const app=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),libraryFill:{
+ const app=createApplication({runtimeId:'A',libraryFill:{
   scope:()=>scope,entries:()=>[libraryRecordEntry(chart)],control:store.fill,inventory:store.maintenance.inventory,
   present:async()=>false,receive:async(_candidate,signal)=>{receives++;fillSignal=signal;return new Promise<FillReceipt>(resolve=>{finishFill=resolve;});},
   place:async()=>assert.fail('a retired child cannot place its late packet'),
@@ -36,7 +36,7 @@ test('the application owns background lifetime and dispatches only a current adm
  let receive:(request:BackgroundRequest)=>void=()=>{},updates=0,stops=0,calls=0,answer:unknown;
  const target={key:'app',scope:{kind:'app' as const}},controller=new AbortController();
  const authority={permit:{key:'app',token:'t',owner:'A',startedAt:1,expiresAt:30001},signal:controller.signal,current:async()=>!controller.signal.aborted};
- const application=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),background:{
+ const application=createApplication({runtimeId:'A',background:{
   coordinator:{start(listener){receive=listener;},update(){updates++;},stop(){controller.abort();stops++;}},
   tasks:()=>[{target,async run(){calls++;return {outcome:{kind:'success'}};}}],
  }});
@@ -49,7 +49,7 @@ test('the application owns background lifetime and dispatches only a current adm
 test('unavailable coordination admits one initial library read per confirmed session and no retry on resume',async()=>{
  let receive:(request:BackgroundRequest)=>void=()=>{},sessionId='first',reads=0;
  const signal=new AbortController().signal;
- const application=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),background:{
+ const application=createApplication({runtimeId:'A',background:{
   coordinator:{start(listener){receive=listener;},update(){receive({kind:'unavailable',signal});},stop(){}},
   tasks:()=>[{target:{key:'library:1',scope:{kind:'library',accountId:'1'},sessionId},run:async()=>assert.fail('no shared permission'),
    initial:async()=>{reads++;throw new Error('unavailable');}}],
@@ -66,7 +66,7 @@ test('without BroadcastChannel initial offline installation waits for visibility
   store:{read:async()=>null,update:async()=>null},
   lifecycle:{get active(){return active;},subscribe(listener){notify=()=>listener(true);return()=>{};}},
  });
- const application=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),background:{coordinator,
+ const application=createApplication({runtimeId:'A',background:{coordinator,
   tasks:()=>[{target:{key:'app',scope:{kind:'app'}},initial:async()=>{installs++;},run:async()=>assert.fail('no shared update')}],
  }});
  application.start();await tick();assert.equal(installs,0);
@@ -79,7 +79,7 @@ test('a pending first install excludes a simultaneous shared release check',asyn
  let receive:(request:BackgroundRequest)=>void=()=>{},finishInstall!:()=>void,updates=0;
  const target={key:'app',scope:{kind:'app' as const}},signal=new AbortController().signal;
  const authority={permit:{key:'app',token:'t',owner:'A',startedAt:1,expiresAt:30001},signal,current:async()=>true};
- const application=createApplication({runtimeId:'A',route:()=>assert.fail('no route'),background:{
+ const application=createApplication({runtimeId:'A',background:{
   coordinator:{start(listener){receive=listener;},update(){receive({kind:'foreground',signal});},stop(){}},
   tasks:()=>[{target,initial:()=>new Promise<void>(resolve=>{finishInstall=resolve;}),
    run:async()=>{updates++;return {outcome:{kind:'success'}};}}],

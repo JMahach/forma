@@ -2041,6 +2041,8 @@ test('quota eviction cannot approve a reload from a RAM-only account chart, and 
  const h=harness({storagePressure:pressure,libraryStorage:storage,chartClient:deletionClient(record),
   accountSession:{accountId:record.accountId,sessionId:'quota-session'},realViewSession:true});
  await h.restoration;await tick();h.select(record.id);await tick();
+ for(let i=0;i<20 && h.shown.id!==record.id;i++)await tick();
+ assert.equal(h.shown.id,record.id,'the opening has applied before asking for an update');
  assert.equal(await h.prepareOfflineUpdate(),true,'the actual local copy initially supports reload');
  useTime=100;const incoming=accountNatalChart(71),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
  const tracker={removed:false};

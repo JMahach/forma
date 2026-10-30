@@ -5,7 +5,7 @@ import {createApplication} from '../src/application/application.ts';
 for(const held of ['ready','restore','resume'] as const)test(`stopped startup cannot persist after late ${held}`,async()=>{
   let release!:()=>void,persisted=false,reports=0;
   const gate=new Promise<void>(resolve=>{release=resolve;});
-  const app=createApplication({runtimeId:'retired',route:()=>assert.fail('no address was requested'),startup:{
+  const app=createApplication({runtimeId:'retired',startup:{
     ready:async()=>{if(held==='ready')await gate;},route:async()=>{},current:()=>true,
     restore:async()=>{if(held==='restore')await gate;return true;},
     resume:async()=>{if(held==='resume')await gate;return true;},

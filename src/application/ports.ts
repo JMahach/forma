@@ -1,3 +1,5 @@
+import type {SavedChart} from '../../shared/chart-types.ts';
+import type {PublicAccountChart} from '../../shared/chart-record-contract.ts';
 import type {AccountLibrary} from '../state/account-library.ts';
 import type {SavedBirthForm} from '../domain/birth-form-draft.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
@@ -30,7 +32,7 @@ export interface AccountBoundaryOperations {
   binding:{readonly accountId:string|null;clear():void};
   form:{readonly pending:SavedBirthForm|null|undefined;readonly snapshot:SavedBirthForm|null|undefined;readonly opened:boolean;
     clearPending():void;discardInput():void;close():void};
-  editing:{reset():void};selection:{cancel():void};
+  editing:{reset():void};
   checkpoint:{clearPersonal():boolean;flush():boolean};
   closeDelete():void;
 }
@@ -64,22 +66,34 @@ export interface NavigationPort {
 }
 export interface RouteRequest {
   readonly snapshot: NavigationSnapshot;
+  readonly selection?:{id:string;edit?:boolean;keepMenuOpen?:boolean};
   readonly initial: boolean;
   readonly runtimeId: string;
   readonly processId: number;
 }
 export interface RoutePort {
-  enter(): void;
-  prepare(signal: AbortSignal, current: () => boolean): Promise<void>;
-  apply(): void;
-  failed(error: unknown): Promise<void>;
-  settled(): void;
-  dispose(): void;
+  library:Pick<AccountLibrary,'get'|'has'|'open'>;
+  sources:{readonly charts:readonly SavedChart[];readonly publicChart:PublicAccountChart|null;readonly temporaryChart:SavedChart|null;
+    get(id:string):SavedChart|null|undefined;acceptPublic(chart:PublicAccountChart):unknown;clearPublic(id:string):unknown};
+  session:{readonly selectedId:string};
+  online():boolean;now():number;
+  readPublic(id:string,signal?:AbortSignal):Promise<PublicAccountChart>;
+  observe(stage:'request'|'storage_read'):{failed(error:unknown):void;finish():void}|null;
+  view:{
+    workspace(screen:'chart'|'account'|'charts'|'knowledge',keepMenuOpen?:boolean):void;
+    select(id:string):void;resetCamera():void;edit(id:string):void;
+    interrupt():void;settled():void;checkpoint():void;report(error:unknown):void;
+    firstTransit():Promise<boolean|void>;transitReady(ready:boolean):void;
+    markOpened(id:string):void;publicRead(checkedAt:number,receivedAt:number):void;
+  };
 }
-export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route(request: RouteRequest): RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
+export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}
+  | {type:'OpenChartRequested';id:string;edit?:boolean;keepMenuOpen?:boolean}
+  | {type:'ChartSelected';id:string;keepMenuOpen?:boolean;fromRoute?:boolean;replace?:boolean}
+  | {type:'WorkspaceRequested';screen:'chart'|'account'|'charts'|'knowledge';keepMenuOpen?:boolean;fromRoute?:boolean}
   | {type: 'RetryRoute'}
   | AccountEvent | Exclude<StartupEvent,{type:'Stop'}> | PublicRefreshEvent | BackgroundWorkEvent | LibraryFillEvent | LibraryAuditEvent | Exclude<WriteEvent,{type:'Stop'|'SourcesReconciled'}>;
 export interface ApplicationView {

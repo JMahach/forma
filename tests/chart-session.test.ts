@@ -666,19 +666,3 @@ test('record refresh owns source changes and skips unchanged personal consumers'
  let ready=false;const initial=createChartSession({store:{has:()=>true,get:()=>ready?current:null},initialSelectedId:current.id});
  ready=true;assert.equal(initial.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,3);
 });
-
-test('one selection owner aborts superseded reads and ignores their late completions',async()=>{
- const h=harness([personalChartFixture()]);
- const owner=createChartExploration({session:h.session,getNatalDay:()=>h.natal,getLifetime:()=>null,getReturns:()=>null,getTransit:()=>null});
- const shown:string[]=[],signals:AbortSignal[]=[];let finish!:()=>void;
- const first=owner.prepareSelection(signal=>{signals.push(signal);return new Promise<void>(resolve=>{finish=resolve;});},()=>shown.push('old'));
- const second=owner.prepareSelection(async signal=>{signals.push(signal);},()=>shown.push('new'));
- assert.equal(signals[0].aborted,true);assert.equal(await second,true);finish();assert.equal(await first,false);
- assert.deepEqual(shown,['new']);
- let fail!:(error:Error)=>void;
- const stale=owner.prepareSelection(signal=>{signals.push(signal);return new Promise<void>((_resolve,reject)=>{fail=reject;});},()=>shown.push('stale'));
- owner.select('current-transit');assert.equal(signals.at(-1)!.aborted,true);fail(new Error('retired failure'));assert.equal(await stale,false);
- let immediate=false;const ready=owner.prepareSelection(()=>undefined,()=>{immediate=true;});assert.equal(immediate,true);assert.equal(await ready,true);
- await assert.rejects(owner.prepareSelection(async()=>{throw new Error('current failure');},()=>assert.fail('failed read cannot select')),{message:'current failure'});
- owner.dispose();let reads=0;assert.equal(await owner.prepareSelection(async()=>{reads++;},()=>shown.push('closed')),false);assert.equal(reads,0);
-});

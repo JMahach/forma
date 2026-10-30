@@ -124,7 +124,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   let publicCheckSource:PublicAccountChart|null=null;
   let freshPublic:{source:PublicAccountChart;checkedAt:number;receivedAt:number}|null=null;
   const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
-  const routeFailed = () => application?.view.destination === 'failed';
+  const routeFailed = () => application?.view.destination === 'failed' && !application.view.request?.selection;
   let pendingBirthForm = savedView?.birthForm ?? null;
   // An operation is linked to this accepted tab source, never inferred from its content.
   let temporaryChartSave = savedView?.temporaryChartSave?.sourceId === store.temporaryChart?.id
@@ -301,34 +301,10 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   scope.own(mandalaMode.dispose);
   // Explicit navigation reveals its destination on a phone. State projection
   // and restoration do not use this command, so a restored menu stays open.
-  function routeForChart(id: string): AppRoute {
-    return id === 'current-transit' ? {kind:'transit'}
-      : accountLibrary.get(id) || store.get(id) && 'revision' in store.get(id)!
-        ? {kind:'chart',id} : {kind:'temporary-chart'};
-  }
-  function publishRoute(route: AppRoute, replace = false) {
-    if (!navigation) return;
-    if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
-    viewSession?.interrupt();
-    initialPresentation = null;
-    application?.send({type:'RoutePublished',route,replace});
-    updateLoading();
-  }
-  function navigateWorkspace(screen: WorkspaceScreen, { keepMenuOpen = false, fromRoute = false } = {}) {
-    if(application?.write.source && !(screen==='account' && application.write.waitingForLogin))cancelChartSave();
-    if (layout.phone && !keepMenuOpen) chartLibrary?.close();
-    workspace.setScreen(screen);
-    if (!fromRoute) publishRoute(screen === 'chart' ? routeForChart(session.selectedId) : {kind:screen});
-  }
-  // Opening a chart uses Home; updating the current chart keeps its camera.
-  function selectChart(id: string, { keepMenuOpen = false, fromRoute = false, replace = false } = {}) {
-    navigateWorkspace('chart', { keepMenuOpen, fromRoute:true });
-    graph.changeChart(id);
-    if (session.selectedId === id && accountLibrary.get(id)) markLibraryOpened(id);
-    gestures.reset();
-    const destination = routeForChart(id);
-    if (!fromRoute) publishRoute(destination, replace);
-  }
+  const routeForChart=(id:string)=>application!.routeForChart(id);
+  const publishRoute=(route:AppRoute,replace=false)=>application!.publishRoute(route,replace);
+  const navigateWorkspace=(screen:WorkspaceScreen,options?:{keepMenuOpen?:boolean;fromRoute?:boolean})=>application!.navigateWorkspace(screen,options);
+  const selectChart=(id:string,options?:{keepMenuOpen?:boolean;fromRoute?:boolean;replace?:boolean})=>application!.selectChart(id,options);
   const birthClient = createBirthClient();
   const chartClient = createChartClient({getSession: account.getSession});
   let libraryChannel: BroadcastChannel | null = null;
@@ -419,29 +395,18 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       accountLibrary.readyIds,accountLibrary.entries);
     birthForm.refresh();
     if (startupRestored() && !preserveSaveSource && editedId && !store.get(editedId)) {
-      exploration!.cancelSelection(); selectChart('current-transit', {replace:true});
+      selectChart('current-transit', {replace:true});
       return;
     } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
-      if (!next) { exploration!.cancelSelection(); selectChart('current-transit', {replace:true}); }
+      if (!next) { selectChart('current-transit', {replace:true}); }
       else session.refreshRecord(graph.changeChart);
       // The accepted session already updates every page projection.
       return;
     }
     if (startupRestored()) updatePage();
   }
-  async function openLibraryChart(id: string, options?: {keepMenuOpen: boolean}, edit = false) {
-    const observation=journal?.begin({action:'chart_open',component:'chart'});
-    try {
-      if (privateLibraryShown && id !== 'current-transit' && id !== store.temporaryChart?.id && !accountLibrary.has(id)) {exploration!.cancelSelection();return;}
-      await exploration!.prepareSelection(
-        signal=>accountLibrary.has(id)?accountLibrary.open(id,signal):undefined,
-        ()=>{if(edit)birthForm.open(true,id);else selectChart(id,options);});
-    } catch (error) {
-      void observation?.reportError(error,{stage:'storage_read'});
-      toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
-    } finally {observation?.finishSuccess();}
-  }
+  const openLibraryChart=(id:string,options?:{keepMenuOpen:boolean},edit=false)=>application!.openChart(id,{...options,edit});
   async function submitAccountChart(input: BirthSubmission, signal: AbortSignal) {
     const observation=journal?.begin({action:'chart_save',component:'chart'});
     try {
@@ -959,65 +924,23 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     binding:{get accountId(){return temporaryChartSave?.expectedAccountId??null;},clear(){temporaryChartSave=null;}},
     form:{get pending(){return pendingBirthForm;},get snapshot(){return birthForm.snapshot;},get opened(){return birthForm.opened;},
       clearPending(){pendingBirthForm=null;},discardInput:discardPendingInput,close:()=>birthForm.close()},
-    selection:{cancel:()=>exploration!.cancelSelection()},
     checkpoint:{clearPersonal:()=>checkpoint.clearPersonal({temporaryChart:store.temporaryChart,publicChart:store.publicChart,selectedId:session.selectedId}),
       flush:()=>viewSession!.flush()},closeDelete:()=>chartLibrary?.closeDelete(),
     changed:notifyOfflineReady,
     storageUnavailable(){toast('Хранилище браузера недоступно. Изменения не будут сохранены.');},
-  },route(request) {
-      const route = request.snapshot.route!;
-      const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
-      return {
-        enter() {
-          if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
-          if (!request.initial) {cancelChartSave();viewSession?.interrupt();}
-          exploration!.cancelSelection();
-          navigateWorkspace(route.kind === 'chart' || route.kind === 'temporary-chart' || route.kind === 'transit' ? 'chart' : route.kind, {fromRoute:true});
-        },
-        async prepare(signal, current) {
-          if (route.kind !== 'chart') return;
-          await application!.requireAccount();
-          if (!current()) return;
-          if (accountLibrary.get(route.id)) await accountLibrary.open(route.id, signal);
-          else {
-            const cached=store.publicChart?.id===route.id
-              ? store.publicChart : null;
-            let chart,checkedAt:number|undefined;
-            try {
-              if(connectionMode()==='offline' && cached)chart=cached;
-              else {checkedAt=Date.now();chart=await chartClient.public(route.id,signal);}
-            }
-            catch(error) {
-              const code=(error as {code?:string})?.code;
-              if(!cached || !['offline','connection_failed','server_unavailable'].includes(code??''))throw error;
-              chart=cached;checkedAt=undefined;
-            }
-            if (current()) {store.acceptPublic(chart);if(checkedAt!==undefined)freshPublic={source:store.publicChart!,checkedAt,receivedAt:Date.now()};}
-          }
-        },
-        apply() {
-          if (request.initial) return;
-          if (route.kind === 'chart') selectChart(route.id, {fromRoute:true});
-          else if (route.kind === 'transit') selectChart('current-transit', {fromRoute:true});
-          else if (route.kind === 'temporary-chart') selectChart(store.temporaryChart?.id ?? 'current-transit', {fromRoute:true});
-        },
-        async failed(error) {
-          void observation?.reportError(error,{stage:'request'});
-          toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
-          if (route.kind === 'chart' && (error as {code?:string})?.code === 'not_found') {
-            store.clearPublic(route.id);selectChart('current-transit',{replace:true});viewSession?.flush();
-            if (request.initial) {
-              const redirected=navigation!.snapshot,ready=await transit!.start(null,{firstChart:true});
-              if(application?.view.lifecycle === 'running' && navigation!.isCurrent(redirected)){initialPage.contentFailed=ready===false;updateLoading();}
-            }
-          }
-        },
-        settled() {
-          if (!request.initial) { initialPresentation = null; }
-        },
-        dispose() { observation?.finishSuccess(); },
-      };
-    }});
+  },route:{
+    library:accountLibrary,sources:store,session,online:()=>connectionMode()!=='offline',now:Date.now,readPublic:chartClient.public,
+    observe(stage){const observation=journal?.begin({action:'chart_open',component:'chart'});
+      return observation?{failed(error){void observation.reportError(error,{stage});},finish:()=>observation.finishSuccess()}:null;},
+    view:{
+      workspace(screen,keepMenuOpen){if(layout.phone && !keepMenuOpen)chartLibrary?.close();workspace.setScreen(screen);},
+      select:graph.changeChart,resetCamera:()=>gestures.reset(),edit:id=>birthForm.open(true,id),
+      interrupt:()=>viewSession?.interrupt(),settled(){initialPresentation=null;updateLoading();},checkpoint:()=>{viewSession?.flush();},
+      report(error){toast(failureMessage(error,UI_MESSAGES.chartUnavailable));},
+      firstTransit:()=>transit!.start(null,{firstChart:true}),transitReady(ready){initialPage.contentFailed=!ready;updateLoading();},
+      markOpened:markLibraryOpened,publicRead(checkedAt,receivedAt){freshPublic={source:store.publicChart!,checkedAt,receivedAt};},
+    },
+  }});
     scope.own(()=>application!.stop());
     scope.own(application.subscribe(updateLoading));
     application.start();

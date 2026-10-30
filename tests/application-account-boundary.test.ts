@@ -33,7 +33,7 @@ function fixture(withInitialSession=true,ready:Promise<unknown>=Promise.resolve(
  const location={pathname:'/account'};
  const navigation=createNavigation({location,history:{pushState(_s,_t,url){location.pathname=String(url);},replaceState(_s,_t,url){location.pathname=String(url);}},events:new EventTarget()});
  const pending=()=>new Promise<void>((resolve,reject)=>releases.push(()=>failCleanup?reject(new Error('cleanup unavailable')):resolve()));
- const app=createApplication({runtimeId:'account-boundary-test',navigation,route(){return {enter(){},async prepare(){},apply(){},async failed(){},settled(){},dispose(){}};},account:{
+ const app=createApplication({runtimeId:'account-boundary-test',navigation,account:{
   ...operations(),ready,getSession:()=>access,
   library:{storageAvailable:true,restore:async()=>{},get accountId(){return owner;},
    connect(value){owner=value?.accountId??owner;return pending();},
@@ -54,7 +54,7 @@ function fixture(withInitialSession=true,ready:Promise<unknown>=Promise.resolve(
 function operations(){return {
  writes:{pending:[],clear(){}},binding:{accountId:null,clear(){}},
  form:{pending:null,snapshot:null,opened:false,clearPending(){},discardInput(){},close(){}},
- editing:{reset(){}},selection:{cancel(){}},checkpoint:{clearPersonal:()=>true,flush:()=>true},closeDelete(){},
+ editing:{reset(){}},checkpoint:{clearPersonal:()=>true,flush:()=>true},closeDelete(){},
 };}
 
 test('account boundaries handle early logout, preserve A to B to A and reject old completion',async()=>{

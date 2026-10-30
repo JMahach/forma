@@ -1,4 +1,6 @@
 import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xstate';
+import {routeForChart} from './route.ts';
+import type {AppRoute} from '../../shared/app-routes.ts';
 import { createApplicationMachine } from './application-machine.ts';
 import { prepareUpdate } from './update.ts';
 import { startupView } from './startup.ts';
@@ -140,10 +142,16 @@ function stopRuntime(actor:ApplicationActor) {
   startup?.send({type:'Stop'});write?.send({type:'Stop'});publicRefresh?.send({type:'CancelPublicRefresh'});actor.send({type:'Stop'});
 }
 
+async function destinationSettled(actor:ApplicationActor) {
+  const request=actor.getSnapshot().context.request;
+  await waitFor(actor,state=>!state.matches({running:{destination:'preparing'}})
+    || (request?.selection?state.context.request?.selection!==request.selection:state.context.request?.snapshot!==request?.snapshot));
+}
+
 function applicationRestored(actor:ApplicationActor,ports:ApplicationPorts) {
   const startup=readStartup(actor),view=applicationView(actor.getSnapshot());
   return view.lifecycle==='running' && startup.restored && !startup.failed
-    && view.destination!=='preparing' && view.destination!=='failed' && ports.update?.restored()===true;
+    && view.destination!=='preparing' && (view.destination!=='failed' || !!view.request?.selection) && ports.update?.restored()===true;
 }
 function prepareRelease(actor:ApplicationActor,ports:ApplicationPorts) {
   const port=ports.update;
@@ -155,9 +163,19 @@ export function createApplication(ports: ApplicationPorts) {
   let sources:Promise<void>=Promise.resolve();
   const machine = createApplicationMachine(ports, () => {
     for(const stop of subscriptions.splice(0))stop();
-  },()=>sources);
+  },()=>sources,()=>{
+    const account=readAccount(actor);
+    if(!ports.account || account.status==='ready' && JSON.stringify(account.access)===JSON.stringify(ports.account.getSession()))return;
+    return requireAccount();
+  });
   const actor = createActor(machine);
   const readView = () => applicationView(actor.getSnapshot());
+  async function requireAccount(){
+    await awaitSources(actor,sources);
+    const result=await requestSession(actor,ports.account?.getSession()??null);
+    if(result.status!=='ready')throw Object.assign(new Error(`Account boundary ${result.status}`),
+      {code:result.status==='failed'?'storage_unavailable':'account_changed'});
+  }
   actor.start();
   return {
     get view() { return readView(); },
@@ -183,12 +201,14 @@ export function createApplication(ports: ApplicationPorts) {
       if(retryAccount)actor.send({type:'RetryAccountBoundary'});
       reconcile(actor,ports,recover,wake);
     },
-    async requireAccount(){
-      await awaitSources(actor,sources);
-      const result=await requestSession(actor,ports.account?.getSession()??null);
-      if(result.status!=='ready')throw Object.assign(new Error(`Account boundary ${result.status}`),
-        {code:result.status==='failed'?'storage_unavailable':'account_changed'});
+    requireAccount,
+    routeForChart:(id:string)=>routeForChart(ports.route!,id),
+    publishRoute:(route:AppRoute,replace=false)=>actor.send({type:'RoutePublished',route,replace}),
+    async openChart(id:string,options:Omit<Extract<ApplicationEvent,{type:'OpenChartRequested'}>,'type'|'id'>={}) {
+      actor.send({type:'OpenChartRequested',id,...options});await destinationSettled(actor);
     },
+    selectChart:(id:string,options:Omit<Extract<ApplicationEvent,{type:'ChartSelected'}>,'type'|'id'>={})=>actor.send({type:'ChartSelected',id,...options}),
+    navigateWorkspace:(screen:Extract<ApplicationEvent,{type:'WorkspaceRequested'}>['screen'],options:Omit<Extract<ApplicationEvent,{type:'WorkspaceRequested'}>,'type'|'screen'>={})=>actor.send({type:'WorkspaceRequested',screen,...options}),
     refreshPublic(authority:CheckAuthority):Promise<CheckResult> {
       if(!ports.publicRefresh || readView().lifecycle!=='running')return Promise.resolve({outcome:{kind:'cancelled'}});
       return new Promise(resolve=>actor.send({type:'RefreshPublicSource',authority,completed:resolve}));
@@ -201,8 +221,7 @@ export function createApplication(ports: ApplicationPorts) {
     // Startup and later navigation share the same route owner.
     async requestRoute(snapshot: NavigationSnapshot, initial = false) {
       actor.send({type: 'RouteRequested', snapshot, initial});
-      const request = actor.getSnapshot().context.request;
-      await waitFor(actor, state => state.context.request?.snapshot !== request?.snapshot || !state.matches({running: {destination: 'preparing'}}));
+      await destinationSettled(actor);
     },
     requestSession:(access:AccountAccess|null)=>requestSession(actor,access),
     async requestSave(source:SavedChart) {
