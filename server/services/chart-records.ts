@@ -1,6 +1,6 @@
 import {canStoreServerReturn,returnSourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
 import {validCycleResult,type CycleInput,type CycleResult} from '../../shared/cycles-format.ts';
-import { canonicalChartId, isOperationIdentifier, CHART_ID_MIN_DIGITS, CHART_ID_MAX_DIGITS } from '../../shared/chart-record-contract.ts';
+import { canonicalChartId, isOperationIdentifier, chartOutcomeTarget, CHART_ID_MIN_DIGITS, CHART_ID_MAX_DIGITS } from '../../shared/chart-record-contract.ts';
 import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
 import { randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -59,6 +59,18 @@ export interface ChartReturnQuery {
 }
 export interface PreparationNotice {kind:'queued'|'removed';chartId:string}
 type PreparationListener=(notice:PreparationNotice)=>void;
+type Authorize=(serverTime:number,options?:{renew?:boolean})=>{accountId:string}|null;
+
+/** Mutable observation accompanies a receipt; it never changes the stored operation fact. */
+function observeOutcome(storage:ReturnType<typeof createChartRecordStorage>,owner:string,result:ChartOutcome):
+ ChartOutcome & {catalogMarker:string;chart?:AccountChart} {
+  const target=chartOutcomeTarget(result) ?? (result.kind==='deleted' || result.kind==='absent'
+    || result.kind==='rejected' && result.code==='not_found'
+    ?{id:result.chartId,revision:1}:null);
+  if(!target)return {...result,catalogMarker:storage.catalog.marker(owner)};
+  const {chart,catalogMarker}=storage.observeOwn(owner,target.id);
+  return {...result,catalogMarker,...(chart && chart.revision>=target.revision?{chart}:{})};
+}
 
 interface CatalogQuery {expectedAccountId:string;knownMarker?:string;marker?:string;after?:string;limit?:number}
 function validateCatalogPosition({knownMarker,marker,after}:CatalogQuery) {
@@ -90,7 +102,7 @@ function readOwnedFamily(storage:ReturnType<typeof createChartRecordStorage>,own
 /** Receives trusted, prepared calculation data. HTTP must not forward user-supplied calculated numbers here. */
 export function createChartRecords({ database, authorize: initialAuthorize, now = Date.now, newId = newChartId }: {
   database: Database;
-  authorize: (serverTime: number) => { accountId: string } | null;
+  authorize: Authorize;
   now?: () => number; newId?: (digits?: number) => string;
 }) {
   const storage = createChartRecordStorage(database,canonicalChartId);
@@ -104,9 +116,9 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     }
     throw new ChartRecordError('chart_unavailable');
   }
-  function withAuthorization(authorize: (serverTime: number) => { accountId: string } | null) {
-  function account(time: number, expected?: string) {
-    const current = authorize(time);
+  function withAuthorization(authorize: Authorize) {
+  function account(time: number, expected?: string, options?:{renew?:boolean}) {
+    const current = authorize(time,options);
     if (!current) throw new ChartRecordError('auth_required');
     if (expected !== undefined && current.accountId !== expected) throw new ChartRecordError('account_changed');
     return current.accountId;
@@ -238,6 +250,12 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
       });
     },
     getOwn(id: string, expectedAccountId?: string) { return database.transaction(() => storage.get(account(now(), expectedAccountId), id)); },
+    observeOwn(id:string,expectedAccountId:string) {
+      return database.transaction(()=>storage.observeOwn(account(now(),expectedAccountId),id));
+    },
+    observeOutcome(result:ChartOutcome,expectedAccountId:string) {
+      return database.transaction(()=>observeOutcome(storage,account(now(),expectedAccountId,{renew:false}),result));
+    },
     list() { return database.transaction(() => storage.list(account(now()))); },
     page({expectedAccountId, after = '', limit = 100}: {expectedAccountId: string; after?: string; limit?: number}) {
       if (!Number.isInteger(limit) || limit < 1 || limit > 100 || typeof after !== 'string' || after.length > 80) {

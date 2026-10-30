@@ -81,6 +81,10 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     identifier: sql.prepare('SELECT 1 FROM chart_identifiers WHERE id = ?'),
     reserve: sql.prepare('INSERT INTO chart_identifiers VALUES (?)'),
     own: sql.prepare('SELECT * FROM account_charts WHERE accountId = ? AND id = ?'),
+    ownObservation:sql.prepare(`SELECT c.*,COALESCE(CAST(m.marker AS TEXT),'0') AS catalogMarker
+      FROM (SELECT ? AS accountId) owner
+      LEFT JOIN library_catalog_markers m ON m.accountId=owner.accountId
+      LEFT JOIN account_charts c ON c.accountId=owner.accountId AND c.id=?`),
     shared: sql.prepare('SELECT * FROM account_charts WHERE id = ?'),
     relatedReturn:sql.prepare(`SELECT r.chartId FROM account_charts c JOIN account_chart_returns r ON r.chartId=c.id
       WHERE json_extract(c.content,'$.source')='calculated' AND json_extract(c.content,'$.utc')=?
@@ -105,6 +109,11 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     identifierUsed(id:string) { return Boolean(statements.identifier.get(id)); },
     get(accountId: string, id: string) {
       return decode(statements.own.get(accountId, id) as unknown as Row | undefined);
+    },
+    observeOwn(accountId:string,id:string) {
+      const row=statements.ownObservation.get(accountId,id) as unknown as
+        (Row & {catalogMarker:string}) | {id:null;catalogMarker:string};
+      return {chart:row.id===null?null:decode(row),catalogMarker:row.catalogMarker};
     },
     shared(id: string) { return decode(statements.shared.get(id) as unknown as Row | undefined); },
     match(accountId: string, nameKey: string, birthMinute: number) {

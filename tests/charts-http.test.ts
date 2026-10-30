@@ -73,11 +73,11 @@ test('HTTP separates public card data, private library and read-only operation r
   assert.equal((await f.request(`/api/charts?accountId=${f.accountId}`,'GET',undefined,{cookie:false})).status,401);
   const deleted=await f.request(`/api/charts/${id}`,'DELETE',f.intent(2)); assert.equal(deleted.body.kind,'deleted');
   const receipt=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
-  const {chart:projection,...fact}=created.body;
+  const {chart:projection,catalogMarker:_createdMarker,...fact}=created.body;
   assert.equal(projection.id,id);
-  assert.deepEqual(receipt.body,fact); assert.equal(f.calls(),1);
+  assert.deepEqual(receipt.body,{...fact,catalogMarker:deleted.body.catalogMarker}); assert.equal(f.calls(),1);
   f.advance(48*60*60*1000);
-  assert.deepEqual((await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`)).body,{kind:'unknown'});
+  assert.deepEqual((await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`)).body,{kind:'unknown',catalogMarker:deleted.body.catalogMarker});
 });
 test('known operation outcome skips recalculation, and text-only updates preserve the exact birth block',async t=>{
   const f=await fixture(t), first=await f.create();
@@ -86,6 +86,69 @@ test('known operation outcome skips recalculation, and text-only updates preserv
   assert.equal(updated.status,200); assert.equal(f.calls(),1);
   const own=await f.request(`/api/charts/${first.body.chartId}?accountId=${f.accountId}`);
   assert.equal(own.body.chart.utc,birth.utc); assert.equal(own.body.chart.note,'new');
+});
+test('private current-state envelopes carry the observed catalog marker without changing durable outcomes',async t=>{
+  const f=await fixture(t),created=await f.create(),id=created.body.chartId;
+  const marker=()=>String(f.database.connection.prepare('SELECT CAST(marker AS TEXT) AS m FROM library_catalog_markers WHERE accountId=?').get(f.accountId)!.m);
+  const receipt=()=>JSON.parse(String(f.database.connection.prepare('SELECT outcome FROM chart_operation_outcomes WHERE accountId=? AND operationId=?').get(f.accountId,op(1))!.outcome));
+  const original=receipt();assert.equal(created.body.catalogMarker,marker());
+  assert.equal(Object.hasOwn(created.body.chart,'catalogMarker'),false);
+  assert.equal(Object.hasOwn(original,'catalogMarker'),false);
+  const updated=await f.request('/api/charts/'+id,'PATCH',{...f.intent(2),name:'Changed'});
+  assert.equal(updated.body.catalogMarker,marker());
+  const recovered=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
+  assert.equal(recovered.body.revision,original.revision);assert.equal(recovered.body.chart.revision,updated.body.revision);
+  assert.equal(recovered.body.catalogMarker,marker());assert.deepEqual(receipt(),original);
+  f.database.connection.prepare('UPDATE library_catalog_markers SET marker=? WHERE accountId=?').run(9007199254740993n,f.accountId);
+  const own=await f.request(`/api/charts/${id}?accountId=${f.accountId}`);
+  assert.equal(own.body.catalogMarker,'9007199254740993');
+  assert.equal(Object.hasOwn((await f.request('/api/shared-charts/'+id)).body,'catalogMarker'),false);
+  for(const [n,kind] of [[3,'deleted'],[4,'absent']] as const){
+    const result=await f.request('/api/charts/'+id,'DELETE',f.intent(n));
+    assert.equal(result.body.kind,kind);assert.equal(result.body.catalogMarker,marker());
+  }
+  const missing=await f.request(`/api/charts/${id}?accountId=${f.accountId}`);
+  assert.equal(missing.status,404);assert.deepEqual(missing.body,{error:'not_found',catalogMarker:marker()});
+  const rejected=await f.request('/api/charts/'+id,'PATCH',{...f.intent(5),name:'Gone'});
+  assert.equal(rejected.body.kind,'rejected');assert.equal(rejected.body.code,'not_found');assert.equal(rejected.body.catalogMarker,marker());
+  const afterDelete=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
+  assert.deepEqual(afterDelete.body,{...original,catalogMarker:marker()});assert.deepEqual(receipt(),original);
+  const unknown=await f.request(`/api/charts/operations/${op(999)}?accountId=${f.accountId}`);
+  assert.deepEqual(unknown.body,{kind:'unknown',catalogMarker:marker()});
+  for(const path of [`/api/charts/${id}?accountId=999`,`/api/charts/operations/${op(1)}?accountId=999`])
+    assert.deepEqual((await f.request(path)).body,{error:'account_changed'});
+  assert.equal(f.calls(),1,'observation and recovery never calculate');
+});
+test('a completed outcome survives revoked access or an unreadable current projection without leaking its marker',async t=>{
+  const f=await fixture(t),created=await f.create(),id=created.body.chartId;
+  const fact={kind:created.body.kind,chartId:id,revision:created.body.revision},current=f.accounts.current.bind(f.accounts);
+  let checks=0;t.mock.method(f.accounts,'current',(...args:Parameters<typeof current>)=>++checks===1?current(...args):null);
+  const revoked=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
+  assert.equal(revoked.status,200);assert.deepEqual(revoked.body,fact);
+  t.mock.restoreAll();
+  const authorize=f.records.withAuthorization;
+  t.mock.method(f.records,'withAuthorization',(...args:Parameters<typeof authorize>)=>new Proxy(authorize(...args),{
+    get(target,key){if(key==='getOwn' || key==='observeOutcome')return ()=>{throw Error('projection unavailable');};return Reflect.get(target,key);}
+  }));
+  const unreadable=await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`);
+  assert.equal(unreadable.status,200);assert.deepEqual(unreadable.body,fact);
+});
+test('read-only current-session observation validates access without extending its expiry',async t=>{
+  const f=await fixture(t),expiry=()=>f.database.connection.prepare('SELECT expiresAt FROM account_sessions WHERE id=?').get(f.id)!.expiresAt;
+  await f.create();
+  const before=expiry();f.advance(1000);
+  assert.equal(f.accounts.current(f.proof,{renew:false})?.account.id,f.accountId);assert.equal(expiry(),before);
+  assert.equal(f.accounts.current(f.proof)?.account.id,f.accountId);assert.notEqual(expiry(),before);
+  const current=f.accounts.current.bind(f.accounts);let checks=0,firstExpiry:unknown;
+  t.mock.method(f.accounts,'current',(...args:Parameters<typeof current>)=>{
+    if(++checks===2)f.advance(1000);
+    const value=current(...args);if(checks===1)firstExpiry=expiry();return value;
+  });
+  assert.equal((await f.request(`/api/charts/operations/${op(1)}?accountId=${f.accountId}`)).status,200);
+  assert.equal(checks,2);assert.equal(expiry(),firstExpiry,'the later observation cannot add a second session write');
+  t.mock.restoreAll();
+  f.database.connection.prepare('DELETE FROM account_sessions WHERE id=?').run(f.id);
+  assert.equal(f.accounts.current(f.proof,{renew:false}),null);
 });
 test('origin and account identity are checked before calculation, and logout during calculation prevents the write',async t=>{
   const f=await fixture(t),body={...f.intent(),name:'Транзит',note:'',birth:{source:'transit',utc:birth.utc}};

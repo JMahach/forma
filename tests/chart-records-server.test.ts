@@ -53,6 +53,26 @@ test('receipt expiry neither removes the chart nor turns an unknown outcome into
   assert.equal(f.database.connection.prepare('SELECT COUNT(*) AS count FROM chart_operation_outcomes').get()!.count, 0);
 });
 
+test('observing an old absent or rejected receipt includes a later current card without rewriting the receipt',t=>{
+  for(const kind of ['absent','rejected'] as const) {
+    const f=fixture(t),id=operation(1),intent={operationId:operation(20),expectedAccountId:f.a};
+    const absent=kind==='absent'?f.records.remove({...intent,chartId:id}):f.records.update({...intent,chartId:id,name:'Before creation'});
+    assert.equal(absent.kind,kind);
+    const created=f.create(21);assert.equal(created.chartId,id,'an address never issued before is still available');
+    const observed=f.records.observeOutcome(f.records.outcome(intent),f.a);
+    assert.equal(observed.kind,kind);assert.equal(observed.chart?.id,id);assert.equal(observed.catalogMarker,'1');
+    assert.deepEqual(f.records.outcome(intent),absent,'current presence does not rewrite historical absence');
+  }
+});
+
+test('a changed public source rejection observes the catalog without treating its address as an own result',t=>{
+  const f=fixture(t),created=f.create(),intent={operationId:operation(2),expectedAccountId:f.a};
+  const result=f.records.addFromSource({...intent,sourceId:created.chartId,seenRevision:2});
+  assert.deepEqual(result,{kind:'rejected',chartId:created.chartId,code:'source_changed'});
+  assert.deepEqual(f.records.observeOutcome(result,f.a),{...result,catalogMarker:'1'});
+  assert.deepEqual(f.records.outcome(intent),result);
+});
+
 test('deduplication compares normalized name and UTC minute, and preserves the existing content', t => {
   const f = fixture(t), first = f.create();
   const duplicate = f.create(2, content({name: ' АННА\tИВАНОВА ', utc: '2000-01-01T15:00:59+03:00', note: 'Must not replace'}));

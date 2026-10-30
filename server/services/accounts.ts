@@ -321,14 +321,16 @@ export function createAccounts({ database, key, mail, telegram, signal, now = Da
       const rows = knownSessions(credentials, now()).filter(row => matches(credentials.sessions[row.id], row.secretHash));
       return rows.length === 1 ? String(rows[0]!.accountId) : null;
     },
-    current(credentials: AccountCredentials) {
+    current(credentials: AccountCredentials, {renew=true}:{renew?:boolean} = {}) {
       return database.transaction(() => {
         const time = now();
         const rows = knownSessions(credentials, time).filter(row => matches(credentials.sessions[row.id], row.secretHash));
         if (rows.length > 1) throw new AccountError('account_changed', 409);
         const row = rows[0]; if (!row) return null;
-        row.expiresAt = time + policy.sessionMs;
-        storage.touchSession(row.id, row.expiresAt);
+        if(renew) {
+          row.expiresAt = time + policy.sessionMs;
+          storage.touchSession(row.id, row.expiresAt);
+        }
         return view(row);
       });
     },
