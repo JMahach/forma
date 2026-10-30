@@ -141,13 +141,68 @@ test('the real natal client stores an owned full day once and a new client resto
  const ready=await first.getDay(chart);
  // Reads share the account transaction queue with the preceding optional save.
  assert.deepEqual(await first.readStoredDay(chart),ready);
- const reopened=createNatalDayClient({library:store,persistentCache:null,fetch:async()=>assert.fail('ready owned day must not request HTTP')});
+ const memory=createMemoryCache(),reopened=createNatalDayClient({library:store,persistentCache:null,memory,fetch:async()=>assert.fail('ready owned day must not request HTTP')});
  const put=IDBObjectStore.prototype.put;let uses=0;
  IDBObjectStore.prototype.put=function(...args){if(this.name==='usage')uses++;return put.apply(this,args);};
  try{assert.deepEqual(await reopened.getDay(chart),ready);}finally{IDBObjectStore.prototype.put=put;}
  assert.equal(requests,1);assert.equal(uses,1,'opening an existing whole day records actual use once');
+ let admissions=0,memoryPuts=0,packetReads=0,hotUses=0;
+ const admit=store.putPackage,remember=memory.put,read=IDBObjectStore.prototype.get;
+ t.mock.method(store,'putPackage',(...args:Parameters<typeof admit>)=>{admissions++;return admit(...args);});
+ t.mock.method(memory,'put',(...args:Parameters<typeof remember>)=>{memoryPuts++;return remember(...args);});
+ t.mock.method(IDBObjectStore.prototype,'get',function(this:IDBObjectStore,...args:Parameters<typeof read>){if(this.name==='packages')packetReads++;return read.apply(this,args);});
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){if(this.name==='usage')hotUses++;return put.apply(this,args);});
+ const hot=await Promise.all(Array.from({length:50},()=>reopened.getDay(chart)));await store.read();
+ assert.ok(hot.every(day=>day===hot[0]));
+ assert.deepEqual({admissions,memoryPuts,packetReads,hotUses},{admissions:0,memoryPuts:0,packetReads:0,hotUses:1},'concurrent RAM hits share one light use mark without revalidating, cloning or re-admitting the full packet');
  await store.clear(lease);
  assert.equal(await first.readStoredDay(chart),null,'RAM never proves a new owned offline action after deletion');
+});
+
+test('an evicted hot day is admitted once and durable reads wait for the optional use fallback',async t=>{
+ const {createNatalDayClient}=await import('../src/data/natal-day-client.ts'),{store,indexedDB,lease}=await setup(t),bytes=dayBytes();
+ await store.putPackage(lease,chart,dayRef,bytes);
+ const client=createNatalDayClient({library:store,persistentCache:null,fetch:async()=>assert.fail('RAM must avoid another download')});
+ const ready=await client.getDay(chart);
+ const request=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{request.onsuccess=()=>resolve(request.result);});t.after(()=>db.close());
+ await new Promise<void>((resolve,reject)=>{const tx=db.transaction('packages','readwrite');tx.objectStore('packages').delete(JSON.stringify(dayRef));tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);});
+ let touches=0,admissions=0,release!:()=>void;const paused=new Promise<void>(resolve=>{release=resolve;});
+ const touch=store.touchPackage,admit=store.putPackage;
+ t.mock.method(store,'touchPackage',async(...args:Parameters<typeof touch>)=>{touches++;const found=await touch(...args);await paused;return found;});
+ t.mock.method(store,'putPackage',(...args:Parameters<typeof admit>)=>{admissions++;return admit(...args);});
+ try{
+  assert.equal(await client.getDay(chart),ready);assert.equal(await client.getDay(chart),ready);
+  await new Promise(setImmediate);assert.equal(touches,1);
+  let settled=false;const durable=client.readStoredDay(chart).then(day=>{settled=true;return day;});
+  await new Promise(setImmediate);assert.equal(settled,false,'do not report absence in the gap before fallback placement');
+  release();assert.deepEqual(await durable,ready);assert.equal(admissions,1);
+ }finally{release();}
+});
+
+test('a pending hot-day admission cannot block or write into a new account lease',async t=>{
+ const {createNatalDayClient}=await import('../src/data/natal-day-client.ts'),{store,lease}=await setup(t),bytes=dayBytes();
+ await store.putPackage(lease,chart,dayRef,bytes);
+ const client=createNatalDayClient({library:store,persistentCache:null,fetch:async()=>assert.fail('no repeat HTTP')});
+ const ready=await client.getDay(chart);let release!:()=>void;
+ const paused=new Promise<void>(resolve=>{release=resolve;}),touch=store.touchPackage;
+ t.mock.method(store,'touchPackage',async(...args:Parameters<typeof touch>)=>{
+  if(args[0].generation===lease.generation){await paused;return false;}
+  return touch(...args);
+ });
+ let timer:ReturnType<typeof setTimeout>|undefined;
+ try{
+  assert.equal(await client.getDay(chart),ready);
+  await store.activate('2');const next=await store.activate('1');if(next.status!=='stored')throw Error('owner');
+  assert.notEqual(next.lease.generation,lease.generation);await store.put(next.lease,[chart]);
+  assert.equal(await client.getDay(chart),ready);
+  const timeout=new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('old admission blocked the new owner')),500);});
+  assert.deepEqual(await Promise.race([client.readStoredDay(chart),timeout]),ready);
+  let payloadWrites=0;const put=IDBObjectStore.prototype.put;
+  t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){if(this.name==='packages')payloadWrites++;return put.apply(this,args);});
+  release();await new Promise(setImmediate);await store.read();
+  assert.equal(payloadWrites,0,'late old-lease fallback cannot publish another package');
+  assert.deepEqual(await store.readPackage(next.lease,dayRef),bytes);
+ }finally{release();clearTimeout(timer);}
 });
 
 test('an owned day response arriving after account change stays out of the new account storage',async t=>{
@@ -303,6 +358,7 @@ test('owned returns reuse a whole durable family and lose new offline permission
  for(const invalid of [{...owner,chartId:'wrong'}, {...owner,expectedAccountId:'2'}, {...owner,record:undefined},
   {...owner,record:{...chart,source:'transit' as const}}])assert.equal(await client.readFamily(input,invalid),null);
  assert.deepEqual(await client.events(input,undefined,{owner}),value.dates);
+ assert.deepEqual(await client.fetchFamily(input,owner),{status:'no-op',payload:value},'a whole durable family never needs another GET');
  const event=value.dates.events[0],exact={...input,eventUtc:event.utc};
  assert.deepEqual((await client.chart(exact,undefined,{owner,event})).chart,value.charts[0].chart);
  await store.read();

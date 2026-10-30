@@ -39,12 +39,13 @@ export function createNatalDayStorage({ legacyDatabaseName = 'bodygraph-chart-da
 
 export interface DayDisk {
  owned?:true;
+ useKey?:string;
  get(key:string,opened?:boolean):Promise<ArrayBuffer|null>;
  put(key:string,bytes:ArrayBuffer):Promise<unknown>;
  remove(key:string):Promise<unknown>;
  touch?:(key:string)=>Promise<unknown>;
 }
-type Library=Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'>;
+type Library=Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'|'touchPackage'>;
 type Identity=Partial<Pick<ChartRecord,'id'|'birthDate'|'timezone'>> & {accountId?:string};
 interface Destination {owner:LibraryLease;card:AccountChart;ref:{kind:'day';sourceKey:string}}
 async function migrateOwnedDay(library:Library,destination:Destination,legacy:NatalDayStorage|null,key:string,opened?:boolean) {
@@ -66,8 +67,10 @@ export function captureNatalDayStorage(chart:Identity|null|undefined,library:Lib
  const owner=library.capture(chart.accountId);if(!owner)return null;
  const card={...chart} as AccountChart,ref={kind:'day' as const,sourceKey:natalDaySourceKey({date:card.birthDate,timezone:card.timezone||'UTC'})};
  return {owned:true,
+  useKey:JSON.stringify([owner,card.id,card.revision,ref]),
   get:(key,opened)=>readOwnedDay(library,{owner,card,ref},legacy,key,opened,observeOnly),
   put:(_key,bytes)=>library.putPackage(owner,card,ref,bytes,{opened:true}),
+  touch:()=>library.touchPackage(owner,ref),
   remove:()=>Promise.resolve(null),
  };
 }

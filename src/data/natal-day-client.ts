@@ -12,7 +12,7 @@ interface NatalClientOptions {
   fetch?: (url: string, options: RequestInit & { signal: AbortSignal }) => DayResponse | PromiseLike<DayResponse>;
   decode?: (bytes: ArrayBuffer) => NatalDay;
   persistentCache?: NatalDayStorage | null;
-  library?:Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'>;
+  library?:Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'|'touchPackage'>;
   memory?: MemoryCache;
   timeoutMs?: number;
 }
@@ -38,11 +38,14 @@ export function createNatalDayClient({
   const packets=new WeakMap<NatalDay,ArrayBuffer>();
   const memorySize=(day:NatalDay)=>estimateBytes(day)+(packets.get(day)?.byteLength??0);
   const diskFor=(chart:BirthDayIdentity|null|undefined,observeOnly=false)=>captureNatalDayStorage(chart,library,persistentCache,observeOnly);
-  function touch(key:string,disk:DayDisk|null=persistentCache) {
-    if(!disk?.touch || touches.has(key))return;
-    const work=Promise.resolve().then(()=>disk?.touch?.(key)).catch(()=>{})
-      .finally(()=>{if(touches.get(key)===work)touches.delete(key);});
-    touches.set(key,work);
+  function touch(key:string,disk:DayDisk|null=persistentCache,bytes?:ArrayBuffer) {
+    if(!disk?.touch || disk.owned && !bytes)return;
+    const useKey=disk.useKey??key;if(touches.has(useKey))return;
+    const work=Promise.resolve().then(async()=>{
+      const present=await disk.touch!(key);
+      if(disk.owned && bytes && !present)await disk.put(key,bytes);
+    }).catch(()=>{}).finally(()=>{if(touches.get(useKey)===work)touches.delete(useKey);});
+    touches.set(useKey,work);
   }
   function remember(key: string, day: NatalDay, disk:DayDisk|null=persistentCache, bytes?:ArrayBuffer) {
     dayKeys.set(day, key);
@@ -114,9 +117,8 @@ export function createNatalDayClient({
     };
     const cached = memory.get<NatalDay>(key), skipDisk = cached && !compatibleTimezone(cached, timezone);
     if(cached && !skipDisk) {
-      const bytes=packets.get(cached);
-      if(disk?.owned && bytes)void disk.put(key,bytes).catch(()=>{});
-      return remember(key,cached,disk);
+      dayKeys.set(cached,key);touch(key,disk,packets.get(cached));
+      return cached;
     }
     if (skipDisk) forget(key,disk);
     return forChart(await shareRequest(pending, requestKey, async ({ controller, consumers }) => {
@@ -177,6 +179,10 @@ export function createNatalDayClient({
   async function readStoredDay(chart:BirthDayIdentity|null|undefined,{signal,opened=false,observeOnly=false}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={}) {
     if(signal?.aborted)throw createAbortError();
     const input=identity(chart),disk=diskFor(chart,observeOnly);if(!input || !disk)return null;
+    // A lightweight miss may still be admitting the hot packet. Observe that
+    // completed placement, never join a network or calculation request.
+    await touches.get(disk.useKey??input.key);
+    if(signal?.aborted)throw createAbortError();
     const bytes=await disk.get(input.key,opened);if(signal?.aborted)throw createAbortError();
     if(!bytes)return null;
     try {const day=validate(bytes,input.birthDate);return compatibleTimezone(day,input.timezone)?remember(input.key,day,disk,bytes):null;}catch{return null;}
