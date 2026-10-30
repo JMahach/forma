@@ -71,6 +71,24 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
     expect(kind);
     return accept('original', baseChart);
   }
+  function select(id: string) {
+    selecting = true;
+    try {
+      if (selectedId === 'current-transit' && id !== 'current-transit') resetTransitFilter();
+      const nextRecord = store.get(id) || null;
+      if (nextRecord !== record) baseChart = nextRecord ? extractChartData(nextRecord) : emptyMoment;
+      selectedId = id; record = nextRecord;
+      expect(id === 'current-transit' ? 'transit' : 'natal-day');
+      getReturns()?.exit(); getReturns()?.select(record);
+      getLifetime()?.close();
+      getNatalDay()?.close(); getNatalDay()?.select(record, baseChart);
+      accept('original', baseChart);
+      onSelect(record);
+      getTransit()?.setWanted(id === 'current-transit');
+      if (id === 'current-transit' && getTransit()?.current) accept('transit', getTransit()!.current);
+    } finally { selecting = false; }
+    refresh();
+  }
   return {
     get selectedId() { return selectedId; },
     get record() { return record; },
@@ -97,9 +115,12 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
       }finally{selecting=false;}
       refresh();return true;
     },
-    refreshRecord() {
+    refreshRecord(reselect:(id:string)=>void=select) {
       const next = store.get(selectedId);
       if (!next) return false;
+      if(next===record){refresh();return true;}
+      if(!record || record.utc!==next.utc || record.activations!==next.activations
+        && JSON.stringify(record.activations)!==JSON.stringify(next.activations)){reselect(selectedId);return true;}
       selecting = true;
       try {
         record = next;
@@ -111,23 +132,6 @@ export function createChartSession({ store, initialSelectedId = 'current-transit
       } finally { selecting = false; }
       refresh(); return true;
     },
-    select(id: string) {
-      selecting = true;
-      try {
-        if (selectedId === 'current-transit' && id !== 'current-transit') resetTransitFilter();
-        const nextRecord = store.get(id) || null;
-        if (nextRecord !== record) baseChart = nextRecord ? extractChartData(nextRecord) : emptyMoment;
-        selectedId = id; record = nextRecord;
-        expect(id === 'current-transit' ? 'transit' : 'natal-day');
-        getReturns()?.exit(); getReturns()?.select(record);
-        getLifetime()?.close();
-        getNatalDay()?.close(); getNatalDay()?.select(record, baseChart);
-        accept('original', baseChart);
-        onSelect(record);
-        getTransit()?.setWanted(id === 'current-transit');
-        if (id === 'current-transit' && getTransit()?.current) accept('transit', getTransit()!.current);
-      } finally { selecting = false; }
-      refresh();
-    },
+    select,
   };
 }

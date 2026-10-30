@@ -647,3 +647,22 @@ test('adoption refuses a changed calculation or an obsolete selected source with
   assert.equal(session.adopt(original.id,'old-selection'),false);assert.equal(session.current,shown);
   assert.equal(session.selectedId,original.id);
 });
+
+test('record refresh owns source changes and skips unchanged personal consumers',()=>{
+ let current=libraryRecordAtMinute(natalDayFixture(),0),changes=0,metadata=0,returns=0;const reselections:string[]=[];
+ const session=createChartSession({store:{has:()=>true,get:()=>current},initialSelectedId:current.id,
+  getNatalDay:()=>({updateMetadata(){metadata++;},select(){},close(){},state:{current:null}}),
+  getReturns:()=>({select(){returns++;},exit(){}}),onChange:()=>{changes++;}});
+ assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
+ assert.deepEqual({changes,metadata,returns},{changes:1,metadata:0,returns:0});
+ current={...current,name:'Changed name'};assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
+ assert.deepEqual({changes,metadata,returns},{changes:2,metadata:1,returns:1});assert.equal(reselections.length,0);
+ current=structuredClone(current);assert.equal(session.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,0);
+ current={...current,utc:'2000-01-01T00:00:00Z'};assert.equal(session.refreshRecord(id=>reselections.push(id)),true);
+ assert.deepEqual(reselections,[current.id]);assert.equal(changes,3,'source replacement belongs to the selection command');
+ assert.equal(metadata,2,'new numerical data must not enter the metadata-only path');
+ current={...current,utc:libraryRecordAtMinute(natalDayFixture(),0).utc,activations:{...current.activations!,personality:[]}};
+ assert.equal(session.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,2);assert.equal(metadata,2);
+ let ready=false;const initial=createChartSession({store:{has:()=>true,get:()=>ready?current:null},initialSelectedId:current.id});
+ ready=true;assert.equal(initial.refreshRecord(id=>reselections.push(id)),true);assert.equal(reselections.length,3);
+});

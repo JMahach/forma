@@ -420,7 +420,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     // record. It does not supersede the accepted source of an explicit save.
     const preserveSaveSource = Boolean(application?.write.source && session.record === application.write.source);
     if(preserveSaveSource)store.showPublic(application!.write.source);
-    const previous = session.record, editedId = birthForm.editedId;
+    const editedId = birthForm.editedId;
     store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
       accountLibrary.readyIds,accountLibrary.entries);
     birthForm.refresh();
@@ -430,8 +430,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
       if (!next) { librarySelection++; selectChart('current-transit', {replace:true}); }
-      else if (previous?.utc !== next.utc || JSON.stringify(previous?.activations) !== JSON.stringify(next.activations)) graph.changeChart(next.id);
-      else session.refreshRecord();
+      else session.refreshRecord(graph.changeChart);
       // The accepted session already updates every page projection.
       return;
     }
@@ -533,7 +532,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     ...birthClient, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, toast,
     onSave: (id, { metadataOnly = false } = {}) => {
       if (id !== session.selectedId) selectChart(id, {replace: navigation?.snapshot.route?.kind === 'temporary-chart'});
-      else if (metadataOnly) session.refreshRecord();
+      else if (metadataOnly) session.refreshRecord(graph.changeChart);
       else graph.changeChart(id);
       workspace.setScreen('chart');
       publishRoute(routeForChart(id), navigation?.snapshot.route?.kind === 'temporary-chart');
@@ -965,10 +964,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       store.acceptPublic(next);
       if(publicCheckSource===previous)publicCheckSource=store.publicChart;
       if(session.selectedId===next.id && !accountLibrary.get(next.id)) {
-        if(previous.utc!==next.utc || JSON.stringify(previous.activations)!==JSON.stringify(next.activations))graph.changeChart(next.id);
-        else session.refreshRecord();
-      }
-      updatePage();viewSession?.flush();
+        session.refreshRecord(graph.changeChart);
+      } else updatePage();
+      viewSession?.flush();
     },
     missing(previous){
       store.clearPublic(previous.id);
