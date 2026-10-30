@@ -219,7 +219,8 @@
         "src/domain/library-catalog.ts",
         "src/domain/background-check.ts",
         "src/domain/background-policy.ts",
-        "src/domain/library-maintenance.ts"
+        "src/domain/library-maintenance.ts",
+        "src/domain/library-fill.ts"
       ],
       "publicEntries": [
         "src/domain/account-chart.ts",
@@ -250,7 +251,8 @@
         "src/domain/library-catalog.ts",
         "src/domain/background-check.ts",
         "src/domain/background-policy.ts",
-        "src/domain/library-maintenance.ts"
+        "src/domain/library-maintenance.ts",
+        "src/domain/library-fill.ts"
       ],
       "allowRuntime": [
         "domain",
@@ -374,7 +376,8 @@
         "src/data/calculation-cache-transition.ts",
         "src/data/library-catalog-store.ts",
         "src/data/background-check-store.ts",
-        "src/data/library-maintenance-store.ts"
+        "src/data/library-maintenance-store.ts",
+        "src/data/library-fill-store.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
@@ -401,12 +404,13 @@
       "privateEntryReasons": {
         "src/data/indexed-db.ts": "Raw database connection stays behind storage adapters.",
         "src/data/calculation-migration.ts": "Legacy source reading and deletion are internal to the single calculation-cache budget owner.",
-        "src/data/account-card-placement.ts": "Atomic admission of an opened card in the existing account database; no independent storage or account owner.",
+        "src/data/account-card-placement.ts": "Whole-card placement and permitted local-copy eviction in the existing account database; no independent storage or account owner.",
         "src/data/account-library-schema.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting.",
         "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner.",
         "src/data/background-check-store.ts": "Shared check control and atomic catalogue permission live in the existing library database; callers receive its narrow background store port.",
-        "src/data/library-maintenance-store.ts": "Bounded account inventory and integrity scans are exposed only through the account library facade."
+        "src/data/library-maintenance-store.ts": "Bounded account inventory and integrity scans are exposed only through the account library facade.",
+        "src/data/library-fill-store.ts": "Shared fill permission and placement guards stay behind the existing account library facade."
       }
     },
     {
@@ -424,7 +428,8 @@
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
         "src/data/telegram-login.ts",
-        "src/data/return-family-client.ts"
+        "src/data/return-family-client.ts",
+        "src/data/library-fill-transfer.ts"
       ],
       "publicEntries": [
         "src/data/account-client.ts",
@@ -437,7 +442,8 @@
         "src/data/natal-day-client.ts",
         "src/data/transit-day-client.ts",
         "src/data/calculation-clients.ts",
-        "src/data/telegram-login.ts"
+        "src/data/telegram-login.ts",
+        "src/data/library-fill-transfer.ts"
       ],
       "allowRuntime": [
         "data-clients",
@@ -1818,12 +1824,16 @@
         "src/application/public-refresh.ts",
         "src/application/startup.ts",
         "src/application/update.ts",
-        "src/application/background-work.ts"
+        "src/application/background-work.ts",
+        "src/application/library-local-audit.ts",
+        "src/application/library-fill.ts"
       ],
       "publicEntries": [
         "src/application/application.ts",
         "src/application/ports.ts",
-        "src/application/background-work.ts"
+        "src/application/background-work.ts",
+        "src/application/library-local-audit.ts",
+        "src/application/library-fill.ts"
       ],
       "allowRuntime": [
         "application",
@@ -2049,6 +2059,18 @@
         "from": "src/application/background-work.ts",
         "specifier": "xstate",
         "reason": "Shared checks are a cancellable application child; lifecycle and storage remain behind ports."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/library-local-audit.ts",
+        "specifier": "xstate",
+        "reason": "Cancellable local integrity child owned by the existing application machine."
+      },
+      {
+        "owner": "application",
+        "from": "src/application/library-fill.ts",
+        "specifier": "xstate",
+        "reason": "Sequential fill is a cancellable application child; transport and storage remain explicit ports."
       }
     ]
   },
