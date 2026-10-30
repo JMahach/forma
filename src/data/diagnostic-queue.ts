@@ -7,14 +7,15 @@ import { parseClientReport, CLIENT_REPORT_MAX_BYTES, DIAGNOSTIC_BATCH_MAX_BYTES,
 export const DIAGNOSTIC_QUEUE_BYTES=5_000_000;
 export const DIAGNOSTIC_QUEUE_RETENTION_MS=7*86400000;
 const CONTROL_BYTES=1024,ROW_BYTES=256,LEASE_MS=30_000;
-const RETRY_DELAYS=[1000,2000,4000,8000,16000,30000,60000];
+const attemptDelay=(attempt:number)=>attempt<2?1000:attempt===2?5000:60_000;
+const newOccasion=(at:number|undefined,deadline:number,time:number)=>at!==undefined && Number.isFinite(at) && at>=deadline && at<=time;
 interface Control {key:'queue';epoch:number;bytes:number;count:number;sequence:number;retryAt:number;failures:number;
-  lease:{owner:string;until:number}|null;scope?:string|null;accountId?:string|null}
+  lease:{owner:string;until:number}|null;scope?:string|null;accountId?:string|null;serverRetryAt?:number}
 interface Stored {diagnosticProof?:string;eventId:string;sequence:number;epoch:number;scope?:string|null;createdAt:number;bytes:number;body:Uint8Array;nextAttemptAt:number;failures:number}
 export interface DiagnosticQueueEntry {diagnosticProof?:string;eventId:string;sequence:number;report:ClientReport}
 export interface DiagnosticBatchToken {epoch:number;owner:string}
 export type DiagnosticBatch={status:'batch';token:DiagnosticBatchToken;entries:DiagnosticQueueEntry[]}
-  |{status:'waiting';retryAt:number}|{status:'empty'|'stale'|'unavailable'};
+  |{status:'waiting'|'paused';retryAt:number}|{status:'empty'|'stale'|'unavailable'};
 interface Options {indexedDB?:IDBFactory|null;databaseName?:string;timeoutMs?:number;now?:()=>number;maxBytes?:number}
 export type DiagnosticQueue=ReturnType<typeof createDiagnosticQueue>;
 const request=<T>(value:IDBRequest<T>)=>new Promise<T>((resolve,reject)=>{value.onsuccess=()=>resolve(value.result);value.onerror=()=>reject(value.error);});
@@ -24,12 +25,35 @@ type Change={clearedEpoch?:number};
 const localChanges=new WeakMap<IDBFactory,Map<string,Set<(change?:Change)=>void>>>();
 const validTime=(value:number)=>Number.isSafeInteger(value) && value>=0 && value<=8.64e15-DIAGNOSTIC_QUEUE_RETENTION_MS;
 
+function deliveryWait(value:Control,owner:string,time:number,wakeAt:number|undefined):DiagnosticBatch|null {
+  if(value.failures>=3 && !newOccasion(wakeAt,value.retryAt,time))return {status:'paused',retryAt:value.retryAt};
+  const until=Math.max(value.retryAt,value.serverRetryAt??0,value.lease && value.lease.owner!==owner?value.lease.until:0);
+  return until>time?{status:'waiting',retryAt:until}:null;
+}
+// Reserve before HTTP: losing the ACK commit must not give the next sender a
+// free attempt. Report bytes and their original creation time remain unchanged.
+function reserve(tx:IDBTransaction,value:Control,selected:Stored[],time:number) {
+  value.failures=value.failures>=3?1:value.failures+1;value.retryAt=time+attemptDelay(value.failures);
+  for(const row of selected){row.failures=row.failures>=3?1:row.failures+1;
+    row.nextAttemptAt=time+attemptDelay(row.failures);tx.objectStore('reports').put(row);}
+}
+function serverPause(value:Control,retryAfterMs:number,time:number) {
+  if(Number.isFinite(retryAfterMs) && retryAfterMs>0)value.serverRetryAt=Math.max(value.serverRetryAt??0,time+Math.min(retryAfterMs,8.64e15-time));
+}
+async function deferRemaining(tx:IDBTransaction,token:DiagnosticBatchToken,allowed:Map<string,number>,accepted:Set<string>,time:number) {
+  for(const [id,sequence]of allowed){if(accepted.has(id))continue;
+    const row=await request(tx.objectStore('reports').get(id)) as Stored|undefined;
+    if(row && row.epoch===token.epoch && row.sequence===sequence){const deadline=time+attemptDelay(row.failures);
+      if(deadline>row.nextAttemptAt){row.nextAttemptAt=deadline;tx.objectStore('reports').put(row);}}}
+}
+
 /** One transactional queue and sender lease for every tab. No report is acknowledged in RAM. */
 export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-diagnostics',timeoutMs=1000,
   now=Date.now,maxBytes=DIAGNOSTIC_QUEUE_BYTES}:Options={}) {
   if(!Number.isSafeInteger(maxBytes) || maxBytes<CONTROL_BYTES || maxBytes>DIAGNOSTIC_QUEUE_BYTES)throw new RangeError('Invalid diagnostic budget');
-  const database=createIndexedDatabase({indexedDB:factory,databaseName,timeoutMs,version:2,stores:['reports','control'],upgrade(db){
-    // Preserve every legacy report. Versionchange fences old writers; only an
+  const database=createIndexedDatabase({indexedDB:factory,databaseName,timeoutMs,version:3,stores:['reports','control'],upgrade(db){
+    // The same queue and bytes survive; versionchange retires writers that do
+    // not reserve the finite retry budget. Only an
     // explicit exit may clear their remainder before a login scope was recorded.
     if(!db.objectStoreNames.contains('reports')){const reports=db.createObjectStore('reports',{keyPath:'eventId'});
       reports.createIndex('sequence','sequence');reports.createIndex('createdAt','createdAt');}
@@ -59,10 +83,12 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
   }
   function remove(tx:IDBTransaction,value:Control,row:Stored){tx.objectStore('reports').delete(row.eventId);value.bytes-=row.bytes;value.count--;}
   async function prune(tx:IDBTransaction,value:Control,time:number) {
+    const before=JSON.stringify(value);
     for await(const cursor of rows(tx.objectStore('reports').index('createdAt'))){const row=cursor.value as Stored;
       if(row.createdAt+DIAGNOSTIC_QUEUE_RETENTION_MS>time)break;remove(tx,value,row);
     }
     if(!value.count){value.retryAt=0;value.failures=0;value.lease=null;}
+    return JSON.stringify(value)!==before;
   }
   async function nextExpiry(tx:IDBTransaction){const cursor=await request(tx.objectStore('reports').index('createdAt').openCursor());
     return cursor?(cursor.value as Stored).createdAt+DIAGNOSTIC_QUEUE_RETENTION_MS:null;}
@@ -70,7 +96,7 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
     if(!await setup() || !validTime(now()))return {status:'unavailable' as const};
     const result=await atomic(async tx=>{const value=(await readControl(tx))!;
       if(boundEpoch!==undefined && boundEpoch!==value.epoch)return {status:'stale' as const,epoch:value.epoch};
-      const count=value.count;await prune(tx,value,now());save(tx,value);
+      const count=value.count;if(await prune(tx,value,now()))save(tx,value);
       return {status:'ready' as const,active:active(),epoch:value.epoch,bytes:value.bytes,count:value.count,retryAt:value.retryAt,
         leaseUntil:value.lease?.until??0,nextExpiry:await nextExpiry(tx),removed:count-value.count};
     });return result??{status:'unavailable' as const};
@@ -80,7 +106,7 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
     (timer as unknown as {unref?():void})?.unref?.();
   }
   async function refreshTimer(){const snapshot=await state();
-    if(snapshot.status==='unavailable'){cleanupFailures++;schedule(now()+RETRY_DELAYS[Math.min(cleanupFailures-1,RETRY_DELAYS.length-1)]);return;}
+    if(snapshot.status==='unavailable'){cleanupFailures++;if(cleanupFailures<3)schedule(now()+attemptDelay(cleanupFailures));return;}
     cleanupFailures=0;schedule(snapshot.status==='ready'?snapshot.nextExpiry:null);
     if(snapshot.status==='ready' && snapshot.removed)for(const listener of listeners)try{listener();}catch{}
   }
@@ -95,8 +121,8 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
   };
   function publish(change?:Change){for(const peer of peers??[])peer(change);channel?.postMessage(change??{changed:true});}
   void refreshTimer();
-  async function batch(tx:IDBTransaction,value:Control,includeDeferred=false,include:(row:Stored)=>boolean=()=>true) {
-    const entries:DiagnosticQueueEntry[]=[];let bytes=128,nextAttemptAt=Infinity;
+  async function batch(tx:IDBTransaction,value:Control,includeDeferred=false,include:(row:Stored)=>boolean=()=>true,wakeAt?:number) {
+    const entries:DiagnosticQueueEntry[]=[],selected:Stored[]=[];let bytes=128,nextAttemptAt=Infinity;
     let batchProof:string|undefined,hasAccount=false;
     for await(const cursor of rows(tx.objectStore('reports').index('sequence'))){const row=cursor.value as Stored;
       if(!include(row))continue;
@@ -105,14 +131,16 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
       if(!report || report.eventId!==row.eventId || row.epoch!==value.epoch){remove(tx,value,row);continue;}
       const proof=row.diagnosticProof===undefined?null:parseDiagnosticProof(row.diagnosticProof);
       if(row.diagnosticProof!==undefined && (!proof || proof.accountId!==report.accountId || row.scope!=null && proof.sessionId!==row.scope)){remove(tx,value,row);continue;}
+      if(!includeDeferred && row.failures>=3 && !newOccasion(wakeAt,row.nextAttemptAt,now()))continue;
       if(!includeDeferred && row.nextAttemptAt>now()){nextAttemptAt=Math.min(nextAttemptAt,row.nextAttemptAt);continue;}
       // One origin per HTTP header; legacy unsigned reports never borrow another login's proof.
       if(report.accountId!==null && hasAccount && row.diagnosticProof!==batchProof)continue;
       if(entries.length===DIAGNOSTIC_BATCH_MAX_COUNT || bytes+row.body.byteLength+1>DIAGNOSTIC_BATCH_MAX_BYTES)break;
       if(report.accountId!==null){hasAccount=true;batchProof=row.diagnosticProof;}
       entries.push({eventId:row.eventId,sequence:row.sequence,report,...(row.diagnosticProof?{diagnosticProof:row.diagnosticProof}:{})});bytes+=row.body.byteLength+1;
+      selected.push(row);
     }
-    return {entries,nextAttemptAt};
+    return {entries,selected,nextAttemptAt};
   }
   return {
     state,
@@ -161,23 +189,24 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
         tx.objectStore('reports').put(row);value.bytes+=size;value.count++;save(tx,value);return {status:'queued' as const,duplicate:false};
       });if(result?.status==='queued')publish();return result??{status:'unavailable' as const};
     },
-    async claim(owner:string):Promise<DiagnosticBatch> {
+    async claim(owner:string,wakeAt?:number):Promise<DiagnosticBatch> {
       if(typeof owner!=='string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(owner))return {status:'unavailable'};
       if(!active())return {status:boundEpoch===undefined?'unavailable':'stale'};
       if(!await setup() || !validTime(now()))return {status:'unavailable'};
       return await atomic(async tx=>{const value=(await readControl(tx))!;if(!active() || value.epoch!==boundEpoch || value.scope!==boundScope)return {status:'stale' as const};
-        const time=now();await prune(tx,value,time);
-        if(!value.count){save(tx,value);return {status:'empty' as const};}
-        const until=Math.max(value.retryAt,value.lease && value.lease.owner!==owner?value.lease.until:0);
-        if(until>time){save(tx,value);return {status:'waiting' as const,retryAt:until};}
-        const {entries,nextAttemptAt}=await batch(tx,value,false,row=>row.scope==null || row.scope===boundScope || boundAccount!=null && parseDiagnosticProof(row.diagnosticProof)?.accountId===boundAccount);
-        if(!entries.length){value.lease=null;save(tx,value);return value.count?{status:'waiting' as const,retryAt:nextAttemptAt}:{status:'empty' as const};}
+        const time=now(),pruned=await prune(tx,value,time);
+        if(!value.count){if(pruned)save(tx,value);return {status:'empty' as const};}
+        const wait=deliveryWait(value,owner,time,wakeAt);if(wait){if(pruned)save(tx,value);return wait;}
+        const {entries,selected,nextAttemptAt}=await batch(tx,value,false,row=>row.scope==null || row.scope===boundScope || boundAccount!=null && parseDiagnosticProof(row.diagnosticProof)?.accountId===boundAccount,wakeAt);
+        if(!entries.length){value.lease=null;save(tx,value);return value.count
+          ?{status:Number.isFinite(nextAttemptAt)?'waiting' as const:'paused' as const,retryAt:nextAttemptAt}:{status:'empty' as const};}
         if(!active()){tx.abort();return {status:'stale' as const};}
+        reserve(tx,value,selected,time);
         value.lease={owner,until:time+LEASE_MS};save(tx,value);
         return {status:'batch' as const,token:{epoch:value.epoch,owner},entries};
       })??{status:'unavailable'};
     },
-    async finish(token:DiagnosticBatchToken,entries:readonly DiagnosticQueueEntry[],acknowledged:readonly string[],retry:'none'|'transport'|'partial') {
+    async finish(token:DiagnosticBatchToken,entries:readonly DiagnosticQueueEntry[],acknowledged:readonly string[],retry:'none'|'transport'|'partial',retryAfterMs=0) {
       if(!await setup())return {status:'unavailable' as const};
       const allowed=new Map(entries.map(entry=>[entry.eventId,entry.sequence]));
       const result=await atomic(async tx=>{const value=(await readControl(tx))!;
@@ -187,18 +216,17 @@ export function createDiagnosticQueue({indexedDB:factory,databaseName='forma-dia
           const row=await request(tx.objectStore('reports').get(id)) as Stored|undefined;
           if(row && row.epoch===token.epoch && row.sequence===sequence)remove(tx,value,row);
         }
-        if(owned && retry==='partial')for(const [id,sequence]of allowed){if(accepted.has(id))continue;
-          const row=await request(tx.objectStore('reports').get(id)) as Stored|undefined;
-          if(row && row.epoch===token.epoch && row.sequence===sequence){row.failures++;row.nextAttemptAt=now()+RETRY_DELAYS[Math.min(row.failures-1,RETRY_DELAYS.length-1)];tx.objectStore('reports').put(row);}
-        }
+        if(owned && retry!=='none')await deferRemaining(tx,token,allowed,accepted,now());
         await prune(tx,value,now());
-        if(owned){value.lease=null;if(retry==='transport' && value.count){value.failures++;value.retryAt=now()+RETRY_DELAYS[Math.min(value.failures-1,RETRY_DELAYS.length-1)];}
+        if(owned){value.lease=null;serverPause(value,retryAfterMs,now());if(retry==='transport' && value.count){value.retryAt=Math.max(value.retryAt,now()+attemptDelay(value.failures),value.serverRetryAt??0);}
           else{value.failures=0;value.retryAt=0;}}
         save(tx,value);return {status:'finished' as const,owned,count:value.count,retryAt:value.retryAt};
       });publish();return result??{status:'unavailable' as const};
     },
-    async release(owner:string){if(!await setup())return;
-      await atomic(async tx=>{const value=(await readControl(tx))!;if(value.epoch===boundEpoch && value.lease?.owner===owner){value.lease=null;save(tx,value);}return true;});publish();},
+    async release(owner:string,retryAfterMs=0){if(!await setup())return;
+      const changed=await atomic(async tx=>{const value=(await readControl(tx))!;
+        if(value.epoch!==boundEpoch || value.lease?.owner!==owner)return false;
+        value.lease=null;serverPause(value,retryAfterMs,now());save(tx,value);return true;});if(changed)publish();},
     async clearForExit(includeBatch:boolean,scopes?:readonly (string|null)[]) {
       if(!await setup())return {status:'unavailable' as const};
       const result=await atomic(async tx=>{const value=(await readControl(tx))!;

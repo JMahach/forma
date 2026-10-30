@@ -19,6 +19,7 @@ export type LifetimeExplorer = ReturnType<typeof createLifetimeExplorer>;
 export type LifetimeState = LifetimeExplorer['state'];
 interface LifetimeOptions {
   connection?: () => ConnectionMode;
+  visible?:()=>boolean;
   observe?:ObserveClientAction;
   dayClient?: TransitDayClient | null;
   natalDayClient?: NatalDayClient | null;
@@ -48,7 +49,7 @@ function dateStart(value: unknown) {
 // Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
 export function createLifetimeExplorer({
-  observe, connection = getConnectionMode, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
+  observe, connection = getConnectionMode, visible=()=>true, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
   client = createLifetimeClient({ dayClient, natalDayClient, getPersonalRecord }), getDayState = () => null, now = () => Date.now(),
   getMomentState = () => null,
   planetFilter = createTransitPlanetFilter(),
@@ -294,13 +295,14 @@ export function createLifetimeExplorer({
           // again explicitly; repeating the same validation cannot repair it.
           status = 'error'; retryCount = 0; error = problem.message || 'Данные летописи недоступны.';
         } else {
-          status = 'loading'; retryCount++;
+          retryCount++;status=retryCount<3?'loading':'error';
+          if(retryCount>=3)error=problem.message || 'Данные летописи недоступны.';
           // Keep the selected target and last good chart. A new command cancels
           // this wait; only the still-current load may retry after its backoff.
-          const delay = Math.min(30_000, 1000 * 2 ** Math.min(retryCount - 1, 5));
-          retryTimer = setTimeout(() => {
+          const delay = retryCount===1?1000:5000;
+          if(retryCount<3)retryTimer = setTimeout(() => {
             if (generation !== sequence || !opened) return;
-            retryTimer = null; void load();
+            retryTimer = null;if(visible())void load();
           }, delay);
         }
         notify();
@@ -426,7 +428,7 @@ export function createLifetimeExplorer({
     goNow() { const reference = referenceUtc(); if (reference !== null) return scrub(reference); },
     togglePlanet(...args: Parameters<TransitPlanetFilter['togglePlanet']>) { return applySelection('togglePlanet', ...args); },
     toggleAllPlanets(...args: Parameters<TransitPlanetFilter['toggleAllPlanets']>) { return applySelection('toggleAllPlanets', ...args); },
-    retry: load,
+    retry() {retryCount=0;return load();},
     setDateRange(from: string | null | undefined, through: string | null | undefined) {
       const nextOpenStart = from === null || from === undefined || from === '';
       if (nextOpenStart) from = minDate;

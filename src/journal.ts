@@ -10,6 +10,7 @@ import { parseClientContextStep, type ClientReportMetadata, type ClientContextSt
 interface Options {
   appVersion:string;environment:ClientReportMetadata['environment'];accountId?:string|null;sessionId?:string|null;diagnosticProof?:string;
   indexedDB?:IDBFactory|null;send?:DiagnosticTransport;connection?:()=>ConnectionMode;now?:()=>number;monotonicNow?:()=>number;
+  visibility?:Pick<Document,'hidden'|'addEventListener'|'removeEventListener'>|null;
 }
 type Delivery=ReturnType<typeof createDiagnosticDelivery>;
 interface Owner {accountId:string|null;diagnosticProof?:string;queue:DiagnosticQueue;generation:number;scope:string|null|undefined;epoch:number|null;activated:boolean;delivery:Delivery|null;closing:Promise<void>|null;
@@ -19,13 +20,16 @@ interface Cleanup {owner:Owner;scopes:readonly (string|null)[]|undefined;attempt
 /** Browser composition only. Callers provide trusted build metadata and account
  * transitions; attachBrowser explicitly connects one replaceable browser source. */
 export function createJournal({appVersion,environment,accountId=null,sessionId,diagnosticProof,indexedDB,
-  send=createDiagnosticClient(),connection=getConnectionMode,now=Date.now,monotonicNow}:Options) {
+  send=createDiagnosticClient(),connection=getConnectionMode,now=Date.now,monotonicNow,
+  visibility=typeof document==='undefined'?null:document}:Options) {
   let currentAccount=accountId,lastAccount=accountId,generation=0,closed=false,unknownCleanup=false;
   let currentScope:string|null|undefined=accountId===null?null:sessionId??undefined;
   let currentProof=diagnosticProof;
   let active:Owner|null=null,cleanup:Cleanup|null=null,retiring:Owner|null=null;
   let work:Promise<void>|null=null,closing:Promise<void>|null=null,requested=false;
   let failures=0,retryAt=0,timer:ReturnType<typeof setTimeout>|undefined;
+  let occasionAt:number|undefined;
+  const visible=()=>!visibility?.hidden;
   let environmentMetadata:Pick<ClientReportMetadata,'browser'|'os'|'device'>={},detachBrowser:(()=>void)|null=null;
   const current=(owner:Owner)=>!closed && active===owner && generation===owner.generation && !cleanup;
   const reports=createClientReports({metadata:()=>({appVersion,environment,accountId:currentAccount,...environmentMetadata}),now,monotonicNow,
@@ -52,7 +56,7 @@ export function createJournal({appVersion,environment,accountId=null,sessionId,d
     })().catch(()=>'unavailable' as const).finally(()=>{owner.initializing=null;});
     return owner.initializing;
   }
-  function sender(owner:Owner){return owner.delivery??=createDiagnosticDelivery({queue:owner.queue,send,connection,now});}
+  function sender(owner:Owner){return owner.delivery??=createDiagnosticDelivery({queue:owner.queue,send,connection,visible,now});}
   function dispose(owner:Owner,finishExit=false):Promise<void> {
     // A forced close also cancels an earlier graceful teardown. At most one
     // detached exit request survives while the current owner is running.
@@ -64,10 +68,10 @@ export function createJournal({appVersion,environment,accountId=null,sessionId,d
     retiring=owner;void dispose(owner,true).finally(()=>{if(retiring===owner)retiring=null;});
   }
   function schedule(){clearTimeout(timer);if(closed)return;
-    timer=setTimeout(()=>{timer=undefined;void wake();},Math.max(0,Math.min(2**31-1,retryAt-now())));
+    timer=setTimeout(()=>{timer=undefined;void wake(false);},Math.max(0,Math.min(2**31-1,retryAt-now())));
     (timer as unknown as {unref?():void})?.unref?.();
   }
-  function pause(){failures++;retryAt=now()+Math.min(60_000,1000*2**Math.min(failures-1,6));schedule();}
+  function pause(){failures++;retryAt=now()+(failures===1?1000:failures===2?5000:60_000);if(failures<3)schedule();}
   function cleared(intent:Cleanup){if(cleanup!==intent || closed)return;cleanup=null;failures=0;retryAt=0;retire(intent.owner);}
   async function clearStep(intent:Cleanup) {
     const owner=intent.owner;
@@ -91,21 +95,24 @@ export function createJournal({appVersion,environment,accountId=null,sessionId,d
     if(closed || cleanup!==intent)return;
     if(result.status==='cleared' || result.status==='stale')cleared(intent);else pause();
   }
-  async function advance() {
+  async function advance(wakeAt:number|undefined) {
     if(unknownCleanup)return;
     if(cleanup){await clearStep(cleanup);if(cleanup || closed)return;}
     const owner=active??=createOwner();
     const prepared=await prepare(owner);if(!current(owner))return;
     if(prepared!=='ready'){if(prepared==='unavailable')pause();return;}failures=0;retryAt=0;
-    if(current(owner))await sender(owner).wake();
+    if(current(owner) && visible())await sender(owner).wake(wakeAt??false);
   }
-  function wake():Promise<void> {
+  function wake(external=true):Promise<void> {
     if(closed || unknownCleanup)return Promise.resolve();
+    if(!visible()){clearTimeout(timer);timer=undefined;void active?.delivery?.wake(false);if(!cleanup && active?.activated)return work??Promise.resolve();}
+    if(external)occasionAt=now();
+    if(failures>=3){if(occasionAt===undefined || occasionAt<retryAt)return work??Promise.resolve();failures=0;}
     if(retryAt>now()){schedule();return work??Promise.resolve();}
     clearTimeout(timer);timer=undefined;
     if(work){requested=true;return work;}
-    requested=false;work=advance().catch(()=>pause()).finally(()=>{work=null;
-      if(requested && !closed && timer===undefined){requested=false;void wake();}
+    requested=false;const wakeAt=occasionAt;occasionAt=undefined;work=advance(wakeAt).catch(()=>pause()).finally(()=>{work=null;
+      if(requested && !closed && timer===undefined){requested=false;void wake(false);}
     });return work;
   }
   function boundary(ids?:readonly string[]) {
@@ -121,6 +128,8 @@ export function createJournal({appVersion,environment,accountId=null,sessionId,d
   }
   // Creation also stays inside the optional background path: even reading the
   // browser's indexedDB property can throw when site storage is prohibited.
+  const visibilityChanged=()=>{void wake(visible());};
+  visibility?.addEventListener('visibilitychange',visibilityChanged);
   void wake();
   function begin(action:ClientActionContext,observedAt?:number) {
     const handle=reports.begin(action,observedAt);
@@ -163,6 +172,7 @@ export function createJournal({appVersion,environment,accountId=null,sessionId,d
     close():Promise<void> {
       if(closing)return closing;
       closed=true;generation++;detachBrowser?.();detachBrowser=null;reports.close();clearTimeout(timer);timer=undefined;
+      visibility?.removeEventListener('visibilitychange',visibilityChanged);
       const owners=new Set([active,cleanup?.owner,retiring].filter((owner):owner is Owner=>!!owner));
       const stopped=[...owners].map(owner=>dispose(owner));
       closing=(async()=>{await Promise.all(stopped);await work;})();return closing;

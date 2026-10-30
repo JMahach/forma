@@ -195,10 +195,10 @@ test('cold exit matches the original login and cannot clear a later login of the
 });
 
 
-test('schema upgrade preserves attributed legacy reports and fences a version-one writer',async t=>{
+for(const version of [1,2])test(`queue upgrade preserves legacy reports and fences a version-${version} writer`,async t=>{
   const indexedDB=new IDBFactory(),body=new TextEncoder().encode(JSON.stringify(report(91,{accountId:'17'})));
   const db=await new Promise<IDBDatabase>((resolve,reject)=>{
-    const opened=indexedDB.open('forma-diagnostics',1);
+    const opened=indexedDB.open('forma-diagnostics',version);
     opened.onupgradeneeded=()=>{const reports=opened.result.createObjectStore('reports',{keyPath:'eventId'});
       reports.createIndex('sequence','sequence');reports.createIndex('createdAt','createdAt');
       opened.result.createObjectStore('control',{keyPath:'key'});};
@@ -216,7 +216,7 @@ test('schema upgrade preserves attributed legacy reports and fences a version-on
   assert.equal(await queue.activate(state.epoch,()=>true,'session-A'),true);
   const batch=expectStatus(await queue.claim(owner),'batch');assert.ok(batch.status==='batch');
   assert.deepEqual(batch.entries.map(entry=>entry.report),[report(91,{accountId:'17'})]);
-  const name=await new Promise<string>((resolve,reject)=>{const opened=indexedDB.open('forma-diagnostics',1);
+  const name=await new Promise<string>((resolve,reject)=>{const opened=indexedDB.open('forma-diagnostics',version);
     opened.onerror=()=>resolve(opened.error!.name);opened.onsuccess=()=>{opened.result.close();reject(new Error('Old writer reopened'));};});
   assert.equal(name,'VersionError');
   const next=createDiagnosticQueue({indexedDB,now:()=>start}),late=createDiagnosticQueue({indexedDB,now:()=>start});

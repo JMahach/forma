@@ -710,11 +710,11 @@ test('cold Now supersedes a queued lifetime scrub before a late response or fail
 });
 
 
-for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} failures retry automatically with a bounded delay and preserve the chosen moment`, async t => {
+for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} failures have a finite automatic budget and preserve the chosen moment for explicit retry`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let attempts = 0;
   const saved = Date.parse('2026-09-30T09:37:00Z'), chart = dayChart();
-  const failFirst = () => { if (++attempts <= 7) throw new Error('temporary failure'); };
+  const failFirst = () => { if (++attempts <= 3) throw new Error('temporary failure'); };
   const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
     getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
     getPoint: async index => { failFirst(); return moment(index, fullMeta); },
@@ -727,16 +727,28 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
   const target = explorer.state.requestedUtc, shown = explorer.current;
   assert.equal(attempts, 1); assert.equal(explorer.state.retryCount, 1);
   assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.error, '');
-  for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000, 30000].entries()) {
+  for (const [index, delay] of [1000, 5000].entries()) {
     t.mock.timers.tick(delay - 1); await tick();
     assert.equal(attempts, index + 1, 'the controller never retries before the deadline');
     assert.equal(explorer.current, shown, 'a failed attempt never replaces the visible chart');
     t.mock.timers.tick(1); await tick();
     assert.equal(attempts, index + 2);
   }
+  t.mock.timers.tick(300_000);await tick();assert.equal(attempts,3);assert.equal(explorer.state.status,'error');
+  assert.equal(explorer.state.error,'temporary failure');
+  await explorer.retry();assert.equal(attempts,4);
   assert.equal(explorer.state.retryCount, 0); assert.equal(explorer.state.status, 'ready');
   assert.equal(explorer.state.requestedUtc, target);
   if (source === 'minute') assert.equal(Date.parse(explorer.current!.utc!), saved);
+});
+
+test('a lifetime retry timer cannot request data while its visibility port is inactive',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});let visible=true,attempts=0;
+ const explorer=createLifetimeExplorer({visible:()=>visible,client:{getMeta:async()=>{attempts++;throw Error('Unavailable');}}});
+ t.after(()=>explorer.close());await explorer.open();assert.equal(attempts,1);visible=false;
+ t.mock.timers.tick(1000);await tick();assert.equal(attempts,1);
+ t.mock.timers.tick(300_000);await tick();assert.equal(attempts,1);
+ visible=true;await explorer.retry();assert.equal(attempts,2);
 });
 
 test('closing or selecting a new moment cancels a pending retry instead of reviving its old target', async t => {

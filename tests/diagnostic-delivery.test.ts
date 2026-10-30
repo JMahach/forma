@@ -33,7 +33,7 @@ test('two tabs share one sender and a surviving tab resumes after its owner clos
   await until(()=>first===1);
   const b=createDiagnosticDelivery({...h,queue:other,newId:()=>id(801),send:async body=>{second++;return accepted(...body.reports);}});t.after(()=>b.close());
   await b.wake();assert.equal(second,0);
-  await a.close();await b.wake();await until(async()=>expectStatus(await other.state(),'ready').count===0);
+  await a.close();h.advance(1000);await b.wake();await until(async()=>expectStatus(await other.state(),'ready').count===0);
   assert.equal(first,1);assert.equal(second,1);pending.resolve(accepted(report(1)));
 });
 test('partial ACK deletes only terminal IDs; ownership failures remain original and do not block new reports',async t=>{
@@ -53,7 +53,7 @@ test('a lost response retries exactly the same snapshots with increasing shared 
   t.after(()=>sender.close());h.online();await sender.wake();assert.equal(calls.length,1);
   await sender.wake();h.advance(999);await sender.wake();assert.equal(calls.length,1);
   h.advance(1);await sender.wake();assert.equal(calls.length,2);
-  h.advance(1999);await sender.wake();assert.equal(calls.length,2);
+  h.advance(4999);await sender.wake();assert.equal(calls.length,2);
   h.advance(1);succeeds=true;await sender.wake();assert.equal(calls.length,3);
   assert.equal(new Set(calls).size,1);assert.equal(expectStatus(await h.queue.state(),'ready').count,0);
 });

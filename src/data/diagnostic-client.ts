@@ -1,7 +1,7 @@
 import { parseClientReport, parseDiagnosticResponse, DIAGNOSTIC_BATCH_MAX_BYTES, DIAGNOSTIC_BATCH_MAX_COUNT,
   type ClientReport } from '../../shared/client-report-contract.ts';
 import { parseDiagnosticProof, DIAGNOSTIC_PROOF_HEADER } from '../../shared/account-contract.ts';
-import { fetchResource } from './http-transport.ts';
+import { fetchResource, retryAfterMilliseconds } from './http-transport.ts';
 
 export interface DiagnosticRequest {readonly schemaVersion:1;readonly reports:readonly ClientReport[]}
 /** Only a bounded, checked per-ID response is an ACK. HTTP and transport failures reject. */
@@ -46,7 +46,8 @@ export function createDiagnosticClient({fetch:send=fetchResource}:{fetch?:typeof
       response=await Promise.race([send('/api/diagnostics',{method:'POST',credentials:'same-origin',
         headers:{'Content-Type':'application/json',...(diagnosticProof?{[DIAGNOSTIC_PROOF_HEADER]:diagnosticProof}:{})},body:text,signal:controller.signal,keepalive:exit,redirect:'error',cache:'no-store'}),interrupted]);
       signal.throwIfAborted();
-      if(!response.ok)throw new Error('Diagnostic HTTP request failed');
+      if(!response.ok)throw Object.assign(new Error('Diagnostic HTTP request failed'),{status:response.status,
+        retryAfterMs:retryAfterMilliseconds(response.headers.get('Retry-After'))});
       const length=response.headers.get('Content-Length');
       if(length!==null && /^\d+$/.test(length) && Number(length)>DIAGNOSTIC_BATCH_MAX_BYTES)throw new Error('Diagnostic response too large');
       if(!response.body)throw new Error('Invalid diagnostic response');
