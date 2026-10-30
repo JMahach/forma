@@ -27,12 +27,24 @@ function validCursor(value:unknown):value is LibraryAuditCursor|null {
  return value===null || object(value) && ['charts','packageMetadata','packages'].includes(String(value.phase))
   && (value.after===undefined || typeof value.after==='string');
 }
+function validAuditLease(value:unknown):value is LibraryAuditCheckpoint['lease'] {
+ return value===undefined || object(value) && typeof value.owner==='string' && !!value.owner && time(value.expiresAt);
+}
 function checkpoint(value:unknown):LibraryAuditCheckpoint|null {
  if(!object(value) || typeof value.runId!=='string' || !value.runId || !time(value.completedAt) || !validCursor(value.cursor))return null;
- return {runId:value.runId,cursor:value.cursor?{...value.cursor}:null,completedAt:value.completedAt};
+ if(!validAuditLease(value.lease))return null;
+ return {runId:value.runId,cursor:value.cursor?{...value.cursor}:null,completedAt:value.completedAt,...(value.lease?{lease:{owner:value.lease.owner as string,expiresAt:value.lease.expiresAt as number}}:{})};
 }
-function owned<T>(database:Database,seen:LibraryLease,mode:IDBTransactionMode,work:(tx:IDBTransaction,done:(value:T)=>void)=>void):Promise<T|null> {
- return database.transaction<T>(mode,(tx,done)=>{const owner=tx.objectStore('context').get('owner');
+function guardTransaction(tx:IDBTransaction,signal?:AbortSignal):boolean {
+ if(!signal)return true;
+ const abort=()=>{try{tx.abort();}catch{/* The transaction has already settled. */}};
+ if(signal.aborted){abort();return false;}
+ const clean=()=>signal.removeEventListener('abort',abort);
+ signal.addEventListener('abort',abort,{once:true});
+ tx.addEventListener('complete',clean,{once:true});tx.addEventListener('abort',clean,{once:true});return true;
+}
+function owned<T>(database:Database,seen:LibraryLease,mode:IDBTransactionMode,work:(tx:IDBTransaction,done:(value:T)=>void)=>void,signal?:AbortSignal):Promise<T|null> {
+ return database.transaction<T>(mode,(tx,done)=>{if(!guardTransaction(tx,signal))return;const owner=tx.objectStore('context').get('owner');
   owner.onsuccess=()=>{if(sameLibraryLease(owner.result,seen))work(tx,done);};
  });
 }
@@ -128,18 +140,25 @@ class LibraryMaintenanceStore {
  private database:Database;
  constructor(database:Database){this.database=database;}
   inventory(seen:LibraryLease){seen={...seen};return owned(this.database,seen,'readonly',(tx,done:(value:LibraryInventory)=>void)=>readInventory(tx,seen,done));}
-  auditPage(seen:LibraryLease,cursor:LibraryAuditCursor|null,limit=16):Promise<LibraryAuditPage|null> {
+  auditPage(seen:LibraryLease,cursor:LibraryAuditCursor|null,limit=16,signal?:AbortSignal,expectedAudit?:LibraryAuditCheckpoint):Promise<LibraryAuditPage|null> {
    if(!validCursor(cursor) || !Number.isInteger(limit) || limit<1 || limit>100)throw new TypeError('Invalid audit page');
    seen={...seen};const position=cursor?{...cursor}:{phase:'charts' as const};
-   return owned(this.database,seen,'readwrite',(tx,done)=>new AuditWalk(tx,seen,limit,done,position).scan(position));
+   return owned(this.database,seen,'readwrite',(tx,done)=>{
+    const scan=()=>new AuditWalk(tx,seen,limit,done,position).scan(position);
+    if(expectedAudit===undefined){scan();return;}
+    const read=tx.objectStore('context').get(AUDIT);read.onsuccess=()=>{
+     if(sameLibraryLease(read.result,seen) && JSON.stringify(checkpoint(read.result.value))===JSON.stringify(expectedAudit))scan();
+    };
+   },signal);
   }
   readAuditCheckpoint(seen:LibraryLease):Promise<LibraryAuditCheckpoint|null> {
    seen={...seen};return owned<LibraryAuditCheckpoint|null>(this.database,seen,'readonly',(tx,done)=>{const read=tx.objectStore('context').get(AUDIT);
     read.onsuccess=()=>done(sameLibraryLease(read.result,seen)?checkpoint(read.result.value):null);});
   }
-  saveAuditCheckpoint(seen:LibraryLease,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint):Promise<LibraryCheckpointWrite> {
+  saveAuditCheckpoint(seen:LibraryLease,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint,signal?:AbortSignal):Promise<LibraryCheckpointWrite> {
    seen={...seen};expected=expected?checkpoint(expected):null;const value=checkpoint(next);if(!value)throw new TypeError('Invalid audit checkpoint');
    return this.database.transaction<LibraryCheckpointWrite>('readwrite',(tx,done)=>{
+    if(!guardTransaction(tx,signal))return;
     const rows=tx.objectStore('context'),owner=rows.get('owner');owner.onsuccess=()=>{
      if(!sameLibraryLease(owner.result,seen)){done('stale');return;}
      const read=rows.get(AUDIT);read.onsuccess=()=>{

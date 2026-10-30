@@ -132,3 +132,32 @@ test('a corrupt card loses its package link in the same bounded page and invalid
  const page=await f.store.maintenance.auditPage(f.lease,null,1);assert.equal(page?.removed,1);
  const inventory=await f.store.maintenance.inventory(f.lease);assert.deepEqual(inventory?.packages[0]?.chartIds,[accountNatalChart(2).id]);
 });
+
+test('audit cancellation aborts a queued transaction without deleting a corrupt record',async t=>{
+ const f=await fixture(t);await f.change(tx=>tx.objectStore('charts').put({...card,accountId:'foreign'}));
+ const controller=new AbortController(),original=IDBObjectStore.prototype.get;
+ IDBObjectStore.prototype.get=function(key){const request=original.call(this,key);if(this.name==='charts')queueMicrotask(()=>controller.abort());return request;};
+ try{assert.equal(await f.store.maintenance.auditPage(f.lease,null,1,controller.signal),null);}finally{IDBObjectStore.prototype.get=original;}
+ const tx=f.db.transaction('charts','readonly'),read=tx.objectStore('charts').get(card.id);
+ const value=await new Promise<any>(resolve=>{read.onsuccess=()=>resolve(read.result);});assert.equal(value.accountId,'foreign');
+ const stopped=new AbortController();stopped.abort();
+ assert.equal(await f.store.maintenance.saveAuditCheckpoint(f.lease,null,{runId:'late',cursor:null,completedAt:1234},stopped.signal),'unavailable');
+ assert.equal(await f.store.maintenance.readAuditCheckpoint(f.lease),null);
+});
+test('audit ownership survives checkpoint persistence and malformed leases cannot be accepted',async t=>{
+ const f=await fixture(t),value={runId:'r',cursor:{phase:'charts' as const},completedAt:0,lease:{owner:'tab',expiresAt:30000}};
+ assert.equal(await f.store.maintenance.saveAuditCheckpoint(f.lease,null,value),'stored');
+ assert.deepEqual(await f.store.maintenance.readAuditCheckpoint(f.lease),value);
+ for(const lease of [null,{}, {owner:'',expiresAt:1},{owner:'a',expiresAt:-1}]){
+  assert.throws(()=>f.store.maintenance.saveAuditCheckpoint(f.lease,value,{...value,lease} as never),TypeError);
+ }
+});
+
+test('a stale audit owner cannot inspect or remove rows after another tab takes its cursor',async t=>{
+ const f=await fixture(t),first={runId:'r',cursor:{phase:'charts' as const},completedAt:0,lease:{owner:'old',expiresAt:100}},second={runId:'r',cursor:{phase:'charts' as const},completedAt:0,lease:{owner:'new',expiresAt:50000}};
+ await f.store.maintenance.saveAuditCheckpoint(f.lease,null,first);
+ await f.store.maintenance.saveAuditCheckpoint(f.lease,first,second);
+ await f.change(tx=>tx.objectStore('charts').put({...card,accountId:'foreign'}));
+ assert.equal(await f.store.maintenance.auditPage(f.lease,null,1,undefined,first),null);
+ const page=await f.store.maintenance.auditPage(f.lease,null,1,undefined,second);assert.equal(page?.removed,1);
+});

@@ -11,5 +11,5 @@ export interface LibraryInventory {
 export type LibraryAuditPhase='charts'|'packageMetadata'|'packages';
 export interface LibraryAuditCursor {phase:LibraryAuditPhase;after?:string}
 export interface LibraryAuditPage {checked:number;removed:number;next:LibraryAuditCursor|null}
-export interface LibraryAuditCheckpoint {runId:string;cursor:LibraryAuditCursor|null;completedAt:number}
+export interface LibraryAuditCheckpoint {runId:string;cursor:LibraryAuditCursor|null;completedAt:number;lease?:{owner:string;expiresAt:number}}
 export type LibraryCheckpointWrite='stored'|'superseded'|'stale'|'unavailable';
