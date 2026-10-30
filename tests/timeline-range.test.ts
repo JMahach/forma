@@ -568,3 +568,45 @@ test('gesture ownership ends once for release, cancellation and focus loss', () 
     }
   }
 });
+
+
+function observedRange() {
+  const range=element(),observers:{active:boolean;callback:ResizeObserverCallback}[]=[];
+  class Observer {
+    active=false;
+    callback:ResizeObserverCallback;
+    constructor(callback:ResizeObserverCallback){this.callback=callback;observers.push(this);}
+    observe(){this.active=true;}
+    disconnect(){this.active=false;}
+  }
+  range.ownerDocument.defaultView.ResizeObserver=Observer as unknown as typeof range.ownerDocument.defaultView.ResizeObserver;
+  return {range:range as unknown as HTMLInputElement,observers};
+}
+
+test('timeline resize observer releases only its owner across thirty signal lifetimes',()=>{
+  const {range,observers}=observedRange(),neighbor=new AbortController();
+  attachTimelineRange({range,signal:neighbor.signal,onScrub:()=>{},onReference:()=>{}});
+  for(let cycle=0;cycle<30;cycle++){
+    const controller=new AbortController();
+    attachTimelineRange({range,signal:controller.signal,onScrub:()=>{},onReference:()=>{}});
+    assert.equal(observers.filter(value=>value.active).length,2);
+    controller.abort();controller.abort();
+    assert.equal(observers.filter(value=>value.active).length,1);
+    assert.equal(observers[0]!.active,true);
+  }
+  neighbor.abort();assert.equal(observers.filter(value=>value.active).length,0);
+  const stopped=new AbortController();stopped.abort();const before=observers.length;
+  attachTimelineRange({range,signal:stopped.signal,onScrub:()=>{},onReference:()=>{}});
+  assert.equal(observers.length,before,'an already stopped owner creates no observer');
+});
+
+test('late timeline resize delivery reads no geometry and publishes nothing after stop',()=>{
+  const {range,observers}=observedRange(),controller=new AbortController();let reads=0,updates=0;
+  attachTimelineRange({range,signal:controller.signal,onScrub:()=>{throw Error('scrub');},onReference:()=>{throw Error('reference');},resolveEdge:()=>{updates++;return null;}});
+  const entry={get contentRect(){reads++;return {width:444};}} as ResizeObserverEntry;
+  const deliver=()=>observers[0]!.callback([entry],{} as ResizeObserver);
+  deliver();assert.equal(reads,1);assert.equal(updates,1,'live layout still updates');
+  controller.abort();const styles={...range.style};
+  deliver();assert.equal(reads,1,'queued delivery must not even inspect the entry');assert.equal(updates,1);
+  assert.deepEqual({...range.style},styles);
+});

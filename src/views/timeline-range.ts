@@ -87,11 +87,14 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
   // Width belongs to layout, not the selected minute. Observe it once instead
   // of forcing a fresh layout on each scrub, clock tick or chart response.
   const ResizeObserver = range.ownerDocument?.defaultView?.ResizeObserver ?? globalThis.ResizeObserver;
-  if (ResizeObserver) {
-    new ResizeObserver(([entry]) => {
+  let resizeObserver:ResizeObserver|undefined;
+  if (ResizeObserver && !signal?.aborted) {
+    resizeObserver=new ResizeObserver(([entry]) => {
+      if(signal?.aborted)return;
       railWidth = Math.max(0, entry.contentRect.width - thumbSize);
       updateThumbEdge();
-    }).observe(range);
+    });
+    resizeObserver.observe(range);
   }
   function geometry() {
     const rect = range.getBoundingClientRect();
@@ -294,7 +297,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     updateContact();
     updateHover();
   }
-  const dispose=()=>{clearGesture();hoverPointer=null;setEventHover(false);};
+  const dispose=()=>{resizeObserver?.disconnect();resizeObserver=undefined;clearGesture();hoverPointer=null;setEventHover(false);};
   if(signal?.aborted)dispose();else signal?.addEventListener('abort',dispose,{once:true});
   return {
     refreshTargets,
