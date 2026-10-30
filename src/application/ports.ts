@@ -103,7 +103,13 @@ export interface StartupPorts {
   changed():void;
 }
 export type StartupEvent={type:'StartupInterrupted'}|{type:'Stop'};
-export interface ApplicationPorts { runtimeId: string; libraryProjection?:LibraryProjectionPort; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:Omit<LibraryFillPorts,'scope'>;libraryAudit?:Omit<LibraryAuditPorts,'scope'> }
+export interface ApplicationRuntimePorts { runtimeId: string; libraryProjection?:LibraryProjectionPort; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:Omit<LibraryFillPorts,'scope'>;libraryAudit?:Omit<LibraryAuditPorts,'scope'> }
+/** Hosts supply data and presentation. The application connects its own commands. */
+export type ApplicationPorts=Omit<ApplicationRuntimePorts,'route'|'write'|'publicRefresh'> & {
+ route?:Omit<RoutePort,'view'> & {view:Omit<RoutePort['view'],'markOpened'|'publicRead'>};
+ write?:Omit<WriteContinuationPorts,'view'|'ready'> & {view:Omit<WriteContinuationPorts['view'],'signIn'|'select'|'publishChart'>};
+ publicRefresh?:Omit<PublicRefreshPorts,'view'> & {view:Omit<PublicRefreshPorts['view'],'selectTransit'>};
+};
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}

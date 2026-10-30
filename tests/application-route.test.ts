@@ -49,7 +49,7 @@ function fixture(adapter: 'memory' | 'browser', pathname = '/chart/1234567890',w
     }}));},
     session:{get selectedId(){return selected;}},
     view:{workspace(){},select(id){selected=id;applied.push(id);},resetCamera(){},edit(id){edited.push(id);},interrupt(){},settled(){settled++;},checkpoint(){},
-      report:error=>failures.push(error),firstTransit:async()=>true,transitReady(){},markOpened(){},publicRead(){}},
+      report:error=>failures.push(error),firstTransit:async()=>true,transitReady(){}},
     observe:()=>({failed(){},finish(){disposals++;}}),
   }});
 

@@ -7,7 +7,7 @@ import {createWriteContinuationMachine,writeContinuationView} from './write-cont
 import type {createBackgroundWork} from './background-work.ts';
 import {createLibraryFill} from './library-fill.ts';
 import {createLibraryLocalAudit} from './library-local-audit.ts';
-import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
+import type { ApplicationEvent, ApplicationRuntimePorts as ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
 
 type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'AccountBoundaryStarted';reset:boolean};
 
@@ -16,7 +16,7 @@ function routeChanged(request:RouteRequest|null,event:Event,navigation?:Navigati
     && !!navigation?.isCurrent(event.snapshot) && request?.snapshot!==event.snapshot;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime,background:ReturnType<typeof createBackgroundWork>|undefined,publicAdmitted:()=>boolean) {
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime,background:ReturnType<typeof createBackgroundWork>|undefined,admitted:{automatic():boolean;publicRefresh():boolean}) {
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
@@ -39,7 +39,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       libraryFill:createLibraryFill({...ports.libraryFill!,scope:()=>background?.scope()??null}),
       libraryAudit:createLibraryLocalAudit({...ports.libraryAudit!,scope:()=>background?.scope()??null}),
       startup: createStartupMachine(ports.startup!,startup,ports.navigation),
-      publicRefresh: createPublicRefreshMachine(ports.publicRefresh!,publicAdmitted),
+      publicRefresh: createPublicRefreshMachine(ports.publicRefresh!,admitted.publicRefresh),
       account: createAccountBoundaryMachine(ports.account!, runtimeId,sources),
       write: createWriteContinuationMachine(ports.write!),
       route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) =>
@@ -160,7 +160,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             actions: sendTo('account', ({event}) => event),
           },
           RetryAccountBoundary: {
-            guard: () => !!ports.account,
+            guard: () => !!ports.account && admitted.automatic(),
             actions: sendTo('account', ({event}) => event),
           },
           SaveRequested: {
@@ -177,7 +177,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             actions: sendTo('write', ({event}) => event),
           },
           RecoverWrites: {
-            guard: () => !!ports.write,
+            guard: () => !!ports.write && admitted.automatic(),
             actions: sendTo('write', ({event}) => event),
           },
         },

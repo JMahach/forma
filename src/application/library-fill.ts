@@ -1,4 +1,5 @@
 import {fromCallback} from 'xstate';
+import {waitForIdle} from './update.ts';
 import type {LibraryCatalogEntry} from '../../shared/library-catalog-contract.ts';
 import type {LibraryInventory,LibraryLease} from '../domain/library-maintenance.ts';
 import {planLibraryFill,reserveFill,finishFill,pruneFillBudgets,type FillCandidate,type FillAuthority,type FillControlStore,type FillPermit,type FillOutcome,type FillReceipt,type FillPlacement} from '../domain/library-fill.ts';
@@ -15,7 +16,7 @@ export interface LibraryFillPorts {
  accepted?(candidate:FillCandidate,payload:unknown,authority:FillAuthority):void;
  clock:{now():number;after(ms:number,run:()=>void):()=>void};id:()=>string;
 }
-export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'}|{type:'FillIdle';complete():void};
+export type LibraryFillEvent={type:'FillWake';at:number;reason:'lifecycle'|'hourly'|'library'|'use'|'space'}|{type:'FillChanged'}|{type:'FillIdle';complete():void;signal?:AbortSignal};
 type Wake=Extract<LibraryFillEvent,{type:'FillWake'}>;
 interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortController;phase:'planning'|'waiting'|'receiving'|'placing'}
 const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,scope.catalogMarker]);
@@ -41,7 +42,7 @@ function failed(error:unknown):FillOutcome {
 class LibraryFill {
  private ports:LibraryFillPorts;private clock:LibraryFillPorts['clock'];private owner:string;
  private active:FillRun|null=null;private pending:Wake|null=null;private paused:{key:string;wake:Wake}|null=null;private stopped=false;private idle=new Set<()=>void>();
- whenIdle(complete:()=>void){if(this.active)this.idle.add(complete);else complete();}
+ whenIdle(complete:()=>void,signal?:AbortSignal){waitForIdle(!!this.active,this.idle,complete,signal);}
  private settled(){if(!this.active){for(const complete of this.idle)complete();this.idle.clear();}}
  constructor(ports:LibraryFillPorts){
   this.ports=ports;this.clock=ports.clock;
@@ -140,6 +141,6 @@ class LibraryFill {
  }
 }
 export function createLibraryFill(ports:LibraryFillPorts){return fromCallback<LibraryFillEvent>(({receive})=>{
- const owner=new LibraryFill(ports);receive(event=>event.type==='FillWake'?owner.wake(event):event.type==='FillIdle'?owner.whenIdle(event.complete):owner.changed());return()=>owner.stop();
+ const owner=new LibraryFill(ports);receive(event=>event.type==='FillWake'?owner.wake(event):event.type==='FillIdle'?owner.whenIdle(event.complete,event.signal):owner.changed());return()=>owner.stop();
 });}
 

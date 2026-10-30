@@ -1,4 +1,5 @@
 import {fromCallback} from 'xstate';
+import {waitForIdle} from './update.ts';
 import type {AccountLibrary} from '../state/account-library.ts';
 import type {LibraryFillScope,LibraryFillEvent} from './library-fill.ts';
 import {readLibraryLocalNotice} from '../domain/library-maintenance.ts';
@@ -9,7 +10,7 @@ export interface BackgroundTask {
  target:CheckTarget;
  run(authority:CheckAuthority):Promise<CheckResult>;
  receive?(data:unknown):void;
- initial?(signal:AbortSignal):Promise<void>;
+ initial?(signal:AbortSignal):Promise<void|'cancelled'>;
 }
 export type BackgroundRequest={kind:'check';target:CheckTarget;authority:CheckAuthority;finish(result:CheckResult):void}
  | {kind:'result';key:string;instance:string;data:unknown}|{kind:'unavailable';signal:AbortSignal}|{kind:'foreground';signal:AbortSignal};
@@ -22,7 +23,7 @@ export interface BackgroundWorkPorts {
  coordinator:BackgroundCoordinator;
  clock:{now():number};
  environment:{visible():boolean;online():boolean;connected():boolean;busy():boolean;transitTimeZone():string|undefined};
- library?:Pick<AccountLibrary,'session'|'workingLease'|'completeCatalog'|'load'|'markOpened'|'receive'|'refreshLocal'>;
+ library?:Pick<AccountLibrary,'session'|'workingLease'|'completeCatalog'|'load'|'cancelCatalogReads'|'markOpened'|'receive'|'refreshLocal'>;
  readonly release:ReleaseCheckPort|null;
  readonly journal:{wake():unknown}|null;
  calculations?:{syncTodayTransitWindow(timeZone:string,now:number,refresh?:boolean):Promise<unknown>|void};
@@ -39,7 +40,7 @@ export type EnvironmentChange={reason:'lifecycle'|'connection'|'visibility';retu
 export interface ReleaseCheckPort {install?(signal:AbortSignal):Promise<void>;check(signal:AbortSignal):Promise<void>;observe():void;stop():void}
 export type BackgroundWorkEvent={type:'BackgroundChanged'}|{type:'BackgroundActivityChanged'}|{type:'LibraryUsed';id:string}
  | {type:'BackgroundEnvironment';change:EnvironmentChange}|{type:'TransitWindowObserved'}
- | {type:'BackgroundIdle';complete():void}
+ | {type:'BackgroundIdle';complete():void;signal?:AbortSignal}
  | {type:'LibraryLocalChanged';change:LibraryLocalChange}|{type:'LibraryReceived';data:unknown;completed?:()=>void};
 function failure(error:unknown):CheckOutcome {
  const value=error as {status?:number;code?:string;retryAfterMs?:number};
@@ -55,7 +56,7 @@ async function perform(task:BackgroundTask|undefined,request:Extract<BackgroundR
 }
 const sessionKey=(target:CheckTarget)=>`${target.key}/${target.sessionId}`;
 /** Failed shared coordination must not block initial library access or offline installation.
- * Each foreground allowance is consumed once; resumes never turn it into polling. */
+ * A failed foreground attempt is consumed once; only explicit update cancellation returns its allowance. */
 class InitialForegroundWork {
  private current=new Map<string,{kind:'app'|'library';issued:boolean;pending:boolean;run?:BackgroundTask['initial']}>();
  configure(tasks:readonly BackgroundTask[]){
@@ -69,12 +70,16 @@ class InitialForegroundWork {
  }
  pending(target:CheckTarget){return this.current.get(sessionKey(target))?.pending;}
  started(target:CheckTarget){const current=this.current.get(sessionKey(target));if(current?.run)current.issued=true;}
- run(signal:AbortSignal,allowLibrary:boolean){
-  for(const current of this.current.values()) {
+ run(signal:AbortSignal,allowLibrary:boolean,reconsider:()=>void){
+  for(const [key,current] of this.current) {
    if(current.kind==='library' && !allowLibrary)continue;
-   if(current.issued || !current.run || signal.aborted)continue;
+   if(current.issued || current.pending || !current.run || signal.aborted)continue;
    current.issued=true;current.pending=true;
-   void current.run(signal).catch(()=>{}).finally(()=>{current.pending=false;});
+   let cancelled=false;
+   void current.run(signal).then(result=>{cancelled=result==='cancelled';}).catch(()=>{}).finally(()=>{
+    current.pending=false;
+    if(cancelled && current.kind==='library' && this.current.get(key)===current){current.issued=false;reconsider();}
+   });
   }
  }
 }
@@ -102,7 +107,11 @@ class BackgroundWork {
   return {target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
    run:async authority=>{const result=await this.ports.library!.load(authority),ready=result.status==='complete'||result.status==='unchanged';
     if(ready)this.wake('hourly');return {outcome:{kind:ready?'success':'cancelled'}};},
-   initial:this.ports.environment.visible() && this.ports.environment.online()?async signal=>{await this.track(this.ports.library!.load(undefined,signal));this.wake('library');}:undefined};
+   initial:this.ports.environment.visible() && this.ports.environment.online()?async signal=>{
+    const result=await this.track(this.ports.library!.load(undefined,signal));
+    if(result.status==='cancelled')return 'cancelled';
+    if(result.status==='complete' || result.status==='unchanged')this.wake('library');
+   }:undefined};
  }
  private tasks():BackgroundTask[]{
   const result:BackgroundTask[]=[],state=this.runtime.state(),access=this.ports.library?.session;
@@ -126,7 +135,7 @@ class BackgroundWork {
   const appeared=visible&&!this.previousVisible,returned=online&&!this.previousOnline;
   this.previousVisible=visible;this.previousOnline=online;
   const resumed=change.returned || appeared || returned;
-  if(resumed)void this.ports.journal?.wake();
+  if(resumed && !this.runtime.state().preparingUpdate)void this.ports.journal?.wake();
   if(appeared || returned)this.transit(true);
   if(visible && change.reason==='visibility' && this.runtime.state().accountReady){const work=this.ports.library?.refreshLocal();if(work)void this.track(work).catch(()=>{});}
   this.runtime.reconcile({retryAccount:change.reason==='connection' && this.ports.environment.connected(),recover:!!resumed,wake:!!resumed});
@@ -145,6 +154,7 @@ class BackgroundWork {
  private currentTasks:readonly BackgroundTask[]=[];
  private initial=new InitialForegroundWork();
  private update(){
+  if(this.runtime.state().preparingUpdate)this.ports.library?.cancelCatalogReads();
   this.currentTasks=this.tasks();
   if(!this.runtime.state().preparingUpdate)this.initial.configure(this.currentTasks);
   this.ports.coordinator.update(this.currentTasks.map(task=>task.target));
@@ -152,7 +162,7 @@ class BackgroundWork {
  private request(request:BackgroundRequest){
   if(this.stopped)return;
   if(request.kind==='unavailable' || request.kind==='foreground'){
-   if(!this.runtime.state().preparingUpdate)this.initial.run(request.signal,request.kind==='unavailable');return;
+   if(!this.runtime.state().preparingUpdate)this.initial.run(request.signal,request.kind==='unavailable',()=>{if(!this.stopped)this.update();});return;
   }
   if(request.kind==='check'){
    const task=this.currentTasks.find(task=>task.target.key===request.target.key && task.target.instance===request.target.instance && task.target.sessionId===request.target.sessionId);
@@ -176,7 +186,7 @@ class BackgroundWork {
    case 'BackgroundEnvironment':this.environment(event.change);return;
    case 'TransitWindowObserved':this.transit();return;
    case 'LibraryReceived':void this.track(this.received(event.data)).finally(event.completed);return;
-   case 'BackgroundIdle':if(this.active)this.idle.add(event.complete);else event.complete();return;
+   case 'BackgroundIdle':waitForIdle(this.active>0,this.idle,event.complete,event.signal);return;
    case 'LibraryLocalChanged':this.localChanged(event.change);return;
    case 'BackgroundChanged':this.update();
   }

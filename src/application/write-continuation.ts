@@ -7,7 +7,7 @@ import type {LibrarySession} from '../state/account-library.ts';
 
 export type TemporaryWriteBinding=ChartWriteIntent & {sourceId:string};
 export interface WriteContinuationPorts {
-  actions:Pick<ChartActions,'saveSource'|'recover'|'pending'>;
+  actions:Pick<ChartActions,'saveSource'|'recover'|'pending'> & Partial<Pick<ChartActions,'whenIdle'>>;
   online():boolean;
   getSession():LibrarySession|null;
   ready():Promise<void>;

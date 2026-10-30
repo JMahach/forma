@@ -1,3 +1,10 @@
+/** Cancelling an observer releases it; the resource owner still finishes its work. */
+export function waitForIdle(active:boolean,waiting:Set<()=>void>,complete:()=>void,signal?:AbortSignal) {
+ if(!active || signal?.aborted){complete();return;}
+ const done=()=>{waiting.delete(done);signal?.removeEventListener('abort',done);complete();};
+ waiting.add(done);signal?.addEventListener('abort',done,{once:true});
+}
+
 export interface UpdatePort {
   restored():boolean;
   ready():boolean;
@@ -5,7 +12,7 @@ export interface UpdatePort {
   sources:{readonly temporaryId:string|null;readonly publicId:string|null;hasOwn(id:string):boolean;canRestore(id:string):boolean|Promise<boolean>};
   checkpoint():boolean;
 }
-interface UpdateRuntime {ready():boolean;changed():void;idle?():Promise<void>|void}
+interface UpdateRuntime {ready():boolean;changed():void;idle?(signal:AbortSignal):Promise<void>|void}
 interface Preparation {control:AbortController;unlink():void}
 function durableSelection(port:UpdatePort,id:string) {
   return id==='current-transit' || id===port.sources.temporaryId
@@ -44,7 +51,7 @@ export function createUpdatePreparation(port:UpdatePort,runtime:UpdateRuntime) {
       return typeof durable==='boolean'?durable && checkpoint():durable.then(value=>value && checkpoint());
     };
     try {
-      const idle=runtime.idle?.(),result=idle?idle.then(commit):commit();
+      const idle=runtime.idle?.(preparation.control.signal),result=idle?idle.then(commit):commit();
       return typeof result==='boolean'?finish(result):cancellable(result,preparation.control.signal).then(finish);
     }catch{release(preparation);return false;}
   }

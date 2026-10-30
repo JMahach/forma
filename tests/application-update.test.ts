@@ -2,6 +2,8 @@ import {createUpdatePreparation} from '../src/application/update.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createApplication} from '../src/application/application.ts';
+import {createChartActions} from '../src/state/chart-actions.ts';
+import {accountChart,chartId} from './helpers/account-chart.ts';
 
 async function fixture() {
   let selected='owned',ready=true,durable:boolean|Promise<boolean>=true,stored=true,writes=0,reads=0;
@@ -51,4 +53,29 @@ test('preparation waits for the active write, then holds its own permission unti
  const accepted=owner.prepare(second.signal);release();assert.equal(await accepted,true);assert.equal(writes,1);assert.equal(owner.active,true);
  first.abort();assert.equal(owner.active,true,'a retired preparation cannot release the new one');
  second.abort();assert.equal(owner.active,false);assert.equal(changes,4);owner.stop();
+});
+
+test('update waits for real recovery acceptance, then blocks new recovery without waiting for unknown intents',async t=>{
+ const chart=accountChart(),intent={expectedAccountId:chart.accountId,operationId:chartId(80)},unknown={...intent,operationId:chartId(81)};
+ let release!:()=>void,reads=0,placements=0,checkpoints=0,prepared=false;
+ const placement=new Promise<void>(resolve=>{release=resolve;}),control=new AbortController(),session={accountId:chart.accountId,sessionId:'update'};
+ const actions=createChartActions({getSession:()=>session,initialPending:[intent,unknown],
+  library:{async open(){placements++;await placement;return chart;},async forget(){}},
+  client:{async outcome(value){reads++;return {...value,outcome:value.operationId===unknown.operationId?{kind:'unknown'}:{kind:'created',chartId:chart.id,revision:1}};},
+   create:async()=>assert.fail('recovery cannot POST'),update:async()=>assert.fail('recovery cannot update'),remove:async()=>assert.fail('recovery cannot remove'),addFromSource:async()=>assert.fail('recovery cannot add')},
+ });
+ const app=createApplication({runtimeId:'recovery-update',startup:{
+  library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,restore:async()=>true,resume(){},flush(){}},
+  form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
+ },write:{actions,online:()=>true,getSession:()=>session,selection:{record:null,selectedId:'current-transit',adopt:()=>false},
+  temporary:()=>null,hasOwn:()=>false,retire(){},public:async()=>assert.fail('no public read'),acceptPublic(){},clearPublic:()=>false,
+  view:{isChartScreen:()=>true,showChart(){},changeChart(){},refresh(){},changed(){},checkpoint(){},report(){}},
+ },update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint(){checkpoints++;return true;}}});
+ t.after(async()=>{release();control.abort();await app.stop();});app.start();await app.whenRestored();app.send({type:'RecoverWrites'});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(placements,1);
+ const preparing=Promise.resolve(app.prepareUpdate(control.signal)).then(value=>{prepared=true;return value;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(prepared,false);assert.equal(checkpoints,0);
+ release();assert.equal(await preparing,true);assert.equal(checkpoints,1);assert.equal(reads,2);assert.deepEqual(actions.pending,[unknown]);
+ app.send({type:'RecoverWrites'});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,2);
+ control.abort();app.send({type:'RecoverWrites'});await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,3);
 });

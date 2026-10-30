@@ -157,7 +157,10 @@ test('a successful resumed audit page restores the retry allowance for the next 
 test('audit idle waits for a pending page and lease release after cancellation',async()=>{
  const f=fixture();f.hold();f.holdRelease();f.wake();await f.advance(0);let idle=0;
  f.change({foreground:true});f.actor.send({type:'AuditIdle',complete(){idle++;}});
+ const cancelled=new AbortController();let released=0;
+ f.actor.send({type:'AuditIdle',signal:cancelled.signal,complete(){released++;}});cancelled.abort();assert.equal(released,1);
  await f.advance(0);assert.equal(idle,0);
  f.release({checked:2,removed:1,next:null});await f.advance(0);assert.equal(idle,0,'lease release is still writing');
  f.releaseWrite();await f.advance(0);assert.equal(idle,1);assert.equal(f.checkpoint?.lease,undefined);assert.equal(f.changes,0);f.actor.stop();
+ assert.equal(released,1,'completion cannot retain or notify the cancelled waiter again');
 });

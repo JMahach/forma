@@ -1,4 +1,5 @@
 import {fromCallback} from 'xstate';
+import {waitForIdle} from './update.ts';
 import type {LibraryLease,LibraryAuditCursor,LibraryAuditPage,LibraryAuditCheckpoint,LibraryCheckpointWrite} from '../domain/library-maintenance.ts';
 export interface LibraryAuditScope {lease:LibraryLease;sessionId:string;visible:boolean;foreground:boolean}
 export interface LibraryAuditPorts {
@@ -8,7 +9,7 @@ export interface LibraryAuditPorts {
   saveAuditCheckpoint(lease:LibraryLease,expected:LibraryAuditCheckpoint|null,next:LibraryAuditCheckpoint,signal?:AbortSignal):Promise<LibraryCheckpointWrite>};
  clock:{now():number;after(ms:number,callback:()=>void):()=>void};id:()=>string;pageSize?:number;changed?():void;
 }
-export type LibraryAuditEvent={type:'AuditWake';at:number}|{type:'AuditChanged'}|{type:'AuditIdle';complete():void};
+export type LibraryAuditEvent={type:'AuditWake';at:number}|{type:'AuditChanged'}|{type:'AuditIdle';complete():void;signal?:AbortSignal};
 const DAY=24*3600000,LEASE=30000;
 const recent=(at:number,now:number)=>at>0 && now>=at && now-at<DAY;
 function occupied(value:LibraryAuditCheckpoint|null,now:number){
@@ -38,7 +39,7 @@ class LocalAudit {
  private pending:number|null=null;
  private paused:AuditRun|null=null;
  private stopped=false;private idle=new Set<()=>void>();
- whenIdle(complete:()=>void){if(this.active)this.idle.add(complete);else complete();}
+ whenIdle(complete:()=>void,signal?:AbortSignal){waitForIdle(!!this.active,this.idle,complete,signal);}
  private settled(){if(!this.active){for(const complete of this.idle)complete();this.idle.clear();}}
  constructor(ports:LibraryAuditPorts){
   this.ports=ports;this.clock=ports.clock;
@@ -153,7 +154,7 @@ class LocalAudit {
 export function createLibraryLocalAudit(ports:LibraryAuditPorts){
  return fromCallback<LibraryAuditEvent>(({receive})=>{
   const owner=new LocalAudit(ports);
-  receive(event=>event.type==='AuditWake'?owner.wake(event.at):event.type==='AuditIdle'?owner.whenIdle(event.complete):owner.changed());
+  receive(event=>event.type==='AuditWake'?owner.wake(event.at):event.type==='AuditIdle'?owner.whenIdle(event.complete,event.signal):owner.changed());
   return()=>owner.stop();
  });
 }

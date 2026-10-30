@@ -1,4 +1,7 @@
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
+import {createActor} from 'xstate';
+import {createAccountLibrary,type LibraryRefreshResult} from '../src/state/account-library.ts';
+import {createBackgroundWork} from '../src/application/background-work.ts';
 import assert from 'node:assert/strict';
 import {createApplication} from '../src/application/application.ts';
 import type {BackgroundRequest} from '../src/application/background-work.ts';
@@ -11,7 +14,7 @@ import type {FillReceipt} from '../src/application/library-fill.ts';
 import type {LibraryAuditPage} from '../src/domain/library-maintenance.ts';
 const clock={now:Date.now,after(ms:number,run:()=>void){const t=setTimeout(run,ms);return()=>clearTimeout(t);}};
 const defaults={clock,id:()=>crypto.randomUUID(),environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},release:null,journal:null,local:{changed(){},broadcast(){}}};
-const libraryDefaults={session:null,workingLease:null,completeCatalog:null,async load(){return {status:'inactive' as const};},async markOpened(){},async receive(){},async refreshLocal(){}};
+const libraryDefaults={session:null,workingLease:null,completeCatalog:null,async load(){return {status:'inactive' as const};},cancelCatalogReads(){},async markOpened(){},async receive(){},async refreshLocal(){}};
 const idleCoordinator={start(){},update(){},stop(){}};
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 test('application children pause fill and local audit and discard their late results after stop',async t=>{
@@ -134,4 +137,50 @@ test('cancelling update preparation preserves the consumed first-install allowan
  assert.equal(await app.prepareUpdate(control.signal),true);
  receive({kind:'foreground',signal});await tick();assert.equal(installs,1);
  const before=updates;control.abort();await tick();assert.ok(updates>before);assert.equal(installs,1);
+});
+
+async function cancelledCatalogFixture(t:TestContext,second:'complete'|'failed'='complete'){
+ let reads=0,installs=0,wakes=0,preparing=false,notify:()=>void=()=>{},release:()=>void=()=>{};
+ const store=createAccountLibraryStore({indexedDB:new IDBFactory()});
+ const library=createAccountLibrary({storage:store,online:()=>true,client:{
+  async catalog(){
+   reads++;if(reads===1)await new Promise<void>(resolve=>{release=resolve;});
+   if(second==='failed' && reads>1)throw Error('network failure');
+   return {kind:'page',accountId:'1',marker:'1',entries:[],nextCursor:null};
+  },async confirmCatalog(){return {kind:'confirmed',accountId:'1',marker:'1'};},async own(){assert.fail('no card fetch');}
+ }});
+ await library.connect({accountId:'1',sessionId:'one'});
+ const coordinator=createBackgroundCoordinator({owner:'proposal',channel:null,store:{read:async()=>null,update:async()=>null},
+  lifecycle:{active:true,subscribe(listener){notify=()=>listener(true);return()=>{};}}});
+ const work=createBackgroundWork({library,coordinator,clock:{now:Date.now},
+  environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},
+  release:{async install(){installs++;},async check(){assert.fail('no shared check');},observe(){},stop(){}},journal:null,local:{changed(){},broadcast(){}}},
+  {state:()=>({running:true,restored:true,accountReady:true,opening:false,writing:false,preparingUpdate:preparing}),publicTask:()=>null,changed(){},
+   wake(_at,reason){if(reason==='library')wakes++;},reconcile(){}});
+ const actor=createActor(work.logic);t.after(()=>{actor.stop();release();library.close();});
+ return {library,actor,start(){actor.start();},counts:()=>({reads,installs,wakes}),prepare(value:boolean){preparing=value;actor.send({type:'BackgroundChanged'});},
+  notify(){notify();actor.send({type:'BackgroundChanged'});},release(){release();},setLoad(fn:()=>LibraryRefreshResult){library.load=async()=>{reads++;return fn();};}};
+}
+for(const timing of ['settle-first','gate-first'])for(const outcome of ['complete','failed'] as const)test(`cancelled first catalogue resumes once: ${timing}, then ${outcome}`,async t=>{
+ const f=await cancelledCatalogFixture(t,outcome);f.start();
+ for(let i=0;i<50 && f.counts().reads===0;i++)await tick();
+ assert.equal(f.counts().reads,1);f.prepare(true);
+ if(timing==='settle-first'){
+  for(let i=0;i<5;i++)await tick();
+  assert.deepEqual(f.counts(),{reads:1,installs:1,wakes:0});
+ }
+ f.prepare(false);
+ for(let i=0;i<50 && (f.counts().reads<2 || outcome==='complete'&&!f.library.completeCatalog);i++)await tick();
+ assert.equal(f.counts().reads,2);assert.equal(f.counts().installs,1);
+ assert.equal(f.library.completeCatalog!==null,outcome==='complete');
+ assert.equal(f.counts().wakes,outcome==='complete'?1:0);
+ for(let i=0;i<6;i++){f.notify();await tick();}
+ assert.equal(f.counts().reads,2,'neither a successful nor failed retry is renewed by return events');
+ f.release();await tick();assert.equal(f.counts().reads,2);
+});
+for(const outcome of ['failed','superseded'])test(`a completed ${outcome} first attempt is not restored by preparation`,async t=>{
+ const f=await cancelledCatalogFixture(t);f.setLoad(()=>{if(outcome==='failed')throw Error('failed');return {status:'superseded'};});f.start();
+ await tick();assert.equal(f.counts().reads,1);f.prepare(true);f.prepare(false);
+ for(let i=0;i<6;i++){f.notify();await tick();}
+ assert.deepEqual(f.counts(),{reads:1,installs:1,wakes:0});
 });

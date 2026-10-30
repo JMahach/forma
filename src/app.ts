@@ -230,6 +230,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       void exploration!.select(id);
     },
   });
+  scope.own(graph.dispose);
   scope.own(chartHighlight.subscribe(() => renderGraph()));
   const cameraChanged = createCameraChangeHandler({
     heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
@@ -629,19 +630,17 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
   },publicRefresh:{
     sources:store,session,library:accountLibrary,getSession:account.getSession,read:chartClient.public,id:()=>crypto.randomUUID(),
-    view:{isChartScreen:()=>workspace.screen==='chart',selectTransit:()=>selectChart('current-transit',{replace:true}),
+    view:{isChartScreen:()=>workspace.screen==='chart',
       changeChart:graph.changeChart,refresh:presentChart,checkpoint:()=>{viewSession?.flush();}},
   }, write:{
     actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,
-    ready:()=>application!.requireAccount(),
     selection:session,temporary:()=>store.temporaryChart,hasOwn:id=>!!accountLibrary.get(id),
     initialBinding:savedView?.temporaryChartSave?.sourceId===store.temporaryChart?.id?savedView?.temporaryChartSave:null,
     retire(source){store.clearTemporary(source.id);store.releasePublicSource(source);},
     public:chartClient.public,acceptPublic:store.acceptPublic,clearPublic:store.clearPublic,
     view:{
-      signIn(){navigateWorkspace('account');},select(id){selectChart(id,{replace:true});},
       isChartScreen:()=>workspace.screen==='chart',showChart:()=>workspace.setScreen('chart'),
-      publishChart:id=>publishRoute({kind:'chart',id},true),changeChart:id=>graph.changeChart(id),refresh:presentChart,
+      changeChart:id=>graph.changeChart(id),refresh:presentChart,
       changed(){updateChartSaveControl();notifyOfflineReady();},checkpoint(){viewSession?.flush();},
       report(kind,error){toast(error===undefined?kind==='unconfirmed'?UI_MESSAGES.chartSaveUnconfirmed
         :kind==='unavailable'?UI_MESSAGES.chartUnavailable:UI_MESSAGES.chartSaveFailed:failureMessage(error,UI_MESSAGES.chartSaveFailed));},
@@ -668,7 +667,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       interrupt:()=>viewSession?.interrupt(),settled(){initialPresentation=null;updateLoading();},checkpoint:()=>{viewSession?.flush();},
       report(error){toast(failureMessage(error,UI_MESSAGES.chartUnavailable));},
       firstTransit:()=>transit!.start(null,{firstChart:true}),transitReady(ready){initialPage.contentFailed=!ready;updateLoading();},
-      markOpened:id=>application!.send({type:'LibraryUsed',id}),publicRead(checkedAt,receivedAt){application!.send({type:'PublicSourceRead',source:store.publicChart!,checkedAt,receivedAt});},
     },
   }});
     scope.own(()=>application!.stop());

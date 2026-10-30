@@ -1,5 +1,5 @@
 import type {AppRoute} from '../../shared/app-routes.ts';
-import type {ApplicationPorts,NavigationPort,RoutePort,RouteRequest} from './ports.ts';
+import type {ApplicationRuntimePorts as ApplicationPorts,NavigationPort,RoutePort,RouteRequest} from './ports.ts';
 
 export const chartDestination=(route:AppRoute)=>route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit';
 export function routeForChart(port:RoutePort,id:string):AppRoute {

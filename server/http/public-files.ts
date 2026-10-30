@@ -123,6 +123,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/startup.ts',
     'src/views/loading-preview.ts',
     'src/views/chart-loading.ts',
+    'src/views/chart-tools-view.ts', 'src/views/workspace.ts',
     'src/views/chart-link.ts',
     'src/data/api-client.ts',
     'src/data/chart-store.ts',

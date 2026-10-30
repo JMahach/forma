@@ -381,7 +381,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
         clear() { element('viewport').innerHTML = ''; },
       } });
       return { choose: noop, changeChart: (id: string) => { chartSelections++; options.onChartChange!(id); },
-      clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
+      clear: noop, dispose:()=>onRelease('scene'), render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
     attachCameraControls: ()=>({dispose:async()=>{}}), createCameraChangeHandler: () => noop,
     createViewSession: (options) => {
       assert.equal(options.cameraRestored, true);
@@ -2789,7 +2789,7 @@ for (const screen of ['account', 'charts', 'knowledge'] as const) {
     for (let i = 0; i < 8; i++) await tick();
     assert.equal(currentTransit()?.utc, '2026-09-24T06:40:00Z', 'the accepted pause survives hidden startup');
     assert.equal(h.offlineRestored(), true);
-    assert.equal(h.prepareOfflineUpdate(), true);
+    assert.equal(await h.prepareOfflineUpdate(), true);
   });
 }
 
@@ -2874,9 +2874,10 @@ for(const boundary of ['timeline','stop'] as const)test(`startup before account 
 
 test('an unfinished library refresh does not block a restorable release transition',async()=>{
  let finish!:(value:ReturnType<typeof catalogPage>)=>void,reads=0;
- const h=harness({realViewSession:true,accountSession:{accountId:'1',sessionId:'catalog-pending'},
+ const h=harness({realViewSession:true,realTransit:true,accountSession:{accountId:'1',sessionId:'catalog-pending'},
   chartClient:{catalog(){reads++;return new Promise(resolve=>{finish=resolve;});}}});
  await h.restoration;await tick();assert.equal(reads,1);
+ assert.equal(h.offlineRestored(),true,'the real transit owner supplies the already ready view');
  assert.equal(await h.prepareOfflineUpdate(),true,'the existing view is durable while the catalog is still arriving');
  finish(catalogPage([],'1'));await tick();await h.stopApplication();
 });
@@ -3030,5 +3031,5 @@ test('a partial application start releases already acquired resources',async()=>
  const close=storage.close;storage.close=()=>{closes++;close();};
  assert.throws(()=>harness({libraryStorage:storage,failAtMonitor:failure,onRelease:owner=>released.push(owner)}),failure);
  await tick();await tick();
- assert.deepEqual(released.sort(),['birth-form','heading','hover']);assert.equal(closes,1);
+ assert.deepEqual(released.sort(),['birth-form','heading','hover','scene']);assert.equal(closes,1);
 });

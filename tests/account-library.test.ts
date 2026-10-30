@@ -647,7 +647,7 @@ for(const stage of ['local','page','confirmation','authority'] as const)test(`ca
  const pending=library.load(authority).then(result=>{finished=true;return result;});
  await began;library.cancelCatalogReads();await new Promise(setImmediate);
  assert.equal(finished,true,'the read must settle before the transport supplies an answer');
- assert.deepEqual(await pending,{status:'superseded'});assert.equal(writes,0);
+ assert.deepEqual(await pending,{status:'cancelled'});assert.equal(writes,0);
  release();await new Promise(setImmediate);await new Promise(setImmediate);
  assert.equal(writes,0);assert.equal(library.completeCatalog,null);assert.deepEqual(library.entries,[]);
  assert.equal((await storage.readCatalog())?.catalog,null);
@@ -669,7 +669,7 @@ test('catalog cancellation covers every distinct run and its joined readers with
  const first=observe(library.load(undefined,firstSignal)),joined=observe(library.load(undefined,firstSignal)),second=observe(library.load(undefined,secondSignal));
  await began;const {cancelCatalogReads}=library;cancelCatalogReads();await new Promise(setImmediate);
  assert.equal(finished,3);assert.ok(calls.every(call=>call.signal.aborted));
- for(const result of await Promise.all([first,joined,second]))assert.deepEqual(result,{status:'superseded'});
+ for(const result of await Promise.all([first,joined,second]))assert.deepEqual(result,{status:'cancelled'});
  assert.equal(library.completeCatalog,prior);assert.deepEqual(library.workingLease,lease);assert.equal(library.get(rows[0]!.id),card);
  rows.push(accountChart(2));for(const call of calls)call.release();await new Promise(setImmediate);await new Promise(setImmediate);
  assert.equal(library.completeCatalog,prior,'late data cannot publish or clear the next run');
@@ -694,7 +694,7 @@ test('catalog cancellation waits for an entered commit and its local publication
  const read=source.catalog;t.mock.method(source,'catalog',async(...args:Parameters<typeof read>)=>{reading();await readGate;return read(...args);});
  const pending=library.load(undefined,new AbortController().signal).then(result=>{readFinished=true;return result;});
  await beganRead;library.cancelCatalogReads();library.cancelCatalogReads();await new Promise(setImmediate);
- assert.equal(readFinished,true);assert.deepEqual(await pending,{status:'superseded'});
+ assert.equal(readFinished,true);assert.deepEqual(await pending,{status:'cancelled'});
  assert.equal(finished,false);assert.equal(joinedFinished,false);assert.equal(library.completeCatalog,prior);
  release();assert.deepEqual(await committing,{status:'complete',durable:true});assert.deepEqual(await joined,{status:'complete',durable:true});
  const saved=await storage.readCatalog();assert.deepEqual(library.completeCatalog,saved?.catalog);assert.deepEqual(library.workingLease,saved?.lease);

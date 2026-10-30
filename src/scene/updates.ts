@@ -114,6 +114,7 @@ export function createGraphController({
   return {
     selectionState, render, preview, choose, reset,
     clear() { reset(); render(); },
+    dispose() { reset(); scene.clear(); },
     changeChart(id: string) { reset(); onChartChange(id); },
   };
 }

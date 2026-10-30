@@ -16,7 +16,7 @@ interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:Ab
 interface CatalogLoading {run:CatalogRun;promise:Promise<LibraryRefreshResult>}
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
-export type LibraryRefreshResult={status:'complete'|'unchanged';durable:boolean}|{status:'inactive'|'unstable'|'superseded'};
+export type LibraryRefreshResult={status:'complete'|'unchanged';durable:boolean}|{status:'inactive'|'unstable'|'superseded'|'cancelled'};
 
 /** One working account library. Acquisition and persistence never choose the visible chart. */
 class AccountLibraryOwner {
@@ -355,7 +355,7 @@ class AccountLibraryOwner {
   const control=run.control;this.catalogReads.add(control);
   let cancel!:()=>void;
   const cancelled=new Promise<LibraryRefreshResult>(resolve=>{
-   cancel=()=>resolve({status:'superseded'});control.signal.addEventListener('abort',cancel,{once:true});
+   cancel=()=>resolve({status:'cancelled'});control.signal.addEventListener('abort',cancel,{once:true});
   });
   try{return await Promise.race([read(),cancelled]);}
   finally{this.catalogReads.delete(control);control.signal.removeEventListener('abort',cancel);}
