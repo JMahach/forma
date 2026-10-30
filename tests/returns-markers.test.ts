@@ -1,11 +1,12 @@
 import test from 'node:test';
+import type {CycleEvent} from '../shared/cycles-format.ts';
 import assert from 'node:assert/strict';
 import { dateDom, type DateNode } from './helpers/date-dom.ts';
 import { CYCLE_BODIES } from '../src/domain/cycles.ts';
 import { attachTimelineRange } from '../src/views/timeline-range.ts';
 
 import { groupReturnMarkers as group, attachReturnMarkers as attach } from '../src/views/returns-markers.ts';
-const event = (id: string, body: string, utc: string, pass = 1) => ({ id, body, utc, pass, cycle: 1, cycleId: `${body}:1`, direction: pass === 2 ? 'retrograde' : 'direct', age: 999 });
+const event = (id: string, body: string, utc: string, pass = 1):CycleEvent => ({ id, body, utc, pass, cycle: 1, cycleId: `${body}:1`, direction: pass === 2 ? 'retrograde' : 'direct', age: 999 });
 const fromUtc = '2026-01-01T00:00:00Z', toUtc = '2026-01-11T00:00:00Z';
 const natal = { id: 'natal', utc: '2000-01-05T00:00:00Z', timezone: 'UTC' };
 // The small DOM fixture stores local text only; real textContent includes descendants.
@@ -81,31 +82,40 @@ test('dense lunar events retain exact positions without pushing visible labels b
 });
 
 function harness(options = {}) {
-  const document = dateDom();
-  const container = document.createElement('div'), slider = document.createElement('input');
-  let width = 324;
-  const observers = [];
-  document.defaultView.ResizeObserver = class {
-    constructor(callback) { this.callback = callback; }
-    observe(target) { observers.push({ target, callback: this.callback }); }
+  const document = dateDom(),create=document.createElement.bind(document);
+  document.createElement=tag=>{
+    const node=create(tag),dispatch=node.dispatch.bind(node);
+    node.closest=((selector:string)=>{for(let current:DateNode|null=node;current;current=current.parentElement)if(selector==='[data-return-marker]' && current.dataset.returnMarker)return current;return null;}) as never;
+    node.dispatch=(type,event={})=>{const result=dispatch(type,event);if(type==='click')node.parentElement?.dispatch(type,{...event,target:event.target??node});return result;};
+    return node;
   };
-  container.getBoundingClientRect = () => ({ width });
+  const container = document.createElement('div'), slider = document.createElement('input');
+  let width = 324,measurements=0;
+  const observers:{target:Element;callback:ResizeObserverCallback;active:boolean}[]=[];
+  document.defaultView.ResizeObserver = class {
+    private record?:typeof observers[number];
+    private callback:ResizeObserverCallback;
+    constructor(callback:ResizeObserverCallback){this.callback=callback;}
+    observe(target:Element){this.record={target,callback:this.callback,active:true};observers.push(this.record);}
+    disconnect(){if(this.record)this.record.active=false;}
+  } as unknown as typeof ResizeObserver;
+  container.getBoundingClientRect = () => {measurements++;return { width };};
   slider.type = 'range'; container.append(slider); document.body.append(container);
   Object.assign(slider, { min: '0', max: '1000', step: '1', value: '1000',
     getBoundingClientRect: () => ({ left: 10, top: 30, width, height: 44 }) });
   container.querySelector = (selector: string) => selector === 'input[type="range"]' ? slider : null;
   let day, refreshes = 0;
-  const chosen = [], markers = attach({ container, onSelect: value => chosen.push(value), onTargetsChange: () => { refreshes++; day?.refreshTargets(); }, ...options });
-  const layer = container.children.at(-1);
+  const chosen = [], markerOptions:Parameters<typeof attach>[0]={ container, onSelect: value => chosen.push(value), onTargetsChange: () => { refreshes++; day?.refreshTargets(); }, ...options };
+  let markers=attach(markerOptions),layer=container.children.at(-1);
   const reference = document.createElement('button'), now: boolean[] = [], scrubs: number[] = [];
   day = attachTimelineRange({ range: slider, marker: reference, resolveTap: (pointer, metrics) => markers.hitTest(pointer, metrics),
     onReference: () => now.push(true), onScrub: value => scrubs.push(value) });
   day.updateReference({ visible: false, label: 'Сейчас' });
   const buttons = () => layer!.all((node: { tagName: string; className: string; }) => node.tagName === 'button' && node.className === 'returns-marker');
   const update = (extra) => markers.update({ events: [], natal, fromUtc, toUtc, visible: true, displayedUtc: extra.selectedEvent?.utc, ...extra });
-  return { document, container, slider, chosen, markers, layer, buttons, update, reference, now, scrubs, day,
+  return { document, container, slider, chosen, get markers(){return markers;}, get layer(){return layer;}, reattach(){markers=attach(markerOptions);layer=container.children.at(-1);return markers;}, get observerCount(){return observers.filter(value=>value.active).length;}, get measurements(){return measurements;}, lateResize(){for(const {callback,active} of observers)if(!active)callback([],{} as ResizeObserver);}, buttons, update, reference, now, scrubs, day,
     get refreshes() { return refreshes; },
-    resize(value: number) { width = value; for (const { target, callback } of observers) callback([{ target, contentRect: { width } }]); } };
+    resize(value: number) { width = value; for (const { target, callback,active } of observers) if(active)callback([{ target, contentRect: { width } }] as ResizeObserverEntry[],{} as ResizeObserver); } };
 }
 
 test('every event lights from accepted UTC without selection id, including coincident events', () => {
@@ -201,7 +211,7 @@ test('the first passage represents its own cycle without swallowing other planet
 
 
 const lifeBirth = '1998-08-18T12:00:00Z', lifeEnd = '2118-08-18T12:00:00Z';
-const lifeEvent = (body: string, cycle: number, utc: string, pass = 1) => ({ ...event(`${body}:${cycle}:${pass}`, body, utc, pass), cycle, cycleId: `${body}:${cycle}` });
+const lifeEvent = (body: string, cycle: number, utc: string, pass = 1):CycleEvent => ({ ...event(`${body}:${cycle}:${pass}`, body, utc, pass), cycle, cycleId: `${body}:${cycle}` });
 test('Saturn 2 remains an independent exact marker beside lunar nodes 3 on a 120-year rail', () => {
   const node = lifeEvent('north_node', 3, '2054-06-24T12:00:00Z');
   const saturn = lifeEvent('saturn', 2, '2057-06-24T23:27:34.429422Z');
@@ -513,4 +523,25 @@ test('ready membership is linear per update and unchanged disabled states are un
   h.update({ events, readyEvents });
   assert.equal(writes, 1, 'in-place ready edits are observed');
   assert.equal(h.buttons().at(-1)!.disabled, true);
+});
+
+test('thirty marker lifetimes disconnect observation and retire cached targets without stopping the shared rail',async()=>{
+ const h=harness(),values=[event('saturn','saturn',fromUtc),event('node','north_node','2026-01-05T00:00:00Z'),event('chiron','chiron',toUtc)];
+ const neighborListeners=h.slider.listenerCount(),neighborObservers=h.observerCount-1;
+ for(let i=0;i<30;i++){
+  h.update({events:values});assert.equal(h.observerCount,neighborObservers+1);const owner=h.markers,layer=h.layer!,button=h.buttons()[0];
+  assert.equal(layer.listenerCount(),1);assert.ok(h.buttons().every(node=>node.listenerCount()===0));
+  const target=owner.hitTest({clientX:270,clientY:720,pointerType:'mouse'})!;assert.ok(target);target.hover?.(true);target.press?.(true);assert.equal(target.valid?.(),true);target.hover?.(false);
+  await owner.dispose();await owner.dispose();
+  assert.equal(h.observerCount,neighborObservers);assert.equal(layer.parentElement,null);assert.equal(layer.children.length,0);assert.equal(layer.listenerCount(),0);assert.equal(button.listenerCount(),0);
+  const before={...button.dataset},refreshes=h.refreshes,reads=h.measurements;
+  target.hover?.(true);assert.deepEqual(button.dataset,before);target.hover?.(false);target.press?.(false);target.select();button.dispatch('click');owner.update({events:values,natal,fromUtc,toUtc,visible:true});h.lateResize();
+  assert.equal(target.valid?.(),false);assert.equal(owner.hitTest({clientX:270,clientY:720,pointerType:'mouse'}),null);assert.deepEqual(button.dataset,before);assert.equal(h.refreshes,refreshes);assert.equal(h.measurements,reads);assert.deepEqual(h.chosen,[]);
+  assert.equal(h.slider.listenerCount(),neighborListeners);if(i<29)h.reattach();
+ }
+ h.day.updateReference({value:500,visible:true,label:'Now'});h.reference.dispatch('click',{detail:0});assert.deepEqual(h.now,[true]);
+ h.reattach();h.update({events:values});const removed=h.buttons()[0];h.update({events:[]});h.update({events:values});
+ h.layer!.dispatch('click',{target:removed,detail:0});h.layer!.dispatch('click',{target:{} as never,detail:0});assert.deepEqual(h.chosen,[]);
+ const current=h.buttons()[0];current.children[1].children[0].dispatch('click',{detail:0});assert.deepEqual(h.chosen,[values[0]]);
+ h.update({events:values,readyEvents:[]});current.dispatch('click',{detail:0});assert.deepEqual(h.chosen,[values[0]]);await h.markers.dispose();
 });

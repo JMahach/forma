@@ -1,4 +1,5 @@
 import type { ChartRecord } from '../../shared/chart-types.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { TimelinePointer, TimelineGeometry, TimelineTarget } from './timeline-range.ts';
 type MarkerUtc = string | number | null | undefined;
@@ -86,6 +87,7 @@ function labelsFor(natal: Partial<ChartRecord> | null | undefined) {
 // This layer shares the slider's 22 px rail endpoints. Pointer input passes
 // through to the range, which resolves a roomy event tap or a continuous drag.
 export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsChange = () => {} }: ReturnMarkerOptions) {
+  const scope=createResourceScope();
   const document = container.ownerDocument;
   const layer = document.createElement('div');
   layer.className = 'returns-markers'; layer.hidden = true; container.append(layer);
@@ -93,8 +95,14 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
   let label: ReturnType<typeof labelsFor> | null = null, targets: ReturnMarkerNode[] = [], hovered: HTMLButtonElement | null = null;
   let hitMetrics: TimelineGeometry | null | undefined = null, hitBoxes: { target: ReturnMarkerNode; rect: DOMRect }[] | null = null;
   const records = new Map<string, ReturnMarkerNode>();
+  layer.addEventListener('click',action=>{
+    if(action.detail)return;
+    const button=(action.target as Element).closest?.<HTMLButtonElement>('[data-return-marker]');
+    const target=records.get(button?.dataset.returnMarker!);
+    if(target && target.button===button && !target.button.disabled)onSelect(target.event);
+  }, {signal:scope.signal});
   function hover(button: HTMLButtonElement | null) {
-    if (hovered === button) return;
+    if (scope.stopped || hovered === button) return;
     if (hovered) delete hovered.dataset.hovered;
     hovered = button;
     if (hovered) hovered.dataset.hovered = 'true';
@@ -137,8 +145,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
         symbol.append(glyph, ordinal);
         button.append(dot, symbol);
         target = { button, dot, symbol, glyph, ordinal, hover: (active: boolean) => hover(active ? button : null),
-          press: (active: boolean) => { if (active) button.dataset.pressed = 'true'; else delete button.dataset.pressed; } } as ReturnMarkerNode;
-        button.addEventListener('click', action => { if (!action.detail) onSelect(target!.event); });
+          press: (active: boolean) => { if(scope.stopped)return; if (active) button.dataset.pressed = 'true'; else delete button.dataset.pressed; } } as ReturnMarkerNode;
         records.set(event.id, target);
       }
       target.event = event; target.utc = Date.parse(event.utc);
@@ -162,6 +169,7 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
     onTargetsChange();
   }
   function update(next: MarkerInputs) {
+    if(scope.stopped)return;
     inputs = { ...next, events: Array.isArray(next.events) ? next.events : [] };
     // Clock changes update only changed indicators; labels and layout stay intact.
     if (sameLayout(inputs)) { updateActive(); return; }
@@ -186,13 +194,19 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
     return true;
   }
   const Observer = document.defaultView?.ResizeObserver || globalThis.ResizeObserver;
-  if (Observer) new Observer(entries => {
+  const observer=Observer?new Observer(entries => {
+    if(scope.stopped)return;
     const measured = entries?.find(entry => entry.target === container)?.contentRect?.width ?? container.getBoundingClientRect().width;
     const nextWidth = Math.max(0, measured - TIMELINE_THUMB_SIZE);
     if (nextWidth === width) return;
     width = nextWidth;
     if (inputs) render();
-  }).observe(container);
+  }):null;
+  observer?.observe(container);
+  scope.own(()=>{
+    observer?.disconnect();records.clear();targets=[];inputs=layout=null;label=null;hitMetrics=hitBoxes=null;hovered=null;
+    layer.replaceChildren();layer.remove();
+  });
   // Resolve a generous invisible target once, at the beginning of the shared
   // rail gesture. Direct labels win; overlapping hit areas use the nearest mark.
   function targetAt(pointer: TimelinePointer, metrics?: TimelineGeometry) {
@@ -229,5 +243,5 @@ export function attachReturnMarkers({ container, onSelect = () => {}, onTargetsC
     return { direct: winner.direct, distance: winner.distance, valid, title: target.button.title, hover: target.hover, press: target.press,
       select() { if (valid()) onSelect(target!.event); } };
   }
-  return { update, hitTest };
+  return { update, hitTest,dispose:scope.stop };
 }

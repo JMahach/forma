@@ -228,9 +228,13 @@ function panelHarness({ rows = false }: { rows?: boolean } = {}) {
     returnsPanel: nodes.returnsPanel, returnsButton: nodes.summaryReturns,
     switcher: nodes.summarySwitch, backdrop: nodes.summaryBackdrop,
   } as unknown as Parameters<typeof attachChartSummary>[0]);
-  view = attachReturnsPanel({ document: document as unknown as Document, viewportLayout: createViewportLayout(document as unknown as Document), onBack: () => { backs.push('summary'); update({ opened: false }); },
+  const viewportLayout=createViewportLayout(document as unknown as Document);
+  const resourceCount=()=>{const all=new Set([document,document.defaultView,...Object.values(nodes)]);const visit=(node:PanelNode)=>{all.add(node);for(const child of node.children)visit(child);};visit(document.body);return [...all].reduce((sum,node)=>sum+(node.listenerCount?.()??0),0);};
+  const baseline=resourceCount();
+  const options:Parameters<typeof attachReturnsPanel>[0]={ document: document as unknown as Document, viewportLayout, onBack: () => { backs.push('summary'); update({ opened: false }); },
     onYear(value) { years.push(value); update({ year: value }); }, onBodies(value) { bodySelections.push(value); update({ bodies: value }); }, onSelect(id) { selected.push(id); },
-    onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ });
+    onBirth() { moments.push('birth'); }, onNow() { moments.push('now'); }, onRetry() {}, onLayout: () => layouts++ };
+  view=attachReturnsPanel(options);
   function escape(target = document.activeElement || nodes.returnsPanel) {
     let stopped = false;
     const event = { target, key: 'Escape', defaultPrevented: false,
@@ -240,7 +244,7 @@ function panelHarness({ rows = false }: { rows?: boolean } = {}) {
     if (!stopped) document.defaultView.dispatch('keydown', event);
     return event;
   }
-  return { document, nodes, view, summary, update, escape, selected, years, moments, bodySelections, backs, get layouts() { return layouts; } };
+  return { document, nodes, get view(){return view;}, reattach(){view=attachReturnsPanel(options);return view;}, viewportLayout, resourceCount, baseline, summary, update, escape, selected, years, moments, bodySelections, backs, get layouts() { return layouts; } };
 }
 
 test('opening planets by pointer focuses its dialog without suggesting the first planet is selected', () => {
@@ -725,4 +729,25 @@ test('offline list rendering indexes current ready IDs once', () => {
   assert.ok(reads <= events.length, `linear ready indexing: ${reads}`);
   assert.equal((markup.match(/data-return-event=/g) || []).length, events.length);
   assert.doesNotMatch(markup, / disabled/);
+});
+
+test('thirty returns-panel lifetimes release the real year picker and owned rows while the summary stays live',async t=>{
+ const h=panelHarness();let retired:ReturnType<typeof attachReturnsPanel>|undefined,openResources=0;
+ for(let i=0;i<30;i++){
+  h.update({timelineVisible:true,opened:true,year:2026,events:[event('saturn','2026-04-01T00:00:00Z')]});
+  h.nodes.returnsBodiesToggle.dispatch('click',{detail:1});assert.equal(h.nodes.returnsBodyMenu.hidden,false);
+  retired?.update({visible:false});assert.equal(h.nodes.returnsBodyMenu.hidden,false,'old updates must not close the new filter');
+  h.nodes.returnsYearCalendar.dispatch('click');
+  const popup=h.document.body.children.find(node=>node.className.includes('date-picker'))!;assert.equal(popup.hidden,false);assert.equal(h.viewportLayout.subscriberCount,1);
+  const choice=popup.all(node=>node.tagName==='button').at(-1)!;openResources=h.resourceCount()-h.baseline;
+  const before={years:h.years.length,bodies:h.bodySelections.length,layouts:h.layouts};retired=h.view;
+  await retired.dispose();await retired.dispose();
+  assert.equal(h.viewportLayout.subscriberCount,0);assert.equal(h.resourceCount(),h.baseline);
+  assert.equal(h.nodes.returnsBody.children.length,0);assert.equal(h.document.body.children.some(node=>node.className.includes('date-picker')),false);
+  choice.dispatch('click');h.nodes.returnsYear.dispatch('change');h.nodes.returnsBodiesClear.dispatch('click');retired.update({visible:true,year:2027});
+  assert.deepEqual({years:h.years.length,bodies:h.bodySelections.length,layouts:h.layouts},before);
+  h.summary.close();h.summary.open();assert.equal(h.summary.opened,true,'the adjacent summary owner remains usable');
+  if(i<29)h.reattach();
+ }
+ t.diagnostic(`owned open-panel resources ${openResources} -> 0; viewport subscriptions 1 -> 0; cycles 30`);h.viewportLayout.destroy();
 });

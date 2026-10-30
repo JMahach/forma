@@ -1,4 +1,5 @@
 import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { ReturnsState } from '../state/returns.ts';
 import type { StudioLayout } from '../ui/layout/studio-controller.ts';
@@ -59,6 +60,7 @@ function renderPreparedReturnEvents(state: ReturnsPanelState, events: ReturnType
 }
 
 export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, onBodies, onSelect, onBirth = () => {}, onNow = () => {}, onRetry, onLayout = () => {} }: ReturnsPanelOptions) {
+  const scope=createResourceScope();
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   const panel = $('returnsPanel');
   panel.style.setProperty('--return-selection', PALETTE.halo);
@@ -86,9 +88,9 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     input.addEventListener('change', () => {
       const selected = state.bodies || [];
       onBodies(input.checked ? [...new Set([...selected, item.id])] : selected.filter(id => id !== item.id));
-    });
+    }, {signal:scope.signal});
   }
-  yearButton.addEventListener('click', () => closeBodies());
+  yearButton.addEventListener('click', () => closeBodies(), {signal:scope.signal});
   let eventInput: CycleEvent[] = [], preparedEvents: ReturnType<typeof firstReturnEvents> = [];
   let rows = new Map<string, EventRow>(), paintedSelection: string | null | undefined = null, paintedPending: string | null | undefined = null;
   let birthRow: HTMLButtonElement | null = null, nowRow: HTMLButtonElement | null = null;
@@ -144,7 +146,7 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     year.value = String(Number(value));
     if (Number(value) !== state.year) onYear(Number(value));
   }
-  const yearCalendar = attachDatePicker({ input: year, button: yearButton, precision: 'year', viewportLayout,
+  const yearCalendar = attachDatePicker({ input: year, button: yearButton, precision: 'year', viewportLayout, signal:scope.signal,
     presentation: { className: 'returns-filter-popover', title: 'Период', preferBelow: true,
       getBounds: () => {
         const bounds = panel.getBoundingClientRect();
@@ -173,35 +175,42 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     // Pointer opening enters the dialog without highlighting an unchosen planet.
     // Keyboard activation still starts at the first checkbox.
     if (opening) (event.detail === 0 ? checks.values().next().value : bodyMenu)?.focus({ preventScroll: true });
-  });
-  $('returnsBodiesClose').addEventListener('click', () => closeBodies(true));
-  $('returnsBodiesClear').addEventListener('click', () => onBodies([]));
-  $('returnsBodiesDefault').addEventListener('click', () => onBodies([...DEFAULT_CYCLE_BODIES]));
+  }, {signal:scope.signal});
+  $('returnsBodiesClose').addEventListener('click', () => closeBodies(true), {signal:scope.signal});
+  $('returnsBodiesClear').addEventListener('click', () => onBodies([]), {signal:scope.signal});
+  $('returnsBodiesDefault').addEventListener('click', () => onBodies([...DEFAULT_CYCLE_BODIES]), {signal:scope.signal});
   document.addEventListener('pointerdown', event => {
     if (!bodyMenu.hidden && !bodyMenu.contains(event.target as Node | null) && !bodyButton.contains(event.target as Node | null)) closeBodies();
-  }, true);
+  }, {capture:true,signal:scope.signal});
   document.addEventListener('focusin', event => {
     if (!bodyMenu.hidden && !bodyMenu.contains(event.target as Node | null) && !bodyButton.contains(event.target as Node | null)) closeBodies();
-  });
-  $('returnsBack').addEventListener('click', onBack);
-  $('returnsRetry').addEventListener('click', onRetry);
-  year.addEventListener('change', () => chooseYear(year.value));
-  year.addEventListener('input', () => year.setAttribute('aria-invalid', 'false'));
-  year.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); chooseYear(year.value); } });
+  }, {signal:scope.signal});
+  $('returnsBack').addEventListener('click', onBack, {signal:scope.signal});
+  $('returnsRetry').addEventListener('click', onRetry, {signal:scope.signal});
+  year.addEventListener('change', () => chooseYear(year.value), {signal:scope.signal});
+  year.addEventListener('input', () => year.setAttribute('aria-invalid', 'false'), {signal:scope.signal});
+  year.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); chooseYear(year.value); } }, {signal:scope.signal});
   content.addEventListener('click', event => {
     const button = (event.target as Element).closest?.<HTMLButtonElement>('[data-return-event], [data-return-birth], [data-return-now]');
     if (!button || button.disabled) return;
     if (button.dataset.returnBirth !== undefined) onBirth();
     else if (button.dataset.returnNow !== undefined) onNow();
     else onSelect(button.dataset.returnEvent!);
-  });
+  }, {signal:scope.signal});
   panel.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || !visible) return;
     if (!bodyMenu.hidden) { event.preventDefault(); closeBodies(true); }
     else if (yearCalendar.opened) { event.preventDefault(); yearCalendar.close(true); }
     // Unhandled Escape bubbles to the shared About drawer owner.
+  }, {signal:scope.signal});
+  scope.own(()=>{
+    visible=false;closeBodies();
+    state={};eventInput=[];preparedEvents=[];listSnapshot=null;rows.clear();birthRow=nowRow=null;markup='';
+    for(const input of checks.values())input.parentElement?.remove();
+    checks.clear();content.replaceChildren();
   });
   function update(next: ReturnsPanelState) {
+    if(scope.stopped)return;
     const wasVisible = visible;
     const nextKey = JSON.stringify([next.natal?.id || next.natal?.utc, next.year, next.bodies]);
     const nextVisible = Boolean(next.visible);
@@ -269,5 +278,5 @@ export function attachReturnsPanel({ document, viewportLayout, onBack, onYear, o
     if (jumpPending && !busy) jumpToPresent();
     if (!wasVisible) { onLayout(); $('returnsBack').focus({ preventScroll: true }); }
   }
-  return { update };
+  return { update,dispose:scope.stop };
 }
