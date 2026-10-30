@@ -17,7 +17,10 @@ import type { AccountChartBirth } from '../shared/chart-record-contract.ts';
 import { createChartClient } from '../src/data/chart-client.ts';
 import { createChartActions } from '../src/state/chart-actions.ts';
 import { createViewStore } from '../src/data/view-store.ts';
-import { accountChart } from './helpers/account-chart.ts';
+import { accountChart, accountNatalChart } from './helpers/account-chart.ts';
+import { createChartReturns } from '../server/services/chart-returns.ts';
+import { deferred } from './helpers/deferred.ts';
+import { mainReturnRange } from '../shared/chart-return-contract.ts';
 
 const op = (n:number) => n.toString(16).padStart(32,'0');
 const birth: AccountChartBirth = {source:'transit', birthDate:'2000-01-01', birthTime:'12:00', birthPlace:'',
@@ -290,16 +293,60 @@ test('runtime joins private HTTP and durable main return records across reconstr
   const connect=()=>f.useHandler(createChartRuntime({database:f.database,accounts:f.accounts,cities:createCityCatalog([]),
     calculate,cycles,origins:['https://forma.example.test']}).handler);
   const path='/api/charts/'+saved.chartId+'/returns/',base={expectedAccountId:f.accountId,birthUtc:content.utc,timezone:content.timezone,body:'saturn'};
+  f.database.connection.exec(`CREATE TEMP TABLE session_renewals(expiresAt INTEGER);
+    CREATE TEMP TRIGGER count_session_renewals AFTER UPDATE OF expiresAt ON account_sessions
+    BEGIN INSERT INTO session_renewals VALUES(NEW.expiresAt); END;`);
+  const current=f.accounts.current.bind(f.accounts);
+  t.mock.method(f.accounts,'current',(...args:Parameters<typeof current>)=>{f.advance(1000);return current(...args);});
+  const renewals=()=>Number(f.database.connection.prepare('SELECT count(*) AS n FROM session_renewals').get()!.n);
   connect();
   const dates=await f.request(path+'events','POST',{...base,...range});assert.equal(dates.status,200,JSON.stringify(dates.body));
+  assert.equal(renewals(),1,'one request renews once even when authorization checks cross clock ticks');
   const exact=await f.request(path+'chart','POST',{...base,eventUtc:utc});assert.equal(exact.status,200,JSON.stringify(exact.body));
+  assert.equal(renewals(),2);
   connect();
   assert.deepEqual((await f.request(path+'events','POST',{...base,...range})).body,dates.body);
+  assert.equal(renewals(),3,'ready dates still renew the next independent request once');
   assert.deepEqual((await f.request(path+'chart','POST',{...base,eventUtc:utc})).body,exact.body);
+  assert.equal(renewals(),4);
   assert.equal(dateCalls,1);assert.equal(chartCalls,1);
   assert.equal((await f.request(path+'chart','POST',{...base,eventUtc:utc},{cookie:false})).status,401);
 });
 
+
+for(const change of ['continue','logout','expiry','revocation'] as const) {
+  test(`return request checks current access after waiting without renewing twice: ${change}`,async t=>{
+    const entered=deferred<void>(),release=deferred<void>();t.after(()=>release.resolve());
+    const returns=createChartReturns({cycles:{
+      async events(input){entered.resolve();await release.promise;return {range:{fromAge:input.fromAge!,toAge:input.toAge!},events:[]};},
+      async chart(){assert.fail('reading dates does not calculate a full return');},
+    }});
+    const f=await fixture(t,undefined,{returns}),content=accountNatalChart();
+    const saved=f.records.withAuthorization(()=>({accountId:f.accountId})).create({...f.intent(),content});
+    assert.equal(saved.kind,'created');assert.ok('chartId' in saved);
+    const expiry=()=>f.database.connection.prepare('SELECT expiresAt FROM account_sessions WHERE id=?').get(f.id)?.expiresAt;
+    const before=expiry();f.advance(1000);
+    const pending=f.request(`/api/charts/${saved.chartId}/returns/events`,'POST',{
+      expectedAccountId:f.accountId,birthUtc:content.utc,timezone:content.timezone,body:'saturn',
+      ...mainReturnRange(content.utc)!,
+    });
+    await Promise.race([entered.promise,pending.then(response=>assert.fail(`request ended before calculation: ${response.status}`))]);
+    const renewed=expiry();assert.notEqual(renewed,before);
+    if(change==='logout')await f.accounts.logout(f.id,f.proof);
+    else if(change==='revocation')f.database.connection.prepare('DELETE FROM account_sessions WHERE id=?').run(f.id);
+    else f.advance(change==='expiry'?90*24*60*60*1000:1000);
+    release.resolve();const response=await pending;
+    if(change==='continue') {
+      assert.equal(response.status,200);assert.deepEqual(response.body.events,[]);
+      assert.equal(expiry(),renewed,'finishing the calculation must not renew again');
+    } else {
+      assert.equal(response.status,401);assert.deepEqual(response.body,{error:'auth_required'});
+      assert.equal(response.headers['Set-Cookie'],undefined,'a rejected session cannot be restored by a late response');
+      assert.equal(f.database.connection.prepare('SELECT count(*) AS n FROM account_chart_returns').get()!.n,0);
+      assert.equal(expiry(),change==='expiry'?renewed:undefined);
+    }
+  });
+}
 
 test('owned return transport needs no calculation marker and preserves queue refusal', async t => {
   const {CycleError}=await import('../server/services/cycles.ts');

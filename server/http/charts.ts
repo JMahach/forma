@@ -91,6 +91,7 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const consumer = requestSignal(req,res);
     let current: ReturnType<Accounts['current']> = null;
+    let renewed = false;
     let recover: (() => ChartOutcome) | undefined;
     let proof: ReturnType<typeof security.credentials> = {bindings:{}, sessions:{}};
     function sessionHeaders() {
@@ -106,7 +107,10 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       if (rejectApiMethod(req,res,url.pathname)) return;
       proof = security.credentials(req.headers.cookie ?? '');
       const access = records.withAuthorization((_time,options) => {
-        current = accounts.current(proof,options);
+        // Recheck access after waiting, but renew only once within this request.
+        const renew = !renewed && options?.renew !== false;
+        current = accounts.current(proof,{renew});
+        if (current && renew) renewed = true;
         return current ? {accountId:current.account.id} : null;
       });
       function withCurrentObservation(result:ChartOutcome, expectedAccountId:string) {
