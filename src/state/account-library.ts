@@ -4,6 +4,7 @@ import type { AccountLibraryStore, LibraryLease,LibrarySnapshot,LibraryCatalogBa
 import type {LibraryCatalogRead} from './library-reconciliation.ts';
 import type {LibraryCatalogSnapshot,LibraryCatalogEntry} from '../../shared/library-catalog-contract.ts';
 import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
+import type {CheckAuthority} from '../domain/background-check.ts';
 import {readCompleteLibraryCatalog,projectLibraryEntries,libraryRecordEntry,sameLibrarySession,sameWorkingLease,catalogIsOlder,mergeLibraryRecords,parseLibraryNotice,type LibrarySession,type LibraryNotice} from './library-reconciliation.ts';
 
 export type {LibrarySession,LibraryNotice} from './library-reconciliation.ts';
@@ -11,7 +12,8 @@ interface Options {
   client: Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'>; storage: AccountLibraryStore;
   online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: (notice:LibraryNotice) => void;
 }
-interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal}
+interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal;authority?:CheckAuthority}
+interface CatalogLoading {run:CatalogRun;promise:Promise<LibraryRefreshResult>}
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
 export type LibraryRefreshResult={status:'complete'|'unchanged';durable:boolean}|{status:'inactive'|'unstable'|'superseded'};
@@ -32,7 +34,7 @@ class AccountLibraryOwner {
  private minimumMarker='0';
  private catalogComplete=false;
  private controller=new AbortController();
- private loading:Promise<LibraryRefreshResult>|null=null;
+ private loading:CatalogLoading|null=null;
  private removals={pending:new Map<string,Promise<void>>(),tail:Promise.resolve()};
  private listeners=new Set<()=>void>();
  private published:unknown[];
@@ -256,10 +258,28 @@ class AccountLibraryOwner {
  private catalogRunCurrent(run:CatalogRun,marker:string) {
   this.check(run.seen);return run.content===this.contentGeneration && !this.older(marker);
  }
+ private async checkCatalogRun(run:CatalogRun) {
+  this.check(run.seen);run.signal.throwIfAborted();
+  if(run.authority){
+   if(run.authority.permit.sessionId!==run.access.sessionId)throw new DOMException('Background check cancelled','AbortError');
+   const current=await run.authority.current();
+   this.check(run.seen);run.signal.throwIfAborted();
+   if(!current)throw new DOMException('Background check cancelled','AbortError');
+  }
+ }
  private async saveCatalog(base:LibraryCatalogBase|null,read:Exclude<LibraryCatalogRead,{status:'unstable'}>,run:CatalogRun):Promise<LibraryRefreshResult> {
-  const saved=base?await this.options.storage.putCatalog(base,read.catalog):{status:'unavailable' as const};
+  const authority=run.authority && {...run.authority,signal:run.signal};
+  const saved=base?await this.options.storage.putCatalog(base,read.catalog,authority):{status:'unavailable' as const};
+  await this.checkCatalogRun(run);
   if(!this.catalogRunCurrent(run,read.catalog.marker))return {status:'superseded'};
-  if(saved.status==='stale' || saved.status==='superseded'){await this.refreshLocal();return {status:'superseded'};}
+  if(saved.status==='stale' || saved.status==='superseded'){
+   // A retired background pass has no further RAM acceptance work. Ordinary
+   // callers retain their existing local reconciliation after a write race.
+   if(!run.authority)await this.refreshLocal();return {status:'superseded'};
+  }
+  return this.publishCatalog(read,saved);
+ }
+ private publishCatalog(read:Exclude<LibraryCatalogRead,{status:'unstable'}>,saved:Awaited<ReturnType<AccountLibraryStore['putCatalog']>>):LibraryRefreshResult {
   const durable=saved.status==='stored';this.available=durable;
   if(saved.status==='stored')this.lease=saved.lease;
   const changed=!this.catalogComplete || this.catalog?.marker!==read.catalog.marker;
@@ -267,19 +287,37 @@ class AccountLibraryOwner {
   return {status:read.status,durable};
  }
  private async refreshCatalog(run:CatalogRun):Promise<LibraryRefreshResult> {
-  const base=await this.options.storage.readCatalog();this.check(run.seen);
+  await this.checkCatalogRun(run);
+  const base=await this.options.storage.readCatalog();await this.checkCatalogRun(run);
   if(base && base.lease.accountId!==run.access.accountId){await this.refreshLocal();throw failed('account_changed');}
-  const read=await readCompleteLibraryCatalog(this.options.client,run.access.accountId,base?.catalog??null,run.signal);this.check(run.seen);
+  const client={catalog:(...args:Parameters<ChartClient['catalog']>)=>this.readCatalogStep(run,()=>this.options.client.catalog(...args)),
+   confirmCatalog:(...args:Parameters<ChartClient['confirmCatalog']>)=>this.readCatalogStep(run,()=>this.options.client.confirmCatalog(...args))};
+  const read=await readCompleteLibraryCatalog(client,run.access.accountId,base?.catalog??null,run.signal);await this.checkCatalogRun(run);
   if(read.status==='unstable')return read;
   if(!this.catalogRunCurrent(run,read.catalog.marker))return {status:'superseded'};
   return this.saveCatalog(base,read,run);
  }
- async load():Promise<LibraryRefreshResult> {
+ private async readCatalogStep<T>(run:CatalogRun,read:()=>Promise<T>) {
+  await this.checkCatalogRun(run);const result=await read();await this.checkCatalogRun(run);return result;
+ }
+ private canJoinCatalog(run:CatalogRun,loading:CatalogRun) {
+  if(loading.signal.aborted)return false;
+  if(!run.authority || !loading.authority)return run.authority===loading.authority;
+  const a=run.authority.permit,b=loading.authority.permit;
+  return run.authority.signal===loading.authority.signal && (['key','token','owner','sessionId'] as const).every(key=>a[key]===b[key]);
+ }
+ private createCatalogRun(authority?:CheckAuthority):CatalogRun {
+  const signal=authority?AbortSignal.any([this.controller.signal,authority.signal]):this.controller.signal;
+  return {seen:this.generation,content:this.contentGeneration,access:{...this.current!},signal,
+   authority:authority && {...authority,permit:{...authority.permit}}};
+ }
+ async load(authority?:CheckAuthority):Promise<LibraryRefreshResult> {
   if(!this.current || !this.options.online() || this.closed)return {status:'inactive'};
-  if(this.loading)return this.loading;
-  const run=this.refreshCatalog({seen:this.generation,content:this.contentGeneration,access:{...this.current},signal:this.controller.signal});
-  this.loading=run;
-  try{return await run;}finally{if(this.loading===run)this.loading=null;}
+  const run=this.createCatalogRun(authority);
+  const shared=this.loading;
+  if(shared && this.canJoinCatalog(run,shared.run)){await this.checkCatalogRun(run);return shared.promise;}
+  const loading={run,promise:this.refreshCatalog(run)};this.loading=loading;
+  try{return await loading.promise;}finally{if(this.loading===loading)this.loading=null;}
  }
  async canRestore(chartId:string):Promise<boolean> {
       const seen=this.generation,target=this.lease,chart=this.records.find(value=>value.id===chartId);

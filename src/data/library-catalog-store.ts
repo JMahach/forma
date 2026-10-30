@@ -5,6 +5,8 @@ import {createRandomId} from '../domain/chart-record.ts';
 import {readLibraryLease,sameLibraryLease,type LibraryLease} from './account-library-schema.ts';
 import {unlinkLibraryPackages} from './library-package-store.ts';
 import type {createIndexedDatabase} from './indexed-db.ts';
+import type {BackgroundControl,CheckAuthority} from '../domain/background-check.ts';
+import {BACKGROUND_CHECK_KEY,backgroundAuthorityCurrent,backgroundPermitCurrent,readBackgroundControl} from './background-check-store.ts';
 
 type Database=Pick<ReturnType<typeof createIndexedDatabase>,'transaction'>;
 export interface LibraryCatalogBase {lease:LibraryLease;mutation:string|null;minimumMarker?:string;catalog:LibraryCatalogSnapshot|null}
@@ -29,17 +31,61 @@ function admission(owner:Record<string,unknown>,prior:unknown,base:LibraryCatalo
 export function markLibraryMutation(tx:IDBTransaction,owner:Record<string,unknown>,marker?:string) {
  tx.objectStore('context').put({...owner,mutation:createRandomId(),catalogMarker:newerLibraryMarker(owner.catalogMarker,marker)});
 }
-function removeAbsent(tx:IDBTransaction,snapshot:LibraryCatalogSnapshot,finish:(removed:string[])=>void) {
+function removeAbsent(tx:IDBTransaction,snapshot:LibraryCatalogSnapshot,current:()=>boolean,finish:(removed:string[])=>void) {
  const keep=new Set(snapshot.entries.map(entry=>entry.id)),rows=tx.objectStore('charts'),keys=rows.getAllKeys();
  keys.onsuccess=()=>{
+  if(!current()){tx.abort();return;}
   const removed=keys.result.map(String).filter(id=>!keep.has(id));
   for(const id of removed){unlinkLibraryPackages(tx,id);rows.delete(id);tx.objectStore('usage').delete(id);}
   finish(removed);
  };
 }
+function abortWithSignal(tx:IDBTransaction,signal:AbortSignal) {
+ const abort=()=>{try{tx.abort();}catch{/* Already completed or rolled back. */}};
+ const clear=()=>{signal.removeEventListener('abort',abort);tx.removeEventListener('complete',clear);tx.removeEventListener('abort',clear);};
+ tx.addEventListener('complete',clear);tx.addEventListener('abort',clear);
+ signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
+}
+function transactionAuthority(tx:IDBTransaction,authority:CheckAuthority|undefined,now:()=>number,accountId:string) {
+ const guard={retired:false,current:()=>true};if(!authority)return guard;
+ abortWithSignal(tx,authority.signal);if(authority.signal.aborted){guard.retired=true;return guard;}
+ const proof=tx.objectStore('context').get(BACKGROUND_CHECK_KEY);
+ let control:BackgroundControl|null=null;
+ proof.onsuccess=()=>{control=readBackgroundControl(proof.result);};
+ guard.current=()=>{
+  guard.retired=authority.signal.aborted || !backgroundPermitCurrent(control,authority.permit,now(),accountId);
+  return !guard.retired;
+ };
+ return guard;
+}
+function replaceCatalog(tx:IDBTransaction,snapshot:LibraryCatalogSnapshot,owner:Record<string,unknown>,seen:LibraryLease,
+ current:()=>boolean,done:(value:LibraryCatalogWrite)=>void,fail:(cause?:unknown)=>void) {
+ removeAbsent(tx,snapshot,current,removed=>{
+  try{
+   if(!current()){tx.abort();return;}
+   // Complete absence fences acquisitions even for IDs not yet stored here.
+   const lease={...seen,generation:createRandomId()},contexts=tx.objectStore('context');
+   contexts.put({key:'catalog',...snapshot});
+   contexts.put({...owner,...lease,mutation:createRandomId(),catalogMarker:newerLibraryMarker(owner.catalogMarker,snapshot.marker)});
+   done({status:'stored',lease,removed});
+  }catch(error){fail(error);}
+ });
+}
+function admitCatalog(tx:IDBTransaction,base:LibraryCatalogBase,snapshot:LibraryCatalogSnapshot,current:()=>boolean,
+ done:(value:LibraryCatalogWrite)=>void,fail:(cause?:unknown)=>void) {
+ const contexts=tx.objectStore('context'),owner=contexts.get('owner'),prior=contexts.get('catalog');
+ prior.onsuccess=()=>{
+  if(!current()){done({status:'superseded'});return;}
+  const decision=admission(owner.result,prior.result,base,snapshot);
+  if(decision==='same'){done({status:'stored',lease:base.lease,removed:[]});return;}
+  if(decision!=='replace'){done({status:decision});return;}
+  replaceCatalog(tx,snapshot,owner.result,base.lease,current,done,fail);
+ };
+}
 class LibraryCatalogStore {
  private database:Database;
- constructor(database:Database){this.database=database;}
+ private now:()=>number;
+ constructor(database:Database,now:()=>number){this.database=database;this.now=now;}
   async readCatalog():Promise<LibraryCatalogBase|null> {
    return this.database.transaction('readonly',(tx,done)=>{
     const rows=tx.objectStore('context'),owner=rows.get('owner'),saved=rows.get('catalog');
@@ -49,31 +95,20 @@ class LibraryCatalogStore {
     };
    });
   }
-  async putCatalog(base:LibraryCatalogBase,value:LibraryCatalogSnapshot):Promise<LibraryCatalogWrite> {
+  async putCatalog(base:LibraryCatalogBase,value:LibraryCatalogSnapshot,authority?:CheckAuthority):Promise<LibraryCatalogWrite> {
+   if(authority && !await backgroundAuthorityCurrent(authority))return {status:'superseded'};
    base={...base,lease:{...base.lease}};
    const snapshot=validateLibraryCatalogSnapshot(value,base.lease.accountId),seen=base.lease;
-   return await this.database.transaction<LibraryCatalogWrite>('readwrite',(tx,done,fail)=>{
-    const contexts=tx.objectStore('context'),owner=contexts.get('owner'),prior=contexts.get('catalog');
-    prior.onsuccess=()=>{
-     const decision=admission(owner.result,prior.result,base,snapshot);
-     if(decision==='same'){done({status:'stored',lease:seen,removed:[]});return;}
-     if(decision!=='replace'){done({status:decision});return;}
-     removeAbsent(tx,snapshot,removed=>{
-      try{
-       // Complete absence also covers IDs that have never been stored here.
-       // Retire earlier acquisitions even when there was no payload to delete.
-       const lease={...seen,generation:createRandomId()};
-       contexts.put({key:'catalog',...snapshot});
-       contexts.put({...owner.result,...lease,mutation:createRandomId(),catalogMarker:newerLibraryMarker(owner.result.catalogMarker,snapshot.marker)});
-       done({status:'stored',lease,removed});
-      }catch(error){fail(error);}
-     });
-    };
-   })??{status:'unavailable'};
+   let guard:ReturnType<typeof transactionAuthority>|undefined;
+   const saved=await this.database.transaction<LibraryCatalogWrite>('readwrite',(tx,done,fail)=>{
+    guard=transactionAuthority(tx,authority,this.now,seen.accountId);
+    if(!guard.retired)admitCatalog(tx,base,snapshot,guard.current,done,fail);
+   });
+   return saved??{status:guard?.retired || authority?.signal.aborted?'superseded':'unavailable'};
   }
 }
 /** The complete light catalogue and its marker commit together with confirmed absence. */
-export function createLibraryCatalogStore(database:Database) {
- const store=new LibraryCatalogStore(database);
+export function createLibraryCatalogStore(database:Database,now=Date.now) {
+ const store=new LibraryCatalogStore(database,now);
  return {readCatalog:store.readCatalog.bind(store),putCatalog:store.putCatalog.bind(store)};
 }

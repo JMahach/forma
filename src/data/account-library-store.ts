@@ -10,6 +10,8 @@ import {createLibraryPackageStore,unlinkLibraryPackages,linkLibraryPackages} fro
 import { placeOpenedCard,replaceCardAfterQuota } from './account-card-placement.ts';
 import {createLibraryCatalogStore,markLibraryMutation,readStoredLibraryCatalog,libraryMarker,newerLibraryMarker,type LibraryCatalogBase} from './library-catalog-store.ts';
 import type {LibraryCatalogSnapshot} from '../../shared/library-catalog-contract.ts';
+import {createBackgroundCheckStore} from './background-check-store.ts';
+import type {CheckAuthority} from '../domain/background-check.ts';
 
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[];catalog?:LibraryCatalogSnapshot;catalogComplete?:boolean;minimumMarker?:string }
 export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'};
@@ -21,12 +23,13 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
   const database = createIndexedDatabase({databaseName, version: 7, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
-  const catalog=createLibraryCatalogStore(database);
+  const catalog=createLibraryCatalogStore(database,now);
   return {
+    background:createBackgroundCheckStore(database),
     ...createLibraryPackageStore(database,{pressure,now}),
     readCatalog:catalog.readCatalog,
-    async putCatalog(base:LibraryCatalogBase,snapshot:LibraryCatalogSnapshot) {
-      const saved=await catalog.putCatalog(base,snapshot);
+    async putCatalog(base:LibraryCatalogBase,snapshot:LibraryCatalogSnapshot,authority?:CheckAuthority) {
+      const saved=await catalog.putCatalog(base,snapshot,authority);
       if(saved.status==='stored' && admitted && same(admitted,base.lease))admitted=saved.lease;
       return saved;
     },
