@@ -1,3 +1,4 @@
+import { createResourceScope } from '../src/runtime/resource-scope.ts';
 import {libraryRecordEntry} from '../src/state/library-reconciliation.ts';
 import type {LibraryListChart} from '../src/domain/library-catalog.ts';
 import {chartPresentation} from '../src/domain/chart-presentation.ts';
@@ -54,7 +55,7 @@ interface BrowserElement {
   getBoundingClientRect(): { top: number; bottom: number; left: number; right: number; width: number; height: number };
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null; removeAttribute(name: string): void;
   classList: { add(name: string): unknown; remove(name: string): unknown; contains(name: string): boolean; toggle(name: string, enabled?: boolean): void };
-  addEventListener(type: string, handler: BrowserListener, capture?: boolean): void;
+  addEventListener(type: string, handler: BrowserListener, options?: boolean | AddEventListenerOptions): void;
   dispatch(type: string, event?: Record<string, unknown>): Promise<void>; click(): Promise<void>;
   open?: boolean; textContent?: string; value?: string; title?: string; showModal(): void; close(): void;
 }
@@ -62,7 +63,7 @@ interface BrowserDocument {
   body: { dataset: Record<string, string> }; activeElement: BrowserElement | null; fonts?: { ready: Promise<unknown> };
   createElement(tag: string): BrowserElement; getElementById(id: string): BrowserElement | null;
   querySelector(selector: string): BrowserElement | null; querySelectorAll(): BrowserElement[];
-  addEventListener(type: string, handler: BrowserListener): void;
+  addEventListener(type: string, handler: BrowserListener, options?: boolean | AddEventListenerOptions): void;
   removeEventListener(type:string,handler:BrowserListener):void;
   dispatch(type: string, event: Record<string, unknown>): unknown;
 }
@@ -98,7 +99,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -196,7 +197,7 @@ function browser() {
   const document: BrowserDocument = { body: { dataset: {} }, activeElement: null,
     createElement: tag => element(`${tag}-${++created}`),
     getElementById: (id: string) => ['returnsToggle', 'returnsControls'].includes(id) ? null : element(id), querySelector: (selector: string) => selector === '.app-shell' ? element('shell') : null, querySelectorAll: () => [],
-    addEventListener(type, handler) { if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type)!.add(handler); },
+    addEventListener(type, handler, options) { const signal=typeof options==='object'?options.signal:undefined; if(signal?.aborted)return; if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type)!.add(handler);signal?.addEventListener('abort',()=>listeners.get(type)?.delete(handler),{once:true}); },
     removeEventListener(type,handler){listeners.get(type)?.delete(handler);},
     dispatch(type, event) { for(const handler of listeners.get(type)??[])handler(event); } };
   function element(id: string): BrowserElement {
@@ -217,7 +218,7 @@ function browser() {
         getAttribute: name => attributes.get(name) ?? null, removeAttribute: name => attributes.delete(name),
         classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name), contains: (name: string) => classes.has(name),
           toggle(name: string, enabled = !classes.has(name)) { if (enabled) classes.add(name); else classes.delete(name); } },
-        addEventListener(type, handler, capture = false) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type)!.push({ handler, capture }); },
+        addEventListener(type, handler, options = false) { const signal=typeof options==='object'?options.signal:undefined,capture=typeof options==='boolean'?options:options.capture??false; if(signal?.aborted)return; if (!handlers.has(type)) handlers.set(type, []); const entry={handler,capture}; handlers.get(type)!.push(entry);signal?.addEventListener('abort',()=>{handlers.set(type,handlers.get(type)!.filter(item=>item!==entry));},{once:true}); },
         async dispatch(type, event = {}) {
           let stopped = false;
           for (const { handler } of [...handlers.get(type) || []].sort((a, b) => Number(b.capture) - Number(a.capture))) {
@@ -254,7 +255,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
   if (fonts !== undefined) document.fonts = { ready: fonts };
   const dimensions = studioSize && { ...studioSize };
   const timelineKinds: TimelineKind[] = [];
-  let resizeLayout: () => void, layout = { refresh: noop, setTimelineKind: (kind: TimelineKind) => timelineKinds.push(kind), setSidePanels: noop, sideInsets: { width: 640, left: 0, right: 0 } } as unknown as StudioLayout;
+  let resizeLayout: () => void, layout = { destroy:noop, refresh: noop, setTimelineKind: (kind: TimelineKind) => timelineKinds.push(kind), setSidePanels: noop, sideInsets: { width: 640, left: 0, right: 0 } } as unknown as StudioLayout;
   if (dimensions) {
     const rect = () => ({ ...dimensions, top: 0, left: 0, bottom: dimensions.height, right: dimensions.width });
     const studio = element('studio'), canvas = element('canvasWrap');
@@ -318,7 +319,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
     createAccountLibraryStore: () => libraryStorage ?? createAccountLibraryStore({indexedDB: null}),
-    createAccountLibrary, createChartActions, UI_MESSAGES, failureMessage, getConnectionMode, subscribeConnection, actionAvailability,
+    createResourceScope, createAccountLibrary, createChartActions, UI_MESSAGES, failureMessage, getConnectionMode, subscribeConnection, actionAvailability,
     createLocalDayTimeline, viewForRoute, createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent, commitLoadingLayout,
     attachAllCharts: (options) => {
       const view = attachAllCharts({ ...options, preview: (_canvas, _chart, { onReady } = {}) => { onReady!(true); return noop; } });
@@ -335,7 +336,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
         return { attachKnowledge: page => ({ snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('knowledge');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
       } });
     },
-    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
+    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop, destroy:noop }),
     attachActivationHover: () => ({ clear: clearActivationHover, dispose: noop }),
     attachHoverPreview: (_svg, options) => {
       assert.equal(options.onClear, clearActivationHover, 'preview dismissal also clears its decorative activation highlight');
@@ -352,7 +353,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
       return camera;
     },
     pointerTarget: noop,
-    attachMandalaMode: (options) => dimensions ? attachMandalaMode(options) : ({ enabled: false, setEnabled: noop }), createMandalaMotion: noop,
+    attachMandalaMode: (options) => dimensions ? attachMandalaMode(options) : ({ enabled: false, setEnabled: noop }), createMandalaMotion: () => ({dispose:noop,setExpanded:noop}),
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
     chartHighlight: createChartHighlight(),
     createGraphController: (options) => { graph = options;
@@ -376,7 +377,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
       Observer: class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} disconnect() {} } as unknown as typeof ResizeObserver,
       requestFrame: callback => {resizeFrames.set(++resizeFrameId, callback); return resizeFrameId;}, cancelFrame: id => {resizeFrames.delete(id);},
     }),
-    createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop }),
+    createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop, destroy:noop }),
     attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
     attachLiveTransit: (options) => {
       transitOptions = options;
@@ -385,13 +386,13 @@ function harness({connection, copyText, transitStart = async () => true, actualS
         dayClient: { getDay: async date => natalDayFixture({date}) },
       });
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, refresh: noop, visibilityChanged: noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
+      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, stop:noop, refresh: noop, visibilityChanged: noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
         goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value: boolean) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: { getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: noop, attachPerformanceMonitor: options => { performanceOptions = options; },
+    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { performanceOptions = options; return {destroy:noop}; },
     attachChartLoading: options => {loadingOptions=options;return {update: (value: Record<string,unknown>) => {loadingState=value;}};}, createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
@@ -434,7 +435,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
   const calculationClients = onPersonalReset || personalCleanup || syncTransitWindow ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
     resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTransitWindow,...personalCleanup} : undefined;
   const application=startApp({ connection, journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
-  return { setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
+  return { highlight:ports.chartHighlight, setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
     advanceBackground(ms:number){backgroundTimeOffset+=ms;},
     get savedSnapshot(){return savedSnapshot;},prepareOfflineUpdate:application.prepareOfflineUpdate,
     offlineRestored:application.offlineRestored,subscribeOfflineReady:application.subscribeOfflineReady,
@@ -2815,4 +2816,35 @@ test('a historical absence response with the current card preserves its owned an
  await h.restoration;await h.removeChart(record.id);await tick();h.flushView();
  assert.equal(store.publicChart?.id,record.id);assert.equal(h.cards[0]?.id,record.id);assert.equal(h.shown.id,record.id);
  await h.stopApplication();
+});
+
+test('30 application start-stop cycles release connection and projection subscriptions',async()=>{
+ const listeners=new Set<(mode:'online'|'offline'|'server')=>void>();
+ const connection:ConnectionSource={current:'online',subscribe(listener){listeners.add(listener);return()=>{listeners.delete(listener);};}};
+ for(let run=0;run<30;run++){
+  const h=harness({connection});await h.restoration;await tick();
+  await h.stopApplication();await h.stopApplication();await tick();
+  assert.equal(listeners.size,0,`cycle ${run}: no retained connection subscribers`);
+  const renders=h.renders;
+  h.highlight.set(h.highlight.current==='glow'?'outline':'glow');
+  h.panels.setRight(!h.panels.right);h.workspace.setScreen('account');await tick();
+  assert.equal(h.renders,renders,`cycle ${run}: closed projection stays closed`);
+ }
+});
+
+test('stopping one tab releases its resources without revoking a live peer library',async t=>{
+ const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),peer=createAccountLibraryStore({indexedDB});
+ t.after(()=>{storage.close();peer.close();});
+ const record=accountNatalChart(),h=harness({libraryStorage:storage,accountSession:{accountId:record.accountId,sessionId:'active'},chartClient:deletionClient(record)});
+ await h.restoration;await tick();
+ const before=await peer.activate(record.accountId);assert.equal(before.status,'stored');
+ await h.stopApplication();await tick();await tick();
+ assert.deepEqual((await peer.read())?.lease,before.lease,'a tab closing does not log out its peer');
+});
+
+test('a lazy moment module arriving after stop cannot create a new controller',async()=>{
+ const h=harness();await h.restoration;await tick();
+ await h.element('lifetimeToggle').click();await h.stopApplication();
+ h.finishModule();await tick();
+ assert.equal(h.lifetime,undefined,'closed runtime cannot acquire late resources');
 });

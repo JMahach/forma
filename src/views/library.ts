@@ -1,3 +1,4 @@
+import { createResourceScope } from '../runtime/resource-scope.ts';
 import type {LibraryListChart} from '../domain/library-catalog.ts';
 import type { ChartSession } from '../state/chart-session.ts';
 import type { PanelState } from '../state/panels.ts';
@@ -125,6 +126,7 @@ export function createChartLibraryView({ chartList, libraryCount, nowButton, doc
 }
 
 export function attachChartLibrary({ serverDeletion, canEdit = () => true, initialSelection, panels = createPanelState(), document, view = null, getCharts, removeChart, getConnectionMode, subscribeConnection, session, onSelect, onEdit, onNew, onUpdate = () => {}, beforeOpen = () => {}, getSelectedId = () => session.selectedId }: LibraryOptions) {
+  const scope=createResourceScope();
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   let deletingId: string | null = null, appliedOpen: boolean | null = null;
   let deleteController: AbortController | null = null, deleteRevision = 0, deleteBusy = false;
@@ -251,7 +253,7 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
       selection.choose(id, false, session.selectedId);
       onSelect(id);
     }
-  });
+  }, {signal:scope.signal});
   chartList.addEventListener('keydown', e => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || !panels.left
       || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || document.querySelector('dialog[open]')) return;
@@ -265,15 +267,15 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
     const next = [...chartList.querySelectorAll<HTMLElement>('.chart-card')].find(item => item.dataset.chartId === id);
     next?.focus({ preventScroll: true });
     if (next) revealRow(next);
-  });
+  }, {signal:scope.signal});
   document.addEventListener('toggle', e => {
     if (!(e.target as Element).matches?.('.chart-actions[open]')) return;
     document.querySelectorAll<HTMLDetailsElement>('.chart-actions[open]').forEach(item => { if (item !== e.target) item.open = false; });
     revealRow(e.target as HTMLElement);
-  }, true);
+  }, {capture:true,signal:scope.signal});
   $('newChartButton').addEventListener('click', () => {
     if (canEdit() && !actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled) onNew();
-  });
+  }, {signal:scope.signal});
   function closeDeleteChart() {
     deleteRevision++; deleteController?.abort(); deleteController = null;
     deleteBusy = false; deletingId = null; deletionError = undefined;
@@ -293,8 +295,8 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
     $<HTMLDialogElement>('deleteChartDialog').showModal(); updateAvailability();
     $('cancelDeleteChart').focus();
   }
-  $('cancelDeleteChart').addEventListener('click', closeDeleteChart);
-  $('deleteChartDialog').addEventListener('cancel', closeDeleteChart);
+  $('cancelDeleteChart').addEventListener('click', closeDeleteChart, {signal:scope.signal});
+  $('deleteChartDialog').addEventListener('cancel', closeDeleteChart, {signal:scope.signal});
   $('confirmDeleteChart').addEventListener('click', async () => {
     if (!deletingId || deleteBusy) return;
     const id = deletingId, revision = deleteRevision;
@@ -334,18 +336,19 @@ export function attachChartLibrary({ serverDeletion, canEdit = () => true, initi
     } finally {
       if (ownsDialog()) { deleteController = null; deleteBusy = false; updateAvailability(); }
     }
-  });
+  }, {signal:scope.signal});
 
-  $('openLibrary').addEventListener('click', toggle);
-  $('libraryBackdrop').addEventListener('click', closeLibrary);
+  $('openLibrary').addEventListener('click', toggle, {signal:scope.signal});
+  $('libraryBackdrop').addEventListener('click', closeLibrary, {signal:scope.signal});
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('dialog[open]')) return;
     const menu = document.querySelector<HTMLDetailsElement>('.chart-actions[open]');
     if (menu) { menu.open = false; menu.querySelector('summary')!.focus(); e.preventDefault(); return; }
-  });
+  }, {signal:scope.signal});
 
-  subscribeConnection(() => {deletionError = undefined; updateAvailability();});
-  panels.subscribe(syncOpen);
+  scope.own(subscribeConnection(() => {deletionError = undefined; updateAvailability();}));
+  scope.own(panels.subscribe(syncOpen));
+  scope.own(()=>{deleteRevision++;deleteController?.abort();deleteController=null;});
   syncOpen();
-  return { open: openLibrary, close: closeLibrary, closeDelete: closeDeleteChart, toggle, render, syncOpen, refreshAvailability: () => updateAvailability(true), get selection() { return selection.snapshot; }, get opened() { return panels.left; } };
+  return { dispose: scope.stop, open: openLibrary, close: closeLibrary, closeDelete: closeDeleteChart, toggle, render, syncOpen, refreshAvailability: () => updateAvailability(true), get selection() { return selection.snapshot; }, get opened() { return panels.left; } };
 }

@@ -85,7 +85,8 @@
         "browser-journal",
         "offline-page",
         "application",
-        "background-platform"
+        "background-platform",
+        "resource-lifetime"
       ],
       "allowTypes": [
         "account-flow",
@@ -118,7 +119,8 @@
         "browser-journal",
         "offline-page",
         "application",
-        "background-platform"
+        "background-platform",
+        "resource-lifetime"
       ],
       "executionEntries": [
         "src/entry.ts"
@@ -876,7 +878,8 @@
         "diagnostics",
         "presentation-primitives",
         "account-flow",
-        "message-catalog"
+        "message-catalog",
+        "resource-lifetime"
       ],
       "allowTypes": [
         "feature-views",
@@ -897,7 +900,8 @@
         "diagnostics",
         "presentation-primitives",
         "account-flow",
-        "message-catalog"
+        "message-catalog",
+        "resource-lifetime"
       ],
       "notes": [
         "No import of a data-storage owner is allowed, including its concrete type. Views should receive narrowly typed read models and action ports, not a writable store.",
@@ -1882,6 +1886,22 @@
         "background-platform",
         "domain",
         "application"
+      ]
+    },
+    {
+      "id": "resource-lifetime",
+      "responsibility": "Own the release of resources acquired by one runtime or view; cancel listeners and await owned cleanup once. No state, commands, transport or storage policy.",
+      "files": [
+        "src/runtime/resource-scope.ts"
+      ],
+      "publicEntries": [
+        "src/runtime/resource-scope.ts"
+      ],
+      "allowRuntime": [
+        "resource-lifetime"
+      ],
+      "allowTypes": [
+        "resource-lifetime"
       ]
     }
   ],

@@ -1,3 +1,4 @@
+import { createResourceScope } from './runtime/resource-scope.ts';
 import { chartPresentation } from './domain/chart-presentation.ts';
 import { createViewCheckpoint } from './state/view-checkpoint.ts';
 import type { ViewCheckpoint } from './state/view-checkpoint.ts';
@@ -36,14 +37,14 @@ import type { ChartLibraryView } from './views/library.ts';
 import type { LifetimeExplorer } from './state/lifetime.ts';
 import type { LifetimeControls } from './views/lifetime-controls.ts';
 import type { ReturnsPanel } from './views/returns-panel.ts';
-type AppJournal=Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'> & Partial<Pick<ReturnType<typeof createJournal>,'discardForSpace'>> & {leave(ids?:readonly string[]):unknown;wake():unknown};
+type AppJournal=Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'> & Partial<Pick<ReturnType<typeof createJournal>,'discardForSpace'|'close'>> & {leave(ids?:readonly string[]):unknown;wake():unknown};
 interface AppOptions {
   connection?: ConnectionSource;
   journal?:AppJournal;
   storagePressure?:StoragePressure;
   navigation?: Navigation;
-  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'|'library'>>;
-  account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'>;
+  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'|'library'|'close'>>;
+  account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'> & Partial<Pick<AccountWorkspace,'destroy'>>;
   dayClient: TransitDayClient; layout: StudioLayout; toast: Toast; viewStore: ViewStore;
   viewCheckpoint?: ViewCheckpoint;
   savedView: Partial<SavedView> | null; panels: PanelState; workspace: WorkspaceState;
@@ -100,6 +101,7 @@ import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
 export function startApp({ connection, journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+  const scope=createResourceScope();
   const connectionMode = connection ? () => connection.current : getConnectionMode;
   const observeConnection = connection ? (listener: Parameters<ConnectionSource['subscribe']>[0]) => connection.subscribe(listener) : subscribeConnection;
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
@@ -133,11 +135,11 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   function cancelInputRestore() { pendingInputRestore = false; }
   function discardPendingInput() {cancelInputRestore();pendingLifetimeDraft=null;}
   // A delayed startup must not move the caret after a new user gesture.
-  document.addEventListener('pointerdown', cancelInputRestore, true);
-  document.addEventListener('keydown', cancelInputRestore, true);
-  document.addEventListener('input', cancelInputRestore, true);
+  document.addEventListener('pointerdown', cancelInputRestore, {capture:true,signal:scope.signal});
+  document.addEventListener('keydown', cancelInputRestore, {capture:true,signal:scope.signal});
+  document.addEventListener('input', cancelInputRestore, {capture:true,signal:scope.signal});
   const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
-  attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]);
+  scope.own(attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]));
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
   // One initial reveal owns the visible screen. Later refreshes stay local to
   // their tools; a failed first attempt reveals the existing recovery UI.
@@ -204,6 +206,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
   });
   const updateLoading = () => {
+    if(scope.stopped)return;
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
     const firstFailed = startupRestored() && startupFailed() && !session.hasCurrent;
     chartLoading.update({ hasChart: !routePending() && !routeFailed() && session.hasCurrent, holdLoading: initialPage.active,
@@ -225,7 +228,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       void exploration!.select(id);
     },
   });
-  chartHighlight.subscribe(() => renderGraph());
+  scope.own(chartHighlight.subscribe(() => renderGraph()));
   const cameraChanged = createCameraChangeHandler({
     heading: $('chartHeader'), fitButton: $('fitButton'), activationPopover,
     getHoverPreview: () => hoverPreview, getSummary: () => chartSummary,
@@ -367,11 +370,11 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       button.removeAttribute('aria-describedby');
     }
   }
-  $('saveShownChart').addEventListener('click',()=>saveShownChart());
+  $('saveShownChart').addEventListener('click',()=>saveShownChart(), {signal:scope.signal});
   $('accountPage').addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-account-action]');
     if(button && !button.disabled && ['back','close','cancel'].includes(button.dataset.accountAction!))cancelChartSave();
-  },true);
+  },{capture:true,signal:scope.signal});
   const actionError = (code: string, message: string) => Object.assign(new Error(message), {code});
   const canAccessCharts = () => !accountLibrary.accountId || Boolean(account.getSession());
   const canEditCharts = () => canAccessCharts()
@@ -568,7 +571,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => chartLibrary.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
   });
-  $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); });
+  $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); }, {signal:scope.signal});
   const birthForm = attachBirthForm({
     getAccountId: () => accountLibrary.accountId,
     onDraftChange: () => { pendingBirthForm = null; viewSession?.schedule(); },
@@ -615,8 +618,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       updateTimelineTools(); viewSession?.schedule();
     },
   });
-  $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); });
-  $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()));
+  $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); }, {signal:scope.signal});
+  $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()), {signal:scope.signal});
   let cacheTimeline: ReturnType<typeof createLocalDayTimeline> | null = null;
   function syncTransitCacheWindow(timeline: typeof cacheTimeline | undefined, refresh = false) {
     if (!calculationClients?.syncTransitWindow || !timeline) return;
@@ -643,12 +646,12 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     onNow: () => { viewSession?.interrupt(); return transit!.goNow(); },
   });
   transitControls!.update(transit!.state);
-  $('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit!.refresh(); });
+  $('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit!.refresh(); }, {signal:scope.signal});
   attachTransitNavigation($('nowButton'), {
     onSelect: selectChart, refresh: transit!.refresh,
   });
   if (!startupGestures) attachCameraControls({ fitButton: $('fitButton') }, gestures);
-  attachPerformanceMonitor({
+  const performanceMonitor=attachPerformanceMonitor({
     document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
     ranges: [$('transitTime'), $('natalDayTime'), $('lifetimeTime')],
     motionButtons: [$('fitButton'), $('mandalaSwitch'), $('transitReference'), $('natalDayReference')],
@@ -668,6 +671,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }
 
   function renderGraph() {
+    if(scope.stopped)return;
     if (workspace.screen !== 'chart') { chartPaintPending = true; return; }
     chartPaintPending = false;
     graph.render();
@@ -727,6 +731,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }
 
   function updatePage() {
+    if(scope.stopped)return;
     const layoutRendered = updateTimelineTools();
     updateChartCaption();updateChartSaveControl();
     chartLibrary!.render(); allCharts?.update(); updateWorkspaceNavigation();
@@ -812,6 +817,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     viewSession?.schedule();
   }
   function updateInitialPage() {
+    if(scope.stopped)return;
     if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending || initialPage.changingTimeline) return;
     let failed = initialPage.screenFailed;
     if (workspace.screen === 'chart') {
@@ -834,15 +840,15 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     commitLoadingLayout(document);
     restoreInitialInput();
   }
-  workspace.subscribe(applyWorkspace);
+  scope.own(workspace.subscribe(applyWorkspace));
   applyWorkspace();
 
   // Views have subscribed first, so their DOM is ready before measuring.
-  panels.subscribe(() => {
+  scope.own(panels.subscribe(() => {
     panelResizePending = true;
     refreshStudioLayout({ preserveScale: true });
     viewSession?.schedule();
-  });
+  }));
 
   returns!.select(session.record);
   natalDay!.select(session.record, session.baseChart);
@@ -851,7 +857,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     if (event.target === $('canvasWrap') && ['left', 'width'].includes(event.propertyName) && panelResizePending) {
       refreshStudioLayout({ preserveScale: true });
     }
-  });
+  }, {signal:scope.signal});
   const layoutObserver = createLayoutObserver(() => refreshStudioLayout());
   layoutObserver.observe($('canvasWrap'));
   const savedChart=store.get(savedView?.selectedId!);
@@ -1000,7 +1006,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     subscribeSession(listener){return account.subscribeSession(()=>listener(account.getSession()));},
     subscribeLogout(listener){return account.subscribeNotices(notice=>{if(notice.kind==='logout')listener(notice.ids);});},
     begin:beginAccountBoundary,
-    stop(){application?.send({type:'CancelPublicRefresh'});void accountLibrary.connect(null).catch(()=>{});},
+    stop(){application?.send({type:'CancelPublicRefresh'});accountLibrary.close();},
   },route(request) {
       const route = request.snapshot.route!;
       const observation = route.kind === 'chart' ? journal?.begin({action:'chart_open',component:'chart'}) : undefined;
@@ -1057,9 +1063,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         dispose() { observation?.finishSuccess(); },
       };
     }});
-    application.subscribe(updateLoading);
+    scope.own(application.subscribe(updateLoading));
     application.start();
-  accountLibrary.subscribe(projectAccountLibrary);
+  scope.own(accountLibrary.subscribe(projectAccountLibrary));
   if (libraryChannel) libraryChannel.onmessage = async event => {
     if (libraryInitialized) await accountLibrary.receive(event.data).catch(() => {});
   };
@@ -1070,9 +1076,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       application!.send({type:'RecoverWrites'});
       syncTransitCacheWindow(transit?.state.timeline, true);
     }
-  });
+  }, {signal:scope.signal});
   let previousConnection = connectionMode();
-  observeConnection(() => {
+  scope.own(observeConnection(() => {
     const connection = connectionMode(), returned = previousConnection !== 'online' && connection === 'online';
     previousConnection = connection;updateChartSaveControl();
     void natalDay?.refreshAvailability();
@@ -1082,14 +1088,16 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     if (!libraryInitialized) return;
     if (connectionMode() !== 'offline') application!.send({type:'RetryAccountBoundary'});
     application!.send({type:'RecoverWrites'});application!.send({type:'BackgroundChanged'});
-  });
+  }));
   const restoration = application.whenRestored();
   studio.dataset.panelsReady = 'true';
 
   function loadReturnsView(): Promise<ReturnsPanel | null> {
+    if(scope.stopped)return Promise.resolve(null);
     if (returnsView) return Promise.resolve(returnsView);
     if (returnsViewLoading) return returnsViewLoading;
     returnsViewLoading = import('./views/returns-panel.ts').then(({ attachReturnsPanel }) => {
+      if(scope.stopped)return null;
       returnsView = attachReturnsPanel({ viewportLayout: layout,
         document, onBack: () => returns!.close(),
         onYear: value => returns!.setYear(value),
@@ -1105,6 +1113,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       updateTimelineTools();
       return returnsView;
     }).catch(() => {
+      if(scope.stopped)return null;
       if (initialPage.active) { initialPage.contentFailed = true; }
       if (returns!.opened) { returns!.close(); toast('Не удалось открыть возвраты. Попробуйте ещё раз.'); }
       return null;
@@ -1113,6 +1122,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }
 
   function updateTimelineTools() {
+    if(scope.stopped)return;
     if (!returns) return;
     const state = returns!.state, lifetimeState = lifetime?.state, metadata = lifetimeState?.metadata;
     const view = presentation();
@@ -1162,6 +1172,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   // Both a toolbar click and page restoration use the same lazy controller.
   // Importing it alone never opens Lifetime or resets a restored date range.
   async function loadLifetime(): Promise<LifetimeExplorer | null> {
+    if(scope.stopped)return null;
     if (lifetime) return lifetime;
     if (lifetimeLoading) return lifetimeLoading;
     if (lifetimeLoadFailed) return null;
@@ -1171,6 +1182,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         const [{ createLifetimeExplorer }, { attachLifetimeControls }] = await Promise.all([
           import('./state/lifetime.ts'), import('./views/lifetime-controls.ts'),
         ]);
+        if(scope.stopped)return null;
         const getDayState = () => session.selectedId === 'current-transit' ? transit!.state : null;
         const getPersonalRecord = () => returns!.available ? returns!.natal : null;
         let controls: LifetimeControls | undefined;
@@ -1225,11 +1237,12 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         lifetimeControls = controls;
         return lifetime;
       } catch {
+        if(scope.stopped)return null;
         lifetimeLoadFailed = true; updateLoading(); updateTimelineTools();
         return null;
       } finally {
         lifetimeLoading = null;
-        $('lifetimeToggle').removeAttribute('aria-busy');
+        if(!scope.stopped)$('lifetimeToggle').removeAttribute('aria-busy');
         updateInitialPage();
       }
     })();
@@ -1260,22 +1273,35 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     if (session.selectedId === 'current-transit') {
       changeTimeline('lifetime', () => exploration!.toggleTransit());
     } else changeTimeline('lifetime', () => exploration!.toggleReturns());
-  });
+  }, {signal:scope.signal});
   for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
-    field.addEventListener('input', () => { viewSession?.interrupt(); exploration!.invalidateTimeline(); }, true);
+    field.addEventListener('input', () => { viewSession?.interrupt(); exploration!.invalidateTimeline(); }, {capture:true,signal:scope.signal});
   }
   initialPage.attached = true;
   updateInitialPage();
   commitLoadingLayout(document);
+  scope.own(()=>calculationClients?.close?.());
+  scope.own(()=>account.destroy?.());
+  scope.own(()=>journal?.close?.());
+  scope.own(()=>layout.destroy());
+  scope.own(checkpoint.destroy);
+  scope.own(headingLayout.destroy);
+  scope.own(()=>layoutObserver.disconnect());
+  scope.own(activationHover.dispose);
+  scope.own(mandalaMotion.dispose);
+  scope.own(performanceMonitor.destroy);
+  scope.own(()=>chartLibrary?.dispose());
+  scope.own(()=>{transit?.stop();natalDay?.select(null);lifetime?.close();returns?.select(null);});
+  scope.own(()=>{releaseCheck?.stop();releaseCheck=null;offlineListeners.clear();libraryChannel?.close();backgroundChannel?.close();});
   const offlineRestored = () => application!.isRestored();
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
-    attachReleaseCheck(port:ReleaseCheckPort){releaseCheck?.stop();releaseCheck=port;application?.send({type:'BackgroundChanged'});},
+    attachReleaseCheck(port:ReleaseCheckPort){if(scope.stopped){port.stop();return;}releaseCheck?.stop();releaseCheck=port;application?.send({type:'BackgroundChanged'});},
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
     prepareOfflineUpdate:()=>application!.prepareUpdate(),
-    // P17 extends the shared lifetime to the remaining owners; this stops all P02 resources.
-    stopApplication: () => {releaseCheck?.stop();releaseCheck=null;return application?.stop() ?? Promise.resolve();},
+    stopApplication: () => {const stopping=application?.stop();return Promise.all([stopping,scope.stop()]).then(()=>{});},
     flushView: () => viewSession!.flush(),
     attachJournal(value:AppJournal){
+      if(scope.stopped){void value.close?.();return;}
       if(journal===value)return;
       const current=syncJournalAccount();journal=value;
       if(lastJournalAccount!==null)journal.setAccount(lastJournalAccount,lastJournalSession,lastJournalProof);
