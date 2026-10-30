@@ -1,4 +1,5 @@
 import type { Camera, CameraPosition, Point } from './camera.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import type { CameraFrame } from './geometry/frames.ts';
 import type { createCameraView } from './camera-view.ts';
 import type { FitInsets } from './camera-fit.ts';
@@ -32,6 +33,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
   requestPaint = globalThis.requestAnimationFrame?.bind(globalThis),
   cancelPaint = globalThis.cancelAnimationFrame?.bind(globalThis),
 }: GestureOptions) {
+  const scope=createResourceScope();
   const pointers = new Map<number, Point & PointerCoordinates>();
   let safariGesture: { scale: number; pointerOwned: boolean } | null = null;
   let moved = false, pinched = false, initialAdditive = false;
@@ -102,6 +104,12 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
     onChange: publish,
   });
   if (existingCamera) camera.setOnChange(publish);
+  scope.own(()=>{
+    camera.clearOnChange(publish);
+    if(paintFrame!==null)cancelPaint?.(paintFrame.handle!);
+    paintFrame=pendingPaint=null;
+    clearGesture();
+  });
   const center = (pair: Point[]) => ({ x: (pair[0].x + pair[1].x) / 2, y: (pair[0].y + pair[1].y) / 2 });
   const distance = (pair: Point[]) => Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y);
   surface.addEventListener('pointerdown', raw => {
@@ -145,7 +153,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
     }
     surface.setPointerCapture(event.pointerId);
     updateCursor();
-  });
+  }, {signal:scope.signal});
   function movePointer(raw: Event) {
     const event = raw as PointerEvent;
     if (!pointers.has(event.pointerId)) return;
@@ -171,7 +179,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
         nextCenter.x - oldCenter.x, nextCenter.y - oldCenter.y));
     }
   }
-  surface.addEventListener('pointermove', movePointer);
+  surface.addEventListener('pointermove', movePointer, {signal:scope.signal});
   function release(raw: Event) {
     const event = raw as PointerEvent;
     if (!pointers.has(event.pointerId)) return;
@@ -187,9 +195,9 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
       else onBackgroundTap();
     }
   }
-  surface.addEventListener('pointerup', release);
-  surface.addEventListener('pointercancel', release);
-  surface.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete((event as PointerEvent).pointerId); updateCursor(); });
+  surface.addEventListener('pointerup', release, {signal:scope.signal});
+  surface.addEventListener('pointercancel', release, {signal:scope.signal});
+  surface.addEventListener('lostpointercapture', event => { flushPaint(); pointers.delete((event as PointerEvent).pointerId); updateCursor(); }, {signal:scope.signal});
   // Safari trackpad pinch uses cumulative GestureEvent scales. Touch pinch
   // stays with PointerEvents, and Ctrl-wheel emitted in the same lifecycle
   // must not apply the trackpad's zoom a second time.
@@ -198,7 +206,7 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
     if (event.cancelable) event.preventDefault();
     safariGesture = { scale: Number.isFinite(event.scale) && event.scale > 0 ? event.scale : 1,
       pointerOwned: pointers.size > 1 };
-  }, { passive: false });
+  }, { passive: false, signal:scope.signal });
   surface.addEventListener('gesturechange', raw => {
     const event = raw as SafariGestureEvent;
     if (event.cancelable) event.preventDefault();
@@ -214,19 +222,19 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
     const anchor = point(position);
     if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) return;
     updateGesture(() => camera.zoomAt(anchor, factor));
-  }, { passive: false });
+  }, { passive: false, signal:scope.signal });
   surface.addEventListener('gestureend', event => {
     if (event.cancelable) event.preventDefault();
     safariGesture = null;
     flushPaint();
-  }, { passive: false });
+  }, { passive: false, signal:scope.signal });
   surface.addEventListener('wheel', raw => {
     const event = raw as WheelEvent;
     event.preventDefault();
     if (event.ctrlKey && safariGesture) return;
     const anchor = point(event);
     updateGesture(() => camera.zoomAt(anchor, Math.exp(-clamp(event.deltaY, -200, 200) * 0.003)));
-  }, { passive: false });
+  }, { passive: false, signal:scope.signal });
   function keydown(raw: Event) {
     const event = raw as KeyboardEvent;
     const target = (event.target as Element).closest<HTMLElement | SVGElement>('[data-type]');
@@ -236,26 +244,42 @@ export function attachGestures(svg: SVGSVGElement & { inert?: boolean }, { camer
       camera.reset();
     }
   }
-  svg.addEventListener('keydown', keydown);
+  svg.addEventListener('keydown', keydown, {signal:scope.signal});
   if (surface !== svg) surface.addEventListener('keydown', event => {
     if (event.target === surface) keydown(event);
-  });
+  }, {signal:scope.signal});
+  function clearGesture() {
+    const captured = [...pointers.keys()];
+    pointers.clear(); safariGesture = null;
+    initialTarget = initialSelection = initialClient = initialPoint = null;
+    moved = pinched = initialAdditive = false;
+    for (const id of captured) if (surface.hasPointerCapture(id)) surface.releasePointerCapture(id);
+  }
   // Startup and the ready chart share one input attachment. A new screen
   // adopts the live pose, but never the tap or Safari gesture that began on
   // the previous screen. Flush its last paint before replacing its callbacks.
   function setHandlers({ onSelect: nextSelect = onSelect, onChange: nextChange = onChange,
     onBackgroundTap: nextBackground = onBackgroundTap, resolvePointerTarget: nextTarget = resolvePointerTarget,
     resolveSelection: nextSelection = resolveSelection }: Partial<Pick<GestureOptions, 'onSelect' | 'onChange' | 'onBackgroundTap' | 'resolvePointerTarget' | 'resolveSelection'>> = {}) {
+    if(scope.stopped)return;
     flushPaint();
-    const captured = [...pointers.keys()];
-    pointers.clear(); safariGesture = null;
-    initialTarget = initialSelection = initialClient = initialPoint = null;
-    moved = pinched = initialAdditive = false;
-    for (const id of captured) if (surface.hasPointerCapture(id)) surface.releasePointerCapture(id);
+    if(scope.stopped)return;
+    clearGesture();
     onSelect = nextSelect; onChange = nextChange; onBackgroundTap = nextBackground;
     resolvePointerTarget = nextTarget; resolveSelection = nextSelection;
     updateCursor();
     onChange(camera.getView(), camera.getFittedView(), { minScale: camera.minimumScale() });
   }
-  return { ...camera, setHandlers };
+  return {
+    dispose:scope.stop, setHandlers,
+    getView:camera.getView, getFittedView:camera.getFittedView, getSavedView:camera.getSavedView,
+    minimumScale:camera.minimumScale, maximumScale:camera.maximumScale,
+    reset(){if(!scope.stopped)camera.reset();},
+    resize(...args:Parameters<Camera['resize']>){if(!scope.stopped)camera.resize(...args);},
+    refreshFrame(){if(!scope.stopped)camera.refreshFrame();},
+    pan(...args:Parameters<Camera['pan']>){if(!scope.stopped)camera.pan(...args);},
+    zoomAt(...args:Parameters<Camera['zoomAt']>){if(!scope.stopped)camera.zoomAt(...args);},
+    setView(...args:Parameters<Camera['setView']>){if(!scope.stopped)camera.setView(...args);},
+    restoreView(...args:Parameters<Camera['restoreView']>){if(!scope.stopped)camera.restoreView(...args);},
+  };
 }

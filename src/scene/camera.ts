@@ -154,6 +154,7 @@ export function createCamera({ getFrame = () => null, getHomeFrame = null, measu
   const controls = {
     // Startup hands its existing camera to gestures; no reset or second state.
     setOnChange(listener: CameraOptions['onChange']) { onChange = listener; publish(); },
+    clearOnChange(listener: CameraOptions['onChange']) { if(onChange===listener)onChange=()=>{}; },
     // Early loading and the ready app save the same Home-relative position.
     // Storage timing and lifetime stay with the caller.
     getSavedView(): SavedCameraPosition {

@@ -1,5 +1,6 @@
 import type { CameraPosition } from '../scene/camera.ts';
 import type { Gestures } from '../scene/gestures.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 interface CameraChangeOptions {
   heading: HTMLElement | null; fitButton: HTMLButtonElement | null;
   getHoverPreview?: () => { refreshCenter: () => void } | null;
@@ -23,5 +24,7 @@ export function createCameraChangeHandler({ heading, fitButton, getHoverPreview 
 }
 
 export function attachCameraControls({ fitButton }: { fitButton: HTMLButtonElement }, gestures: Gestures) {
-  fitButton.addEventListener('click', () => gestures.reset());
+  const scope=createResourceScope();
+  fitButton.addEventListener('click', () => gestures.reset(), {signal:scope.signal});
+  return {dispose:scope.stop};
 }

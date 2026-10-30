@@ -131,3 +131,53 @@ test('loading and ready surfaces ignore removed zoom keys and keep Home and focu
   h.send('keydown', { key: '0' });
   assert.deepEqual(h.controls.getView(), h.controls.getFittedView());
 });
+
+// The lifecycle fixture counts real AbortSignal-driven event registrations;
+// numeric movement still uses the production camera and its current owner.
+import {dateDom} from './helpers/date-dom.ts';
+import {attachCameraControls} from '../src/views/camera-controls.ts';
+import {attachMandalaMode} from '../src/scene/modes/mandala.ts';
+
+test('thirty gesture lifetimes release capture and paint without moving the shared camera or stopping a live owner',async()=>{
+ const doc=dateDom(),surface=doc.createElement('div'),svg=doc.createElement('svg'),home=doc.createElement('button'),modeButton=doc.createElement('button');
+ const captures=new Set<number>(),queued=new Map<number,FrameRequestCallback>(),classes=new Set<string>();let nextPaint=0,paints=0,changes=0,selection=0,background=0,renders=0,motions=0,measurements=0;
+ Object.assign(surface,{closest:()=>null,setPointerCapture:(id:number)=>captures.add(id),hasPointerCapture:(id:number)=>captures.has(id),releasePointerCapture(id:number){captures.delete(id);surface.dispatch('lostpointercapture',{pointerId:id});}});
+ Object.assign(svg,{closest:()=>null,classList:{toggle(name:string,value:boolean){if(value)classes.add(name);else classes.delete(name);return value;}}});
+ const measureFit=()=>{measurements++;return {area:{x:0,y:0,width:640,height:820},viewport:{x:0,y:0,width:640,height:820},min:.1,screenScale:1,zoomLimitScale:1};};
+ const camera=createCamera({measureFit,onChange(){}});camera.reset();camera.zoomAt({x:320,y:410},1.5);
+ const cameraView={surface:surface as unknown as HTMLElement,point:(event:Pick<MouseEvent,'clientX'|'clientY'>)=>({x:event.clientX,y:event.clientY}),measureFit,paint(){paints++;}};
+ const send=(type:string,extra={})=>surface.dispatch(type,{type,pointerId:1,pointerType:'mouse',button:0,target:surface,clientX:320,clientY:410,preventDefault(){},...extra});
+ let neighborEvents=0;surface.addEventListener('wheel',()=>neighborEvents++);
+ const options={camera,cameraView,onChange:()=>changes++,onSelect:()=>selection++,onBackgroundTap:()=>background++,requestPaint(callback:FrameRequestCallback){const id=++nextPaint;queued.set(id,callback);return id;},cancelPaint:(id:number)=>{queued.delete(id);}};
+ const stopped:ReturnType<typeof attachGestures>[]=[];
+ for(let i=0;i<30;i++){
+  camera.reset();camera.zoomAt({x:320,y:410},1.5);
+  const controls=attachGestures(svg as unknown as SVGSVGElement,options);
+  const binding=attachCameraControls({fitButton:home as unknown as HTMLButtonElement},controls);
+  const mode=attachMandalaMode({button:modeButton as unknown as HTMLElement,canvas:svg as unknown as Element,gestures:controls,render:()=>renders++,motion:{setExpanded(){motions++;}} as never});
+  assert.equal(surface.listenerCount()+svg.listenerCount()+home.listenerCount()+modeButton.listenerCount(),14);
+  send('pointerdown');send('pointermove',{clientX:350});assert.equal(captures.size,1);assert.equal(queued.size,1);
+  mode.setEnabled(true);mode.setEnabled(false);
+  send('pointermove',{clientX:365});const late=[...queued.values()];assert.equal(late.length,1);
+  const before={pose:camera.getView(),paints,changes,measurements,renders,motions,selection,background};
+  await binding.dispose();await mode.dispose();await controls.dispose();
+  assert.equal(surface.listenerCount()+svg.listenerCount()+home.listenerCount()+modeButton.listenerCount(),1);
+  assert.equal(captures.size,0);assert.equal(queued.size,0);
+  for(const callback of late)callback(0);
+  controls.setHandlers({onChange:()=>assert.fail('retired callback')});controls.reset();controls.resize();controls.refreshFrame();controls.pan(30,10);controls.zoomAt({x:300,y:300},2);controls.setView({x:0,y:0,k:1});controls.restoreView(null);
+  mode.setEnabled(true);mode.finishTransition(false);home.dispatch('click');modeButton.dispatch('click');send('pointerup');send('wheel',{deltaY:-10});
+  assert.deepEqual({pose:camera.getView(),paints,changes,measurements,renders,motions,selection,background},before);
+  stopped.push(controls);
+ }
+ assert.equal(neighborEvents,30);
+ const live=attachGestures(svg as unknown as SVGSVGElement,options);const before=camera.getView();let liveChanges=0;
+ // A separate current camera consumer must survive disposal of an older attachment.
+ camera.setOnChange(()=>liveChanges++);const baseline=liveChanges;await live.dispose();
+ for(const old of stopped)await old.dispose();
+ camera.pan(5,0);assert.equal(liveChanges,baseline+1);assert.notDeepEqual(camera.getView(),before);
+ const saved=camera.getView();const count=paints;camera.zoomAt({x:300,y:300},1.01);assert.equal(paints,count,'released camera callback never paints the retired surface');assert.notDeepEqual(camera.getView(),saved);
+ let retire=false,incoming=0,closing:Promise<void>|undefined;
+ const interrupted=attachGestures(svg as unknown as SVGSVGElement,{...options,onChange(){if(retire)closing=interrupted.dispose();}});
+ send('wheel',{deltaY:-10});retire=true;interrupted.setHandlers({onChange(){incoming++;}});await closing;
+ assert.equal(incoming,0,'an outgoing callback can retire the attachment during handoff');assert.equal(queued.size,0);assert.equal(surface.listenerCount()+svg.listenerCount(),1);
+});
