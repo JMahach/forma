@@ -1,3 +1,4 @@
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import { BIRTH_DRAFT_FIELDS, normalizeBirthFormDraft, type SavedBirthForm, type BirthDraftFoldChoice } from '../domain/birth-form-draft.ts';
 import type { City, CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
 import type { ChartSession } from '../state/chart-session.ts';
@@ -35,13 +36,14 @@ import { failureMessage, UI_MESSAGES } from '../ui/messages.ts';
 
 // Birth data, city search, DST ambiguity and calculation live within one dialog.
 export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange=()=>{}, getChart, saveChart, submitChart, isCheckingSubmission = () => false, noteComparisonLabel, findCities, calculate, getConnectionMode, subscribeConnection, randomBirth = randomBirthMoment, session, onSave, beforeOpen = () => {}, toast, getFormData = form => new FormData(form) }: BirthFormOptions) {
+  const scope=createResourceScope();
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
   let editingId: string | null = null, openedRecord: SavedChart | undefined, displayedRecord: SavedChart | undefined;
   type VersionedRecord = SavedChart & {revision?: number; noteRevision?: number};
   let comparedNote: VersionedRecord | null = null;
   let draftAccountId:string|null=null,restoringDraft=false;
   let foldChoices:BirthDraftFoldChoice[]=[];
-  const draftChanged=()=>{if(!restoringDraft)onDraftChange();};
+  const draftChanged=()=>{if(!scope.stopped && !restoringDraft)onDraftChange();};
   const noteField = $<HTMLTextAreaElement>('chartNote');
   const notePanel = $('savedChartNote');
   if (notePanel) notePanel.hidden = true;
@@ -67,10 +69,11 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     const text = document.createElement('div'); text.textContent = comparedNote!.note;
     text.style.whiteSpace = 'pre-wrap'; notePanel.append(text);
   }
-  noteField.addEventListener('input', () => showNoteComparison());
+  noteField.addEventListener('input', () => showNoteComparison(), {signal:scope.signal});
   let serverPending = false, checkingSubmission = false;
   let formPurpose: 'natal' | 'metadata' = 'natal', selectedCity: Partial<City> | null = null, cityResults: City[] = [], activeCityIndex = -1;
   let cityTimer: ReturnType<typeof setTimeout> | undefined, cityController: AbortController | undefined, citySequence = 0, calculationController: AbortController | undefined, formBusy = false;
+  const cityBlurTimers=new Set<ReturnType<typeof setTimeout>>();
   const randomButton = $<HTMLButtonElement>('randomChartButton');
   let randomController: AbortController | null = null;
   function setRandomBusy(busy: boolean) {
@@ -82,8 +85,8 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
   const countryLabel = (code: string | undefined) => /^[A-Z]{2}$/.test(code || '') ? countryNames.of(code!) : code || '';
   const cityLabel = (city: Partial<City>) => [...new Set([city.name, city.region, countryLabel(city.country)].filter(Boolean))].join(', ');
 
-  bindNumericInput($<HTMLInputElement>('birthDate'), formatDateInput);
-  bindNumericInput($<HTMLInputElement>('birthTime'), formatTimeInput);
+  bindNumericInput($<HTMLInputElement>('birthDate'), formatDateInput, scope.signal);
+  bindNumericInput($<HTMLInputElement>('birthTime'), formatTimeInput, scope.signal);
 
   const fieldIds = ['chartName', 'birthDate', 'birthTime', 'birthPlace', 'foldChoice'] as const;
   type FieldId = typeof fieldIds[number];
@@ -103,7 +106,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     fieldIds.forEach(id => fieldError(id));
     showForm();
   }
-  for (const id of fieldIds) $(id).addEventListener(id === 'foldChoice' ? 'change' : 'input', () => fieldError(id));
+  for (const id of fieldIds) $(id).addEventListener(id === 'foldChoice' ? 'change' : 'input', () => fieldError(id), {signal:scope.signal});
 
   function resetFold() {
     foldChoices=[];
@@ -129,6 +132,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     $('cityStatus').classList.remove('is-error'); closeCityResults(); resetFold();draftChanged();
   }
   async function searchCities(query: string) {
+    if(scope.stopped)return;
     const sequence = ++citySequence;
     cityController?.abort();
     const controller = new AbortController();
@@ -173,7 +177,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
   }
   let closedFormDiscarded = false;
   function discardClosedForm() {
-    if (closedFormDiscarded) return;
+    if (scope.stopped || closedFormDiscarded) return;
     closedFormDiscarded = true;
     cancelRandom(); calculationController?.abort(); calculationController = undefined;
     cityController?.abort(); cityController = undefined; clearTimeout(cityTimer); citySequence++;
@@ -182,9 +186,19 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     clearNoteComparison(); $<HTMLFormElement>('chartForm').reset();
     $('cityStatus').textContent = ''; resetFold(); clearErrors(); serverPending = false; setFormBusy(false);draftChanged();
   }
-  function closeForm() { $<HTMLDialogElement>('chartDialog').close(); discardClosedForm(); }
+  function closeForm() { if(scope.stopped)return; $<HTMLDialogElement>('chartDialog').close(); discardClosedForm(); }
+
+  scope.own(()=>{
+    calculationController?.abort();calculationController=undefined;
+    cityController?.abort();cityController=undefined;
+    randomController?.abort();randomController=null;
+    clearTimeout(cityTimer);for(const timer of cityBlurTimers)clearTimeout(timer);cityBlurTimers.clear();
+    selectedCity=null;cityResults=[];foldChoices=[];editingId=null;openedRecord=displayedRecord=undefined;comparedNote=null;draftAccountId=null;
+    const dialog=$<HTMLDialogElement>('chartDialog');if(dialog.open)dialog.close();
+  });
 
   function refreshForm() {
+    if(scope.stopped)return false;
     if (!$<HTMLDialogElement>('chartDialog').open || !editingId) return false;
     const next = getChart(editingId);
     if (!next) {closeForm(); return true;}
@@ -214,7 +228,9 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     draftChanged();return true;
   }
 
-  function openForm(edit = false, id = session.selectedId) {
+  function openForm(edit = false, id?:string|null) {
+    if(scope.stopped)return;
+    if(id===undefined)id=session.selectedId;
     if (!restoringDraft && actionAvailability({connection:getConnectionMode(),requiresConnection:true}).disabled) return;
     cancelRandom();
     const c = getChart(id) || session.record;
@@ -235,7 +251,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
       }
     }
     setFormPurpose(edit && c!.source === 'transit' ? 'metadata' : 'natal');setFormBusy(false);
-    beforeOpen();
+    beforeOpen();if(scope.stopped)return;
     closedFormDiscarded = false;
     $<HTMLDialogElement>('chartDialog').showModal();draftChanged();
   }
@@ -244,7 +260,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     $<HTMLSelectElement>('foldChoice').innerHTML='<option value="">Выберите вариант</option>'+foldChoices.map(choice=>`<option value="${choice.fold}">${esc(choice.label)}</option>`).join('');
   }
   function snapshot():SavedBirthForm|null {
-    if(!$<HTMLDialogElement>('chartDialog').open)return null;
+    if(scope.stopped || !$<HTMLDialogElement>('chartDialog').open)return null;
     const fields=Object.fromEntries(BIRTH_DRAFT_FIELDS.map(id=>[id,$<HTMLInputElement>(id).value]));
     const active=document.activeElement as HTMLInputElement|HTMLTextAreaElement|null;
     const field=active?.id;
@@ -256,6 +272,7 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
       fold:$('foldField').hidden?null:{value:$<HTMLSelectElement>('foldChoice').value,choices:foldChoices},base,focus});
   }
   function restore(input:unknown):boolean {
+    if(scope.stopped)return false;
     const draft=normalizeBirthFormDraft(input),dialog=$<HTMLDialogElement>('chartDialog');
     if(!draft || dialog.open || draft.accountId!==null && draft.accountId!==getAccountId())return false;
     const record=draft.editingId?getChart(draft.editingId):undefined;
@@ -288,13 +305,13 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     }finally{restoringDraft=false;draftChanged();}
   }
 
-  for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm);
-  $<HTMLDialogElement>('chartDialog').addEventListener('cancel', closeForm);
+  for (const id of ['closeDialog', 'cancelDialog']) $(id).addEventListener('click', closeForm, {signal:scope.signal});
+  $<HTMLDialogElement>('chartDialog').addEventListener('cancel', closeForm, {signal:scope.signal});
   $<HTMLDialogElement>('chartDialog').addEventListener('close', () => {
     if (!$<HTMLDialogElement>('chartDialog').open) discardClosedForm();
-  });
+  }, {signal:scope.signal});
   $<HTMLFormElement>('chartForm').addEventListener('submit', async e => {
-    e.preventDefault(); if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy}).disabled) return; clearErrors();
+    e.preventDefault(); if (scope.stopped || actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy}).disabled) return; clearErrors();
     const controller = new AbortController(); calculationController = controller;
     const submittedNoteRevision = (openedRecord as VersionedRecord | undefined)?.noteRevision ?? 0;
     try {
@@ -385,15 +402,15 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
         else showForm(failureMessage(error, error.message || UI_MESSAGES.chartCalculationFailed, 'chart-form'));
       }
     } finally { if (calculationController === controller) { serverPending = false; setFormBusy(false);draftChanged(); } }
-  });
-  for (const id of ['birthDate', 'birthTime']) $(id).addEventListener('input', resetFold);
+  }, {signal:scope.signal});
+  for (const id of ['birthDate', 'birthTime']) $(id).addEventListener('input', resetFold, {signal:scope.signal});
   $<HTMLInputElement>('birthPlace').addEventListener('input', () => {
     selectedCity = null; cityResults = []; citySequence += 1; cityController?.abort(); clearTimeout(cityTimer); closeCityResults(); resetFold();
     if (formPurpose !== 'natal') return;
     const query = $<HTMLInputElement>('birthPlace').value.trim(); $('cityStatus').classList.remove('is-error');
     $('cityStatus').textContent = query.length < 2 ? 'Введите хотя бы две буквы названия города.' : 'Ищем город…';
     if (query.length >= 2) cityTimer = setTimeout(() => searchCities(query), 220);
-  });
+  }, {signal:scope.signal});
   $<HTMLInputElement>('birthPlace').addEventListener('keydown', event => {
     if (formPurpose !== 'natal') return;
     if (event.key === 'Escape' && !$('cityResults').hidden) { event.preventDefault(); event.stopPropagation(); closeCityResults(); return; }
@@ -407,16 +424,18 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     } else if (event.key === 'Enter' && !$('cityResults').hidden) {
       event.preventDefault(); selectCity(cityResults[Math.max(0, activeCityIndex)]);
     }
-  });
-  $<HTMLInputElement>('birthPlace').addEventListener('blur', () => setTimeout(closeCityResults, 140));
-  $('cityResults').addEventListener('pointerdown', event => event.preventDefault());
+  }, {signal:scope.signal});
+  $<HTMLInputElement>('birthPlace').addEventListener('blur', () => {
+    const timer=setTimeout(()=>{cityBlurTimers.delete(timer);if(!scope.stopped)closeCityResults();},140);cityBlurTimers.add(timer);
+  }, {signal:scope.signal});
+  $('cityResults').addEventListener('pointerdown', event => event.preventDefault(), {signal:scope.signal});
   $('cityResults').addEventListener('click', event => {
     const option = (event.target as Element).closest<HTMLElement>('[data-city-index]');
     if (option && cityResults[Number(option.dataset.cityIndex)]) selectCity(cityResults[Number(option.dataset.cityIndex)]);
-  });
+  }, {signal:scope.signal});
 
   randomButton?.addEventListener('click', async () => {
-    if (actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy || Boolean(randomController)}).disabled || $<HTMLDialogElement>('chartDialog').open) return;
+    if (scope.stopped || actionAvailability({connection:getConnectionMode(),requiresConnection:true,pending:formBusy || Boolean(randomController)}).disabled || $<HTMLDialogElement>('chartDialog').open) return;
     const controller = new AbortController(); randomController = controller; setRandomBusy(true);
     try {
       const birth = randomBirth();
@@ -440,9 +459,10 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
     } finally {
       if (randomController === controller) { randomController = null; setRandomBusy(false); }
     }
-  });
+  }, {signal:scope.signal});
 
-  subscribeConnection(mode => {
+  scope.own(subscribeConnection(mode => {
+    if(scope.stopped)return;
     if (mode === 'offline') {
       if (!serverPending) calculationController?.abort(); cityController?.abort(); citySequence += 1;
       clearTimeout(cityTimer); closeCityResults(); cancelRandom();
@@ -453,9 +473,16 @@ export function attachBirthForm({ document, getAccountId=()=>null, onDraftChange
       if (mode === 'offline') showForm(UI_MESSAGES.offline, false, 'offline');
       else if (formMessageKind === 'offline') showForm();
     }
-  });
+  }));
   for(const id of [...BIRTH_DRAFT_FIELDS,'foldChoice'])
-    for(const event of ['input','change','focus','blur','select','keyup','pointerup'])$(id).addEventListener(event,draftChanged);
-  document.addEventListener('selectionchange',()=>{if($<HTMLDialogElement>('chartDialog').open && snapshot()?.focus)draftChanged();});
-  return { open: openForm, close: closeForm, clearDraft:closeForm, restore, refreshAvailability(){setRandomBusy(Boolean(randomController));setFormBusy(formBusy);}, get snapshot(){return snapshot();}, get pending(){return formBusy || serverPending || Boolean(randomController);}, refresh: refreshForm, get opened() { return $<HTMLDialogElement>('chartDialog').open; }, get editedId() { return $<HTMLDialogElement>('chartDialog').open ? editingId : null; } };
+    for(const event of ['input','change','focus','blur','select','keyup','pointerup'])$(id).addEventListener(event,draftChanged, {signal:scope.signal});
+  document.addEventListener('selectionchange',()=>{if($<HTMLDialogElement>('chartDialog').open && snapshot()?.focus)draftChanged();}, {signal:scope.signal});
+  return {
+    dispose:scope.stop, open:openForm, close:closeForm, clearDraft:closeForm, restore, refresh:refreshForm,
+    refreshAvailability(){if(scope.stopped)return;setRandomBusy(Boolean(randomController));setFormBusy(formBusy);},
+    get snapshot(){return snapshot();},
+    get pending(){return !scope.stopped && (formBusy || serverPending || Boolean(randomController));},
+    get opened(){return !scope.stopped && $<HTMLDialogElement>('chartDialog').open;},
+    get editedId(){return !scope.stopped && $<HTMLDialogElement>('chartDialog').open ? editingId : null;},
+  };
 }

@@ -1,3 +1,4 @@
+import {setMaxListeners} from 'node:events';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {BirthSubmission} from '../src/domain/chart-record.ts';
@@ -24,7 +25,7 @@ interface FormNode {
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null; removeAttribute(name: string): void;
   focus(): void; setSelectionRange(start: number, end: number,direction?:'forward'|'backward'|'none'): void; scrollIntoView(): void;
   showModal(): void; close(): void; reset(): void; requestSubmit(): void;
-  addEventListener(type: string, handler: (event: FormEvent) => unknown): void;
+  addEventListener(type: string, handler: (event: FormEvent) => unknown, options?:AddEventListenerOptions): void;
   emit(type: string, options?: Record<string, unknown>): Promise<void>;
   dispatchEvent(event: { type: string }): Promise<void>;
   querySelector(selector: unknown): FormNode; querySelectorAll(selector: unknown): FormNode[];
@@ -196,23 +197,33 @@ function projectedStore(charts: readonly TestRecord[]) {
   return chartStore;
 }
 
-function formHarness(t: test.TestContext, { connection, charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, reuseTimers=false }: { connection?: ConnectionSource; charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; reuseTimers?:boolean } = {}) {
+function formHarness(t: test.TestContext, { connection, charts = [], selectedId = charts[0]?.id || 'current-transit', persist = true, chartStore = null, port = '', saveChart, getChart, submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, calculate, beforeOpen, reuseTimers=false }: { connection?: ConnectionSource; charts?: readonly TestRecord[]; selectedId?: string; persist?: boolean; chartStore?: ChartStore | null; port?: string; saveChart?:BirthOptions['saveChart']; getChart?:BirthOptions['getChart']; submitChart?: BirthOptions['submitChart']; isCheckingSubmission?: BirthOptions['isCheckingSubmission']; noteComparisonLabel?: string; getAccountId?:()=>string|null; onDraftChange?:()=>void; calculate?:BirthOptions['calculate']; beforeOpen?:()=>void; reuseTimers?:boolean } = {}) {
   if(!reuseTimers)t.mock.timers.enable({ apis: ['setTimeout'] });
   const elements = new Map<string, FormNode>(), requests: RequestRecord[] = [];
-  const documentHandlers=new Map<string,(()=>void)[]>();
+  const documentHandlers=new Map<string,Set<()=>void>>(),connections=new Set<Parameters<BirthOptions['subscribeConnection']>[0]>();
+  let activeListeners=0;
+  function listen<T>(handlers:Map<string,Set<T>>,type:string,handler:T,options?:AddEventListenerOptions){
+    if(options?.signal?.aborted)return;
+    const list=handlers.get(type)??new Set<T>();if(list.has(handler))return;list.add(handler);handlers.set(type,list);activeListeners++;
+    if(options?.signal){setMaxListeners(0,options.signal);options.signal.addEventListener('abort',()=>{if(list.delete(handler))activeListeners--;},{once:true});}
+  }
+  function subscribe(listener:Parameters<BirthOptions['subscribeConnection']>[0]){
+    connections.add(listener);const release=connection?connection.subscribe(listener):subscribeConnection(listener);
+    const stop=()=>{connections.delete(listener);release();};t.after(stop);return stop;
+  }
   const calls = { beforeOpen: 0, saved: [] as string[], saveOptions: [] as Parameters<BirthOptions['onSave']>[1][], persisted: [] as (readonly TestRecord[])[], replaced: [] as (readonly TestRecord[])[], toasts: [] as string[] };
   const fields = { name: 'chartName', birthDate: 'birthDate', birthTime: 'birthTime', birthPlace: 'birthPlace', note: 'chartNote', personality: 'personalityGates', design: 'designGates' };
   const document = {
     defaultView: { location: { port } },
     activeElement: null as FormNode | null,
-    addEventListener(type:string,callback:()=>void) {documentHandlers.set(type,[...documentHandlers.get(type)??[],callback]);},
+    addEventListener(type:string,callback:()=>void,options?:AddEventListenerOptions) {listen(documentHandlers,type,callback,options);},
     createElement: () => element('generated-' + elements.size),
     getElementById(id: string) { return element(id); },
     querySelectorAll() {return [];},
   };
   function element(id: string): FormNode {
     if (elements.has(id)) return elements.get(id)!;
-    const attributes = new Map<string, string>(), classes = new Set<unknown>(), handlers = new Map<string, ((event: FormEvent) => unknown)[]>();
+    const attributes = new Map<string, string>(), classes = new Set<unknown>(), handlers = new Map<string, Set<(event: FormEvent) => unknown>>();
     let markup = '', ownText = ''; let children: FormNode[] = [];
     const node: FormNode = {
       id, value: '', ownerDocument:document, className:'', style:{},
@@ -233,10 +244,10 @@ function formHarness(t: test.TestContext, { connection, charts = [], selectedId 
       setSelectionRange(start: number, end: number,direction:'forward'|'backward'|'none'='none') { this.selectionStart = start; this.selectionEnd = end; this.selectionDirection=direction; },
       scrollIntoView() {},
       showModal() { this.open = true; }, close() { this.open = false; }, requestSubmit() { void this.emit('submit'); },
-      addEventListener(type, handler) { if (!handlers.has(type)) handlers.set(type, []); handlers.get(type)!.push(handler); },
+      addEventListener(type, handler, options) {listen(handlers,type,handler,options);},
       async emit(type: string, options = {}) {
         const event = { target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {}, ...options };
-        const pending = (handlers.get(type) || []).map(handler => handler(event));
+        const pending = [...(handlers.get(type) || [])].map(handler => handler(event));
         if (id === 'chartDialog' && type === 'cancel' && !event.defaultPrevented) this.close();
         await Promise.all(pending);
       },
@@ -262,7 +273,7 @@ function formHarness(t: test.TestContext, { connection, charts = [], selectedId 
     get charts() { return records; }, get selectedId() { return selectedId; },
     get current() { return records.find(chart => chart.id === selectedId) || { id: 'current-transit', source: 'transit' as const, personality: [], design: [] }; },
   };
-  const form = attachBirthForm({
+  const options:BirthOptions = {
     document: document as unknown as Document,
     getChart: getChart ?? (id => store.charts.find(chart => chart.id === id) as SavedChart | undefined),
     saveChart: saveChart ?? ((chart, id) => {
@@ -272,8 +283,8 @@ function formHarness(t: test.TestContext, { connection, charts = [], selectedId 
       else replaceRecords(next);
       return persist;
     }),
-    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode: connection ? () => connection.current : getConnectionMode, subscribeConnection: connection ? fn => connection.subscribe(fn) : subscribeConnection, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
-    onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => calls.beforeOpen++, toast: text => calls.toasts.push(text),
+    submitChart, isCheckingSubmission, noteComparisonLabel, getAccountId, onDraftChange, getConnectionMode: connection ? () => connection.current : getConnectionMode, subscribeConnection:subscribe, session: { get selectedId() { return selectedId; }, get original() { return store.charts.find(chart => chart.id === selectedId); } } as unknown as BirthOptions['session'],
+    onSave: (id, options) => { calls.saved.push(id); calls.saveOptions.push(options); }, beforeOpen: () => {calls.beforeOpen++;beforeOpen?.();}, toast: text => calls.toasts.push(text),
     getFormData: () => new Map(Object.entries(fields).map(([name, id]) => [name, element(id).value])) as unknown as FormData,
     ...createBirthClient(function requestJSON<T = unknown>(url: string, options: RequestInit = {}) {
       let resolve!: (value: unknown) => void, reject!: (error: unknown) => void;
@@ -281,10 +292,14 @@ function formHarness(t: test.TestContext, { connection, charts = [], selectedId 
       requests.push({ url, options, resolve, reject });
       return promise;
     }),
-  });
-  t.after(() => form.close());
+    ...(calculate?{calculate}:{}),
+  };
+  let form=attachBirthForm(options);t.after(()=>form.dispose?.()??form.close());
   return {
-    form, document, element, store, calls, requests, replaceRecords,
+    get form(){return form;},document,element,store,calls,requests,replaceRecords,session:options.session,
+    reattach(){form=attachBirthForm(options);return form;},
+    get resources(){return {listeners:activeListeners,subscriptions:connections.size};},
+    connectionCallbacks(){return [...connections];},
     selectionChanged(){for(const callback of documentHandlers.get('selectionchange')??[])callback();},
     submit: () => element('chartForm').emit('submit'),
     mode: (mode: string) => element(`mode-${mode}`).emit('click'),
@@ -1023,4 +1038,93 @@ test('command close and delayed native close discard one draft exactly once', as
   h.element('chartDialog').open = false;
   await h.element('chartDialog').emit('close');
   assert.equal(resets, 3, 'new open reset plus native-close discard');
+});
+
+function trackedFormTimers(t:test.TestContext){
+ const schedule=setTimeout,cancel=clearTimeout,active=new Set<unknown>(),queued:(()=>void)[]=[];
+ t.mock.method(globalThis,'setTimeout',(run:(...args:unknown[])=>void,delay?:number,...args:unknown[])=>{
+  const callback=()=>{active.delete(id);run(...args);},id=schedule(callback,delay);active.add(id);queued.push(callback);return id;
+ });
+ t.mock.method(globalThis,'clearTimeout',(id:Parameters<typeof clearTimeout>[0])=>{active.delete(id);cancel(id);});
+ return {get pending(){return active.size;},queued};
+}
+
+test('thirty form attach and dispose cycles release only their own listeners, subscription and timers',async t=>{
+ const h=formHarness(t),timers=trackedFormTimers(t);let neighbor=0;
+ const {bindNumericInput,formatTimeInput}=await import('../src/views/date-input.ts');
+ bindNumericInput(h.element('neighborTime') as unknown as HTMLInputElement,formatTimeInput);
+ h.document.addEventListener('selectionchange',()=>neighbor++);
+ const live=h.resources;assert.ok(live.listeners>3);assert.equal(live.subscriptions,1);
+ for(let index=0;index<30;index++){
+  if(index)h.reattach();assert.deepEqual(h.resources,live);
+  h.form.open();h.element('birthPlace').value='Москва';await h.element('birthPlace').emit('input');await h.element('birthPlace').emit('blur');
+  assert.equal(timers.pending,2);const form=h.form;await form.dispose?.();await form.dispose?.();
+  assert.deepEqual(h.resources,{listeners:3,subscriptions:0});assert.equal(timers.pending,0);assert.equal(form.opened,false);assert.equal(form.snapshot,null);assert.equal(form.pending,false);
+ }
+ t.mock.timers.tick(1000);await settle();assert.equal(h.requests.length,0);
+ h.selectionChanged();assert.equal(neighbor,1);
+ const input=h.element('neighborTime');input.value='1234';input.selectionStart=4;await input.emit('input');assert.equal(input.value,'12:34');
+});
+
+test('disposed city callbacks and stale form commands cannot affect a replacement runtime',async t=>{
+ let drafts=0;const h=formHarness(t,{onDraftChange:()=>drafts++}),timers=trackedFormTimers(t);h.form.open();
+ const request=await h.search('Москва');await h.element('birthPlace').emit('blur');
+ const callbacks=h.connectionCallbacks(),old=h.form,draft=old.snapshot;await old.dispose?.();assert.equal(request!.options.signal!.aborted,true);
+ h.reattach().open();h.element('chartName').value='Новый ввод';h.element('cityStatus').textContent='Новая форма';h.element('cityResults').hidden=false;
+ assert.equal(old.snapshot,null);assert.equal(old.opened,false);assert.equal(old.editedId,null);
+ const before=drafts,opens=h.calls.beforeOpen;request!.resolve({cities:[city(1,'Москва')]});await settle();
+ for(const callback of timers.queued)callback();for(const callback of callbacks)callback('offline');
+ old.open();old.close();old.clearDraft();assert.equal(old.restore(draft),false);assert.equal(old.refresh(),false);old.refreshAvailability();await old.dispose?.();
+ assert.equal(h.form.opened,true);assert.equal(h.element('chartName').value,'Новый ввод');assert.equal(h.element('chartName').disabled,false);
+ assert.equal(h.element('cityStatus').textContent,'Новая форма');assert.equal(h.element('cityResults').hidden,false);
+ assert.equal(drafts,before);assert.equal(h.calls.beforeOpen,opens);assert.deepEqual(h.calls.saved,[]);assert.deepEqual(h.calls.toasts,[]);
+});
+
+test('disposing an admission wait stops its retry without resetting the replacement form',async t=>{
+ const h=formHarness(t,{charts:[natalChart()]}),timers=trackedFormTimers(t);h.form.open(true,'natal-1');const submitting=h.submit();
+ h.requests[0].reject(Object.assign(new Error('Server is busy'),{code:'busy',status:503}));await settle();assert.equal(timers.pending,1);
+ await h.form.dispose?.();assert.equal(timers.pending,0);await submitting;
+ h.reattach().open();h.element('chartName').value='Новый черновик';t.mock.timers.tick(60_000);await settle();
+ assert.equal(h.requests.length,1);assert.equal(h.element('chartName').value,'Новый черновик');assert.equal(h.form.pending,false);assert.deepEqual(h.calls.saved,[]);
+});
+
+test('disposing a form ignores a late confirmed submission while the server fact remains accepted',async t=>{
+ let finish!:(value:{id:string;persisted:boolean})=>void,confirmed=0,signal:AbortSignal|undefined;
+ const h=formHarness(t,{charts:[natalChart()],submitChart:(_input,active)=>{signal=active;return new Promise<{id:string;persisted:boolean}>(resolve=>finish=resolve).then(result=>{confirmed++;return result;});}});
+ h.form.open(true,'natal-1');const submitting=h.submit();assert.equal(h.form.pending,true);await h.form.dispose?.();assert.equal(signal?.aborted,true);
+ h.reattach().open();h.element('chartName').value='Следующая карта';finish({id:'confirmed',persisted:true});await submitting;
+ assert.equal(confirmed,1);assert.deepEqual(h.calls.saved,[]);assert.deepEqual(h.calls.toasts,[]);assert.equal(h.form.opened,true);assert.equal(h.element('chartName').value,'Следующая карта');
+});
+
+test('a disposed random lookup cannot unlock or report into the next random action',async t=>{
+ const h=formHarness(t),old=h.element('randomChartButton').emit('click');assert.equal(h.form.pending,true);await h.form.dispose?.();assert.equal(h.requests[0].options.signal!.aborted,true);
+ h.reattach();const fresh=h.element('randomChartButton').emit('click');assert.equal(h.requests.length,2);
+ h.requests[0].reject(new Error('Old failure'));await old;assert.equal(h.element('randomChartButton').disabled,true);assert.deepEqual(h.calls.toasts,[]);
+ await h.form.dispose?.();h.requests[1].resolve({cities:[]});await fresh;assert.deepEqual(h.calls.saved,[]);assert.deepEqual(h.calls.toasts,[]);
+});
+
+test('a disposed form does not read the retired selection owner through a default argument',async t=>{
+ const h=formHarness(t);await h.form.dispose();t.mock.getter(h.session,'selectedId',()=>assert.fail('retired owner read'));
+ h.form.open();assert.equal(h.form.opened,false);
+});
+
+test('retirement inside beforeOpen cannot reopen the disposed dialog',async t=>{
+ for(const restoring of [false,true]){
+  let h!:ReturnType<typeof formHarness>,drafts=0,beforeId:string|null|undefined;h=formHarness(t,{charts:[natalChart()],reuseTimers:restoring,beforeOpen:()=>{beforeId=h.form.editedId;void h.form.dispose();},onDraftChange:()=>drafts++});
+  if(restoring)h.form.restore({editingId:null,accountId:null,calculationMode:'calculated',fields:{chartName:'Draft',birthDate:'12.',birthTime:'3',birthPlace:'City',chartNote:''},city:null,fold:null,base:null,focus:null});
+  else h.form.open(true,'natal-1');
+  assert.equal(beforeId,null);assert.equal(h.element('chartDialog').open,false);assert.equal(h.form.snapshot,null);assert.equal(drafts,0);assert.deepEqual(h.resources,{listeners:0,subscriptions:0});
+ }
+});
+
+test('disposing a form releases its calculation wait while a real shared consumer still receives the result',async t=>{
+ const {shareRequest}=await import('../src/runtime/shared-request.ts');
+ type Result=Awaited<ReturnType<BirthOptions['calculate']>>;
+ const pending=new Map<string,import('../src/runtime/shared-request.ts').SharedRequest<Result>>();
+ let finish!:(value:Result)=>void,transport!:AbortController,input!:Parameters<BirthOptions['calculate']>[0],starts=0;
+ const calculate:BirthOptions['calculate']=(payload,signal)=>{input=payload;return shareRequest(pending,JSON.stringify(payload),({controller})=>{starts++;transport=controller;return new Promise(resolve=>finish=resolve);},{signal});};
+ const h=formHarness(t,{charts:[natalChart()],calculate});h.form.open(true,'natal-1');assert.equal(h.form.editedId,'natal-1');const submitting=h.submit(),neighbor=new AbortController();assert.equal(h.form.pending,true);
+ const waiting=calculate(input,neighbor.signal);assert.equal(starts,1);await h.form.dispose();await submitting;
+ assert.equal(transport.signal.aborted,false);assert.equal(neighbor.signal.aborted,false);assert.equal(pending.size,1);assert.deepEqual(h.calls.saved,[]);
+ const ready=libraryRecordAtMinute(natalDayFixture(),754,personalChartFixture());finish(ready);assert.equal(await waiting,ready);assert.equal(pending.size,0);
 });
