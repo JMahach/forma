@@ -103,7 +103,7 @@ export interface StartupPorts {
   changed():void;
 }
 export type StartupEvent={type:'StartupInterrupted'}|{type:'Stop'};
-export interface ApplicationPorts { runtimeId: string; libraryProjection?:LibraryProjectionPort; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
+export interface ApplicationPorts { runtimeId: string; libraryProjection?:LibraryProjectionPort; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:Omit<LibraryFillPorts,'scope'>;libraryAudit?:Omit<LibraryAuditPorts,'scope'> }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}

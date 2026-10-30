@@ -3,7 +3,7 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { createChartToolsView } from './views/chart-tools-view.ts';
 import { createActionNotice } from './ui/feedback.ts';
 import { createChartEditing } from './application/chart-editing.ts';
-import { readLibraryLocalNotice, readLibraryPackageKey } from './domain/library-maintenance.ts';
+import { readLibraryPackageKey } from './domain/library-maintenance.ts';
 import type {LibraryLocalChange,LibraryLocalNotice} from './domain/library-maintenance.ts';
 import { createResourceScope } from './runtime/resource-scope.ts';
 import { createViewCheckpoint } from './state/view-checkpoint.ts';
@@ -11,7 +11,6 @@ import type { ViewCheckpoint } from './state/view-checkpoint.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
 import type { createJournal } from './journal.ts';
 import type { StoragePressure } from './data/storage-pressure.ts';
-import { createLocalDayTimeline } from './domain/day-timeline.ts';
 import type { CalculationClients } from './data/calculation-clients.ts';
 import type { AppRoute } from '../shared/app-routes.ts';
 import { appRoutePath } from '../shared/app-routes.ts';
@@ -19,13 +18,11 @@ import { attachChartLink } from './views/chart-link.ts';
 import type { Navigation } from './platform/browser/navigation.ts';
 import { createApplication } from './application/application.ts';
 import type { Application } from './application/application.ts';
-import type {BackgroundTask,ReleaseCheckPort} from './application/background-work.ts';
+import type {ReleaseCheckPort} from './application/background-work.ts';
 import { createBackgroundCoordinator } from './platform/browser/background-coordinator.ts';
 import { createPageLifecycle } from './platform/browser/lifecycle.ts';
 import { createLibraryFillTransfer } from './data/library-fill-transfer.ts';
 import type {LibraryFillPacket} from './data/library-fill-transfer.ts';
-import type {LibraryFillEvent,LibraryFillScope} from './application/library-fill.ts';
-import type { PublicAccountChart } from '../shared/chart-record-contract.ts';
 import type { SavedChart } from '../shared/chart-types.ts';
 import type { AccountWorkspace } from './account.ts';
 import type { TransitDayClient } from './data/transit-day-client.ts';
@@ -49,7 +46,7 @@ interface AppOptions {
   journal?:AppJournal;
   storagePressure?:StoragePressure;
   navigation?: Navigation;
-  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTransitWindow'|'library'|'close'>>;
+  calculationClients?: Pick<CalculationClients, 'natal' | 'cycles' | 'resetPersonal' | 'retryPersonalCleanup'> & Partial<Pick<CalculationClients,'evictForSpace'|'syncTodayTransitWindow'|'library'|'close'>>;
   account: Pick<AccountWorkspace, 'ready' | 'snapshot' | 'restoreInputFocus' | 'setVisible' | 'getSession' | 'subscribeSession' | 'subscribeNotices' | 'canRestoreLibrary'> & Partial<Pick<AccountWorkspace,'destroy'>>;
   dayClient: TransitDayClient; layout: StudioLayout; toast: Toast; viewStore: ViewStore;
   viewCheckpoint?: ViewCheckpoint;
@@ -117,10 +114,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const checkpoint=viewCheckpoint??createViewCheckpoint({store:viewStore,eventTarget:document.defaultView,interactionTarget:document});
   if(!viewCheckpoint)scope.own(checkpoint.destroy);
   let application: Application | null = null;
-  let lastLibraryWork='',pendingLibraryUses=0;
-  let releaseCheck:ReleaseCheckPort|null=null,publicCheckKey='',publicCheckInstance='';
-  let publicCheckSource:PublicAccountChart|null=null;
-  let freshPublic:{source:PublicAccountChart;checkedAt:number;receivedAt:number}|null=null;
+  let releaseCheck:ReleaseCheckPort|null=null;
+  const backgroundClock={now:Date.now,after(ms:number,run:()=>void){const timer=setTimeout(run,ms);return()=>clearTimeout(timer);}};
+  const activityChanged=()=>application?.send({type:'BackgroundActivityChanged'});
   const routePending = () => application?.view.destination === 'preparing' && application.view.request?.snapshot.route?.kind === 'chart';
   const routeFailed = () => application?.view.destination === 'failed' && !application.view.request?.selection;
   let pendingBirthForm = savedView?.birthForm ?? null;
@@ -142,7 +138,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     get lifetimeLoading(){return !!lifetimeLoading;},get returnsLoading(){return !!returnsViewLoading;},
     drawing:{get pending(){return chartPaintPending;},render:renderGraph},
     layout:{beginChange(){panelResizePending=true;},refresh:()=>refreshStudioLayout({preserveScale:true})},
-    restored:startupRestored,failed:startupFailed,loadingChanged:()=>updateLoading()});
+    restored:startupRestored,failed:startupFailed,loadingChanged:()=>{updateLoading();activityChanged();}});
   const initialPage=workspaceView.initial;
   const {inputSnapshot,discardInput:discardPendingInput,restoreInput:restoreInitialInput}=workspaceView;
   function updateInitialPage(){workspaceView.update();}
@@ -219,7 +215,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       failed: routeFailed() || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
       loading: routePending() || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
     updateInitialPage();
-    updateLibraryWork();
   };
 
   const graph = createGraphController({
@@ -414,7 +409,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
     status: $('natalDayStatus'), retryButton: $('natalDayRetry'), hourMarks: $('natalDayHourMarks'),
     onMomentInput: () => viewSession?.interrupt(),
-    onRender: exploration!.publishDay, onStateChange: () => { updateTimelineTools(); viewSession?.schedule();updateLibraryWork(); },
+    onRender: exploration!.publishDay, onStateChange: () => { updateTimelineTools(); viewSession?.schedule();activityChanged(); },
   });
   returnMarkers = attachReturnMarkers({ container: $('lifetimeTime').parentElement!,
     onTargetsChange: () => lifetimeControls?.refreshTargets(),
@@ -433,25 +428,17 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     client: cyclesClient,
     onRequest: exploration!.requestReturn, onRender: exploration!.publishReturn,
     onStateChange() {
-      updateTimelineTools(); viewSession?.schedule();updateLibraryWork();
+      updateTimelineTools(); viewSession?.schedule();activityChanged();
     },
   });
   $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); }, {signal:scope.signal});
   $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()), {signal:scope.signal});
-  let cacheTimeline: ReturnType<typeof createLocalDayTimeline> | null = null;
-  function syncTransitCacheWindow(timeline: typeof cacheTimeline | undefined, refresh = false) {
-    if (!calculationClients?.syncTransitWindow || !timeline) return;
-    const now = Date.now();
-    if (!refresh && cacheTimeline && now < cacheTimeline.endUtc && cacheTimeline.timeZone === timeline.timeZone) return;
-    // Persistent transit covers today's local day, even while exploring a past date.
-    cacheTimeline = createLocalDayTimeline(now, timeline.timeZone);
-    void calculationClients.syncTransitWindow({dates: cacheTimeline.packetDates, expiresAt: cacheTimeline.endUtc});
-  }
   transit = attachLiveTransit({ signal:scope.signal,
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     isChartVisible: () => workspace.screen === 'chart',
     onRender: exploration!.publishTransit, onStateChange: state => {
-      syncTransitCacheWindow(state.timeline);
+      application?.send({type:'TransitWindowObserved'});
+      activityChanged();
       transitControls?.setCoveredByLifetime(session.selectedId !== 'current-transit' || Boolean(lifetime?.state.opened));
       transitControls?.update(state); syncLifetimeTransit(); updateLoading(); refreshTimelineLayout(); viewSession?.schedule();
       if (returns?.available) updateChartCaption();
@@ -591,70 +578,26 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     }
     if(change.keys.includes(session.selectedId))notifyOfflineReady();
   }
-  function receiveLocalLibraryChange(value:unknown):boolean {
-    if(scope.stopped)return false;
-    const change=readLibraryLocalNotice(value,accountLibrary.workingLease,accountLibrary.session?.sessionId);
-    if(!change)return false;acceptLocalLibraryChange(change);return true;
-  }
-  function markLibraryOpened(id:string) {
-    pendingLibraryUses++;updateLibraryWork();
-    void accountLibrary.markOpened(id).finally(()=>{pendingLibraryUses--;wakeLibraryWork('use');});
-  }
-  function libraryWorkScope():LibraryFillScope|null {
-    const lease=accountLibrary.workingLease,access=accountLibrary.session;
-    if(!lease || !access || application?.account.status!=='ready' || !startupRestored())return null;
-    const foreground=Boolean(initialPage.active || pendingLibraryUses>0 || birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending
-      || application?.view.destination==='preparing' || application?.write.busy && !application.write.waitingForLogin
-      || transit?.state.loading || natalDay?.pending || returns?.pending || lifetimeLoading || lifetime?.pending);
-    return {lease,sessionId:access.sessionId,catalogMarker:accountLibrary.completeCatalog?.marker??'',
-      visible:pageLifecycle.visible,foreground,online:connectionMode()==='online'};
-  }
-  function updateLibraryWork() {
-    if(!application || scope.stopped)return;
-    const key=JSON.stringify(libraryWorkScope());if(key===lastLibraryWork)return;lastLibraryWork=key;
-    application.send({type:'FillChanged'});application.send({type:'AuditChanged'});
-  }
-  function wakeLibraryWork(reason:Extract<LibraryFillEvent,{type:'FillWake'}>['reason']) {
-    if(!application || scope.stopped)return;updateLibraryWork();const at=Date.now();
-    application.send({type:'FillWake',at,reason});
-    if(reason!=='use' && reason!=='space')application.send({type:'AuditWake',at});
-  }
   const libraryTransfer=createLibraryFillTransfer({store:libraryStorage,charts:chartClient,cycles:cyclesClient,lease:()=>accountLibrary.workingLease});
-  function backgroundTasks():BackgroundTask[] {
-    const tasks:BackgroundTask[]=[],access=account.getSession();
-    if(releaseCheck || journal)tasks.push({target:{key:'app',scope:{kind:'app'},instance:'release'},
-      async run(authority){void journal?.wake();await releaseCheck?.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
-      initial:releaseCheck?.install?.bind(releaseCheck),
-      receive(){releaseCheck?.observe();}});
-    if(application?.account.status==='ready' && startupRestored() && access)tasks.push({
-      target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
-      async run(authority){const result=await accountLibrary.load(authority);const ready=result.status==='complete'||result.status==='unchanged';
-        if(ready)wakeLibraryWork('hourly');return {outcome:{kind:ready?'success':'cancelled'}};},
-      initial:!document.hidden && connectionMode()==='online'?async signal=>{await accountLibrary.load(undefined,signal);wakeLibraryWork('library');}:undefined,
-    });
-    const source=store.publicChart?.id===session.selectedId && !accountLibrary.has(session.selectedId)?store.publicChart:null;
-    const key=source?`${source.id}/${access?.sessionId??'guest'}`:'';
-    if(freshPublic?.source!==source)freshPublic=null;
-    if(key!==publicCheckKey || source!==publicCheckSource){publicCheckKey=key;publicCheckSource=source;publicCheckInstance=crypto.randomUUID();}
-    if(source && startupRestored())tasks.push({target:{key:`public:${source.id}`,scope:{kind:'public',chartId:source.id},instance:publicCheckInstance},
-      run:authority=>freshPublic?.source===source && authority.permit.startedAt>=freshPublic.receivedAt && authority.permit.startedAt-freshPublic.receivedAt<2000
-        ?Promise.resolve({outcome:{kind:'success',checkedAt:freshPublic.checkedAt},data:{chart:source}})
-        :application!.refreshPublic(authority),
-      receive:data=>application!.send({type:'PublicSourceObserved',source,access,data}),
-    });
-    return tasks;
-  }
   application = createApplication({runtimeId:crypto.randomUUID(),navigation,libraryProjection:{
     library:accountLibrary,sources:store,selection:session,form:birthForm,
     view:{isChartScreen:()=>workspace.screen==='chart',changeChart:graph.changeChart,library:presentLibrary,checkpoint:()=>{viewSession?.flush();}},
-  },background:{coordinator:backgroundCoordinator,tasks:backgroundTasks},
-    libraryFill:{...libraryTransfer,scope:libraryWorkScope,entries:()=>accountLibrary.completeCatalog?.entries??null,
+  },background:{coordinator:backgroundCoordinator,
+    clock:backgroundClock,library:accountLibrary,
+    get release(){return releaseCheck;},get journal(){return journal??null;},
+    calculations:calculationClients?.syncTodayTransitWindow?{syncTodayTransitWindow:calculationClients.syncTodayTransitWindow}:undefined,
+    environment:{visible:()=>pageLifecycle.visible,online:()=>connectionMode()==='online',connected:()=>connectionMode()!=='offline',transitTimeZone:()=>transit?.state.timeline?.timeZone,
+      busy:()=>Boolean(initialPage.active || birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending
+        || transit?.state.loading || natalDay?.pending || returns?.pending || lifetimeLoading || lifetime?.pending)},
+    local:{changed:acceptLocalLibraryChange,broadcast:notifyLibrary},
+  },
+    libraryFill:{...libraryTransfer,clock:backgroundClock,id:()=>crypto.randomUUID(),entries:()=>accountLibrary.completeCatalog?.entries??null,
       control:libraryStorage.fill,inventory:libraryStorage.maintenance.inventory,
       accepted(_candidate,payload,authority){
         const packet=payload as LibraryFillPacket;
         if(packet.kind==='card' && accountLibrary.acceptStored(packet.chart,packet.marker,authority.permit.lease,authority.permit.sessionId) && session.selectedId===packet.chart.id)notifyOfflineReady();
       }},
-    libraryAudit:{scope:libraryWorkScope,store:libraryStorage.maintenance},
+    libraryAudit:{clock:backgroundClock,id:()=>crypto.randomUUID(),store:libraryStorage.maintenance},
     update:{
     restored:()=>workspaceView.status==='ready',
     ready(){
@@ -685,24 +628,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       updateTimelineTools();updateLoading();restoreInitialInput();notifyOfflineReady();
     },
   },publicRefresh:{
-    source:()=>store.publicChart,getSession:account.getSession,read:chartClient.public,
-    available:()=>store.publicChart?.id===session.selectedId && !application?.write.source && startupRestored() && connectionMode()==='online'
-      && !accountLibrary.get(store.publicChart!.id),
-    accept(previous,next){
-      store.acceptPublic(next);
-      if(publicCheckSource===previous)publicCheckSource=store.publicChart;
-      if(session.selectedId===next.id && !accountLibrary.get(next.id)) {
-        session.refreshRecord(graph.changeChart);
-      } else presentChart();
-      viewSession?.flush();
-    },
-    missing(previous){
-      store.clearPublic(previous.id);
-      if(session.selectedId===previous.id && !accountLibrary.get(previous.id)) {
-        if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
-      } else presentChart();
-      viewSession?.flush();
-    },
+    sources:store,session,library:accountLibrary,getSession:account.getSession,read:chartClient.public,id:()=>crypto.randomUUID(),
+    view:{isChartScreen:()=>workspace.screen==='chart',selectTransit:()=>selectChart('current-transit',{replace:true}),
+      changeChart:graph.changeChart,refresh:presentChart,checkpoint:()=>{viewSession?.flush();}},
   }, write:{
     actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,
     ready:()=>application!.requireAccount(),
@@ -714,7 +642,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       signIn(){navigateWorkspace('account');},select(id){selectChart(id,{replace:true});},
       isChartScreen:()=>workspace.screen==='chart',showChart:()=>workspace.setScreen('chart'),
       publishChart:id=>publishRoute({kind:'chart',id},true),changeChart:id=>graph.changeChart(id),refresh:presentChart,
-      changed(){updateChartSaveControl();notifyOfflineReady();updateLibraryWork();},checkpoint(){viewSession?.flush();},
+      changed(){updateChartSaveControl();notifyOfflineReady();},checkpoint(){viewSession?.flush();},
       report(kind,error){toast(error===undefined?kind==='unconfirmed'?UI_MESSAGES.chartSaveUnconfirmed
         :kind==='unavailable'?UI_MESSAGES.chartUnavailable:UI_MESSAGES.chartSaveFailed:failureMessage(error,UI_MESSAGES.chartSaveFailed));},
     },
@@ -740,46 +668,20 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       interrupt:()=>viewSession?.interrupt(),settled(){initialPresentation=null;updateLoading();},checkpoint:()=>{viewSession?.flush();},
       report(error){toast(failureMessage(error,UI_MESSAGES.chartUnavailable));},
       firstTransit:()=>transit!.start(null,{firstChart:true}),transitReady(ready){initialPage.contentFailed=!ready;updateLoading();},
-      markOpened:markLibraryOpened,publicRead(checkedAt,receivedAt){freshPublic={source:store.publicChart!,checkedAt,receivedAt};},
+      markOpened:id=>application!.send({type:'LibraryUsed',id}),publicRead(checkedAt,receivedAt){application!.send({type:'PublicSourceRead',source:store.publicChart!,checkedAt,receivedAt});},
     },
   }});
     scope.own(()=>application!.stop());
     scope.own(application.subscribe(updateLoading));
     application.start();
   scope.own(accountLibrary.subscribe(()=>application!.libraryChanged()));
-  scope.own(libraryStorage.subscribeLocal(change=>{
-    const sessionId=accountLibrary.session?.sessionId;if(!sessionId)return;
-    const notice:LibraryLocalNotice={kind:'local-storage',sessionId,...change};
-    if(receiveLocalLibraryChange(notice))notifyLibrary(notice);
-  }));
-  let pageVisible=pageLifecycle.visible;
-  scope.own(pageLifecycle.subscribe(returned=>{
-    const appeared=pageLifecycle.visible && !pageVisible;pageVisible=pageLifecycle.visible;
-    application!.environmentChanged({recover:returned || appeared,wake:returned || appeared});
-  }));
-  if (libraryChannel) libraryChannel.onmessage = async event => {
-    if(scope.stopped || receiveLocalLibraryChange(event.data))return;
-    if (application?.account.status==='ready') {
-      const prior=accountLibrary.completeCatalog;await accountLibrary.receive(event.data).catch(() => {});
-      updateLibraryWork();if(accountLibrary.completeCatalog && accountLibrary.completeCatalog!==prior)wakeLibraryWork('library');
-    }
-  };
-  document.addEventListener('visibilitychange', () => {
-    if(!document.hidden)void journal?.wake();
-    if (!document.hidden && application?.account.status==='ready') {
-      void accountLibrary.refreshLocal().catch(() => {});
-      syncTransitCacheWindow(transit?.state.timeline, true);
-    }
-  }, {signal:scope.signal});
-  let previousConnection = connectionMode();
-  scope.own(observeConnection(() => {
-    const connection = connectionMode(), returned = previousConnection !== 'online' && connection === 'online';
-    previousConnection = connection;updateChartSaveControl();
-    void natalDay?.refreshAvailability();
-    void returns?.refreshAvailability();
-    lifetime?.refreshAvailability(); updateTimelineTools();
-    if (returned) {syncTransitCacheWindow(transit?.state.timeline, true);void journal?.wake();}
-    application!.environmentChanged({retryAccount:connectionMode()!=='offline'});
+  scope.own(libraryStorage.subscribeLocal(change=>application!.send({type:'LibraryLocalChanged',change})));
+  scope.own(pageLifecycle.subscribe(returned=>application!.environmentChanged({reason:'lifecycle',returned})));
+  if(libraryChannel)libraryChannel.onmessage=event=>application!.receiveLibrary(event.data);
+  document.addEventListener('visibilitychange',()=>application!.environmentChanged({reason:'visibility'}),{signal:scope.signal});
+  scope.own(observeConnection(()=>{
+    updateChartSaveControl();void natalDay?.refreshAvailability();void returns?.refreshAvailability();
+    lifetime?.refreshAvailability();updateTimelineTools();application!.environmentChanged({reason:'connection'});
   }));
   const restoration = application.whenRestored();
   studio.dataset.panelsReady = 'true';
@@ -845,7 +747,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
             transitControls!.setCoveredByLifetime(state.opened || session.selectedId !== 'current-transit');
             viewSession?.schedule();
             exploration!.lifetimeChanged(state);
-            updateTimelineTools(); updateLoading();
+            updateTimelineTools(); updateLoading();activityChanged();
           },
         });
         controls = attachLifetimeControls({
@@ -890,10 +792,10 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       } finally {
         lifetimeLoading = null;
         if(!scope.stopped)$('lifetimeToggle').removeAttribute('aria-busy');
-        updateInitialPage();
+        updateInitialPage();activityChanged();
       }
     })();
-    return lifetimeLoading;
+    activityChanged();return lifetimeLoading;
   }
   function changeTimeline(kind: 'day' | 'lifetime', command: () => unknown) {
     discardPendingInput();

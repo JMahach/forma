@@ -96,7 +96,7 @@ interface HarnessOptions {
   storagePressure?: ReturnType<typeof createStoragePressure>;
   journal?: Parameters<typeof import('../src/app.ts').startApp>[0]['journal'];
   navigation?: ReturnType<typeof createNavigation>; onPersonalReset?: () => void;
-  syncTransitWindow?: ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>['syncTransitWindow'];
+  syncTodayTransitWindow?: ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>['syncTodayTransitWindow'];
   personalCleanup?: Pick<ReturnType<typeof import('../src/data/calculation-clients.ts').createCalculationClients>,'resetPersonal'|'retryPersonalCleanup'>;
   chartClient?: Partial<ChartClient>; accountSession?: (LibrarySession & {diagnosticProof?:string}) | null;
   libraryStorage?: ReturnType<typeof createAccountLibraryStore>;
@@ -259,7 +259,7 @@ function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
     own:unexpected,public:unexpected,list:unexpected,readyDay:unexpected,catalog:unexpected,confirmCatalog:async input=>({kind:'confirmed',accountId:input.expectedAccountId,marker:input.marker}),...overrides};
 }
-function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
+function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTodayTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();
   let backgroundTimeOffset=0;
   let hovered = false, notifyHover: () => void = noop;
@@ -309,10 +309,11 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   let lifetimeStateOptions!: NonNullable<Parameters<typeof createMomentTimeline>[0]>;
   let transitOptions!: PortOptions<'attachLiveTransit'>;
   let liveTransit: ReturnType<typeof attachRealLiveTransit> | undefined;
+  let testTransitState:{timeline?:ReturnType<typeof createLocalDayTimeline>}|undefined;
   let finishModule!: (value: unknown) => void, failModule!: (error: unknown) => void;
   let loads = 0, stateLoads = 0, reloads = 0, renders = 0, dayRequests = 0, chartSelections = 0, interruptions = 0;
   let performanceOptions!: PortOptions<'attachPerformanceMonitor'>;
-  let libraryUpdates=0, catalogUpdates=0;
+  let libraryUpdates=0, catalogUpdates=0, backgroundUpdates=0;
   let captionUpdates = 0, workspace!: ReturnType<typeof createWorkspaceState>, panels!: ReturnType<typeof createPanelState>;
   let knowledgeOptions!: PortOptions<'attachKnowledgeEntry'>, knowledgeLoads = 0, restoreInterrupted = false;
   const module = new Promise<unknown>((resolve, reject) => { finishModule = resolve; failModule = reject; });
@@ -329,10 +330,10 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
         const next=structuredClone(control),result=change(next);control=next;return result;
       }};
-      return createBackgroundCoordinator({...options,store:libraryStorage?.background??coordination,clock:{now:()=>Date.now()+backgroundTimeOffset,after(ms,callback){
+      const coordinator=createBackgroundCoordinator({...options,store:libraryStorage?.background??coordination,clock:{now:()=>Date.now()+backgroundTimeOffset,after(ms,callback){
       if(ms===25){let cancelled=false;queueMicrotask(()=>{if(!cancelled)callback();});return()=>{cancelled=true;};}
       const timer=setTimeout(callback,ms);timer.unref();return()=>clearTimeout(timer);
-    }}});},
+    }}});const update=coordinator.update.bind(coordinator);coordinator.update=targets=>{backgroundUpdates++;return update(targets);};return coordinator;},
     appRoutePath, createActionNotice: () => copyNotice, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
@@ -406,7 +407,8 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
         dayClient: { getDay: async date => natalDayFixture({date}) },
       });
       const current = dimensions ? store.get('current-transit') : null;
-      return { state: { wanted: true, current, status: current ? 'ready' : 'idle' }, current, stop:noop, refresh: noop, visibilityChanged: noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
+      const state={wanted:true,current,status:current?'ready':'idle',timeline:undefined as ReturnType<typeof createLocalDayTimeline>|undefined};testTransitState=state;
+      return { state, current, stop:noop, refresh: noop, visibilityChanged: noop, setWanted: noop, start: async () => {transitStarts++;return transitStart();},
         goNow: async () => { transitNowRequests++; return true; } };
     },
     attachTransitNavigation,
@@ -453,8 +455,8 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   const cameraView = { surface: element('canvasWrap'), paint: noop };
   const libraryView = createChartLibraryView({ chartList: element('chartList'), libraryCount: element('libraryCount'), nowButton: element('nowButton'), document } as unknown as Parameters<typeof createChartLibraryView>[0]);
   const updateLibrary=libraryView.update;libraryView.update=(...args)=>{libraryUpdates++;return updateLibrary(...args);};
-  const calculationClients = onPersonalReset || personalCleanup || syncTransitWindow ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
-    resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTransitWindow,...personalCleanup} : undefined;
+  const calculationClients = onPersonalReset || personalCleanup || syncTodayTransitWindow ? {natal:natalClient,cycles:{events:async()=>({events:[]}),chart:getReturn},
+    resetPersonal:async()=>{onPersonalReset?.();return {status:'cleared',generation:1};},retryPersonalCleanup:async()=>null,syncTodayTransitWindow,...personalCleanup} : undefined;
   const application=startApp({ connection, journal, storagePressure, navigation, calculationClients, account: { ready: accountReady, restoreInputFocus(){inputRestores.push('account');return true;}, snapshot: savedView?.account ?? null, setVisible: noop, getSession: () => accountSession, subscribeSession: (listener: () => void) => {accountListeners.add(listener); return () => {accountListeners.delete(listener);};}, subscribeNotices: (listener: (value: {kind:'logout';ids:string[]})=>void) => {noticeListeners.add(listener); return () => {noticeListeners.delete(listener);};}, canRestoreLibrary: async () => true }, dayClient: { memory }, layout, toast: (message:string)=>{notices.push(message);}, viewStore: {clear(){savedSnapshot=null;return true;}, write: (value: Partial<SavedView>) => {savedSnapshot = value; return true;} }, savedView, panels, workspace, store, libraryView, camera, cameraView, initialPresentation });
   return { highlight:ports.chartHighlight, setHovered() { hovered = true; notifyHover(); }, get liveTransit() { return liveTransit; }, copiedLinks, element, layout, natalClient, inputRestores, notices, restoration:application.restoration, stopApplication:application.stopApplication,
     advanceBackground(ms:number){backgroundTimeOffset+=ms;},
@@ -480,7 +482,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       const button = { dataset: { chartId: id } };
       document.dispatch('click', { target: { closest: (selector: string) => selector === '[data-chart-id]' ? button : null } });
     }, get shown() { return graph.getChart() as ChartComposition; }, get renders() { return renders; }, get lifetime() { return lifetime; }, get loads() { return loads; }, get stateLoads() { return stateLoads; },
-    get libraryUpdates(){return libraryUpdates;},get catalogUpdates(){return catalogUpdates;},
+    get libraryUpdates(){return libraryUpdates;},get catalogUpdates(){return catalogUpdates;},get backgroundUpdates(){return backgroundUpdates;},
     get interruptions() { return interruptions; }, get captionUpdates() { return captionUpdates; },
     filter: (id: string) => gestures.onSelect!({ type: 'planet-filter' as const, id }),
     failModule, get reloads() { return reloads; }, get natalDay() { return natalDay; },
@@ -490,7 +492,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     get activationHoverClears() { return activationHoverClears; },
     get lifetimeStateOptions() { return lifetimeStateOptions; },
     get returns() { return returns; }, get dayRequests() { return dayRequests; }, get chartSelections() { return chartSelections; },
-    clockTick(timeline?: ReturnType<typeof createLocalDayTimeline>) { transitOptions.onStateChange!({ wanted: false, timeline } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
+    clockTick(timeline?: ReturnType<typeof createLocalDayTimeline>) { Object.assign(testTransitState!,{timeline});transitOptions.onStateChange!({ wanted: false, timeline } as Parameters<NonNullable<typeof transitOptions.onStateChange>>[0]); },
     edit() { birthOptions.beforeOpen!(); },
     saveChart(chart: TestChart, options?: Parameters<NonNullable<typeof birthOptions.onSave>>[1]) {
       charts = fixtureStore.charts = [...charts.filter(previous => previous.id !== chart.id), chart];
@@ -652,10 +654,11 @@ test('clock updates, day and lifetime scrubs, and exact returns preserve the exp
   const exploring = h.camera.getView();
   h.clockTick();
   assert.deepEqual(h.camera.getView(), exploring);
-  const libraryBefore=h.libraryUpdates,catalogBefore=h.catalogUpdates;
+  const libraryBefore=h.libraryUpdates,catalogBefore=h.catalogUpdates,backgroundBefore=h.backgroundUpdates;
   h.natalDay.scrub(800);
   assert.equal(h.libraryUpdates-libraryBefore,0,'a moment change does not update library rows');
   assert.equal(h.catalogUpdates-catalogBefore,0,'a moment change does not update the catalog');
+  assert.equal(h.backgroundUpdates-backgroundBefore,0,'a moment change does not update background scheduling');
   assert.equal(h.shown.utc, '2026-09-24T13:20:00Z');
   assert.deepEqual(h.camera.getView(), exploring);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
@@ -2025,9 +2028,9 @@ test('an update may preserve the email field but may not discard a secret code',
  const h=harness({realViewSession:true,savedView:{version:1,workspace:'account',selectedId:'current-transit',
    account:{step:'email',email:'a@example.org',focus:{start:1,end:2,direction:'none'}}}});
  await h.restoration;await tick();h.element('accountEmail').focus();
- assert.equal(h.prepareOfflineUpdate(),true,'email already has a supported restoration owner');
+ assert.equal(await h.prepareOfflineUpdate(),true,'email already has a supported restoration owner');
  h.element('accountCode').focus();
- assert.equal(h.prepareOfflineUpdate(),false,'verification code is not persisted');
+ assert.equal(await h.prepareOfflineUpdate(),false,'verification code is not persisted');
 });
 
 test('peer an input event without key or pointer cannot restore the old email caret',async()=>{
@@ -2825,20 +2828,15 @@ test('failed personal cleanup survives a later account boundary and reconnect wi
 });
 
 
-test('transit storage follows the current local day once per boundary even while exploring the past',async t=>{
+test('transit UI passes its timezone and the current clock to the calculation owner',async t=>{
   let now=Date.parse('2026-09-30T12:00:00Z');t.mock.method(Date,'now',()=>now);
-  const writes:{dates:readonly string[];expiresAt:number}[]=[];
-  const h=harness({syncTransitWindow:async window=>{writes.push(window);return {status:'applied',revision:writes.length};}});
+  const calls:unknown[]=[];
+  const h=harness({syncTodayTransitWindow:(...args)=>{calls.push(args);return undefined;}});
   await h.restoration;
-  const past=createLocalDayTimeline(Date.parse('2000-01-01T12:00:00Z'),'Europe/Moscow');
-  for(let i=0;i<100;i++)h.clockTick(past);
-  const current=createLocalDayTimeline(now,'Europe/Moscow');
-  assert.deepEqual(writes,[{dates:current.packetDates,expiresAt:current.endUtc}]);
-  now=current.endUtc;
-  h.clockTick(past);
-  assert.deepEqual(writes[1],{dates:createLocalDayTimeline(now,'Europe/Moscow').packetDates,expiresAt:createLocalDayTimeline(now,'Europe/Moscow').endUtc});
-  h.clockTick(createLocalDayTimeline(now,'America/New_York'));
-  assert.equal(writes.length,3,'a timezone change changes the protected UTC packets');
+  h.clockTick(createLocalDayTimeline(Date.parse('2000-01-01T12:00:00Z'),'Europe/Moscow'));
+  assert.deepEqual(calls,[['Europe/Moscow',now,false]]);
+  now+=86400000;h.clockTick(createLocalDayTimeline(now,'America/New_York'));
+  assert.deepEqual(calls[1],['America/New_York',now,false]);
 });
 
 for(const sample of [{error:{code:'not_found'},replaced:false},{error:{code:'offline'},replaced:false},

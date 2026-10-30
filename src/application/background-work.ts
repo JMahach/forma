@@ -37,7 +37,7 @@ export interface BackgroundRuntime {
 }
 export type EnvironmentChange={reason:'lifecycle'|'connection'|'visibility';returned?:boolean};
 export interface ReleaseCheckPort {install?(signal:AbortSignal):Promise<void>;check(signal:AbortSignal):Promise<void>;observe():void;stop():void}
-export type BackgroundWorkEvent={type:'BackgroundChanged'}|{type:'LibraryUsed';id:string}
+export type BackgroundWorkEvent={type:'BackgroundChanged'}|{type:'BackgroundActivityChanged'}|{type:'LibraryUsed';id:string}
  | {type:'BackgroundEnvironment';change:EnvironmentChange}|{type:'TransitWindowObserved'}
  | {type:'BackgroundIdle';complete():void}
  | {type:'LibraryLocalChanged';change:LibraryLocalChange}|{type:'LibraryReceived';data:unknown;completed?:()=>void};
@@ -80,7 +80,7 @@ class InitialForegroundWork {
 }
 /** Task policy and in-flight usage live here, never in a browser scope callback. */
 class BackgroundWork {
- private pendingUses=0;private stopped=true;private previousVisible=false;private previousOnline=false;private active=0;
+ private pendingUses=0;private stopped=true;private previousVisible=false;private previousOnline=false;private previousBusy=false;private active=0;
  private ports:BackgroundWorkPorts;private runtime:BackgroundRuntime;
  constructor(ports:BackgroundWorkPorts,runtime:BackgroundRuntime){this.ports=ports;this.runtime=runtime;}
  private idle=new Set<()=>void>();
@@ -169,6 +169,10 @@ class BackgroundWork {
   if(this.stopped)return;
   switch(event.type){
    case 'LibraryUsed':this.used(event.id);return;
+   case 'BackgroundActivityChanged':{
+    const busy=this.ports.environment.busy();if(busy===this.previousBusy)return;
+    this.previousBusy=busy;this.changed();return;
+   }
    case 'BackgroundEnvironment':this.environment(event.change);return;
    case 'TransitWindowObserved':this.transit();return;
    case 'LibraryReceived':void this.track(this.received(event.data)).finally(event.completed);return;
@@ -178,7 +182,7 @@ class BackgroundWork {
   }
  }
  readonly logic=fromCallback<BackgroundWorkEvent>(({receive})=>{
-  this.stopped=false;this.previousVisible=this.ports.environment.visible();this.previousOnline=this.ports.environment.online();
+  this.stopped=false;this.previousVisible=this.ports.environment.visible();this.previousOnline=this.ports.environment.online();this.previousBusy=this.ports.environment.busy();
   this.ports.coordinator.start(request=>this.request(request));receive(event=>this.event(event));this.update();
   return()=>{this.stopped=true;this.ports.coordinator.stop();};
  });

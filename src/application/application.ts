@@ -1,4 +1,6 @@
 import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xstate';
+import {createBackgroundWork,type BackgroundTask,type EnvironmentChange} from './background-work.ts';
+import {publicRefreshCheck} from './public-refresh.ts';
 import {routeForChart} from './route.ts';
 import type {AppRoute} from '../../shared/app-routes.ts';
 import { createApplicationMachine } from './application-machine.ts';
@@ -67,15 +69,25 @@ function reconcile(actor:ApplicationActor,ports:ApplicationPorts,recover=true,wa
     if(readWrite(actor).waitingForLogin)actor.send({type:'ResumeWrite'});
     if(restored && recover)actor.send({type:'RecoverWrites'});
   }
-  actor.send({type:'BackgroundChanged'});
-  actor.send({type:'FillChanged'});actor.send({type:'AuditChanged'});
+  backgroundChanged(actor);
   if(restored && account.status==='ready' && wake) {
     wakeLibrary(actor,ports);
   }
 }
 
+function backgroundChanged(actor:ApplicationActor) {
+  actor.send({type:'BackgroundChanged'});actor.send({type:'FillChanged'});actor.send({type:'AuditChanged'});
+}
+function whenBackgroundIdle(actor:ApplicationActor) {
+  const {background,libraryFill,libraryAudit}=actor.getSnapshot().children;
+  if(!background && !libraryFill && !libraryAudit)return;
+  return Promise.all([background?new Promise<void>(complete=>background.send({type:'BackgroundIdle',complete})):undefined,
+    libraryFill?new Promise<void>(complete=>libraryFill.send({type:'FillIdle',complete})):undefined,
+    libraryAudit?new Promise<void>(complete=>libraryAudit.send({type:'AuditIdle',complete})):undefined]).then(()=>{});
+}
 function wakeLibrary(actor:ApplicationActor,ports:ApplicationPorts) {
-  const at=ports.libraryFill?.clock?.now()??Date.now();
+  const clock=ports.background?.clock??ports.libraryFill?.clock??ports.libraryAudit?.clock;if(!clock)return;
+  const at=clock.now();
   actor.send({type:'FillWake',at,reason:'lifecycle'});actor.send({type:'AuditWake',at});
 }
 
@@ -118,7 +130,7 @@ function connectViews(actor:ApplicationActor,ports:ApplicationPorts) {
     const subscription=write.subscribe(()=>{
       const next=readWrite(actor);
       if(next.source===previous.source && next.busy===previous.busy && next.waitingForLogin===previous.waitingForLogin)return;
-      previous=next;ports.write!.view.changed();
+      previous=next;ports.write!.view.changed();backgroundChanged(actor);
     });
     subscriptions.push(()=>subscription.unsubscribe());
   }
@@ -184,10 +196,23 @@ export function createApplication(ports: ApplicationPorts) {
   let sources:Promise<void>=Promise.resolve();
   const updating=ports.update?createUpdatePreparation(ports.update,{
     ready:()=>applicationRestored(actor,ports) && !readWrite(actor).busy && ports.update!.ready(),
-    changed(){if(actor.getSnapshot().matches('running')){
-      actor.send({type:'BackgroundChanged'});actor.send({type:'FillChanged'});actor.send({type:'AuditChanged'});
-    }},
+    changed(){if(actor.getSnapshot().matches('running'))backgroundChanged(actor);},
+    idle:()=>whenBackgroundIdle(actor),
   }):null;
+  const background=ports.background?createBackgroundWork(ports.background,{
+    state(){const write=readWrite(actor);return {running:actor.getSnapshot().matches('running'),restored:!ports.startup || readStartup(actor).restored,
+      accountReady:!ports.account || readAccount(actor).status==='ready',opening:readView().destination==='preparing',writing:write.busy && !write.waitingForLogin,preparingUpdate:updating?.active===true};},
+    publicTask:()=>publicTask(),
+    changed(){actor.send({type:'FillChanged'});actor.send({type:'AuditChanged'});},
+    wake(at,reason){actor.send({type:'FillWake',at,reason});if(reason!=='use' && reason!=='space')actor.send({type:'AuditWake',at});},
+    reconcile({retryAccount,recover,wake}){if(retryAccount)actor.send({type:'RetryAccountBoundary'});reconcile(actor,ports,recover,wake);},
+  }):undefined;
+  function publicTask():BackgroundTask|null {
+    const child=actor.getSnapshot().children.publicRefresh;if(!child)return null;
+    child.send({type:'PublicRefreshChanged'});const check=publicRefreshCheck(child.getSnapshot());if(!check)return null;
+    return {target:check.target,run:authority=>new Promise(resolve=>child.send({type:'RefreshPublicSource',authority,completed:resolve})),
+      receive:data=>child.send({type:'PublicSourceObserved',source:check.source,access:check.access,data})};
+  }
   const machine = createApplicationMachine(ports, () => {
     for(const stop of subscriptions.splice(0))stop();
   },()=>sources,()=>{
@@ -196,7 +221,8 @@ export function createApplication(ports: ApplicationPorts) {
     return requireAccount();
   },{ready:requireAccount,project:()=>projectLibrary(actor,ports),async route(snapshot){
     actor.send({type:'RouteRequested',snapshot,initial:true});await destinationSettled(actor);
-  }});
+  }},background,()=>!updating?.active && !readWrite(actor).source && (!ports.startup || readStartup(actor).restored)
+    && (ports.background?.environment.online()??true));
   const actor = createActor(machine);
   const readView = () => applicationView(actor.getSnapshot());
   async function requireAccount(){
@@ -222,14 +248,17 @@ export function createApplication(ports: ApplicationPorts) {
         const result=await requestSession(actor,ports.account.getSession());
         if(result.status==='ready' && !ports.account.library.storageAvailable)ports.account.storageUnavailable();
       }).catch(()=>{}); // Consumers receive the same failure through requireAccount.
-      subscriptions.push(observeAccount(actor,ports),...connectViews(actor,ports),...connectInputs(actor,ports));
+      subscriptions.push(observeAccount(actor,ports),...connectViews(actor,ports),...connectInputs(actor,ports),subscribeView(actor,()=>backgroundChanged(actor)));
     },
     send(event: ApplicationEvent) { actor.send(event); },
     attachJournal(journal:AccountJournal){actor.send({type:'JournalAttached',journal});},
-    environmentChanged({retryAccount=false,recover=true,wake=false}={}) {
-      if(retryAccount)actor.send({type:'RetryAccountBoundary'});
-      reconcile(actor,ports,recover,wake);
+    environmentChanged(change:EnvironmentChange) {actor.send({type:'BackgroundEnvironment',change});},
+    receiveLibrary(data:unknown):Promise<void> {
+      if(!ports.background || !actor.getSnapshot().matches('running'))return Promise.resolve();
+      return new Promise(resolve=>actor.send({type:'LibraryReceived',data,completed:resolve}));
     },
+    whenBackgroundIdle:()=>whenBackgroundIdle(actor)??Promise.resolve(),
+    backgroundChanged:()=>backgroundChanged(actor),
     requireAccount,
     libraryChanged(){projectLibrary(actor,ports);},
     formSaved(id:string,{metadataOnly=false}={}){presentFormResult(actor,ports,id,metadataOnly);},

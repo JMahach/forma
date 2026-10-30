@@ -1,10 +1,10 @@
-import { assign, fromPromise, sendTo, setup } from 'xstate';
+import { assign, fromCallback, fromPromise, sendTo, setup } from 'xstate';
 import {prepareRoute,chartDestination,showChart,routeForChart,publishRoute} from './route.ts';
 import { createAccountBoundaryMachine } from './account-boundary.ts';
 import { createStartupMachine,type StartupRuntime } from './startup.ts';
 import { createPublicRefreshMachine } from './public-refresh.ts';
 import {createWriteContinuationMachine,writeContinuationView} from './write-continuation.ts';
-import {createBackgroundWork} from './background-work.ts';
+import type {createBackgroundWork} from './background-work.ts';
 import {createLibraryFill} from './library-fill.ts';
 import {createLibraryLocalAudit} from './library-local-audit.ts';
 import type { ApplicationEvent, ApplicationPorts, RouteRequest, NavigationPort } from './ports.ts';
@@ -16,7 +16,7 @@ function routeChanged(request:RouteRequest|null,event:Event,navigation?:Navigati
     && !!navigation?.isCurrent(event.snapshot) && request?.snapshot!==event.snapshot;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime) {
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime,background:ReturnType<typeof createBackgroundWork>|undefined,publicAdmitted:()=>boolean) {
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
@@ -35,11 +35,11 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       events: {} as Event,
     },
     actors: {
-      background:createBackgroundWork(ports.background!),
-      libraryFill:createLibraryFill(ports.libraryFill!),
-      libraryAudit:createLibraryLocalAudit(ports.libraryAudit!),
+      background:background?.logic??fromCallback(()=>{}),
+      libraryFill:createLibraryFill({...ports.libraryFill!,scope:()=>background?.scope()??null}),
+      libraryAudit:createLibraryLocalAudit({...ports.libraryAudit!,scope:()=>background?.scope()??null}),
       startup: createStartupMachine(ports.startup!,startup,ports.navigation),
-      publicRefresh: createPublicRefreshMachine(ports.publicRefresh!),
+      publicRefresh: createPublicRefreshMachine(ports.publicRefresh!,publicAdmitted),
       account: createAccountBoundaryMachine(ports.account!, runtimeId,sources),
       write: createWriteContinuationMachine(ports.write!),
       route: fromPromise(({input, signal}: {input: RouteRequest; signal: AbortSignal}) =>
@@ -122,7 +122,14 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         ],
         on: {
           Stop: '#application.stopping',
+          LibraryUsed:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          BackgroundIdle:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          BackgroundEnvironment:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          TransitWindowObserved:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          LibraryLocalChanged:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          LibraryReceived:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
           BackgroundChanged:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
+          BackgroundActivityChanged:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
           FillWake:{guard:()=>!!ports.libraryFill,actions:sendTo('libraryFill',({event})=>event)},
           FillChanged:{guard:()=>!!ports.libraryFill,actions:sendTo('libraryFill',({event})=>event)},
           AuditWake:{guard:()=>!!ports.libraryAudit,actions:sendTo('libraryAudit',({event})=>event)},
@@ -135,6 +142,8 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
             guard: () => !!ports.publicRefresh,
             actions: sendTo('publicRefresh', ({event}) => event),
           },
+          PublicRefreshChanged:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
+          PublicSourceRead:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
           PublicSourceObserved:{guard:()=>!!ports.publicRefresh,actions:sendTo('publicRefresh',({event})=>event)},
           CancelPublicRefresh: {
             guard: () => !!ports.publicRefresh,
