@@ -28,6 +28,35 @@ import { getConnectionMode, type ConnectionMode } from '../data/http-transport.t
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
   loadLifetime, connection = getConnectionMode, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
   let timelineOpening: { target: LifetimeTarget } | null = null, restoreBirthBoundary: Partial<SavedLifetimeView> | false = false, returnsPreferred = false;
+  let selectionRead: AbortController | null = null, disposed = false;
+  function cancelSelection() {
+    const previous = selectionRead;
+    selectionRead = null;
+    previous?.abort();
+  }
+  async function prepareSelection(read: (signal: AbortSignal) => Promise<unknown> | void, accept: () => void) {
+    if (disposed) return false;
+    cancelSelection();
+    const request = new AbortController();
+    selectionRead = request;
+    try {
+      const pending = read(request.signal);
+      if (pending) await pending;
+    } catch (error) {
+      if (selectionRead !== request) return false;
+      selectionRead = null;
+      throw error;
+    }
+    if (selectionRead !== request) return false;
+    selectionRead = null;
+    accept();
+    return true;
+  }
+  function dispose() {
+    disposed = true;
+    cancelSelection();
+    invalidateTimeline();
+  }
   const personal = () => Boolean(getReturns()?.available);
   const returnsEnabled = () => personal() && Boolean(timelineOpening || getLifetime()?.state.opened && !getNatalDay().state.opened);
   const live = () => personal() && session.owner === 'transit';
@@ -46,6 +75,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     invalidateTimeline();
   }
   function select(id: string) {
+    cancelSelection();
     // Keep the chosen tool through unsupported charts, without opening it there
     // or carrying another person's moment/range. Transit clears that preference.
     returnsPreferred = id !== 'current-transit' && (returnsPreferred || returnsEnabled());
@@ -251,7 +281,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     }
     syncTransitWanted();
   }
-  return { select, selected, openDay, closeScales, resetMoment, toggleTransit, toggleReturns, openReturnsList,
+  return { select, selected,prepareSelection,cancelSelection,dispose, openDay, closeScales, resetMoment, toggleTransit, toggleReturns, openReturnsList,
     toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
     // The accepted opening exists before the lazy controller. Once its state
     // opens, that controller owns the actual range and moment for persistence.

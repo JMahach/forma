@@ -1,3 +1,4 @@
+import { createResourceScope } from './runtime/resource-scope.ts';
 import { chartPresentation } from './domain/chart-presentation.ts';
 import {createViewCheckpoint} from './state/view-checkpoint.ts';
 import { createLayoutObserver } from './ui/layout/resize-observer.ts';
@@ -35,6 +36,7 @@ import { attachLoadingPreview } from './views/loading-preview.ts';
 import { personalTimelineTarget } from './domain/cycles.ts';
 
 type Journal=ReturnType<typeof createJournal>;
+const startupResources=createResourceScope();
 let application:ReturnType<typeof import('./app.ts').startApp>|undefined;
 let applicationFailed=false,connectedJournal:Journal|undefined,connection:Promise<void>|undefined;
 // One first startup fact, before the optional journal is available. No snapshot,
@@ -80,7 +82,7 @@ export function connectJournal(journal:Journal) {
   })();
 }
 
-attachPageGestures(document);
+attachPageGestures(document,startupResources.signal);
 
 const element = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 const toast = createToast(element('toast'));
@@ -120,7 +122,7 @@ store.projectLibrary([], false);
 // The first preview and the application share these state owners. Project the
 // saved shells before importing the application, while boot transitions are off.
 const panels = createPanelState(), workspace = createWorkspaceState();
-attachPanelKeyboard(document, panels);
+attachPanelKeyboard(document, panels,startupResources.signal);
 const randomButton = document.getElementById('randomChartButton');
 if (randomButton) randomButton.hidden = false;
 panels.restore(savedView?.panels); workspace.restore(savedView?.workspace);
@@ -198,8 +200,8 @@ syncLoadingPanels();
 // The navigation drawer covers the workspace; its visibility remains owned by
 // the same panel state during loading and after the application takes over.
 function refreshPhoneNavigation() { studio.inert = Boolean(layout.phone && panels.left); }
-layout.subscribeViewport(refreshPhoneNavigation);
-panels.subscribe(refreshPhoneNavigation);
+startupResources.own(layout.subscribeViewport(refreshPhoneNavigation));
+startupResources.own(panels.subscribe(refreshPhoneNavigation));
 refreshPhoneNavigation();
 // One projection paints the ready chart and its loading illustration. The
 // application takes this camera over without changing the saved view.
@@ -211,7 +213,8 @@ const camera = createCamera({ getHomeFrame: () => layout.frame(), getFrame: () =
 camera.restoreView(savedView?.camera);
 const gestures = attachGestures(element('bodygraph'), { camera, cameraView, resolvePointerTarget: () => null,
   onChange(view, fitted) { cameraChanged(view, fitted); scheduleLoadingView(); } });
-attachCameraControls({ fitButton: element('fitButton') }, gestures);
+startupResources.own(gestures.dispose);
+startupResources.own(attachCameraControls({ fitButton: element('fitButton') }, gestures).dispose);
 let loadingActive = true, pendingAccountFocus = savedView?.account?.focus;
 function cancelLoadingFocus() {
   pendingAccountFocus = null; loadingInteraction = true;
@@ -314,10 +317,13 @@ commitLoadingLayout(document);
 if (!previewLoading) try {
   const app = await import('./app.ts');
   const latestView = handoffLoadingView();
-  application = app.startApp({ navigation, storagePressure, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent });
+  application = app.startApp({ navigation, storagePressure, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView: latestView, panels, workspace, store, libraryView, camera, cameraView, gestures, initialPresentation, releaseLoadingContent,releaseStartupResources:startupResources.stop });
   saveBeforeNavigate = () => application?.flushView();
 } catch {
+  void startupResources.stop().catch(error=>console.error('Startup cleanup failed',error));
   handoffLoadingView();
+  // The failed page keeps its zoom policy until its explicit reload.
+  attachPageGestures(document);
   viewCheckpoint.destroy();
   applicationFailed=true;
   const shell = document.querySelector<HTMLElement>('.app-shell')!;

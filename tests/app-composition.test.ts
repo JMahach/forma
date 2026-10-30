@@ -366,10 +366,10 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       gestures = options;
       camera = options.camera!;
       camera.setOnChange(options.onChange!);
-      return camera;
+      return {...camera,dispose:async()=>{}};
     },
     pointerTarget: noop,
-    attachMandalaMode: (options) => dimensions ? attachMandalaMode(options) : ({ enabled: false, setEnabled: noop }), createMandalaMotion: () => ({dispose:noop,setExpanded:noop}),
+    attachMandalaMode: (options) => dimensions ? attachMandalaMode(options) : ({ dispose:async()=>{},enabled: false, setEnabled: noop }), createMandalaMotion: () => ({dispose:noop,setExpanded:noop}),
     mandalaPreviewFromPointer: noop, mandalaPreviewFromFocus: noop, mandalaSelectionFromTarget: noop,
     chartHighlight: createChartHighlight(),
     createGraphController: (options) => { graph = options;
@@ -379,7 +379,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       } });
       return { choose: noop, changeChart: (id: string) => { chartSelections++; options.onChartChange!(id); },
       clear: noop, render: () => { renders++; }, preview: noop, selectionState: { primary: null } }; },
-    attachCameraControls: noop, createCameraChangeHandler: () => noop,
+    attachCameraControls: ()=>({dispose:async()=>{}}), createCameraChangeHandler: () => noop,
     createViewSession: (options) => {
       assert.equal(options.cameraRestored, true);
       if (realViewSession) return createViewSession({ ...options, eventTarget: null, interactionTarget: null, delay: 0 });

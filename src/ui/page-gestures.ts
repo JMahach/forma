@@ -1,9 +1,9 @@
 // The page stays at its native scale, including body portals and modal dialogs.
 // Cancel browser zoom without stopping propagation: the scene still owns its
 // camera gestures, while ordinary scrolling and editable controls stay native.
-export function attachPageGestures(document: Document) {
+export function attachPageGestures(document: Document,signal?:AbortSignal) {
   const cancelZoom = (event: Event) => { if (event.cancelable) event.preventDefault(); };
-  const options = { capture: true, passive: false };
+  const options = { capture: true, passive: false,signal };
   document.addEventListener('wheel', event => {
     if (event.ctrlKey || event.metaKey) cancelZoom(event);
   }, options);
@@ -13,5 +13,5 @@ export function attachPageGestures(document: Document) {
   document.addEventListener('keydown', event => {
     if (event.altKey || !(event.ctrlKey || event.metaKey)) return;
     if (['+', '=', '-', '_', '0'].includes(event.key)) cancelZoom(event);
-  }, { capture: true });
+  }, { capture: true,signal });
 }

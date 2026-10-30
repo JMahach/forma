@@ -1,3 +1,4 @@
+import {createResourceScope} from '../src/runtime/resource-scope.ts';
 import {chartPresentation} from '../src/domain/chart-presentation.ts';
 import {createViewCheckpoint} from '../src/state/view-checkpoint.ts';
 import { createLayoutObserver } from '../src/ui/layout/resize-observer.ts';
@@ -63,7 +64,7 @@ type LayoutFixture = Pick<RealStartupPorts['layout'], 'frame'>
     insets(): Pick<ReturnType<RealStartupPorts['layout']['insets']>, 'side' | 'top' | 'bottom'>;
     refresh(...args: Parameters<RealStartupPorts['layout']['refresh']>): void;
     setTimelineKind(...args: Parameters<RealStartupPorts['layout']['setTimelineKind']>): void;
-    subscribeViewport(...args: Parameters<RealStartupPorts['layout']['subscribeViewport']>): void;
+    subscribeViewport(...args: Parameters<RealStartupPorts['layout']['subscribeViewport']>): () => void;
   };
 type DayOptions = NonNullable<Parameters<typeof createTransitDayClient>[0]>;
 type ViewFixture = TestStub<Partial<SavedView>>;
@@ -127,7 +128,7 @@ interface FakeDocument extends EventTarget {
 const source = readModuleSource(new URL('../src/startup.ts', import.meta.url))
   .replace(/^import .*;\n/gm, '').replace(/^export /gm,'').replace("import('./app.ts')", 'loadApp()');
 const evaluate = new (Object.getPrototypeOf(async function () {}).constructor)(
-  'chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'personalTimelineTarget', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
+  'createResourceScope','chartPresentation', 'createViewCheckpoint', 'createLayoutObserver', 'clientFailureReason', 'parseClientContextStep', 'CLIENT_REPORT_REASONS', 'createStoragePressure', 'createNavigation', 'viewForRoute', 'history', 'window', 'getConnectionMode', 'actionAvailability', 'attachAccount', 'attachPanelKeyboard', 'attachGestures', 'attachCameraControls', 'attachLoadingPreview', 'personalTimelineTarget', 'holdLoadingContent', 'commitLoadingLayout', 'studioPresentation', 'originalNatalDayMoment', 'createCameraChangeHandler', 'createCamera', 'createCameraView', 'MANDALA_FRAME', 'ACTIVATION_COLUMN_REVEAL_DISTANCE', 'createChartLibraryView', 'STUDIO_FOOTPRINT', 'createPanelState', 'createWorkspaceState', 'getComputedStyle', 'attachPageGestures', 'document', 'ResizeObserver', 'createCalculationClients', 'createStudioLayout', 'createToast', 'createViewStore', 'createChartStore', 'loadApp', 'location', source + '\nreturn {connectJournal};') as (...ports: unknown[]) => Promise<StartupExports>;
 function tabStorage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -154,7 +155,7 @@ const run = (guard: typeof attachPageGestures, document: FakeDocument,
   const history = {pushState: navigate, replaceState: navigate};
   const clients = clientFactory ?? ((options: {transit: DayOptions}) => ({transit: dayFactory(options.transit), natal: {}, cycles: {}}));
   // Evaluated production code consumes these explicitly partial ports only at this boundary.
-  return evaluate(chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, personalTimelineTarget, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
+  return evaluate(createResourceScope,chartPresentation,createViewCheckpoint,(refresh: () => void) => createLayoutObserver(refresh, {Observer: observer as typeof ResizeObserver}), clientFailureReason, parseClientContextStep, CLIENT_REPORT_REASONS, createStoragePressure, createNavigation, viewForRoute, history, events, getConnectionMode, actionAvailability, attachAccount, attachPanelKeyboard, gestureFactory, attachCameraControls, attachPreview, personalTimelineTarget, holdLoadingContent, commitLoadingLayout, studioPresentation, originalNatalDayMoment, createCameraChangeHandler, createCamera, createCameraView, MANDALA_FRAME, ACTIVATION_COLUMN_REVEAL_DISTANCE, createChartLibraryView, STUDIO_FOOTPRINT, createPanelState, createWorkspaceState,
     () => ({ getPropertyValue: () => '296.8px' }), guard, document, observer, clients, layoutFactory, toastFactory, viewFactory, storeFactory, loadApp, address);
 };
 
@@ -230,7 +231,7 @@ function startupDocument(overrides: Record<string, object> = {}) {
 const layoutStyle: Pick<CSSStyleDeclaration, 'scrollPaddingTop' | 'scrollPaddingLeft' | 'getPropertyValue'> = {
   scrollPaddingTop: '112px', scrollPaddingLeft: '4px', getPropertyValue: () => '0px',
 };
-const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, setTimelineKind() {}, subscribeViewport() {} });
+const layoutStub = () => ({ frame: () => STUDIO_FOOTPRINT.frame, insets: () => ({ side: 4, top: 112, bottom: 68 }), refresh() {}, setTimelineKind() {}, subscribeViewport() {return()=>{};} });
 
 const emptyStore = (options: Parameters<typeof createChartStore>[0] = {}) => createChartStore({...options});
 
@@ -261,11 +262,15 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
       });
     assert.equal(Boolean(options!.initialDate), needsDay, JSON.stringify(savedView));
     assert.equal(creates, 1); assert.equal(reads, 1);
-    const { navigation, storagePressure, calculationClients, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, viewCheckpoint, ...existingPorts } = received!;
+    const { navigation, storagePressure, calculationClients, account, panels, workspace, store, libraryView, camera, cameraView, gestures, previewLoading, initialPresentation, releaseLoadingContent, viewCheckpoint,releaseStartupResources, ...existingPorts } = received!;
     assert.equal(calculationClients.transit, client);
     assert.equal(typeof storagePressure?.write, 'function');
     assert.equal(typeof viewCheckpoint?.flushForPageHide, 'function');
     assert.deepEqual(existingPorts, { dayClient: client, layout, toast, viewStore, savedView });
+    const pose=camera.getView();await releaseStartupResources!();await releaseStartupResources!();
+    gestures!.pan(10,20);assert.deepEqual(camera.getView(),pose,'retired startup gestures cannot move the shared camera');
+    const zoom=Object.assign(new Event('wheel',{cancelable:true}),{ctrlKey:true});document.dispatchEvent(zoom);
+    assert.equal(zoom.defaultPrevented,false,'successful handoff releases its page handlers on stop');
   }
 });
 

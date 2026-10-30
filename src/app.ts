@@ -56,6 +56,7 @@ interface AppOptions {
   savedView: Partial<SavedView> | null; panels: PanelState; workspace: WorkspaceState;
   store: ChartStore; libraryView: ChartLibraryView; camera: Camera;
   cameraView: ReturnType<typeof createCameraView>; gestures?: Gestures | null;
+  releaseStartupResources?:()=>Promise<void>;
   initialPresentation?: StudioPresentation | null; releaseLoadingContent?: (() => void) | null;
 }
 
@@ -106,9 +107,10 @@ import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { studioPresentation } from './ui/studio-presentation.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
-export function startApp({ connection, journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null }: AppOptions) {
+export function startApp({ connection, journal, storagePressure, navigation, calculationClients, account, dayClient, layout, toast, viewStore, viewCheckpoint, savedView, panels, workspace, store, libraryView, camera, cameraView, gestures: startupGestures = null, initialPresentation = null, releaseLoadingContent = null, releaseStartupResources }: AppOptions) {
   const scope=createResourceScope();
   try {
+  scope.own(()=>releaseStartupResources?.());
   scope.own(()=>calculationClients?.close?.());
   scope.own(()=>account.destroy?.());
   scope.own(()=>journal?.close?.());
@@ -205,6 +207,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
     onTimelineReady: () => { updateTimelineTools(); refreshStudioLayout(); },
     onModeChange: updateTimelineTools, onChange: () => { syncLifetimeTransit(); viewSession?.schedule(); } });
+  scope.own(exploration.dispose);
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
     lifetime?.state.opened && lifetime.state.mode === 'lifetime' || viewSession?.pendingLifetime?.mode === 'lifetime');
@@ -271,6 +274,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
   };
   const gestures = startupGestures || attachGestures($('bodygraph'), gestureHandlers);
+  if(!releaseStartupResources)scope.own(gestures.dispose);
   if (startupGestures) gestures.setHandlers(gestureHandlers);
   const activationHover = attachActivationHover($('bodygraph'));
   scope.own(activationHover.dispose);
@@ -307,6 +311,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     motion: mandalaMotion, layout, onStateChange: () => viewSession?.schedule(),
     beforeChange: () => { activationPopover.close(); hoverPreview?.clear({ notify: false }); },
   });
+  scope.own(mandalaMode.dispose);
   // Explicit navigation reveals its destination on a phone. State projection
   // and restoration do not use this command, so a restored menu stays open.
   function routeForChart(id: string): AppRoute {
@@ -359,7 +364,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   scope.own(()=>accountLibrary.close());
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   scope.own(chartLink.dispose);
-  let privateLibraryShown = false, librarySelection = 0;
+  let privateLibraryShown = false;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
@@ -425,11 +430,11 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       accountLibrary.readyIds,accountLibrary.entries);
     birthForm.refresh();
     if (startupRestored() && !preserveSaveSource && editedId && !store.get(editedId)) {
-      librarySelection++; selectChart('current-transit', {replace:true});
+      exploration!.cancelSelection(); selectChart('current-transit', {replace:true});
       return;
     } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
       const next = store.get(session.selectedId);
-      if (!next) { librarySelection++; selectChart('current-transit', {replace:true}); }
+      if (!next) { exploration!.cancelSelection(); selectChart('current-transit', {replace:true}); }
       else session.refreshRecord(graph.changeChart);
       // The accepted session already updates every page projection.
       return;
@@ -438,17 +443,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   }
   async function openLibraryChart(id: string, options?: {keepMenuOpen: boolean}, edit = false) {
     const observation=journal?.begin({action:'chart_open',component:'chart'});
-    const selection = ++librarySelection;
     try {
-      if (privateLibraryShown && id !== 'current-transit' && id !== store.temporaryChart?.id && !accountLibrary.has(id)) return;
-      if (accountLibrary.has(id)) await accountLibrary.open(id);
-      if (selection !== librarySelection) return;
-      if (edit) birthForm.open(true, id); else selectChart(id, options);
+      if (privateLibraryShown && id !== 'current-transit' && id !== store.temporaryChart?.id && !accountLibrary.has(id)) {exploration!.cancelSelection();return;}
+      await exploration!.prepareSelection(
+        signal=>accountLibrary.has(id)?accountLibrary.open(id,signal):undefined,
+        ()=>{if(edit)birthForm.open(true,id);else selectChart(id,options);});
     } catch (error) {
-      if (selection === librarySelection) {
-        void observation?.reportError(error,{stage:'storage_read'});
-        toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
-      }
+      void observation?.reportError(error,{stage:'storage_read'});
+      toast(failureMessage(error, UI_MESSAGES.chartUnavailable));
     } finally {observation?.finishSuccess();}
   }
   async function submitAccountChart(input: BirthSubmission, signal: AbortSignal) {
@@ -478,7 +480,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         if(!journal){journalBoundaryPending=true;for(const id of ids)journalBoundaryIds.add(id);}
         journal?.leave(ids);
         cancelChartSave();pendingBirthForm=null;discardPendingInput();
-        temporaryChartSave=null;chartActions.clear();chartEditing.reset();librarySelection++;birthForm.close();
+        temporaryChartSave=null;chartActions.clear();chartEditing.reset();exploration!.cancelSelection();birthForm.close();
         // Retain only independent tab sources in the private checkpoint adapter.
         return checkpoint.clear(store.temporaryChart || store.publicChart?{version:1,
           temporaryChart:store.temporaryChart,publicChart:store.publicChart,
@@ -487,7 +489,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       },
       switchAccount(access){
         if(pendingBirthForm && pendingBirthForm.accountId!==null && pendingBirthForm.accountId!==access.accountId)pendingBirthForm=null;
-        temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();librarySelection++;
+        temporaryChartSave=null;cancelChartSave();chartActions.clear();chartEditing.reset();exploration!.cancelSelection();
         const draft=birthForm.snapshot;
         if(birthForm.opened && (!draft || draft.accountId!==null && draft.accountId!==access.accountId))birthForm.close();
       },
@@ -601,7 +603,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   attachTransitNavigation($('nowButton'), { signal:scope.signal,
     onSelect: selectChart, refresh: transit!.refresh,
   });
-  if (!startupGestures) attachCameraControls({ fitButton: $('fitButton') }, gestures);
+  if (!startupGestures) scope.own(attachCameraControls({ fitButton: $('fitButton') }, gestures).dispose);
   const performanceMonitor=attachPerformanceMonitor({
     document, button: $('togglePerformance'), panel: $('performancePanel'), drawing: $('bodygraph'), inputSurface: $('canvasWrap'),
     ranges: [$('transitTime'), $('natalDayTime'), $('lifetimeTime')],
@@ -1014,7 +1016,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         enter() {
           if (route.kind==='chart' || route.kind==='temporary-chart' || route.kind==='transit') application?.send({type:'CancelPublicRefresh'});
           if (!request.initial) {cancelChartSave();viewSession?.interrupt();}
-          librarySelection++;
+          exploration!.cancelSelection();
           navigateWorkspace(route.kind === 'chart' || route.kind === 'temporary-chart' || route.kind === 'transit' ? 'chart' : route.kind, {fromRoute:true});
         },
         async prepare(signal, current) {
