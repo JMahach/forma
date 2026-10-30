@@ -144,3 +144,12 @@ test('calculation failures contain only a fixed component and controlled technic
   assert.equal(parseJournalEvent({...valid,...fields}),null);
  }
 });
+
+
+test('library preparation failures contain only a bounded stage, never card data or exceptions',()=>{
+ const fact={schemaVersion:1,eventId:'library-prepare',occurredAt:1000,environment:'stand',
+  source:'runtime',event:'library_preparation_failed',level:'error',outcome:'failed',reason:'prepare'};
+ for(const reason of ['prepare','schedule'])assert.ok(parseJournalEvent({...fact,reason}));
+ for(const extra of [{reason:'PRIVATE'},{chartId:'PRIVATE'},{error:Error('PRIVATE')},{accountId:'1'}])
+  assert.equal(parseJournalEvent({...fact,...extra}),null);
+});

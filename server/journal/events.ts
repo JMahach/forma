@@ -52,11 +52,13 @@ const shapes: Record<string, Shape> = {
  mail_queue_unavailable:['mail','error','unavailable',[],[]],
  account_cleanup_failed:['runtime','error','failed',[],[]],
  chart_cleanup_failed:['runtime','error','failed',[],[]],
+ library_preparation_failed:['runtime','error','failed',['reason'],[]],
 };
 const core = ['schemaVersion','eventId','occurredAt','environment','source','event','level','outcome'];
 const opaqueId = (value: unknown): value is string => typeof value==='string'
  && /^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(value);
 const reasons: Record<string, RegExp> = {
+ library_preparation_failed:/^(?:prepare|schedule)$/,
  service_failed:/^(?:spawn|process|cleanup)$/,
  startup_failed:/^unexpected$/,
  http_request_failed:/^unexpected$/,

@@ -1228,7 +1228,8 @@
         "server/storage/database.ts",
         "server/storage/mail-queue.ts",
         "server/storage/calculation-transition.ts",
-        "server/storage/library-packages.ts"
+        "server/storage/library-packages.ts",
+        "server/storage/library-preparation.ts"
       ],
       "publicEntries": [
         "server/storage/account-counters.ts",
@@ -1236,7 +1237,8 @@
         "server/storage/chart-records.ts",
         "server/storage/database.ts",
         "server/storage/mail-queue.ts",
-        "server/storage/library-packages.ts"
+        "server/storage/library-packages.ts",
+        "server/storage/library-preparation.ts"
       ],
       "allowRuntime": [
         "journal-policy",
@@ -1389,17 +1391,19 @@
     },
     {
       "id": "server-chart-records",
-      "responsibility": "Account chart mutations and owned/public reads; one transaction guards access, duplicate identity, note revision and compact 48-hour outcome. Receives prepared calculations, not raw HTTP input.",
+      "responsibility": "Account chart mutations and owned/public reads; one transaction guards access, duplicate identity, note revision and compact 48-hour outcome. Receives prepared calculations, not raw HTTP input. Owns resumable preparation of committed saved destinations through existing calculation services.",
       "files": [
         "server/services/chart-policy.ts",
         "server/services/chart-records.ts",
         "server/services/chart-returns.ts",
-        "server/services/return-receipt.ts"
+        "server/services/return-receipt.ts",
+        "server/services/library-preparation.ts"
       ],
       "publicEntries": [
         "server/services/chart-records.ts",
         "server/services/chart-returns.ts",
-        "server/services/return-receipt.ts"
+        "server/services/return-receipt.ts",
+        "server/services/library-preparation.ts"
       ],
       "allowRuntime": [
         "server-chart-records",
@@ -1411,7 +1415,8 @@
         "server-chart-records",
         "server-primary-storage",
         "shared-contracts",
-        "shared-job-consumers"
+        "shared-job-consumers",
+        "server-services"
       ]
     },
     {
