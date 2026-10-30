@@ -289,12 +289,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
     isCurrent: () => workspace.screen === 'knowledge',
     getSelection: () => graph.selectionState.primary, onError: toast });
+  scope.own(knowledge.dispose);
   chartSummary = attachChartSummary({ panels, initialReturnsVisible: initialPresentation?.returnsVisible === true, isAvailable: () => workspace.screen === 'chart',
     panel: $('chartSummary'), summaryScreen: $('summaryScreen'), returnsPanel: $('returnsPanel'),
     switcher: $('summarySwitch'), backdrop: $('summaryBackdrop'),
     returnsButton: $('summaryReturns'), onReturns: () => { viewSession?.interrupt(); void exploration!.openReturnsList(); },
     onOpen: () => { activationPopover.close(); hoverPreview?.clear(); },
   });
+  scope.own(chartSummary.dispose);
   const mandalaMotion = createMandalaMotion({
     viewport: $('canvasWrap'), onUpdate: () => activationPopover.reposition(),
     onFinish: enabled => mandalaMode?.finishTransition(enabled),
@@ -356,6 +358,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
   scope.own(()=>accountLibrary.close());
   const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
+  scope.own(chartLink.dispose);
   let privateLibraryShown = false, librarySelection = 0;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, calculate: birthClient.calculate, initialPending: savedView?.pendingChartWrites,
@@ -517,6 +520,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     list: $('allChartsList'), getCharts: () => store.displayCharts, canEdit: canEditCharts, onRowsChange: () => chartLibrary.refreshAvailability(), initialView: savedView?.charts, onChange: () => viewSession?.schedule(),
     onOpen: () => { navigateWorkspace('charts'); },
   });
+  scope.own(allCharts.dispose);
   $('openAccount').addEventListener('click', () => { navigateWorkspace('account'); }, {signal:scope.signal});
   const birthForm = attachBirthForm({
     getAccountId: () => accountLibrary.accountId,

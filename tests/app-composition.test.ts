@@ -63,6 +63,7 @@ interface BrowserElement {
   setAttribute(name: string, value: unknown): void; getAttribute(name: string): string | null; removeAttribute(name: string): void;
   classList: { add(name: string): unknown; remove(name: string): unknown; contains(name: string): boolean; toggle(name: string, enabled?: boolean): void };
   addEventListener(type: string, handler: BrowserListener, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener(type:string,handler:BrowserListener,options?:boolean|EventListenerOptions):void;
   dispatch(type: string, event?: Record<string, unknown>): Promise<void>; click(): Promise<void>;
   open?: boolean; textContent?: string; value?: string; title?: string; showModal(): void; close(): void;
 }
@@ -231,6 +232,7 @@ function browser() {
         getAttribute: name => attributes.get(name) ?? null, removeAttribute: name => attributes.delete(name),
         classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name), contains: (name: string) => classes.has(name),
           toggle(name: string, enabled = !classes.has(name)) { if (enabled) classes.add(name); else classes.delete(name); } },
+        removeEventListener(type,handler,options=false){const capture=typeof options==='boolean'?options:options.capture??false;handlers.set(type,(handlers.get(type)??[]).filter(item=>item.handler!==handler || item.capture!==capture));},
         addEventListener(type, handler, options = false) { const signal=typeof options==='object'?options.signal:undefined,capture=typeof options==='boolean'?options:options.capture??false; if(signal?.aborted)return; if (!handlers.has(type)) handlers.set(type, []); const entry={handler,capture}; handlers.get(type)!.push(entry);signal?.addEventListener('abort',()=>{handlers.set(type,handlers.get(type)!.filter(item=>item!==entry));},{once:true}); },
         async dispatch(type, event = {}) {
           let stopped = false;
@@ -347,10 +349,10 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       knowledgeOptions = options;
       return attachKnowledgeEntry({ ...options, load: async () => {
         knowledgeLoads++; if (loadKnowledge) await loadKnowledge();
-        return { attachKnowledge: page => ({ snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('knowledge');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
+        return { attachKnowledge: page => ({ dispose:async()=>{},snapshot:{query:'',searchOpen:false,collection:'',entryId:'',view:'catalog' as const}, restoreInputFocus(){inputRestores.push('knowledge');return true;}, show() { page.hidden = false; }, hide() { page.hidden = true; } }) };
       } });
     },
-    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop, destroy:()=>onRelease('heading') }),
+    attachActivationPopover: () => ({ close: noop, reposition: noop, refresh: noop }),
     attachActivationHover: () => ({ clear: clearActivationHover, dispose: () => onRelease('hover') }),
     attachHoverPreview: (_svg, options) => {
       assert.equal(options.onClear, clearActivationHover, 'preview dismissal also clears its decorative activation highlight');
@@ -406,7 +408,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     attachTransitNavigation,
     attachTransitControls: ({ panel }) => ({ update: noop, setCoveredByLifetime(value: boolean) { if (dimensions) panel.hidden = value; } }),
     attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: storedNatalClient??{ getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
-    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { if(failAtMonitor)throw failAtMonitor;performanceOptions = options; return {destroy:noop}; },
+    attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ dispose:async()=>{},close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { if(failAtMonitor)throw failAtMonitor;performanceOptions = options; return {destroy:noop}; },
     attachChartLoading: options => {loadingOptions=options;return {update: (value: Record<string,unknown>) => {loadingState=value;}};}, createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
     attachReturnMarkers: () => ({ update: noop }),
   };
