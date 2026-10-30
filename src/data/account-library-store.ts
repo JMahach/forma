@@ -126,7 +126,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         if(result.status==='quota'){
           if(isCurrent && !isCurrent())return {status:'stale'};
           if(stored)return {status:'partial',lease:{...seen},changed};
-          if(pressure){result=await pressure.write(()=>write([chart]),{atomicLibrary:true});recovered=true;}
+          if(pressure){result=await pressure.write(()=>write([chart]),{accountLibrary:true});recovered=true;}
           if(result.status==='quota') {
             const replacement=await replaceCardAfterQuota({database,chart,isOwner:owner=>same(owner,seen),isCurrent:isCurrent??(()=>true),marker});
             if(replacement.saved){result={status:'complete',value:{status:'stored',lease:{...seen},changed:replacement.changed}};recovered=true;}

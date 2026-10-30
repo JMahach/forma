@@ -1,4 +1,4 @@
-import {TransactionPlacement,replaceAfterQuota,type PlacementProgress} from './library-package-placement.ts';
+import {LibrarySpaceRelease,replaceAfterQuota,type PlacementProgress} from './library-package-placement.ts';
 import type {FillAuthority} from '../domain/library-fill.ts';
 import {admitFillTransaction} from './library-fill-store.ts';
 import type {StoragePressure} from './storage-pressure.ts';
@@ -21,6 +21,9 @@ function matchesChart(ref:LibraryPartRef,chart:AccountChart) {
  return chart.source==='calculated' && (ref.kind==='day'
   ?ref.sourceKey===natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone||'UTC'})
   :ref.sourceKey===returnSourceKey({birthUtc:chart.utc,timezone:chart.timezone||'UTC'}));
+}
+function linksCurrent(prior:LibraryPackageMetadata|undefined,chartIds:string[]) {
+ return !!prior && !prior.evicted && chartIds.every(id=>prior.chartIds.includes(id));
 }
 export function validLibraryPayload(ref:LibraryPartRef,payload:unknown):payload is ArrayBuffer|MajorReturnsPackage {
  try {
@@ -122,12 +125,17 @@ class LibraryPackageOwner {
   chartIds:string[],limit:number,done:(value:LibraryPackageWrite)=>void,fail:(cause?:unknown)=>void,
   progress:PlacementProgress={released:0,remaining:false,ready:false}) {
   const {id,ref,payload,openedAt,isCurrent}=input;
-  const linked=prior && !prior.evicted && chartIds.every(id=>prior.chartIds.includes(id));
-  const placement=new TransactionPlacement(tx,{id,kind:ref.kind,chartIds,openedAt},input.needsPayload?limit:0,isCurrent,fail,progress);
-  const finish=()=>{progress.ready=true;done(linked && !input.needsPayload?'no-op':'stored');};
-  const saveUse=()=>openedAt===undefined?finish():placement.write(()=>tx.objectStore('usage').put({id,openedAt}),finish);
-  const saveLink=()=>linked?saveUse():placement.write(()=>tx.objectStore('packageMetadata').put({id,ref,chartIds}),saveUse);
-  placement.start(()=>input.needsPayload?placement.write(()=>tx.objectStore('packages').put({id,payload}),saveLink):saveLink());
+  const linked=linksCurrent(prior,chartIds);
+  if(limit){
+   new LibrarySpaceRelease(tx,{id,kind:ref.kind,chartIds,openedAt},input.needsPayload?limit:0,isCurrent,fail,progress)
+    .start(()=>done('stored'));return;
+  }
+  try {
+   if(input.needsPayload)tx.objectStore('packages').put({id,payload});
+   if(!linked)tx.objectStore('packageMetadata').put({id,ref,chartIds});
+   if(openedAt!==undefined)tx.objectStore('usage').put({id,openedAt});
+   done(linked && !input.needsPayload?'no-op':'stored');
+  }catch(error){fail(error);}
  }
  private attempt(input:IncomingPackage,limit:number,progress?:PlacementProgress) {
   const {seen,chart,ref,id,isCurrent}=input;
@@ -154,10 +162,9 @@ class LibraryPackageOwner {
  }
  private async place(input:IncomingPackage):Promise<LibraryPackageWrite> {
   const first=()=>this.attempt(input,0);
-  if(input.authority){const result=await first();return result.status==='complete'?result.value??'unavailable':result.status;}
-  let result=this.pressure?await this.pressure.write(first,{atomicLibrary:true}):await first();
-  if(result.status==='quota' && input.needsPayload && input.isCurrent())
-   result=await replaceAfterQuota((limit,progress)=>this.attempt(input,limit,progress));
+  let result=this.pressure && !input.authority?await this.pressure.write(first,{accountLibrary:true}):await first();
+  if(!input.authority && result.status==='quota' && input.needsPayload && input.isCurrent())
+   result=await replaceAfterQuota((limit,progress)=>this.attempt(input,limit,progress),first);
   return result.status==='complete'?result.value??'unavailable':result.status;
  }
  async putPackage(seen:LibraryLease,chart:AccountChart,ref:LibraryPartRef,payload:unknown,{opened=false,authority}:{opened?:boolean;authority?:FillAuthority}={}):Promise<LibraryPackageWrite> {

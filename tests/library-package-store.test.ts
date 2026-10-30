@@ -35,16 +35,16 @@ async function setup(t:TestContext,indexedDB=new IDBFactory()){
  await store.put(active.lease,[chart]);return {store,lease:active.lease,indexedDB};
 }
 
-for(const required of [2,Infinity])test(`commit-time day quota preserves cards and atomically replaces whole families: ${required}`,async t=>{
+for(const required of [2,Infinity])test(`commit-time day quota preserves cards and releases families before placement: ${required}`,async t=>{
  const {store,lease}=await setup(t),families=[family('saturn'),family('chiron'),family('uranus')];
  for(const {ref,value} of families)assert.equal(await store.putPackage(lease,chart,ref,value),'stored');
  const attempts=commitQuota(t,{store:'packages',id:JSON.stringify(dayRef)},required),bytes=dayBytes();
  assert.equal(await store.putPackage(lease,chart,dayRef,bytes),required===2?'stored':'quota');
- assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,2]:[0,1,2,3]);
+ assert.deepEqual(attempts.map(rows=>rows.length),[0,1,3]);
  assert.deepEqual((await store.read())!.charts,[chart]);
  assert.deepEqual(await store.readPackage(lease,dayRef),required===2?bytes:null);
  for(const {ref,value} of families) {
-   const evicted=required===2 && attempts.at(-1)!.includes(JSON.stringify(ref));
+   const evicted=attempts.at(-1)!.includes(JSON.stringify(ref));
    assert.deepEqual(await store.readPackage(lease,ref),evicted?null:value);
  }
 });
@@ -164,14 +164,14 @@ for(const [fits,used,tie] of [[true,false,false],[false,false,false],[true,true,
  const admitted=fits && !used && !tie;
  const next=structuredClone(original);next.value.source.birthUtc=second.utc;next.ref.sourceKey=returnSourceKey(next.value.source);
  next.value.dates.events.forEach(event=>{event.age=cycleAge(event.utc,second.utc);});
- const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,removed=new WeakSet<IDBTransaction>(),deletions:string[]=[];
- IDBObjectStore.prototype.delete=function(key){if(this.name==='packages'){removed.add(this.transaction);deletions.push(String(key));}return remove.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='packages' && value.id===JSON.stringify(next.ref) && (!fits || !removed.has(this.transaction)))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,deletions:string[]=[];let committed=false;
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages'){this.transaction.addEventListener('complete',()=>committed=true);deletions.push(String(key));}return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='packages' && value.id===JSON.stringify(next.ref) && (!fits || !committed))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.putPackage(lease,second,next.ref,next.value,{opened:!used && !tie}),admitted?'stored':'quota');}
  finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.deepEqual((await store.read())!.charts,[chart,second]);assert.deepEqual(await store.readPackage(lease,dayRef),bytes);
  assert.deepEqual(deletions,used || tie?[]:[JSON.stringify(original.ref)]);
- assert.deepEqual(await store.readPackage(lease,original.ref),admitted?null:original.value);
+ assert.deepEqual(await store.readPackage(lease,original.ref),used || tie?original.value:null);
  assert.deepEqual(await store.readPackage(lease,next.ref),admitted?next.value:null);
  const open=indexedDB.open('forma-account-library');
  const keys=await new Promise<IDBValidKey[]>(resolve=>{open.onsuccess=()=>{
@@ -183,10 +183,10 @@ for(const [fits,used,tie] of [[true,false,false],[false,false,false],[true,true,
 
 test('an opened card releases a lower-tier day before any existing card',async t=>{
  const {store,lease}=await setup(t),bytes=dayBytes();await store.putPackage(lease,chart,dayRef,bytes);
- const incoming=accountNatalChart(2),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,freed=new WeakSet<IDBTransaction>();
+ const incoming=accountNatalChart(2),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={freed:false};
  const removed:string[]=[];
- IDBObjectStore.prototype.delete=function(key){removed.push(this.name);if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ IDBObjectStore.prototype.delete=function(key){removed.push(this.name);if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(removed.includes('charts'),false);assert.equal((await store.read())!.charts.length,2);
  assert.equal(await store.readPackage(lease,dayRef),null);
@@ -196,15 +196,15 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  const {store,lease,indexedDB}=await setup(t),second=accountNatalChart(2),incoming=accountNatalChart(3);
  const {ref,value}=kind==='day'?{ref:dayRef,value:dayBytes()}:family();
  await store.put(lease,[second]);await store.putPackage(lease,chart,ref,value,{opened:true});
- const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,freed=new WeakSet<IDBTransaction>();
+ const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={freed:false};
  IDBObjectStore.prototype.put=function(value,...args){
   if(this.name==='charts' && value.id===incoming.id || this.name==='packageMetadata' && value.evicted)throw new DOMException('full','QuotaExceededError');
   return put.call(this,value,...args);
  };
  try{assert.equal(await store.touch(lease,incoming.id,incoming),false);}finally{IDBObjectStore.prototype.put=put;}
  assert.deepEqual(await store.readPackage(lease,ref),value,'failed ownership mark rolls back payload eviction');
- IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(await store.readPackage(lease,ref),null);
  const later=accountNatalChart(4);let packageDeletes=0;
@@ -212,9 +212,10 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,later.id,later),false);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(packageDeletes,0,'an already evicted payload causes no repeated deletion work');
- assert.equal(await store.putPackage(lease,second,ref,value),'stored');
- IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ await store.put(lease,[chart,second,incoming]);
+ assert.equal(await store.putPackage(lease,second,ref,value),'stored');tracker.freed=false;
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,later.id,later),true,'a restored whole packet returns to normal placement');}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(await store.readPackage(lease,ref),null);
  const open=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{open.onsuccess=()=>resolve(open.result);});t.after(()=>db.close());
@@ -229,10 +230,10 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
 
 test('background acquisition places a higher-tier card without opening it or deleting an existing card',async t=>{
  const {store,lease}=await setup(t),bytes=dayBytes();await store.putPackage(lease,chart,dayRef,bytes);
- const incoming=accountNatalChart(2),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,freed=new WeakSet<IDBTransaction>();
+ const incoming=accountNatalChart(2),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={freed:false};
  const deleted:string[]=[],uses:string[]=[];
- IDBObjectStore.prototype.delete=function(key){deleted.push(this.name);if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='usage')uses.push(value.id);if(this.name==='charts' && value.id===incoming.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ IDBObjectStore.prototype.delete=function(key){deleted.push(this.name);if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='usage')uses.push(value.id);if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  let result;
  try{result=await store.put(lease,[incoming]);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(result.status,'stored');assert.deepEqual(uses,[]);assert.equal(deleted.includes('charts'),false);

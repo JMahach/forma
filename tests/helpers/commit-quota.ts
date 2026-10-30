@@ -2,16 +2,20 @@ import type {TestContext} from 'node:test';
 import {IDBObjectStore,IDBTransaction} from 'fake-indexeddb';
 
 // fake-indexeddb has no quota. Inject it at its final commit step, after all
-// requests succeeded, so the real adapter must observe abort and rollback.
+// requests succeeded. Only separately committed deletions provide new room;
+// deleting in the failed write itself cannot satisfy the browser's check.
 type PendingTransaction = IDBTransaction & {
   _start():void; _abort(name:string):void; _state:string;
   _requests:{request:IDBRequest}[];
 };
-export function commitQuota(t:TestContext,incoming:{store:string;id:string},requiredVictims:number) {
+export function commitQuota(t:TestContext,incoming:{store:string;id:string},requiredVictims:number,{rejectCleanup=false}={}) {
   const states=new WeakMap<IDBTransaction,{incoming:boolean;deleted:string[]}>();
   const attempts:string[][]=[];
+  const committed=new Set<string>();
   const state=(tx:IDBTransaction)=>{
-    let value=states.get(tx);if(!value){value={incoming:false,deleted:[]};states.set(tx,value);}return value;
+    let value=states.get(tx);if(!value){value={incoming:false,deleted:[]};states.set(tx,value);
+      tx.addEventListener('complete',()=>{for(const id of states.get(tx)!.deleted)committed.add(id);});
+    }return value;
   };
   const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
   t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){
@@ -25,9 +29,11 @@ export function commitQuota(t:TestContext,incoming:{store:string;id:string},requ
   const prototype=IDBTransaction.prototype as PendingTransaction,start=prototype._start;
   t.mock.method(prototype,'_start',function(this:PendingTransaction){
     const current=states.get(this);
+    if(rejectCleanup && current?.deleted.length && !current.incoming && this._state!=='finished'
+      && !this._requests.some(row=>row.request.readyState!=='done')){this._abort('QuotaExceededError');return;}
     if(current?.incoming && this._state!=='finished' && !this._requests.some(row=>row.request.readyState!=='done')) {
-      attempts.push([...current.deleted]);
-      if(current.deleted.length<requiredVictims){this._abort('QuotaExceededError');return;}
+      attempts.push([...committed]);
+      if(committed.size<requiredVictims){this._abort('QuotaExceededError');return;}
     }
     start.call(this);
   });

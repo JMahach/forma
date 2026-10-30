@@ -1,7 +1,7 @@
 import type { IndexedResult } from './indexed-db.ts';
 export type ReliefGuard=()=>boolean;
 export type StorageRelief = 'released' | 'empty' | 'unavailable';
-export interface ProtectedWrite { calculation?:{kind:string;key:string}; atomicLibrary?:boolean }
+export interface ProtectedWrite { calculation?:{kind:string;key:string}; accountLibrary?:boolean }
 export interface PressureSources {
  diagnostics:(isCurrent:ReliefGuard)=>Promise<StorageRelief>;
  natalDays:(keep:number,exclude:string|undefined,isCurrent:ReliefGuard)=>Promise<StorageRelief>;
@@ -23,7 +23,7 @@ export function createStoragePressure({locks=browserLocks()}:{locks?:Pick<LockMa
   invalidate(){generation++;},
   setSources(value:Partial<PressureSources>){Object.assign(sources,value);},
   async write<T>(write:()=>Promise<IndexedResult<T>>,protect:ProtectedWrite={}):Promise<IndexedResult<T>> {
-   const isCurrent=capture(),atomicLibrary=protect.atomicLibrary===true;
+   const isCurrent=capture(),accountLibrary=protect.accountLibrary===true;
    const initial=await attempt(write);if(initial.status!=='quota')return initial;
    const calculation=protect.calculation?{...protect.calculation}:undefined;
    const recover=async():Promise<IndexedResult<T>>=>{
@@ -34,9 +34,9 @@ export function createStoragePressure({locks=browserLocks()}:{locks?:Pick<LockMa
      const steps=[()=>sources.diagnostics?.(isCurrent),
       ()=>sources.natalDays?.(10,calculation?.kind==='natal'?calculation.key:undefined,isCurrent),
       ()=>sources.returnCharts?.(10,calculation?.kind==='return-charts'?calculation.key:undefined,isCurrent)];
-     // This owner commits its victims together with the candidate. Only
-     // disposable diagnostics may be removed outside that transaction.
-     if(atomicLibrary)steps.splice(1);
+     // The account owner alone ranks and releases its library copies.
+     // This service may release only disposable diagnostics for that write.
+     if(accountLibrary)steps.splice(1);
      let released=false;
      for(const step of steps){
       if(!isCurrent())return result;

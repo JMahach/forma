@@ -3,15 +3,18 @@ import type {LibraryPackageMetadata} from './account-library-schema.ts';
 import type {IndexedResult} from './indexed-db.ts';
 
 export interface PlacementProgress {released:number;remaining:boolean;ready:boolean}
-/** Commit quota rolls back the whole prefix. Grow it geometrically, not 1+2+3+….
- * Each attempt selects and checks current victims inside its own transaction. */
-export async function replaceAfterQuota<T>(attempt:(limit:number,progress:PlacementProgress)=>Promise<IndexedResult<T>>) {
+/** Commit cleanup before trying the whole new write. Growing batches avoid
+ * a full scan per victim; retries do not delete the same rolled-back prefix. */
+export async function replaceAfterQuota<T>(release:(limit:number,progress:PlacementProgress)=>Promise<IndexedResult<T>>,
+ write:()=>Promise<IndexedResult<T>>) {
  let limit=1;
  for(;;) {
   const progress:PlacementProgress={released:0,remaining:false,ready:false};
-  const result=await attempt(limit,progress);
-  if(result.status!=='quota' || !progress.ready || !progress.remaining)return result;
-  limit=Math.max(limit,progress.released)*2;
+  const freed=await release(limit,progress);
+  if(freed.status!=='complete' || !progress.ready)return freed;
+  const result=await write();
+  if(result.status!=='quota' || !progress.remaining)return result;
+  limit*=2;
  }
 }
 
@@ -39,8 +42,9 @@ function selectVictims(keys:IDBValidKey[],packages:LibraryPackageMetadata[],mark
   .sort((a,b)=>rank[a.kind]-rank[b.kind] || a.used-b.used || compareIds(a.id,b.id));
 }
 
-/** One transaction visits each admissible victim at most once. Abort restores all victims. */
-export class TransactionPlacement {
+/** This transaction contains only intentional eviction and its ownership marks.
+ * Failure rolls back this batch; a later failed payload write cannot restore it. */
+export class LibrarySpaceRelease {
  private victims:Victim[]|undefined;
  private next=0;
  private tx:IDBTransaction;private incoming:Candidate;private limit:number;private progress:PlacementProgress;
@@ -72,19 +76,11 @@ export class TransactionPlacement {
    }catch(error){this.fail(error);}
   };
  }
- write(write:()=>IDBRequest,accepted:()=>void) {
-  const rejected=(cause:unknown)=>{
-   if((cause as DOMException)?.name==='QuotaExceededError')this.release(()=>this.write(write,accepted));else this.fail(cause);
-  };
-  try {
-   const request=write();request.onsuccess=accepted;
-   request.onerror=event=>{event.preventDefault();event.stopPropagation();rejected(request.error);};
-  }catch(error){rejected(error);}
- }
- start(save:()=>void) {
-  if(!this.limit){save();return;}
+ start(done:()=>void) {
+  const finish=()=>{this.progress.ready=true;done();};
+  if(!this.limit){finish();return;}
   const reserve=()=>this.release(()=>{
-   if(this.progress.released<this.limit && this.progress.remaining)reserve();else save();
+   if(this.progress.released<this.limit && this.progress.remaining)reserve();else finish();
   });
   reserve();
  }

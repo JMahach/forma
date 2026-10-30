@@ -9,15 +9,31 @@ import {createJournal} from '../src/journal.ts';
 import {accountChart,chartId} from './helpers/account-chart.ts';
 import {commitQuota} from './helpers/commit-quota.ts';
 
-for(const required of [2,Infinity])test(`commit-time card quota uses bounded atomic replacement: ${required}`,async t=>{
+for(const required of [2,Infinity])test(`commit-time card quota releases copies before attempting a whole new write: ${required}`,async t=>{
  const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000});t.after(()=>store.close());
  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
  const cards=Array.from({length:5},(_,i)=>accountChart(i+1));await store.put(active.lease,cards);
  const incoming=accountChart(6),attempts=commitQuota(t,{store:'charts',id:incoming.id},required);
+ const put=IDBObjectStore.prototype.put;let touches=0;
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){
+  if(this.name==='usage' && args[0]?.id===incoming.id)touches++;
+  return put.apply(this,args);
+ });
  assert.equal(await store.touch(active.lease,incoming.id,incoming),Number.isFinite(required));
- assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,2]:[0,1,2,4,5]);
+ assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,3]:[0,1,3,5]);
  const saved=(await store.read())!.charts;
- assert.deepEqual(saved,required===2?[...cards.slice(2),incoming]:cards,'failed commits preserve every old payload');
+ assert.deepEqual(saved,required===2?[...cards.slice(3),incoming]:[],'failed placement does not restore intentionally evicted copies');
+ assert.equal(touches,attempts.length,'successful placement must not start another cleanup or rewrite its use mark');
+});
+
+test('failed cleanup commit preserves its victims and does not retry the new payload',async t=>{
+ const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000});t.after(()=>store.close());
+ const active=await store.activate('1');if(active.status!=='stored')throw Error('owner');
+ const cards=[accountChart(1),accountChart(2)];await store.put(active.lease,cards);
+ const incoming=accountChart(3),attempts=commitQuota(t,{store:'charts',id:incoming.id},1,{rejectCleanup:true});
+ assert.equal(await store.touch(active.lease,incoming.id,incoming),false);
+ assert.deepEqual(attempts,[[]],'no candidate write follows an uncommitted cleanup');
+ assert.deepEqual((await store.read())!.charts,cards);
 });
 
 test('pressure retries after one release and stops as soon as the original write fits',async()=>{
@@ -181,7 +197,7 @@ for (const waitingAttempt of [1, 2]) test(`logout before pressure admission revo
 });
 
 
-for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'call'],[1,true,'call'],[1,true,'request'],[1,false,'unavailable']] as const)test(`opening an absent card replaces a lower-priority card atomically: cards=${total}, fits=${fitsAfterDeletion}, failure=${failureMode}`,async t=>{
+for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'call'],[1,true,'call'],[1,true,'request'],[1,false,'unavailable']] as const)test(`opening an absent card releases a lower-priority copy before placement: cards=${total}, fits=${fitsAfterDeletion}, failure=${failureMode}`,async t=>{
   const pressure=createStoragePressure({locks:null}),order:string[]=[];
   pressure.setSources({diagnostics:async()=>{order.push('diagnostics');return 'empty';}});
   const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000,pressure});t.after(()=>store.close());
@@ -189,22 +205,20 @@ for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'
   const cards=Array.from({length:total},(_,n)=>accountChart(n+1));await store.put(active.lease,cards);
   const opened=Math.min(20,total-1);
   for(let n=1;n<=opened;n++)await store.touch(active.lease,chartId(n));
-  const incoming=accountChart(total+1),removed=new WeakMap<IDBTransaction,number>();let deleteRequests=0;
+  const incoming=accountChart(total+1);let committed=0,deleteRequests=0;
   const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
   IDBObjectStore.prototype.delete=function(...args){
-    if(this.name==='charts'){order.push('victim');deleteRequests++;removed.set(this.transaction,(removed.get(this.transaction)??0)+1);}
+    if(this.name==='charts'){order.push('victim');deleteRequests++;this.transaction.addEventListener('complete',()=>committed++);}
     return remove.apply(this,args);
   };
   IDBObjectStore.prototype.put=function(value,...args){
-    if(this.name==='charts' && value.id===incoming.id && (!fitsAfterDeletion || !removed.get(this.transaction))){
+    if(this.name==='charts' && value.id===incoming.id && (!fitsAfterDeletion || !committed)){
       if(failureMode==='unavailable')throw new Error('Storage cannot write');
       if(failureMode==='request'){
-        // A real failing IDB request exercises preventDefault/transaction continuation.
+        // A request failure aborts before any cleanup transaction is started.
         const request=this.add(cards[0]);
-        return new Proxy(request,{
-          get:(target,key)=>key==='error'?new DOMException('No room','QuotaExceededError'):Reflect.get(target,key,target),
-          set:(target,key,value)=>Reflect.set(target,key,value,target),
-        });
+        request.addEventListener('error',()=>Object.defineProperty(request,'error',{value:new DOMException('No room','QuotaExceededError')}));
+        return request;
       }
       throw new DOMException('No room for the incoming card','QuotaExceededError');
     }
@@ -213,7 +227,7 @@ for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'
   try {assert.equal(await store.touch(active.lease,incoming.id,incoming),fitsAfterDeletion);}
   finally {IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
   const saved=(await store.read())!.charts;
-  assert.equal(saved.length,total);
+  assert.equal(saved.length,fitsAfterDeletion || failureMode==='unavailable'?total:0);
   assert.ok(deleteRequests<=total,'one failed placement must not repeatedly revisit the same victims');
   if(failureMode==='unavailable')assert.deepEqual(order,[],'ordinary storage refusal never starts deletion');
   else assert.ok(order.indexOf('diagnostics')>=0 && order.indexOf('diagnostics')<order.indexOf('victim'),'disposable service data is considered before library victims');
@@ -221,7 +235,7 @@ for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'
     assert.ok(saved.some(chart=>chart.id===incoming.id));
     assert.equal(saved.some(chart=>chart.id===chartId(opened+1)),false);
     for(let n=1;n<=opened;n++)assert.ok(saved.some(chart=>chart.id===chartId(n)));
-  }else assert.deepEqual(saved,cards,'every candidate victim survives failed placement');
+  }else assert.deepEqual(saved,failureMode==='unavailable'?cards:[],'only intentional lower-priority eviction survives a failed placement');
 });
 
 
@@ -235,6 +249,23 @@ test('an opening waiting for its revision lookup cannot borrow a later cleanup p
   pressure.setSources({diagnostics:async()=>assert.fail('revoked opening cannot release service data')});
   assert.equal(await store.touch(active.lease,chartId(1),accountChart(1)),false);
   assert.deepEqual((await store.read())!.charts,[]);
+});
+
+test('account replacement after committed eviction rejects the old pending payload',async t=>{
+ const indexedDB=new IDBFactory(),a=createAccountLibraryStore({indexedDB,now:()=>1000}),b=createAccountLibraryStore({indexedDB});
+ t.after(()=>{a.close();b.close();});const active=await a.activate('1');if(active.status!=='stored')throw Error('owner');
+ await b.read();await a.put(active.lease,[accountChart(1)]);
+ const incoming=accountChart(2);commitQuota(t,{store:'charts',id:incoming.id},1);
+ const remove=IDBObjectStore.prototype.delete;let switched:Promise<void>|undefined;
+ t.mock.method(IDBObjectStore.prototype,'delete',function(this:IDBObjectStore,...args:Parameters<typeof remove>){
+  if(this.name==='charts')this.transaction.addEventListener('complete',()=>{
+   switched=(async()=>{const next=await b.activate('2');if(next.status!=='stored')throw Error('account');
+    await b.put(next.lease,[accountChart(3,'2')]);})();
+  },{once:true});
+  return remove.apply(this,args);
+ });
+ assert.equal(await a.touch(active.lease,incoming.id,incoming),false);await switched;
+ assert.deepEqual((await b.read())!.charts,[accountChart(3,'2')]);
 });
 
 
