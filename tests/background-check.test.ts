@@ -75,7 +75,8 @@ test('the exact deadline admits one attempt, including a renewed session after s
  for(const complete of [false,true]){
   const state=empty(),permit=claimCheck(state,app,'A',10000,'lifecycle','a')!;
   if(complete)finishCheck(state,permit,{kind:'success'},10001);
-  const due=complete?10000+HOUR:permit.expiresAt;
+  const due=complete?10000+HOUR:permit.expiresAt+60000;
+  if(!complete)assert.equal(claimCheck(state,app,'B',permit.expiresAt,'lifecycle','too-soon'),null);
   assert.ok(claimCheck(state,app,'B',due,complete?'hourly':'lifecycle','b'));
  }
 });

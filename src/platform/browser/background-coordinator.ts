@@ -117,7 +117,7 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
  }
  private reserve(control:BackgroundControl,choices:Choice[],reason:CheckReason,elapsed:Record<string,number>,now:number):Assignment[]{
   const alive=new Set(choices.map(({target})=>target.key));
-  for(const [key,record] of Object.entries(control.checks))if(!alive.has(key) && !(record.permit && record.permit.expiresAt>now))delete control.checks[key];
+  for(const [key,record] of Object.entries(control.checks))if(record.target.scope.kind==='public' && !alive.has(key) && !(record.permit && record.permit.expiresAt>now))delete control.checks[key];
   return choices.flatMap(choice=>{
    const permit=claimCheck(control,choice.target,choice.executor,now,reason,this.id(),elapsed[choice.target.key]);
    return permit?[{...choice,permit,recipients:this.recipients(choice.target.key)}]:[];
@@ -171,7 +171,7 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
 
  private async releaseInactive(leader:BackgroundLeader){
   await this.options.store.update(control=>{
-   if(!this.active && sameLeader(control.leader,leader))control.leader=null;
+   if(!this.active && leader.owner===this.options.owner && sameLeader(control.leader,leader))control.leader=null;
    return true;
   });
   this.post({kind:'changed'});

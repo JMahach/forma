@@ -55,7 +55,7 @@ try {
         if(stopped || signal.aborted)return;
         registration??=await navigator.serviceWorker.getRegistration('/');
         if(stopped || signal.aborted)return;
-        if(registration){await observe();await page?.refresh();}
+        if(registration){await observe();if(!stopped && !signal.aborted)await page?.refresh(signal);}
         else registration=await navigator.serviceWorker.register('/service-worker.js',{scope:'/',updateViaCache:'none'});
         if(!signal.aborted)await observe();
       },observe(){void observe().catch(()=>{});},stop(){stopped=true;page?.dispose();}});

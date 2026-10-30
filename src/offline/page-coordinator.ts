@@ -114,12 +114,12 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
   return checking;
  }
  const wake=()=>{if(checking)checkAgain=true;else void check();};
- function refresh():Promise<void>{
-  if(disposed)return Promise.resolve();
+ function refresh(signal?:AbortSignal):Promise<void>{
+  if(disposed || signal?.aborted)return Promise.resolve();
   wake();
   // Checking a known worker does not discover a release on the server.
   // The application background child is the only caller that discovers releases.
-  if(!refreshing)refreshing=Promise.resolve().then(async()=>{await registration.update();}).finally(()=>{refreshing=null;if(!disposed)wake();});
+  if(!refreshing)refreshing=Promise.resolve().then(async()=>{if(!disposed && !signal?.aborted)await registration.update();}).finally(()=>{refreshing=null;if(!disposed)wake();});
   return refreshing;
  }
  // The state owner wakes a refused transition after an operation/restore or

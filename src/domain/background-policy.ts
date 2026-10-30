@@ -5,20 +5,26 @@ export const sameLeader=(left:BackgroundLeader|null,right:BackgroundLeader)=>lef
 const backwards=(record:CheckRecord,now:number)=>record.lastAttemptAt>now+COALESCE_WINDOW;
 const unauthorized=(record:CheckRecord,target:CheckTarget)=>!!record.blockedSessionId && record.blockedSessionId===target.sessionId;
 const newSession=(record:CheckRecord,target:CheckTarget)=>target.sessionId!==record.target.sessionId;
+// An expired permission is durable evidence of a lost executor, even if that
+// executor froze before its timeout callback could save a failure.
+function retryDeadline(record:CheckRecord,now:number){
+ const expired=record.permit && now>=record.permit.expiresAt;
+ return Math.max(record.retryNotBefore,expired?record.permit!.expiresAt+MIN_RETRY_PAUSE:0);
+}
 
 export function nextCheckAt(record:CheckRecord|undefined,target:CheckTarget,now:number):number|null {
  if(!record)return now;
- if(newSession(record,target))return record.blockedSessionId?now:Math.max(now,record.retryNotBefore);
+ if(newSession(record,target))return record.blockedSessionId?now:Math.max(now,retryDeadline(record,now));
  if(unauthorized(record,target))return null;
  if(backwards(record,now))return now;
- return Math.max(record.nextDueAt,record.retryNotBefore);
+ return Math.max(record.nextDueAt,retryDeadline(record,now));
 }
 function checkAllowed(record:CheckRecord|undefined,target:CheckTarget,now:number,reason:CheckReason,elapsedAttempt?:number) {
  if(!record)return true;
  if(unauthorized(record,target))return false;
  if(backwards(record,now))return true;
- if(newSession(record,target))return !!record.blockedSessionId || now>=record.retryNotBefore;
- if(now<record.retryNotBefore || now<(record.permit?.expiresAt??0))return false;
+ if(newSession(record,target))return !!record.blockedSessionId || now>=retryDeadline(record,now);
+ if(now<retryDeadline(record,now) || now<(record.permit?.expiresAt??0))return false;
  return reasonAllows(record,now,reason,elapsedAttempt);
 }
 function reasonAllows(record:CheckRecord,now:number,reason:CheckReason,elapsedAttempt?:number) {

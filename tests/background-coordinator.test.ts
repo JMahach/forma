@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
-import type {BackgroundControl,BackgroundStore,CheckTarget} from '../src/domain/background-check.ts';
+import type {BackgroundControl,BackgroundStore,CheckTarget,CheckOutcome} from '../src/domain/background-check.ts';
 import {HOUR} from '../src/domain/background-policy.ts';
 const flush=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const app:CheckTarget={key:'app',scope:{kind:'app'}},library:CheckTarget={key:'library:1',scope:{kind:'library',accountId:'1'},sessionId:'s'};
@@ -20,11 +20,18 @@ function fixture(unavailable=false){
   const deliver=()=>target.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
   if(holdResults && (data as {kind:string}).kind==='result')messages.push(deliver);else queueMicrotask(deliver);
  }},close(){channels.delete(events);}};};
+ let heldOwner='',releasePlan=()=>{};const foreignReleases:string[]=[];
  const counts:Record<string,number>={app:0,'library:1':0},running=new Map<string,unknown>();
  const tab=(owner:string,targets:CheckTarget[]=[app,library])=>{
   let active=true,frozen=false,notify:(returned:boolean)=>void=()=>{};const received:unknown[]=[];
   const lifecycle={get active(){return active;},subscribe(listener:(returned:boolean)=>void){notify=listener;return()=>{notify=()=>{};};}};
-  const coordinator=createBackgroundCoordinator({owner,store:storage,lifecycle,channel:channel(),clock:{...clock,after(ms,fn){return clock.after(ms,()=>{if(!frozen)fn();});}},id:()=>`${owner}-${++id}`});
+  const ownerStore:BackgroundStore={read:storage.read,async update<T>(change:(control:BackgroundControl)=>T){
+   const result=await storage.update(control=>{const previous=control.leader?.owner,result=change(control);
+    if(previous && previous!==owner && !control.leader)foreignReleases.push(owner);return result;});
+   if(heldOwner===owner && result && typeof result==='object' && 'current' in result){heldOwner='';await new Promise<void>(resolve=>{releasePlan=resolve;});}
+   return result;
+  }};
+  const coordinator=createBackgroundCoordinator({owner,store:ownerStore,lifecycle,channel:channel(),clock:{...clock,after(ms,fn){return clock.after(ms,()=>{if(!frozen)fn();});}},id:()=>`${owner}-${++id}`});
   coordinator.start(request=>{if(request.kind!=='check'){received.push(request);return;}counts[request.target.key]=(counts[request.target.key]??0)+1;
    if(running.has(request.target.key)){running.set(request.target.key,request);return;}
    request.finish({outcome:{kind:'success'}});
@@ -37,7 +44,7 @@ function fixture(unavailable=false){
   if(!entry){now=end;await flush();return;}
   timers.delete(entry[0]);now=entry[1].at;entry[1].fn();
  }throw new Error('timer loop');}
- return {tab,advance,counts,running,broadcast(value:unknown){const sender=channel();sender.postMessage(value);sender.close();},restoreStorage(){unavailable=false;},holdResults(){holdResults=true;},releaseResults(){holdResults=false;for(const deliver of messages.splice(0))queueMicrotask(deliver);},get state(){return state;},get writes(){return writes;},get timerCount(){return timers.size;}};
+ return {tab,advance,counts,running,foreignReleases,holdPlan(owner:string){heldOwner=owner;},releasePlan(){releasePlan();},broadcast(value:unknown){const sender=channel();sender.postMessage(value);sender.close();},restoreStorage(){unavailable=false;},holdResults(){holdResults=true;},releaseResults(){holdResults=false;for(const deliver of messages.splice(0))queueMicrotask(deliver);},get state(){return state;},get writes(){return writes;},get timerCount(){return timers.size;}};
 }
 test('two tabs make one pass at startup and at the hour, with no work during 59 idle minutes',async()=>{
  const f=fixture(),a=f.tab('A'),b=f.tab('B');await f.advance(100);
@@ -110,4 +117,24 @@ test('malformed peer scopes and assignments cannot add work',async()=>{
  f.broadcast({...envelope,kind:'result',key:'app',recipients:{A:'old:selection'},data:'late'});
  await f.advance(100);assert.deepEqual(f.counts,{app:1,'library:1':1});assert.equal(a.received.length,0);
  a.coordinator.stop();
+});
+
+for(const outcome of [{kind:'failed',retryAfterMs:600000},{kind:'unauthorized'}] as CheckOutcome[])
+test(`a temporarily absent library retains its ${outcome.kind} pause`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A',[app]),b=f.tab('B',[library]);await f.advance(100);
+ (f.running.get(library.key) as {finish(result:unknown):void}).finish({outcome});await f.advance(100);
+ b.hide();await f.advance(3000);a.return();await f.advance(100);b.show();await f.advance(100);
+ assert.equal(f.counts[library.key],1);assert.ok(f.state.checks[library.key]);
+ a.coordinator.stop();b.coordinator.stop();
+});
+test('a timed out request retains a shared failure pause without a retry timer',async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A',[library]);await f.advance(100);
+ await f.advance(31000);a.return();await f.advance(100);assert.equal(f.counts[library.key],1);
+ await f.advance(60000);assert.equal(f.counts[library.key],1);a.return();await f.advance(100);assert.equal(f.counts[library.key],2);
+ a.coordinator.stop();
+});
+test('a hidden candidate cannot release the current leader while its planning result is pending',async()=>{
+ const f=fixture(),a=f.tab('A',[app]);await f.advance(100);assert.equal(f.state.leader?.owner,'A');
+ f.holdPlan('B');const b=f.tab('B',[app]);await flush();b.hide();await flush();f.releasePlan();await flush();await flush();
+ assert.deepEqual(f.foreignReleases,[]);assert.equal(f.state.leader?.owner,'A');a.coordinator.stop();b.coordinator.stop();
 });

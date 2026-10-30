@@ -186,3 +186,9 @@ test('a replaced worker stays observed only until its active status exchange fin
  reply.postMessage({type:'forma-offline',action:'status',ready:false});await checking;
  assert.equal(getEventListeners(pending,'statechange').length,0);
 });
+
+test('disposing before a queued native update starts prevents the network call',async()=>{
+ const f=fixture();let updates=0;
+ Object.assign(f.registration,{update:async()=>{updates++;}});
+ const pending=f.page.refresh();f.page.dispose();await pending;assert.equal(updates,0);
+});
