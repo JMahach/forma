@@ -183,6 +183,8 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     }, { signal });
   }
   return {
+    receiveFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
+      families.receive(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
     readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false}:{signal?:AbortSignal;opened?:boolean}={})=>
       families.read(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal,opened,durable:true}),
     fetchFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>

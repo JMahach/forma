@@ -1,3 +1,4 @@
+import type {PackageRef} from '../../shared/library-package-contract.ts';
 import {validateAccountChart} from '../domain/account-chart.ts';
 import type {LibraryLease,LibraryInventory,LibraryUsage,LibraryAuditCursor,LibraryAuditPage,LibraryAuditCheckpoint,LibraryCheckpointWrite} from '../domain/library-maintenance.ts';
 import {sameLibraryLease,type LibraryPackageMetadata} from './account-library-schema.ts';
@@ -139,6 +140,17 @@ class AuditWalk {
 class LibraryMaintenanceStore {
  private database:Database;
  constructor(database:Database){this.database=database;}
+  contains(seen:LibraryLease,ref:PackageRef,chartId:string,revision:number):Promise<boolean>{
+   seen={...seen};
+   if(ref.kind==='card')return this.readCard(seen,chartId).then(value=>!!value && value.revision>=revision);
+   return owned(this.database,seen,'readonly',(tx,done)=>{const id=libraryPackageId(ref),key=tx.objectStore('packages').getKey(id),row=tx.objectStore('packageMetadata').get(id);
+    row.onsuccess=()=>done(key.result!==undefined && metadata(row.result) && row.result.evicted!==true);
+   }).then(value=>value===true);
+  }
+  readCard(seen:LibraryLease,id:string){
+   seen={...seen};return owned<ReturnType<typeof validateAccountChart>|null>(this.database,seen,'readonly',(tx,done)=>{const read=tx.objectStore('charts').get(id);
+    read.onsuccess=()=>{try{done(validateAccountChart(read.result,seen.accountId));}catch{done(null);}};});
+  }
   inventory(seen:LibraryLease){seen={...seen};return owned(this.database,seen,'readonly',(tx,done:(value:LibraryInventory)=>void)=>readInventory(tx,seen,done));}
   auditPage(seen:LibraryLease,cursor:LibraryAuditCursor|null,limit=16,signal?:AbortSignal,expectedAudit?:LibraryAuditCheckpoint):Promise<LibraryAuditPage|null> {
    if(!validCursor(cursor) || !Number.isInteger(limit) || limit<1 || limit>100)throw new TypeError('Invalid audit page');
@@ -172,6 +184,6 @@ class LibraryMaintenanceStore {
 }
 export function createLibraryMaintenanceStore(database:Database) {
  const store=new LibraryMaintenanceStore(database);
- return {inventory:store.inventory.bind(store),auditPage:store.auditPage.bind(store),
+ return {contains:store.contains.bind(store),readCard:store.readCard.bind(store),inventory:store.inventory.bind(store),auditPage:store.auditPage.bind(store),
   readAuditCheckpoint:store.readAuditCheckpoint.bind(store),saveAuditCheckpoint:store.saveAuditCheckpoint.bind(store)};
 }

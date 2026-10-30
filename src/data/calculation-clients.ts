@@ -144,6 +144,8 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
     retainDay(day){const owner=natalOwners.get(day);return owner && !owner.generation.closed?owner.client.retainDay(day):()=>{};},
   };
   const cycles:CyclesClient={
+    receiveFamily(input,owner,options){const value=current,client=value.clients.cycles;
+      return run(value,options?.signal,signal=>client.receiveFamily(input,owner,{signal}));},
     readFamily(input,owner,options){const value=current,client=value.clients.cycles;
       return run(value,options?.signal,signal=>client.readFamily(input,owner,{signal,opened:options?.opened}));},
     fetchFamily(input,owner,options){const value=current,client=value.clients.cycles;

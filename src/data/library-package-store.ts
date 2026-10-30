@@ -1,4 +1,6 @@
 import {TransactionPlacement,replaceAfterQuota,type PlacementProgress} from './library-package-placement.ts';
+import type {FillAuthority} from '../domain/library-fill.ts';
+import {admitFillTransaction} from './library-fill-store.ts';
 import type {StoragePressure} from './storage-pressure.ts';
 import type {AccountChart} from '../../shared/chart-record-contract.ts';
 import {natalDaySourceKey,returnSourceKey,validMajorReturnsPackage,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
@@ -12,6 +14,9 @@ type Database=Pick<ReturnType<typeof createIndexedDatabase>,'transactionResult'|
 export const libraryPackageId=(ref:LibraryPartRef)=>JSON.stringify(ref.kind==='day'
  ?{kind:ref.kind,sourceKey:ref.sourceKey}:{kind:ref.kind,sourceKey:ref.sourceKey,family:ref.family});
 
+function allowsPackage(authority:FillAuthority|undefined,chart:AccountChart,ref:LibraryPartRef){
+ return !authority || authority.permit.key===libraryPackageId(ref) && authority.permit.chartId===chart.id && authority.permit.revision<=chart.revision;
+}
 function matchesChart(ref:LibraryPartRef,chart:AccountChart) {
  return chart.source==='calculated' && (ref.kind==='day'
   ?ref.sourceKey===natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone||'UTC'})
@@ -69,7 +74,7 @@ function discardBrokenPackage(database:Database,seen:LibraryLease,ref:LibraryPar
 
 interface IncomingPackage {
  seen:LibraryLease;chart:AccountChart;ref:LibraryPartRef;id:string;payload:unknown;
- openedAt:number|undefined;isCurrent:()=>boolean;needsPayload:boolean;
+ authority?:FillAuthority;openedAt:number|undefined;isCurrent:()=>boolean;needsPayload:boolean;
 }
 
 class LibraryPackageOwner {
@@ -127,6 +132,8 @@ class LibraryPackageOwner {
  private attempt(input:IncomingPackage,limit:number,progress?:PlacementProgress) {
   const {seen,chart,ref,id,isCurrent}=input;
   return this.database.transactionResult<LibraryPackageWrite>('readwrite',(tx,done,fail)=>{
+   admitFillTransaction(tx,input.authority,seen,this.now,allowed=>{
+   if(!allowed){done('stale');return;}
    const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
     if(!sameLibraryLease(owner.result,seen) || !isCurrent()){done('stale');return;}
     const card=tx.objectStore('charts').index('recordSource').getKey([chart.id,chart.revision,chart.birthDate,chart.timezone||'UTC',chart.utc]);
@@ -142,21 +149,24 @@ class LibraryPackageOwner {
      };
     };
    };
+   });
   });
  }
  private async place(input:IncomingPackage):Promise<LibraryPackageWrite> {
   const first=()=>this.attempt(input,0);
+  if(input.authority){const result=await first();return result.status==='complete'?result.value??'unavailable':result.status;}
   let result=this.pressure?await this.pressure.write(first,{atomicLibrary:true}):await first();
   if(result.status==='quota' && input.needsPayload && input.isCurrent())
    result=await replaceAfterQuota((limit,progress)=>this.attempt(input,limit,progress));
   return result.status==='complete'?result.value??'unavailable':result.status;
  }
- async putPackage(seen:LibraryLease,chart:AccountChart,ref:LibraryPartRef,payload:unknown,{opened=false}:{opened?:boolean}={}):Promise<LibraryPackageWrite> {
+ async putPackage(seen:LibraryLease,chart:AccountChart,ref:LibraryPartRef,payload:unknown,{opened=false,authority}:{opened?:boolean;authority?:FillAuthority}={}):Promise<LibraryPackageWrite> {
   seen={...seen};chart={...chart};ref={...ref};
+  if(!allowsPackage(authority,chart,ref))return 'stale';
   const isCurrent=this.pressure?.capture()??(()=>true);
   if(chart.accountId!==seen.accountId || !matchesChart(ref,chart) || !validLibraryPayload(ref,payload))return 'invalid';
   return this.place({seen,chart,ref,id:libraryPackageId(ref),payload:structuredClone(payload),
-   openedAt:opened?Math.max(1,this.now()):undefined,isCurrent,needsPayload:true});
+   authority,openedAt:opened?Math.max(1,this.now()):undefined,isCurrent:()=>!authority?.signal.aborted && isCurrent(),needsPayload:true});
  }
 }
 

@@ -1,3 +1,5 @@
+import {createCyclesClient} from '../src/data/cycles-client.ts';
+import {createMemoryCache} from '../src/data/memory-cache.ts';
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {IDBFactory,IDBObjectStore} from 'fake-indexeddb';
@@ -363,4 +365,17 @@ for(const scenario of ['corrupt','foreign','quota','retired','aborted','timeout'
   assert.deepEqual(await client.readFamily(input,owner),value,'a later opening saves the retained whole packet when quota is released');
   assert.equal(requests,1);
  }
+});
+
+test('receiving a prepared family has no placement or RAM side effects and shares transport with foreground fetch',async t=>{
+ const {store,lease}=await setup(t),{ref,value}=family(),memory=createMemoryCache();let requests=0,release:(value:unknown)=>void=()=>{};
+ const client=createCyclesClient({library:store,memory,returnStorage:null,request:async()=>{requests++;return new Promise(resolve=>{release=resolve;});}});t.after(()=>client.close());
+ const input={...value.source,body:value.family,...value.dates.range},owner={chartId:chart.id,expectedAccountId:'1',record:chart};
+ const receipt=client.receiveFamily(input,owner);await new Promise(resolve=>setImmediate(resolve));release({kind:'ready',ref,payload:value});
+ assert.equal((await receipt).status,'ready');assert.equal(await store.readPackage(lease,ref),null);assert.equal(memory.get(`return-family:${ref.sourceKey}:${value.family}`),null);
+ const foreground=client.fetchFamily(input,owner);
+ for(let i=0;requests<2 && i<100;i++)await new Promise(resolve=>setImmediate(resolve));assert.equal(requests,2);
+ const controller=new AbortController(),background=client.receiveFamily(input,owner,{signal:controller.signal});
+ controller.abort();await assert.rejects(background,{name:'AbortError'});
+ release({kind:'ready',ref,payload:value});assert.equal((await foreground).status,'stored');assert.equal(requests,2);assert.ok(await store.readPackage(lease,ref));
 });

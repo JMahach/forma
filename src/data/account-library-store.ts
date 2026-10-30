@@ -13,10 +13,12 @@ import type {LibraryCatalogSnapshot} from '../../shared/library-catalog-contract
 import {createBackgroundCheckStore} from './background-check-store.ts';
 import type {CheckAuthority} from '../domain/background-check.ts';
 import {createLibraryMaintenanceStore} from './library-maintenance-store.ts';
+import {createLibraryFillStore,admitFillTransaction} from './library-fill-store.ts';
+import type {FillAuthority} from '../domain/library-fill.ts';
 import {restoreCardUsage} from './library-package-placement.ts';
 
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[];catalog?:LibraryCatalogSnapshot;catalogComplete?:boolean;minimumMarker?:string }
-export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'};
+export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'} | {status:'quota'};
 interface Options { indexedDB?: IDBFactory | null; databaseName?: string;now?:()=>number;pressure?:StoragePressure }
 const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
 
@@ -28,6 +30,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
   const catalog=createLibraryCatalogStore(database,now);
   return {
     background:createBackgroundCheckStore(database),
+    fill:createLibraryFillStore(database),
     maintenance:createLibraryMaintenanceStore(database),
     ...createLibraryPackageStore(database,{pressure,now}),
     readCatalog:catalog.readCatalog,
@@ -79,11 +82,14 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       }) ?? unavailable();
       if(saved.status==='stored')admitted=saved.lease;return saved;
     },
-    async put(seen:LibraryLease,values:readonly AccountChart[],marker?:string):Promise<LibraryStoreResult> {
+    async put(seen:LibraryLease,values:readonly AccountChart[],marker?:string,authority?:FillAuthority):Promise<LibraryStoreResult> {
       // A late quota must not acquire cleanup permission from a new account.
       const isCurrent=pressure?.capture();
       const charts=values.map(value=>validateAccountChart(value,seen.accountId));
+      if(authority && (charts.length!==1 || authority.permit.kind!=='card' || charts[0].id!==authority.permit.chartId || charts[0].revision<authority.permit.revision))return {status:'stale'};
       const write=(batch:readonly AccountChart[])=>database.transactionResult<LibraryStoreResult>('readwrite',(tx,result,fail)=>{
+        admitFillTransaction(tx,authority,seen,now,allowed=>{
+        if(!allowed){result({status:'stale'});return;}
         const request=tx.objectStore('context').get('owner');request.onsuccess=()=>{
           if(!same(request.result,seen)){result({status:'stale'});return;}
           const rows=tx.objectStore('charts');
@@ -105,8 +111,10 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
           };}
           result(outcome);
         };
+        });
       });
       const first=await write(charts);
+      if(authority && first.status==='quota')return {status:'quota'};
       if(first.status!=='quota')return first.status==='complete'?first.value??unavailable():unavailable();
       if(isCurrent && !isCurrent())return {status:'stale'};
       // One hundred cards need not fit atomically to preserve one usable card.

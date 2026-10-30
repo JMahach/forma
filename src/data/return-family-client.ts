@@ -14,6 +14,7 @@ interface Destination {lease:LibraryLease;card:AccountChart;ref:FamilyRef;key:st
 interface ReadOptions {signal:AbortSignal;opened?:boolean;durable?:boolean}
 interface ClientOptions {library?:Library;memory:MemoryCache;legacy:ReturnStorage|null;
  request:(url:string,options:RequestInit)=>Promise<unknown>;timeoutMs:number}
+export type FamilyReceipt={status:'not-ready'|'stale'}|{status:'ready';payload:MajorReturnsPackage};
 export type FamilyTransfer={status:'not-ready'|'stale'|'invalid'}
  | {status:'stored'|'no-op'|'quota'|'unavailable';payload:MajorReturnsPackage};
 
@@ -63,7 +64,8 @@ async function discardLegacy(legacy:ReturnStorage,partKeys:string[],dateKey:stri
 class ReturnFamilyClient {
  private options:ClientOptions;
  private reads=new Map<string,SharedRequest<MajorReturnsPackage|null>>();
- private downloads=new Map<string,SharedRequest<FamilyTransfer>>();
+ private downloads=new Map<string,SharedRequest<MajorReturnsPackage|null>>();
+ private transfers=new Map<string,SharedRequest<FamilyTransfer>>();
  private uses=new Map<string,SharedRequest<void>>();
  constructor(options:ClientOptions){this.options=options;}
  private remember(target:Destination,packet:MajorReturnsPackage) {this.options.memory.put(target.key,packet);return packet;}
@@ -106,12 +108,30 @@ class ReturnFamilyClient {
   const key=JSON.stringify([target.key,target.lease,opened]);
   return shareRequest(this.reads,key,({controller})=>this.load(target,controller.signal,opened),{signal});
  }
- private async download(target:Destination,signal:AbortSignal):Promise<FamilyTransfer> {
+ private async download(target:Destination,signal:AbortSignal):Promise<MajorReturnsPackage|null> {
   const query=new URLSearchParams({accountId:target.lease.accountId,sourceKey:target.ref.sourceKey});
   const value=await this.options.request(`/api/charts/${encodeURIComponent(target.card.id)}/returns/${target.ref.family}/package?${query}`,
    {method:'GET',cache:'no-store',signal});
   if(signal.aborted)throw createAbortError();
-  const packet=parseReply(value,target.ref);if(!packet)return {status:'not-ready'};
+  return parseReply(value,target.ref);
+ }
+ private receiveTarget(target:Destination,signal:AbortSignal){
+  const key=JSON.stringify([target.key,target.lease,target.card.id]);
+  return shareRequest(this.downloads,key,async({controller})=>{
+   let timedOut=false;
+   const timer=setTimeout(()=>{timedOut=true;controller.abort();},this.options.timeoutMs);
+   try{return await this.download(target,controller.signal);}
+   catch(error){if(timedOut)throw Object.assign(new Error('Return package timeout'),{code:'server_unavailable'});throw error;}
+   finally{clearTimeout(timer);}
+  },{signal});
+ }
+ async receive(input:CycleInput,owner:CycleOwner,{signal}:ReadOptions):Promise<FamilyReceipt>{
+  if(signal.aborted)throw createAbortError();
+  const target=destination(this.options.library,input,owner);if(!target)return {status:'stale'};
+  const payload=await this.receiveTarget(target,signal);return payload?{status:'ready',payload}:{status:'not-ready'};
+ }
+ private async transfer(target:Destination,signal:AbortSignal):Promise<FamilyTransfer>{
+  const packet=await this.receiveTarget(target,signal);if(!packet)return {status:'not-ready'};
   const status=await this.save(target,packet,false);
   if(signal.aborted)throw createAbortError();
   if(status==='stale' || status==='invalid')return {status};
@@ -122,17 +142,11 @@ class ReturnFamilyClient {
   const target=destination(this.options.library,input,owner);if(!target)return {status:'stale'};
   const stored=await this.read(input,owner,{signal,durable:true});if(stored)return {status:'no-op',payload:stored};
   const key=JSON.stringify([target.key,target.lease,target.card.id]);
-  return shareRequest(this.downloads,key,async({controller})=>{
-   let timedOut=false;
-   const timer=setTimeout(()=>{timedOut=true;controller.abort();},this.options.timeoutMs);
-   try{return await this.download(target,controller.signal);}
-   catch(error){if(timedOut)throw Object.assign(new Error('Return package timeout'),{code:'server_unavailable'});throw error;}
-   finally{clearTimeout(timer);}
-  },{signal});
+  return shareRequest(this.transfers,key,({controller})=>this.transfer(target,controller.signal),{signal});
  }
 }
 /** Whole families share the existing library and bounded tab memory; transfer status never implies offline readiness. */
 export function createReturnFamilyClient(options:ClientOptions) {
  const client=new ReturnFamilyClient(options);
- return {read:client.read.bind(client),fetch:client.fetch.bind(client)};
+ return {receive:client.receive.bind(client),read:client.read.bind(client),fetch:client.fetch.bind(client)};
 }
