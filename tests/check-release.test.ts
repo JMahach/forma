@@ -3,16 +3,23 @@ import assert from 'node:assert/strict';
 import {mkdtemp, mkdir, writeFile, readFile, rm, chmod} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {checkRelease} from '../deploy/check-release.ts';
 
 const revision='a'.repeat(40);
 async function fixture(t: test.TestContext) {
   const root=await mkdtemp(path.join(tmpdir(),'forma-release-check-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
-  const release=path.join(root,'release'),state=path.join(root,'state'),journal=path.join(root,'journal'),mail=path.join(root,'mail');
+  const release=path.join(root,'release'),state=path.join(root,'state'),journal='/var/log/forma',mail=path.join(root,'mail');
+  const journalFixture=path.join(root,'journal'),realStat=fs.lstat;
+  // Only the fixed production directory's metadata comes from a disposable fixture.
+  // No test creates or changes /var/log/forma; preflight and path validation remain real.
+  t.mock.method(fs,'lstat',(filename:Parameters<typeof realStat>[0])=>realStat(filename===journal?journalFixture:filename));
+  syncBuiltinESMExports();t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
   for(const folder of ['server/python','dist','.venv/bin'])await mkdir(path.join(release,folder),{recursive:true});
   await mkdir(path.join(state,'keys'),{recursive:true,mode:0o700});await chmod(state,0o700);
-  await mkdir(journal,{mode:0o700});await mkdir(mail,{mode:0o700});
+  await mkdir(journalFixture,{mode:0o700});await mkdir(mail,{mode:0o700});
   for(const file of ['server/server.ts','server/journal-service.ts','server/python/system_journal.py'])
     await writeFile(path.join(release,file),'// fixture');
   await writeFile(path.join(release,'package.json'),JSON.stringify({engines:{node:'24.x'}}));
@@ -86,6 +93,13 @@ test('release preflight checks the actual SMTP listener in the installed instanc
 test('release preflight requires the independently owned journal writer',async t=>{
  const f=await fixture(t);await f.envChange('FORMA_JOURNAL_WRITER=embedded');
  await assert.rejects(checkRelease(f.options),/external writer/);
+});
+
+test('release preflight rejects a writer path that disagrees with the fixed stop hooks',async t=>{
+ const f=await fixture(t),journal=path.join(f.root,'journal');
+ await f.envChange('FORMA_JOURNAL_DIR='+journal);
+ await f.controlChange({journalSocketPath:path.join(journal,'run/services.sock')});
+ await assert.rejects(checkRelease(f.options),/journal directory must match the fixed service templates/i);
 });
 
 test('release preflight rejects a journal source path that disagrees with nginx',async t=>{

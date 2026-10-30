@@ -42,6 +42,7 @@ export async function checkRelease({release,revision,environmentFile,mailEnviron
   if(env.HOST && env.HOST!=='127.0.0.1' || env.PORT && env.PORT!=='4173')throw new Error('Release listener must match the nginx upstream');
   const accounts=accountEnvironment(env,4173),journal=journalEnvironment(env,accounts.stateDir);
   if(journalWriterMode(env)!=='external')throw new Error('Production requires an external writer for the journal');
+  if(journal.directory!=='/var/log/forma')throw new Error('Journal directory must match the fixed service templates');
   if(env.FORMA_JOURNAL_NGINX_SOCKET!=='/run/forma-journal/nginx.sock')throw new Error('Journal source socket must match the nginx template');
   if(journal.environment!=='production' || !accounts.trustLoopbackProxy)throw new Error('Expected production environment behind loopback proxy');
   parseAccountOrigins(accounts.origins);
