@@ -1,6 +1,7 @@
 import { UI_MESSAGES } from '../ui/messages.ts';
 import type { NatalExplorerState, NatalExplorerOptions } from '../state/natal-day.ts';
 interface NatalDayControlsOptions extends NatalExplorerOptions {
+  signal?:AbortSignal;
   toggle: HTMLButtonElement; panel: HTMLElement; range: HTMLInputElement; status: HTMLElement; retryButton: HTMLButtonElement;
   hourMarks?: HTMLElement | null; marker?: HTMLButtonElement | null; onMomentInput?: () => void;
 }
@@ -13,9 +14,10 @@ import { natalDayMinute } from '../domain/natal-day.ts';
 import { setText } from '../ui/html.ts';
 import { savedBirthTime } from './chart-display.ts';
 
-export function attachNatalDayExplorer({ toggle, panel, range, status, retryButton, hourMarks = null, marker = null, onMomentInput = () => {}, ...options }: NatalDayControlsOptions) {
+export function attachNatalDayExplorer({ signal, toggle, panel, range, status, retryButton, hourMarks = null, marker = null, onMomentInput = () => {}, ...options }: NatalDayControlsOptions) {
   const timelineMarks = attachTimelineMarks(hourMarks);
   function update(state: NatalExplorerState) {
+    if(signal?.aborted)return;
     toggle.hidden = !state.available;
     toggle.disabled = !state.opened && !state.canOpen;
     toggle.setAttribute('aria-expanded', String(state.opened));
@@ -49,9 +51,9 @@ export function attachNatalDayExplorer({ toggle, panel, range, status, retryButt
   }
   const explorer = createNatalDayExplorer({ ...options, onStateChange: update });
   const reset = () => { onMomentInput(); return explorer.reset(); };
-  const dayRange = attachTimelineRange({ range, marker,
+  const dayRange = attachTimelineRange({ signal, range, marker,
     onScrub: value => { onMomentInput(); return explorer.scrub(value); }, onReference: reset });
-  retryButton.addEventListener('click', () => { if (explorer.state.status === 'error') return explorer.retry(); });
+  retryButton.addEventListener('click', () => { if (explorer.state.status === 'error') return explorer.retry(); },{signal});
   update(explorer.state);
   return explorer;
 }

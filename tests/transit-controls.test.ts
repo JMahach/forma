@@ -9,10 +9,13 @@ function element() {
   const attributes = new Map<string, string>(), listeners = new Map<string, ((event: unknown) => void)[]>();
   let captured: number | null = null;
   const node = {
+    get listenerCount(){return [...listeners.values()].reduce((sum,items)=>sum+items.length,0);},
     hidden: false, disabled: false, dataset: {} as DOMStringMap, style: { setProperty(this: Record<string, unknown>, name: string, value: string) { this[name] = value; } } as unknown as CSSStyleDeclaration, value: '', textContent: '', title: '', dateTime: '',
     setAttribute(name: string, value: unknown) { attributes.set(name, String(value)); },
     getAttribute(name: string) { return attributes.get(name) ?? null; },
-    addEventListener(type: string, callback: (event: unknown) => void) {
+    addEventListener(type: string, callback: (event: unknown) => void, options?:AddEventListenerOptions) {
+      if(options?.signal?.aborted)return;
+      options?.signal?.addEventListener('abort',()=>listeners.set(type,(listeners.get(type)??[]).filter(fn=>fn!==callback)),{once:true});
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type)!.push(callback);
     },
@@ -25,13 +28,13 @@ function element() {
   return node as typeof node & HTMLInputElement & HTMLButtonElement;
 }
 
-function harness(withMarker = true) {
+function harness(withMarker = true, signal?:AbortSignal) {
   const elements = Object.fromEntries(['panel', 'range', 'status', 'retryButton', ...(withMarker ? ['marker'] : [])].map(name => [name, element()])) as unknown as Record<'panel' | 'range' | 'status' | 'retryButton' | 'marker', ReturnType<typeof element>> & { hourMarks: ReturnType<ReturnType<typeof dateDom>['createElement']> };
   elements.hourMarks = dateDom().createElement('div');
   (elements.range as unknown as { closest(): HTMLElement | null }).closest = () => elements.panel.hidden ? elements.panel : null;
   const scrubCalls: [value: number][] = [], nowCalls: [][] = [];
   const controls = attachTransitControls({
-    ...elements,
+    ...elements,signal,
     onScrub: (...args) => scrubCalls.push(args),
     onNow: (...args) => nowCalls.push(args),
   });
@@ -411,4 +414,15 @@ test('transit reference tooltip says Current moment while retaining its accessib
   assert.equal(h.marker.getAttribute('aria-label'), 'Вернуться к текущему времени');
   h.range.dispatch('pointermove', { pointerType: 'mouse', buttons: 0, clientX: 22, clientY: 22 });
   assert.equal(h.range.title, 'Текущий момент');
+});
+
+
+test('retired transit controls cannot update the view or invoke a new request',()=>{
+ const owner=new AbortController(),h=harness(true,owner.signal);h.update(state({status:'error'}));
+ assert.ok(h.range.listenerCount+h.retryButton.listenerCount+h.marker.listenerCount>0);
+ owner.abort();assert.equal(h.range.listenerCount+h.retryButton.listenerCount+h.marker.listenerCount,0);const before=h.range.value;
+ h.retryButton.dispatch('click');h.update(state({index:100}));h.setCoveredByLifetime(true);
+ assert.equal(h.range.value,before);h.range.value='5';h.range.dispatch('input');
+ assert.equal(h.scrubCalls.length,0);assert.equal(h.nowCalls.length,0);assert.equal(h.panel.hidden,false);
+ assert.equal(before,'0');
 });

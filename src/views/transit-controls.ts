@@ -1,6 +1,6 @@
 import { UI_MESSAGES } from '../ui/messages.ts';
 import type { LiveTransitState } from '../state/live-transit.ts';
-interface TransitControlsOptions { panel: HTMLElement; range: HTMLInputElement; status: HTMLElement; retryButton: HTMLButtonElement; hourMarks?: HTMLElement | null; marker?: HTMLButtonElement | null; onScrub: (value: number) => void; onNow: () => void }
+interface TransitControlsOptions { signal?:AbortSignal; panel: HTMLElement; range: HTMLInputElement; status: HTMLElement; retryButton: HTMLButtonElement; hourMarks?: HTMLElement | null; marker?: HTMLButtonElement | null; onScrub: (value: number) => void; onNow: () => void }
 export type TransitControls = ReturnType<typeof attachTransitControls>;
 
 import { formatTimelineMinute, timelineMinute } from '../domain/day-timeline.ts';
@@ -8,12 +8,13 @@ import { attachTimelineRange, isReferenceMoment } from './timeline-range.ts';
 import { attachTimelineMarks } from './timeline-marks.ts';
 import { setText } from '../ui/html.ts';
 
-export function attachTransitControls({ panel, range, status, retryButton, hourMarks = null, marker = null, onScrub, onNow }: TransitControlsOptions) {
-  const dayRange = attachTimelineRange({ range, marker, onScrub, onReference: onNow });
+export function attachTransitControls({ signal, panel, range, status, retryButton, hourMarks = null, marker = null, onScrub, onNow }: TransitControlsOptions) {
+  const dayRange = attachTimelineRange({ signal, range, marker, onScrub, onReference: onNow });
   const timelineMarks = attachTimelineMarks(hourMarks);
   let coveredByLifetime = false, latestState: LiveTransitState | null = null;
-  retryButton.addEventListener('click', () => { if (latestState?.status === 'error') return onNow(); });
+  retryButton.addEventListener('click', () => { if (latestState?.status === 'error') return onNow(); },{signal});
   function update(state: LiveTransitState) {
+    if(signal?.aborted)return;
     latestState = state;
     if (coveredByLifetime || !state.wanted) {
       if (!panel.hidden) {
@@ -47,6 +48,7 @@ export function attachTransitControls({ panel, range, status, retryButton, hourM
   }
   return { update,
     setCoveredByLifetime(value: boolean) {
+      if(signal?.aborted)return;
       if (coveredByLifetime === Boolean(value)) return;
       coveredByLifetime = Boolean(value);
       if (latestState) update(latestState);

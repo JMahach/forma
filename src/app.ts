@@ -537,8 +537,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
     beforeOpen: () => { chartEditing.reset(); returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
   });
+  scope.own(birthForm.dispose);
   const natalDayClient = calculationClients?.natal ?? createNatalDayClient({ memory: dayClient.memory,library:libraryStorage });
-  natalDay = attachNatalDayExplorer({
+  natalDay = attachNatalDayExplorer({ signal:scope.signal,
     connection: connectionMode,
     dayClient: natalDayClient,
     toggle: $('natalDayToggle'), panel: $('natalDayControls'), range: $('natalDayTime'), marker: $('natalDayReference'),
@@ -576,7 +577,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     cacheTimeline = createLocalDayTimeline(now, timeline.timeZone);
     void calculationClients.syncTransitWindow({dates: cacheTimeline.packetDates, expiresAt: cacheTimeline.endUtc});
   }
-  transit = attachLiveTransit({
+  transit = attachLiveTransit({ signal:scope.signal,
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     isChartVisible: () => workspace.screen === 'chart',
     onRender: exploration!.publishTransit, onStateChange: state => {
@@ -586,7 +587,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       if (returns?.available) updateChartCaption();
     },
   });
-  transitControls = attachTransitControls({
+  transitControls = attachTransitControls({ signal:scope.signal,
     panel: $('transitControls'), range: $('transitTime'), marker: $('transitReference'),
     status: $('transitStatus'), retryButton: $('transitRetry'), hourMarks: $('transitHourMarks'),
     onScrub: value => { viewSession?.interrupt(); return transit!.scrub(value); },
@@ -594,7 +595,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   });
   transitControls!.update(transit!.state);
   $('chartDialog').addEventListener('close', () => { if (!session.hasCurrent) transit!.refresh(); }, {signal:scope.signal});
-  attachTransitNavigation($('nowButton'), {
+  attachTransitNavigation($('nowButton'), { signal:scope.signal,
     onSelect: selectChart, refresh: transit!.refresh,
   });
   if (!startupGestures) attachCameraControls({ fitButton: $('fitButton') }, gestures);

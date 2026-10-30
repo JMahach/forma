@@ -392,7 +392,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       requestFrame: callback => {resizeFrames.set(++resizeFrameId, callback); return resizeFrameId;}, cancelFrame: id => {resizeFrames.delete(id);},
     }),
     createChartHeadingLayout: ({ title, subtitle }) => ({ updateText(a: string, b: string) { title.textContent = a; subtitle!.textContent = b; }, refresh: noop, destroy:()=>onRelease('heading') }),
-    attachBirthForm: options => { birthOptions = options; return { get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
+    attachBirthForm: options => { birthOptions = options; return { dispose:async()=>{onRelease('birth-form');},get opened() {return editedId !== null || !!birthDraft;}, get editedId() {return editedId;}, close() {editedId=null;birthDraft=null;}, refreshAvailability:noop, restore() {return false;}, get snapshot(){return birthDraft;}, pending:false, refresh() {if (editedId && !store.get(editedId)) editedId=null;} }; },
     attachLiveTransit: (options) => {
       transitOptions = options;
       if (realTransit) return liveTransit = attachRealLiveTransit({...options,
@@ -3013,5 +3013,5 @@ test('a partial application start releases already acquired resources',async()=>
  const close=storage.close;storage.close=()=>{closes++;close();};
  assert.throws(()=>harness({libraryStorage:storage,failAtMonitor:failure,onRelease:owner=>released.push(owner)}),failure);
  await tick();await tick();
- assert.deepEqual(released.sort(),['heading','hover']);assert.equal(closes,1);
+ assert.deepEqual(released.sort(),['birth-form','heading','hover']);assert.equal(closes,1);
 });
