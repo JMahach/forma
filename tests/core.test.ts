@@ -685,20 +685,21 @@ test('calculated chart validation retains both activation streams and calculatio
   assert.deepEqual(normalizeTemporaryChart(roundtrip), roundtrip, 'repeated validation remains stable');
 });
 
-test('transit chart validation keeps its source and absence of design activations', () => {
+test('ready transit validation retains both activation streams and rejects an incomplete placeholder', () => {
   const original = calculatedChart();
   Object.assign(original, {
-    source: 'transit' as const, name: 'Текущий момент', design: [], designUtc: null, designArcResidualDegrees: null,
+    source: 'transit' as const, name: 'Сохранённый момент',
     city: null, cityId: null, timezone: 'UTC', utcOffset: 'UTC+00:00'
   });
-  original.activations.design = [];
   const roundtrip = normalizeTemporaryChart(original);
   assert.ok(roundtrip);
   assert.equal(roundtrip.source, 'transit');
-  assert.deepEqual(roundtrip.design, []);
+  assert.deepEqual(roundtrip.design, original.design);
   assert.deepEqual(roundtrip.activations, original.activations);
-  assert.equal(roundtrip.designUtc, null);
-  assert.equal(roundtrip.designArcResidualDegrees, null);
+  assert.equal(roundtrip.designUtc, original.designUtc);
+  assert.equal(roundtrip.designArcResidualDegrees, original.designArcResidualDegrees);
+  assert.equal(normalizeTemporaryChart({...original, design: [], designUtc: null,
+    activations: {...original.activations, design: []}}), null);
 });
 
 test('calculated chart validation rejects invalid activation records', () => {

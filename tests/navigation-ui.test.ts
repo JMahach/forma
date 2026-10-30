@@ -212,24 +212,24 @@ function libraryHarness(savedCharts: { id: string; name: string; source: string;
   return { context, element: (id: string|number) => dom[id] };
 }
 
-test('the personal-chart count and list exclude current and legacy transits without changing stored records', () => {
+test('the saved list includes saved transits and excludes the current-moment slot without mutating records', () => {
   const fixtures = [
     { id: 'current-transit', name: 'Текущий момент', source: 'transit' as const },
     { id: 'marat', name: 'Марат', source: 'calculated' as const, birthDate: '2000-01-02', birthTime: '03:04' },
-    { id: 'legacy-transit', name: 'Older live chart', source: 'transit' as const },
+    { id: 'saved-transit', name: 'Сохранённый момент', source: 'transit' as const },
     { id: 'manual-card', name: 'Ручная карта', source: 'manual' as const },
   ];
   fixtures.forEach(Object.freeze);
   Object.freeze(fixtures);
   const before = JSON.stringify(fixtures);
   const { element, context } = libraryHarness(fixtures, 'marat');
-  assert.equal(element('libraryCount').textContent, '2');
+  assert.equal(element('libraryCount').textContent, '3');
   const list = element('chartList').innerHTML;
-  assert.deepEqual([...list.matchAll(/\bdata-chart-id="([^"]+)"/g)].map(match => match[1]), ['marat', 'manual-card']);
-  assert.doesNotMatch(list, /current-transit|legacy-transit|Текущий момент|Older live chart/);
+  assert.deepEqual([...list.matchAll(/\bdata-chart-id="([^"]+)"/g)].map(match => match[1]), ['marat', 'saved-transit', 'manual-card']);
+  assert.doesNotMatch(list, /current-transit|Текущий момент/);
   assert.match(list, /data-chart-id="marat"[^>]*aria-pressed="true"/);
   assert.match(list, /data-chart-id="manual-card"[^>]*aria-pressed="false"/);
-  for (const id of ['marat', 'manual-card'] as const) {
+  for (const id of ['marat', 'saved-transit', 'manual-card'] as const) {
     for (const action of ['edit', 'delete'] as const) {
       assert.match(list, new RegExp(`data-chart-action="${action}"[^>]*data-action-chart-id="${id}"`), `personal ${id} retains ${action}`);
     }

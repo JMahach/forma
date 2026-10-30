@@ -103,7 +103,7 @@ test('chart records may share a pending job without owning physical workers or t
  const policy=JSON.parse(await readFile(new URL('../scripts/architecture/architecture-boundaries.json',import.meta.url),'utf8'));
  const files=policy.modules.flatMap((owner:{files:string[]})=>owner.files);
  for(const typeOnly of [false,true]) {
-  const check=(to:string)=>checkContour({files,modules:policy.modules,imports:[edge('server/services/chart-library.ts',to,typeOnly)],exceptions:policy.exactExceptions});
+  const check=(to:string)=>checkContour({files,modules:policy.modules,imports:[edge('server/services/chart-records.ts',to,typeOnly)],exceptions:policy.exactExceptions});
   assert.deepEqual(check('server/runtime/job-consumers.ts').violations,[]);
   for(const to of ['server/runtime/calculator-workers.ts','server/runtime/compute-queue.ts','server/runtime/json-worker.ts'])
    assert.ok(check(to).violations.some((v:{code:string})=>v.code==='forbidden_import'));

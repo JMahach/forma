@@ -66,7 +66,13 @@ test('browser modules belong to real page entries or the generated worker, with 
     if (reachable.has(file)) return;
     assert.ok(file.startsWith('src/') || file.startsWith('shared/'), `browser imports private code: ${file}`);
     reachable.add(file);
-    for (const dependency of graph.get(file) || []) visit(dependency);
+    for (const dependency of graph.get(file) || []) {
+      if (graph.has(dependency)) { visit(dependency); continue; }
+      const imported = importEvidence.imports.find(edge => edge.from === file && edge.to === dependency && edge.resolution === 'external');
+      const owner = policy.modules.find((module: { files: string[] }) => module.files.includes(file))?.id;
+      assert.ok(imported && externalImportAllowed(imported, owner, policy.externalPolicy),
+        `${file} imports a package outside its declared boundary: ${dependency}`);
+    }
   }
   entries.forEach(visit);
   const pageReachable = new Set(reachable);
@@ -77,7 +83,15 @@ test('browser modules belong to real page entries or the generated worker, with 
   assert.deepEqual([...reachable].sort(), [...browserFiles].sort(), 'orphaned browser files need an owner or removal');
   for (const file of pageReachable) assert.equal(PUBLIC_FILES.get(file), file, `${file} must be served to source pages`);
   for (const file of reachable) if (!pageReachable.has(file)) assert.ok(!PUBLIC_FILES.has(file), `${file} belongs only in the compiled worker`);
-  for (const file of PUBLIC_FILES.values()) {
+  const vendorFiles = new Set(['xstate.esm.js', 'xstate-actors.esm.js', 'xstate-dev.esm.js',
+    'raise-effbee0c.esm.js', 'StateMachine-ae06a22b.esm.js', 'assign-1f0d7720.esm.js', 'log-6a5e50a8.esm.js']
+    .map(file => `node_modules/xstate/dist/${file}`));
+  for (const [url, file] of PUBLIC_FILES) {
+    if (vendorFiles.has(file)) {
+      assert.equal(url, `vendor/xstate/${path.basename(file)}`);
+      assert.ok(fs.existsSync(path.join(root, file)), `stale vendor path: ${file}`);
+      continue;
+    }
     assert.ok(file.startsWith('src/') || file.startsWith('public/') || file.startsWith('shared/'), `private path exposed: ${file}`);
     assert.ok(fs.existsSync(path.join(root, file)), `stale public path: ${file}`);
     if (!file.startsWith('public/')) assert.ok(pageReachable.has(file), `unneeded public module: ${file}`);

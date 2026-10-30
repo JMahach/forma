@@ -645,7 +645,7 @@ test('valid dates outside supported bounds identify the offending endpoint', asy
   }
 });
 
-test('date errors remain inside the date while repeated failures recover automatically', async t => {
+test('date errors survive the bounded retry budget and explicit recovery', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness(); await open(h); await dates(h);
   h.type(h.toDate, '31021998');
@@ -653,8 +653,13 @@ test('date errors remain inside the date while repeated failures recover automat
     h.requests.at(-1)!.reject(new Error('Нет соединения')); await tick();
     assert.equal(h.toError.textContent, 'Дата некорректна');
     assert.equal(h.status.textContent, attempt < 3 ? '' : 'Загружаем момент…');
-    t.mock.timers.tick(1000 * 2 ** (attempt - 1)); await tick();
+    if (attempt < 3) { t.mock.timers.tick(attempt === 1 ? 1000 : 5000); await tick(); }
   }
+  assert.equal(h.explorer.state.status, 'error');
+  assert.equal(h.requests.length, 3);
+  t.mock.timers.tick(60_000); await tick();
+  assert.equal(h.requests.length, 3, 'exhaustion does not create an automatic fourth request');
+  void h.explorer.retry(); await tick();
   await complete(h);
   assert.equal(h.toError.textContent, 'Дата некорректна');
   assert.equal(h.status.textContent, ''); h.explorer.close();

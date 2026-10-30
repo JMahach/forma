@@ -108,7 +108,7 @@ test('library metadata upgrade preserves version-one charts, owner and notes',as
    tx.oncomplete=()=>{db.close();resolve();};tx.onabort=()=>reject(tx.error);};
  });
  const store=createAccountLibraryStore({indexedDB,databaseName});t.after(()=>store.close());
- assert.deepEqual(await store.read(),{lease:{accountId:'1',generation:'legacy'},charts:[accountChart(1)]});
+ assert.deepEqual(await store.read(),{lease:{accountId:'1',generation:'legacy'},charts:[accountChart(1)],minimumMarker:'0'});
  assert.equal(await store.clear({accountId:'1',generation:'legacy'}),'cleared');assert.deepEqual((await store.read())!.charts,[]);
 });
 
@@ -165,7 +165,7 @@ for (const waitingAttempt of [1, 2]) test(`logout before pressure admission revo
   finish(); const result = await pending;
   assert.deepEqual(cleanupGuards, [], 'an old write must not acquire cleanup permission after logout');
   assert.equal(result.status, 'stale');
-  assert.deepEqual(await b.read(), {lease: second.lease, charts: [replacement]});
+  assert.deepEqual(await b.read(), {lease: second.lease, charts: [replacement], minimumMarker: '0'});
 });
 
 
