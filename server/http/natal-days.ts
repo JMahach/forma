@@ -5,6 +5,15 @@ import type { CityCatalog } from '../services/cities.ts';
 import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
 import { NatalDayError, validateNatalDayDate, validateNatalZone } from '../services/natal-days.ts';
 import { negotiateEncoding } from './content-encoding.ts';
+type DayPacket=Awaited<ReturnType<NatalDays['get']>>;
+import type {OutgoingHttpHeaders} from 'node:http';
+
+export function sendNatalDayPacket(res:ServerResponse,packet:DayPacket,encoding:keyof DayPacket['bytes'],headers:OutgoingHttpHeaders) {
+  const body=packet.bytes[encoding];
+  res.writeHead(200,{...headers,'Content-Type':'application/octet-stream','Content-Length':body.length,Vary:'Accept-Encoding',
+    ...(encoding==='identity'?{}:{'Content-Encoding':encoding})});
+  res.end(body);
+}
 
 export function validateNatalDayRequest(value: unknown, cities: CityCatalog) {
   const input = value as { v?: string; birthDate?: unknown; cityId?: unknown } | null;
@@ -44,11 +53,9 @@ export function createNatalDayHandler({ get }: Pick<NatalDays, 'get'>, {report}:
       const { date, timezone } = validateNatalDayRequest(input, cities);
       const encoding = negotiateEncoding(req.headers['accept-encoding']);
       if (!encoding) throw new NatalDayError('encoding_not_acceptable', 'Нет поддерживаемого способа передачи дня рождения.', 406, null);
-      const packet = await get(date, timezone, { signal: controller.signal }), body = packet.bytes[encoding];
+      const packet = await get(date, timezone, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      res.writeHead(200, { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': body.length, Vary: 'Accept-Encoding',
-        ...(encoding === 'identity' ? {} : { 'Content-Encoding': encoding }) });
-      res.end(body);
+      sendNatalDayPacket(res,packet,encoding,headers);
     } catch (error) {
       if (controller.signal.aborted) return;
       const known = error instanceof NatalDayError;

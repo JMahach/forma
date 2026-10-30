@@ -47,6 +47,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/application/route.ts',
     'src/application/background-work.ts',
     'src/data/background-check-store.ts',
+    'src/data/library-maintenance-store.ts',
     'src/runtime/resource-scope.ts',
     'src/platform/browser/background-coordinator.ts',
     'src/platform/browser/lifecycle.ts',

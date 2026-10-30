@@ -218,7 +218,8 @@
         "src/domain/variables.ts",
         "src/domain/library-catalog.ts",
         "src/domain/background-check.ts",
-        "src/domain/background-policy.ts"
+        "src/domain/background-policy.ts",
+        "src/domain/library-maintenance.ts"
       ],
       "publicEntries": [
         "src/domain/account-chart.ts",
@@ -248,7 +249,8 @@
         "src/domain/variables.ts",
         "src/domain/library-catalog.ts",
         "src/domain/background-check.ts",
-        "src/domain/background-policy.ts"
+        "src/domain/background-policy.ts",
+        "src/domain/library-maintenance.ts"
       ],
       "allowRuntime": [
         "domain",
@@ -371,7 +373,8 @@
         "src/data/library-package-placement.ts",
         "src/data/calculation-cache-transition.ts",
         "src/data/library-catalog-store.ts",
-        "src/data/background-check-store.ts"
+        "src/data/background-check-store.ts",
+        "src/data/library-maintenance-store.ts"
       ],
       "publicEntries": [
         "src/data/account-library-store.ts",
@@ -402,7 +405,8 @@
         "src/data/account-library-schema.ts": "One-time schema-upgrade conversion owned by account-library storage; no old writer runs alongside the upgrade.",
         "src/data/calculation-cache-transition.ts": "One-time calculation-cache schema upgrade; preserves payload bytes, legacy source checkpoints and atomic byte accounting.",
         "src/data/library-catalog-store.ts": "Atomic complete catalogue and content-mutation fence in the existing account database; no separate library owner.",
-        "src/data/background-check-store.ts": "Shared check control and atomic catalogue permission live in the existing library database; callers receive its narrow background store port."
+        "src/data/background-check-store.ts": "Shared check control and atomic catalogue permission live in the existing library database; callers receive its narrow background store port.",
+        "src/data/library-maintenance-store.ts": "Bounded account inventory and integrity scans are exposed only through the account library facade."
       }
     },
     {

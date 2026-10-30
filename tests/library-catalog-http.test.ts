@@ -20,7 +20,7 @@ import {ACCOUNT_POLICY} from '../server/services/account-policy.ts';
 import {createChartReturns} from '../server/services/chart-returns.ts';
 import {mainReturnRange} from '../shared/chart-return-contract.ts';
 import {cycleAge} from '../shared/cycles-format.ts';
-import {returnSourceKey} from '../shared/library-package-contract.ts';
+import {returnSourceKey,natalDaySourceKey} from '../shared/library-package-contract.ts';
 import {createAccountStorage} from '../server/storage/accounts.ts';
 import {natalDayFixture} from './fixtures/natal-day.ts';
 import {encodeNatalDayPacket} from '../server/services/natal-days.ts';
@@ -51,12 +51,12 @@ async function fixture(t:test.TestContext) {
     chart:async()=>assert.fail('ready reads must not calculate')}});
   const handler=createChartHandler({records,accounts,origins:['https://forma.example.test'],now:()=>time,
     returns,prepareBirth:async()=>assert.fail('catalogue reads must not calculate')});
-  async function request(path:string,method='GET',authenticated=true) {
+  async function request(path:string,method='GET',authenticated=true,encoding='identity') {
     const req=Object.assign(Readable.from([]),{method,url:path,headers:{host:'forma.example.test',origin:'https://forma.example.test',
-      cookie:authenticated?Object.entries(proof.sessions).map(([id,token])=>`__Host-forma_s_${id}=${token}`).join('; '):''},
+      'accept-encoding':encoding,cookie:authenticated?Object.entries(proof.sessions).map(([id,token])=>`__Host-forma_s_${id}=${token}`).join('; '):''},
       socket:{remoteAddress:'192.0.2.1'}}) as unknown as IncomingMessage;
     const res=captureResponse();await handler(req,res,new URL(path,'https://forma.example.test'));
-    return {status:res.status,body:JSON.parse(res.body),headers:res.headers};
+    return {status:res.status,body:res.headers['Content-Type']==='application/octet-stream'?res.body:JSON.parse(res.body),headers:res.headers};
   }
   const intent=()=>({expectedAccountId:accountId,operationId:chartId(operation++)});
   return {database,accounts,records,accountId,proof,request,intent,session:login.session,queries,setNextId(id:number){nextId=id;},
@@ -358,4 +358,56 @@ test('catalogue markers and complete-family descriptors survive a database close
   assert.deepEqual(records.catalog({expectedAccountId:accountId}),expected);
   assert.equal(database.connection.prepare('SELECT total_changes() AS n').get()!.n,0);
   assert.equal(records.confirmCatalog(accountId,expected.marker).kind,'confirmed');
+});
+
+test('owned ready-day GET returns stored bytes or bounded not-ready, never starts computation',async t=>{
+ const f=await fixture(t),id=f.add(),source={date:'2000-01-01',timezone:'UTC'},ref={kind:'day',sourceKey:natalDaySourceKey(source)};
+ const path=`/api/charts/${id}/day?`+new URLSearchParams({accountId:f.accountId,sourceKey:ref.sourceKey});
+ const pending=await f.request(path);assert.equal(pending.status,202);assert.deepEqual(pending.body,{kind:'not-ready',ref});assert.equal(pending.headers['Retry-After'],'1');
+ const transit=f.records.create({...f.intent(),content:accountChart()}).chartId!;
+ assert.equal((await f.request(path.replace(id!,transit))).status,400,'a transit record cannot acquire a natal day by matching dates');
+ assert.equal((await f.request(path,'POST')).status,405);assert.equal((await f.request(path,'GET',false)).status,401);
+ assert.equal((await f.request(path.replace('accountId='+f.accountId,'accountId=999'))).status,409);
+ assert.equal((await f.request(path+'&sourceKey=duplicate')).status,400);
+ assert.equal((await f.request(path.replace(encodeURIComponent(ref.sourceKey),encodeURIComponent('["2001-01-01","UTC"]')))).status,409);
+ const day=natalDayFixture({...source,samples:10}),packet={bytes:await compressDayPacket(await encodeNatalDayPacket({...day,columns:day.columns.map(column=>Array.from(column))}),{quality:9})};
+ f.records.packages.putDay(source,packet);f.queries.length=0;
+ for(const encoding of ['identity','br','gzip'] as const){
+  const ready=await f.request(path,'GET',true,encoding);assert.equal(ready.status,200);
+  assert.deepEqual(ready.body,packet.bytes[encoding]);assert.equal(ready.headers['Content-Encoding'],encoding==='identity'?undefined:encoding);assert.ok(ready.headers['Set-Cookie']);
+ }
+ assert.ok(!f.queries.some(sql=>/INSERT INTO library_preparation|INSERT INTO account_chart_returns|INSERT INTO library_natal_days/.test(sql)));
+ assert.equal((await f.request(path,'GET',true,'identity;q=0, br;q=0, gzip;q=0')).status,406);
+ f.database.connection.exec("UPDATE library_natal_days SET br=x'00'");assert.equal((await f.request(path)).status,202);
+ f.records.remove({...f.intent(),chartId:id!});assert.equal((await f.request(path)).status,404);
+});
+
+test('ready-day transport keeps binary packets separate from placement and rejects late foreign sessions',async t=>{
+ const f=await fixture(t),id=f.add()!,source={date:'2000-01-01',timezone:'UTC'},ref={kind:'day' as const,sourceKey:natalDaySourceKey(source)};
+ let access={accountId:f.accountId,sessionId:f.session.id},after=()=>{},calls=0;
+ const client=createChartClient({getSession:()=>access,fetch:async(path,options)=>{
+  assert.equal(options?.method,'GET');calls++;const reply=await f.request(String(path));after();
+  return reply.headers['Content-Type']==='application/octet-stream'?new Response(reply.body,{status:reply.status}):Response.json(reply.body,{status:reply.status,headers:reply.headers as HeadersInit});
+ }});
+ assert.equal(typeof client.readyDay,'function');
+ const input={chartId:id,expectedAccountId:f.accountId,ref};
+ assert.deepEqual(await client.readyDay(input),{kind:'not-ready',ref,retryAfterMs:1000});
+ const day=natalDayFixture({...source,samples:10}),packet={bytes:await compressDayPacket(await encodeNatalDayPacket({...day,columns:day.columns.map(column=>Array.from(column))}))};
+ f.records.packages.putDay(source,packet);
+ const ready=await client.readyDay(input);assert.equal(ready.kind,'ready');if(ready.kind==='ready')assert.deepEqual(Buffer.from(ready.payload),packet.bytes.identity);
+ after=()=>{access={...access,sessionId:'new'};};await assert.rejects(client.readyDay(input),{code:'account_changed'});
+ after=()=>{};const stopped=new AbortController();stopped.abort();const previous=calls;
+ await assert.rejects(client.readyDay(input,stopped.signal),{name:'AbortError'});assert.equal(calls,previous);
+});
+
+test('ready-day transport rejects malformed readiness instead of treating it as a valid wait',async()=>{
+ const ref={kind:'day' as const,sourceKey:'["2000-01-01","UTC"]'},input={chartId:chartId(1),expectedAccountId:'1',ref};
+ let body:unknown={kind:'not-ready',ref},calls=0;
+ const client=createChartClient({getSession:()=>({accountId:'1',sessionId:'s'}),fetch:async()=>{calls++;return Response.json(body,{status:202});}});
+ for(const bad of [null,{kind:'ready',ref},{kind:'not-ready',ref:null},{kind:'not-ready',ref:{...ref,kind:'major-returns'}},{kind:'not-ready',ref:{...ref,sourceKey:'different'}}]){
+  body=bad;await assert.rejects(client.readyDay(input),{code:'invalid_response'});
+ }
+ const prior=calls;
+ for(const bad of [{...ref,kind:'major-returns'},{...ref,sourceKey:''}])await assert.rejects(client.readyDay({...input,ref:bad as never}),{code:'invalid_request'});
+ assert.equal(calls,prior,'invalid address cannot start HTTP');
 });

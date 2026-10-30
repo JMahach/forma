@@ -17,7 +17,7 @@ function matchesChart(ref:LibraryPartRef,chart:AccountChart) {
   ?ref.sourceKey===natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone||'UTC'})
   :ref.sourceKey===returnSourceKey({birthUtc:chart.utc,timezone:chart.timezone||'UTC'}));
 }
-function validPayload(ref:LibraryPartRef,payload:unknown):payload is ArrayBuffer|MajorReturnsPackage {
+export function validLibraryPayload(ref:LibraryPartRef,payload:unknown):payload is ArrayBuffer|MajorReturnsPackage {
  try {
   if(ref.kind==='major-returns')return validMajorReturnsPackage(ref,payload);
   const day=decodeNatalDay(payload);
@@ -60,7 +60,7 @@ function discardBrokenPackage(database:Database,seen:LibraryLease,ref:LibraryPar
   const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
    if(!sameLibraryLease(owner.result,seen))return;
    const rows=tx.objectStore('packages'),id=libraryPackageId(ref),read=rows.get(id);read.onsuccess=()=>{
-    if(!read.result || validPayload(ref,read.result.payload))return;
+    if(!read.result || validLibraryPayload(ref,read.result.payload))return;
     rows.delete(id);tx.objectStore('packageMetadata').delete(id);tx.objectStore('usage').delete(id);
    };
   };
@@ -85,7 +85,7 @@ class LibraryPackageOwner {
    const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
     if(!sameLibraryLease(owner.result,seen))return;
     const row=tx.objectStore('packages').get(id);row.onsuccess=()=>{
-     const payload:unknown=row.result?.payload,valid=validPayload(ref,payload);validated=valid;
+     const payload:unknown=row.result?.payload,valid=validLibraryPayload(ref,payload);validated=valid;
      try {if(validated && openedAt!==undefined)tx.objectStore('usage').put({id,openedAt});}catch(error){fail(error);return;}
      done({payload:valid?payload:null,broken:!!row.result && !validated});
     };
@@ -154,7 +154,7 @@ class LibraryPackageOwner {
  async putPackage(seen:LibraryLease,chart:AccountChart,ref:LibraryPartRef,payload:unknown,{opened=false}:{opened?:boolean}={}):Promise<LibraryPackageWrite> {
   seen={...seen};chart={...chart};ref={...ref};
   const isCurrent=this.pressure?.capture()??(()=>true);
-  if(chart.accountId!==seen.accountId || !matchesChart(ref,chart) || !validPayload(ref,payload))return 'invalid';
+  if(chart.accountId!==seen.accountId || !matchesChart(ref,chart) || !validLibraryPayload(ref,payload))return 'invalid';
   return this.place({seen,chart,ref,id:libraryPackageId(ref),payload:structuredClone(payload),
    openedAt:opened?Math.max(1,this.now()):undefined,isCurrent,needsPayload:true});
  }

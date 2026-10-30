@@ -12,6 +12,8 @@ import {createLibraryCatalogStore,markLibraryMutation,readStoredLibraryCatalog,l
 import type {LibraryCatalogSnapshot} from '../../shared/library-catalog-contract.ts';
 import {createBackgroundCheckStore} from './background-check-store.ts';
 import type {CheckAuthority} from '../domain/background-check.ts';
+import {createLibraryMaintenanceStore} from './library-maintenance-store.ts';
+import {restoreCardUsage} from './library-package-placement.ts';
 
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[];catalog?:LibraryCatalogSnapshot;catalogComplete?:boolean;minimumMarker?:string }
 export type LibraryStoreResult = {status: 'stored'; lease: LibraryLease; pressure?:true; changed?:boolean} | {status:'partial';lease:LibraryLease;changed?:boolean} | {status: 'stale' | 'unavailable'};
@@ -20,12 +22,13 @@ const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
 
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
 export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
-  const database = createIndexedDatabase({databaseName, version: 7, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
+  const database = createIndexedDatabase({databaseName, version: 8, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
   const catalog=createLibraryCatalogStore(database,now);
   return {
     background:createBackgroundCheckStore(database),
+    maintenance:createLibraryMaintenanceStore(database),
     ...createLibraryPackageStore(database,{pressure,now}),
     readCatalog:catalog.readCatalog,
     async putCatalog(base:LibraryCatalogBase,snapshot:LibraryCatalogSnapshot,authority?:CheckAuthority) {
@@ -93,6 +96,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
                 // Acquisition never creates or changes a real-use mark.
                 if(current)unlinkLibraryPackages(tx,chart.id,chart);
                 rows.put(chart);
+                if(!current)restoreCardUsage(tx,chart.id);
                 linkLibraryPackages(tx,chart);
                 outcome.changed=true;
               }

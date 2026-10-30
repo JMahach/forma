@@ -30,3 +30,7 @@ export type LibraryCatalogConfirmation=CatalogState & {kind:'confirmed'|'restart
 export type LibraryMajorReturnsReply=
   | {kind:'ready';ref:ReturnsRef;payload:MajorReturnsPackage}
   | {kind:'not-ready';ref:ReturnsRef};
+/** Client result: successful HTTP bodies retain the existing binary day packet. */
+export type LibraryNatalDayReply=
+  | {kind:'ready';ref:DayRef;payload:ArrayBuffer}
+  | {kind:'not-ready';ref:DayRef;retryAfterMs:number};

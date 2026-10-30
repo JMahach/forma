@@ -16,6 +16,7 @@ function allowedMethods(path:string):string|undefined {
   if(/^\/api\/(?:shared-charts\/[^/]+|charts\/operations\/[^/]+)$/.test(path))return 'GET';
   if(/^\/api\/charts\/[^/]+\/returns\/(?:events|chart|accept)$/.test(path))return 'POST';
   if(/^\/api\/charts\/[^/]+\/returns\/[^/]+\/package$/.test(path))return 'GET';
+  if(/^\/api\/charts\/[^/]+\/day$/.test(path))return 'GET';
   if(/^\/api\/charts\/[^/]+$/.test(path))return 'GET, PATCH, DELETE';
 }
 

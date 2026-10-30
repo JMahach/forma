@@ -1,6 +1,8 @@
 import type {PackageRef} from '../../shared/library-package-contract.ts';
 import { canonicalChartId } from '../../shared/chart-record-contract.ts';
 import { migrateCalculationMetadata } from '../../shared/calculation-storage-transition.ts';
+import type {LibraryLease} from '../domain/library-maintenance.ts';
+export type {LibraryLease} from '../domain/library-maintenance.ts';
 
 function migrateCard(transaction:IDBTransaction,cursor:IDBCursorWithValue) {
   const value=migrateCalculationMetadata(cursor.value);
@@ -39,7 +41,6 @@ export function upgradeAccountLibrary(database:IDBDatabase,transaction:IDBTransa
   };
 }
 
-export interface LibraryLease {accountId:string;generation:string}
 export const validLibraryAccountId=(value:unknown):value is string=>typeof value==='string' && /^[1-9][0-9]{0,19}$/.test(value);
 export function readLibraryLease(value:unknown):LibraryLease|null {
   if(!value || typeof value!=='object' || Array.isArray(value))return null;

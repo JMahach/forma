@@ -1,4 +1,4 @@
-import {TransactionPlacement,replaceAfterQuota,type PlacementProgress} from './library-package-placement.ts';
+import {TransactionPlacement,replaceAfterQuota,restoreCardUsage,type PlacementProgress} from './library-package-placement.ts';
 import {unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
 import {markLibraryMutation} from './library-catalog-store.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
@@ -20,7 +20,7 @@ function replaceWithinTransaction(tx:IDBTransaction,input:Placement,limit:number
     state.needsPayload?limit:0,isCurrent,fail,progress);
   const saveUse=()=>openedAt===undefined?done(true):placement.write(()=>usage.put({id:chart.id,openedAt}),()=>done(true));
   const saveCard=()=>placement.write(()=>rows.put(chart),()=>{
-    try{unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);markLibraryMutation(tx,owner,input.marker);saveUse();}catch(error){fail(error);}
+    try{unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);if(openedAt===undefined)restoreCardUsage(tx,chart.id);markLibraryMutation(tx,owner,input.marker);saveUse();}catch(error){fail(error);}
   });
   placement.start(state.needsPayload?saveCard:saveUse);
 }

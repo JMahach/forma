@@ -1,4 +1,4 @@
-import {canStoreServerReturn,returnSourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
+import {canStoreServerReturn,returnSourceKey,natalDaySourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
 import {validCycleResult,type CycleInput,type CycleResult} from '../../shared/cycles-format.ts';
 import { canonicalChartId, isOperationIdentifier, chartOutcomeTarget, CHART_ID_MIN_DIGITS, CHART_ID_MAX_DIGITS } from '../../shared/chart-record-contract.ts';
 import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
@@ -98,6 +98,14 @@ function readOwnedFamily(storage:ReturnType<typeof createChartRecordStorage>,own
   if(returnSourceKey(source)!==ref.sourceKey)throw new ChartRecordError('source_changed');
   return {source,...storage.readReturnFamily(id,ref.family)};
 }
+function readOwnedDay(storage:ReturnType<typeof createChartRecordStorage>,owner:string,id:string,ref:Extract<PackageRef,{kind:'day'}>) {
+  const chart=storage.get(owner,id);
+  if(!chart)throw new ChartRecordError('not_found');
+  if(chart.source!=='calculated' || ref.kind!=='day')throw new ChartRecordError('invalid_chart');
+  const source={date:chart.birthDate,timezone:chart.timezone||'UTC'};
+  if(natalDaySourceKey(source)!==ref.sourceKey)throw new ChartRecordError('source_changed');
+  return storage.packages.readDay(source);
+}
 
 /** Receives trusted, prepared calculation data. HTTP must not forward user-supplied calculated numbers here. */
 export function createChartRecords({ database, authorize: initialAuthorize, now = Date.now, newId = newChartId }: {
@@ -178,6 +186,9 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     },
     readReturnFamily(id:string,expectedAccountId:string,ref:Extract<PackageRef,{kind:'major-returns'}>) {
       return database.transaction(()=>readOwnedFamily(storage,account(now(),expectedAccountId),id,ref));
+    },
+    readNatalDay(id:string,expectedAccountId:string,ref:Extract<PackageRef,{kind:'day'}>) {
+      return database.transaction(()=>readOwnedDay(storage,account(now(),expectedAccountId),id,ref));
     },
     // Internal reuse only. The calculation service must project numeric data before returning or storing it.
     readRelatedReturn(query:ChartReturnQuery):unknown {

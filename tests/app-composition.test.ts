@@ -242,7 +242,7 @@ function catalogPage(charts:AccountChart[],accountId:string) {
 function testChartClient(overrides: Partial<ChartClient>): ChartClient {
   const unexpected = async () => {throw new Error('Unexpected chart API call in composition test');};
   return {create:unexpected,update:unexpected,remove:unexpected,addFromSource:unexpected,outcome:unexpected,
-    own:unexpected,public:unexpected,list:unexpected,catalog:unexpected,confirmCatalog:async input=>({kind:'confirmed',accountId:input.expectedAccountId,marker:input.marker}),...overrides};
+    own:unexpected,public:unexpected,list:unexpected,readyDay:unexpected,catalog:unexpected,confirmCatalog:async input=>({kind:'confirmed',accountId:input.expectedAccountId,marker:input.marker}),...overrides};
 }
 function harness({connection, copyText, transitStart = async () => true, actualStore, accountReady = Promise.resolve(), storagePressure,  journal, navigation, onPersonalReset, personalCleanup, syncTransitWindow, chartClient, libraryStorage, accountSession = null, realSummary = false, realViewSession = false, realTransit = false, search = '', restore = async () => true, savedView = null, fonts, initialPresentation = null, studioSize = null, metaError = null, charts = [], loadKnowledge = null, chartsReady = null, returnEvents = [], getReturn = () => assert.fail('no return calculation expected'), getPoint = () => assert.fail('these navigation actions do not request lifetime points') }: HarnessOptions = {}) {
   const { document, element } = browser();

@@ -19,6 +19,11 @@ interface Candidate {id:string;kind:PackageRef['kind'];chartIds:string[];openedA
 interface Victim {id:string;kind:PackageRef['kind'];used:number;metadata?:LibraryPackageMetadata}
 const rank={card:3,day:2,'major-returns':1};
 const compareIds=(a:string,b:string)=>a<b?-1:a>b?1:0;
+export function restoreCardUsage(tx:IDBTransaction,id:string) {
+ const rows=tx.objectStore('usage'),read=rows.get(id);read.onsuccess=()=>{
+  if(read.result?.evicted)rows.put({id,openedAt:read.result.openedAt});
+ };
+}
 function lowerPriority(row:Victim,incoming:Candidate,threshold:number) {
  if(row.id===incoming.id)return false;
  return rank[row.kind]<rank[incoming.kind] || rank[row.kind]===rank[incoming.kind]
@@ -63,7 +68,7 @@ export class TransactionPlacement {
    this.progress.released++;
    try {
     if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=retry;
-    else retry();
+    else this.tx.objectStore('usage').put({id:victim.id,openedAt:victim.used,evicted:true}).onsuccess=retry;
    }catch(error){this.fail(error);}
   };
  }

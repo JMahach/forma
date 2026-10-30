@@ -2,7 +2,9 @@ import { isChartIdentifier as identifier, isOperationIdentifier, MAX_CALCULATION
 import type { AccountChart, PublicAccountChart, AccountChartPage, ChartWriteIntent, ChartWriteOutcome, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart, validatePublicAccountChart } from '../domain/account-chart.ts';
 import { ConnectionError, fetchResource, responseError,retryAfterMilliseconds } from './http-transport.ts';
-import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
+import {isLibraryCatalogMarker,type LibraryNatalDayReply} from '../../shared/library-catalog-contract.ts';
+import {natalDaySourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
+import {decodeNatalDay} from '../../shared/day-packets/decode.ts';
 import {validateLibraryCatalogReply,validateLibraryCatalogConfirmation,type CatalogQuery} from '../domain/library-catalog.ts';
 
 /** Source input may carry an opaque proof of server-calculated numbers; no unsigned activations cross the write boundary. */
@@ -88,6 +90,22 @@ function reply<T extends ChartOutcome>(base:ChartWriteIntent, result:T, value:Re
   return receipt;
 }
 
+function validateDayReadiness(value:unknown,ref:Extract<PackageRef,{kind:'day'}>) {
+ if(!object(value) || value.kind!=='not-ready' || !object(value.ref) || value.ref.kind!=='day' || value.ref.sourceKey!==ref.sourceKey)throw invalid();
+}
+async function readDayResponse(response:Response,ref:Extract<PackageRef,{kind:'day'}>,signal?:AbortSignal):Promise<LibraryNatalDayReply> {
+  if(response.status===200) {
+    const payload=await response.arrayBuffer();active(signal);
+    if(validated(()=>natalDaySourceKey(decodeNatalDay(payload)))!==ref.sourceKey)throw invalid();
+    return {kind:'ready',ref,payload};
+  }
+  const value:unknown=await response.json().catch(()=>null);active(signal);
+  const retryAfterMs=retryAfterMilliseconds(response.headers.get('Retry-After'));
+  if(response.status!==202)throw responseError(response.status,value,'chart_unavailable',retryAfterMs);
+  validateDayReadiness(value,ref);
+  return {kind:'not-ready',ref,retryAfterMs:retryAfterMs??0};
+}
+
 /** No retries, queues, local storage, navigation or implicit account selection. */
 export function createChartClient({fetch: send = fetchResource, getSession}: Options) {
   function session(expectedAccountId: string): Session {
@@ -100,12 +118,12 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
     const current = getSession();
     if (!current || current.accountId !== seen.accountId || current.sessionId !== seen.sessionId) throw accountChanged();
   }
-  async function request(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async function transport(path:string,method:string,body:object|undefined,signal?:AbortSignal,accept='application/json'):Promise<Response> {
     active(signal);
     let response: Response;
     try {
       response = await send(path, {method, credentials: 'same-origin', cache: 'no-store', signal,
-        headers: {Accept: 'application/json', ...(body ? {'Content-Type': 'application/json'} : {})},
+        headers: {Accept: accept, ...(body ? {'Content-Type': 'application/json'} : {})},
         ...(body ? {body: JSON.stringify(body)} : {})});
     } catch (error) {
       active(signal);
@@ -113,6 +131,10 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
       throw new ConnectionError('connection_failed');
     }
     active(signal);
+    return response;
+  }
+  async function request(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const response=await transport(path,method,body,signal);
     let value: unknown;
     try { value = await response.json(); } catch (error) {
       active(signal);
@@ -146,6 +168,16 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
     return reply(base,result,value);
   }
   return {
+    async readyDay(input:{chartId:string;expectedAccountId:string;ref:Extract<PackageRef,{kind:'day'}>},signal?:AbortSignal):Promise<LibraryNatalDayReply> {
+      const chartId=id(input.chartId),seen=session(input.expectedAccountId),ref={...input.ref};
+      if(ref.kind!=='day' || !nonempty(ref.sourceKey,512))throw badInput();
+      const query=new URLSearchParams({accountId:seen.accountId,sourceKey:ref.sourceKey});
+      try {
+        const response=await transport(`/api/charts/${chartId}/day?`+query,'GET',undefined,signal,'application/octet-stream, application/json');
+        stillCurrent(seen);
+        const result=await readDayResponse(response,ref,signal);stillCurrent(seen);return result;
+      }catch(error){stillCurrent(seen);throw error;}
+    },
     async create(input: ChartCreateInput, signal?: AbortSignal) {
       const base = intent(input);
       if (!nonempty(input.name, 80) || !text(input.note, 2000)) throw badInput();

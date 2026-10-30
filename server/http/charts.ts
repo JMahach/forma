@@ -13,6 +13,8 @@ import { HttpInputError, readJSONObject, sendJSON } from './json.ts';
 import { requestSignal } from './request-signal.ts';
 import { rejectApiMethod } from './api-methods.ts';
 import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
+import {negotiateEncoding} from './content-encoding.ts';
+import {sendNatalDayPacket} from './natal-days.ts';
 
 interface ChartHttpOptions {
   report?: ServerFailureReport;
@@ -91,11 +93,13 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
     let current: ReturnType<Accounts['current']> = null;
     let recover: (() => ChartOutcome) | undefined;
     let proof: ReturnType<typeof security.credentials> = {bindings:{}, sessions:{}};
+    function sessionHeaders() {
+      return current ? {'Set-Cookie': [security.cookie('session', current.session.id,
+        proof.sessions[current.session.id]!, current.session.expiresAt)]} : {};
+    }
     function reply(status: number, body: unknown, extra: Record<string,string> = {}) {
       if (consumer.signal.aborted) return;
-      const headers = current ? {'Set-Cookie': [security.cookie('session', current.session.id,
-        proof.sessions[current.session.id]!, current.session.expiresAt)]} : {};
-      sendJSON(res, status, body, {'Cache-Control':'private, no-store', ...headers, ...extra});
+      sendJSON(res, status, body, {'Cache-Control':'private, no-store', ...sessionHeaders(), ...extra});
     }
     try {
       security.assertOrigin(req);
@@ -121,6 +125,17 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
       }
       const library=readLibraryRequest(url,access,returns,consumer);
       if(library){reply(200,library);return;}
+      const dayMatch=/^\/api\/charts\/([^/]+)\/day$/.exec(url.pathname);
+      if(dayMatch) {
+        queryFields(url,['accountId','sourceKey']);
+        const ref={kind:'day' as const,sourceKey:text(url.searchParams.get('sourceKey'),512,true)};
+        const packet=access.readNatalDay(identifier(dayMatch[1]),accountId(url.searchParams.get('accountId')),ref);
+        if(!packet){reply(202,{kind:'not-ready',ref},{'Retry-After':'1'});return;}
+        const encoding=negotiateEncoding(req.headers['accept-encoding']);
+        if(!encoding)throw new HttpInputError('encoding_not_acceptable',406);
+        if(!consumer.signal.aborted)sendNatalDayPacket(res,packet,encoding,{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...sessionHeaders()});
+        return;
+      }
       if (url.pathname === '/api/charts' && req.method === 'GET') {
         const expectedAccountId = accountId(url.searchParams.get('accountId'));
         const after = url.searchParams.get('after') ?? '';
