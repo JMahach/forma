@@ -38,7 +38,9 @@ for (const method of ['adopt','select'] as const) test(`${method} attaches guest
     return {...data,proof:receipts.issue('events',request,data)!};
   }});t.after(()=>client.close());let signedIn=false;
   const own=accountNatalChart(),control=createReturnsController({client,getOwner:chart=>signedIn?{chartId:chart.id!,expectedAccountId:'1'}:null});
-  await control.select(own);signedIn=true;
+  await control.select(own);
+  assert.equal(sent.length,0,'a closed saved chart must not prepare guest dates');
+  await control.open();assert.equal(sent.length,5);signedIn=true;
   await control[method]({...own});await tick();await tick();
   assert.equal(sent.filter(url=>url.endsWith('/accept')).length,5,'same ID hid the change from guest to owner');
   await control[method]({...own});await tick();await tick();
