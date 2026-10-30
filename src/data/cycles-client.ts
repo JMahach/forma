@@ -185,8 +185,8 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
   return {
     receiveFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
       families.receive(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
-    readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false}:{signal?:AbortSignal;opened?:boolean}={})=>
-      families.read(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal,opened,durable:true}),
+    readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false,observeOnly=false}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={})=>
+      families.read(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal,opened,durable:true,observeOnly}),
     fetchFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
       families.fetch(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
     preparedChartInputs, events: (input: CycleInput, signal?: AbortSignal, options?: Pick<CycleOptions, 'owner'>) => get('events', input, signal, options) as Promise<CycleEventsResult>,

@@ -736,3 +736,76 @@ test('offline availability enumerates existing charts before checking their visi
  await control.select(natal());await control.setBodies(['moon']);chartReads=0;
  await control.refreshAvailability();assert.equal(chartReads,1);assert.deepEqual(control.state.readyEvents,[opened.id]);
 });
+
+const storedReturnsRef={kind:'major-returns' as const,sourceKey:JSON.stringify(['2000-01-01T00:00:00Z','UTC']),family:'saturn' as const};
+function storedFamily(body:import('../shared/chart-return-contract.ts').MainReturnBody='saturn'):import('../shared/library-package-contract.ts').MajorReturnsPackage {
+ const dates=packet({body,fromAge:0,toAge:centuryAge});return {source:{birthUtc:'2000-01-01T00:00:00Z',timezone:'UTC'},family:body,dates,charts:dates.events.map(chartPacket)};
+}
+const packageOwner=(chart:import('../shared/chart-types.ts').ChartRecord)=>({chartId:chart.id!,expectedAccountId:'1'});
+test('stored family notice reads only that family and publishes offline readiness once',async()=>{
+ const reads:string[]=[],packets=new Map<string,ReturnType<typeof storedFamily>>();let updates=0,renders=0;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,onStateChange:()=>updates++,onRender:()=>renders++,client:{
+  events:async()=>assert.fail('no HTTP'),chart:async()=>assert.fail('no calculation'),readFamily:async(input,_owner,options)=>{reads.push(input.body);if(reads.length===1)assert.equal(options?.observeOnly,true);return packets.get(input.body)??null;},
+ }});
+ // Initial selection has its existing whole-library availability pass.
+ reads.push('initial');await control.select(natal());reads.length=0;updates=0;renders=0;
+ await control.refreshStoredPackage?.({kind:'day',sourceKey:storedReturnsRef.sourceKey});await control.refreshStoredPackage?.({...storedReturnsRef,sourceKey:'foreign'});
+ assert.deepEqual(reads,[]);assert.equal(updates,0);
+ packets.set('saturn',storedFamily());await control.refreshStoredPackage?.(storedReturnsRef);
+ assert.deepEqual(reads,['saturn']);assert.deepEqual(control.state.readyBodies,['saturn']);assert.deepEqual(control.state.readyEvents,[event().id]);assert.equal(updates,1);assert.equal(renders,0);
+ await control.refreshStoredPackage(storedReturnsRef);assert.equal(updates,1);
+});
+
+test('stored family removal disables its offline entry while preserving the shown return',async()=>{
+ let value:ReturnType<typeof storedFamily>|null=storedFamily(),renders=0;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,onRender:()=>renders++,client:{
+  readFamily:async input=>input.body==='saturn'?value:null,readChart:async()=>({...chartPacket(event()),event:event()}),
+ }});await control.select(natal());await control.selectEvent(event().id);const current=control.current;renders=0;value=null;
+ await control.refreshStoredPackage?.(storedReturnsRef);assert.equal(control.current,current);assert.equal(control.state.selectedEvent?.id,event().id);assert.equal(renders,0);
+ assert.deepEqual(control.state.readyBodies,[]);assert.equal(control.state.canOpen,false);
+});
+
+test('a late stored family cannot replace another source or the latest observation',async()=>{
+ const waits:((value:ReturnType<typeof storedFamily>|null)=>void)[]=[];let delayed=false;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,client:{readFamily:async()=>delayed?new Promise(resolve=>waits.push(resolve)):null}});
+ await control.select(natal());delayed=true;const old=control.refreshStoredPackage?.(storedReturnsRef);await tick();assert.equal(waits.length,1);
+ delayed=false;await control.select(natal({id:'other',utc:'2001-01-01T00:00:00Z'}));waits[0](storedFamily());await old;assert.deepEqual(control.state.readyBodies,[]);
+ await control.select(natal());delayed=true;const first=control.refreshStoredPackage(storedReturnsRef),last=control.refreshStoredPackage(storedReturnsRef);await tick();
+ waits[2](null);await last;waits[1](storedFamily());await first;assert.deepEqual(control.state.readyBodies,[]);
+});
+
+test('a full availability scan cannot publish half a result or overwrite a newer family notice',async()=>{
+ const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let bulk=false;
+ const control=createReturnsController({connection:()=> 'offline',getOwner:packageOwner,client:{readFamily:async(input,_owner,options)=>{
+  if(options?.observeOnly)return input.body==='saturn'?storedFamily():null;
+  return bulk?new Promise(resolve=>waits.set(input.body,resolve)):null;
+ }}});await control.select(natal());bulk=true;const scan=control.refreshAvailability();await tick();
+ waits.get('uranus')!(storedFamily('uranus'));await tick();assert.deepEqual(control.state.readyBodies,[],'full refresh publishes a coherent result');
+ await control.refreshStoredPackage(storedReturnsRef);assert.deepEqual(control.state.readyBodies,['saturn']);
+ for(const [body,resolve] of waits)if(body!=='uranus')resolve(null);await scan;
+ assert.deepEqual(control.state.readyBodies,['saturn','uranus'],'old absence cannot revoke the newer saturn packet');
+});
+
+test('independent family notices complete independently and late ownership changes are rejected',async()=>{
+ const waits=new Map<string,(value:ReturnType<typeof storedFamily>|null)=>void>();let delayed=false,account='1';
+ const control=createReturnsController({connection:()=> 'offline',getOwner:chart=>({...packageOwner(chart),expectedAccountId:account}),client:{
+  readFamily:async input=>delayed?new Promise(resolve=>waits.set(input.body,resolve)):null,
+ }});await control.select(natal());delayed=true;
+ const saturn=control.refreshStoredPackage(storedReturnsRef),uranus=control.refreshStoredPackage({...storedReturnsRef,family:'uranus'});await tick();
+ waits.get('uranus')!(storedFamily('uranus'));await uranus;assert.deepEqual(control.state.readyBodies,['uranus']);
+ waits.get('saturn')!(storedFamily());await saturn;assert.deepEqual(control.state.readyBodies,['saturn','uranus']);
+ const late=control.refreshStoredPackage({...storedReturnsRef,family:'chiron'});await tick();account='2';waits.get('chiron')!(storedFamily('chiron'));await late;
+ assert.deepEqual(control.state.readyBodies,['saturn','uranus']);
+});
+
+test('a stored online family supplies pending dates without requesting or rendering another chart',async()=>{
+ let finish!:(value:CycleEventsResult)=>void,aborted=false,requests=0,renders=0;
+ const control=createReturnsController({getOwner:packageOwner,onRender:()=>renders++,client:{
+  events:async(input,signal)=>{requests++;if(input.body!=='saturn')return packet(input);signal?.addEventListener('abort',()=>aborted=true);return new Promise(resolve=>finish=resolve);},
+  readFamily:async()=>storedFamily(),chart:async()=>assert.fail('no exact chart request'),
+ }});const selecting=control.select(natal());await tick();const initial=requests;renders=0;
+ await control.refreshStoredPackage(storedReturnsRef);assert.equal(aborted,true);assert.equal(requests,initial);assert.equal(renders,0);
+ assert.ok(control.state.events.some(value=>value.id===event().id));assert.ok(!control.state.pendingBodies.includes('saturn'));
+ finish(packet({body:'saturn',fromAge:0,toAge:centuryAge},[]));await selecting;await control.open();
+ assert.equal(requests,initial);assert.ok(control.state.events.some(value=>value.id===event().id));assert.equal(control.current,null);
+});

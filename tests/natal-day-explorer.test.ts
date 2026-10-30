@@ -508,3 +508,42 @@ test('a late offline day readiness lookup cannot enable a different selected cha
   assert.equal(explorer.state.original?.cityId, 'second');
   assert.equal(explorer.state.canOpen, false);
 });
+
+const storedDayRef={kind:'day' as const,sourceKey:JSON.stringify(['2026-09-24','UTC'])};
+test('stored day notice ignores another source and adopts one ready day without an opening request',async()=>{
+ let reads=0,notifications=0,renders=0;const ready=natalDayFixture(),source=personalChartFixture({accountId:'1'});
+ const explorer=createNatalDayExplorer({dayClient:{getDay:async()=>assert.fail('no HTTP'),readStoredDay:async(chart,options)=>{reads++;assert.equal(chart,source);assert.equal(options?.observeOnly,true);return ready;}},
+  onStateChange:()=>notifications++,onRender:()=>renders++});explorer.select(source);notifications=0;
+ await explorer.refreshStoredPackage?.({kind:'day',sourceKey:'another'});await explorer.refreshStoredPackage?.({kind:'major-returns',sourceKey:storedDayRef.sourceKey,family:'saturn'});
+ assert.equal(reads,0);assert.equal(notifications,0);
+ await explorer.refreshStoredPackage?.(storedDayRef);assert.equal(reads,1);assert.equal(explorer.state.day,ready);assert.equal(renders,0);assert.equal(notifications,1);
+ assert.equal(await explorer.open(),true);assert.equal(reads,1);assert.equal(explorer.state.status,'ready');assert.equal(explorer.state.current?.utc,source.utc);
+});
+
+test('deleting a stored day preserves the held minute and a repeated notice does not repaint it',async()=>{
+ const ready=natalDayFixture();let stored:NatalDay|null=ready,renders=0,updates=0;
+ const explorer=createNatalDayExplorer({connection:()=> 'offline',dayClient:{getDay:async()=>assert.fail('no HTTP'),readStoredDay:async()=>stored},onStateChange:()=>updates++,onRender:()=>renders++});
+ explorer.select(personalChartFixture({accountId:'1'}));await settle();await explorer.open();explorer.scrub(600);const current=explorer.current;updates=0;renders=0;stored=null;
+ await explorer.refreshStoredPackage?.(storedDayRef);assert.equal(explorer.current,current);assert.equal(explorer.state.index,600);assert.equal(renders,0);assert.equal(updates,0);
+ explorer.close();await settle();assert.equal(explorer.state.canOpen,false);
+});
+
+test('a delayed stored day cannot cross a new account or a newer packet observation',async()=>{
+ const waiting:((day:NatalDay|null)=>void)[]=[];const explorer=createNatalDayExplorer({dayClient:{getDay:async()=>assert.fail('no HTTP'),
+  readStoredDay:async()=>new Promise<NatalDay|null>(resolve=>waiting.push(resolve))}});
+ explorer.select(personalChartFixture({accountId:'1'}));const old=explorer.refreshStoredPackage?.(storedDayRef);await settle();assert.equal(waiting.length,1);
+ explorer.select(personalChartFixture({accountId:'2'}));waiting[0](natalDayFixture());await old;assert.equal(explorer.state.day,null);
+ const first=explorer.refreshStoredPackage(storedDayRef),last=explorer.refreshStoredPackage(storedDayRef);await settle();
+ waiting[2](null);await last;waiting[1](natalDayFixture());await first;assert.equal(explorer.state.day,null);
+});
+
+test('a stored day supersedes a pending calculation without changing the shown minute',async()=>{
+ let finish!:(value:NatalDay)=>void,aborted=false,renders=0;const prepared=natalDayFixture();
+ const explorer=createNatalDayExplorer({onRender:()=>renders++,dayClient:{
+  getDay:async(_chart,options)=>{options?.signal?.addEventListener('abort',()=>aborted=true);return new Promise(resolve=>finish=resolve);},
+  readStoredDay:async()=>prepared,
+ }});explorer.select(personalChartFixture({accountId:'1'}));const opening=explorer.open();await settle();
+ await explorer.refreshStoredPackage(storedDayRef);assert.equal(aborted,true);assert.equal(explorer.state.status,'ready');assert.equal(renders,0);
+ explorer.scrub(600);const shown=explorer.current;finish(natalDayFixture());await opening;
+ assert.equal(explorer.state.day,prepared);assert.equal(explorer.current,shown);assert.equal(explorer.state.index,600);assert.equal(renders,1);
+});

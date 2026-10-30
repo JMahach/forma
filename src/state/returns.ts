@@ -4,6 +4,7 @@ import type { CycleEvent, CycleInput } from '../../shared/cycles-format.ts';
 import type { ChartInput } from '../domain/chart-composition.ts';
 import type { CachedCycleChart, CyclesClient, CycleOwner } from '../data/cycles-client.ts';
 import type { SavedReturnView } from '../data/view-store.ts';
+import {returnSourceKey,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
 import { getConnectionMode, type ConnectionMode } from '../data/http-transport.ts';
 interface ReturnJob<T> { controller: AbortController; promise: Promise<T> }
 interface BodyReturns {
@@ -11,6 +12,10 @@ interface BodyReturns {
   error: { body: string; code: string; message: string } | null;
   job: ReturnJob<boolean> | null;
   release: (() => void) | null;
+  availability:number;probe:AbortController|null;
+}
+interface StoredFamily {
+  body:string;input:CycleInput;packet:MajorReturnsPackage|null;record:BodyReturns;version:number;
 }
 export type ReturnsController = ReturnType<typeof createReturnsController>;
 export type ReturnsState = ReturnsController['state'];
@@ -49,6 +54,11 @@ export function createReturnsController({ observe, connection = getConnectionMod
   let minYear = EPHEMERIS_FIRST_YEAR, maxYear = EPHEMERIS_LAST_YEAR, calendarZone = 'UTC';
   // null events means not loaded; [] is a completed search with no returns.
   const records = new Map<string, BodyReturns>();
+  function recordFor(body:string) {
+    let record=records.get(body);
+    if(!record){record={events:null,error:null,job:null,release:null,availability:0,probe:null};records.set(body,record);}
+    return record;
+  }
   // Availability is a view of the current owner's existing data, not another
   // chart cache. A changed selection cancels all outstanding device probes.
   let readyEvents = new Set<string>(), availabilityJob: AbortController | null = null;
@@ -96,25 +106,46 @@ export function createReturnsController({ observe, connection = getConnectionMod
   }
   function cancelSearch(record: BodyReturns) { abortJob(record.job); record.job = null; }
   function cancelSearches() {
-    for (const record of records.values()) { cancelSearch(record); record.release?.(); record.release = null; }
+    for (const record of records.values()) { cancelSearch(record);record.availability++;record.probe?.abort();record.probe=null;record.release?.(); record.release = null; }
+  }
+  function acceptStoredFamily(part:StoredFamily|null) {
+    if(!part || part.version!==part.record.availability)return false;
+    const {body,input,packet,record}=part;
+    const wasReady=readyWholeBodies.has(body);
+    if(packet)readyWholeBodies.add(body);else readyWholeBodies.delete(body);
+    let changed=offline() && wasReady!==!!packet;
+    if(packet && record.events===null){record.release?.();record.release=client.retainEvents?.(input,packet.dates)??null;record.events=packet.dates.events;changed=true;}
+    if(packet && (record.error || record.job)){cancelSearch(record);record.error=null;changed=true;}
+    return changed;
+  }
+  function publishStoredFamilies() {
+    readyEvents=new Set(offline()?visibleEvents().filter(event=>readyWholeBodies.has(event.body)).map(event=>event.id):[]);
+    if(offline() && current && selectedEvent)readyEvents.add(selectedEvent.id);
+    emit();
+  }
+  async function readStoredFamily(owner:ChartRecord,destination:CycleOwner,body:string,
+    options:{signal:AbortSignal;owns:()=>boolean;observeOnly?:boolean;probe?:AbortController}):Promise<StoredFamily|null> {
+    const record=recordFor(body),version=++record.availability;record.probe?.abort();record.probe=options.probe??null;
+    const input={birthUtc:owner.utc!,timezone:owner.timezone||'UTC',body,...cycleRangeForChart(owner)!};
+    let packet:MajorReturnsPackage|null=null;
+    try{packet=await client.readFamily?.(input,destination,{signal:options.signal,observeOnly:options.observeOnly})??null;}catch{/* Optional device read. */}
+    finally{if(record.probe===options.probe)record.probe=null;}
+    if(!options.owns() || !sameOwner(destination,ownerSnapshot(natal)))return null;
+    return {body,input,packet,record,version};
   }
   async function refreshOwnedFamilies(owner:ChartRecord,destination:CycleOwner,signal:AbortSignal,owns:()=>boolean) {
-    const range=cycleRangeForChart(owner)!;
-    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(async body=>{
-      const input={birthUtc:owner.utc!,timezone:owner.timezone||'UTC',body,...range};
-      try{return {body,input,packet:await client.readFamily?.(input,destination,{signal})};}catch{return {body,input,packet:null};}
-    }));
-    if(!owns())return;
-    readyWholeBodies.clear();
-    for(const {body,input,packet} of parts) {
-      const record=records.get(body)??{events:null,error:null,job:null,release:null};
-      record.release?.();record.release=null;record.events=packet?.dates.events??null;
-      if(packet){readyWholeBodies.add(body);record.release=client.retainEvents?.(input,packet.dates)??null;}
-      records.set(body,record);
-    }
-    readyEvents=new Set(visibleEvents().filter(event=>readyWholeBodies.has(event.body)).map(event=>event.id));
-    if(current && selectedEvent)readyEvents.add(selectedEvent.id);
-    availabilityJob=null;emit();
+    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(body=>readStoredFamily(owner,destination,body,{signal,owns})));
+    if(!owns() || !sameOwner(destination,ownerSnapshot(natal)))return;
+    availabilityJob=null;const changed=parts.map(acceptStoredFamily);if(changed.some(Boolean))publishStoredFamilies();
+  }
+  async function refreshStoredPackage(ref:Exclude<PackageRef,{kind:'card'}>):Promise<void> {
+    const owner=natal,destination=ownerSnapshot(owner);
+    if(ref.kind!=='major-returns' || !available() || !destination
+      || ref.sourceKey!==returnSourceKey({birthUtc:owner!.utc!,timezone:owner!.timezone||'UTC'}))return;
+    const probe=new AbortController(),version=generation;
+    const owns=()=>!probe.signal.aborted && version===generation && sameOwner(destination,ownerSnapshot(natal));
+    const part=await readStoredFamily(owner!,destination,ref.family,{signal:probe.signal,owns,probe,observeOnly:true});
+    if(owns() && acceptStoredFamily(part))publishStoredFamilies();
   }
   async function refreshReadyCharts() {
     availabilityJob?.abort(); availabilityJob = null;
@@ -162,8 +193,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     let added = false,remaining=0,observation:ClientObservation|undefined;
     const required = new Set([...DEFAULT_CYCLE_BODIES, ...bodies, ...waitBodies]);
     for (const body of BODY_IDS.filter(body => required.has(body))) {
-      let record = records.get(body);
-      if (!record) { record = { events: null, error: null, job: null, release: null }; records.set(body, record); }
+      const record = recordFor(body);
       if (record.events !== null || record.job || record.error) continue;
       observation??=observe?.({action:'calculate',component:'cycles'});remaining++;
       const job = start(async signal => {
@@ -352,7 +382,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     for (const body of bodies) { const record = records.get(body); if (record) record.error = null; }
     return ensure();
   }
-  return { select, adopt, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore, refreshAvailability,
+  return { select, adopt, open, close, exit, reset, enableMarkers, setYear, setBodies, selectEvent, retry, restore, refreshAvailability,refreshStoredPackage,
 
     get available() { return available(); }, get natal() { return natal; }, get opened() { return opened; },
     get year() { return year; }, get selectedEvent() { return selectedEvent; },

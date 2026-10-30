@@ -11,7 +11,7 @@ export interface CycleOwner {chartId:string;expectedAccountId:string;record?:Acc
 type Library=Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'|'touchPackage'>;
 type FamilyRef=Extract<PackageRef,{kind:'major-returns'}>;
 interface Destination {lease:LibraryLease;card:AccountChart;ref:FamilyRef;key:string}
-interface ReadOptions {signal:AbortSignal;opened?:boolean;durable?:boolean}
+interface ReadOptions {signal:AbortSignal;opened?:boolean;durable?:boolean;observeOnly?:boolean}
 interface ClientOptions {library?:Library;memory:MemoryCache;legacy:ReturnStorage|null;
  request:(url:string,options:RequestInit)=>Promise<unknown>;timeoutMs:number}
 export type FamilyReceipt={status:'not-ready'|'stale'}|{status:'ready';payload:MajorReturnsPackage};
@@ -84,17 +84,18 @@ class ReturnFamilyClient {
   if(placed!=='stored' && placed!=='no-op')return null;
   await discardLegacy(legacy,data.keys,data.key,signal);return data.packet;
  }
- private async load(target:Destination,signal:AbortSignal,opened:boolean) {
-  const stored=await this.options.library!.readPackage(target.lease,target.ref,{opened});
-  const packet=stored??await this.migrate(target,signal,opened);
+ private async load(target:Destination,signal:AbortSignal,opened:boolean,observeOnly:boolean) {
+  const options=observeOnly?{opened:false,observeOnly:true}:{opened};
+  const stored=await this.options.library!.readPackage(target.lease,target.ref,options);
+  const packet=stored??(observeOnly?null:await this.migrate(target,signal,opened));
   if(signal.aborted)throw createAbortError();
   return packet && !(packet instanceof ArrayBuffer)?this.remember(target,packet):null;
  }
- async read(input:CycleInput,owner:CycleOwner,{signal,opened=false,durable=false}:ReadOptions) {
+ async read(input:CycleInput,owner:CycleOwner,{signal,opened=false,durable=false,observeOnly=false}:ReadOptions) {
   if(signal.aborted)throw createAbortError();
   const target=destination(this.options.library,input,owner);if(!target)return null;
   const useKey=JSON.stringify([target.key,target.lease]);
-  if(!durable) {
+  if(!durable && !observeOnly) {
    const ready=this.options.memory.get<MajorReturnsPackage>(target.key);
    if(ready){
     if(opened)void shareRequest(this.uses,useKey,({controller})=>this.use(target,ready,controller.signal),{signal}).catch(()=>{});
@@ -105,8 +106,8 @@ class ReturnFamilyClient {
   // the gap between a missing lightweight use mark and the full fallback write.
   await this.uses.get(useKey)?.promise.catch(()=>{});
   if(signal.aborted)throw createAbortError();
-  const key=JSON.stringify([target.key,target.lease,opened]);
-  return shareRequest(this.reads,key,({controller})=>this.load(target,controller.signal,opened),{signal});
+  const key=JSON.stringify([target.key,target.lease,opened,observeOnly]);
+  return shareRequest(this.reads,key,({controller})=>this.load(target,controller.signal,opened,observeOnly),{signal});
  }
  private async download(target:Destination,signal:AbortSignal):Promise<MajorReturnsPackage|null> {
   const query=new URLSearchParams({accountId:target.lease.accountId,sourceKey:target.ref.sourceKey});

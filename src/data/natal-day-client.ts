@@ -36,7 +36,7 @@ export function createNatalDayClient({
   const touches = new Map<string, Promise<unknown>>();
   const packets=new WeakMap<NatalDay,ArrayBuffer>();
   const memorySize=(day:NatalDay)=>estimateBytes(day)+(packets.get(day)?.byteLength??0);
-  const diskFor=(chart:BirthDayIdentity|null|undefined)=>captureNatalDayStorage(chart,library,persistentCache);
+  const diskFor=(chart:BirthDayIdentity|null|undefined,observeOnly=false)=>captureNatalDayStorage(chart,library,persistentCache,observeOnly);
   function touch(key:string,disk:DayDisk|null=persistentCache) {
     if(!disk?.touch || touches.has(key))return;
     const work=Promise.resolve().then(()=>disk?.touch?.(key)).catch(()=>{})
@@ -161,9 +161,9 @@ export function createNatalDayClient({
       } finally { clearTimeout(deadline); }
     }, { signal, consumer: { timezone } }));
   }
-  async function readStoredDay(chart:BirthDayIdentity|null|undefined,{signal,opened=false}:{signal?:AbortSignal;opened?:boolean}={}) {
+  async function readStoredDay(chart:BirthDayIdentity|null|undefined,{signal,opened=false,observeOnly=false}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={}) {
     if(signal?.aborted)throw createAbortError();
-    const input=identity(chart),disk=diskFor(chart);if(!input || !disk)return null;
+    const input=identity(chart),disk=diskFor(chart,observeOnly);if(!input || !disk)return null;
     const bytes=await disk.get(input.key,opened);if(signal?.aborted)throw createAbortError();
     if(!bytes)return null;
     try {const day=validate(bytes,input.birthDate);return compatibleTimezone(day,input.timezone)?remember(input.key,day,disk,bytes):null;}catch{return null;}

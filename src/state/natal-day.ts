@@ -2,6 +2,7 @@ import type { ChartRecord } from '../../shared/chart-types.ts';
 import type { ChartInput } from '../domain/chart-composition.ts';
 import type { NatalDay } from '../../shared/day-packets/natal-format.ts';
 import type { NatalDayClient } from '../data/natal-day-client.ts';
+import {natalDaySourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
 import { getConnectionMode, type ConnectionMode } from '../data/http-transport.ts';
 export interface NatalExplorerState {
   original: ChartRecord | null; current: ChartInput | null; day: NatalDay | null;
@@ -32,16 +33,19 @@ export function createNatalDayExplorer({
   let opened = false, status: NatalExplorerState['status'] = 'idle', error = '', exactOriginal = true, sequence = 0;
   let active: { controller: AbortController; promise: Promise<boolean> } | null = null;
   let readyOnDevice = false, availabilitySequence = 0;
+  let storedProbe:AbortController|null=null;
   const canOpen = () => canExploreNatalDay(original) && (connection() !== 'offline' || Boolean(day) || readyOnDevice);
   const state = () => ({ original, current, day, index, referenceIndex, opened,
     status, error, exactOriginal, available: canExploreNatalDay(original), canOpen: canOpen() });
   const notify = () => onStateChange(state());
-  const cancel = () => { sequence += 1; active?.controller.abort(); active = null; };
+  const cancel = () => { sequence += 1; active?.controller.abort(); active = null;
+    availabilitySequence++;storedProbe?.abort();storedProbe=null; };
 
   const discardDay = () => { releaseDay?.(); releaseDay = null; day = null; index = 0; referenceIndex = null; };
 
   const owned=(chart:ChartRecord|null)=>!!chart && 'accountId' in chart && typeof chart.accountId==='string';
   async function refreshAvailability() {
+    storedProbe?.abort();storedProbe=null;
     const version = ++availabilitySequence, chart = original;
     readyOnDevice = Boolean(day || !owned(chart) && dayClient.peekDay?.(chart));
     notify();
@@ -50,6 +54,23 @@ export function createNatalDayExplorer({
     try { ready = Boolean(await (owned(chart)?dayClient.readStoredDay?.(chart):dayClient.readDay?.(chart))); } catch { /* Optional device lookup. */ }
     if (version !== availabilitySequence || chart !== original) return;
     readyOnDevice = ready; notify();
+  }
+  function acceptDay(result:NatalDay,chart:ChartRecord) {
+    const release=dayClient.retainDay?.(result);releaseDay?.();releaseDay=release??null;
+    day=result;referenceIndex=natalDayIndexAt(day,chart.utc!);index=referenceIndex;status='ready';error='';
+  }
+  async function refreshStoredPackage(ref:Exclude<PackageRef,{kind:'card'}>):Promise<void> {
+    const chart=original;
+    if(ref.kind!=='day' || !owned(chart) || !canExploreNatalDay(chart)
+      || ref.sourceKey!==natalDaySourceKey({date:chart!.birthDate,timezone:chart!.timezone||'UTC'}))return;
+    storedProbe?.abort();const probe=new AbortController(),version=++availabilitySequence;storedProbe=probe;
+    let result:NatalDay|null|undefined;
+    try{result=await dayClient.readStoredDay?.(chart,{signal:probe.signal,observeOnly:true});}catch{return;}
+    finally{if(storedProbe===probe)storedProbe=null;}
+    if(probe.signal.aborted || version!==availabilitySequence || chart!==original)return;
+    const wasOpenable=canOpen(),prepared=!!result && !day;readyOnDevice=!!result;
+    if(prepared){sequence++;active?.controller.abort();active=null;acceptDay(result!,chart!);}
+    if(prepared || wasOpenable!==canOpen())notify();
   }
 
   async function load() {
@@ -64,9 +85,7 @@ export function createNatalDayExplorer({
           :await dayClient.getDay(chart,{signal:controller.signal});
         if (requestSequence !== sequence || !opened) return false;
         if(!result){readyOnDevice=false;opened=false;status='idle';return false;}
-        const release = dayClient.retainDay?.(result);
-        releaseDay?.(); releaseDay = release ?? null;
-        day = result; referenceIndex = natalDayIndexAt(day, chart.utc!); index = referenceIndex; status = 'ready';
+        acceptDay(result,chart);
         return true;
       } catch (failure) {
         if (requestSequence !== sequence || controller.signal.aborted) return false;
@@ -116,6 +135,7 @@ export function createNatalDayExplorer({
     },
     close,
     refreshAvailability,
+    refreshStoredPackage,
 
     retry: load,
     reset,

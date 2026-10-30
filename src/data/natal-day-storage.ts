@@ -47,21 +47,26 @@ export interface DayDisk {
 type Library=Pick<AccountLibraryStore,'capture'|'readPackage'|'putPackage'>;
 type Identity=Partial<Pick<ChartRecord,'id'|'birthDate'|'timezone'>> & {accountId?:string};
 interface Destination {owner:LibraryLease;card:AccountChart;ref:{kind:'day';sourceKey:string}}
-async function readOwnedDay(library:Library,destination:Destination,legacy:NatalDayStorage|null,key:string,opened?:boolean) {
- const {owner,card,ref}=destination,ready=await library.readPackage(owner,ref,{opened});
- if(ready instanceof ArrayBuffer)return ready;
+async function migrateOwnedDay(library:Library,destination:Destination,legacy:NatalDayStorage|null,key:string,opened?:boolean) {
+ const {owner,card,ref}=destination;
  const bytes=await legacy?.get(key);if(!bytes)return null;
  const saved=await library.putPackage(owner,card,ref,bytes,{opened});
  if(saved==='stored' || saved==='no-op')await legacy?.remove(key);
  return saved==='invalid' || saved==='stale'?null:bytes;
 }
+async function readOwnedDay(library:Library,destination:Destination,legacy:NatalDayStorage|null,key:string,opened?:boolean,observeOnly=false) {
+ const options=observeOnly?{opened:false,observeOnly:true}:{opened};
+ const ready=await library.readPackage(destination.owner,destination.ref,options);
+ if(ready instanceof ArrayBuffer)return ready;
+ return observeOnly?null:migrateOwnedDay(library,destination,legacy,key,opened);
+}
 /** Capture account authority before any asynchronous read, migration or download. */
-export function captureNatalDayStorage(chart:Identity|null|undefined,library:Library|undefined,legacy:NatalDayStorage|null):DayDisk|null {
- if(!library || !chart?.accountId)return legacy;
+export function captureNatalDayStorage(chart:Identity|null|undefined,library:Library|undefined,legacy:NatalDayStorage|null,observeOnly=false):DayDisk|null {
+ if(!library || !chart?.accountId)return observeOnly?null:legacy;
  const owner=library.capture(chart.accountId);if(!owner)return null;
  const card={...chart} as AccountChart,ref={kind:'day' as const,sourceKey:natalDaySourceKey({date:card.birthDate,timezone:card.timezone||'UTC'})};
  return {owned:true,
-  get:(key,opened)=>readOwnedDay(library,{owner,card,ref},legacy,key,opened),
+  get:(key,opened)=>readOwnedDay(library,{owner,card,ref},legacy,key,opened,observeOnly),
   put:(_key,bytes)=>library.putPackage(owner,card,ref,bytes,{opened:true}),
   remove:()=>Promise.resolve(null),
  };

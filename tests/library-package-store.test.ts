@@ -404,3 +404,45 @@ test('receiving a prepared family has no placement or RAM side effects and share
  controller.abort();await assert.rejects(background,{name:'AbortError'});
  release({kind:'ready',ref,payload:value});assert.equal((await foreground).status,'stored');assert.equal(requests,2);assert.ok(await store.readPackage(lease,ref));
 });
+
+test('observing an owned day reads only its durable packet without migration or use writes',async t=>{
+ const {createNatalDayClient}=await import('../src/data/natal-day-client.ts'),{store,lease}=await setup(t),bytes=dayBytes();
+ let legacyReads=0;const client=createNatalDayClient({library:store,fetch:async()=>assert.fail('no HTTP'),persistentCache:{
+  get:async()=>{legacyReads++;return bytes;},put:async()=>assert.fail('no legacy write'),remove:async()=>assert.fail('no migration removal'),touch:async()=>assert.fail('no use'),close:()=>{},
+ }});
+ assert.equal(await client.readStoredDay(chart,{observeOnly:true,opened:true}),null);assert.equal(legacyReads,0);
+ await store.putPackage(lease,chart,dayRef,bytes);let reads=0;const read=store.readPackage;
+ t.mock.method(store,'readPackage',(...args:Parameters<typeof read>)=>{reads++;assert.deepEqual(args[2],{opened:false,observeOnly:true});return read(...args);});
+ t.mock.method(IDBObjectStore.prototype,'put',()=>assert.fail('observation must not write'));
+ assert.deepEqual(await client.readStoredDay(chart,{observeOnly:true,opened:true}),decodeNatalDay(bytes));assert.equal(reads,1);
+});
+
+test('observing a return family never reads or migrates legacy individual results',async t=>{
+ const {createReturnStorage}=await import('../src/data/return-storage.ts'),{store,indexedDB,lease}=await setup(t),{ref,value}=family();
+ const legacy=createReturnStorage({indexedDB});t.after(()=>legacy.close());
+ const input={birthUtc:chart.utc,timezone:chart.timezone,body:'saturn',...value.dates.range},owner={chartId:chart.id,expectedAccountId:'1',record:chart};
+ await legacy.putEvents(JSON.stringify(['events',input.birthUtc,input.body,input.fromAge,input.toAge,input.timezone]),input,value.dates);
+ for(let i=0;i<value.charts.length;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
+ const client=createCyclesClient({library:store,returnStorage:legacy,request:async()=>assert.fail('no HTTP')});t.after(()=>client.close());
+ t.mock.method(legacy,'getEvents',()=>assert.fail('no legacy reads'));
+ assert.equal(await client.readFamily(input,owner,{observeOnly:true,opened:true}),null);
+ await store.putPackage(lease,chart,ref,value);let reads=0;const read=store.readPackage;
+ t.mock.method(store,'readPackage',(...args:Parameters<typeof read>)=>{reads++;assert.deepEqual(args[2],{opened:false,observeOnly:true});return read(...args);});
+ t.mock.method(IDBObjectStore.prototype,'put',()=>assert.fail('no use or payload write'));
+ assert.deepEqual(await client.readFamily(input,owner,{observeOnly:true,opened:true}),value);assert.equal(reads,1);
+});
+
+for(const kind of ['day','family'] as const)test(`observing a corrupt ${kind} reports absence without repairing storage`,async t=>{
+ const {createNatalDayClient}=await import('../src/data/natal-day-client.ts'),{store,indexedDB}=await setup(t),part=family();
+ const ref=kind==='day'?dayRef:part.ref;
+ const open=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{open.onsuccess=()=>resolve(open.result);});t.after(()=>db.close());
+ await new Promise<void>((resolve,reject)=>{const tx=db.transaction('packages','readwrite');tx.objectStore('packages').put({id:JSON.stringify(ref),payload:{broken:true}});tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);});
+ let writes=0;const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){writes++;return put.apply(this,args);});
+ t.mock.method(IDBObjectStore.prototype,'delete',function(this:IDBObjectStore,...args:Parameters<typeof remove>){writes++;return remove.apply(this,args);});
+ const day=createNatalDayClient({library:store,persistentCache:null,fetch:async()=>assert.fail('no HTTP')});
+ const returns=createCyclesClient({library:store,returnStorage:null,request:async()=>assert.fail('no HTTP')});t.after(()=>returns.close());
+ const ready=kind==='day'?await day.readStoredDay(chart,{observeOnly:true,opened:true})
+  :await returns.readFamily({...part.value.source,body:'saturn'},{chartId:chart.id,expectedAccountId:'1',record:chart},{observeOnly:true,opened:true});
+ assert.equal(ready,null);assert.equal(writes,0,'observation leaves repair to the storage owner');
+});
