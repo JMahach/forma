@@ -57,14 +57,15 @@ export function createChartToolsView(ports:ChartToolsPorts) {
 
   function update() {
     if(ports.signal.aborted)return;
-    const {returns,lifetime,initialPage,initialPresentation,session,exploration,transit,chartSummary,returnsView,lifetimeControls,returnMarkers}=ports;
+    const {returns,lifetime,initialPage,session,exploration,transit,chartSummary,returnsView,lifetimeControls,returnMarkers}=ports;
     if (!returns) return;
     const state = returns!.state, lifetimeState = lifetime?.state, metadata = lifetimeState?.metadata;
     const view = presentation();
     const dayOpen = view.timelinePanel === 'natal-day';
     $('natalDayToggle').setAttribute('aria-expanded', String(dayOpen));
     $('natalDayToggle').setAttribute('aria-pressed', String(dayOpen));
-    if (initialPage.active && initialPresentation) {
+    // The final startup projection must also replace the shell's visibility.
+    if (initialPage.active) {
       for (const [kind, id] of [['transit', 'transitControls'], ['natal-day', 'natalDayControls'], ['lifetime', 'lifetimeControls']] as const)
         $(id).hidden = kind !== view.timelinePanel;
     }

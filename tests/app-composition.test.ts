@@ -1186,6 +1186,18 @@ test('clicking a saved enabled chronicle before its controller arrives closes it
   assert.equal(h.loads, 0, 'a late restoration cannot reopen the cancelled mode');
 });
 
+test('restoration reveals the ready natal day when the initial shell had no timeline', async () => {
+  const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
+  const h = harness({ charts: [chart], savedView: { selectedId: chart.id }, realViewSession: true,
+    initialPresentation: studioPresentation({ personalAvailable: true }) });
+  await h.restoration;
+  assert.equal(h.natalDay.state.opened, true);
+  assert.equal(h.natalDay.state.status, 'ready');
+  assert.equal(h.element('natalDayControls').hidden, false);
+  assert.equal(h.element('natalDayToggle').getAttribute('aria-expanded'), 'true');
+  await h.stopApplication();
+});
+
 test('clicking a saved enabled natal day before restoration closes it and a late restore cannot reopen it', async () => {
   let finishRestore;
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
