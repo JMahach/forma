@@ -55,6 +55,8 @@ export interface ChartReturnQuery {
   chartId:string; expectedAccountId:string; birth:AccountChartBirth;
   action:'events'|'chart'; input:CycleInput;
 }
+export interface PreparationNotice {kind:'queued'|'removed';chartId:string}
+type PreparationListener=(notice:PreparationNotice)=>void;
 
 /** Receives trusted, prepared calculation data. HTTP must not forward user-supplied calculated numbers here. */
 export function createChartRecords({ database, authorize: initialAuthorize, now = Date.now, newId = newChartId }: {
@@ -63,6 +65,7 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
   now?: () => number; newId?: (digits?: number) => string;
 }) {
   const storage = createChartRecordStorage(database,canonicalChartId);
+  const preparationListeners=new Set<PreparationListener>();
   function allocateId() {
     for(let digits=CHART_ID_MIN_DIGITS;digits<=CHART_ID_MAX_DIGITS;digits++) {
       for(let attempt=0;attempt<32;attempt++) {
@@ -79,19 +82,24 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     if (expected !== undefined && current.accountId !== expected) throw new ChartRecordError('account_changed');
     return current.accountId;
   }
-  function write(intent: ChartWriteIntent, apply: (accountId: string) => ChartWriteOutcome): ChartWriteOutcome {
+  function write(intent: ChartWriteIntent, apply: (accountId: string,notice:PreparationListener) => ChartWriteOutcome): ChartWriteOutcome {
     operationId(intent.operationId);
-    return database.transaction(() => {
+    let notice:PreparationNotice|undefined;
+    const outcome=database.transaction(() => {
       const time = now(), owner = account(time, intent.expectedAccountId);
       const prior = storage.outcome(owner, intent.operationId);
       if (prior && time < prior.createdAt + CHART_POLICY.outcomeLifetimeMs) return prior.outcome;
       // IDs are recognized only within the accepted receipt lifetime. Recovery
       // uses outcome(), never a repeated mutation; a new explicit action uses a new ID.
       if (prior) storage.removeOutcome(owner, intent.operationId);
-      const result = apply(owner);
+      const result = apply(owner,value=>{notice=value;});
       storage.saveOutcome(owner, intent.operationId, time, result);
       return result;
     });
+    if(notice)for(const listener of preparationListeners) {
+      try {listener(notice);}catch { /* The committed destination survives a failed wake and resumes on restart. */ }
+    }
+    return outcome;
   }
   function returnContext(query:ChartReturnQuery) {
     const owner=account(now(),query.expectedAccountId), current=storage.get(owner,query.chartId);
@@ -99,12 +107,13 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     if(!isDeepStrictEqual(birthContent(current),birthContent(query.birth)))throw new ChartRecordError('source_changed');
     if(current.source!=='calculated' || !canStoreServerReturn(query.action,query.input.body))throw new ChartRecordError('invalid_chart');
   }
-  function saveContent(owner: string, prepared: AccountChartContent): ChartWriteOutcome {
+  function saveContent(owner: string, prepared: AccountChartContent,notice:PreparationListener): ChartWriteOutcome {
     const content = contentOf(prepared), key = identity(content);
     const existing = storage.match(owner, key.nameKey, key.birthMinute);
     if (existing) return {kind:'existing', chartId:existing.id, revision:existing.revision};
     const row: AccountChart = {...content, id:allocateId(), accountId:owner, revision:1, noteRevision:1, publicRevision:1};
     storage.insert(row, key.nameKey, key.birthMinute, content);
+    if(row.source==='calculated') {storage.preparation.reset(row);notice({kind:'queued',chartId:row.id});}
     return {kind:'created', chartId:row.id, revision:row.revision};
   }
   const api = {
@@ -122,6 +131,14 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
         return storage.readReturnFamily(query.chartId,query.input.body);
       });
     },
+    // Internal reuse only. The calculation service must project numeric data before returning or storing it.
+    readRelatedReturn(query:ChartReturnQuery):unknown {
+      return database.transaction(()=>{
+        returnContext(query);
+        return storage.readRelatedReturn(query.chartId,query.birth.utc,query.birth.timezone||'UTC',query.action,
+          query.input.body,query.action==='chart'?query.input.eventUtc!:'');
+      });
+    },
     // Only trusted, validated computation owners may call this; not browser-supplied numbers.
     saveReturn(query:ChartReturnQuery,result:CycleResult):void {
       if(!validCycleResult(query.action,result,query.input))throw new ChartRecordError('invalid_chart');
@@ -131,20 +148,20 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
       });
     },
     create(intent: ChartWriteIntent & { content: AccountChartContent }): ChartWriteOutcome {
-      return write(intent, owner => saveContent(owner, intent.content));
+      return write(intent, (owner,notice) => saveContent(owner, intent.content,notice));
     },
     addFromSource(intent: ChartWriteIntent & {sourceId: string; seenRevision: number}): ChartWriteOutcome {
-      return write(intent, owner => {
+      return write(intent, (owner,notice) => {
         const source = storage.shared(intent.sourceId);
         if (!source) return {kind:'rejected', chartId:intent.sourceId, code:'not_found'};
         if (source.publicRevision !== intent.seenRevision) {
           return {kind:'rejected', chartId:source.id, code:'source_changed'};
         }
-        return saveContent(owner, {...contentOf(source), note:''});
+        return saveContent(owner, {...contentOf(source), note:''},notice);
       });
     },
     update(intent: ChartUpdate): ChartWriteOutcome {
-      return write(intent, owner => {
+      return write(intent, (owner,notice) => {
         const current = storage.get(owner, intent.chartId);
         if (!current) return {kind:'rejected', chartId:intent.chartId, code:'not_found'};
         if (intent.note && intent.note.seenRevision !== current.noteRevision) {
@@ -163,12 +180,19 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
         if (!storage.update(row, key.nameKey, key.birthMinute, content)) {
           return {kind:'rejected', chartId:current.id, code:'not_found'};
         }
-        if(!isDeepStrictEqual(birthContent(current),birthContent(content)))storage.clearReturns(current.id);
+        if(!isDeepStrictEqual(birthContent(current),birthContent(content))) {
+          storage.clearReturns(current.id);storage.preparation.reset(row);
+          notice({kind:row.source==='calculated'?'queued':'removed',chartId:row.id});
+        }
         return {kind:'updated', chartId:current.id, revision:row.revision};
       });
     },
     remove(intent: ChartWriteIntent & {chartId: string}): ChartWriteOutcome {
-      return write(intent, owner => ({kind:storage.remove(owner, intent.chartId) ? 'deleted' : 'absent', chartId:intent.chartId}));
+      return write(intent, (owner,notice) => {
+        const removed=storage.remove(owner,intent.chartId);
+        if(removed)notice({kind:'removed',chartId:intent.chartId});
+        return {kind:removed?'deleted':'absent',chartId:intent.chartId};
+      });
     },
     outcome(intent: ChartWriteIntent): ChartOutcome {
       operationId(intent.operationId);
@@ -200,6 +224,8 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
   }
   const api = withAuthorization(initialAuthorize);
   api.cleanup();
-  return {...api, withAuthorization,packages:storage.packages};
+  return {...api, withAuthorization,packages:storage.packages,preparation:storage.preparation,
+    subscribePreparation(listener:PreparationListener) {preparationListeners.add(listener);return ()=>{preparationListeners.delete(listener);};},
+  };
 }
 export type ChartRecordAccess = ReturnType<ReturnType<typeof createChartRecords>['withAuthorization']>;

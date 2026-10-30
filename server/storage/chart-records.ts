@@ -1,5 +1,6 @@
 import { migrateStoredCalculations } from './calculation-transition.ts';
 import {createLibraryPackages,createReturnPackets} from './library-packages.ts';
+import {createLibraryPreparationStorage} from './library-preparation.ts';
 import type { Database } from './database.ts';
 import type { AccountChart, AccountChartContent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 
@@ -27,6 +28,9 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     UNIQUE(accountId, nameKey, birthMinute)
   ) STRICT;
   CREATE INDEX IF NOT EXISTS account_charts_account_id ON account_charts(accountId,id);
+  CREATE INDEX IF NOT EXISTS account_charts_return_source ON account_charts(
+    json_extract(content,'$.utc'),COALESCE(NULLIF(json_extract(content,'$.timezone'),''),'UTC'))
+    WHERE json_extract(content,'$.source')='calculated';
   CREATE TABLE IF NOT EXISTS chart_operation_outcomes (
     accountId INTEGER NOT NULL REFERENCES accounts(id), operationId TEXT NOT NULL,
     createdAt INTEGER NOT NULL, outcome TEXT NOT NULL,
@@ -68,12 +72,17 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
     mark.run('short_identifiers_v1');
   });
   const packages=createLibraryPackages(database);
+  const preparation=createLibraryPreparationStorage(database);
   // Compile fixed SQL once per connection owner; each execution reads current rows.
   const statements = {
     identifier: sql.prepare('SELECT 1 FROM chart_identifiers WHERE id = ?'),
     reserve: sql.prepare('INSERT INTO chart_identifiers VALUES (?)'),
     own: sql.prepare('SELECT * FROM account_charts WHERE accountId = ? AND id = ?'),
     shared: sql.prepare('SELECT * FROM account_charts WHERE id = ?'),
+    relatedReturn:sql.prepare(`SELECT r.chartId FROM account_charts c JOIN account_chart_returns r ON r.chartId=c.id
+      WHERE json_extract(c.content,'$.source')='calculated' AND json_extract(c.content,'$.utc')=?
+      AND COALESCE(NULLIF(json_extract(c.content,'$.timezone'),''),'UTC')=? AND c.id<>?
+      AND r.action=? AND r.body=? AND r.eventUtc=? LIMIT 1`),
     matching: sql.prepare('SELECT * FROM account_charts WHERE accountId = ? AND nameKey = ? AND birthMinute = ?'),
     list: sql.prepare('SELECT * FROM account_charts WHERE accountId = ? ORDER BY id'),
     page: sql.prepare('SELECT * FROM account_charts WHERE accountId = ? AND id > ? ORDER BY id LIMIT ?'),
@@ -88,6 +97,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
   };
   return {
     packages,
+    preparation,
     identifierUsed(id:string) { return Boolean(statements.identifier.get(id)); },
     get(accountId: string, id: string) {
       return decode(statements.own.get(accountId, id) as unknown as Row | undefined);
@@ -120,6 +130,10 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
       return returns.read({chartId,action,body,eventUtc});
     },
     readReturnFamily(chartId:string,body:string) {return returns.readFamily(chartId,body);},
+    readRelatedReturn(chartId:string,birthUtc:string,timezone:string,action:'events'|'chart',body:string,eventUtc:string):unknown {
+      const row=statements.relatedReturn.get(birthUtc,timezone,chartId,action,body,eventUtc) as {chartId:string}|undefined;
+      return row?returns.read({chartId:row.chartId,action,body,eventUtc}):null;
+    },
     saveReturn(chartId: string, action: 'events'|'chart', body: string, eventUtc: string, value: unknown) {
       returns.save({chartId,action,body,eventUtc},value);
     },

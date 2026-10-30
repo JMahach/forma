@@ -9,8 +9,45 @@ import { captureResponse } from './helpers/http-response.ts';
 import { accountEnvironment } from '../server/runtime/account-environment.ts';
 import { accountClientIp } from '../server/http/accounts.ts';
 import { createAccountRuntime } from '../server/accounts.ts';
+import {openDatabase} from '../server/storage/database.ts';
+import {createAccountStorage} from '../server/storage/accounts.ts';
+import {createChartRecords} from '../server/services/chart-records.ts';
+import {createCycles} from '../server/services/cycles.ts';
+import {createCalculator} from '../server/services/calculate.ts';
+import {createNatalDays} from '../server/services/natal-days.ts';
+import type {CityCatalog} from '../server/services/cities.ts';
+import {accountNatalChart,chartId} from './helpers/account-chart.ts';
+import {natalDayFixture} from './fixtures/natal-day.ts';
+import {deferred} from './helpers/deferred.ts';
 
 const configuration = (stateDir: string) => accountEnvironment({ FORMA_STATE_DIR: stateDir }, 3636);
+
+test('account runtime stops preparation before closing its shared database',async t=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'forma-runtime-preparation-'));
+  t.after(()=>rm(directory,{recursive:true,force:true}));
+  const filename=path.join(directory,'forma.sqlite'),database=openDatabase(filename);
+  const accountId=String(createAccountStorage(database).ensureAccount('owner@example.test').id);
+  createChartRecords({database,authorize:()=>({accountId})}).create({operationId:chartId(1),expectedAccountId:accountId,content:accountNatalChart()});
+  database.close();
+  const calculate=createCalculator({root:process.cwd()}),cycles=createCycles({generate:async()=>assert.fail('stopped day cannot start returns')});
+  const runtime=await createAccountRuntime({configuration:configuration(directory),charts:{calculate,cycles,cities:{} as CityCatalog}});
+  const entered=deferred(),release=deferred();
+  const natal=createNatalDays({packages:runtime.libraryPackages,generateDay:async(date,timezone)=>{
+    entered.resolve();await release.promise;const day=natalDayFixture({date,timezone,samples:10});
+    return {...day,columns:day.columns.map(column=>Array.from(column))};
+  }});
+  try {
+    const work=runtime.startPreparation!(natal);await entered.promise;
+    let closed=false;const stopped=runtime.close().then(()=>{closed=true;});
+    await new Promise(setImmediate);assert.equal(closed,false);
+    release.resolve();await stopped;await work;
+    const check=openDatabase(filename);
+    try {
+      assert.equal(check.connection.prepare('SELECT count(*) AS n FROM library_preparations').get()!.n,1);
+      assert.equal(check.connection.prepare('SELECT count(*) AS n FROM library_natal_days').get()!.n,0);
+    } finally {check.close();}
+  } finally {release.resolve();await runtime.close();await natal.close();await cycles.close();await calculate.close();}
+});
 
 test('environment keeps persistent state outside the repository and validates paired mail settings', () => {
   assert.ok(path.isAbsolute(accountEnvironment({}, 3636).stateDir));

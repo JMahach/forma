@@ -5,10 +5,10 @@ import type {AccountChart} from '../../shared/chart-record-contract.ts';
 import {canStoreServerReturn,returnSourceKey,validMajorReturnsPackage,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
 
 export interface ChartReturnCalculator {
-  events(input:CycleInput,options:{signal:AbortSignal}):Promise<CycleEventsResult>;
-  chart(input:CycleInput,options:{signal:AbortSignal}):Promise<CycleChartResult>;
+  events(input:CycleInput,options:{signal:AbortSignal;priority?:number}):Promise<CycleEventsResult>;
+  chart(input:CycleInput,options:{signal:AbortSignal;priority?:number}):Promise<CycleChartResult>;
 }
-type ReadOptions={signal:AbortSignal};
+type ReadOptions={signal:AbortSignal;priority?:number};
 
 function requestedLifetimeRange(birthUtc:string,input:CycleInput) {
   const range=mainReturnRange(birthUtc);
@@ -28,11 +28,28 @@ function source(access:ChartRecordAccess,id:string,accountId:string,input:CycleI
 function query(chart:AccountChart,input:CycleInput,action:ChartReturnQuery['action']):ChartReturnQuery {
   return {chartId:chart.id,expectedAccountId:chart.accountId,birth:chart,action,input};
 }
+function reuse(access:ChartRecordAccess,target:ChartReturnQuery) {
+  const value=access.readRelatedReturn(target),{input,action}=target;
+  if(!validCycleResult(action,value,input))return null;
+  if(action==='events') {
+    const dates=value as CycleEventsResult;
+    if(dates.events.length>2000)return null;
+    const result={range:{...dates.range},events:dates.events.map(({utc,cycle,pass,direction})=>({utc,cycle,pass,direction,
+      id:`${input.body}:${utc}`,body:input.body,age:cycleAge(utc,input.birthUtc),cycleId:`${input.body}:${cycle}`}))};
+    access.saveReturn(target,result);return result;
+  }
+  const normalized=normalizeMainReturn(action,input,value);
+  if(!normalized)return null;
+  // A donor's personal fields must never travel with shared numerical work.
+  const {birthPlace:_place,...chart}=(normalized.result as CycleChartResult).chart as CycleChartResult['chart'] & {birthPlace?:string};
+  const result={chart};access.saveReturn(target,result);return result;
+}
 async function dates(cycles:ChartReturnCalculator,access:ChartRecordAccess,context:ReturnType<typeof source>,options:ReadOptions):Promise<CycleEventsResult> {
   options.signal.throwIfAborted();
   const input={birthUtc:context.chart.utc,body:context.body,...context.range};
   const target=query(context.chart,input,'events'),stored=access.readReturn(target);
   if(validCycleResult('events',stored,input))return stored as CycleEventsResult;
+  const shared=reuse(access,target);if(shared)return shared as CycleEventsResult;
   const result=await cycles.events({...input},options);
   options.signal.throwIfAborted();
   if(!validCycleResult('events',result,input) || result.events.length>2000)throw new ChartRecordError('chart_unavailable');
@@ -69,14 +86,18 @@ async function acceptPrepared(receipts:ReturnReceiptReader|undefined,access:Char
   return {accepted:true};
 }
 
-async function readChart(cycles:ChartReturnCalculator,access:ChartRecordAccess,id:string,expectedAccountId:string,input:CycleInput,options:ReadOptions):Promise<CycleChartResult> {
-  const context=source(access,id,expectedAccountId,input,options,'chart'),eventUtc=input.eventUtc;
+function requestedEvent(context:ReturnType<typeof source>,eventUtc:string|undefined) {
   const age=cycleAge(eventUtc,context.chart.utc);
   if(typeof eventUtc!=='string' || !Number.isFinite(age) || age<=0 || age>context.range.toAge)throw new ChartRecordError('invalid_chart');
+  return eventUtc;
+}
+async function readChart(cycles:ChartReturnCalculator,access:ChartRecordAccess,id:string,expectedAccountId:string,input:CycleInput,options:ReadOptions):Promise<CycleChartResult> {
+  const context=source(access,id,expectedAccountId,input,options,'chart'),eventUtc=requestedEvent(context,input.eventUtc);
   const request={birthUtc:context.chart.utc,body:context.body,eventUtc,timezone:context.chart.timezone||'UTC'};
   const target=query(context.chart,request,'chart'),stored=access.readReturn(target);
   // An accepted signed chart remains ready even if its dates were never requested here.
   if(validCycleResult('chart',stored,request))return stored as CycleChartResult;
+  const shared=reuse(access,target);if(shared)return shared as CycleChartResult;
   const events=await dates(cycles,access,context,options);
   options.signal.throwIfAborted();
   access.assertReturnCurrent(target);

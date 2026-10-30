@@ -10,9 +10,11 @@ import { createChartRecords } from './services/chart-records.ts';
 import { createChartCalculation } from './services/chart-calculation.ts';
 import { createCalculationReceipts } from './services/calculation-receipt.ts';
 import { createChartHandler } from './http/charts.ts';
+import {createLibraryPreparation} from './services/library-preparation.ts';
+import type {NatalDays} from './services/natal-days.ts';
 
 /** Shares the account database and calculator; owns neither their lifetime nor a second copy. */
-export function createChartRuntime({report,database,accounts,cities,calculate,cycles,origins,now=Date.now,onInvalidResult,key}: {
+export function createChartRuntime({report,database,accounts,cities,calculate,cycles,origins,now=Date.now,onInvalidResult,key,onPreparationFailure}: {
   report?: ServerFailureReport;
   database: Database;
   key?:Uint8Array;
@@ -23,6 +25,7 @@ export function createChartRuntime({report,database,accounts,cities,calculate,cy
   origins: string[];
   now?:()=>number;
   onInvalidResult?:()=>unknown;
+  onPreparationFailure?:(stage:'prepare'|'schedule')=>unknown;
 }) {
   const records=createChartRecords({database,authorize:()=>null,now});
   const receipts=key?createCalculationReceipts({key}):undefined;
@@ -30,5 +33,13 @@ export function createChartRuntime({report,database,accounts,cities,calculate,cy
   const returnReceipts=key ? createReturnReceipts({key}) : undefined;
   const returns = cycles ? createChartReturns({cycles,receipts:returnReceipts}) : undefined;
   const handler=createChartHandler({report,records,accounts,prepareBirth,returns,issueReturnReceipt:returnReceipts?.issue,origins,now});
-  return {handler,packages:records.packages,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue};
+  let preparation:ReturnType<typeof createLibraryPreparation>|undefined,closed=false;
+  return {handler,packages:records.packages,cleanup:records.cleanup,issueCalculationReceipt:receipts?.issue,issueReturnReceipt:returnReceipts?.issue,
+    startPreparation(natalDays:Pick<NatalDays,'get'>) {
+      if(closed || !returns)return Promise.resolve();
+      preparation??=createLibraryPreparation({records,returns,natalDays,now,onFailure:onPreparationFailure});
+      return preparation.start();
+    },
+    async close() {closed=true;await preparation?.close();},
+  };
 }

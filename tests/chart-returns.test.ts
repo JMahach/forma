@@ -101,6 +101,18 @@ test('a new server instance reads the saved return from the same database withou
   assert.equal(database.connection.prepare('SELECT total_changes() AS n').get()!.n,changes);
 });
 
+test('ready numerical work can be reused across accounts without transferring private donor fields',async t=>{
+  const f=fixture(t);
+  f.cycles.chart=async input=>({chart:{...calculation(input).chart,name:'PRIVATE',note:'PRIVATE',birthPlace:'PRIVATE'}});
+  await f.selected();const before=f.calls();
+  const other=f.records.withAuthorization(()=>({accountId:f.otherId}));
+  const created=other.create({operationId:chartId(999),expectedAccountId:f.otherId,content:accountNatalChart()});
+  const result=await f.service.chart(other,created.chartId,f.otherId,f.input,f.options);
+  assert.equal(result.chart.utc,eventUtc);assert.equal(JSON.stringify(result).includes('PRIVATE'),false);
+  assert.deepEqual(f.calls(),before);
+  assert.throws(()=>f.service.readPackage(f.records,created.chartId,f.accountId,f.input,f.options),{code:'not_found'});
+});
+
 test('an empty confirmed family is complete, but wrong sources, owners and non-primary families are rejected',async t=>{
   const f=fixture(t),read=(input=f.input)=>f.service.readPackage(f.records,f.chart.id,f.accountId,input,f.options);
   f.cycles.events=async input=>({range:dates(input).range,events:[]});

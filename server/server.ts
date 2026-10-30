@@ -82,9 +82,12 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     const account = await createAccountRuntime({ configuration: accountConfiguration,
       charts: { cities, calculate, cycles, onInvalidResult: () => invalidChartResult('invalid_result') },
       report: journal.report, handoffMailReport: journal.handoffMailReport,
-    }); cleanup.push(() => account.close());
+    });
+    let closeNatal=async()=>{};
+    cleanup.push(async()=>{await account.stopPreparation();await closeNatal();await account.close();});
     component='natal_day';
     const natalDays = createNatalDays({ root, computeQueue, report: journal.report, packages:account.libraryPackages });
+    closeNatal=()=>natalDays.close();
     component='routing';
     const diagnosticHandler = createDiagnosticHandler({accounts:account.accounts,origins:accountConfiguration.origins,
       trustLoopbackProxy:accountConfiguration.trustLoopbackProxy,
@@ -120,6 +123,7 @@ export async function startServer({ root = projectRoot, env = process.env, relea
     }
     if (!account.mailConfigured) console.log('Форма: почта не настроена; отправка кодов недоступна.');
     transitDays.startWarmup();
+    void account.startPreparation?.(natalDays);
     return server;
   } catch (error) {
     reportServerFailure(journal.report,{event:'startup_failed',component,reason:'unexpected'});

@@ -51,7 +51,9 @@ export async function createAccountRuntime({ configuration, charts, now = Date.n
     const telegram = configuration.telegramClientId ? createTelegramProvider({ clientId: configuration.telegramClientId, now, fetch: telegramFetch }) : undefined;
     const accounts = createAccounts({ database, key, now, report, telegram, signal: controller.signal,
       mail: { enqueue: value => (queue ?? unavailable).enqueue(value), cancel: id => (queue ?? unavailable).cancel(id) } });
-    const chartRuntime = charts && createChartRuntime({ ...charts, key, database, accounts, origins: configuration.origins, now, report });
+    const chartRuntime = charts && createChartRuntime({ ...charts, key, database, accounts, origins: configuration.origins, now, report,
+      onPreparationFailure:reason=>report({event:'library_preparation_failed',reason,occurredAt:now()}),
+    });
     const handler = createAccountHandler(accounts, { origins: configuration.origins, now, report,
       trustLoopbackProxy: configuration.trustLoopbackProxy });
     if (configuration.postfix) queue = createCodeMailQueue({ database, postfix: createPostfix(configuration.postfix),
@@ -64,10 +66,12 @@ export async function createAccountRuntime({ configuration, charts, now = Date.n
     queue?.start();
     let closing: Promise<void> | undefined;
     return { handler, chartHandler: chartRuntime?.handler, libraryPackages:chartRuntime?.packages, issueCalculationReceipt:chartRuntime?.issueCalculationReceipt, issueReturnReceipt:chartRuntime?.issueReturnReceipt, accounts, mailConfigured: !!configuration.postfix,
+      startPreparation:chartRuntime?.startPreparation,
+      stopPreparation:async()=>{await chartRuntime?.close();},
       close() {
         if (!closing) {
           controller.abort(); clearInterval(timer);
-          closing = (async () => { try { await queue?.close(); } finally { database.close(); } })();
+          closing = (async () => { try {await chartRuntime?.close();await queue?.close();} finally { database.close(); } })();
         }
         return closing;
       },
