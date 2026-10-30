@@ -52,6 +52,7 @@ class AccountLibraryOwner {
   this.markOpened=this.markOpened.bind(this);
   this.open=this.open.bind(this);
   this.prepareAcceptance=this.prepareAcceptance.bind(this);
+  this.acceptStored=this.acceptStored.bind(this);
   this.forget=this.forget.bind(this);
   this.clear=this.clear.bind(this);
   this.retryClear=this.retryClear.bind(this);
@@ -64,7 +65,7 @@ class AccountLibraryOwner {
  private announce(detail:Omit<Extract<LibraryNotice,{kind:'record'}>,'accountId'|'sessionId'>|Omit<Extract<LibraryNotice,{kind:'removed'}>,'accountId'|'sessionId'>|Omit<Extract<LibraryNotice,{kind:'catalog'}>,'accountId'|'sessionId'>){
     if(this.current)this.options.notify({...this.current,...detail});
   }
- private observable() {return [this.records, this.rows, this.ownerId, this.available, this.current?.accountId, this.current?.sessionId, this.lease?.generation];}
+ private observable() {return [this.records, this.rows, this.ownerId, this.available, this.current?.accountId, this.current?.sessionId, this.lease?.generation,this.completeCatalog?.marker];}
  private emit(durableChanged = false) {
     this.rows=projectLibraryEntries(this.catalog,this.records,this.rows);
     const next = this.observable();
@@ -123,10 +124,33 @@ class AccountLibraryOwner {
   if(this.newerRecord(chart))this.contentGeneration++;
   const durableChanged=await this.persistRecord(chart,seen,expectedLease,marker);
   if(this.older(marker))throw failed('library_changed');
-  const changed=this.newerRecord(chart);
-  if(changed){const rows=new Map(this.records.map(row=>[row.id,row]));rows.set(chart.id,chart);this.retainList([...rows.values()]);}
+  this.publishRecord(chart,marker,durableChanged);
+ }
+ private mergeRecord(chart:AccountChart) {
+  const index=this.records.findIndex(row=>row.id===chart.id);
+  if(index>=0 && this.records[index].revision>=chart.revision)return false;
+  const rows=[...this.records];if(index<0)rows.push(chart);else rows[index]=chart;
+  this.records=rows;this.contentGeneration++;return true;
+ }
+ private publishRecord(chart:AccountChart,marker:string,durableChanged:boolean) {
+  const changed=this.mergeRecord(chart),current=this.get(chart.id)!;
+  const entry=libraryRecordEntry(current,this.rows.find(row=>row.id===chart.id));
+  this.replaceEntry(entry,marker,current.accountId);
   this.emit(durableChanged);
-  if(changed || durableChanged)this.announce({kind:'record',entry:libraryRecordEntry(chart,this.rows.find(row=>row.id===chart.id)),marker,durable:this.available});
+  if(changed || durableChanged)this.announce({kind:'record',entry,marker,durable:this.available});
+ }
+ acceptStored(chart:AccountChart,marker:string,lease:LibraryLease,sessionId:string):boolean {
+  if(!this.storedAdmission(chart,marker,lease,sessionId))return false;
+  const recovered=!this.available;this.available=true;this.advance(marker);
+  this.publishRecord(chart,marker,recovered);return true;
+ }
+ private storedAdmission(chart:AccountChart,marker:string,lease:LibraryLease,sessionId:string) {
+  if(!sameWorkingLease(this.workingLease,lease) || this.current?.sessionId!==sessionId || chart.accountId!==this.ownerId)return false;
+  if(!isLibraryCatalogMarker(marker) || this.older(marker) || this.removals.pending.has(chart.id))return false;
+  return this.currentRevision(chart);
+ }
+ private currentRevision(chart:AccountChart) {
+  return chart.revision>=(this.get(chart.id)?.revision??0) && chart.revision>=(this.rows.find(row=>row.id===chart.id)?.revision??0);
  }
  private async persistRecord(chart:AccountChart,seen:number,expectedLease:LibraryLease|null,marker:string) {
   if(!expectedLease)return false;
@@ -235,6 +259,13 @@ class AccountLibraryOwner {
  has(id:string) {return this.rows.some(row=>row.id===id);}
  get accountId() { return this.ownerId; }
  get session() { return this.current; }
+ get workingLease():LibraryLease|null {
+  if(this.closed || !this.current || this.current.accountId!==this.ownerId || this.lease?.accountId!==this.ownerId)return null;
+  return {...this.lease};
+ }
+ get completeCatalog():LibraryCatalogSnapshot|null {
+  return !this.closed && this.catalogComplete && this.catalog?.accountId===this.ownerId && !this.older(this.catalog.marker)?this.catalog:null;
+ }
  get storageAvailable() { return this.available; }
  subscribe(listener: () => void) { this.listeners.add(listener); listener(); return () => { this.listeners.delete(listener); }; }
  get(id: string) {return this.records.find(chart => chart.id === id);}
@@ -386,25 +417,41 @@ class AccountLibraryOwner {
   const base=await this.options.storage.readCatalog();this.check(seen);
   if(base && base.lease.accountId!==this.ownerId)return false;
   if(base){this.advance(base.minimumMarker??'0');if(base.catalog)this.advance(base.catalog.marker);this.lease=base.lease;}
-  return true;
+  return base;
  }
  private async receiveCatalog(notice:Extract<LibraryNotice,{kind:'catalog'}>) {
   if(this.older(notice.catalog.marker))return;
-  if(notice.durable && !await this.readCatalogLease(this.generation))return;
+  if(notice.durable && await this.readCatalogLease(this.generation)===false)return;
   if(!this.older(notice.catalog.marker))this.applyCatalog(notice.catalog);
  }
  private async receiveRecord(notice:Extract<LibraryNotice,{kind:'record'}>) {
   if(this.older(notice.marker))return;
-  const seen=this.generation;this.advance(notice.marker);this.contentGeneration++;
-  if(notice.durable)await this.readLocal(()=>this.check(seen),notice.accountId,false,notice.entry.id);
-  if(seen!==this.generation)return;
-  if(!this.older(notice.marker))this.replaceEntry(notice.entry,notice.marker,notice.accountId);
+  const seen=this.generation;
+  if(notice.durable && !await this.readPeerRecord(notice,seen))return;
+  if(seen!==this.generation || this.older(notice.marker))return;
+  this.advance(notice.marker);this.replaceEntry(notice.entry,notice.marker,notice.accountId);
   this.emit();
  }
+ private async readPeerRecord(notice:Extract<LibraryNotice,{kind:'record'}>,seen:number) {
+  const base=await this.readCatalogLease(seen);
+  if(base===false){this.invalidate();this.resetWorking();this.emit();return false;}
+  // A null metadata read does not distinguish unavailable storage from logout.
+  // Keep the existing recovery guard for that exceptional case only.
+  if(!base)return this.readLocal(()=>this.check(seen),notice.accountId,false,notice.entry.id);
+  if(this.older(notice.marker))return false;
+  const chart=await this.options.storage.maintenance.readCard(base.lease,notice.entry.id);this.check(seen);
+  if(!sameWorkingLease(this.lease,base.lease) || this.older(notice.marker))return false;
+  if(!chart || chart.revision!==notice.entry.revision || this.removals.pending.has(chart.id))return false;
+  this.available=true;this.mergeRecord(chart);
+  return true;
+ }
  private replaceEntry(row:LibraryCatalogEntry,marker:string,accountId:string) {
-  const rows=new Map(projectLibraryEntries(this.catalog,this.records,this.rows).map(entry=>[entry.id,entry]));
-  const prior=rows.get(row.id);if(!prior || prior.revision<=row.revision)rows.set(row.id,row);
+  const prior=this.rows.find(entry=>entry.id===row.id),next=prior && prior.revision>row.revision?prior:row;
+  const accepted=this.catalog?.entries.find(entry=>entry.id===row.id);
+  if(this.catalog?.marker===marker && JSON.stringify(accepted)===JSON.stringify(next))return;
+  const rows=new Map(this.rows.map(entry=>[entry.id,entry]));rows.set(row.id,next);
   this.catalog={accountId,marker,entries:[...rows.values()]};this.catalogComplete=false;
+  this.contentGeneration++;
  }
  private removeWorking(chartId:string) {
   this.contentGeneration++;this.catalogComplete=false;

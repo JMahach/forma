@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { createAccountLibraryStore,type LibraryLease } from '../src/data/account-library-store.ts';
 import { createAccountLibrary } from '../src/state/account-library.ts';
-import { accountChart, chartId } from './helpers/account-chart.ts';
+import { accountChart, accountNatalChart, chartId } from './helpers/account-chart.ts';
 import type { ChartClient } from '../src/data/chart-client.ts';
+import type {LibraryCatalogEntry} from '../shared/library-catalog-contract.ts';
 
 const session = {accountId: '1', sessionId: 'first-session'};
 const noNetwork = async (): Promise<never> => { throw new Error('offline data must not request a server'); };
+function recordEntry(chart=accountChart()):LibraryCatalogEntry {
+ const {id,revision,name,source,birthDate,birthTime}=chart;
+ return {id,revision,name,source,birthDate,birthTime,packages:{card:{kind:'card',sourceKey:JSON.stringify([id,revision])},day:null,majorReturns:null}};
+}
 function client(rows = [accountChart()]): Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'> {
   let marker=1,signature=JSON.stringify(rows);
   const current=()=>{const next=JSON.stringify(rows);if(next!==signature){marker++;signature=next;}return String(marker);};
@@ -431,4 +436,196 @@ test('unavailable logout cleanup retains its exact account target and a retry pr
   assert.deepEqual((await stored.read())!.charts.map(chart=>chart.accountId),['2']);
   assert.equal(library.accountId,'2');
  }finally{library.close();}
+});
+
+test('a stored background card publishes once without another read, put or HTTP and retains its full catalogue',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client(),notices:unknown[]=[];
+ const library=createAccountLibrary({storage,client:source,online:()=>true,notify:value=>notices.push(value)});t.after(()=>library.close());
+ await library.connect(session);await library.load();const base=(await storage.readCatalog())!,chart=accountChart();
+ assert.equal((await storage.put(base.lease,[chart],'1')).status,'stored');let updates=0;library.subscribe(()=>updates++);updates=0;notices.length=0;
+ t.mock.method(storage,'put',()=>assert.fail('already stored'));t.mock.method(storage,'read',()=>assert.fail('already acquired'));
+ t.mock.method(IDBObjectStore.prototype,'get',()=>assert.fail('acceptance must do no IDB read'));
+ t.mock.method(IDBObjectStore.prototype,'put',()=>assert.fail('acceptance must do no IDB write'));
+ for(const name of ['catalog','confirmCatalog','own'] as const)t.mock.method(source,name,noNetwork);
+ assert.equal(library.acceptStored?.(chart,'1',base.lease,session.sessionId),true);
+ assert.equal(library.get(chart.id),chart);assert.equal(library.isReady(chart.id),true);assert.equal(updates,1);assert.equal(notices.length,1);
+ assert.equal(library.completeCatalog?.marker,'1');assert.equal(library.completeCatalog?.entries.length,1);
+ assert.equal(library.acceptStored(structuredClone(chart),'1',base.lease,session.sessionId),true);
+ assert.equal(updates,1);assert.equal(notices.length,1);
+ const permission=library.workingLease!;permission.generation='external mutation';assert.deepEqual(library.workingLease,base.lease);
+ await library.connect(null);assert.equal(library.workingLease,null);library.close();assert.equal(library.completeCatalog,null);
+});
+
+test('stored acceptance rejects stale session, account, lease, marker and revision without publishing',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),chart=accountChart(1,'1',2);
+ const library=createAccountLibrary({storage,client:client([chart]),online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();const lease=(await storage.readCatalog())!.lease;
+ assert.equal(library.acceptStored?.(chart,'1',lease,session.sessionId),true);let updates=0;library.subscribe(()=>updates++);updates=0;
+ const cases=[{chart,marker:'1',lease,sessionId:'old'}, {chart:{...chart,accountId:'2'},marker:'1',lease,sessionId:session.sessionId},
+  {chart,marker:'1',lease:{...lease,generation:'old'},sessionId:session.sessionId},
+  {chart,marker:'0',lease,sessionId:session.sessionId}, {chart,marker:'invalid',lease,sessionId:session.sessionId},
+  {chart:accountChart(),marker:'1',lease,sessionId:session.sessionId}];
+ for(const value of cases)assert.equal(library.acceptStored(value.chart,value.marker,value.lease,value.sessionId),false);
+ assert.equal(updates,0);assert.equal(library.get(chart.id),chart);
+ await library.connect({...session,sessionId:'renewed'});assert.equal(library.acceptStored(chart,'1',lease,session.sessionId),false);
+ await library.connect({accountId:'2',sessionId:'other'});assert.equal(library.acceptStored(chart,'1',lease,'other'),false);
+ library.close();assert.equal(library.workingLease,null);assert.equal(library.acceptStored(chart,'1',lease,'other'),false);
+});
+
+test('a durable peer record reads only its addressed card and never echoes or rewrites it',async t=>{
+ const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});t.after(()=>other.close());
+ const library=createAccountLibrary({storage,client:client(),online:()=>true,notify:()=>assert.fail('no echo')});t.after(()=>library.close());
+ await library.connect(session);const lease=(await other.readCatalog())!.lease,chart=accountChart();await other.put(lease,[chart],'1');
+ let full=0,cardReads=0,catalogReads=0,updates=0;const read=storage.read,readCard=storage.maintenance.readCard,readCatalog=storage.readCatalog;
+ t.mock.method(storage,'read',()=>{full++;return read();});
+ t.mock.method(storage,'readCatalog',()=>{catalogReads++;return readCatalog();});
+ t.mock.method(storage.maintenance,'readCard',(...args:Parameters<typeof readCard>)=>{cardReads++;assert.equal(args[1],chart.id);return readCard(...args);});
+ t.mock.method(storage,'put',()=>assert.fail('peer already stored'));library.subscribe(()=>updates++);updates=0;
+ const get=IDBObjectStore.prototype.get,ids:(IDBValidKey|IDBKeyRange)[]=[];
+ t.mock.method(IDBObjectStore.prototype,'get',function(this:IDBObjectStore,key:IDBValidKey|IDBKeyRange){if(this.name==='charts')ids.push(key);return get.call(this,key);});
+ t.mock.method(IDBObjectStore.prototype,'getAll',()=>assert.fail('no complete numeric read'));
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry(chart)});
+ assert.equal(library.get(chart.id)?.note,chart.note);assert.equal(full,0);assert.equal(cardReads,1);assert.equal(catalogReads,1);assert.equal(updates,1);
+ assert.deepEqual(ids,[chart.id]);
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry(chart)});assert.equal(updates,1);
+});
+
+test('a complete catalogue is invalidated by a new or changed stored observation, including ordinary acceptance',async t=>{
+ for(const kind of ['new','revision','marker','ordinary'] as const){
+  const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());
+  await library.connect(session);await library.load();assert.equal(library.completeCatalog?.marker,'1');
+  const chart=kind==='new'?accountChart(2):accountChart(1,'1',kind==='revision'?2:1),marker=kind==='marker'?'2':'1';
+  if(kind==='ordinary')await library.prepareAcceptance()(chart.id,{...chart,revision:2},marker);
+  else assert.equal(library.acceptStored(chart,marker,(await storage.readCatalog())!.lease,session.sessionId),true);
+  assert.equal(library.completeCatalog,null,kind);assert.equal(library.get(chart.id)?.id,chart.id);
+ }
+});
+
+test('a peer card read delayed across catalogue replacement cannot restore the absent record',async t=>{
+ const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});t.after(()=>other.close());
+ const rows=[accountChart()],library=createAccountLibrary({storage,client:client(rows),online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();await other.put((await other.readCatalog())!.lease,rows,'1');
+ let release!:()=>void,started!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{started=resolve;});
+ const readCard=storage.maintenance.readCard;t.mock.method(storage.maintenance,'readCard',async(...args:Parameters<typeof readCard>)=>{const chart=await readCard(...args);started();await gate;return chart;});
+ const receiving=library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});
+ // On the old full-read implementation no addressed read begins.
+ const startedRead=await Promise.race([began.then(()=>true),receiving.then(()=>false)]);assert.equal(startedRead,true);
+ rows.length=0;await library.load();release();await receiving;
+ assert.equal(library.get(chartId(1)),undefined);assert.deepEqual(library.completeCatalog?.entries,[]);
+});
+
+test('a peer deletion between metadata and card reads cannot publish a record under the retired lease',async t=>{
+ const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});t.after(()=>other.close());
+ const library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const chart=accountChart(),base=(await other.readCatalog())!;await other.put(base.lease,[chart],'1');
+ const readCatalog=storage.readCatalog;t.mock.method(storage,'readCatalog',async()=>{const value=await readCatalog();await other.remove(base.lease,chart.id,'2');return value;});
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry(chart)});
+ assert.equal(library.has(chart.id),false);assert.equal(library.get(chart.id),undefined);
+});
+
+test('stored acceptance is fenced while a same-account deletion is waiting to commit',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();const lease=(await storage.readCatalog())!.lease;
+ assert.equal(library.acceptStored(accountChart(),'1',lease,session.sessionId),true);
+ let release!:()=>void,started!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{started=resolve;});
+ const remove=storage.remove;t.mock.method(storage,'remove',async(...args:Parameters<typeof remove>)=>{started();await gate;return remove(...args);});
+ const removing=library.forget(chartId(1),'2','deleted');await began;
+ assert.equal(library.acceptStored(accountChart(),'2',lease,session.sessionId),false);assert.equal(library.has(chartId(1)),false);
+ release();await removing;
+});
+
+test('stored acceptance cannot use an older revision than a full light catalogue even without a RAM record',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client([accountChart(1,'1',3)]),online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();const lease=(await storage.readCatalog())!.lease;
+ assert.equal(library.acceptStored(accountChart(1,'1',2),'1',lease,session.sessionId),false);
+ assert.equal(library.get(chartId(1)),undefined);assert.equal(library.completeCatalog?.entries[0].revision,3);
+});
+
+test('a stored catalogue behind the minimum marker never authorizes background completeness',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client();
+ const first=createAccountLibrary({storage,client:source,online:()=>true});await first.connect(session);await first.load();
+ const lease=(await storage.readCatalog())!.lease;await storage.put(lease,[accountChart(2)],'2');
+ const library=createAccountLibrary({storage,client:source,online:()=>true});t.after(()=>{first.close();library.close();});await library.connect(session);
+ assert.equal(library.completeCatalog,null);assert.equal(library.get(chartId(2))?.id,chartId(2));
+});
+
+for(const transition of ['session','account','close'] as const)test('a delayed peer card cannot cross a retired '+transition,async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());
+ await library.connect(session);const lease=(await storage.readCatalog())!.lease;await storage.put(lease,[accountChart()],'1');
+ let release!:()=>void,started!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{started=resolve;});
+ const read=storage.maintenance.readCard;t.mock.method(storage.maintenance,'readCard',async(...args:Parameters<typeof read>)=>{const card=await read(...args);started();await gate;return card;});
+ const receiving=library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()}),rejected=assert.rejects(receiving,{code:'account_changed'});await began;
+ if(transition==='close')library.close();else await library.connect(transition==='session'?{...session,sessionId:'next'}:{accountId:'2',sessionId:'other'});
+ let updates=0;library.subscribe(()=>updates++);updates=0;release();await rejected;assert.equal(updates,0);
+ if(transition==='account')assert.equal(library.get(chartId(1)),undefined);
+});
+
+test('a durable full catalogue notice remains usable when local storage is unavailable',async t=>{
+ const library=createAccountLibrary({storage:createAccountLibraryStore({indexedDB:null}),client:{catalog:noNetwork,confirmCatalog:noNetwork,own:noNetwork},online:()=>true});t.after(()=>library.close());
+ await library.connect(session);
+ await library.receive({kind:'catalog',...session,durable:true,catalog:{accountId:'1',marker:'2',entries:[recordEntry()]}});
+ assert.equal(library.has(chartId(1)),true);assert.equal(library.completeCatalog?.marker,'2');assert.equal(library.workingLease,null);
+});
+
+test('peer package readiness may advance without changing the card revision',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const chart=accountNatalChart(),entry={...recordEntry(chart),packages:{card:{kind:'card' as const,sourceKey:JSON.stringify([chart.id,1])},
+  day:{ref:{kind:'day' as const,sourceKey:JSON.stringify([chart.birthDate,chart.timezone])},ready:false},majorReturns:{sourceKey:JSON.stringify([chart.utc,chart.timezone]),readyFamilies:[]}}};
+ await library.receive({kind:'catalog',...session,durable:false,catalog:{accountId:'1',marker:'1',entries:[entry]}});
+ await library.receive({kind:'record',...session,durable:false,marker:'2',entry:{...entry,packages:{...entry.packages,day:{...entry.packages.day,ready:true}}}});
+ assert.equal(library.entries[0].packages.day?.ready,true);assert.equal(library.completeCatalog,null);
+});
+
+test('a later peer marker cannot downgrade a newer light row when its numerical card is absent',async t=>{
+ const library=createAccountLibrary({storage:createAccountLibraryStore({indexedDB:null}),client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ await library.receive({kind:'catalog',...session,durable:false,catalog:{accountId:'1',marker:'1',entries:[recordEntry(accountChart(1,'1',3))]}});
+ await library.receive({kind:'record',...session,durable:false,marker:'2',entry:recordEntry()});
+ assert.equal(library.entries[0].revision,3);assert.equal(library.get(chartId(1)),undefined);
+});
+
+test('a delayed peer numeric read cannot undo a newer RAM-only catalogue with the same local lease',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const lease=(await storage.readCatalog())!.lease;await storage.put(lease,[accountChart()],'1');
+ let release!:()=>void,started!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{started=resolve;});
+ const read=storage.maintenance.readCard;t.mock.method(storage.maintenance,'readCard',async(...args:Parameters<typeof read>)=>{const chart=await read(...args);started();await gate;return chart;});
+ const receiving=library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});await began;
+ await library.receive({kind:'catalog',...session,durable:false,catalog:{accountId:'1',marker:'2',entries:[]}});release();await receiving;
+ assert.equal(library.get(chartId(1)),undefined);assert.deepEqual(library.completeCatalog?.entries,[]);
+});
+
+test('a peer record with a different stored revision cannot mark the older notice as ready',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ await storage.put((await storage.readCatalog())!.lease,[accountChart(1,'1',2)],'1');
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});
+ assert.equal(library.has(chartId(1)),false);assert.equal(library.get(chartId(1)),undefined);
+});
+
+test('a known foreign disk owner rejects peer records without reading its numerical library',async t=>{
+ const indexedDB=new IDBFactory(),storage=createAccountLibraryStore({indexedDB}),other=createAccountLibraryStore({indexedDB});t.after(()=>other.close());
+ const library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ await other.activate('2');t.mock.method(storage,'read',()=>assert.fail('known foreign owner requires no full read'));
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});
+ assert.equal(library.accountId,null);assert.equal(library.workingLease,null);assert.equal(library.has(chartId(1)),false);
+});
+
+test('the ambiguous metadata fallback publishes recovered numbers and peer readiness together once',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const chart=accountNatalChart(),entry={...recordEntry(chart),packages:{card:{kind:'card' as const,sourceKey:JSON.stringify([chart.id,1])},
+  day:{ref:{kind:'day' as const,sourceKey:JSON.stringify([chart.birthDate,chart.timezone])},ready:false},majorReturns:{sourceKey:JSON.stringify([chart.utc,chart.timezone]),readyFamilies:[]}}};
+ await storage.putCatalog((await storage.readCatalog())!,{accountId:'1',marker:'1',entries:[entry]});await library.refreshLocal();
+ await storage.put((await storage.readCatalog())!.lease,[chart],'1');
+ t.mock.method(storage,'readCatalog',async()=>null);let updates=0;library.subscribe(()=>updates++);updates=0;
+ await library.receive({kind:'record',...session,durable:true,marker:'2',entry:{...entry,packages:{...entry.packages,day:{...entry.packages.day,ready:true}}}});
+ assert.equal(library.isReady(chart.id),true);assert.equal(library.entries[0].packages.day?.ready,true);assert.equal(updates,1);
+});
+
+test('an addressed peer read publishes durable recovery of the same RAM card once',async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),library=createAccountLibrary({storage,client:client(),online:()=>true});t.after(()=>library.close());await library.connect(session);
+ const chart=accountChart(),lease=(await storage.readCatalog())!.lease,put=storage.put;
+ storage.put=async()=>({status:'unavailable'});try{await library.prepareAcceptance()(chart.id,chart,'1');}finally{storage.put=put;}
+ assert.equal(library.storageAvailable,false);await storage.put(lease,[chart],'1');
+ let updates=0;library.subscribe(()=>updates++);updates=0;
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});
+ assert.equal(library.storageAvailable,true);assert.equal(library.get(chart.id),chart);assert.equal(updates,1);
+ await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});assert.equal(updates,1);
 });
