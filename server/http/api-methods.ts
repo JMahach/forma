@@ -6,6 +6,7 @@ const methods=new Map<string,string>([
   ...['email/start','email/resend','email/verify','confirm','cancel','logout','telegram/start','telegram/verify']
     .map(path=>['/api/auth/'+path,'POST'] as [string,string]),
   ['/api/charts','GET, POST'],['/api/charts/add','POST'],['/api/cycles/events','POST'],['/api/cycles/chart','POST'],
+  ['/api/charts/catalog','GET'],['/api/charts/catalog/confirm','GET'],
   ['/api/chart/day','POST'],['/api/transit/day','GET, HEAD'],['/api/lifetime','GET'],['/api/lifetime/meta','GET'],['/api/diagnostics','POST'],
 ]);
 
@@ -14,6 +15,7 @@ function allowedMethods(path:string):string|undefined {
   if(fixed)return fixed;
   if(/^\/api\/(?:shared-charts\/[^/]+|charts\/operations\/[^/]+)$/.test(path))return 'GET';
   if(/^\/api\/charts\/[^/]+\/returns\/(?:events|chart|accept)$/.test(path))return 'POST';
+  if(/^\/api\/charts\/[^/]+\/returns\/[^/]+\/package$/.test(path))return 'GET';
   if(/^\/api\/charts\/[^/]+$/.test(path))return 'GET, PATCH, DELETE';
 }
 

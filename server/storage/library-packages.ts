@@ -144,44 +144,67 @@ function migrateReturnPackets(database:Database,compress:CompressReturn) {
   });
 }
 
-/** Prepared parts are written once; repeated reads only verify and decompress stored bytes. */
-export function createReturnPackets(database:Database,{compress=(raw:Buffer)=>gzipSync(raw,{level:9})}:{compress?:CompressReturn}={}) {
-  const sql=database.connection;
-  sql.exec(returnTable('account_chart_returns'));
-  migrateReturnPackets(database,compress);
-  const read=sql.prepare('SELECT content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
-  const family=sql.prepare('SELECT action,eventUtc,content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND body=?');
-  const remove=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
-  const insert=sql.prepare(`INSERT INTO account_chart_returns VALUES(?,?,?,?,?,?,?)
-    ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content,checksum=excluded.checksum,rawDigest=excluded.rawDigest`);
-  const clear=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=?');
-  const keyArgs=({chartId,action,body,eventUtc}:ReturnAddress)=>[chartId,action,body,eventUtc];
-  function decode(address:ReturnAddress,row:ReturnRow) {
-    try {return unpackReturn(returnKey(address),row);}
-    catch {remove.run(...keyArgs(address));return null;}
+interface ReturnPacketOptions {
+  compress?:CompressReturn;onChange?:(address:ReturnAddress)=>void;onClear?:(chartId:string)=>void;
+}
+const returnArgs=({chartId,action,body,eventUtc}:ReturnAddress)=>[chartId,action,body,eventUtc];
+
+/** A changed part and its readiness notification belong to the same SQLite transaction. */
+class ReturnPackets {
+  private database:Database;
+  private options:ReturnPacketOptions;
+  private compress:CompressReturn;
+  private find;
+  private family;
+  private remove;
+  private insert;
+  private removeAll;
+  constructor(database:Database,options:ReturnPacketOptions) {
+    this.database=database;this.options=options;this.compress=options.compress??(raw=>gzipSync(raw,{level:9}));
+    const sql=database.connection;
+    sql.exec(returnTable('account_chart_returns'));migrateReturnPackets(database,this.compress);
+    this.find=sql.prepare('SELECT content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
+    this.family=sql.prepare('SELECT action,eventUtc,content,checksum,rawDigest FROM account_chart_returns WHERE chartId=? AND body=?');
+    this.remove=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=? AND action=? AND body=? AND eventUtc=?');
+    this.insert=sql.prepare(`INSERT INTO account_chart_returns VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(chartId,action,body,eventUtc) DO UPDATE SET content=excluded.content,checksum=excluded.checksum,rawDigest=excluded.rawDigest`);
+    this.removeAll=sql.prepare('DELETE FROM account_chart_returns WHERE chartId=?');
   }
-  return {
-    read(address:ReturnAddress):unknown {
-      const args=keyArgs(address),row=read.get(...args) as unknown as ReturnRow|undefined;
-      if(!row)return null;
-      return decode(address,row);
-    },
-    readFamily(chartId:string,body:string) {
-      let dates:unknown=null;
-      const charts=new Map<string,unknown>();
-      for(const row of family.all(chartId,body) as unknown as (ReturnRow & Pick<ReturnAddress,'action'|'eventUtc'>)[]) {
-        const value=decode({chartId,body,action:row.action,eventUtc:row.eventUtc},row);
-        if(row.action==='events')dates=value;else if(value!==null)charts.set(row.eventUtc,value);
-      }
-      return {dates,charts};
-    },
-    save(address:ReturnAddress,value:unknown):boolean {
-      const args=keyArgs(address),key=returnKey(address),raw=returnBytes(value),hash=digest(key,raw);
-      const previous=read.get(...args) as unknown as ReturnRow|undefined;
+  private decode(address:ReturnAddress,row:ReturnRow) {
+    try {return unpackReturn(returnKey(address),row);}
+    catch {
+      this.database.transaction(()=>{this.remove.run(...returnArgs(address));this.options.onChange?.(address);});return null;
+    }
+  }
+  read(address:ReturnAddress):unknown {
+    const row=this.find.get(...returnArgs(address)) as unknown as ReturnRow|undefined;
+    return row?this.decode(address,row):null;
+  }
+  readFamily(chartId:string,body:string) {
+    let dates:unknown=null;
+    const charts=new Map<string,unknown>();
+    for(const row of this.family.all(chartId,body) as unknown as (ReturnRow & Pick<ReturnAddress,'action'|'eventUtc'>)[]) {
+      const value=this.decode({chartId,body,action:row.action,eventUtc:row.eventUtc},row);
+      if(row.action==='events')dates=value;else if(value!==null)charts.set(row.eventUtc,value);
+    }
+    return {dates,charts};
+  }
+  save(address:ReturnAddress,value:unknown):boolean {
+    return this.database.transaction(()=>{
+      const args=returnArgs(address),key=returnKey(address),raw=returnBytes(value),hash=digest(key,raw);
+      const previous=this.find.get(...args) as unknown as ReturnRow|undefined;
       if(previous?.rawDigest===hash && compressedReturnValid(key,previous))return false;
-      const packet=packReturn(key,raw,compress,hash);
-      insert.run(...args,packet.content,packet.checksum,packet.rawDigest);return true;
-    },
-    clear(chartId:string){clear.run(chartId);},
-  };
+      const packet=packReturn(key,raw,this.compress,hash);
+      this.insert.run(...args,packet.content,packet.checksum,packet.rawDigest);this.options.onChange?.(address);return true;
+    });
+  }
+  clear(chartId:string) {
+    this.database.transaction(()=>{this.removeAll.run(chartId);this.options.onClear?.(chartId);});
+  }
+}
+/** Prepared parts are written once; repeated reads only verify and decompress stored bytes. */
+export function createReturnPackets(database:Database,options:ReturnPacketOptions={}) {
+  const packets=new ReturnPackets(database,options);
+  return {read:packets.read.bind(packets),readFamily:packets.readFamily.bind(packets),
+    save:packets.save.bind(packets),clear:packets.clear.bind(packets)};
 }

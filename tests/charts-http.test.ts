@@ -190,7 +190,7 @@ test('concurrent private and public reads return ready numbers without preparati
 
 test('owned returns HTTP uses chart authorization and the common origin boundary', async t => {
   let calls=0;
-  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={events:async (access, id, expectedAccountId, input, {signal})=>{
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={readPackage(){throw new Error('unused');},events:async (access, id, expectedAccountId, input, {signal})=>{
     const chart=access.getOwn(id,expectedAccountId);
     assert.ok(chart);assert.equal(signal.aborted,false);calls++;
     return {events:[],range:{fromAge:input.fromAge ?? 0,toAge:input.toAge ?? 100}};
@@ -241,7 +241,7 @@ test('runtime joins private HTTP and durable main return records across reconstr
 test('owned return transport needs no calculation marker and preserves queue refusal', async t => {
   const {CycleError}=await import('../server/services/cycles.ts');
   let calls=0;
-  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={readPackage(){throw new Error('unused');},
     async events(){calls++;throw new CycleError('busy','Busy',503,2);},
     async chart(){throw new Error('unused');},async accept(){throw new Error('unused');},
   };
@@ -255,7 +255,7 @@ test('owned return transport needs no calculation marker and preserves queue ref
 
 test('HTTP accepts a proven prepared return without calculating it again', async t => {
   let accepted=0;
-  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={
+  const returns: NonNullable<Parameters<typeof createChartHandler>[0]['returns']>={readPackage(){throw new Error('unused');},
     async events(){throw new Error('must not calculate');},async chart(){throw new Error('must not calculate');},
     async accept(access,id,expectedAccountId,packet,{signal}){
       assert.ok(access.getOwn(id,expectedAccountId));assert.equal(signal.aborted,false);

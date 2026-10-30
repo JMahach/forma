@@ -1,8 +1,8 @@
-import {mainReturnRange,isMainReturnBody,normalizeMainReturn,type ReturnReceiptReader,type PreparedReturnSubmission} from '../../shared/chart-return-contract.ts';
+import {mainReturnRange,normalizeMainReturn,type ReturnReceiptReader,type PreparedReturnSubmission} from '../../shared/chart-return-contract.ts';
 import {validCycleResult,cycleAge,type CycleInput,type CycleEventsResult,type CycleChartResult} from '../../shared/cycles-format.ts';
 import {ChartRecordError,type ChartRecordAccess,type ChartReturnQuery} from './chart-records.ts';
 import type {AccountChart} from '../../shared/chart-record-contract.ts';
-import {canStoreServerReturn,returnSourceKey,validMajorReturnsPackage,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
+import {canStoreServerReturn,validMajorReturnsPackage,type PackageRef,type MajorReturnsPackage} from '../../shared/library-package-contract.ts';
 
 export interface ChartReturnCalculator {
   events(input:CycleInput,options:{signal:AbortSignal;priority?:number}):Promise<CycleEventsResult>;
@@ -57,15 +57,13 @@ async function dates(cycles:ChartReturnCalculator,access:ChartRecordAccess,conte
   return result;
 }
 
-function readPackage(access:ChartRecordAccess,id:string,expectedAccountId:string,input:CycleInput,options:ReadOptions):{ref:Extract<PackageRef,{kind:'major-returns'}>;payload:MajorReturnsPackage}|null {
-  const context=source(access,id,expectedAccountId,input,options,'chart');
-  if(!isMainReturnBody(context.body))throw new ChartRecordError('invalid_chart');
-  const parts=access.readReturnFamily(query(context.chart,input,'chart'));
+function readPackage(access:ChartRecordAccess,id:string,expectedAccountId:string,expected:Extract<PackageRef,{kind:'major-returns'}>,options:ReadOptions):{ref:Extract<PackageRef,{kind:'major-returns'}>;payload:MajorReturnsPackage}|null {
+  options.signal.throwIfAborted();
+  const parts=access.readReturnFamily(id,expectedAccountId,expected),origin=parts.source;
   const events=(parts.dates as Partial<CycleEventsResult>|null)?.events;
   if(!Array.isArray(events))return null;
-  const origin={birthUtc:context.chart.utc,timezone:context.chart.timezone||'UTC'};
-  const ref={kind:'major-returns' as const,sourceKey:returnSourceKey(origin),family:context.body};
-  const payload={source:origin,family:context.body,dates:parts.dates,
+  const ref={kind:'major-returns' as const,sourceKey:expected.sourceKey,family:expected.family};
+  const payload={source:origin,family:expected.family,dates:parts.dates,
     charts:events.map(event=>parts.charts.get(event?.utc))};
   return validMajorReturnsPackage(ref,payload)?{ref,payload}:null;
 }

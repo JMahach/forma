@@ -1,8 +1,10 @@
-import {canStoreServerReturn} from '../../shared/library-package-contract.ts';
+import {canStoreServerReturn,returnSourceKey,type PackageRef} from '../../shared/library-package-contract.ts';
 import {validCycleResult,type CycleInput,type CycleResult} from '../../shared/cycles-format.ts';
 import { canonicalChartId, isOperationIdentifier, CHART_ID_MIN_DIGITS, CHART_ID_MAX_DIGITS } from '../../shared/chart-record-contract.ts';
+import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
 import { randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import {isLibraryCatalogMarker,type LibraryCatalogReply,type LibraryCatalogConfirmation} from '../../shared/library-catalog-contract.ts';
 import type { Database } from '../storage/database.ts';
 import { createChartRecordStorage } from '../storage/chart-records.ts';
 import { CHART_POLICY } from './chart-policy.ts';
@@ -57,6 +59,33 @@ export interface ChartReturnQuery {
 }
 export interface PreparationNotice {kind:'queued'|'removed';chartId:string}
 type PreparationListener=(notice:PreparationNotice)=>void;
+
+interface CatalogQuery {expectedAccountId:string;knownMarker?:string;marker?:string;after?:string;limit?:number}
+function validateCatalogPosition({knownMarker,marker,after}:CatalogQuery) {
+  for(const value of [knownMarker,marker])if(value!==undefined && !isLibraryCatalogMarker(value))throw new ChartRecordError('invalid_operation');
+  if(knownMarker!==undefined && marker!==undefined || after && marker===undefined)throw new ChartRecordError('invalid_operation');
+}
+function validateCatalogQuery(input:CatalogQuery) {
+  const {limit=100,after=''}=input;
+  if(!Number.isInteger(limit) || limit<1 || limit>100 || typeof after!=='string' || after.length>80)throw new ChartRecordError('invalid_operation');
+  validateCatalogPosition(input);
+}
+function readCatalog(catalog:ReturnType<typeof createChartRecordStorage>['catalog'],owner:string,{knownMarker,marker,after='',limit=100}:CatalogQuery):LibraryCatalogReply {
+  const current=catalog.marker(owner),state={accountId:owner,marker:current};
+  if(marker!==undefined && marker!==current)return {...state,kind:'restart'};
+  if(knownMarker===current)return {...state,kind:'unchanged'};
+  const rows=catalog.page(owner,after,limit+1),entries=rows.slice(0,limit);
+  return {...state,kind:'page',entries,nextCursor:rows.length>limit?entries.at(-1)!.id:null};
+}
+function readOwnedFamily(storage:ReturnType<typeof createChartRecordStorage>,owner:string,id:string,ref:Extract<PackageRef,{kind:'major-returns'}>) {
+  if(ref.kind!=='major-returns' || !isMainReturnBody(ref.family))throw new ChartRecordError('invalid_chart');
+  const chart=storage.get(owner,id);
+  if(!chart)throw new ChartRecordError('not_found');
+  if(chart.source!=='calculated')throw new ChartRecordError('invalid_chart');
+  const source={birthUtc:chart.utc,timezone:chart.timezone||'UTC'};
+  if(returnSourceKey(source)!==ref.sourceKey)throw new ChartRecordError('source_changed');
+  return {source,...storage.readReturnFamily(id,ref.family)};
+}
 
 /** Receives trusted, prepared calculation data. HTTP must not forward user-supplied calculated numbers here. */
 export function createChartRecords({ database, authorize: initialAuthorize, now = Date.now, newId = newChartId }: {
@@ -117,6 +146,17 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
     return {kind:'created', chartId:row.id, revision:row.revision};
   }
   const api = {
+    catalog(input:CatalogQuery):LibraryCatalogReply {
+      validateCatalogQuery(input);
+      return database.transaction(()=>readCatalog(storage.catalog,account(now(),input.expectedAccountId),input));
+    },
+    confirmCatalog(expectedAccountId:string,marker:string):LibraryCatalogConfirmation {
+      if(!isLibraryCatalogMarker(marker))throw new ChartRecordError('invalid_operation');
+      return database.transaction(()=>{
+        const owner=account(now(),expectedAccountId),current=storage.catalog.marker(owner);
+        return {accountId:owner,marker:current,kind:marker===current?'confirmed':'restart'};
+      });
+    },
     assertReturnCurrent(query:ChartReturnQuery) { database.transaction(()=>returnContext(query)); },
     readReturn(query:ChartReturnQuery):unknown {
       return database.transaction(()=>{
@@ -124,12 +164,8 @@ export function createChartRecords({ database, authorize: initialAuthorize, now 
         return storage.readReturn(query.chartId,query.action,query.input.body,query.action==='chart'?query.input.eventUtc!:'');
       });
     },
-    readReturnFamily(query:ChartReturnQuery) {
-      if(query.action!=='chart')throw new ChartRecordError('invalid_chart');
-      return database.transaction(()=>{
-        returnContext(query);
-        return storage.readReturnFamily(query.chartId,query.input.body);
-      });
+    readReturnFamily(id:string,expectedAccountId:string,ref:Extract<PackageRef,{kind:'major-returns'}>) {
+      return database.transaction(()=>readOwnedFamily(storage,account(now(),expectedAccountId),id,ref));
     },
     // Internal reuse only. The calculation service must project numeric data before returning or storing it.
     readRelatedReturn(query:ChartReturnQuery):unknown {

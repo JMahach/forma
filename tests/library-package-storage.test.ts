@@ -60,7 +60,7 @@ test('one shared day keeps independent card references; metadata makes no packag
   assert.equal(count(),1);
   const before=f.db.connection.prepare('SELECT total_changes() AS n').get()!.n as number;
   f.records.update({...f.intent(),chartId:a,name:'Renamed'});
-  assert.equal((f.db.connection.prepare('SELECT total_changes() AS n').get()!.n as number)-before,2,'only record and immutable outcome change');
+  assert.equal((f.db.connection.prepare('SELECT total_changes() AS n').get()!.n as number)-before,3,'only record, immutable outcome and catalogue marker change');
   f.records.remove({...f.intent(),chartId:a});assert.equal(count(),1);
   const replacement=createNatalDays({packages:f.records.packages,generateDay:async()=>{assert.fail('B still owns this ready day');}});
   await replacement.get('2000-01-01','UTC');

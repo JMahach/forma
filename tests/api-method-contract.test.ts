@@ -15,6 +15,7 @@ test('API method rejection precedes service access and advertises only supported
     ['/api/cities','GET'],['/api/calculate','POST'],['/api/account','GET'],['/api/auth/attempt','GET'],
     ...['email/start','email/resend','email/verify','confirm','cancel','logout','telegram/start','telegram/verify'].map(path=>['/api/auth/'+path,'POST']),
     ['/api/charts','GET, POST'],['/api/charts/add','POST'],['/api/charts/123','GET, PATCH, DELETE'],
+    ['/api/charts/catalog','GET'],['/api/charts/catalog/confirm','GET'],['/api/charts/123/returns/saturn/package','GET'],
     ['/api/charts/operations/abcd','GET'],['/api/shared-charts/123','GET'],
     ...['events','chart','accept'].map(action=>['/api/charts/123/returns/'+action,'POST']),
     ['/api/cycles/events','POST'],['/api/cycles/chart','POST'],['/api/chart/day','POST'],

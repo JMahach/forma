@@ -1,6 +1,7 @@
 import { migrateStoredCalculations } from './calculation-transition.ts';
 import {createLibraryPackages,createReturnPackets} from './library-packages.ts';
 import {createLibraryPreparationStorage} from './library-preparation.ts';
+import {createLibraryCatalogStorage} from './library-catalog.ts';
 import type { Database } from './database.ts';
 import type { AccountChart, AccountChartContent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 
@@ -38,7 +39,8 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
   ) STRICT;
   CREATE INDEX IF NOT EXISTS chart_operation_expiry ON chart_operation_outcomes(createdAt);`);
   migrateStoredCalculations(database);
-  const returns=createReturnPackets(database);
+  let catalog:ReturnType<typeof createLibraryCatalogStorage>;
+  const returns=createReturnPackets(database,{onChange:address=>catalog?.returnChanged(address.chartId,address.body),onClear:id=>catalog?.clearReturns(id)});
   // Issued addresses are never recycled after deletion.
   sql.exec(`CREATE TABLE IF NOT EXISTS chart_identifiers (id TEXT PRIMARY KEY) STRICT;
     CREATE TABLE IF NOT EXISTS chart_storage_migrations (name TEXT PRIMARY KEY) STRICT;`);
@@ -73,6 +75,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
   });
   const packages=createLibraryPackages(database);
   const preparation=createLibraryPreparationStorage(database);
+  catalog=createLibraryCatalogStorage(database,returns);
   // Compile fixed SQL once per connection owner; each execution reads current rows.
   const statements = {
     identifier: sql.prepare('SELECT 1 FROM chart_identifiers WHERE id = ?'),
@@ -98,6 +101,7 @@ export function createChartRecordStorage(database: Database, migrateIdentifier?:
   return {
     packages,
     preparation,
+    catalog,
     identifierUsed(id:string) { return Boolean(statements.identifier.get(id)); },
     get(accountId: string, id: string) {
       return decode(statements.own.get(accountId, id) as unknown as Row | undefined);

@@ -7,18 +7,19 @@ import type { createChartReturns } from '../services/chart-returns.ts';
 import { CycleError, validateCycleRequest } from '../services/cycles.ts';
 import { ChartCalculationError } from '../services/chart-calculation.ts';
 import { AccountError, type Accounts } from '../services/accounts.ts';
-import { ChartRecordError, type createChartRecords } from '../services/chart-records.ts';
+import { ChartRecordError, type createChartRecords, type ChartRecordAccess } from '../services/chart-records.ts';
 import { createAccountSecurity } from './account-security.ts';
 import { HttpInputError, readJSONObject, sendJSON } from './json.ts';
 import { requestSignal } from './request-signal.ts';
 import { rejectApiMethod } from './api-methods.ts';
+import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
 
 interface ChartHttpOptions {
   report?: ServerFailureReport;
   records: ReturnType<typeof createChartRecords>;
   accounts: Pick<Accounts, 'current'>;
   prepareBirth(input: unknown, options: {signal: AbortSignal;receipt?:unknown}): Promise<AccountChartBirth>;
-  returns?: Pick<ReturnType<typeof createChartReturns>, 'events'|'chart'|'accept'>;
+  returns?: Pick<ReturnType<typeof createChartReturns>,'events'|'chart'|'accept'|'readPackage'>;
   issueReturnReceipt?:ReturnType<typeof createReturnReceipts>['issue'];
   origins: string[];
   now?: () => number;
@@ -43,12 +44,43 @@ function text(value: unknown, maximum: number, required = false) {
 function fields(input: Record<string, unknown>, allowed: readonly string[]) {
   if (Object.keys(input).some(key => !allowed.includes(key))) throw invalid();
 }
+function queryFields(url:URL,allowed:readonly string[]) {
+  for(const key of url.searchParams.keys())if(!allowed.includes(key) || url.searchParams.getAll(key).length!==1)throw invalid();
+}
 function note(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
   const input = value as Record<string, unknown>;
   fields(input, ['value', 'seenRevision']);
   if (!Number.isSafeInteger(input.seenRevision) || (input.seenRevision as number) < 1) throw invalid();
   return {value:text(input.value, 2000), seenRevision:input.seenRevision as number};
+}
+
+function readCatalogRequest(url:URL,access:ChartRecordAccess) {
+  queryFields(url,['accountId','knownMarker','marker','after','limit']);
+  const after=url.searchParams.get('after')??'';if(after)identifier(after);
+  return access.catalog({expectedAccountId:accountId(url.searchParams.get('accountId')),
+    knownMarker:url.searchParams.get('knownMarker')??undefined,marker:url.searchParams.get('marker')??undefined,after,
+    limit:url.searchParams.has('limit')?Number(url.searchParams.get('limit')):100});
+}
+
+/** Metadata sync and ready-package reads share the existing authenticated record owner. */
+function readLibraryRequest(url:URL,access:ChartRecordAccess,
+  returns:ChartHttpOptions['returns'],consumer:{signal:AbortSignal}) {
+  if(url.pathname==='/api/charts/catalog')return readCatalogRequest(url,access);
+  if(url.pathname==='/api/charts/catalog/confirm') {
+    queryFields(url,['accountId','marker']);
+    return access.confirmCatalog(accountId(url.searchParams.get('accountId')),url.searchParams.get('marker')??'');
+  }
+  const packageMatch=/^\/api\/charts\/([^/]+)\/returns\/([^/]+)\/package$/.exec(url.pathname);
+  if(packageMatch) {
+    if(!returns)throw new HttpInputError('chart_unavailable',503);
+    queryFields(url,['accountId','sourceKey']);
+    const family=packageMatch[2];if(!isMainReturnBody(family))throw invalid();
+    const ref={kind:'major-returns' as const,family,sourceKey:text(url.searchParams.get('sourceKey'),512,true)};
+    const id=identifier(packageMatch[1]),owner=accountId(url.searchParams.get('accountId'));
+    const packet=returns.readPackage(access,id,owner,ref,consumer);
+    return packet?{kind:'ready',...packet}:{kind:'not-ready',ref};
+  }
 }
 
 /** HTTP never accepts calculated activations or a client-selected record owner. */
@@ -93,6 +125,8 @@ export function createChartHandler({ report, records, accounts, prepareBirth, re
         const intent={operationId:operationIdentifier(outcomeMatch[1]), expectedAccountId:accountId(url.searchParams.get('accountId'))};
         reply(200,withCurrentChart(access.outcome(intent),intent.expectedAccountId)); return;
       }
+      const library=readLibraryRequest(url,access,returns,consumer);
+      if(library){reply(200,library);return;}
       if (url.pathname === '/api/charts' && req.method === 'GET') {
         const expectedAccountId = accountId(url.searchParams.get('accountId'));
         const after = url.searchParams.get('after') ?? '';

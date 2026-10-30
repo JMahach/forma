@@ -12,7 +12,7 @@ import {createReturnReceipts} from '../server/services/return-receipt.ts';
 import {natalDayFixture} from './fixtures/natal-day.ts';
 import {deferred} from './helpers/deferred.ts';
 import {MAIN_RETURN_BODIES,mainReturnRange} from '../shared/chart-return-contract.ts';
-import {RETURN_FAMILIES} from '../shared/library-package-contract.ts';
+import {RETURN_FAMILIES,returnSourceKey} from '../shared/library-package-contract.ts';
 import {cycleAge,type CycleInput,type CycleResult} from '../shared/cycles-format.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -155,7 +155,7 @@ test('later saved cards with the same numerical source reuse ready parts without
   assert.deepEqual(p.calls,first);
   const chart=f.records.getOwn(second)!;
   for(const body of MAIN_RETURN_BODIES)assert.ok(p.returns.readPackage(f.records,second,f.accountId,
-    {birthUtc:chart.utc,timezone:chart.timezone,body},{signal:new AbortController().signal}));
+    {kind:'major-returns',family:body,sourceKey:returnSourceKey({birthUtc:chart.utc,timezone:chart.timezone!})},{signal:new AbortController().signal}));
 });
 
 test('background cancellation waits for its physical worker before another destination starts',async t=>{
@@ -205,7 +205,7 @@ test('background day and complete families retain the saved IANA zone',async t=>
   const created=f.records.create({...f.intent(),content:{...accountNatalChart(),timezone,utc:'2000-01-01T09:00:00Z',utcOffset:'UTC+03:00'}});
   await p.worker.start();assert.equal(f.records.preparation.nextDue(),null);
   assert.ok(f.records.packages.readDay({date:'2000-01-01',timezone}));
-  const packet=p.returns.readPackage(f.records,created.chartId,f.accountId,{birthUtc:'2000-01-01T09:00:00Z',timezone,body:'saturn'},
+  const packet=p.returns.readPackage(f.records,created.chartId,f.accountId,{kind:'major-returns',family:'saturn',sourceKey:returnSourceKey({birthUtc:'2000-01-01T09:00:00Z',timezone})},
     {signal:new AbortController().signal});
   assert.equal(packet?.payload.source.timezone,timezone);assert.equal(packet?.payload.charts[0]?.chart.timezone,timezone);
 });

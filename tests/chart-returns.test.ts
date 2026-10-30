@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHmac} from 'node:crypto';
-import {MAIN_RETURN_BODIES,normalizeMainReturn} from '../shared/chart-return-contract.ts';
+import {MAIN_RETURN_BODIES,normalizeMainReturn,type MainReturnBody} from '../shared/chart-return-contract.ts';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {openDatabase} from '../server/storage/database.ts';
 import {createAccountStorage} from '../server/storage/accounts.ts';
 import {createChartRecords} from '../server/services/chart-records.ts';
+import {returnSourceKey,type PackageRef} from '../shared/library-package-contract.ts';
 import {createReturnPackets} from '../server/storage/library-packages.ts';
 import {createChartReturns} from '../server/services/chart-returns.ts';
 import {createCycles} from '../server/services/cycles.ts';
@@ -20,6 +21,8 @@ import {CYCLE_BODIES as CLIENT_FAMILIES} from '../src/domain/cycles.ts';
 import {readFile} from 'node:fs/promises';
 
 const version='a'.repeat(64),nextVersion='b'.repeat(64);
+const packageRef=(input:CycleInput):Extract<PackageRef,{kind:'major-returns'}>=>({kind:'major-returns',family:input.body as MainReturnBody,
+  sourceKey:returnSourceKey({birthUtc:input.birthUtc,timezone:input.timezone??'UTC'})});
 // 1 Jan 2000 noon -> 1 Jan 2100 noon is 36525 days, a 100-year calendar span.
 const range={fromAge:0,toAge:36525/365.2425};
 const eventUtc='2029-01-01T12:00:00Z';
@@ -68,7 +71,7 @@ test('main dates persist, and only an opened full return is calculated; ready re
 
 test('a whole primary family is ready only after every listed event has a valid calculation',async t=>{
   const f=fixture(t),later='2058-01-01T12:00:00Z';
-  const read=()=>f.service.readPackage(f.records,f.chart.id,f.accountId,f.input,f.options);
+  const read=()=>f.service.readPackage(f.records,f.chart.id,f.accountId,packageRef(f.input),f.options);
   assert.equal(read(),null,'no date list is not an empty complete family');
   f.cycles.events=async input=>({range:dates(input).range,events:[dates(input).events[0]!,{
     ...dates(input).events[0]!,id:`saturn:${later}`,utc:later,age:(Date.parse(later)-Date.parse(f.chart.utc))/(365.2425*86400000),
@@ -97,7 +100,7 @@ test('a new server instance reads the saved return from the same database withou
     cycles:{events:async()=>{throw Error('must not run');},chart:async()=>{throw Error('must not run');}}});
   assert.equal((await service.chart(records,f.chart.id,f.accountId,f.input,f.options)).chart.utc,eventUtc);
   const changes=database.connection.prepare('SELECT total_changes() AS n').get()!.n;
-  assert.deepEqual(service.readPackage(records,f.chart.id,f.accountId,f.input,f.options)?.payload.charts.map(item=>item.chart.utc),[eventUtc]);
+  assert.deepEqual(service.readPackage(records,f.chart.id,f.accountId,packageRef(f.input),f.options)?.payload.charts.map(item=>item.chart.utc),[eventUtc]);
   assert.equal(database.connection.prepare('SELECT total_changes() AS n').get()!.n,changes);
 });
 
@@ -110,14 +113,14 @@ test('ready numerical work can be reused across accounts without transferring pr
   const result=await f.service.chart(other,created.chartId,f.otherId,f.input,f.options);
   assert.equal(result.chart.utc,eventUtc);assert.equal(JSON.stringify(result).includes('PRIVATE'),false);
   assert.deepEqual(f.calls(),before);
-  assert.throws(()=>f.service.readPackage(f.records,created.chartId,f.accountId,f.input,f.options),{code:'not_found'});
+  assert.throws(()=>f.service.readPackage(f.records,created.chartId,f.accountId,packageRef(f.input),f.options),{code:'not_found'});
 });
 
 test('an empty confirmed family is complete, but wrong sources, owners and non-primary families are rejected',async t=>{
-  const f=fixture(t),read=(input=f.input)=>f.service.readPackage(f.records,f.chart.id,f.accountId,input,f.options);
+  const f=fixture(t),read=(input=f.input)=>f.service.readPackage(f.records,f.chart.id,f.accountId,packageRef(input),f.options);
   f.cycles.events=async input=>({range:dates(input).range,events:[]});
   await f.events();assert.deepEqual(read()?.payload.charts,[]);
-  for(const patch of [{body:'moon'},{fromAge:1},{birthUtc:'2000-01-02T12:00:00Z'}])assert.throws(()=>read({...f.input,...patch}));
+  for(const patch of [{body:'moon'},{timezone:'Europe/Moscow'},{birthUtc:'2000-01-02T12:00:00Z'}])assert.throws(()=>read({...f.input,...patch}));
   f.auth(f.otherId);assert.throws(()=>read(),{code:'account_changed'});f.auth(f.accountId);
   f.update({birth:{...f.chart,birthDate:'2000-01-02',utc:'2000-01-02T12:00:00Z'}});
   assert.throws(()=>read(),{code:'source_changed'});
@@ -130,7 +133,7 @@ test('all five primary families expose their complete saved events without a new
   for(const body of MAIN_RETURN_BODIES) {
     const input={...f.input,body};
     await f.service.chart(f.records,f.chart.id,f.accountId,input,f.options);
-    const packet=f.service.readPackage(f.records,f.chart.id,f.accountId,input,f.options);
+    const packet=f.service.readPackage(f.records,f.chart.id,f.accountId,packageRef(input),f.options);
     assert.ok(packet);assert.equal(packet.ref.family,body);
     assert.equal(packet.payload.dates.events[0]!.body,body);
     assert.deepEqual(packet.payload.charts.map(item=>item.chart.utc),[eventUtc]);
