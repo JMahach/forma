@@ -7,6 +7,7 @@ interface TimelineGesture {
   referenceTap: boolean; tapTarget: TimelineTarget | null; relative: boolean;
 }
 export interface TimelineRangeOptions {
+  signal?:AbortSignal;
   range: HTMLInputElement; marker?: HTMLButtonElement | null; onScrub: (value: number) => void; onReference: () => void;
   onStep?: ((direction: number) => number | null | void) | null;
   onInteractionChange?: (active: boolean) => void; thumbSize?: number; movementThreshold?: number; tapDuration?: number;
@@ -57,7 +58,7 @@ function thumbImage(frame: number) {
 // width and 22px rail inset keep the visible endpoints and value mapping stable.
 export function attachTimelineRange({ range, marker = null, onScrub, onReference, onStep = null,
   onInteractionChange = () => {}, thumbSize = TIMELINE_THUMB_SIZE, movementThreshold = 8, tapDuration = 500,
-  now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null, resolveEdge = () => null,
+  signal, now = () => globalThis.performance?.now() ?? Date.now(), resolveTap = () => null, resolveEdge = () => null,
 }: TimelineRangeOptions) {
   let interacting = false;
   const interaction = (value: boolean) => { if (value !== interacting) { interacting = value; onInteractionChange(value); } };
@@ -66,7 +67,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     const min = Number(range.min || 0), max = Number(range.max || 100);
     return { min, max, step: range.step === 'any' ? null : Number(range.step) > 0 ? Number(range.step) : 1 };
   };
-  const canScrub = () => !range.disabled && !range.hidden && !range.closest?.('[hidden]');
+  const canScrub = () => !signal?.aborted && !range.disabled && !range.hidden && !range.closest?.('[hidden]');
   const canReturn = () => !!marker && available && canScrub() && !marker.disabled;
   let railWidth = Math.max(0, range.getBoundingClientRect().width - thumbSize), thumbFrame: number | null = null;
   function updateThumbEdge() {
@@ -226,10 +227,10 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
       gesture.dragging = true;
       move(event);
     }
-  });
-  range.addEventListener('pointermove', event => { updateHover(event); move(event); });
-  range.addEventListener('pointerleave', () => { hoverPointer = null; setEventHover(false); });
-  range.addEventListener('blur', () => { clearGesture(); hoverPointer = null; setEventHover(false); });
+  }, {signal});
+  range.addEventListener('pointermove', event => { updateHover(event); move(event); }, {signal});
+  range.addEventListener('pointerleave', () => { hoverPointer = null; setEventHover(false); }, {signal});
+  range.addEventListener('blur', () => { clearGesture(); hoverPointer = null; setEventHover(false); }, {signal});
   range.addEventListener('pointerup', event => {
     rememberPointer(event);
     if (!gesture) { interaction(false); updateHover(event); return; }
@@ -243,21 +244,21 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     }
     suppressedInputValue = Number(range.value);
     updateHover(event);
-  });
+  }, {signal});
   range.addEventListener('pointercancel', event => {
     interaction(false);
     if (gesture?.pointerId === event.pointerId) { suppressClickUntil = now() + 500; clearGesture(); }
     hoverPointer = null; setEventHover(false);
-  });
+  }, {signal});
   range.addEventListener('lostpointercapture', event => {
     interaction(false);
     if (gesture?.pointerId === event.pointerId) { clearGesture(); hoverPointer = null; setEventHover(false); }
-  });
-  range.ownerDocument?.addEventListener?.('pointerup', () => interaction(false));
-  range.addEventListener('change', () => interaction(false));
+  }, {signal});
+  range.ownerDocument?.addEventListener?.('pointerup', () => interaction(false), {signal});
+  range.addEventListener('change', () => interaction(false), {signal});
   range.addEventListener('click', event => {
     if (event.detail > 0 && now() <= suppressClickUntil) event.preventDefault();
-  });
+  }, {signal});
   range.addEventListener('keydown', event => {
     suppressedInputValue = null;
     hoverPointer = null; setEventHover(false); clearGesture();
@@ -270,7 +271,7 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     const value = direction ? onStep(direction) : event.key === 'Home' ? bounds().min : bounds().max;
     if (Number.isFinite(value)) onScrub(value as number);
     updateThumbEdge();
-  });
+  }, {signal});
   range.addEventListener('input', () => {
     if (gesture) { range.value = String(gesture.lastValue); return; }
     // Prevent a queued compatibility event after a captured release from
@@ -278,23 +279,27 @@ export function attachTimelineRange({ range, marker = null, onScrub, onReference
     if (suppressedInputValue !== null && now() <= suppressClickUntil) { range.value = String(suppressedInputValue); return; }
     if (canScrub()) onScrub(Number(range.value));
     updateThumbEdge();
-  });
+  }, {signal});
   marker?.addEventListener('click', event => {
     // Keyboard and assistive technology activate the semantic button. Pointer
     // clicks have already been resolved on the range, never on an overlay.
     if ((!event || !event.detail) && canReturn()) onReference();
-  });
+  }, {signal});
 
   function refreshTargets() {
+    if(signal?.aborted)return;
     updateThumbEdge();
     if (!canScrub() || gesture?.referenceTap && !canReturn()
         || !gesture?.dragging && gesture?.tapTarget?.valid?.() === false) clearGesture();
     updateContact();
     updateHover();
   }
+  const dispose=()=>{clearGesture();hoverPointer=null;setEventHover(false);};
+  if(signal?.aborted)dispose();else signal?.addEventListener('abort',dispose,{once:true});
   return {
     refreshTargets,
     updateReference({ value, visible, label, title = label, active = false }: { value?: number | null; visible: boolean; label: string; title?: string; active?: boolean }) {
+      if(signal?.aborted)return;
       const currentBounds = bounds();
       if (gesture && (gesture.metrics.min !== currentBounds.min || gesture.metrics.max !== currentBounds.max)) {
         clearGesture(); hoverPointer = null; setEventHover(false); suppressedInputValue = null;

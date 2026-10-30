@@ -82,7 +82,7 @@ export function normalizeTime(value: unknown) {
   return formatted;
 }
 
-export function bindNumericInput(input: HTMLInputElement, format: (value: string) => string) {
+export function bindNumericInput(input: HTMLInputElement, format: (value: string) => string, signal?:AbortSignal) {
   function update(value: string, precedingDigits: number) {
     input.value = format(value);
     let cursor = input.value.length;
@@ -103,7 +103,7 @@ export function bindNumericInput(input: HTMLInputElement, format: (value: string
     const value = input.value.slice(0, cursor - 2) + input.value.slice(cursor);
     update(value, digits(input.value.slice(0, cursor - 2), 8).length);
     input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  }, {signal});
   input.addEventListener('input', () => {
     const raw = input.value, caret = input.selectionStart!;
     const prefix = raw.slice(0, caret);
@@ -113,5 +113,5 @@ export function bindNumericInput(input: HTMLInputElement, format: (value: string
     else if (/\D$/.test(prefix) && /\D/.test(input.value[input.selectionStart!] || '')) {
       input.setSelectionRange(input.selectionStart! + 1, input.selectionStart! + 1);
     }
-  });
+  }, {signal});
 }

@@ -1,5 +1,6 @@
 import type { StudioLayout } from '../ui/layout/studio-controller.ts';
 export interface DatePickerOptions {
+  signal?:AbortSignal;
   input: HTMLInputElement; button: HTMLButtonElement; getBounds: () => { min: string | null; max: string | null };
   onSelect: (date: string) => void; viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'>;
   precision?: 'day' | 'year'; clearLabel?: string; onClear?: (() => void) | null; getInitialDate?: () => string | null;
@@ -19,7 +20,7 @@ const PAGE_YEARS = 25, YEAR_PERIODS = 9, YEAR_COLUMNS = 3, MAX_YEARS_PER_PERIOD 
 
 // A non-modal calendar: typed input remains independent, and Tab can leave the
 // popup. Only its active grid choice is tabbable; arrows move between choices.
-export function attachDatePicker({ input, button, getBounds, onSelect, viewportLayout, precision = 'day', clearLabel = '', onClear = null, getInitialDate = () => null, presentation = null }: DatePickerOptions) {
+export function attachDatePicker({ input, button, getBounds, onSelect, viewportLayout, signal, precision = 'day', clearLabel = '', onClear = null, getInitialDate = () => null, presentation = null }: DatePickerOptions) {
   const document = input.ownerDocument, window = document.defaultView;
   const popup = document.createElement('section');
   popup.className = ['date-picker', presentation?.className].filter(Boolean).join(' ');
@@ -46,7 +47,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
   }
   function control(text: string, label: string, action: () => void, className = '') {
     const result = node('button', text, className); result.type = 'button';
-    result.setAttribute('aria-label', label); result.addEventListener('click', action);
+    result.setAttribute('aria-label', label); result.addEventListener('click', ()=>{if(!signal?.aborted)action();});
     return result;
   }
   const anchorVisible = () => button.getClientRects?.().length !== 0
@@ -202,6 +203,7 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     position(); focusChoice(focused < 0 ? 0 : focused);
   }
   function open() {
+    if(signal?.aborted)return;
     const bounds = getBounds(); minimum = bounds?.min!; maximum = bounds?.max!;
     if (!minimum || !maximum || minimum > maximum || button.disabled || !anchorVisible()) return;
     const yearCount = maxYear() - minYear() + 1;
@@ -238,13 +240,13 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
   // iOS Safari enables native :active feedback only with a touch listener.
   // Keep it passive: scrolling and activation stay under browser control.
   // https://bugs.webkit.org/show_bug.cgi?id=138816
-  popup.addEventListener('touchstart', () => {}, { passive: true });
+  popup.addEventListener('touchstart', () => {}, {passive:true,signal});
   popup.addEventListener('pointermove', event => {
     popup.dataset.pointerHover = String(event.pointerType === 'mouse' || event.pointerType === 'pen');
-  });
+  }, {signal});
   popup.addEventListener('pointerdown', event => {
     if (event.pointerType === 'touch') popup.dataset.pointerHover = 'false';
-  });
+  }, {signal});
   popup.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true, false); return; }
     const current = choices.indexOf(document.activeElement as HTMLButtonElement);
@@ -274,7 +276,9 @@ export function attachDatePicker({ input, button, getBounds, onSelect, viewportL
     } else if ((event.key === 'PageUp' || event.key === 'PageDown') && view !== 'periods') {
       event.preventDefault(); navigate(event.key === 'PageUp' ? -1 : 1);
     }
-  });
-  button.addEventListener('click', () => popup.hidden ? open() : close());
+  }, {signal});
+  button.addEventListener('click', () => popup.hidden ? open() : close(), {signal});
+  const dispose=()=>{close(false,false);popup.remove();};
+  if(signal?.aborted)dispose();else signal?.addEventListener('abort',dispose,{once:true});
   return { close, get opened() { return !popup.hidden; } };
 }

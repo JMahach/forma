@@ -1,3 +1,4 @@
+import { createResourceScope } from '../runtime/resource-scope.ts';
 import { normalizeLifetimeDraft, type SavedLifetimeDraft } from '../domain/input-draft.ts';
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
@@ -45,6 +46,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
   getDayState = () => null, getMomentState = () => null, getPersonalRecord = () => null,
   onDayScrub = () => {}, onDayNow = () => {}, onLifetimeNow = () => false, beforeScrub = () => {},
   formatEndpoints = () => null, onMomentInput = () => {}, onDraftChange = () => {}, resolveTap }: LifetimeControlsOptions) {
+  const scope=createResourceScope();
   const marks = panel.querySelectorAll('[data-lifetime-date]');
   const rangeLabel = panel.querySelectorAll('label[for="lifetimeTime"]')[0];
   const inputs = [fromDate, toDate], dirty = new Set<HTMLInputElement>();
@@ -66,7 +68,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       range.value = String(explorer.state.requestedUtc);
     }
   }
-  const dayRange = attachTimelineRange({ range, marker, resolveTap, onScrub: scrub,
+  const dayRange = attachTimelineRange({ range, marker, resolveTap, signal:scope.signal, onScrub: scrub,
     onInteractionChange: active => explorer.setInteracting(active),
     resolveEdge({ min, max, value }) {
       const state = explorer.state;
@@ -125,7 +127,9 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     if (marks[1]) setText(marks[1], endpoints[1]);
   }
 
-  function update(state: LifetimeState, momentState = getMomentState()) {
+  function update(state: LifetimeState, momentState:MomentState|null|undefined = undefined) {
+    if(scope.stopped)return;
+    if(momentState===undefined)momentState=getMomentState();
     if (wasOpened && !state.opened) {
       calendars.forEach(calendar => calendar.close()); submitted = null; waitingForMetadata = false;
       inputs.forEach(restoreDate);
@@ -253,7 +257,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     return true;
   }
   function applyDates(reportIncomplete = true, allowOpenEnd = explorer.state.openEnded, allowOpenStart = explorer.state.openStart) {
-    if (!explorer.state.opened) return;
+    if (scope.stopped || !explorer.state.opened) return;
     clearInputError();
     let incomplete = false;
     const { minDate, maxDate } = explorer.state;
@@ -300,12 +304,13 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
 
   for (const input of inputs) {
     let selectWholeOnClick = false, selectionTimer: ReturnType<typeof setTimeout> | undefined;
+    scope.own(()=>clearTimeout(selectionTimer));
     function selectAfterClick(whole: boolean, clientX?: number) {
       clearTimeout(selectionTimer);
       // Let the browser finish placing its caret inside previously selected
       // text before choosing a component. A drag retains its native selection.
       selectionTimer = setTimeout(() => {
-        if (input.ownerDocument.activeElement !== input) return;
+        if (scope.stopped || input.ownerDocument.activeElement !== input) return;
         if (whole) input.select();
         else if (input.selectionStart === input.selectionEnd) {
           const part = datePartAt(input, clientX);
@@ -317,14 +322,14 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       clearTimeout(selectionTimer);
       if (event.button !== 0) return;
       selectWholeOnClick = input.ownerDocument.activeElement !== input || event.pointerType === 'touch';
-    });
-    input.addEventListener('focus', () => input.select());
+    }, {signal:scope.signal});
+    input.addEventListener('focus', () => input.select(), {signal:scope.signal});
     input.addEventListener('click', event => {
       if (event.button !== undefined && event.button !== 0) return;
       selectAfterClick(selectWholeOnClick || event.detail >= 2 || event.detail === 0, event.clientX);
       selectWholeOnClick = false;
-    });
-    input.addEventListener('dblclick', () => selectAfterClick(true));
+    }, {signal:scope.signal});
+    input.addEventListener('dblclick', () => selectAfterClick(true), {signal:scope.signal});
     input.addEventListener('blur', () => {
       clearTimeout(selectionTimer);
       selectWholeOnClick = false;
@@ -333,12 +338,12 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       if (input.value.replace(/\D/g, '').length >= 8 && input.getAttribute('aria-invalid') !== 'true' && (!dirty.has(input) || pending)) return;
       restoreDate(input);
       if (submitted) rejectDates();
-    });
+    }, {signal:scope.signal});
     // A numeric paste can contain nine digits while still fitting maxlength=10.
     // Retain that invalid draft instead of silently committing its first eight.
     let rawInput = '';
-    input.addEventListener('input', () => { clearTimeout(selectionTimer); rawInput = input.value; });
-    bindNumericInput(input, formatDateInput);
+    input.addEventListener('input', () => { clearTimeout(selectionTimer); rawInput = input.value; }, {signal:scope.signal});
+    bindNumericInput(input, formatDateInput, scope.signal);
     input.addEventListener('input', () => {
       dirty.add(input); clearInputError(); waitingForMetadata = false;
       if (rawInput.replace(/\D/g, '').length > 8) {
@@ -348,7 +353,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
         return;
       }
       applyDateEdit(input, false);
-    });
+    }, {signal:scope.signal});
     input.addEventListener('keydown', event => {
       clearTimeout(selectionTimer);
       if (input === fromDate && event.key === 'Tab' && !event.shiftKey) {
@@ -356,10 +361,11 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       }
       if (event.key !== 'Enter') return;
       event.preventDefault(); applyDateEdit(input, true);
-    });
+    }, {signal:scope.signal});
   }
-  toDate.addEventListener('change', () => applyDateEdit(toDate, true));
+  toDate.addEventListener('change', () => applyDateEdit(toDate, true), {signal:scope.signal});
   function setVisibleWindow(value: VisibleWindow | null) {
+    if(scope.stopped)return;
     const next = value && Number.isFinite(value.minUtc) && Number.isFinite(value.maxUtc) && value.minUtc <= value.maxUtc
       ? { minUtc: value.minUtc, maxUtc: value.maxUtc, calendar: Boolean(value.calendar), timeZone: value.timeZone || 'UTC' } : null;
     if (next?.minUtc === visibleWindow?.minUtc && next?.maxUtc === visibleWindow?.maxUtc
@@ -370,13 +376,14 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
   // Readiness and the real-clock marker can change without a new chart object.
   // The existing day controller remains the sole owner of its minute range.
   function refreshMoment() {
+    if(scope.stopped)return;
     const state = explorer.state;
     const momentState = getMomentState();
     if (state.opened && (state.mode === 'day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
   }
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]] as const) {
     if (!button) continue;
-    calendars.push(attachDatePicker({ input, button, viewportLayout,
+    calendars.push(attachDatePicker({ input, button, viewportLayout, signal:scope.signal,
       getBounds: () => ({ min: explorer.state.minDate, max: explorer.state.maxDate }),
       onSelect(value) {
         onMomentInput();
@@ -387,13 +394,14 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     }));
   }
   function snapshot(): SavedLifetimeDraft | null {
-    if (!explorer.state.opened) return null;
+    if (scope.stopped || !explorer.state.opened) return null;
     const field=inputs.find(input=>input.ownerDocument.activeElement === input);
     const focus=captureTextSelection(field);
     return focus || dirty.size ? {fromDate:fromDate.value,toDate:toDate.value,
       focus:focus ? {field:field === fromDate ? 'fromDate' : 'toDate',...focus} : null} : null;
   }
   function restoreDraft(value: unknown, {restoreFocus = true} = {}) {
+    if(scope.stopped)return false;
     const draft=normalizeLifetimeDraft(value);
     if (!draft || !explorer.state.opened || fromDate.disabled || toDate.disabled) return false;
     for (const [input,text] of [[fromDate,draft.fromDate],[toDate,draft.toDate]] as const) {
@@ -405,7 +413,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     onDraftChange();
     return restored;
   }
-  watchTextSelection(inputs,onDraftChange);
+  scope.own(watchTextSelection(inputs,()=>{if(!scope.stopped)onDraftChange();}));
   update(explorer.state);
-  return { update, refreshMoment, setVisibleWindow, refreshTargets: dayRange.refreshTargets, restoreDraft, get snapshot() { return snapshot(); } };
+  return { dispose:scope.stop, update, refreshMoment, setVisibleWindow, refreshTargets: dayRange.refreshTargets, restoreDraft, get snapshot() { return snapshot(); } };
 }

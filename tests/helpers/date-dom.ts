@@ -1,13 +1,14 @@
+import { setMaxListeners } from 'node:events';
 interface FixtureEvent extends Record<string, unknown> {
   target?: EventSurface; relatedTarget?: DateNode | null;
   preventDefault?: () => void; stopPropagation?: () => void;
 }
 type Listener = (event: FixtureEvent) => unknown;
 interface EventSurface {
-  addEventListener(type: string, listener: Listener): void;
+  addEventListener(type: string, listener: Listener, options?:AddEventListenerOptions|boolean): void;
   removeEventListener(type: string, listener: Listener): void;
   dispatch(type: string, event?: FixtureEvent): unknown;
-  listenerCount(type: string): number;
+  listenerCount(type?: string): number;
 }
 export interface DateDocument extends EventSurface {
   activeElement: DateNode | null;
@@ -34,13 +35,17 @@ export interface DateNode extends EventSurface {
 function eventTarget(): EventSurface {
   const listeners = new Map<string, Set<Listener>>();
   return {
-    addEventListener(type, listener) { const list = listeners.get(type) || new Set(); list.add(listener); listeners.set(type, list); },
+    addEventListener(type, listener, options) {
+      const signal=typeof options==='object'?options.signal:undefined;if(signal?.aborted)return;
+      const list=listeners.get(type)||new Set();list.add(listener);listeners.set(type,list);
+      if(signal){setMaxListeners(0,signal);signal.addEventListener('abort',()=>list.delete(listener),{once:true});}
+    },
     removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
     dispatch(type, event = {}) {
       event.target ||= this; event.preventDefault ||= () => {}; event.stopPropagation ||= () => {};
       let result; for (const listener of [...(listeners.get(type) || [])] as const) result = listener(event); return result;
     },
-    listenerCount(type) { return listeners.get(type)?.size || 0; },
+    listenerCount(type) { return type ? listeners.get(type)?.size || 0 : [...listeners.values()].reduce((count,values)=>count+values.size,0); },
   };
 }
 export function dateDom() {

@@ -59,13 +59,19 @@ function harness(options: HarnessOptions = {}) {
     } as NonNullable<ExplorerOptions['client']>,
     onStateChange(state) { notifications.push({ opened: state.opened, status: state.status }); controls?.update(state); },
   });
+  const viewportLayout=createViewportLayout(document);
+  const layoutListeners=document.listenerCount()+document.defaultView.listenerCount('scroll');
+  function bind(extra:Partial<ControlsOptions>={}) {
   controls = attachLifetimeControls({ ...elements as unknown as Pick<ControlsOptions, 'panel' | 'range' | 'fromDate' | 'toDate' | 'fromError' | 'toError' | 'fromCalendar' | 'toCalendar' | 'marker' | 'hourMarks' | 'status'>, explorer: Object.freeze(explorer), getDayState: () => day,
-    viewportLayout: createViewportLayout(document), ...options,
-    onDayScrub: value => dayScrubs.push(value), onDayNow: (...args) => dayReturns.push(args),
+    viewportLayout, ...options,
+    onDayScrub: value => dayScrubs.push(value), onDayNow: (...args) => dayReturns.push(args), ...extra,
   });
+  return controls;
+  }
+  const initialControls=bind();
   function syncTransit() { if (!explorer.syncDay() && !explorer.syncClock()) controls.refreshMoment(); }
   function type(input: DateNode, value: string) { input.focus(); input.value = value; input.setSelectionRange(value.length, value.length); input.dispatch('input'); }
-  return { ...elements, marks, explorer, controls, syncTransit, requests, notifications, document, type, dayScrubs, dayReturns,
+  return { ...elements, marks, explorer, controls:initialControls, bind, viewportLayout, layoutListeners, syncTransit, requests, notifications, document, type, dayScrubs, dayReturns,
     get day() { return day; },
     setDayState(overrides: Partial<LiveTransitState>) { day = { ...day, ...overrides }; syncTransit(); },
     setNow(utc: string) { now = Date.parse(utc); explorer.syncClock(); },
@@ -1587,4 +1593,86 @@ test('restoring unfinished date text may retain a newer focus elsewhere',async()
  assert.equal(h.fromDate.value,'04.1');assert.equal(h.document.activeElement,h.toggle);
  assert.deepEqual(h.controls.snapshot,{...draft,focus:null});
  h.explorer.close();assert.equal(h.controls.snapshot,null);
+});
+
+function controlResources(h:ReturnType<typeof harness>){
+ const nodes=[h.fromDate,h.toDate,h.range,h.marker,h.fromCalendar,h.toCalendar,h.document,...h.document.body.all(()=>true)];
+ return {listeners:nodes.reduce((count,node)=>count+node.listenerCount(),0)+h.document.defaultView.listenerCount('scroll')-h.layoutListeners,
+  popups:h.document.body.children.filter(node=>node.className.includes('date-picker')).length,viewport:h.viewportLayout.subscriberCount};
+}
+test('lifetime disposal releases date, timeline, calendar and selection resources on the same nodes',async t=>{
+ let drafts=0;const h=harness({onDraftChange:()=>drafts++});await open(h);h.fromCalendar.dispatch('click');
+ const before=controlResources(h);await h.controls.dispose?.();await h.controls.dispose?.();
+ const after=controlResources(h);t.diagnostic(JSON.stringify({before,after}));
+ assert.deepEqual(after,{listeners:0,popups:0,viewport:0});
+ const prior=drafts;h.fromDate.focus();h.document.dispatch('selectionchange');h.range.dispatch('input');h.marker.dispatch('click',{detail:0});
+ assert.equal(drafts,prior);assert.equal(h.dayScrubs.length,0);assert.equal(h.dayReturns.length,0);h.viewportLayout.destroy();
+});
+test('lifetime create-dispose-create gives reused nodes to the new owner only',async()=>{
+ let oldDrafts=0,newDrafts=0;const h=harness({onDraftChange:()=>oldDrafts++});await open(h);
+ const baseline=controlResources(h);await h.controls.dispose?.();const replacement=h.bind({onDraftChange:()=>newDrafts++});await h.controls.dispose?.();
+ assert.deepEqual(controlResources(h),baseline);const prior=oldDrafts;
+ h.fromDate.focus();h.document.dispatch('selectionchange');assert.equal(oldDrafts,prior);assert.equal(newDrafts,2);
+ h.range.value='120';h.range.dispatch('input');assert.deepEqual(h.dayScrubs,[120]);
+ await replacement.dispose?.();assert.deepEqual(controlResources(h),{listeners:0,popups:0,viewport:0});h.viewportLayout.destroy();
+});
+test('lifetime disposal cancels selection timers and rejects even an already queued callback',async t=>{
+ const timers=new Map<number,()=>void>();let serial=0;
+ t.mock.method(globalThis,'setTimeout',(callback:()=>void)=>{const id=++serial;timers.set(id,callback);return id;});
+ t.mock.method(globalThis,'clearTimeout',(id:number)=>{timers.delete(id);});
+ const h=harness();await open(h);h.fromDate.focus();h.fromDate.dispatch('click',{button:0,detail:0});
+ assert.equal(timers.size,1);const late=[...timers.values()][0];await h.controls.dispose?.();
+ t.diagnostic(JSON.stringify({scheduled:serial,remainingAfterDispose:timers.size}));assert.equal(timers.size,0);
+ h.fromDate.setSelectionRange(1,1);late();assert.deepEqual([h.fromDate.selectionStart,h.fromDate.selectionEnd],[1,1]);h.viewportLayout.destroy();
+});
+test('disposed lifetime methods cannot overwrite a replacement view or restore focus',async()=>{
+ const h=harness();await open(h);h.fromDate.focus();assert.ok(h.controls.snapshot);await h.controls.dispose?.();h.status.textContent='replacement';h.range.value='123';h.fromDate.value='replacement';
+ h.controls.update({...h.explorer.state,opened:false});h.controls.refreshMoment();h.controls.setVisibleWindow({minUtc:0,maxUtc:1});h.controls.refreshTargets();
+ assert.equal(h.controls.restoreDraft({fromDate:'01.01.2000',toDate:'01.01.2001',focus:null}),false);
+ assert.equal(h.status.textContent,'replacement');assert.equal(h.range.value,'123');assert.equal(h.fromDate.value,'replacement');assert.equal(h.controls.snapshot,null);h.viewportLayout.destroy();
+});
+
+test('a late lifetime state publication does not even read presentation data after disposal',async()=>{
+ let reads=0;const h=harness({getMomentState:()=>{reads++;return null;}});await open(h);await h.controls.dispose?.();
+ const before=reads;h.controls.update(h.explorer.state);h.controls.refreshMoment();assert.equal(reads,before);h.viewportLayout.destroy();
+});
+
+test('queued metadata continuation cannot apply dates after lifetime disposal',async t=>{
+ const queued:(()=>void)[]=[];t.mock.method(globalThis,'queueMicrotask',(run:()=>void)=>queued.push(run));
+ const meta=deferred(),h=harness({metaPromise:meta.promise}),opening=h.explorer.open();
+ await dates(h,'01012000','02012000');meta.resolve(metadata);await opening;await tick();assert.equal(queued.length,1);
+ await h.controls.dispose?.();const requests=h.requests.length,from=h.fromDate.value;
+ queued[0]();await tick();assert.equal(h.requests.length,requests);assert.equal(h.fromDate.value,from);h.explorer.close();h.viewportLayout.destroy();
+});
+test('late failed calculation cannot update a disposed lifetime view',async t=>{
+ let reads=0;const h=harness();await h.controls.dispose?.();const controls=h.bind({getMomentState:()=>{reads++;return null;}});
+ t.after(()=>{h.explorer.close();h.viewportLayout.destroy();});
+ await open(h);await dates(h);assert.equal(h.requests.length,1);await controls.dispose?.();
+ const before=reads;h.status.textContent='replacement';h.requests[0].reject(Error('late failure'));await tick();
+ assert.equal(reads,before);assert.equal(h.status.textContent,'replacement');
+});
+test('disposing an open calendar discards its browsing choice and cannot reopen through stale nodes',async()=>{
+ const h=harness();await open(h);h.fromCalendar.dispatch('click');
+ const popup=h.document.body.children.find(node=>node.className.includes('date-picker'))!;
+ const year=popup.all(node=>node.getAttribute('aria-label')?.endsWith('год, 1 января')===true && !node.disabled)[0];
+ year.dispatch('click');const prior=h.fromDate.value;await h.controls.dispose?.();
+ assert.equal(h.fromDate.value,prior);assert.equal(h.requests.length,0);assert.notEqual(h.document.activeElement,h.fromCalendar);
+ const before=popup.children.length;year.dispatch('click');h.fromCalendar.dispatch('click');
+ assert.equal(popup.children.length,before);assert.equal(h.document.body.children.length,0);h.viewportLayout.destroy();
+});
+
+test('lifetime disposal releases an active pointer capture and ignores its late movement',async()=>{
+ const h=harness();await open(h);const captured=new Set<number>();
+ Object.assign(h.range,{setPointerCapture(id:number){captured.add(id);},hasPointerCapture(id:number){return captured.has(id);},releasePointerCapture(id:number){captured.delete(id);}});
+ h.range.dispatch('pointerdown',{pointerId:17,pointerType:'pen',isPrimary:true,button:0,clientX:283,clientY:720});
+ assert.deepEqual([...captured],[17]);await h.controls.dispose?.();assert.equal(captured.size,0);
+ const prior=h.dayScrubs.length;h.range.dispatch('pointermove',{pointerId:17,pointerType:'pen',clientX:400,clientY:720});assert.equal(h.dayScrubs.length,prior);h.viewportLayout.destroy();
+});
+
+test('lifetime state publication reads its current moment unless an explicit moment was supplied',async()=>{
+ let live:MomentState|null=null;const h=harness({getMomentState:()=>live});await open(h);await dates(h);await complete(h);
+ live={...h.day,current:{...h.day.current,utc:'1998-08-11T12:34:00Z'}} as MomentState;
+ h.controls.update(h.explorer.state);assert.equal(h.range.value,String(Date.parse('1998-08-11T12:34:00Z')));
+ h.controls.update(h.explorer.state,null);assert.equal(h.range.value,String(h.explorer.state.requestedUtc));
+ await h.controls.dispose?.();h.explorer.close();h.viewportLayout.destroy();
 });
