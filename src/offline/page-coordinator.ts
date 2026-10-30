@@ -1,6 +1,6 @@
 import { OFFLINE_VERSION, type OfflineCommand, type OfflineStatus, type OfflineTabReply, type OfflineTabRequest } from '../../shared/offline-contract.ts';
 
-interface PageOwner { prepare():boolean|Promise<boolean>; restored():boolean; subscribe?(listener:()=>void):()=>void }
+interface PageOwner { prepare(signal:AbortSignal):boolean|Promise<boolean>; restored():boolean; subscribe?(listener:()=>void):()=>void }
 type Reply={type:'forma-offline';action:OfflineCommand['action'];accepted:boolean}&Partial<OfflineStatus>&{previousVersions?:string[]};
 interface Options {
  registration:ServiceWorkerRegistration;serviceWorker:ServiceWorkerContainer;loadedVersion:string;
@@ -13,14 +13,15 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
  events=window,visibility=document,timeoutMs=7000}:Options) {
  if(!OFFLINE_VERSION.test(loadedVersion))throw new TypeError('Missing loaded release identity');
  let disposed=false,reloading=false,deferred=false,checking:Promise<void>|null=null,checkAgain=false;
- type Preparation={requestId:string;version:string;worker:ServiceWorker;release:()=>void;timer:ReturnType<typeof setTimeout>};
+ type Preparation={requestId:string;version:string;worker:ServiceWorker;control:AbortController;release:()=>void;timer:ReturnType<typeof setTimeout>};
  let prepared:Preparation|null=null,refreshing:Promise<void>|null=null;
+ let reloadControl:AbortController|null=null;
  let reloadRelease:(()=>void)|null=null,reloadTimer:ReturnType<typeof setTimeout>|null=null;
- function releaseReload(){if(reloadTimer!==null)clearTimeout(reloadTimer);reloadTimer=null;reloadRelease?.();reloadRelease=null;}
+ function releaseReload(){reloadControl?.abort();reloadControl=null;if(reloadTimer!==null)clearTimeout(reloadTimer);reloadTimer=null;reloadRelease?.();reloadRelease=null;}
  function navigationHidden(){releasePreparation();releaseReload();}
  function navigationShown(){releaseReload();reloading=false;void check();}
  const pending=new Set<()=>void>(),observedWorkers=new Set<ServiceWorker>(),askingWorkers=new Map<ServiceWorker,number>();
- function releasePreparation(){if(!prepared)return;const old=prepared;prepared=null;clearTimeout(old.timer);old.release();observeWorkers();}
+ function releasePreparation(){if(!prepared)return;const old=prepared;prepared=null;clearTimeout(old.timer);old.control.abort();old.release();observeWorkers();}
  function known(worker:ServiceWorker|null){return !!worker&&[registration.waiting,registration.active,serviceWorker.controller].includes(worker);}
  function ask(worker:ServiceWorker,data:OfflineCommand):Promise<Reply|null>{
   return new Promise(resolve=>{
@@ -57,10 +58,10 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
   if(request.action==='verify-restored-tab'){reply(!disposed&&loadedVersion===request.version&&owner.restored());return;}
   if(request.action!=='prepare-tab')return;
   releasePreparation();
-  const token:Preparation={requestId:request.requestId,version:request.version,worker:worker!,release:hold(),
+  const token:Preparation={requestId:request.requestId,version:request.version,worker:worker!,control:new AbortController(),release:hold(),
    timer:setTimeout(()=>{if(prepared===token)releasePreparation();},Math.max(timeoutMs*2,10000))};
   prepared=token;
-  void Promise.resolve().then(()=>owner.prepare()).then(ok=>{
+  void Promise.resolve().then(()=>owner.prepare(token.control.signal)).then(ok=>{
    const ready=ok===true&&!disposed&&prepared===token;
    if(!ready&&prepared===token){deferred=true;releasePreparation();}reply(ready);
   },()=>{deferred=true;if(prepared===token)releasePreparation();reply(false);});
@@ -73,17 +74,20 @@ export function attachOfflinePage({registration,serviceWorker,loadedVersion,owne
   if(status?.ready&&typeof status.version==='string'&&OFFLINE_VERSION.test(status.version)&&status.version!==loadedVersion){
    // Recheck persistence immediately before reload: data may have finished
    // loading between the earlier preparation and controllerchange.
-   const release=hold();let navigating=false;
+   const token=prepared,control=new AbortController();let navigating=false;
+   reloadControl=control;reloadRelease=hold();
+   const expires=()=>{if(reloadControl===control){releaseReload();reloading=false;deferred=true;}};
+   reloadTimer=setTimeout(expires,Math.max(timeoutMs*2,10000));
    try{
-    if(await owner.prepare()&&!disposed&&active===(serviceWorker.controller??registration.active)){
-     deferred=false;reloading=true;reloadRelease=release;
+    if(await owner.prepare(control.signal)&&!control.signal.aborted&&!disposed&&active===(serviceWorker.controller??registration.active)){
+     deferred=false;reloading=true;
      // reload() only starts navigation. Keep the snapshot intact until the
      // document leaves; recover if the browser cancels that navigation.
-     reloadTimer=setTimeout(()=>{releaseReload();reloading=false;deferred=true;},Math.max(timeoutMs*2,10000));
+     if(reloadTimer!==null)clearTimeout(reloadTimer);reloadTimer=setTimeout(expires,Math.max(timeoutMs*2,10000));
      reload();navigating=true;
     }else deferred=true;
-   }catch{releaseReload();reloading=false;deferred=true;}
-   finally{releasePreparation();if(!navigating)release();}
+   }catch{reloading=false;deferred=true;}
+   finally{if(prepared===token)releasePreparation();if(!navigating && reloadControl===control)releaseReload();}
    return;
   }
   if(!owner.restored()){deferred=true;return;}

@@ -5,7 +5,7 @@ import { attachOfflinePage } from '../src/offline/page-coordinator.ts';
 
 const old='a'.repeat(64),next='b'.repeat(64);
 const settle=()=>new Promise(resolve=>setTimeout(resolve,15));
-function fixture(options:{prepare?:()=>boolean|Promise<boolean>;restored?:()=>boolean;controlled?:boolean;activeVersion?:string;waitingVersion?:string}={}) {
+function fixture(options:{prepare?:(signal:AbortSignal)=>boolean|Promise<boolean>;restored?:()=>boolean;controlled?:boolean;activeVersion?:string;waitingVersion?:string}={}) {
  const container=new EventTarget() as EventTarget & {controller:any},events=new EventTarget(),visibility=Object.assign(new EventTarget(),{hidden:false});
  const calls:any[]=[],registration=Object.assign(new EventTarget(),{active:null as any,waiting:null as any,installing:null as any});
  let held=0,reloads=0,ready=true,accepted=true;let activationWait:Promise<void>|null=null;const ownerListeners=new Set<()=>void>();
@@ -34,15 +34,16 @@ test('unwritten snapshot never approves a transition or keeps input held',async 
  const reply=await f.ask('prepare-tab');assert.equal(reply.ready,false);assert.equal(f.held,0);assert.equal(f.reloads,0);
 });
 test('a cancelled asynchronous preparation cannot later approve or re-lock the page',async t=>{
- let finish!:(value:boolean)=>void;const f=fixture({prepare:()=>new Promise(resolve=>{finish=resolve;})});
+ let finish!:(value:boolean)=>void,signal!:AbortSignal;const f=fixture({prepare:value=>{signal=value;return new Promise(resolve=>{finish=resolve;});}});
  t.after(()=>f.page.dispose());f.registration.waiting=f.worker(next);
  const reply=f.ask('prepare-tab');await settle();assert.equal(f.held,1);f.cancel();assert.equal(f.held,0);
- finish(true);assert.equal((await reply).ready,false);assert.equal(f.held,0);
+ finish(true);assert.equal((await reply).ready,false);assert.equal(signal.aborted,true);assert.equal(f.held,0);
 });
 test('wrong cancellation does not release another prepared attempt',async t=>{
- const f=fixture();t.after(()=>f.page.dispose());f.registration.waiting=f.worker(next);
+ const signals:AbortSignal[]=[];const f=fixture({prepare:signal=>{signals.push(signal);return true;}});t.after(()=>f.page.dispose());f.registration.waiting=f.worker(next);
  assert.equal((await f.ask('prepare-tab')).ready,true);assert.equal(f.held,1);
- f.cancel('wrong');assert.equal(f.held,1);f.cancel();assert.equal(f.held,0);
+ assert.equal((await f.ask('prepare-tab','attempt-2')).ready,true);assert.equal(signals[0].aborted,true);
+ f.cancel('attempt-1');assert.equal(f.held,1);assert.equal(signals[1].aborted,false);f.cancel('attempt-2');assert.equal(f.held,0);assert.equal(signals[1].aborted,true);
 });
 test('knowing the active worker version never proves that the page restored new code',async t=>{
  const f=fixture();t.after(()=>f.page.dispose());f.registration.active=f.worker(next);
@@ -69,9 +70,9 @@ test('a waiting bundle is asked to activate only after it is complete and the pa
 });
 
 test('reload keeps the input fence until pagehide, rather than releasing before navigation commits',async t=>{
- const f=fixture();t.after(()=>f.page.dispose());f.container.controller=f.registration.active=f.worker(next);
+ let signal!:AbortSignal;const f=fixture({prepare:value=>{signal=value;return true;}});t.after(()=>f.page.dispose());f.container.controller=f.registration.active=f.worker(next);
  await f.page.check();assert.equal(f.reloads,1);assert.equal(f.held,1);
- f.events.dispatchEvent(new Event('pagehide'));assert.equal(f.held,0);
+ assert.equal(signal.aborted,false);f.events.dispatchEvent(new Event('pagehide'));assert.equal(f.held,0);assert.equal(signal.aborted,true);
 });
 test('finishing an operation retries a waiting update without requiring tab switching',async t=>{
  const f=fixture();t.after(()=>f.page.dispose());f.registration.waiting=f.worker(next);f.setAccepted(false);

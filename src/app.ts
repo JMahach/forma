@@ -656,7 +656,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       }},
     libraryAudit:{scope:libraryWorkScope,store:libraryStorage.maintenance},
     update:{
-    restored:()=>!initialPage.contentFailed && !initialPage.screenPending && !initialPage.screenFailed,
+    restored:()=>workspaceView.status==='ready',
     ready(){
       if(birthForm.pending || account.snapshot?.verificationPending || account.snapshot?.telegramPending)return false;
       // An unfinished field must have a supported checkpoint owner.
@@ -672,10 +672,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
 
     },
     selection:()=>session.selectedId,
-    canRestore(selected){
-      return selected==='current-transit' || selected===store.temporaryChart?.id
-        || !accountLibrary.get(selected) && selected===store.publicChart?.id || accountLibrary.canRestore(selected);
-    },
+    sources:{get temporaryId(){return store.temporaryChart?.id??null;},get publicId(){return store.publicChart?.id??null;},
+      hasOwn:id=>!!accountLibrary.get(id),canRestore:accountLibrary.canRestore},
     checkpoint:()=>viewSession!.flush(),
   },startup:{
     library:accountLibrary,view:viewSession,
@@ -933,7 +931,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   return { saveShownChart,cancelChartSave,restoration,offlineRestored,
     attachReleaseCheck(port:ReleaseCheckPort){if(scope.stopped){port.stop();return;}releaseCheck?.stop();releaseCheck=port;application?.send({type:'BackgroundChanged'});},
     subscribeOfflineReady(listener:()=>void){offlineListeners.add(listener);return()=>{offlineListeners.delete(listener);};},
-    prepareOfflineUpdate:()=>application!.prepareUpdate(),
+    prepareOfflineUpdate:(signal?:AbortSignal)=>application!.prepareUpdate(signal),
     stopApplication: scope.stop,
     flushView: () => viewSession!.flush(),
     attachJournal(value:AppJournal){

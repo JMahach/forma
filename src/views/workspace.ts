@@ -145,7 +145,7 @@ export function createWorkspaceView(ports:WorkspacePorts) {
   }
 
 
-  return {attach(){initialPage.attached=true;updateInitialPage();commitLoadingLayout(document);},initial:initialPage,update:updateInitialPage,restoreInput:restoreInitialInput,inputSnapshot,discardInput:discardPendingInput,
+  return {get status(){return ports.signal.aborted?'cancelled':initialPage.active?'preparing':shell.dataset.pageState==='error'?'failed':'ready';},attach(){initialPage.attached=true;updateInitialPage();commitLoadingLayout(document);},initial:initialPage,update:updateInitialPage,restoreInput:restoreInitialInput,inputSnapshot,discardInput:discardPendingInput,
     get pendingLifetimeDraft(){return pendingLifetimeDraft;},
     start(){const unsubscribe=workspace.subscribe(applyWorkspace);applyWorkspace();return unsubscribe;}};
 }

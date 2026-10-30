@@ -343,7 +343,7 @@ if (!previewLoading) try {
 }
 
 // The page updater cannot infer restoration from shell visibility or the worker.
-export function prepareOfflineUpdate(){return application?.prepareOfflineUpdate()??false;}
+export function prepareOfflineUpdate(signal?:AbortSignal){return application?.prepareOfflineUpdate(signal)??false;}
 export function offlineRestored(){return application?.offlineRestored()??false;}
 export function offlineReady(){return application?.restoration??Promise.resolve();}
 export function subscribeOfflineReady(listener:()=>void){return application?.subscribeOfflineReady(listener)??(()=>{});}

@@ -2,7 +2,7 @@ import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xsta
 import {routeForChart} from './route.ts';
 import type {AppRoute} from '../../shared/app-routes.ts';
 import { createApplicationMachine } from './application-machine.ts';
-import { prepareUpdate } from './update.ts';
+import { createUpdatePreparation } from './update.ts';
 import { startupView } from './startup.ts';
 import { writeContinuationView, type TemporaryWriteBinding } from './write-continuation.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
@@ -178,14 +178,16 @@ function applicationRestored(actor:ApplicationActor,ports:ApplicationPorts) {
   return view.lifecycle==='running' && startup.restored && !startup.failed
     && view.destination!=='preparing' && (view.destination!=='failed' || !!view.request?.selection) && ports.update?.restored()===true;
 }
-function prepareRelease(actor:ApplicationActor,ports:ApplicationPorts) {
-  const port=ports.update;
-  return port?prepareUpdate(port,()=>applicationRestored(actor,ports) && !readWrite(actor).busy && port.ready()):false;
-}
 
 export function createApplication(ports: ApplicationPorts) {
   const subscriptions:(()=>void)[]=[];
   let sources:Promise<void>=Promise.resolve();
+  const updating=ports.update?createUpdatePreparation(ports.update,{
+    ready:()=>applicationRestored(actor,ports) && !readWrite(actor).busy && ports.update!.ready(),
+    changed(){if(actor.getSnapshot().matches('running')){
+      actor.send({type:'BackgroundChanged'});actor.send({type:'FillChanged'});actor.send({type:'AuditChanged'});
+    }},
+  }):null;
   const machine = createApplicationMachine(ports, () => {
     for(const stop of subscriptions.splice(0))stop();
   },()=>sources,()=>{
@@ -210,7 +212,7 @@ export function createApplication(ports: ApplicationPorts) {
     get startup() {return readStartup(actor);},
     get account(){return readAccount(actor);},
     isRestored(){return applicationRestored(actor,ports);},
-    prepareUpdate(){return prepareRelease(actor,ports);},
+    prepareUpdate(signal?:AbortSignal){return updating?.prepare(signal)??false;},
     start() {
       if (!actor.getSnapshot().matches('created')) return;
       sources=restoreAccount(ports);
@@ -258,7 +260,7 @@ export function createApplication(ports: ApplicationPorts) {
       const write=actor.getSnapshot().children.write;
       if(write)await waitFor(write,state=>!writeContinuationView(state).busy);
     },
-    async stop() {stopRuntime(actor);},
+    async stop() {stopRuntime(actor);updating?.stop();},
   };
 }
 
