@@ -3,10 +3,18 @@ import type {BirthSubmission} from '../domain/chart-record.ts';
 import type {ChartActions,ChartActionResult} from '../state/chart-actions.ts';
 import type {LibrarySession} from '../state/account-library.ts';
 
+interface EditingObservation {
+ finishSuccess():unknown;
+ reportError(error:unknown,step:{stage:'commit'|'request'}):unknown;
+ reportFailure(step:{stage:'response';reason:'outcome_unknown';outcome:'unknown'}):unknown;
+}
 interface EditingPorts {
  actions:Pick<ChartActions,'create'|'update'|'recover'|'remove'>;
  ready():Promise<void>;
  session():LibrarySession|null;
+ accountId():string|null;
+ temporaryId():string|null;
+ observe?(action:'chart_save'|'chart_delete'):EditingObservation|undefined;
  durable():boolean;
  online():boolean;
  deleted(id:string):void;
@@ -47,7 +55,7 @@ class ChartEditing {
   if(result.kind==='unknown'){
    this.intent=result.intent;throw failure('write_unknown',this.ports.messages.unconfirmed);
   }
-  if(result.kind!=='settled' || !result.active)throw failure('account_changed',this.ports.messages.signIn);
+  if(!result.active)throw failure('account_changed',this.ports.messages.signIn);
   if(result.receipt.outcome.kind==='rejected')throw failure(result.receipt.outcome.code,this.ports.messages.failed);
   if(!result.chart){
    this.intent={operationId:result.receipt.operationId,expectedAccountId:result.receipt.expectedAccountId};
@@ -55,7 +63,15 @@ class ChartEditing {
   }
   this.intent=null;return this.result(result.chart.id,Boolean(input.previous && !input.birth));
  }
- async submit(input:BirthSubmission,signal:AbortSignal):Promise<SubmissionResult> {
+ submit(input:BirthSubmission,signal:AbortSignal):Promise<SubmissionResult>|null {
+  if(input.previous && input.previous.id===this.ports.temporaryId())return null;
+  if(!this.ports.session() && !this.ports.accountId())return null;
+  const observation=this.ports.observe?.('chart_save');
+  return this.submitAccount(input,signal).then(result=>{observation?.finishSuccess();return result;},error=>{
+   void observation?.reportError(error,{stage:'commit'});throw error;
+  });
+ }
+ private async submitAccount(input:BirthSubmission,signal:AbortSignal):Promise<SubmissionResult> {
   const access=this.ports.session(),generation=this.generation;
   await this.ports.ready();signal.throwIfAborted();
   if(!access || !sameSession(this.ports.session(),access) || generation!==this.generation)
@@ -70,6 +86,15 @@ class ChartEditing {
   catch(error){return active()?{kind:'unknown',error}:{kind:'inactive'};}
  }
  async remove(id:string,signal:AbortSignal):Promise<RemovalResult> {
+  const observation=this.ports.observe?.('chart_delete');
+  try {
+   const result=await this.removeAccount(id,signal);
+   if(result.kind==='unknown')void observation?.reportFailure({stage:'response',reason:'outcome_unknown',outcome:'unknown'});
+   else observation?.finishSuccess();
+   return result;
+  }catch(error){void observation?.reportError(error,{stage:'request'});throw error;}
+ }
+ private async removeAccount(id:string,signal:AbortSignal):Promise<RemovalResult> {
   const access=this.ports.session();if(!access)return {kind:'inactive'};
   const active=()=>!signal.aborted && sameSession(this.ports.session(),access);
   const result=await this.ports.actions.remove(id,signal);if(!active())return {kind:'inactive'};

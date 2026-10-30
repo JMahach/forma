@@ -1,30 +1,26 @@
 import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
-import type { AccountChart, PublicAccountChart, ChartWriteIntent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
+import type { AccountChart, ChartWriteIntent, ChartWriteOutcome } from '../../shared/chart-record-contract.ts';
 import { chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
-import type { CalculationRequest, SavedChart } from '../../shared/chart-types.ts';
+import type { SavedChart } from '../../shared/chart-types.ts';
 import type { ChartClient, ChartBirthInput, ChartReceipt, ChartReply, ChartPatchInput } from '../data/chart-client.ts';
-import type { ChartCalculation } from '../domain/chart-record.ts';
 import type { AccountLibrary, LibrarySession } from './account-library.ts';
 import type { CheckpointResult } from './view-checkpoint.ts';
-import { createRandomId } from '../domain/chart-record.ts';
+import { createRandomId, chartSaveSourceKey, type ChartSaveSource } from '../domain/chart-record.ts';
 import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
 
 export type ChartActionResult =
-  | {kind: 'temporary'; chart: SavedChart}
   | {kind: 'unknown'; intent: ChartWriteIntent; error?: unknown}
   | {kind: 'settled'; receipt: ChartReceipt<ChartWriteOutcome>; chart: AccountChart | null; active: boolean; readError?: unknown};
-export type ChartSaveSource = {kind:'temporary';chart:SavedChart} | {kind:'shared';chart:Pick<PublicAccountChart,'id'|'revision'> & Partial<SavedChart>};
-export type ChartSaveResult = ChartActionResult | {kind:'sign-in'|'inactive'};
-export interface ChartSaveAction {
-  readonly waitingForLogin:boolean;
-  run(signal?:AbortSignal):Promise<ChartSaveResult>;
-  cancel():void;
+export interface SaveSourceOptions {
+  signal:AbortSignal;
+  isCurrent:()=>boolean;
+  intent?:ChartWriteIntent;
+  onIntent?:(intent:ChartWriteIntent|null)=>void;
 }
 interface Options {
   client: Pick<ChartClient, 'create' | 'update' | 'remove' | 'addFromSource' | 'outcome'>;
   library: Pick<AccountLibrary,'open'|'forget'> & Partial<Pick<AccountLibrary,'prepareAcceptance'>>;
   getSession: () => LibrarySession | null;
-  calculate(input: CalculationRequest, signal: AbortSignal): Promise<ChartCalculation>;
   // Optional transport override. The default sends source input and the server
   // calculation receipt; browser activation numbers never cross this boundary.
   saveReady?: (input:ChartWriteIntent & {chart:SavedChart},signal?:AbortSignal)=>Promise<ChartReceipt<ChartWriteOutcome>>;
@@ -46,12 +42,12 @@ function refusedBeforeWrite(error: unknown) {
 }
 
 /** Writes are explicit once. Pending pointers contain no command or chart and permit only outcome reads. */
-export function createChartActions({client, library, getSession, calculate, saveReady, newId = createRandomId, initialPending = [],
+export function createChartActions({client, library, getSession, saveReady, newId = createRandomId, initialPending = [],
   prepareWrite, onPending = () => {}}: Options) {
   const pending = new Map<string, ChartWriteIntent>();
   const saveChecks=new Map<string,{intent:ChartWriteIntent;session:LibrarySession}>();
   const recoveries=new Map<string,SharedRequest<ChartActionResult,{live:()=>boolean}>>();
-  let generation=0,saving:{key:string;live:()=>boolean;action:ChartSaveAction}|null=null;
+  let generation=0;
   // Only the open page associates a deletion with its recovery pointer. No
   // command payload, queued write or deletion tombstone is persisted here.
   const removals = new Map<string, {intent?: ChartWriteIntent; work?: Promise<ChartActionResult>}>();
@@ -174,108 +170,52 @@ export function createChartActions({client, library, getSession, calculate, save
     }).catch(() => {});
     return work;
   }
-  function selectionKey(source:ChartSaveSource) {
-    const chart=source.chart;
-    return JSON.stringify([source.kind,chart.id,chart.name,chart.source,chart.utc,chart.timezone,
-      chart.birthDate,chart.birthTime,chart.cityId,chart.fold,
-      source.kind==='shared'?source.chart.revision:source.chart.note]);
+  async function saveSource(source:ChartSaveSource,{signal,isCurrent,intent:restored,onIntent}:SaveSourceOptions):Promise<ChartActionResult> {
+    signal.throwIfAborted();
+    const seen=access(),sourceKey=chartSaveSourceKey(source),previous=saveChecks.get(sourceKey);
+    let intent=restored??(previous && same(previous.session)?previous.intent:undefined);
+    if(intent && intent.expectedAccountId!==seen.accountId)throw failed('account_changed');
+    const remember=(value:ChartWriteIntent|null,session:LibrarySession)=>{
+      if(value){intent=value;saveChecks.set(sourceKey,{intent:value,session});onIntent?.(value);}
+      else if(saveChecks.get(sourceKey)?.intent===intent){saveChecks.delete(sourceKey);onIntent?.(null);intent=undefined;}
+    };
+    try {
+      const result=intent?await recover(intent,signal,isCurrent)
+        :await write(value=>sendSource(source,value,signal),signal,isCurrent,remember);
+      if(result.kind==='settled' && result.active && (result.chart || result.receipt.outcome.kind==='rejected')) {
+        const owned=saveChecks.get(sourceKey)?.intent;
+        if(owned?.operationId===result.receipt.operationId && owned.expectedAccountId===result.receipt.expectedAccountId)saveChecks.delete(sourceKey);
+      }
+      return result;
+    }catch(error){
+      if(refusedBeforeWrite(error) && intent && saveChecks.get(sourceKey)?.intent===intent){
+        saveChecks.delete(sourceKey);onIntent?.(null);
+      }
+      throw error;
+    }
   }
-  // One explicit page-local action. Only its recovery pointer is persisted;
-  // closing login, navigation and source replacement cancel this continuation.
-  function prepareSave(source:ChartSaveSource,isCurrent:()=>boolean=()=>true,
-    recovery:{intent?:ChartWriteIntent;onIntent?:(intent:ChartWriteIntent|null)=>void}={}):ChartSaveAction {
-    const selectedKey=selectionKey(source);
-    if(saving?.key===selectedKey && saving.live())return saving.action;
-    saving?.action.cancel();
-    const ownedGeneration=generation,controller=new AbortController();
-    let seen=getSession(),cancelled=false,waiting=false,external:AbortSignal|undefined;
-    seen=seen?{...seen}:null;
-    let work:Promise<ChartSaveResult>|null=null,intent:ChartWriteIntent|null=recovery.intent?{operationId:recovery.intent.operationId,expectedAccountId:recovery.intent.expectedAccountId}:null,completed:ChartActionResult|null=null;
-    const live=()=>{
-      try{return !cancelled && ownedGeneration===generation && selectionKey(source)===selectedKey
-        && isCurrent() && (!seen || same(seen));}catch{return false;}
-    };
-    function cancel(){cancelled=true;waiting=false;controller.abort();external?.removeEventListener('abort',cancel);if(saving?.action===action)saving=null;}
-    const action:ChartSaveAction={
-      get waitingForLogin(){return waiting && live();},cancel,
-      run(signal){
-        if(signal?.aborted)cancel();
-        if(!live()){cancel();return Promise.resolve({kind:'inactive'});}
-        if(!external && signal){external=signal;external.addEventListener('abort',cancel,{once:true});}
-        if(work)return work;
-        if(completed)return Promise.resolve(completed);
-        const current=getSession();
-        if(!current){waiting=true;return Promise.resolve({kind:'sign-in'});}
-        seen??={...current};waiting=false;
-        if(intent && intent.expectedAccountId!==current.accountId){cancel();return Promise.resolve({kind:'inactive'});}
-        const previous=saveChecks.get(selectedKey);
-        if(!intent && previous && same(previous.session))intent=previous.intent;
-        const remember=(value:ChartWriteIntent|null,session:LibrarySession)=>{
-          if(value){intent=value;saveChecks.set(selectedKey,{intent:value,session});recovery.onIntent?.(value);}
-          else {
-            // A newer save of the same source may already own its binding.
-            if(saveChecks.get(selectedKey)?.intent===intent){saveChecks.delete(selectedKey);recovery.onIntent?.(null);}
-            intent=null;
-          }
-        };
-        work=(async()=>{
-          let result:ChartActionResult;
-          if(intent)result=await recover(intent,controller.signal,live);
-          else if(source.kind==='shared')result=await write(value=>client.addFromSource({...value,
-            sourceId:source.chart.id,seenRevision:source.chart.revision},controller.signal),controller.signal,live,remember);
-          else {
-            const chart=source.chart;
-            const birth:ChartBirthInput=chart.source==='transit'?{source:'transit',utc:chart.utc!}
-              :{source:'calculated',date:chart.birthDate,time:chart.birthTime,cityId:String(chart.cityId??chart.city?.id??''),
-                ...(chart.fold===0 || chart.fold===1?{fold:chart.fold}:{})};
-            if(chart.source!=='transit' && chart.source!=='calculated')throw failed('invalid_request');
-            result=await write(value=>saveReady?saveReady({...value,chart},controller.signal)
-              :client.create({...value,name:chart.name,note:chart.note,birth,
-                ...(chart.calculationReceipt?{calculationReceipt:chart.calculationReceipt}:{})},controller.signal),controller.signal,live,remember);
-          }
-          if(result.kind==='settled' && result.active && (result.chart || result.receipt.outcome.kind==='rejected')) {
-            const previous=saveChecks.get(selectedKey);
-            if(previous?.intent.operationId===result.receipt.operationId && previous.intent.expectedAccountId===result.receipt.expectedAccountId)saveChecks.delete(selectedKey);
-          }
-          if(result.kind==='unknown')intent=result.intent;
-          else if(result.kind==='settled' && result.active && !result.chart && result.receipt.outcome.kind!=='rejected')
-            intent={operationId:result.receipt.operationId,expectedAccountId:result.receipt.expectedAccountId};
-          else {completed=result;external?.removeEventListener('abort',cancel);}
-          return result;
-        })().catch(error=>{
-          if(refusedBeforeWrite(error) && intent){
-            const previous=saveChecks.get(selectedKey);
-            if(previous?.intent.operationId===intent.operationId && previous.intent.expectedAccountId===intent.expectedAccountId)saveChecks.delete(selectedKey);
-            intent=null;recovery.onIntent?.(null);
-          }
-          throw error;
-        }).finally(()=>{work=null;});
-        return work;
-      },
-    };
-    saving={key:selectedKey,live,action};return action;
+  function sendSource(source:ChartSaveSource,intent:ChartWriteIntent,signal:AbortSignal) {
+    if(source.kind==='shared')return client.addFromSource({...intent,sourceId:source.chart.id,seenRevision:source.chart.revision},signal);
+    const chart=source.chart;
+    if(chart.source!=='transit' && chart.source!=='calculated')throw failed('invalid_request');
+    if(saveReady)return saveReady({...intent,chart},signal);
+    const birth:ChartBirthInput=chart.source==='transit'?{source:'transit',utc:chart.utc!}
+      :{source:'calculated',date:chart.birthDate,time:chart.birthTime,cityId:String(chart.cityId??chart.city?.id??''),
+        ...(chart.fold===0 || chart.fold===1?{fold:chart.fold}:{})};
+    return client.create({...intent,name:chart.name,note:chart.note,birth,
+      ...(chart.calculationReceipt?{calculationReceipt:chart.calculationReceipt}:{})},signal);
   }
   return {
     isCheckingRemoval(chartId: string) { return Boolean(removals.get(removalKey(chartId))?.intent); },
     get pending(): readonly ChartWriteIntent[] { return [...pending.values()].map(value => ({...value})); },
     clear() {
-      saving?.action.cancel();saving=null;generation++;
+      generation++;
       for(const request of recoveries.values())request.controller.abort();
       recoveries.clear();removals.clear();saveChecks.clear();pending.clear();publish();
     },
-    prepareSave,
-    async create(input: CreateInput, signal = new AbortController().signal): Promise<ChartActionResult> {
-      signal.throwIfAborted();
-      if (getSession()) return write(intent => client.create({...intent, ...input}, signal), signal);
-      const birth = input.birth;
-      const request: CalculationRequest = birth.source === 'transit' ? {mode: 'transit', utc: birth.utc}
-        : {mode: 'natal', name: input.name, date: birth.date, time: birth.time, cityId: String(birth.cityId),
-          ...(birth.cityName === undefined ? {} : {cityName: birth.cityName}),
-          ...(birth.fold === undefined ? {} : {fold: birth.fold})};
-      const chart = await calculate(request, signal);
-      signal.throwIfAborted();
-      const now = new Date().toISOString();
-      return {kind: 'temporary', chart: {...chart, id: newId(), name: input.name, note: input.note, createdAt: now, updatedAt: now}};
+    saveSource,
+    create(input: CreateInput, signal?:AbortSignal):Promise<ChartActionResult> {
+      return write(intent=>client.create({...intent,...input},signal),signal);
     },
     update(input: Omit<ChartPatchInput, keyof ChartWriteIntent>, signal?: AbortSignal) {
       return write(intent => client.update({...intent, ...input}, signal), signal);

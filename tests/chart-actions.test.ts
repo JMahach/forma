@@ -8,10 +8,11 @@ import type { AccountChart, ChartWriteIntent, ChartWriteOutcome } from '../share
 import type { SavedChart } from '../shared/chart-types.ts';
 import type { ChartClient } from '../src/data/chart-client.ts';
 
+const options=(signal=new AbortController().signal)=>({signal,isCurrent:()=>true});
 const access = {accountId: '1', sessionId: 'session'};
 const input = {name: 'A', note: 'draft', birth: {source: 'transit' as const, utc: '2000-01-01T12:00:00Z'}};
 function fixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepareWrite']) {
-  let current: typeof access | null = {...access}, writes = 0, calculations = 0, opens = 0;
+  let current: typeof access | null = {...access}, writes = 0, opens = 0;
   let sendError: unknown = null, seen: unknown, lookup = {kind: 'unknown'} as any;
   let afterWrite = () => {};
   const pending: unknown[] = [];
@@ -24,8 +25,8 @@ function fixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepar
   } satisfies Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>;
   const actions = createChartActions({client, getSession:()=>current, newId:()=>chartId(77),
     library:{async open(){opens++;return accountChart();},async forget(){}},
-    async calculate(){calculations++;return accountChart();},prepareWrite,onPending:values=>pending.push(values)});
-  return {actions, pending, seen:()=>seen, writes:()=>writes, calculations:()=>calculations, opens:()=>opens,
+    prepareWrite,onPending:values=>pending.push(values)});
+  return {actions, pending, seen:()=>seen, writes:()=>writes, opens:()=>opens,
     switch(value:typeof current){current=value;}, fail(value:unknown){sendError=value;},lookup(value:unknown){lookup=value;},
     afterWrite(fn:()=>void){afterWrite=fn;}};
 }
@@ -33,15 +34,8 @@ function fixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepar
 test('signed-in creation uses one server write and then reads the actual chart, without a separate calculation',async()=>{
   const f=fixture(), result=await f.actions.create(input);
   assert.equal(result.kind,'settled'); assert.equal(result.chart?.id,chartId(1));
-  assert.equal(f.writes(),1);assert.equal(f.calculations(),0);assert.equal(f.opens(),1);
+  assert.equal(f.writes(),1);assert.equal(f.opens(),1);
   assert.deepEqual(f.actions.pending,[]);
-});
-
-test('a guest gets a temporary calculated card without a server write or save marker',async()=>{
-  const f=fixture();f.switch(null);
-  const result=await f.actions.create(input);
-  assert.equal(result.kind,'temporary');assert.equal(result.chart.name,'A');assert.equal(result.chart.note,'draft');
-  assert.equal(f.writes(),0);assert.equal(f.calculations(),1);assert.deepEqual(f.actions.pending,[]);
 });
 
 test('a lost write remains a small pending pointer and is recovered only by reading its outcome',async()=>{
@@ -81,7 +75,7 @@ test('note edits send the shown note revision without resending birth or an unch
 test('a failed current-chart read cannot turn a committed receipt into a failed command',async()=>{
   const f=fixture();
   const actions=createChartActions({client:{async create(value: Parameters<ChartClient['create']>[0]){return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}} as any,
-    getSession:()=>access,newId:()=>chartId(77),calculate:async()=>accountChart(),
+    getSession:()=>access,newId:()=>chartId(77),
     library:{async open(){throw Object.assign(new Error(),{code:'not_found',status:404});},async forget(){}}});
   const result=await actions.create(input);
   assert.equal(result.kind,'settled');assert.equal(result.receipt.outcome.kind,'created');
@@ -119,7 +113,7 @@ test('a late failed current-record read returns only an inactive historical rece
     client: {async create(value) {return {...value, outcome: {kind: 'created', chartId: chartId(1), revision: 1}};},
       async update() {assert.fail('no update');}, async remove() {assert.fail('no deletion');},
       async addFromSource() {assert.fail('no copying');}, async outcome() {assert.fail('no lookup');}},
-    calculate: async () => accountChart(),
+
     library: {async open() {current = {accountId: '2', sessionId: 'next'}; throw new Error('private error');}, async forget() {}}});
   const result = await actions.create(input); assert.equal(result.kind, 'settled');
   assert.equal(result.active, false); assert.equal(result.chart, null); assert.equal(result.readError, undefined);
@@ -148,7 +142,7 @@ test('rechecking an unconfirmed deletion reads its first outcome instead of issu
 test('concurrent confirmations share one deletion while a different card remains independent',async()=>{
   let writes=0,finish!:()=>void;
   const done=new Promise<void>(resolve=>{finish=resolve;});
-  const actions=createChartActions({getSession:()=>access,newId:()=>chartId(70+writes),calculate:async()=>accountChart(),
+  const actions=createChartActions({getSession:()=>access,newId:()=>chartId(70+writes),
     client:{async remove(intent: Parameters<ChartClient['remove']>[0]){writes++;await done;return {...intent,catalogMarker:'2',outcome:{kind:'deleted',chartId:intent.chartId}};}} as any,
     library:{async open(){return accountChart();},async forget(){}}});
   const first=actions.remove(chartId(1)), second=actions.remove(chartId(1)), other=actions.remove(chartId(2));
@@ -157,7 +151,7 @@ test('concurrent confirmations share one deletion while a different card remains
 
 test('a lost outcome lookup remains unknown and keeps the original deletion pointer',async()=>{
   let writes=0,reads=0;
-  const actions=createChartActions({getSession:()=>access,newId:()=>chartId(70),calculate:async()=>accountChart(),
+  const actions=createChartActions({getSession:()=>access,newId:()=>chartId(70),
     client:{async remove(){writes++;throw new TypeError('network');},async outcome(){reads++;throw new TypeError('network');}} as any,
     library:{async open(){return accountChart();},async forget(){}}});
   await actions.remove(chartId(1));const check=await actions.remove(chartId(1));
@@ -167,7 +161,7 @@ test('a lost outcome lookup remains unknown and keeps the original deletion poin
 
 test('logout clears deletion recovery and a late response cannot attach it to the next account',async()=>{
   let session:typeof access|null={...access},finish!:(value:any)=>void;
-  const actions=createChartActions({getSession:()=>session,newId:()=>chartId(71),calculate:async()=>accountChart(),
+  const actions=createChartActions({getSession:()=>session,newId:()=>chartId(71),
     client:{remove:()=>new Promise(resolve=>{finish=resolve;})} as any,
     library:{async open(){return accountChart();},async forget(){assert.fail('former account must not clear the new library');}}});
   const work=actions.remove(chartId(1));
@@ -193,7 +187,7 @@ test('expanded decimal chart IDs remain distinct through deletion, lost replies 
     const operation=path.slice('/api/charts/operations/'.length).split('?')[0];
     return Response.json({kind:'deleted',chartId:operations.get(operation),catalogMarker:'2'});
   }});
-  const actions=createChartActions({client,getSession:()=>access,calculate:async()=>accountChart(),
+  const actions=createChartActions({client,getSession:()=>access,
     library:{async open(){return accountChart();},async forget(id){forgotten.push(id);}}});
   for(const id of ids)assert.equal((await actions.remove(id)).kind,'unknown');
   for(const id of ids)assert.equal((await actions.remove(id)).kind,'settled');
@@ -202,73 +196,46 @@ test('expanded decimal chart IDs remain distinct through deletion, lost replies 
 
 
 function readySaveFixture(prepareWrite?: Parameters<typeof createChartActions>[0]['prepareWrite']) {
-  let current:typeof access|null=null,writes=0,calculations=0,reads=0,opens=0;
+  let current:typeof access|null=null,writes=0,reads=0,opens=0;
   let result:ChartWriteOutcome={kind:'created',chartId:chartId(2),revision:1};
-  let error:unknown,after=async()=>{};
+  let error:unknown,lookupError:unknown,after=async()=>{};
   const copy={...accountChart(2),note:'Own existing note'};
   const temporary:SavedChart={...accountChart(1),createdAt:'',updatedAt:''};
   const submitted:unknown[]=[];
   async function write(value:ChartWriteIntent) {writes++;submitted.push(value);await after();if(error)throw error;return {...value,outcome:result};}
   const actions=createChartActions({getSession:()=>current,newId:()=>chartId(77),
     client:{create:write,update:write,remove:write,addFromSource:write,
-      async outcome(value){reads++;return {...value,outcome:result};}},
+      async outcome(value){reads++;if(lookupError)throw lookupError;return {...value,outcome:result};}},
     library:{async open(){opens++;return copy;},async forget(){}},
-    async calculate(){calculations++;return temporary;},saveReady:write,prepareWrite});
-  return {actions,temporary,copy,submitted,counts:()=>({writes,calculations,reads,opens}),
+    saveReady:write,prepareWrite});
+  return {actions,temporary,copy,submitted,counts:()=>({writes,reads,opens}),
     login(value:typeof current={...access}){current=value;},outcome(value:ChartWriteOutcome){result=value;},
-    fail(value:unknown){error=value;},wait(value:()=>Promise<void>){after=value;}};
+    fail(value:unknown){error=value;},lookupFail(value:unknown){lookupError=value;},wait(value:()=>Promise<void>){after=value;}};
 }
-
-test('ready temporary save continues once after login and repeated clicks share the same command',async()=>{
-  const h=readySaveFixture(),source={kind:'temporary' as const,chart:h.temporary};
-  const action=h.actions.prepareSave(source);
-  assert.deepEqual(await action.run(),{kind:'sign-in'});
-  assert.equal(h.actions.prepareSave(source),action);
-  assert.deepEqual(await action.run(),{kind:'sign-in'});
-  assert.equal(h.counts().writes,0);h.login();
-  const [first,second]=await Promise.all([action.run(),action.run()]);
-  assert.equal(first,second);assert.equal(first.kind,'settled');
-  assert.deepEqual(h.counts(),{writes:1,calculations:0,reads:0,opens:1});
-  assert.equal((h.submitted[0] as {chart:SavedChart}).chart,h.temporary);
-});
 
 test('adding a shared source opens the matched own chart without copying its note or calculating',async()=>{
   const h=readySaveFixture();h.login();h.outcome({kind:'existing',chartId:chartId(2),revision:1});
   const source={...accountChart(1,'7'),note:'Private source note'};
-  const result=await h.actions.prepareSave({kind:'shared',chart:source}).run();
+  const result=await h.actions.saveSource({kind:'shared',chart:source},options());
   assert.equal(result.kind,'settled');if(result.kind!=='settled')return;
   assert.equal(result.chart,h.copy);assert.equal(result.chart?.note,'Own existing note');
   assert.deepEqual(h.submitted,[{operationId:chartId(77),expectedAccountId:'1',sourceId:chartId(1),seenRevision:1}]);
-  assert.equal(h.counts().calculations,0);
-});
-
-for(const change of ['cancel','source','revision','navigation'] as const)test(`login completion cannot resume a ready save after ${change}`,async()=>{
-  const h=readySaveFixture();let visible=true;
-  const source={kind:'shared' as const,chart:{...accountChart(1,'7')}};
-  const action=h.actions.prepareSave(source,()=>visible);
-  assert.equal((await action.run()).kind,'sign-in');
-  if(change==='cancel')action.cancel();
-  if(change==='source')source.chart.name='Changed';
-  if(change==='revision')source.chart.revision++;
-  if(change==='navigation')visible=false;
-  h.login();assert.deepEqual(await action.run(),{kind:'inactive'});
-  assert.deepEqual(h.counts(),{writes:0,calculations:0,reads:0,opens:0});
 });
 
 test('a lost ready save is checked by outcome reading without a second create',async()=>{
   const h=readySaveFixture();h.login();h.fail(new TypeError('lost response'));
-  const action=h.actions.prepareSave({kind:'temporary',chart:h.temporary});
-  assert.equal((await action.run()).kind,'unknown');h.fail(undefined);
-  assert.equal((await action.run()).kind,'settled');
-  assert.deepEqual(h.counts(),{writes:1,calculations:0,reads:1,opens:1});
+  const source={kind:'temporary' as const,chart:h.temporary};
+  assert.equal((await h.actions.saveSource(source,options())).kind,'unknown');h.fail(undefined);
+  assert.equal((await h.actions.saveSource(source,options())).kind,'settled');
+  assert.deepEqual(h.counts(),{writes:1,reads:1,opens:1});
 });
 
 for(const change of ['cancel','account','session','clear'] as const)test(`a committed ready save after ${change} cannot restore the old screen`,async()=>{
   const h=readySaveFixture();h.login();let finish!:()=>void;
   h.wait(()=>new Promise(resolve=>{finish=resolve;}));
-  const action=h.actions.prepareSave({kind:'temporary',chart:h.temporary});
-  const pending=action.run();
-  if(change==='cancel')action.cancel();
+  const controller=new AbortController();
+  const pending=h.actions.saveSource({kind:'temporary',chart:h.temporary},options(controller.signal));
+  if(change==='cancel')controller.abort();
   if(change==='account')h.login({accountId:'2',sessionId:'next'});
   if(change==='session')h.login({accountId:'1',sessionId:'next'});
   if(change==='clear')h.actions.clear();
@@ -276,46 +243,46 @@ for(const change of ['cancel','account','session','clear'] as const)test(`a comm
   assert.equal(result.kind,'settled');if(result.kind!=='settled')return;
   assert.equal(result.active,false);assert.equal(result.chart,null);
   assert.equal(h.counts().opens,change==='cancel'?1:0,'screen cancellation allows library acceptance, account retirement does not');
-  assert.deepEqual(await action.run(),{kind:'inactive'});
 });
 
 test('cancelling a save while its library read finishes suppresses the returned chart',async()=>{
   let finish!:(chart:AccountChart)=>void;
   const h=readySaveFixture();h.login();
-  const actions=createChartActions({getSession:()=>access,calculate:async()=>{assert.fail('no recalculation');},
+  const actions=createChartActions({getSession:()=>access,
     client:{async create(){assert.fail();},async update(){assert.fail();},async remove(){assert.fail();},
       async addFromSource(value){return {...value,outcome:{kind:'created',chartId:chartId(2),revision:1}};},async outcome(){assert.fail();}},
     library:{open:()=>new Promise(resolve=>{finish=resolve;}),async forget(){}}});
-  const action=actions.prepareSave({kind:'shared',chart:accountChart(1,'7')});
-  const pending=action.run();await new Promise(setImmediate);action.cancel();finish(accountChart(2));
+  const controller=new AbortController();
+  const pending=actions.saveSource({kind:'shared',chart:accountChart(1,'7')},options(controller.signal));
+  await new Promise(setImmediate);controller.abort();finish(accountChart(2));
   const result=await pending;assert.equal(result.kind,'settled');if(result.kind==='settled'){assert.equal(result.active,false);assert.equal(result.chart,null);}
 });
 
 
-test('returning to an unknown save after closing its action reads the original outcome',async()=>{
+test('returning to an unknown source after cancellation reads the original outcome',async()=>{
   const h=readySaveFixture();h.login();h.fail(new TypeError('lost reply'));
   const source={kind:'temporary' as const,chart:h.temporary};
-  const first=h.actions.prepareSave(source);assert.equal((await first.run()).kind,'unknown');first.cancel();
-  h.fail(undefined);const second=h.actions.prepareSave(source);assert.notEqual(second,first);
-  assert.equal((await second.run()).kind,'settled');
-  assert.deepEqual(h.counts(),{writes:1,calculations:0,reads:1,opens:1});
+  const controller=new AbortController();
+  assert.equal((await h.actions.saveSource(source,options(controller.signal))).kind,'unknown');controller.abort();
+  h.fail(undefined);assert.equal((await h.actions.saveSource(source,options())).kind,'settled');
+  assert.deepEqual(h.counts(),{writes:1,reads:1,opens:1});
 });
 
 
 test('a definitive ready-save refusal allows a fresh explicit write instead of checking a nonexistent outcome',async()=>{
   const h=readySaveFixture();h.login();h.fail(Object.assign(new Error('invalid input'),{status:422,code:'city_required'}));
-  const source={kind:'temporary' as const,chart:h.temporary},first=h.actions.prepareSave(source);
-  await assert.rejects(first.run(),{code:'city_required'});
-  assert.equal(h.actions.pending.length,0);first.cancel();h.fail(undefined);
-  assert.equal((await h.actions.prepareSave(source).run()).kind,'settled');
-  assert.deepEqual(h.counts(),{writes:2,calculations:0,reads:0,opens:1});
+  const source={kind:'temporary' as const,chart:h.temporary};
+  await assert.rejects(h.actions.saveSource(source,options()),{code:'city_required'});
+  assert.equal(h.actions.pending.length,0);h.fail(undefined);
+  assert.equal((await h.actions.saveSource(source,options())).kind,'settled');
+  assert.deepEqual(h.counts(),{writes:2,reads:0,opens:1});
 });
 
 test('concurrent recovery shares acquisition but keeps each consumer cancellation independent',async()=>{
  const intent={operationId:chartId(77),expectedAccountId:'1'};
  let reads=0,opens=0,release!:()=>void,transport:AbortSignal|undefined;
  const gate=new Promise<void>(resolve=>{release=resolve;});
- const actions=createChartActions({initialPending:[intent],getSession:()=>access,calculate:async()=>accountChart(),
+ const actions=createChartActions({initialPending:[intent],getSession:()=>access,
   client:{async outcome(value,signal){reads++;transport=signal;await gate;return {...value,outcome:{kind:'created',chartId:chartId(1),revision:1}};}} as Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>,
   library:{async open(){opens++;return accountChart();},async forget(){}}});
  const controller=new AbortController();
@@ -341,7 +308,7 @@ test('the last recovery consumer aborts transport and a cleared generation canno
  const intent={operationId:chartId(78),expectedAccountId:'1'};
  const requests:{signal?:AbortSignal;finish:(value:unknown)=>void}[]=[];
  let opens=0;
- const actions=createChartActions({initialPending:[intent],getSession:()=>access,calculate:async()=>accountChart(),
+ const actions=createChartActions({initialPending:[intent],getSession:()=>access,
   client:{outcome(_value: ChartWriteIntent,signal?: AbortSignal){return new Promise(resolve=>requests.push({signal,finish:resolve}));}} as unknown as Pick<ChartClient,'create'|'update'|'remove'|'addFromSource'|'outcome'>,
   library:{async open(){opens++;return accountChart();},async forget(){}}});
  const controller=new AbortController(),first=actions.recover(intent,controller.signal);
@@ -364,10 +331,9 @@ test('ready save waits for the prepared pointer and binding; RAM-only still perm
   steps.push('checkpoint');assert.deepEqual(h.actions.pending,[intent]);assert.deepEqual(binding,intent);
   assert.equal(seen.sessionId,access.sessionId);assert.equal(signal.aborted,false);return prepared;
  });h.login();
- const action=h.actions.prepareSave({kind:'temporary',chart:h.temporary},()=>true,{onIntent:value=>{binding=value;steps.push('binding');}});
- const first=action.run(),second=action.run();
+ const first=h.actions.saveSource({kind:'temporary',chart:h.temporary},{...options(),onIntent:value=>{binding=value;steps.push('binding');}});
  assert.equal(h.counts().writes,0,'HTTP cannot begin while the checkpoint waits');assert.deepEqual(steps,['binding','checkpoint']);
- release({kind:'memory-only'});assert.equal(await first,await second);assert.equal(h.counts().writes,1);
+ release({kind:'memory-only'});assert.equal((await first).kind,'settled');assert.equal(h.counts().writes,1);
 });
 
 for(const change of ['session','source','abort','failed'] as const)test(`an unsent save drops its recovery pointer after ${change} during preparation`,async()=>{
@@ -376,8 +342,8 @@ for(const change of ['session','source','abort','failed'] as const)test(`an unse
  const h=readySaveFixture(async()=>++attempts===1?prepared:{kind:'stored'});h.login();
  let current=true,binding:ChartWriteIntent|null=null;
  const controller=new AbortController(),source={kind:'temporary' as const,chart:h.temporary};
- const action=h.actions.prepareSave(source,()=>current,{onIntent:value=>{binding=value;}});
- const running=action.run(controller.signal);
+ const request={signal:controller.signal,isCurrent:()=>current,onIntent:(value:ChartWriteIntent|null)=>{binding=value;}};
+ const running=h.actions.saveSource(source,request);
  assert.equal(h.counts().writes,0);
  const rejected=assert.rejects(running);
  if(change==='session')h.login({accountId:'2',sessionId:'next'});
@@ -386,7 +352,7 @@ for(const change of ['session','source','abort','failed'] as const)test(`an unse
  release(change==='failed'?{kind:'failed',cause:new Error('snapshot producer')}:{kind:'stored'});
  await rejected;assert.equal(h.counts().writes,0);assert.deepEqual(h.actions.pending,[]);assert.equal(binding,null);
  if(change==='failed'){
-  assert.equal((await action.run()).kind,'settled','another explicit save is not trapped in lookup for an unsent operation');
+  assert.equal((await h.actions.saveSource(source,request)).kind,'settled','another explicit save is not trapped in lookup for an unsent operation');
   assert.equal(h.counts().writes,1);assert.equal(h.counts().reads,0);
   const direct=fixture(async()=>({kind:'failed',cause:new Error('snapshot')}));
   await assert.rejects(direct.actions.create(input),{code:'checkpoint_failed'});
@@ -395,13 +361,53 @@ for(const change of ['session','source','abort','failed'] as const)test(`an unse
 });
 
 // Exercise the application result before a view disposes its completed request.
-test('editing accepts confirmed deletion and recovered absence without another write',async()=>{
- for(const kind of ['deleted','absent'] as const){
-  const f=fixture(),deleted:string[]=[];
-  if(kind==='absent'){f.fail(new TypeError('lost response'));f.lookup({kind,chartId:chartId(1)});}
-  const editing=createChartEditing({actions:f.actions,ready:async()=>{},session:()=>access,durable:()=>true,online:()=>true,
-   deleted:id=>{deleted.push(id);},messages:{signIn:'sign-in',failed:'failed',unconfirmed:'unconfirmed',unavailable:'unavailable'}});
-  assert.deepEqual(await editing.remove(chartId(1),new AbortController().signal),{kind:'deleted'});
-  assert.deepEqual(deleted,[chartId(1)]);assert.equal(f.writes(),1);assert.equal(f.calculations(),0);assert.equal(f.opens(),0);
+test('editing reports the command outcome once without repeating deletion',async()=>{
+ for(const kind of ['deleted','absent','unknown','refused'] as const){
+  const f=fixture(),deleted:string[]=[],reports:string[]=[];
+  if(kind==='absent' || kind==='unknown'){f.fail(new TypeError('lost response'));f.lookup({kind,chartId:chartId(1)});}
+  if(kind==='refused')f.fail(Object.assign(new Error('invalid'),{status:422,code:'invalid_request'}));
+  const editing=createChartEditing({actions:f.actions,ready:async()=>{},session:()=>access,accountId:()=>access.accountId,
+   temporaryId:()=>null,durable:()=>true,online:()=>kind!=='unknown',deleted:id=>{deleted.push(id);},
+   observe:action=>{reports.push(action);return {finishSuccess(){reports.push('success');},reportFailure(step){reports.push(step.reason);},reportError(_error,step){reports.push(step.stage);}};},
+   messages:{signIn:'sign-in',failed:'failed',unconfirmed:'unconfirmed',unavailable:'unavailable'}});
+  const result=editing.remove(chartId(1),new AbortController().signal);
+  if(kind==='refused')await assert.rejects(result,{code:'invalid_request'});
+  else assert.equal((await result).kind,kind==='unknown'?'unknown':'deleted');
+  assert.deepEqual(reports,['chart_delete',kind==='refused'?'request':kind==='unknown'?'outcome_unknown':'success']);
+  assert.deepEqual(deleted,kind==='deleted' || kind==='absent'?[chartId(1)]:[]);
+  assert.equal(f.writes(),1);assert.equal(f.opens(),0);
  }
+});
+
+test('editing chooses the existing local form path for a guest or temporary edit, but never for an expired personal library',async()=>{
+ for(const kind of ['guest','temporary','expired'] as const){
+  const f=fixture();if(kind!=='temporary')f.switch(null);
+  const previous=kind==='temporary'?{...accountChart(),id:'temporary',createdAt:'',updatedAt:''}:undefined;
+  const editing=createChartEditing({actions:f.actions,ready:async()=>{},session:()=>kind==='temporary'?access:null,
+   accountId:()=>kind==='expired'?'1':null,temporaryId:()=>previous?.id??null,
+   durable:()=>true,online:()=>true,deleted(){},messages:{signIn:'sign-in',failed:'failed',unconfirmed:'unconfirmed',unavailable:'unavailable'}});
+  const result=editing.submit({name:'A',note:'draft',...(previous?{previous}:{})},new AbortController().signal);
+  result?.catch(()=>{});
+  if(kind==='expired')await assert.rejects(result!,{code:'account_changed'});else assert.equal(result,null,kind);
+  assert.equal(f.writes(),0);
+ }
+});
+
+
+test('a failed outcome read keeps the unknown source bound to its original command',async()=>{
+ const h=readySaveFixture();h.login();h.fail(new TypeError('lost reply'));
+ const source={kind:'temporary' as const,chart:h.temporary};
+ assert.equal((await h.actions.saveSource(source,options())).kind,'unknown');h.fail(undefined);
+ const unavailable=new TypeError('outcome unavailable');h.lookupFail(unavailable);
+ await assert.rejects(h.actions.saveSource(source,options()),error=>error===unavailable);
+ h.lookupFail(undefined);assert.equal((await h.actions.saveSource(source,options())).kind,'settled');
+ assert.deepEqual(h.counts(),{writes:1,reads:2,opens:1});
+});
+
+test('an outcome refusal for a restored pointer preserves its cause without clearing another binding',async()=>{
+ const h=readySaveFixture();h.login();const refusal=Object.assign(new Error('invalid pointer'),{code:'invalid_request',status:400});
+ h.lookupFail(refusal);let cleared=0;
+ await assert.rejects(h.actions.saveSource({kind:'temporary',chart:h.temporary},{...options(),
+  intent:{operationId:chartId(90),expectedAccountId:'1'},onIntent(){cleared++;}}),error=>error===refusal);
+ assert.deepEqual(h.counts(),{writes:0,reads:1,opens:0});assert.equal(cleared,0);
 });

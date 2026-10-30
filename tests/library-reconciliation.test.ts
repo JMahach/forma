@@ -149,7 +149,7 @@ test('an old absence receipt cannot erase the current chart accompanying its ser
  const session={accountId:'1',sessionId:'one'},chart=accountChart();let reads=0;
  const client=createChartClient({getSession:()=>session,fetch:async()=>{reads++;return new Response(JSON.stringify({kind:'absent',chartId:chart.id,catalogMarker:'2',chart}));}});
  const library=createAccountLibrary({client,storage:createAccountLibraryStore({indexedDB:null}),online:()=>true});t.after(()=>library.close());await library.connect(session);
- const actions=createChartActions({client,library,getSession:()=>session,calculate:async()=>assert.fail('no calculation')});
+ const actions=createChartActions({client,library,getSession:()=>session});
  const result=await actions.recover({operationId:'a'.repeat(32),expectedAccountId:'1'});
  assert.equal(result.kind,'settled');if(result.kind!=='settled')return;
  assert.equal(result.receipt.outcome.kind,'absent');assert.equal(library.get(chart.id)?.id,chart.id);assert.equal(reads,1);
@@ -210,7 +210,7 @@ test('local command observations arriving out of order preserve confirmed deleti
   if(scenario==='deleted-other' || scenario==='same-record')await library.prepareAcceptance()(y.id,y,'3');
   else if(scenario.startsWith('catalog-'))await library.receive({kind:'catalog',...session,durable:false,catalog:{accountId:'1',marker:'3',entries:[]}});
   else await library.prepareAcceptance()(x.id,latest,'3');
-  const actions=createChartActions({client,library,getSession:()=>session,calculate:async()=>assert.fail('no calculation')});
+  const actions=createChartActions({client,library,getSession:()=>session});
   const result=await actions.recover(intent);assert.equal(result.kind,'settled',scenario);if(result.kind!=='settled')continue;
   if(scenario==='deleted-other'){assert.equal(result.readError,undefined);assert.equal(library.has(x.id),false);assert.equal(library.has(y.id),true);}
   else if(scenario.startsWith('catalog-') || scenario==='same-record')assert.equal(library.has(x.id),false,scenario);

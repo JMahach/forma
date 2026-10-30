@@ -1,4 +1,13 @@
+import type {PublicAccountChart} from '../../shared/chart-record-contract.ts';
 import type { ChartRecord, SavedChart } from '../../shared/chart-types.ts';
+export type ChartSaveSource = {kind:'temporary';chart:SavedChart} | {kind:'shared';chart:Pick<PublicAccountChart,'id'|'revision'> & Partial<SavedChart>};
+export function chartSaveSourceKey(source:ChartSaveSource) {
+  const chart=source.chart;
+  return JSON.stringify([source.kind,chart.id,chart.name,chart.source,chart.utc,chart.timezone,
+    chart.birthDate,chart.birthTime,chart.cityId,chart.fold,
+    source.kind==='shared'?source.chart.revision:source.chart.note]);
+}
+
 export interface BirthSubmission {
   previous?: SavedChart; name: string; note: string;
   birth?: {source: 'calculated'; date: string; time: string; cityId: string; cityName?: string; fold?: 0 | 1};

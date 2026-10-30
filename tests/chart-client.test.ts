@@ -1,3 +1,6 @@
+import {createActor,waitFor} from 'xstate';
+import {createWriteContinuationMachine,writeContinuationView} from '../src/application/write-continuation.ts';
+import type {SavedChart} from '../shared/chart-types.ts';
 import { createCalculationReceipts } from '../server/services/calculation-receipt.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -157,8 +160,7 @@ test('write replies join the real HTTP, client and library with only a necessary
       }
       return Response.json(value,{status:response.status});
     });
-    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1),
-      calculate:async()=>{throw new Error('server owns this calculation');}});
+    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1)});
     const result=await actions.create({name:'A',note:'',birth:{source:'transit',utc}});
     assert.equal(result.kind,'settled'); assert.equal(result.chart?.utc,utc);
     assert.equal('chart' in result.receipt,false,'the immutable receipt does not contain its current projection');
@@ -184,8 +186,7 @@ test('a delayed write projection cannot undo a confirmed local or peer deletion'
     const storage=createAccountLibraryStore({indexedDB}), other=createAccountLibraryStore({indexedDB});
     const library=createAccountLibrary({client:f.client,storage,online:()=>true});
     t.after(()=>{library.close();other.close();}); await library.connect(f.getSession());
-    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1),
-      calculate:async()=>{throw new Error('unused');}});
+    const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(1)});
     f.alter(async response=>{
       const value=await response.clone().json();
       if(value.kind==='created') {
@@ -394,12 +395,29 @@ test('a late private refusal cannot revoke the next session, while a current ref
 
 
 test('client and HTTP save a signed ready chart without recalculation or persisting its proof',async t=>{
-  const f=await fixture(t);await f.create();const proof=f.calculationReceipt();assert.ok(proof);
-  const result=await f.client.create({...f.intent(50),name:'Another name',note:'Own note',
-    birth:{source:'transit',utc},calculationReceipt:proof});
-  assert.equal(result.outcome.kind,'created');assert.equal(f.preparations(),1);
+  const f=await fixture(t),created=await f.create(),proof=f.calculationReceipt();assert.ok(proof);
+  const {accountId,revision,noteRevision,publicRevision,...record}=created.chart!;
+  const source:SavedChart={...record,id:'temporary',createdAt:'',updatedAt:'',name:'Another name',note:'Own note',calculationReceipt:proof};
+  const storage=createAccountLibraryStore({indexedDB:new IDBFactory()});
+  const library=createAccountLibrary({client:f.client,storage,online:()=>true});
+  t.after(()=>library.close());await library.connect(f.getSession());
+  let puts=0,updates=0,adopted='';const put=storage.put;
+  storage.put=(...args)=>{puts++;return put(...args);};library.subscribe(()=>{updates++;});updates=0;
+  const actions=createChartActions({client:f.client,library,getSession:f.getSession,newId:()=>op(50)});
+  let temporary:SavedChart|null=source;
+  const actor=createActor(createWriteContinuationMachine({actions,online:()=>true,getSession:f.getSession,ready:async()=>{},
+    selection:{record:source,selectedId:source.id,adopt(id){assert.ok(library.get(id),'library and projection precede adopt');adopted=id;return true;}},
+    temporary:()=>temporary,hasOwn:id=>!!library.get(id),retire(){temporary=null;},public:f.client.public,acceptPublic(){},clearPublic:()=>false,
+    view:{signIn(){assert.fail('already authenticated');},select(){assert.fail('adopt keeps the current view');},
+      isChartScreen:()=>true,showChart(){},publishChart(){},changeChart(){},refresh(){},changed(){},checkpoint(){},report(){assert.fail('save must succeed');}},
+  }));actor.start();t.after(()=>actor.stop());f.calls.length=0;
+  actor.send({type:'SaveRequested',source});await waitFor(actor,state=>!writeContinuationView(state).busy);
+  assert.ok(adopted);assert.equal(f.preparations(),1);
+  assert.equal(f.calls.filter(call=>call.options.method==='POST').length,1);
+  assert.equal(f.calls.filter(call=>call.options.method==='GET').length,0);
+  assert.equal(puts,1);assert.equal(updates,1);
   assert.equal(JSON.parse(String(f.calls.at(-1)!.options.body)).calculationReceipt,proof);
-  const {chart}=await f.client.own({chartId:result.outcome.chartId,expectedAccountId:f.first.accountId});
+  const {chart}=await f.client.own({chartId:adopted,expectedAccountId:f.first.accountId});
   assert.equal(chart.name,'Another name');assert.equal(chart.note,'Own note');
   assert.equal(Object.hasOwn(chart,'calculationReceipt'),false);
   await assert.rejects(f.client.create({...f.intent(51),name:'Tampered',note:'',
