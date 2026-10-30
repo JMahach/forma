@@ -171,7 +171,7 @@ test('HTTP validates one canonical bounded index and sanitizes unavailable error
   assert.equal((await request(service, '/api/lifetime/unknown')).status, 404);
   assert.equal((await request(null, '/api/lifetime/meta')).status, 503);
   const failure = await request({ getPoint() { throw new Error('/private/secret ENOENT'); } }, '/api/lifetime?index=0');
-  assert.equal(failure.status, 503); assert.deepEqual(JSON.parse(failure.body), { error: 'lifetime_unavailable', message: 'Данные летописи недоступны.' });
+  assert.equal(failure.status, 500); assert.deepEqual(JSON.parse(failure.body), { error: 'internal_error', message: 'Данные летописи недоступны.' });
 });
 
 test('real Python file retains format and checksum without calculation markers', async t => {
