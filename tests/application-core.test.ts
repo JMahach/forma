@@ -301,7 +301,7 @@ for(const coordination of ['shared','single','unavailable'] as const){
 const rules={
  login:{post:1,outcome:0,own:0,public:0,http:{shared:7,single:7,unavailable:7},writes:20,recordWrites:1,chartUpdates:2,libraryUpdates:5},
  recovered:{post:1,outcome:1,own:0,public:0,http:{shared:6,single:6,unavailable:8},writes:24,recordWrites:1,chartUpdates:3,libraryUpdates:9},
- navigation:{post:0,outcome:0,own:3,public:0,http:{shared:6,single:6,unavailable:6},writes:14,recordWrites:0,chartUpdates:4,libraryUpdates:5},
+ navigation:{post:0,outcome:0,own:0,public:0,http:{shared:3,single:3,unavailable:3},writes:10,recordWrites:0,chartUpdates:4,libraryUpdates:5},
  public:{post:0,outcome:0,own:0,public:1,http:{shared:2,single:2,unavailable:2},writes:2,recordWrites:0,chartUpdates:2,libraryUpdates:0},
  logout:{post:1,outcome:0,own:1,public:0,http:{shared:11,single:11,unavailable:11},writes:40,recordWrites:1,chartUpdates:2,libraryUpdates:11},
 };

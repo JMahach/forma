@@ -145,7 +145,7 @@ test('cancelling one open aborts its request without cancelling another open or 
 });
 
 test('cancelled opens do no work and cannot apply a late deletion or cached fallback', async () => {
-  const storage = createAccountLibraryStore({indexedDB:new IDBFactory()}), source = client();
+  const rows=[accountChart()],storage = createAccountLibraryStore({indexedDB:new IDBFactory()}), source = client(rows);
   const library = createAccountLibrary({storage, client:source, online:()=>true});
   try {
     await library.connect(session); await library.load();await acceptFixtureCards(library);
@@ -153,6 +153,8 @@ test('cancelled opens do no work and cannot apply a late deletion or cached fall
     source.own = async () => { calls++; return {chart:accountChart(),catalogMarker:'1'}; };
     await assert.rejects(library.open(chartId(1), AbortSignal.abort()), {name:'AbortError'});
     assert.equal(calls, 0);
+    rows[0]=accountChart(1,'1',2);
+    await library.load();
     for (const code of ['not_found', 'connection_failed']) {
       const cancelled = new AbortController();
       source.own = async () => { cancelled.abort(); throw Object.assign(new Error(code), {code}); };
@@ -210,7 +212,7 @@ test('reading an older local copy cannot roll back a confirmed card kept in memo
   await storage.put(first.lease, [accountChart()]);
   const library = createAccountLibrary({storage, client: client([accountChart(1, '1', 2)]), online: () => true});
   try {
-    await library.connect(session);
+    await library.connect(session); await library.load();
     const put = storage.put;
     storage.put = async () => ({status: 'unavailable'});
     await library.open(chartId(1)); storage.put = put;
@@ -370,11 +372,11 @@ test('a newer RAM revision cannot use an older durable copy as reload evidence',
  const library=createAccountLibrary({storage,client:client([newer]),online:()=>true});
  try{
   const active=await storage.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
-  await storage.put(active.lease,[accountChart()]);await library.connect(session);
+  await storage.put(active.lease,[accountChart()]);await library.connect(session);await library.load();
   const put=storage.put;storage.put=async()=>({status:'unavailable'});
   try{await library.open(newer.id);}finally{storage.put=put;}
   assert.equal(library.get(newer.id)?.revision,2);assert.equal(await library.canRestore(newer.id),false);
-  await storage.put(active.lease,[newer]);assert.equal(await library.canRestore(newer.id),true);
+  await storage.put((await storage.read())!.lease!,[newer]);assert.equal(await library.canRestore(newer.id),true);
  }finally{library.close();}
 });
 test('logout during durable verification cannot authorize the previous account reload',async()=>{
@@ -391,9 +393,9 @@ test('logout during durable verification cannot authorize the previous account r
 test('unchanged library reads retain records without notifications, while durable recovery still notifies', async () => {
   const storage = createAccountLibraryStore({indexedDB: new IDBFactory()});
   const rows = [accountChart(1), accountChart(2)];
-  let notices = 0, observations = 0;
+  let notices = 0, observations = 0, reads = 0;
   const source = client(rows), own = source.own;
-  source.own = async (...args) => structuredClone(await own(...args));
+  source.own = async (...args) => { reads++; return structuredClone(await own(...args)); };
   const library = createAccountLibrary({storage, client: source, online: () => true, notify: () => { notices++; }});
   library.subscribe(() => { observations++; });
   try {
@@ -401,7 +403,8 @@ test('unchanged library reads retain records without notifications, while durabl
     const first = library.charts, untouched = first[1];
     const before = observations, notified = notices;
     await library.open(chartId(1));
-    assert.equal(library.charts, first, 'unchanged network data must not recreate the working list');
+    assert.equal(reads, 0, 'a ready local card does not request its server copy');
+    assert.equal(library.charts, first, 'opening a ready local card retains the working list');
     assert.equal(observations, before, 'unchanged data does not wake local observers');
     assert.equal(notices, notified, 'unchanged durable data does not wake other tabs');
     await library.refreshLocal();
@@ -410,10 +413,16 @@ test('unchanged library reads retain records without notifications, while durabl
     for (let repeat = 0; repeat < 10; repeat++) await library.load();
     assert.equal(notices, notified, 'identical pages do not publish durable changes');
     await placeUnderQuota(storage,(await storage.read())!.lease!);
-    await library.open(chartId(1));
+    for(const projection of [undefined,accountChart(1)]) {
+      rows[0] = {...rows[0]!, revision: rows[0]!.revision+1, noteRevision: rows[0]!.noteRevision+1, note: 'Confirmed note'};
+      await library.prepareAcceptance()(chartId(1),projection);
+      assert.equal(library.get(chartId(1))!.revision,rows[0]!.revision,'a missing projection or marker requires a fresh result before any catalogue refresh');
+    }
     assert.ok(observations > before && notices > notified, 're-admitting an evicted row wakes observers');
-    rows[0] = {...rows[0]!, revision: 2, noteRevision: 2, note: 'Updated note'};
+    rows[0] = {...rows[0]!, revision: 4, noteRevision: 4, note: 'Updated note'};
+    await library.load();
     await library.open(chartId(1));
+    assert.equal(reads, 3, 'incomplete receipts and a newer catalogue each need one card fetch');
     assert.notEqual(library.charts, first);
     assert.equal(library.charts[1], untouched, 'one changed card does not replace its neighbours');
     assert.equal(library.charts[0]!.note, 'Updated note');

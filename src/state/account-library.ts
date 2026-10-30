@@ -226,31 +226,29 @@ class AccountLibraryOwner {
   }
  async open(chartId: string, consumerSignal?: AbortSignal): Promise<AccountChart> {
     consumerSignal?.throwIfAborted();
+    if(this.closed)throw failed('account_changed');
     const cached = this.records.find(chart => chart.id === chartId);
+    if (cached && this.isReady(chartId)) return cached;
+    const signal = consumerSignal ? AbortSignal.any([this.controller.signal, consumerSignal]) : this.controller.signal;
+    return this.readOwn(chartId,signal);
+  }
+ private async readOwn(chartId:string,signal:AbortSignal):Promise<AccountChart> {
     if (!this.options.online() || !this.current) {
-      if (cached && this.isReady(chartId)) return cached;
       throw failed(this.options.online() ? 'auth_required' : 'offline');
     }
-    const signal = consumerSignal ? AbortSignal.any([this.controller.signal, consumerSignal]) : this.controller.signal;
-    return this.readOwn(chartId,signal,cached);
-  }
- private async readOwn(chartId:string,signal:AbortSignal,cached:AccountChart|undefined):Promise<AccountChart> {
     const seen=this.generation,target=this.lease;
     const valid = () => { this.check(seen); signal.throwIfAborted(); };
     try {
       const read = await this.options.client.own({chartId, expectedAccountId: this.current!.accountId}, signal);
       valid(); await this.accept(read.chart, seen, target,read.catalogMarker); valid(); return this.records.find(value => value.id === chartId)!;
     } catch (error) {
-      valid();return this.failedOpen(error,chartId,cached);
-    }
-  }
- private async failedOpen(error:unknown,chartId:string,cached:AccountChart|undefined):Promise<AccountChart> {
+      valid();
       if (codeOf(error) === 'not_found') {
         const marker=(error as {details?:{catalogMarker?:unknown}}).details?.catalogMarker;
         if(isLibraryCatalogMarker(marker))await this.forget(chartId,marker);
       }
-      else if (['offline','connection_failed','server_unavailable'].includes(codeOf(error) ?? '') && cached && this.isReady(chartId)) return cached;
       throw error;
+    }
   }
  get charts(): readonly AccountChart[] { return this.records; }
  get entries(){return this.rows;}
@@ -390,7 +388,8 @@ class AccountLibraryOwner {
           throw failed('account_changed');
         // A deletion fences responses already in flight. A fresh address read may
         // establish current data; the captured projection cannot restore it.
-        if(!chart || !isLibraryCatalogMarker(marker) || seen!==this.generation)return this.open(chartId);
+        if(!chart || !isLibraryCatalogMarker(marker) || seen!==this.generation)
+          return this.readOwn(chartId,this.controller.signal);
         return this.acceptObservation(chart,seen,target,marker);
       };
     }
@@ -403,7 +402,7 @@ class AccountLibraryOwner {
  private currentRecord(observed:AccountChart):Promise<AccountChart> {
   const current=this.get(observed.id);
   if(current && current.revision>observed.revision && this.isReady(current.id))return Promise.resolve(current);
-  return this.open(observed.id);
+  return this.readOwn(observed.id,this.controller.signal);
  }
  async clear() {
       let accountId = this.ownerId ?? this.current?.accountId ?? null;

@@ -226,17 +226,20 @@ test('a complete catalogue fences a late record even when that deleted ID was ne
  assert.deepEqual((await store.read())!.charts.map(row=>row.id),[accountChart().id,accountChart(2).id]);
 });
 
-test('own failures require a current absence marker and only fall back to a ready complete record',async t=>{
+test('command result reads require a current absence marker and never hide failure behind an older local card',async t=>{
  const session={accountId:'1',sessionId:'one'},card=accountChart();
  for(const scenario of ['connection','absence','late-absence','unproven-absence','outdated-cache'] as const){
   const marker=scenario==='absence'?'4':scenario==='late-absence'?'2':undefined;
   const error=Object.assign(Error(scenario),{code:['connection','outdated-cache'].includes(scenario)?'connection_failed':'not_found',details:{catalogMarker:marker}});
+  let reads=0;
   const library=createAccountLibrary({storage:createAccountLibraryStore({indexedDB:null}),online:()=>true,
-   client:{catalog:async()=>assert.fail('no catalogue fetch'),confirmCatalog:async()=>assert.fail('no confirmation'),own:async()=>{throw error;}}});
+   client:{catalog:async()=>assert.fail('no catalogue fetch'),confirmCatalog:async()=>assert.fail('no confirmation'),own:async()=>{reads++;throw error;}}});
   t.after(()=>library.close());await library.connect(session);await library.prepareAcceptance()(card.id,card,'3');
   if(scenario==='outdated-cache')await library.receive({kind:'record',...session,durable:false,marker:'4',entry:entry({...card,revision:2})});
-  if(scenario==='connection')assert.equal(await library.open(card.id),card);
-  else await assert.rejects(library.open(card.id),{code:scenario==='late-absence'?'library_changed':error.code});
+  const accept=library.prepareAcceptance();
+  if(scenario!=='outdated-cache'){assert.equal(await library.open(card.id),card);assert.equal(reads,0);}
+  await assert.rejects(accept(card.id),{code:scenario==='late-absence'?'library_changed':error.code});
+  assert.equal(reads,1);
   assert.equal(library.has(card.id),scenario!=='absence',scenario);
  }
 });
