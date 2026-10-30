@@ -26,9 +26,10 @@ export function upgradeAccountLibrary(database:IDBDatabase,transaction:IDBTransa
   const charts=database.objectStoreNames.contains('charts')?transaction.objectStore('charts')
     :database.createObjectStore('charts',{keyPath:'id'});
   if(charts.indexNames.contains('accessed'))charts.deleteIndex('accessed');
+  if(!charts.indexNames.contains('recordRevision'))charts.createIndex('recordRevision',['id','revision']);
   if(!database.objectStoreNames.contains('context'))database.createObjectStore('context',{keyPath:'key'});
   if(!database.objectStoreNames.contains('usage'))database.createObjectStore('usage',{keyPath:'id'});
-  if(!oldVersion)return;
+  if(!oldVersion || oldVersion>=5)return;
   const request=charts.openCursor();
   request.onsuccess=()=>{
     const cursor=request.result;if(!cursor)return;

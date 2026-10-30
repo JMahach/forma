@@ -4,7 +4,7 @@ import {createStoragePressure} from '../src/data/storage-pressure.ts';
 import {createCalculationCache} from '../src/data/calculation-cache.ts';
 import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
 import {createIndexedDatabase} from '../src/data/indexed-db.ts';
-import {IDBFactory,IDBObjectStore,forceCloseDatabase} from 'fake-indexeddb';
+import {IDBFactory,IDBObjectStore,IDBIndex,forceCloseDatabase} from 'fake-indexeddb';
 import {createJournal} from '../src/journal.ts';
 import {accountChart,chartId} from './helpers/account-chart.ts';
 
@@ -62,7 +62,7 @@ test('library relief persists last use, preserves protected targets and does not
  let numericReads=0,numericWrites=0;
  IDBObjectStore.prototype.get=function(...args){if(this.name==='charts')numericReads++;return get.apply(this,args);};
  IDBObjectStore.prototype.put=function(...args){if(this.name==='charts')numericWrites++;return put.apply(this,args);};
- try { assert.equal(await store.touch(active.lease,chartId(1)),true); }
+ try { assert.equal(await store.touch(active.lease,chartId(1),accountChart(1)),true); }
  finally {IDBObjectStore.prototype.get=get;IDBObjectStore.prototype.put=put;}
  assert.equal(numericReads,0,'recording an opening does not read the numerical card');
  assert.equal(numericWrites,0,'recording an opening does not rewrite its prepared numbers');
@@ -207,4 +207,95 @@ for (const waitingAttempt of [1, 2]) test(`logout before pressure admission revo
   assert.deepEqual(cleanupGuards, [], 'an old write must not acquire cleanup permission after logout');
   assert.equal(result.status, 'stale');
   assert.deepEqual(await b.read(), {lease: second.lease, charts: [replacement]});
+});
+
+
+for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'call'],[1,true,'call'],[1,true,'request'],[1,false,'unavailable']] as const)test(`opening an absent card replaces a lower-priority card atomically: cards=${total}, fits=${fitsAfterDeletion}, failure=${failureMode}`,async t=>{
+  const pressure=createStoragePressure({locks:null}),order:string[]=[];
+  pressure.setSources({diagnostics:async()=>{order.push('diagnostics');return 'empty';},
+    charts:async()=>assert.fail('victims must belong to the placement transaction')});
+  const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000,pressure});t.after(()=>store.close());
+  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
+  const cards=Array.from({length:total},(_,n)=>accountChart(n+1));await store.put(active.lease,cards);
+  const opened=Math.min(20,total-1);
+  for(let n=1;n<=opened;n++)await store.touch(active.lease,chartId(n));
+  const incoming=accountChart(total+1),removed=new WeakMap<IDBTransaction,number>();let deleteRequests=0;
+  const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
+  IDBObjectStore.prototype.delete=function(...args){
+    if(this.name==='charts'){order.push('victim');deleteRequests++;removed.set(this.transaction,(removed.get(this.transaction)??0)+1);}
+    return remove.apply(this,args);
+  };
+  IDBObjectStore.prototype.put=function(value,...args){
+    if(this.name==='charts' && value.id===incoming.id && (!fitsAfterDeletion || !removed.get(this.transaction))){
+      if(failureMode==='unavailable')throw new Error('Storage cannot write');
+      if(failureMode==='request'){
+        // A real failing IDB request exercises preventDefault/transaction continuation.
+        const request=this.add(cards[0]);
+        return new Proxy(request,{
+          get:(target,key)=>key==='error'?new DOMException('No room','QuotaExceededError'):Reflect.get(target,key,target),
+          set:(target,key,value)=>Reflect.set(target,key,value,target),
+        });
+      }
+      throw new DOMException('No room for the incoming card','QuotaExceededError');
+    }
+    return put.call(this,value,...args);
+  };
+  try {assert.equal(await store.touch(active.lease,incoming.id,incoming),fitsAfterDeletion);}
+  finally {IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
+  const saved=(await store.read())!.charts;
+  assert.equal(saved.length,total);
+  assert.ok(deleteRequests<=total,'one failed placement must not repeatedly revisit the same victims');
+  if(failureMode==='unavailable')assert.deepEqual(order,[],'ordinary storage refusal never starts deletion');
+  else assert.ok(order.indexOf('diagnostics')>=0 && order.indexOf('diagnostics')<order.indexOf('victim'),'disposable service data is considered before library victims');
+  if(fitsAfterDeletion){
+    assert.ok(saved.some(chart=>chart.id===incoming.id));
+    assert.equal(saved.some(chart=>chart.id===chartId(opened+1)),false);
+    for(let n=1;n<=opened;n++)assert.ok(saved.some(chart=>chart.id===chartId(n)));
+  }else assert.deepEqual(saved,cards,'every candidate victim survives failed placement');
+});
+
+
+test('an opening waiting for its revision lookup cannot borrow a later cleanup permission',async t=>{
+  const pressure=createStoragePressure({locks:null}),store=createAccountLibraryStore({indexedDB:new IDBFactory(),pressure});
+  t.after(()=>store.close());const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
+  const original=IDBIndex.prototype.getKey;
+  t.mock.method(IDBIndex.prototype,'getKey',function(this:IDBIndex,...args:Parameters<IDBIndex['getKey']>){
+    const request=original.apply(this,args);request.addEventListener('success',()=>pressure.invalidate());return request;
+  });
+  pressure.setSources({diagnostics:async()=>assert.fail('revoked opening cannot release service data')});
+  assert.equal(await store.touch(active.lease,chartId(1),accountChart(1)),false);
+  assert.deepEqual((await store.read())!.charts,[]);
+});
+
+
+test('another tab changing account during service cleanup rejects the subsequent placement',async t=>{
+  const indexedDB=new IDBFactory(),pressure=createStoragePressure({locks:null});
+  const a=createAccountLibraryStore({indexedDB,pressure}),b=createAccountLibraryStore({indexedDB});t.after(()=>{a.close();b.close();});
+  const active=await a.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
+  await a.put(active.lease,[accountChart(1)]);
+  const put=IDBObjectStore.prototype.put;
+  t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,value:unknown,key?:IDBValidKey){
+    if(this.name==='charts' && (value as {id?:string}).id===chartId(2))throw new DOMException('Full','QuotaExceededError');
+    return key===undefined?put.call(this,value):put.call(this,value,key);
+  });
+  pressure.setSources({diagnostics:async()=>{
+    const next=await b.activate('2');assert.equal(next.status,'stored');if(next.status!=='stored')throw Error('account');
+    await b.put(next.lease,[accountChart(3,'2')]);return 'empty';
+  }});
+  assert.equal(await a.touch(active.lease,chartId(2),accountChart(2)),false);
+  assert.deepEqual((await b.read())!.charts,[accountChart(3,'2')]);
+});
+
+test('an older visible revision never evicts cards or repeats placement for a failed use mark',async t=>{
+  const store=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>store.close());
+  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
+  const rows=[accountChart(1,'1',3),accountChart(2)];await store.put(active.lease,rows);
+  const put=IDBObjectStore.prototype.put;let marks=0;
+  t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,value:unknown,key?:IDBValidKey){
+    if(this.name==='usage'){marks++;throw new DOMException('Full','QuotaExceededError');}
+    return key===undefined?put.call(this,value):put.call(this,value,key);
+  });
+  assert.equal(await store.touch(active.lease,chartId(1),accountChart(1)),false);
+  assert.equal(marks,1,'already ready numbers do not justify another placement attempt');
+  assert.deepEqual((await store.read())!.charts,rows);
 });

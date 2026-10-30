@@ -119,7 +119,7 @@ export const PUBLIC_FILES = new Map<string, string>([
     'src/state/account-library.ts',
     'src/state/chart-actions.ts',
     'src/data/binary-cache.ts', 'src/data/indexed-db.ts',
-    'src/data/calculation-migration.ts', 'src/data/calculation-cache-transition.ts', 'src/data/account-library-schema.ts',
+    'src/data/calculation-migration.ts', 'src/data/calculation-cache-transition.ts', 'src/data/account-library-schema.ts', 'src/data/account-card-placement.ts',
     'src/data/calculation-clients.ts', 'src/data/calculation-cache.ts',
     'src/data/natal-day-client.ts',
     'src/runtime/shared-request.ts',

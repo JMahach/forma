@@ -388,7 +388,7 @@ test('real SQL and account IDB owners activate the transition and read ready car
     const read = await library.read();
     assert.deepEqual(read!.charts, [accountChart(1), accountChart(2)]);
     assert.equal(scans,1,'one schema pass migrates numerical metadata and lightweight use together');
-    const raw = deviceDatabase(indexedDB, 5);
+    const raw = deviceDatabase(indexedDB, 6);
     try {
       const after = (await deviceRows(raw))!;
       assert.deepEqual(after.context, before.context);
@@ -402,7 +402,7 @@ test('real SQL and account IDB owners activate the transition and read ready car
 test('an IndexedDB schema transition retains card numbers, recency and account lease, and fences the old writer', async () => {
   const indexedDB = await storedDevice(), old = deviceDatabase(indexedDB, 3);
   const before = await deviceRows(old) as {charts:unknown[];context:unknown[]}; old.close();
-  const current = deviceDatabase(indexedDB, 5);
+  const current = deviceDatabase(indexedDB, 6);
   try {
     const after = await deviceRows(current) as typeof before;
     assert.deepEqual(after.context, before.context);
@@ -418,7 +418,7 @@ test('an interrupted IndexedDB card upgrade retains the original schema and ever
   for (const at of [1, 2]) {
     const indexedDB = await storedDevice(), old = deviceDatabase(indexedDB, 3);
     const before = await deviceRows(old); old.close();
-    const next = deviceDatabase(indexedDB, 5);
+    const next = deviceDatabase(indexedDB, 6);
     let writes = 0;
     IDBCursorWithValue.prototype.update = function(...args) {
       const result = update.apply(this, args);
@@ -429,7 +429,7 @@ test('an interrupted IndexedDB card upgrade retains the original schema and ever
     finally { IDBCursorWithValue.prototype.update = update; next.close(); }
     const rollback = deviceDatabase(indexedDB, 3);
     assert.deepEqual(await deviceRows(rollback), before); rollback.close();
-    const retry = deviceDatabase(indexedDB, 5);
+    const retry = deviceDatabase(indexedDB, 6);
     try { assert.ok(await deviceRows(retry)); } finally { retry.close(); }
   }
 });

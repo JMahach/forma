@@ -4,6 +4,7 @@ import { createRandomId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
 import { createIndexedDatabase } from './indexed-db.ts';
 import { upgradeAccountLibrary } from './account-library-schema.ts';
+import { placeOpenedCard } from './account-card-placement.ts';
 
 export interface LibraryLease { accountId: string; generation: string }
 export interface LibrarySnapshot { lease: LibraryLease | null; charts: AccountChart[] }
@@ -35,7 +36,7 @@ function leastUsedCard(keys:IDBValidKey[],usage:{id:string;openedAt:number}[],ex
 
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
 export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
-  const database = createIndexedDatabase({databaseName, version: 5, stores: ['charts', 'context', 'usage'], indexedDB,
+  const database = createIndexedDatabase({databaseName, version: 6, stores: ['charts', 'context', 'usage'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
   return {
@@ -110,7 +111,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         if(result.status==='quota'){
           if(isCurrent && !isCurrent())return {status:'stale'};
           if(stored)return {status:'partial',lease:{...seen},changed};
-          if(pressure){result=await pressure.write(()=>write([chart]),{chartIds:[chart.id]});recovered=true;}
+          if(pressure){result=await pressure.write(()=>write([chart]),{chartIds:[chart.id],atomicLibrary:true});recovered=true;}
         }
         if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen},changed}:unavailable();
         if(result.value.status!=='stored')return result.value;
@@ -134,16 +135,22 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         };
       })===true;
     },
-    async touch(seen:LibraryLease,chartId:string):Promise<boolean> {
-      return await database.transaction<boolean>('readwrite',(tx,result,fail)=>{
+    async touch(seen:LibraryLease,chartId:string,openedChart?:AccountChart):Promise<boolean> {
+      const isCurrent=pressure?.capture()??(()=>true);
+      const chart=openedChart?validateAccountChart(openedChart,seen.accountId):null,openedAt=Math.max(1,now());
+      if(chart && chart.id!==chartId)throw new TypeError('invalid_chart');
+      const present=await database.transaction<'stored'|'missing'|'stale'>('readwrite',(tx,result,fail)=>{
         const owner=tx.objectStore('context').get('owner');owner.onsuccess=()=>{
-          if(!same(owner.result,seen)){result(false);return;}
-          const read=tx.objectStore('charts').getKey(chartId);read.onsuccess=()=>{
-            if(!read.result){result(false);return;}
-            try{tx.objectStore('usage').put({id:chartId,openedAt:now()});result(true);}catch(error){fail(error);}
+          if(!same(owner.result,seen)){result('stale');return;}
+          const rows=tx.objectStore('charts');
+          const read=chart?rows.index('recordRevision').getKey([chartId,chart.revision]):rows.getKey(chartId);
+          read.onsuccess=()=>{
+            if(!read.result){result('missing');return;}
+            try{tx.objectStore('usage').put({id:chartId,openedAt});result('stored');}catch(error){fail(error);}
           };
         };
-      })===true;
+      });
+      return present==='stored' || present==='missing' && !!chart && await placeOpenedCard({database,isOwner:owner=>same(owner,seen),isCurrent,chart,openedAt,pressure});
     },
     async evictForSpace(keep:number,exclude:readonly string[]=[],isCurrent:()=>boolean=()=>true):Promise<StorageRelief> {
       if(!Number.isSafeInteger(keep)||keep<0)throw new RangeError('Invalid library minimum');

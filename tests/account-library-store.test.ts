@@ -21,10 +21,12 @@ test('a confirmed account library survives reopening and ignores older revisions
   const newer = {...accountChart(1, '1', 3), note: 'Confirmed', noteRevision: 2};
   assert.equal((await first.put(active.lease, [newer])).status, 'stored');
   await first.put(active.lease, [accountChart()]);
+  assert.equal(await first.touch(active.lease,chartId(2),accountChart(2)),true,'an opened RAM card fits without removing anything');
   first.close();
   const second = createAccountLibraryStore({indexedDB});
   try {
     const read = await second.read();
+    assert.equal(read!.charts.length,2);
     assert.equal(read!.charts[0]!.revision, 3); assert.equal(read!.charts[0]!.note, 'Confirmed');
     assert.deepEqual(read!.lease, active.lease);
   } finally { second.close(); }

@@ -171,9 +171,10 @@ export function createAccountLibrary({client, storage, online, restoreAllowed = 
         && charts.find(value=>value.id===chartId)===chart && !removals.pending.has(chartId);
     },
     async markOpened(chartId: string): Promise<void> {
-      if (closed || !lease || !charts.some(chart => chart.id === chartId)) return;
-      // The visible selection calls this; background acquisition never counts as use.
-      await storage.touch(lease, chartId).catch(() => false);
+      const chart=charts.find(chart=>chart.id===chartId);
+      if (closed || !lease || !chart) return;
+      // The visible selection lifts priority and can place a RAM-only card.
+      await storage.touch(lease, chartId, chart).catch(() => false);
     },
     open,
     prepareAcceptance() {
