@@ -13,8 +13,17 @@ type Event = ApplicationEvent | {type: 'Start'} | {type: 'Stop'} | {type:'Accoun
  | {type:'xstate.snapshot.account';snapshot:SnapshotFrom<ReturnType<typeof createAccountBoundaryMachine>>}
  | {type:'xstate.snapshot.startup';snapshot:SnapshotFrom<ReturnType<typeof createStartupMachine>>}
  | {type:'xstate.snapshot.write';snapshot:SnapshotFrom<ReturnType<typeof createWriteContinuationMachine>>}
- | {type:'EnvironmentObserved';connected:boolean;resumed:boolean}
- | {type:'CheckRestored'} | {type:'CheckUpdateReady'} | {type:'CheckAccountReady'};
+ | {type:'EnvironmentObserved';connected:boolean;resumed:boolean};
+
+type AccountSnapshot=SnapshotFrom<ReturnType<typeof createAccountBoundaryMachine>>;
+interface ApplicationContext {
+ request:RouteRequest|null;
+ processId:number;
+ // Notification filters only. Admission always reads the current child states.
+ observedAccount:Pick<AccountSnapshot,'value'> & {request:AccountSnapshot['context']['request']} | null;
+ observedStartup:ReturnType<typeof startupView>|null;
+ observedWrite:Pick<ReturnType<typeof writeContinuationView>,'source'|'busy'|'recovering'|'waitingForLogin'>|null;
+}
 
 function routeChanged(request:RouteRequest|null,event:Event,navigation?:NavigationPort) {
   return event.type==='RouteRequested' && !!event.snapshot.route
@@ -22,13 +31,16 @@ function routeChanged(request:RouteRequest|null,event:Event,navigation?:Navigati
 }
 
 
-interface CoreActor {
- getSnapshot():{context:{request:RouteRequest|null};matches(value:'running'|{running:{destination:'preparing'|'failed'}}):boolean;children:{
+interface CoreSnapshot {
+ context:{request:RouteRequest|null};matches(value:'running'|{running:{destination:'preparing'|'failed'}}):boolean;children:{
   account?:ActorRefFrom<ReturnType<typeof createAccountBoundaryMachine>>;
   startup?:ActorRefFrom<ReturnType<typeof createStartupMachine>>;
   write?:ActorRefFrom<ReturnType<typeof createWriteContinuationMachine>>;
   publicRefresh?:ActorRefFrom<ReturnType<typeof createPublicRefreshMachine>>;
- }};
+ };
+}
+interface CoreActor {
+ getSnapshot():CoreSnapshot;
  send(event:Event):void;
 }
 function readWrite(actor:CoreActor){const child=actor.getSnapshot().children.write;return child?writeContinuationView(child.getSnapshot()):{source:null,busy:false,recovering:false,waitingForLogin:false};}
@@ -58,35 +70,44 @@ function presentFormResult(actor:CoreActor,ports:ApplicationPorts,id:string,meta
   port.view.checkpoint();
 }
 
-function applicationRestored(actor:CoreActor,ports:ApplicationPorts) {
-  const startup=readStartup(actor),snapshot=actor.getSnapshot();
+export function applicationRestored(snapshot:CoreSnapshot,ports:ApplicationPorts) {
+  const child=snapshot.children.startup,startup=child?startupView(child.getSnapshot()):{restored:false,failed:false};
   return snapshot.matches('running') && startup.restored && !startup.failed
     && (!ports.account || snapshot.children.account?.getSnapshot().matches('ready')===true)
     && !snapshot.matches({running:{destination:'preparing'}}) && (!snapshot.matches({running:{destination:'failed'}}) || !!snapshot.context.request?.selection) && ports.update?.restored()===true;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime,preparingUpdate:()=>boolean) {
+export function applicationUpdateReady(snapshot:CoreSnapshot,ports:ApplicationPorts) {
+  const write=snapshot.children.write;
+  return applicationRestored(snapshot,ports) && (!write || !writeContinuationView(write.getSnapshot()).busy)
+    && ports.update?.ready()===true;
+}
+
+export function applicationAccountReady(snapshot:CoreSnapshot,ports:ApplicationPorts) {
+  const account=snapshot.children.account?.getSnapshot();
+  return snapshot.matches('running') && (!ports.account || account?.matches('ready')===true
+    && JSON.stringify(account.context.access)===JSON.stringify(ports.account.getSession()));
+}
+
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime,preparingUpdate:()=>boolean,runtime:()=>CoreActor) {
   const runtimeId = ports.runtimeId;
-  let processId = 0;
-  let root:CoreActor;
-  let previousAccount:SnapshotFrom<ReturnType<typeof createAccountBoundaryMachine>>|undefined;
-  let previousStartup:ReturnType<typeof startupView>|undefined;
-  let previousWrite:ReturnType<typeof writeContinuationView>|undefined;
-  const accountReady=()=>!ports.account || root.getSnapshot().children.account?.getSnapshot().matches('ready')===true;
+  // The owning Application provides its actor lazily, after construction.
+  // Actions use self; only callback owners need this runtime connection.
+  const accountReady=()=>!ports.account || runtime().getSnapshot().children.account?.getSnapshot().matches('ready')===true;
   const background=ports.background?createBackgroundWork(ports.background,{
-    state(){const write=readWrite(root);return {running:root.getSnapshot().matches('running'),restored:!ports.startup || readStartup(root).restored,
-      accountReady:accountReady(),opening:root.getSnapshot().matches({running:{destination:'preparing'}}),writing:write.busy && !write.waitingForLogin,preparingUpdate:preparingUpdate()};},
+    state(){const actor=runtime(),snapshot=actor.getSnapshot(),write=readWrite(actor);return {running:snapshot.matches('running'),restored:!ports.startup || readStartup(actor).restored,
+      accountReady:accountReady(),opening:snapshot.matches({running:{destination:'preparing'}}),writing:write.busy && !write.waitingForLogin,preparingUpdate:preparingUpdate()};},
     publicTask():BackgroundTask|null {
-      const child=root.getSnapshot().children.publicRefresh;if(!child)return null;
+      const child=runtime().getSnapshot().children.publicRefresh;if(!child)return null;
       child.send({type:'PublicRefreshChanged'});const check=publicRefreshCheck(child.getSnapshot());if(!check)return null;
       return {target:check.target,run:authority=>new Promise(resolve=>child.send({type:'RefreshPublicSource',authority,completed:resolve})),
         receive:data=>child.send({type:'PublicSourceObserved',source:check.source,access:check.access,data})};
     },
-    changed(){root.send({type:'FillChanged'});root.send({type:'AuditChanged'});},
-    wake(at,reason){root.send({type:'FillWake',at,reason});if(reason!=='use' && reason!=='space')root.send({type:'AuditWake',at});},
-    environmentChanged(facts){root.send({type:'EnvironmentObserved',...facts});},
+    changed(){runtime().send({type:'FillChanged'});runtime().send({type:'AuditChanged'});},
+    wake(at,reason){runtime().send({type:'FillWake',at,reason});if(reason!=='use' && reason!=='space')runtime().send({type:'AuditWake',at});},
+    environmentChanged(facts){runtime().send({type:'EnvironmentObserved',...facts});},
   }):undefined;
-  const publicRefreshAllowed=()=>!preparingUpdate() && !readWrite(root).source && (!ports.startup || readStartup(root).restored)
+  const publicRefreshAllowed=()=>!preparingUpdate() && !readWrite(runtime()).source && (!ports.startup || readStartup(runtime()).restored)
     && (ports.background?.environment.online()??true);
   return setup({
     types: {
@@ -100,7 +121,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         libraryFill:'libraryFill';
         libraryAudit:'libraryAudit';
       },
-      context: {} as {request: RouteRequest | null},
+      context: {} as ApplicationContext,
       events: {} as Event,
     },
     actors: {
@@ -115,77 +136,92 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         prepareRoute(ports,input,signal,ready)),
     },
     guards: {
-      restored:()=>applicationRestored(root,ports),
-      updateReady:()=>applicationRestored(root,ports) && !readWrite(root).busy && ports.update!.ready(),
-      accountReady:()=>accountReady() && (!ports.account || JSON.stringify(root.getSnapshot().children.account?.getSnapshot().context.access)===JSON.stringify(ports.account.getSession())),
       changed: ({context,event})=>!!ports.route && routeChanged(context.request,event,ports.navigation),
     },
     actions: {
-      attach:({self})=>{root=self;},
       backgroundChanged:enqueueActions(({self,enqueue})=>{
         if(!self.getSnapshot().matches('running'))return;
         if(ports.background)enqueue.sendTo('background',{type:'BackgroundChanged'});
         if(ports.libraryFill)enqueue.sendTo('libraryFill',{type:'FillChanged'});
         if(ports.libraryAudit)enqueue.sendTo('libraryAudit',{type:'AuditChanged'});
       }),
-      coordinate:enqueueActions(({self,event,enqueue})=>{
-        const options=event.type==='EnvironmentObserved'?{recover:event.resumed,wake:event.resumed}:{recover:true,wake:true};
-        const account=self.getSnapshot().children.account?.getSnapshot(),restored=readStartup(root).restored;
-        if(account?.matches('ready') && account.context.access && ports.write){
-          if(readWrite(root).waitingForLogin)enqueue.sendTo('write',{type:'ResumeWrite'});
-          if(restored && options.recover && !preparingUpdate())enqueue.sendTo('write',{type:'RecoverWrites'});
-        }
-        enqueue('backgroundChanged');
+      // Recheck admission after account/startup changes or an environment fact.
+      // The parent diagram shows this action; these cross-region conditions live
+      // here instead of adding states for every combination of child states.
+      coordinate:enqueueActions(({enqueue})=>{
+        enqueue('resumeWaitingWrite');enqueue('recoverReadyWrites');
+        enqueue('backgroundChanged');enqueue('wakeLibrary');
+      }),
+      resumeWaitingWrite:enqueueActions(({self,enqueue})=>{
+        const account=self.getSnapshot().children.account?.getSnapshot();
+        if(ports.write && account?.matches('ready') && account.context.access && readWrite(self).waitingForLogin)
+          enqueue.sendTo('write',{type:'ResumeWrite'});
+      }),
+      recoverReadyWrites:enqueueActions(({self,event,enqueue})=>{
+        const account=self.getSnapshot().children.account?.getSnapshot();
+        if(ports.write && account?.matches('ready') && account.context.access && readStartup(self).restored
+          && (event.type!=='EnvironmentObserved' || event.resumed) && !preparingUpdate())
+          enqueue.sendTo('write',{type:'RecoverWrites'});
+      }),
+      wakeLibrary:enqueueActions(({self,event,enqueue})=>{
         const clock=ports.background?.clock??ports.libraryFill?.clock??ports.libraryAudit?.clock;
-        if(clock && restored && account?.matches('ready') && options.wake){
+        const account=self.getSnapshot().children.account?.getSnapshot();
+        if(clock && readStartup(self).restored && account?.matches('ready') && (event.type!=='EnvironmentObserved' || event.resumed)){
           const at=clock.now();
           if(ports.libraryFill)enqueue.sendTo('libraryFill',{type:'FillWake',at,reason:'lifecycle'});
           if(ports.libraryAudit)enqueue.sendTo('libraryAudit',{type:'AuditWake',at});
         }
       }),
-      accountChanged:enqueueActions(({event,enqueue})=>{
+      accountChanged:enqueueActions(({context,event,enqueue})=>{
         if(event.type!=='xstate.snapshot.account')return;
-        const next=event.snapshot;
-        if(!next.context.request){previousAccount=next;return;}
-        if(next.value===previousAccount?.value && next.context.request===previousAccount?.context.request)return;
-        previousAccount=next;ports.account!.changed();enqueue('coordinate');
+        const next=event.snapshot,previous=context.observedAccount;
+        if(next.value===previous?.value && next.context.request===previous?.request)return;
+        enqueue.assign({observedAccount:{value:next.value,request:next.context.request}});
+        if(!next.context.request)return;
+        ports.account!.changed();enqueue('coordinate');
       }),
-      startupChanged:enqueueActions(({event,enqueue})=>{
+      startupChanged:enqueueActions(({context,event,enqueue})=>{
         if(event.type!=='xstate.snapshot.startup' || event.snapshot.matches('stopped'))return;
-        const next=startupView(event.snapshot);
-        if(!previousStartup){previousStartup=next;return;}
-        if(next.restored===previousStartup?.restored && next.failed===previousStartup?.failed)return;
-        previousStartup=next;ports.startup!.changed();enqueue('coordinate');
+        const next=startupView(event.snapshot),previous=context.observedStartup;
+        if(next.restored===previous?.restored && next.failed===previous?.failed)return;
+        enqueue.assign({observedStartup:next});
+        if(!previous)return;
+        ports.startup!.changed();enqueue('coordinate');
       }),
-      writeChanged:enqueueActions(({event,enqueue})=>{
+      writeChanged:enqueueActions(({context,event,enqueue})=>{
         if(event.type!=='xstate.snapshot.write')return;
-        const next=writeContinuationView(event.snapshot);
-        if(!previousWrite){previousWrite=next;return;}
-        if(next.source===previousWrite?.source && next.busy===previousWrite?.busy && next.recovering===previousWrite?.recovering && next.waitingForLogin===previousWrite?.waitingForLogin)return;
-        previousWrite=next;ports.write!.view.changed();enqueue('backgroundChanged');
+        const {source,busy,recovering,waitingForLogin}=writeContinuationView(event.snapshot);
+        const next={source,busy,recovering,waitingForLogin},previous=context.observedWrite;
+        if(next.source===previous?.source && next.busy===previous?.busy && next.recovering===previous?.recovering && next.waitingForLogin===previous?.waitingForLogin)return;
+        enqueue.assign({observedWrite:next});
+        if(!previous)return;
+        ports.write!.view.changed();enqueue('backgroundChanged');
       }),
       environmentObserved:enqueueActions(({event,enqueue})=>{
         if(event.type!=='EnvironmentObserved')return;
         if(event.connected && ports.account && !preparingUpdate())enqueue.sendTo('account',{type:'RetryAccountBoundary'});
         enqueue('coordinate');
       }),
-      libraryChanged:()=>projectLibrary(root,ports),
-      formSaved:({event})=>{if(event.type==='FormSaved')presentFormResult(root,ports,event.id,event.metadataOnly);},
-      requested: assign({
-        request: ({event}) => {
-          if (event.type !== 'RouteRequested') return null;
-          return {snapshot: event.snapshot, initial: event.initial ?? false, runtimeId, processId: ++processId};
-        },
+      libraryChanged:({self})=>projectLibrary(self,ports),
+      formSaved:({self,event})=>{if(event.type==='FormSaved')presentFormResult(self,ports,event.id,event.metadataOnly);},
+      requested: assign(({context,event}) => {
+        if(event.type!=='RouteRequested')return {request:null};
+        const processId=context.processId+1;
+        return {processId,request:{snapshot:event.snapshot,initial:event.initial??false,runtimeId,processId}};
       }),
-      retried: assign({
-        request: ({context, event}) => context.request
-          ? {...context.request, initial: event.type === 'RetryRoute' ? false : context.request.initial, processId: ++processId}
-          : null,
+      retried: assign(({context,event}) => {
+        if(!context.request)return {};
+        const processId=context.processId+1;
+        return {processId,request:{...context.request,initial:event.type==='RetryRoute'?false:context.request.initial,processId}};
       }),
-      chosen:assign({request:({event})=>event.type==='OpenChartRequested'?{
-        snapshot:ports.navigation?.snapshot??{route:null,revision:0},initial:false,runtimeId,processId:++processId,
-        selection:{id:event.id,edit:event.edit},
-      }:null}),
+      chosen:assign(({context,event})=>{
+        if(event.type!=='OpenChartRequested')return {request:null};
+        const processId=context.processId+1;
+        return {processId,request:{
+          snapshot:ports.navigation?.snapshot??{route:null,revision:0},initial:false,runtimeId,processId,
+          selection:{id:event.id,edit:event.edit},
+        }};
+      }),
       cancelWrite:enqueueActions(({enqueue})=>{if(ports.write)enqueue.sendTo('write',{type:'CancelWrite'});}),
       cancelPublic:enqueueActions(({enqueue})=>{if(ports.publicRefresh)enqueue.sendTo('publicRefresh',{type:'CancelPublicRefresh'});}),
       cancelOpening:enqueueActions(({context,enqueue})=>{
@@ -195,8 +231,8 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         if(!context.request.initial)enqueue('cancelWrite');
       }),
       cancelPublished:enqueueActions(({event,enqueue})=>{if(event.type==='RoutePublished' && chartDestination(event.route))enqueue('cancelPublic');}),
-      cancelDepartingWrite:enqueueActions(({event,enqueue})=>{
-        if(event.type==='WorkspaceRequested' && !(event.screen==='account' && readWrite(root).waitingForLogin))enqueue('cancelWrite');
+      cancelDepartingWrite:enqueueActions(({self,event,enqueue})=>{
+        if(event.type==='WorkspaceRequested' && !(event.screen==='account' && readWrite(self).waitingForLogin))enqueue('cancelWrite');
       }),
       opening:({context})=>{
         if(!context.request || !ports.route)return;
@@ -231,8 +267,8 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
     },
   }).createMachine({
     id: 'application',
-    initial: 'created',entry:'attach',
-    context: {request: null},
+    initial: 'created',
+    context:()=>({request:null,processId:0,observedAccount:null,observedStartup:null,observedWrite:null}),
     states: {
       created: {on: {Start: 'running', Stop: 'stopping'}},
       running: {
@@ -248,7 +284,6 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
         ],
         on: {
           Stop: '#application.stopping',
-          CheckRestored:{guard:'restored',actions:()=>{}},CheckUpdateReady:{guard:'updateReady',actions:()=>{}},CheckAccountReady:{guard:'accountReady',actions:()=>{}},
           EnvironmentObserved:{actions:'environmentObserved'},LibraryChanged:{actions:'libraryChanged'},FormSaved:{actions:'formSaved'},
           LibraryUsed:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},
           BackgroundIdle:{guard:()=>!!ports.background,actions:sendTo('background',({event})=>event)},

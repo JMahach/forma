@@ -2,7 +2,7 @@ import { createActor, waitFor, type ActorRefFrom, type SnapshotFrom } from 'xsta
 import type {EnvironmentChange} from './background-work.ts';
 import {routeForChart} from './route.ts';
 import type {AppRoute} from '../../shared/app-routes.ts';
-import { createApplicationMachine } from './application-machine.ts';
+import {createApplicationMachine,applicationRestored,applicationUpdateReady,applicationAccountReady} from './application-machine.ts';
 import { createUpdatePreparation } from './update.ts';
 import { startupView } from './startup.ts';
 import { writeContinuationView, type TemporaryWriteBinding } from './write-continuation.ts';
@@ -118,16 +118,16 @@ export function createApplication(input: ApplicationOptions) {
   const subscriptions:(()=>void)[]=[];
   let sources:Promise<void>=Promise.resolve();
   const updating=ports.update?createUpdatePreparation(ports.update,{
-    ready:()=>actor.getSnapshot().can({type:'CheckUpdateReady'}),
+    ready:()=>applicationUpdateReady(actor.getSnapshot(),ports),
     changed(){actor.send({type:'BackgroundChanged'});},
     idle:signal=>whenBackgroundIdle(actor,ports,signal),
   }):null;
   const machine = createApplicationMachine(ports, () => {
     for(const stop of subscriptions.splice(0))stop();
-  },()=>sources,()=>actor.getSnapshot().can({type:'CheckAccountReady'})?undefined:requireAccount(),
+  },()=>sources,()=>applicationAccountReady(actor.getSnapshot(),ports)?undefined:requireAccount(),
   {ready:requireAccount,project:()=>actor.send({type:'LibraryChanged'}),async route(snapshot){
     actor.send({type:'RouteRequested',snapshot,initial:true});await destinationSettled(actor);
-  }},()=>updating?.active===true);
+  }},()=>updating?.active===true,()=>actor);
   const actor = createActor(machine);
   const readView = () => applicationView(actor.getSnapshot());
   async function requireAccount(){
@@ -142,7 +142,7 @@ export function createApplication(input: ApplicationOptions) {
     get write() {return readWrite(actor,ports.write?.initialBinding);},
     get startup() {return readStartup(actor);},
     get account(){return readAccount(actor);},
-    isRestored(){return actor.getSnapshot().can({type:'CheckRestored'});},
+    isRestored(){return applicationRestored(actor.getSnapshot(),ports);},
     prepareUpdate(signal?:AbortSignal){return updating?.prepare(signal)??false;},
     start() {
       if (!actor.getSnapshot().matches('created')) return;
