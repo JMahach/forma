@@ -116,7 +116,7 @@ class LibraryPackageOwner {
  private writePackage(tx:IDBTransaction,input:IncomingPackage,prior:LibraryPackageMetadata|undefined,
   chartIds:string[],evict:boolean,done:(value:LibraryPackageWrite)=>void,fail:(cause?:unknown)=>void) {
   const {id,ref,payload,openedAt,isCurrent}=input;
-  const linked=prior && chartIds.every(id=>prior.chartIds.includes(id));
+  const linked=prior && !prior.evicted && chartIds.every(id=>prior.chartIds.includes(id));
   const placement=new TransactionPlacement(tx,{id,kind:ref.kind,chartIds,openedAt},evict && input.needsPayload,isCurrent,fail);
   const finish=()=>done(linked && !input.needsPayload?'no-op':'stored');
   const saveUse=()=>openedAt===undefined?finish():placement.write(()=>tx.objectStore('usage').put({id,openedAt}),finish);

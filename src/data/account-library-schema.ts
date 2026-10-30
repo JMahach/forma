@@ -51,7 +51,7 @@ export function sameLibraryLease(current:unknown,seen:LibraryLease) {
   const value=readLibraryLease(current);return !!value && value.accountId===seen.accountId && value.generation===seen.generation;
 }
 
-export interface LibraryPackageMetadata {id:string;ref:Exclude<PackageRef,{kind:"card"}>;chartIds:string[]}
+export interface LibraryPackageMetadata {id:string;ref:Exclude<PackageRef,{kind:"card"}>;chartIds:string[];evicted?:true}
 
 function upgradePackageSchema(database:IDBDatabase,charts:IDBObjectStore) {
   if(!charts.indexNames.contains('recordSource'))charts.createIndex('recordSource',['id','revision','birthDate','timezone','utc']);

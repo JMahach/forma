@@ -161,7 +161,7 @@ for(const [fits,used,tie] of [[true,false,false],[false,false,false],[true,true,
   const tx=open.result.transaction('packageMetadata'),read=tx.objectStore('packageMetadata').getAllKeys();
   tx.oncomplete=()=>{open.result.close();resolve(read.result);};
  };});
- assert.deepEqual(keys.sort(),[JSON.stringify(dayRef),JSON.stringify(admitted?next.ref:original.ref)].sort(),'committed eviction leaves no orphan package links');
+ assert.deepEqual(keys.sort(),[JSON.stringify(dayRef),JSON.stringify(original.ref),...(admitted?[JSON.stringify(next.ref)]:[])].sort(),'eviction retains ownership of real-use marks, not offline readiness');
 });
 
 test('an opened card releases a lower-tier day before any existing card',async t=>{
@@ -173,6 +173,41 @@ test('an opened card releases a lower-tier day before any existing card',async t
  try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(removed.includes('charts'),false);assert.equal((await store.read())!.charts.length,2);
  assert.equal(await store.readPackage(lease,dayRef),null);
+});
+
+for(const kind of ['day','family'])test(`evicted ${kind} use belongs to surviving cards and disappears with the last owner`,async t=>{
+ const {store,lease,indexedDB}=await setup(t),second=accountNatalChart(2),incoming=accountNatalChart(3);
+ const {ref,value}=kind==='day'?{ref:dayRef,value:dayBytes()}:family();
+ await store.put(lease,[second]);await store.putPackage(lease,chart,ref,value,{opened:true});
+ const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,freed=new WeakSet<IDBTransaction>();
+ IDBObjectStore.prototype.put=function(value,...args){
+  if(this.name==='charts' && value.id===incoming.id || this.name==='packageMetadata' && value.evicted)throw new DOMException('full','QuotaExceededError');
+  return put.call(this,value,...args);
+ };
+ try{assert.equal(await store.touch(lease,incoming.id,incoming),false);}finally{IDBObjectStore.prototype.put=put;}
+ assert.deepEqual(await store.readPackage(lease,ref),value,'failed ownership mark rolls back payload eviction');
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
+ assert.equal(await store.readPackage(lease,ref),null);
+ const later=accountNatalChart(4);let packageDeletes=0;
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')packageDeletes++;return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ try{assert.equal(await store.touch(lease,later.id,later),false);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
+ assert.equal(packageDeletes,0,'an already evicted payload causes no repeated deletion work');
+ assert.equal(await store.putPackage(lease,second,ref,value),'stored');
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')freed.add(this.transaction);return remove.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
+ try{assert.equal(await store.touch(lease,later.id,later),true,'a restored whole packet returns to normal placement');}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
+ assert.equal(await store.readPackage(lease,ref),null);
+ const open=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{open.onsuccess=()=>resolve(open.result);});t.after(()=>db.close());
+ const marks=()=>new Promise<{id:string}[]>(resolve=>{const tx=db.transaction('usage'),read=tx.objectStore('usage').getAll();tx.oncomplete=()=>resolve(read.result);});
+ let current=lease;
+ const removed=await store.remove(current,chart.id);if(removed.status!=='stored')throw Error('remove');current=removed.lease;
+ assert.ok((await marks()).some(row=>row.id===JSON.stringify(ref)),'other cards retain real use after eviction');
+ for(const item of [second,incoming,later]){const removed=await store.remove(current,item.id);if(removed.status!=='stored')throw Error('remove');current=removed.lease;}
+ assert.deepEqual((await store.read())!.charts,[]);
+ assert.deepEqual(await marks(),[],'explicit removal of every owner leaves no package use orphan');
 });
 
 test('background acquisition places a higher-tier card without opening it or deleting an existing card',async t=>{

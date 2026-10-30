@@ -2,7 +2,7 @@ import type {PackageRef} from '../../shared/library-package-contract.ts';
 import type {LibraryPackageMetadata} from './account-library-schema.ts';
 
 interface Candidate {id:string;kind:PackageRef['kind'];chartIds:string[];openedAt?:number}
-interface Victim {id:string;kind:PackageRef['kind'];used:number}
+interface Victim {id:string;kind:PackageRef['kind'];used:number;metadata?:LibraryPackageMetadata}
 const rank={card:3,day:2,'major-returns':1};
 const compareIds=(a:string,b:string)=>a<b?-1:a>b?1:0;
 function lowerPriority(row:Victim,incoming:Candidate,threshold:number) {
@@ -15,7 +15,7 @@ function selectVictims(keys:IDBValidKey[],packages:LibraryPackageMetadata[],mark
  const priority=(id:string,chartIds:string[])=>Math.max(used.get(id)??0,...chartIds.map(id=>used.get(id)??0));
  const threshold=Math.max(incoming.openedAt??0,priority(incoming.id,incoming.chartIds));
  const candidates:Victim[]=[...keys.map(key=>({id:String(key),kind:'card' as const,used:used.get(String(key))??0})),
-  ...packages.map(row=>({id:row.id,kind:row.ref.kind,used:priority(row.id,row.chartIds)}))];
+  ...packages.filter(row=>!row.evicted).map(row=>({id:row.id,kind:row.ref.kind,used:priority(row.id,row.chartIds),metadata:row}))];
  return candidates.filter(row=>lowerPriority(row,incoming,threshold))
   .sort((a,b)=>rank[a.kind]-rank[b.kind] || a.used-b.used || compareIds(a.id,b.id));
 }
@@ -40,9 +40,15 @@ export class TransactionPlacement {
   }
   const victim=this.victims[this.next++];
   if(!victim){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
-  if(victim.kind!=='card')this.tx.objectStore('packageMetadata').delete(victim.id);
+  // Keep real-use ownership after payload eviction. Explicit removal of the
+  // final card can then release the mark; an evicted row is never a new victim.
   const removed=this.tx.objectStore(victim.kind==='card'?'charts':'packages').delete(victim.id);
-  removed.onsuccess=retry;
+  removed.onsuccess=()=>{
+   try {
+    if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=retry;
+    else retry();
+   }catch(error){this.fail(error);}
+  };
  }
  write(write:()=>IDBRequest,accepted:()=>void) {
   const rejected=(cause:unknown)=>{
