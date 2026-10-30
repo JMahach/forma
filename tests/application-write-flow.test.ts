@@ -157,3 +157,19 @@ test('a late unknown reply after actor disposal cannot show a notice or restore 
  f.actor.send({type:'SaveRequested',source:f.source});await tick();assert.equal(f.counts().writes,1);
  f.actor.stop();release();await tick();assert.deepEqual(f.notices,[]);assert.equal(f.counts().adoptions,0);
 });
+
+
+test('write idle waits for active recovery but not its unresolved pointers',async()=>{
+ const f=fixture();try{
+  f.login();f.lose();f.actor.send({type:'SaveRequested',source:f.source});await f.settled();
+  assert.equal(f.actions.pending.length,1);await waitFor(f.actor,state=>!writeContinuationView(state).busy && !writeContinuationView(state).recovering);
+  let release!:()=>void,idle=false;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const recover=f.actions.recover;f.actions.recover=async(...args)=>{await gate;return recover(...args);};
+  f.actor.send({type:'RecoverWrites'});
+  assert.equal(writeContinuationView(f.actor.getSnapshot()).recovering,true);
+  const barrier=waitFor(f.actor,state=>!writeContinuationView(state).recovering).then(()=>{idle=true;});await tick();assert.equal(idle,false);
+  release();await barrier;assert.equal(writeContinuationView(f.actor.getSnapshot()).recovering,false);
+  assert.equal(f.counts().adoptions,1);assert.equal(f.actions.pending.length,0);
+ }finally{f.actor.send({type:'Stop'});}
+});

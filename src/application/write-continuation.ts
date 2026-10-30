@@ -272,5 +272,6 @@ export function createWriteContinuationMachine(ports:WriteContinuationPorts) {
 export function writeContinuationView(snapshot:SnapshotFrom<ReturnType<typeof createWriteContinuationMachine>>) {
   const work=snapshot.context.work;
   return {source:work?.source??null,binding:snapshot.context.binding,busy:snapshot.matches({running:{save:'working'}}),
+    recovering:snapshot.matches({running:{recovery:'reading'}}),
     waitingForLogin:snapshot.matches({running:{save:'waiting'}})};
 }

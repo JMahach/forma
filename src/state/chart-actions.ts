@@ -6,7 +6,7 @@ import type { ChartClient, ChartBirthInput, ChartReceipt, ChartReply, ChartPatch
 import type { AccountLibrary, LibrarySession } from './account-library.ts';
 import type { CheckpointResult } from './view-checkpoint.ts';
 import { createRandomId, chartSaveSourceKey, type ChartSaveSource } from '../domain/chart-record.ts';
-import { shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
+import { createAbortError, shareRequest, type SharedRequest } from '../runtime/shared-request.ts';
 
 export type ChartActionResult =
   | {kind: 'unknown'; intent: ChartWriteIntent; error?: unknown}
@@ -48,6 +48,23 @@ export function createChartActions({client, library, getSession, saveReady, newI
   const saveChecks=new Map<string,{intent:ChartWriteIntent;session:LibrarySession}>();
   const recoveries=new Map<string,SharedRequest<ChartActionResult,{live:()=>boolean}>>();
   let generation=0;
+  let activeEffects=0;
+  const idle=new Set<()=>void>();
+  // Track actual effects, including settlement after the last consumer leaves.
+  async function track<T>(work:()=>Promise<T>):Promise<T> {
+    activeEffects++;
+    try{return await work();}
+    finally{if(--activeEffects===0){const waiting=[...idle];idle.clear();for(const complete of waiting)complete();}}
+  }
+  function whenIdle(signal?:AbortSignal):Promise<void> {
+    if(signal?.aborted)return Promise.reject(createAbortError());
+    if(!activeEffects)return Promise.resolve();
+    return new Promise((resolve,reject)=>{
+      const complete=()=>{signal?.removeEventListener('abort',cancel);resolve();};
+      const cancel=()=>{idle.delete(complete);signal?.removeEventListener('abort',cancel);reject(createAbortError());};
+      idle.add(complete);signal?.addEventListener('abort',cancel,{once:true});
+    });
+  }
   // Only the open page associates a deletion with its recovery pointer. No
   // command payload, queued write or deletion tombstone is persisted here.
   const removals = new Map<string, {intent?: ChartWriteIntent; work?: Promise<ChartActionResult>}>();
@@ -87,36 +104,38 @@ export function createChartActions({client, library, getSession, saveReady, newI
     const active = same(seen) && live();
     return {kind: 'settled', receipt, chart: active ? chart : null, active, ...(!active || readError === undefined ? {} : {readError})};
   }
-  async function write(send: (intent: ChartWriteIntent) => Promise<ChartReceipt<ChartWriteOutcome>>, signal = new AbortController().signal, isCurrent:()=>boolean=()=>true, onIntent?:(intent:ChartWriteIntent|null,session:LibrarySession)=>void): Promise<ChartActionResult> {
-    signal.throwIfAborted();
-    const ownedGeneration=generation;
-    const seen = access(), intent = {operationId: newId(), expectedAccountId: seen.accountId};
-    const live=()=>ownedGeneration===generation && !signal.aborted && isCurrent();
-    pending.set(key(intent), intent);
-    try {
-      onIntent?.(intent,seen);
-      // Preparation owns the new pointer's persistence. Other changes publish
-      // below; a standalone owner without a checkpoint has only its RAM pointer.
-      const checkpoint=prepareWrite?await prepareWrite(intent,seen,signal):(publish(),{kind:'memory-only' as const});
+  function write(send: (intent: ChartWriteIntent) => Promise<ChartReceipt<ChartWriteOutcome>>, signal = new AbortController().signal, isCurrent:()=>boolean=()=>true, onIntent?:(intent:ChartWriteIntent|null,session:LibrarySession)=>void): Promise<ChartActionResult> {
+    return track(async()=>{
       signal.throwIfAborted();
-      if(!same(seen) || !live())throw failed('account_changed');
-      if(checkpoint.kind==='failed')throw Object.assign(failed('checkpoint_failed'),{cause:checkpoint.cause});
-    }catch(error){
-      // Nothing reached the server: this pointer must never become outcome recovery.
-      forget(intent);onIntent?.(null,seen);throw error;
-    }
-    const accept=prepareAcceptance();
-    let receipt: ChartReply<ChartWriteOutcome>;
-    try { receipt = await send(intent); }
-    catch (error) {
-      // A gateway/server failure can arrive after commit. Only a typed refusal
-      // known to precede the write makes the recovery pointer unnecessary.
-      if (refusedBeforeWrite(error)) {
-        forget(intent); throw same(seen) && live() ? error : failed('account_changed');
+      const ownedGeneration=generation;
+      const seen = access(), intent = {operationId: newId(), expectedAccountId: seen.accountId};
+      const live=()=>ownedGeneration===generation && !signal.aborted && isCurrent();
+      pending.set(key(intent), intent);
+      try {
+        onIntent?.(intent,seen);
+        // Preparation owns the new pointer's persistence. Other changes publish
+        // below; a standalone owner without a checkpoint has only its RAM pointer.
+        const checkpoint=prepareWrite?await prepareWrite(intent,seen,signal):(publish(),{kind:'memory-only' as const});
+        signal.throwIfAborted();
+        if(!same(seen) || !live())throw failed('account_changed');
+        if(checkpoint.kind==='failed')throw Object.assign(failed('checkpoint_failed'),{cause:checkpoint.cause});
+      }catch(error){
+        // Nothing reached the server: this pointer must never become outcome recovery.
+        forget(intent);onIntent?.(null,seen);throw error;
       }
-      return {kind: 'unknown', intent, ...(same(seen) && live() ? {error} : {})};
-    }
-    return settle(receipt, seen,live,accept,()=>ownedGeneration===generation);
+      const accept=prepareAcceptance();
+      let receipt: ChartReply<ChartWriteOutcome>;
+      try { receipt = await send(intent); }
+      catch (error) {
+        // A gateway/server failure can arrive after commit. Only a typed refusal
+        // known to precede the write makes the recovery pointer unnecessary.
+        if (refusedBeforeWrite(error)) {
+          forget(intent); throw same(seen) && live() ? error : failed('account_changed');
+        }
+        return {kind: 'unknown', intent, ...(same(seen) && live() ? {error} : {})};
+      }
+      return settle(receipt, seen,live,accept,()=>ownedGeneration===generation);
+    });
   }
   async function recover(intent: ChartWriteIntent, signal?: AbortSignal,isCurrent:()=>boolean=()=>true): Promise<ChartActionResult> {
     signal?.throwIfAborted();
@@ -125,13 +144,13 @@ export function createChartActions({client, library, getSession, saveReady, newI
     const ownedGeneration=generation;
     const live=()=>ownedGeneration===generation && !signal?.aborted && isCurrent();
     const recoveryKey=ownedGeneration+':'+seen.sessionId+':'+key(intent);
-    const result=await shareRequest(recoveries,recoveryKey,async (request):Promise<ChartActionResult>=>{
+    const result=await shareRequest(recoveries,recoveryKey,request=>track(async():Promise<ChartActionResult>=>{
       const accept=prepareAcceptance();
       const receipt = await client.outcome(intent, request.controller.signal);
       if (receipt.outcome.kind === 'unknown') return {kind: 'unknown', intent: {...intent}};
       return settle({...receipt, outcome: receipt.outcome}, seen,
         ()=>!request.controller.signal.aborted && [...request.consumers].some(consumer=>consumer.live()),accept,()=>ownedGeneration===generation);
-    },{signal,consumer:{live}});
+    }),{signal,consumer:{live}});
     if(result.kind==='settled' && (!same(seen) || !live())) {
       const {readError: _error,...settled}=result;
       return {...settled,chart:null,active:false};
@@ -206,6 +225,7 @@ export function createChartActions({client, library, getSession, saveReady, newI
       ...(chart.calculationReceipt?{calculationReceipt:chart.calculationReceipt}:{})},signal);
   }
   return {
+    whenIdle,
     isCheckingRemoval(chartId: string) { return Boolean(removals.get(removalKey(chartId))?.intent); },
     get pending(): readonly ChartWriteIntent[] { return [...pending.values()].map(value => ({...value})); },
     clear() {
