@@ -1234,6 +1234,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
           fromError: $('lifetimeFromError'), toError: $('lifetimeToError'),
           fromCalendar: $('lifetimeFromCalendar'), toCalendar: $('lifetimeToCalendar'),
         });
+        scope.own(controls.dispose);
         lifetime = controller;
         lifetimeControls = controls;
         return lifetime;

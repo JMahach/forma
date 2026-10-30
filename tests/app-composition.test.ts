@@ -287,6 +287,7 @@ function harness({connection, copyText, transitStart = async () => true, actualS
   let birthDraft: SavedView['birthForm'] = null;
   let birthOptions!: PortOptions<'attachBirthForm'>, lifetime!: ReturnType<typeof createLifetimeExplorer>;
   let lifetimeOptions!: Parameters<typeof attachLifetimeControls>[0];
+  let lifetimeDisposals=0;
   let returnsViewOptions!: Parameters<typeof attachReturnsPanel>[0], returnsViewState: ReturnsPanelState | undefined;
   let transitNowRequests = 0, transitStarts = 0, activationHoverClears = 0;
   const clearActivationHover = () => { activationHoverClears++; };
@@ -482,11 +483,12 @@ function harness({connection, copyText, transitStart = async () => true, actualS
       return element('confirmDeleteChart').click();
     },
     saveMetadata(chart: TestChart) { charts = fixtureStore.charts = charts.map(previous => previous.id === chart.id ? chart : previous); birthOptions.onSave(chart.id, { metadataOnly: true }); },
+    get lifetimeDisposals(){return lifetimeDisposals;},
     finishModule() { finishModule({ attachLifetimeControls(options: Parameters<typeof attachLifetimeControls>[0]) {
       lifetimeOptions = options;
       const update = (state: ReturnType<typeof createLifetimeExplorer>['state']) => { options.panel.hidden = !state.opened; };
       update(options.explorer.state);
-      return { update, refreshMoment: noop, setVisibleWindow: noop, refreshTargets: noop };
+      return { dispose(){lifetimeDisposals++;}, update, refreshMoment: noop, setVisibleWindow: noop, refreshTargets: noop };
     } }); },
   };
 }
@@ -518,6 +520,8 @@ test('lazy Lifetime uses a separate controls view and leaves the real controller
   await h.element('lifetimeToggle').click();
   assert.equal(h.lifetime!.state.opened, true);
   assert.equal(h.loads, 1); assert.equal(h.stateLoads, 1);
+ await h.stopApplication();await h.stopApplication();
+ assert.equal(h.lifetimeDisposals,1,'the root releases its acquired controls exactly once');
 });
 
 test('explicit library and Transit navigation return a zoomed and panned camera Home before async work completes', async () => {
