@@ -40,8 +40,8 @@ const BODY_IDS = CYCLE_BODIES.map(item => item.id);
 const normalizeBodies = (value: unknown): string[] | null => Array.isArray(value) && value.every(id => BODY_IDS.includes(id))
   ? BODY_IDS.filter(id => value.includes(id)) : null;
 
-// The selected saved natal prepares its default dates. Extra bodies load on
-// demand; all prepared lists remain reusable while exact chart selection is independent.
+// Owned natal packages are prepared by the server and library fill. The tool
+// acquires dates on demand; temporary charts retain their existing preparation.
 export function createReturnsController({ observe, connection = getConnectionMode, client = createCyclesClient(), getOwner = () => null, onStateChange = () => {}, onRender = () => {}, onRequest = () => {} }: ReturnsOptions = {}) {
   let natal: ChartRecord | null = null, opened = false, markersEnabled = false;
   let natalOwner: CycleOwner | null = null;
@@ -186,6 +186,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
   function ensure({ waitBodies = bodies } = {}) {
     if (!available()) return Promise.resolve(false);
     if(offline() && natal && getOwner(natal))return refreshReadyCharts().then(()=>[readyBodies().length>0]);
+    if(!wanted() && (natalOwner || natal && 'accountId' in natal && typeof natal.accountId==='string'))return Promise.resolve(false);
     const owner = natal, version = generation, range = cycleRangeForChart(owner)!;
     if (range.toAge <= range.fromAge) return Promise.resolve(false);
     let added = false,remaining=0,observation:ClientObservation|undefined;

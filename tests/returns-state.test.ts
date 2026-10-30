@@ -32,6 +32,39 @@ const chartPacket = (selected: CycleEvent): CycleChartResult => ({ chart: { ...n
 function freeze<T>(value: T): T { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 function fast(options: TestReturnsOptions = {}) { const calls: CycleInput[] = []; const control = createReturnsController({ ...options, client: { events: async input => { calls.push(input); return packet(input); }, chart: async input => chartPacket(event(input.body, input.eventUtc)), ...options.client } }); return { control, calls }; }
 
+test('a closed owned return tool does not acquire dates during selection or restored filter changes',async()=>{
+ for(const authenticated of [true,false]){
+  const chart={...natal({id:'owned'}),accountId:'7'},owner={chartId:chart.id,expectedAccountId:chart.accountId};
+  let packageReads=0;const {control,calls}=fast({getOwner:()=>authenticated?owner:null,client:{readFamily:async()=>{packageReads++;return null;}}});
+  await control.select(chart);
+  await control.restore({opened:false,bodies:[],year:2040,eventId:null});
+  await control.setBodies(['saturn']);await control.setYear(2028);await control.enableMarkers(false);await control.refreshAvailability();
+  assert.equal(control.state.opened,false);assert.equal(control.state.markersEnabled,false);
+  assert.equal(calls.length,0);assert.equal(packageReads,0);assert.deepEqual(control.state.pendingBodies,[]);
+  await control.open();assert.equal(calls.length,majorBodies.length);
+ }
+});
+
+for(const demand of ['markers','restored-event'] as const)test(`owned return dates start for ${demand} without needing an open panel`,async()=>{
+ const chart=natal({id:'owned'}),{control,calls}=fast({getOwner:()=>({chartId:chart.id,expectedAccountId:'7'})});
+ await control.select(chart);assert.equal(calls.length,0);
+ if(demand==='markers')await control.enableMarkers(true);
+ else {assert.equal(await control.restore({opened:false,bodies:['saturn'],year:null,eventId:event().id}),true);assert.equal(control.selectedEvent?.id,event().id);}
+ assert.equal(control.opened,false);assert.equal(calls.length,majorBodies.length);
+});
+
+test('closing an explicitly opened owned return tool retains its pending useful work',async()=>{
+ const chart=natal({id:'owned'}),jobs:{input:CycleInput;signal:AbortSignal|undefined;resolve:(value:CycleEventsResult)=>void}[]=[];
+ const control=createReturnsController({getOwner:()=>({chartId:chart.id,expectedAccountId:'7'}),client:{events:(input,signal)=>new Promise(resolve=>{jobs.push({input,signal,resolve});})}});
+ try{
+  const selecting=control.select(chart);await tick();assert.equal(jobs.length,0);await selecting;
+  const opening=control.open();await tick();assert.equal(jobs.length,majorBodies.length);
+  const closing=control.close();assert.ok(jobs.every(job=>!job.signal?.aborted));
+  for(const job of jobs)job.resolve(packet(job.input));await Promise.all([opening,closing]);
+  await control.open();assert.equal(jobs.length,majorBodies.length,'reopening reuses the finished work');
+ }finally{for(const job of jobs)job.resolve(packet(job.input));control.select(null);}
+});
+
 test('unchanged returns reads reuse prepared events and exported arrays cannot corrupt that preparation', async t => {
   const events = Array.from({ length: 1336 }, (_, i) => event('moon', new Date(Date.UTC(2000, 0, 2) + i * 27 * 86400000).toISOString()));
   const { control } = fast({ client: { events: async input => packet(input, events) } });
@@ -640,6 +673,7 @@ test('return jobs carry only the selected natal ownership supplied by the librar
       chart: async (input, _signal, options) => { requests.push({kind:'chart', owner:options?.owner}); return chartPacket(event(input.body,input.eventUtc)); },
     }});
   await control.select(own);
+  await control.open();
   await control.selectEvent(event().id);
   assert.equal(requests.length,majorBodies.length+1);
   assert.ok(requests.every(request=>request.owner===owner));
@@ -816,7 +850,7 @@ test('a stored online family supplies pending dates without requesting or render
  const control=createReturnsController({getOwner:packageOwner,onRender:()=>renders++,client:{
   events:async(input,signal)=>{requests++;if(input.body!=='saturn')return packet(input);signal?.addEventListener('abort',()=>aborted=true);return new Promise(resolve=>finish=resolve);},
   readFamily:async()=>storedFamily(),chart:async input=>{charts++;return chartPacket(event(input.body,input.eventUtc));},
- }});const selecting=control.select(natal());await tick();await control.selectEvent(event('uranus').id);const current=control.current,initial=requests;renders=0;
+ }});await control.select(natal());const selecting=control.open();await tick();await control.selectEvent(event('uranus').id);const current=control.current,initial=requests;renders=0;
  await control.refreshStoredPackage(storedReturnsRef);assert.equal(aborted,true);assert.equal(requests,initial);assert.equal(renders,0);assert.equal(charts,1);assert.deepEqual(control.state.readyEvents,[],'online publication has no offline-only event markers');
  assert.ok(control.state.events.some(value=>value.id===event().id));assert.ok(!control.state.pendingBodies.includes('saturn'));
  finish(packet({body:'saturn',fromAge:0,toAge:centuryAge},[]));await selecting;await control.open();
