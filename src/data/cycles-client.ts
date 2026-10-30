@@ -8,7 +8,7 @@ import type { ReturnStorage } from './return-storage.ts';
 import type { MemoryCache } from './memory-cache.ts';
 import type { SharedRequest } from '../runtime/shared-request.ts';
 type CycleAction = 'events' | 'chart';
-interface CycleOptions { event?: CycleEvent | null; owner?: CycleOwner | null; cacheOnly?: boolean; preserve?: boolean; opened?:boolean }
+interface CycleOptions { event?: CycleEvent | null; owner?: CycleOwner | null; cacheOnly?: boolean; opened?:boolean }
 export type CachedCycleChart = CycleChartResult & { event?: CycleEvent; proof?: string };
 type ClientCycleResult = CycleResult & { event?: CycleEvent; proof?: string };
 interface CyclesClientOptions {
@@ -31,29 +31,40 @@ import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
 // stay in shared tab memory; controllers pin active inputs within its byte budget.
 export function createCyclesClient({ request = requestJSON, memory = createMemoryCache(), timeoutMs = 60_000,
   returnStorage,library }: CyclesClientOptions = {}) {
-  const lifetime = new AbortController(), attachments = new Map<string, SharedRequest<unknown>>();
-  const preservations = new Map<string, SharedRequest<void>>();
+  const lifetime = new AbortController();
+  const preservations = new Map<string, SharedRequest<boolean>>();
   const reads = new Map<string, SharedRequest<unknown>>(), pending = new Map<string, SharedRequest<ClientCycleResult>>();
   const device = returnStorage === undefined ? createReturnStorage() : returnStorage;
   const families=createReturnFamilyClient({library,memory,request,timeoutMs,legacy:device});
+  // Server knowledge follows the numerical result's lifetime, never a permanent
+  // list of requests. Keep the proof so another saved card can adopt the result.
+  const storedOwners=new WeakMap<ClientCycleResult,Set<string>>();
+  const ownerKey=(owner:CycleOwner)=>JSON.stringify([owner.expectedAccountId,owner.chartId,owner.record?.revision]);
+  const storedFor=(data:ClientCycleResult,owner:CycleOwner)=>storedOwners.get(data)?.has(ownerKey(owner))??false;
+  function rememberStored(data:ClientCycleResult,owner:CycleOwner) {
+    const owners=storedOwners.get(data)??new Set<string>();owners.add(ownerKey(owner));storedOwners.set(data,owners);
+  }
   const eventFields = ['id', 'body', 'utc', 'age', 'cycle', 'pass', 'cycleId', 'direction'] as const;
   const confirmsEvent = (event: CycleEvent | null | undefined, input: CycleInput): event is CycleEvent => validCycleEvent(event, input) && event!.utc === input.eventUtc;
-  async function preserveReadyWork(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
-    if (signal.aborted || !DEFAULT_CYCLE_BODIES.includes(input.body)) return;
+  async function preserveReadyWork(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || !DEFAULT_CYCLE_BODIES.includes(input.body)) return false;
+    let accepted=storedFor(data,owner);
     const writes: Promise<unknown>[] = [];
-    if (!alreadyStored && typeof data.proof === 'string' && data.proof.length > 0 && data.proof.length <= MAX_RETURN_PROOF_LENGTH) {
+    if (!accepted && typeof data.proof === 'string' && data.proof.length > 0 && data.proof.length <= MAX_RETURN_PROOF_LENGTH) {
       const target = {chartId:owner.chartId,expectedAccountId:owner.expectedAccountId}, proof = data.proof;
-      const key = JSON.stringify([action, target, input, proof]);
-      writes.push(shareRequest(attachments,key,async ({controller}) => {
+      writes.push((async () => {
+        const controller=new AbortController(),active=AbortSignal.any([signal,controller.signal]);
         const timer=setTimeout(()=>controller.abort(),timeoutMs);
         try {
           const reply = await request(`/api/charts/${encodeURIComponent(target.chartId)}/returns/accept`, {
             method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({expectedAccountId:target.expectedAccountId,action,input,result:data,proof}),signal:controller.signal,
+            body:JSON.stringify({expectedAccountId:target.expectedAccountId,action,input,result:data,proof}),signal:active,
           });
           if (!reply || typeof reply !== 'object' || !('accepted' in reply) || reply.accepted !== true) throw new Error('Invalid return attachment');
+          if(active.aborted)throw createAbortError();
+          accepted=true;rememberStored(data,owner);
         } finally {clearTimeout(timer);}
-      },{signal}));
+      })());
     }
     // Only already opened full charts are read here. Missing ones never enter the numerical queue.
     if (action === 'events') writes.push((async () => {
@@ -68,15 +79,17 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
           if (cycleUtcDifference(events[mid].utc, exact.eventUtc) < 0) low = mid + 1; else high = mid;
         }
         if (events[low]?.utc !== exact.eventUtc) continue;
-        const ready=await get('chart',exact,signal,{cacheOnly:true,preserve:false});
+        const ready=await get('chart',exact,signal,{cacheOnly:true});
         if(ready)await preserveReady('chart',exact,ready,owner,signal);
       }
     })());
     await Promise.allSettled(writes);
+    return accepted;
   }
-  function preserveReady(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal, alreadyStored = false): Promise<void> {
-    const key=JSON.stringify([action,owner.chartId,owner.expectedAccountId,input,data.proof,alreadyStored]);
-    return shareRequest(preservations,key,({controller})=>preserveReadyWork(action,input,data,owner,controller.signal,alreadyStored),{signal});
+  function preserveReady(action: CycleAction, input: CycleInput, data: ClientCycleResult, owner: CycleOwner, signal: AbortSignal): Promise<void> {
+    const key=JSON.stringify([action,ownerKey(owner),input,data.proof]);
+    return shareRequest(preservations,key,({controller})=>preserveReadyWork(action,input,data,owner,controller.signal),{signal})
+      .then(accepted=>{if(accepted)rememberStored(data,owner);});
   }
   async function preparedChartInputs(input: {birthUtc:string;body?:string;timezone?:string}, {signal}:{signal?:AbortSignal}={}):Promise<CycleInput[]> {
     if(lifetime.signal.aborted || signal?.aborted)throw createAbortError();
@@ -96,7 +109,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     } catch { /* A malformed catalogue identity is not a candidate. */ }
     return found;
   }
-  async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false, preserve = true,opened = !cacheOnly && action==='chart' }: CycleOptions = {}): Promise<ClientCycleResult | null> {
+  async function get(action: CycleAction, input: CycleInput, signal?: AbortSignal, { event, owner, cacheOnly = false,opened = !cacheOnly && action==='chart' }: CycleOptions = {}): Promise<ClientCycleResult | null> {
     signal = signal ? AbortSignal.any([signal,lifetime.signal]) : lifetime.signal;
     if (signal.aborted) throw createAbortError();
     // Copy before the optional device read so callers cannot mutate identity.
@@ -105,7 +118,7 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     const key = identity(action, input);
     const memoryKey = `return-${action}:${key}`;
     const own = owner && (action==='events' || DEFAULT_CYCLE_BODIES.includes(input.body))
-      ? {chartId: owner.chartId, expectedAccountId: owner.expectedAccountId,record:owner.record} : null;
+      ? {chartId: owner.chartId, expectedAccountId: owner.expectedAccountId,record:owner.record && {...owner.record}} : null;
     // Numerical reuse is common; a request that persists a result belongs to one card.
     const requestKey = own ? JSON.stringify([key, own.chartId, own.expectedAccountId, sourceTimezone]) : key;
     const persistent = device && DEFAULT_CYCLE_BODIES.includes(input.body);
@@ -116,10 +129,13 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     const accept = (data: ClientCycleResult, { save = false, remember = true } = {}) => {
       const enrich = confirmed && eventFields.some(field => confirmed[field] !== data.event?.[field]);
       const result = enrich ? { ...data, event: confirmed } : data;
+      const owners=storedOwners.get(data);if(enrich && owners)storedOwners.set(result,owners);
+      if(own && save)rememberStored(result,own);
       if (remember || enrich) memory.put(memoryKey, result);
       if (saveIndividual && (save || enrich)) Promise.resolve().then(() => action === 'events'
         ? device!.putEvents(key, input, result as CycleEventsResult) : device!.putChart(key, result)).catch(() => {});
-      if (own && preserve) void preserveReady(action,{...input,timezone:sourceTimezone},result,own,signal!,save).catch(()=>{});
+      if (own && !cacheOnly && (!storedFor(result,own) || save && action==='events'))
+        void preserveReady(action,{...input,timezone:sourceTimezone},result,own,signal!).catch(()=>{});
       return result;
     };
     const reuse=(data:ClientCycleResult)=>{
@@ -200,8 +216,8 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     async syncPrepared(input: CycleInput, owner: CycleOwner, signal?: AbortSignal) {
       const active=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal;
       const action=input.eventUtc===undefined?'events':'chart';
-      const request={...normalized(action,input),timezone:input.timezone??'UTC'},destination={...owner};
-      const data=await get(action,request,active,{cacheOnly:true,preserve:false});
+      const request={...normalized(action,input),timezone:input.timezone??'UTC'},destination={...owner,record:owner.record && {...owner.record}};
+      const data=await get(action,request,active,{cacheOnly:true});
       if(data)await preserveReady(action,request,data,destination,active);
     },
     close() {lifetime.abort();if(returnStorage===undefined)device?.close();},
