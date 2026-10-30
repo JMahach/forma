@@ -629,3 +629,75 @@ test('an addressed peer read publishes durable recovery of the same RAM card onc
  assert.equal(library.storageAvailable,true);assert.equal(library.get(chart.id),chart);assert.equal(updates,1);
  await library.receive({kind:'record',...session,durable:true,marker:'1',entry:recordEntry()});assert.equal(updates,1);
 });
+
+
+for(const stage of ['local','page','confirmation','authority'] as const)test(`catalog cancellation releases a pending ${stage} read and discards its late result`,async t=>{
+ const storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client();
+ let begin!:()=>void,release!:()=>void,finished=false,writes=0;
+ const began=new Promise<void>(resolve=>{begin=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const library=createAccountLibrary({storage,client:source,online:()=>true});t.after(()=>{release();library.close();});
+ await library.connect(session);
+ const hold=async<T>(read:()=>Promise<T>)=>{begin();await gate;return read();};
+ if(stage==='local'){const read=storage.readCatalog;t.mock.method(storage,'readCatalog',()=>hold(read));}
+ if(stage==='page'){const read=source.catalog;t.mock.method(source,'catalog',(...args)=>hold(()=>read(...args)));}
+ if(stage==='confirmation'){const read=source.confirmCatalog;t.mock.method(source,'confirmCatalog',(...args)=>hold(()=>read(...args)));}
+ const put=storage.putCatalog;t.mock.method(storage,'putCatalog',(...args)=>{writes++;return put(...args);});
+ const authority=stage==='authority'?{permit:{key:'library:1',owner:'A',token:'p',sessionId:session.sessionId,startedAt:1,expiresAt:999999},
+  signal:new AbortController().signal,current:()=>hold(async()=>true)}:undefined;
+ const pending=library.load(authority).then(result=>{finished=true;return result;});
+ await began;library.cancelCatalogReads();await new Promise(setImmediate);
+ assert.equal(finished,true,'the read must settle before the transport supplies an answer');
+ assert.deepEqual(await pending,{status:'superseded'});assert.equal(writes,0);
+ release();await new Promise(setImmediate);await new Promise(setImmediate);
+ assert.equal(writes,0);assert.equal(library.completeCatalog,null);assert.deepEqual(library.entries,[]);
+ assert.equal((await storage.readCatalog())?.catalog,null);
+});
+
+test('catalog cancellation covers every distinct run and its joined readers without invalidating ready data',async t=>{
+ const rows=[accountChart()],storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client(rows);
+ const library=createAccountLibrary({storage,client:source,online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();await library.open(rows[0]!.id);
+ const prior=library.completeCatalog,lease=library.workingLease,card=library.get(rows[0]!.id);
+ const calls:{signal:AbortSignal;release:()=>void}[]=[],read=source.catalog;
+ let begin!:()=>void;const began=new Promise<void>(resolve=>{begin=resolve;});
+ t.mock.method(source,'catalog',async(...args)=>{
+  await new Promise<void>(resolve=>{calls.push({signal:args[1]!,release:resolve});if(calls.length===2)begin();});return read(...args);
+ });
+ t.after(()=>{for(const call of calls)call.release();});
+ const firstSignal=new AbortController().signal,secondSignal=new AbortController().signal;
+ let finished=0;const observe=(work:ReturnType<typeof library.load>)=>work.then(result=>{finished++;return result;});
+ const first=observe(library.load(undefined,firstSignal)),joined=observe(library.load(undefined,firstSignal)),second=observe(library.load(undefined,secondSignal));
+ await began;const {cancelCatalogReads}=library;cancelCatalogReads();await new Promise(setImmediate);
+ assert.equal(finished,3);assert.ok(calls.every(call=>call.signal.aborted));
+ for(const result of await Promise.all([first,joined,second]))assert.deepEqual(result,{status:'superseded'});
+ assert.equal(library.completeCatalog,prior);assert.deepEqual(library.workingLease,lease);assert.equal(library.get(rows[0]!.id),card);
+ rows.push(accountChart(2));for(const call of calls)call.release();await new Promise(setImmediate);await new Promise(setImmediate);
+ assert.equal(library.completeCatalog,prior,'late data cannot publish or clear the next run');
+ t.mock.method(source,'catalog',read);
+ assert.equal((await library.load()).status,'complete');assert.equal(library.entries.length,2);
+});
+
+test('catalog cancellation waits for an entered commit and its local publication while cancelling another read',async t=>{
+ const rows=[accountChart()],storage=createAccountLibraryStore({indexedDB:new IDBFactory()}),source=client(rows);
+ const library=createAccountLibrary({storage,client:source,online:()=>true});t.after(()=>library.close());
+ await library.connect(session);await library.load();
+ const prior=library.completeCatalog;rows.push(accountChart(2));
+ let entered!:()=>void,release!:()=>void,reading!:()=>void,releaseRead!:()=>void,finished=false,readFinished=false;
+ const began=new Promise<void>(resolve=>{entered=resolve;}),commitGate=new Promise<void>(resolve=>{release=resolve;}),
+  beganRead=new Promise<void>(resolve=>{reading=resolve;}),readGate=new Promise<void>(resolve=>{releaseRead=resolve;});
+ t.after(()=>{release();releaseRead();});
+ const put=storage.putCatalog;t.mock.method(storage,'putCatalog',async(...args)=>{entered();await commitGate;return put(...args);});
+ const commitSignal=new AbortController().signal;
+ const committing=library.load(undefined,commitSignal).then(value=>{finished=true;return value;});
+ await began;let joinedFinished=false;
+ const joined=library.load(undefined,commitSignal).then(value=>{joinedFinished=true;return value;});
+ const read=source.catalog;t.mock.method(source,'catalog',async(...args)=>{reading();await readGate;return read(...args);});
+ const pending=library.load(undefined,new AbortController().signal).then(result=>{readFinished=true;return result;});
+ await beganRead;library.cancelCatalogReads();library.cancelCatalogReads();await new Promise(setImmediate);
+ assert.equal(readFinished,true);assert.deepEqual(await pending,{status:'superseded'});
+ assert.equal(finished,false);assert.equal(joinedFinished,false);assert.equal(library.completeCatalog,prior);
+ release();assert.deepEqual(await committing,{status:'complete',durable:true});assert.deepEqual(await joined,{status:'complete',durable:true});
+ const saved=await storage.readCatalog();assert.deepEqual(library.completeCatalog,saved?.catalog);assert.deepEqual(library.workingLease,saved?.lease);
+ assert.equal(library.entries.length,2);releaseRead();await new Promise(setImmediate);
+ assert.deepEqual(library.completeCatalog,saved?.catalog);
+});

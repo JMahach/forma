@@ -12,7 +12,7 @@ interface Options {
   client: Pick<ChartClient, 'catalog' | 'confirmCatalog' | 'own'>; storage: AccountLibraryStore;
   online: () => boolean; restoreAllowed?: () => Promise<boolean>; notify?: (notice:LibraryNotice) => void;
 }
-interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal;authority?:CheckAuthority;foregroundSignal?:AbortSignal}
+interface CatalogRun {seen:number;content:number;access:LibrarySession;signal:AbortSignal;control:AbortController;authority?:CheckAuthority;foregroundSignal?:AbortSignal}
 interface CatalogLoading {run:CatalogRun;promise:Promise<LibraryRefreshResult>}
 const failed = (code: string) => Object.assign(new Error(code), {code});
 const codeOf = (error: unknown) => (error as {code?: string} | null)?.code;
@@ -35,6 +35,7 @@ class AccountLibraryOwner {
  private catalogComplete=false;
  private controller=new AbortController();
  private loading:CatalogLoading|null=null;
+ private catalogReads=new Set<AbortController>();
  private removals={pending:new Map<string,Promise<void>>(),tail:Promise.resolve()};
  private listeners=new Set<()=>void>();
  private published:unknown[];
@@ -48,6 +49,7 @@ class AccountLibraryOwner {
   this.restore=this.restore.bind(this);
   this.connect=this.connect.bind(this);
   this.load=this.load.bind(this);
+  this.cancelCatalogReads=this.cancelCatalogReads.bind(this);
   this.canRestore=this.canRestore.bind(this);
   this.markOpened=this.markOpened.bind(this);
   this.open=this.open.bind(this);
@@ -300,6 +302,8 @@ class AccountLibraryOwner {
   if(!current)throw new DOMException('Background check cancelled','AbortError');
  }
  private async saveCatalog(base:LibraryCatalogBase|null,read:Exclude<LibraryCatalogRead,{status:'unstable'}>,run:CatalogRun):Promise<LibraryRefreshResult> {
+  // From this boundary load must wait for storage and local reconciliation.
+  this.catalogReads.delete(run.control);
   const authority=run.authority && {...run.authority,signal:run.signal};
   const saved=base?await this.options.storage.putCatalog(base,read.catalog,authority):{status:'unavailable' as const};
   await this.checkCatalogRun(run);
@@ -340,17 +344,30 @@ class AccountLibraryOwner {
   return run.authority.signal===loading.authority.signal && (['key','token','owner','sessionId'] as const).every(key=>a[key]===b[key]);
  }
  private createCatalogRun(authority?:CheckAuthority,foregroundSignal?:AbortSignal):CatalogRun {
-  let signal=authority?AbortSignal.any([this.controller.signal,authority.signal]):this.controller.signal;
-  if(foregroundSignal)signal=AbortSignal.any([signal,foregroundSignal]);
-  return {seen:this.generation,content:this.contentGeneration,access:{...this.current!},signal,
+  const control=new AbortController();
+  const signal=AbortSignal.any([this.controller.signal,control.signal,...(authority?[authority.signal]:[]),...(foregroundSignal?[foregroundSignal]:[])]);
+  return {seen:this.generation,content:this.contentGeneration,access:{...this.current!},signal,control,
    foregroundSignal,authority:authority && {...authority,permit:{...authority.permit}}};
+ }
+ // Cancel acquisition only; entered writes remain owned by their load promises.
+ cancelCatalogReads() {for(const control of this.catalogReads)control.abort();}
+ private async cancellableCatalogRead(run:CatalogRun,read:()=>Promise<LibraryRefreshResult>):Promise<LibraryRefreshResult> {
+  const control=run.control;this.catalogReads.add(control);
+  let cancel!:()=>void;
+  const cancelled=new Promise<LibraryRefreshResult>(resolve=>{
+   cancel=()=>resolve({status:'superseded'});control.signal.addEventListener('abort',cancel,{once:true});
+  });
+  try{return await Promise.race([read(),cancelled]);}
+  finally{this.catalogReads.delete(control);control.signal.removeEventListener('abort',cancel);}
  }
  async load(authority?:CheckAuthority,foregroundSignal?:AbortSignal):Promise<LibraryRefreshResult> {
   if(!this.current || !this.options.online() || this.closed)return {status:'inactive'};
   const run=this.createCatalogRun(authority,foregroundSignal);
   const shared=this.loading;
-  if(shared && this.canJoinCatalog(run,shared.run)){await this.checkCatalogRun(run);return shared.promise;}
-  const loading={run,promise:this.refreshCatalog(run)};this.loading=loading;
+  if(shared && this.canJoinCatalog(run,shared.run))return this.cancellableCatalogRead(run,async()=>{
+   await this.checkCatalogRun(run);this.catalogReads.delete(run.control);return shared.promise;
+  });
+  const loading={run,promise:this.cancellableCatalogRead(run,()=>this.refreshCatalog(run))};this.loading=loading;
   try{return await loading.promise;}finally{if(this.loading===loading)this.loading=null;}
  }
  async canRestore(chartId:string):Promise<boolean> {
