@@ -55,7 +55,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
   let momentClockShown = false;
   let visibleWindow: VisibleWindow | null = null;
   const calendars: DatePicker[] = [];
-  const timelineMarks = attachTimelineMarks(hourMarks);
+  const timelineMarks = attachTimelineMarks(hourMarks,scope.signal);
   function scrub(value: number) {
     if (!explorer.state.opened) return;
     onMomentInput();

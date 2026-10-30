@@ -105,3 +105,45 @@ test('a skipped calendar date does not introduce an off-grid caption', () => {
   assert.deepEqual(captions(h), ['01.01', '03.01']);
   assert.equal(h.container.children.length, 5, 'unlabelled ticks remain on the rail');
 });
+
+
+test('timeline marks retire observation and stale methods across thirty lifetimes while a neighbor stays live',()=>{
+  const document=dateDom(),container=document.createElement('div');let reads=0,writes=0;
+  container.getBoundingClientRect=()=>{reads++;return {width:640} as DOMRect;};
+  const replace=container.replaceChildren.bind(container);
+  container.replaceChildren=(...nodes)=>{writes++;replace(...nodes);};
+  const observers:{active:boolean;callback:ResizeObserverCallback}[]=[];
+  class Observer {
+    active=false;callback:ResizeObserverCallback;
+    constructor(callback:ResizeObserverCallback){this.callback=callback;observers.push(this);}
+    observe(){this.active=true;} disconnect(){this.active=false;}
+  }
+  Object.assign(document.defaultView,{ResizeObserver:Observer});
+  const neighborSignal=new AbortController(),neighbor=attachTimelineMarks(container,neighborSignal.signal);
+  for(let cycle=0;cycle<30;cycle++){
+    const controller=new AbortController(),marks=attachTimelineMarks(container,controller.signal);
+    marks.calendar({fromUtc,toUtc});assert.equal(observers.filter(o=>o.active).length,2);
+    controller.abort();controller.abort();assert.equal(observers.filter(o=>o.active).length,1);
+    const before={reads,writes},nodes=container.children;
+    const stale=observers.at(-1)!;
+    stale.callback([{get target(){reads++;return container;},contentRect:{width:200}} as unknown as ResizeObserverEntry],{} as ResizeObserver);
+    marks.clear();marks.calendar({fromUtc:0,toUtc:100});
+    marks.day({},2,()=>{throw Error('stale day computation');});marks.life({get utc(){throw Error('stale life computation');}} as never,0,100);
+    assert.deepEqual({reads,writes},before);assert.equal(container.children,nodes);
+    neighbor.calendar({fromUtc:fromUtc+cycle+1,toUtc});assert.ok(writes>before.writes,'live neighboring owner still updates');
+  }
+  neighborSignal.abort();assert.equal(observers.filter(o=>o.active).length,0);
+  const stopped=new AbortController();stopped.abort();const count=observers.length,before={reads,writes};
+  const marks=attachTimelineMarks(container,stopped.signal);marks.calendar({fromUtc,toUtc});marks.clear();
+  assert.equal(observers.length,count);assert.deepEqual({reads,writes},before);
+});
+
+test('late marks resize cannot update retained calendar after abort',()=>{
+  const document=dateDom(),container=document.createElement('div');let callback!:ResizeObserverCallback,reads=0;
+  container.getBoundingClientRect=()=>({width:640} as DOMRect);
+  Object.assign(document.defaultView,{ResizeObserver:class {constructor(cb:ResizeObserverCallback){callback=cb;}observe(){}disconnect(){}}});
+  const controller=new AbortController(),marks=attachTimelineMarks(container,controller.signal);marks.calendar({fromUtc,toUtc});
+  controller.abort();const children=container.children;
+  callback([{get target(){reads++;return container;},contentRect:{width:200}} as unknown as ResizeObserverEntry],{} as ResizeObserver);
+  assert.equal(reads,0);assert.equal(container.children,children);
+});

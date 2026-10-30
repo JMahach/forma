@@ -10,7 +10,7 @@ import { setText } from '../ui/html.ts';
 
 export function attachTransitControls({ signal, panel, range, status, retryButton, hourMarks = null, marker = null, onScrub, onNow }: TransitControlsOptions) {
   const dayRange = attachTimelineRange({ signal, range, marker, onScrub, onReference: onNow });
-  const timelineMarks = attachTimelineMarks(hourMarks);
+  const timelineMarks = attachTimelineMarks(hourMarks, signal);
   let coveredByLifetime = false, latestState: LiveTransitState | null = null;
   retryButton.addEventListener('click', () => { if (latestState?.status === 'error') return onNow(); },{signal});
   function update(state: LiveTransitState) {

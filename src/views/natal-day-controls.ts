@@ -15,7 +15,7 @@ import { setText } from '../ui/html.ts';
 import { savedBirthTime } from './chart-display.ts';
 
 export function attachNatalDayExplorer({ signal, toggle, panel, range, status, retryButton, hourMarks = null, marker = null, onMomentInput = () => {}, ...options }: NatalDayControlsOptions) {
-  const timelineMarks = attachTimelineMarks(hourMarks);
+  const timelineMarks = attachTimelineMarks(hourMarks, signal);
   function update(state: NatalExplorerState) {
     if(signal?.aborted)return;
     toggle.hidden = !state.available;

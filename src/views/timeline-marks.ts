@@ -8,7 +8,7 @@ import { lifeDecadeMarks } from '../domain/personal-age.ts';
 
 // One owner replaces a rail's decorations and retains its current mode. Changing
 // between hours and years never needs a separate clearing pass from another view.
-export function attachTimelineMarks(container: HTMLElement | null) {
+export function attachTimelineMarks(container: HTMLElement | null, signal?:AbortSignal) {
   let previousMode: string | undefined, previousKey: unknown, calendarInputs: CalendarInputs | null = null, width: number | null = null;
   function renderCalendar() {
     if (!calendarInputs || !container) return;
@@ -31,25 +31,33 @@ export function attachTimelineMarks(container: HTMLElement | null) {
     });
   }
   const Observer = container?.ownerDocument.defaultView?.ResizeObserver || globalThis.ResizeObserver;
-  if (container && Observer) new Observer(entries => {
+  let observer:ResizeObserver|undefined;
+  if (container && Observer && !signal?.aborted) {
+    observer=new Observer(entries => {
+    if(signal?.aborted)return;
     const measured = entries.find(entry => entry.target === container)?.contentRect?.width;
     if (!Number.isFinite(measured) || measured === width) return;
     width = Math.max(0, measured!); renderCalendar();
-  }).observe(container);
+    });
+    observer.observe(container);
+  }
+  if(!signal?.aborted)signal?.addEventListener('abort',()=>{observer?.disconnect();observer=undefined;calendarInputs=null;previousKey=undefined;},{once:true});
   function render(mode: string, key: unknown, createMarks: () => Node[]) {
     if (!container || mode === previousMode && key === previousKey) return;
     previousMode = mode; previousKey = key;
     container.replaceChildren(...createMarks());
   }
-  function clear() { calendarInputs = null; render('empty', null, () => []); }
+  function clear() { if(signal?.aborted)return; calendarInputs = null; render('empty', null, () => []); }
   return {
     clear,
     calendar(inputs: CalendarInputs) {
+      if(signal?.aborted)return;
       calendarInputs = inputs;
       if (width === null) width = Math.max(0, container?.getBoundingClientRect?.().width || 0);
       renderCalendar();
     },
     day<T>(day: T | null | undefined, samples: number | undefined, timeAt: (day: T, index: number) => string) {
+      if(signal?.aborted)return;
       calendarInputs = null;
       if (!day || !(samples! > 1)) { clear(); return; }
       render('day', day, () => {
@@ -75,6 +83,7 @@ export function attachTimelineMarks(container: HTMLElement | null) {
       });
     },
     life(natal: ChartInput | null, fromUtc: number, toUtc: number) {
+      if(signal?.aborted)return;
       calendarInputs = null;
       if (!natal) { clear(); return; }
       const key = JSON.stringify([natal.utc, natal.timezone, fromUtc, toUtc]);
