@@ -1,3 +1,4 @@
+import { createActionNotice } from './ui/feedback.ts';
 import { createChartEditing } from './application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from './domain/library-maintenance.ts';
 import type {LibraryLocalChange,LibraryLocalNotice} from './domain/library-maintenance.ts';
@@ -362,7 +363,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     online: () => connectionMode() !== 'offline',
     restoreAllowed: account.canRestoreLibrary, notify: notifyLibrary});
   scope.own(()=>accountLibrary.close());
-  const chartLink = attachChartLink({button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
+  const actionNotice = createActionNotice(shell);
+  scope.own(actionNotice.dispose);
+  const chartLink = attachChartLink({notice: actionNotice, button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   scope.own(chartLink.dispose);
   let privateLibraryShown = false;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
@@ -975,8 +978,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       store.clearPublic(previous.id);
       if(session.selectedId===previous.id && !accountLibrary.get(previous.id)) {
         if(workspace.screen==='chart')selectChart('current-transit',{replace:true});else graph.changeChart('current-transit');
-      }
-      updatePage();viewSession?.flush();
+      } else updatePage();
+      viewSession?.flush();
     },
   }, write:{
     actions:chartActions,online:()=>connectionMode()!=='offline',getSession:account.getSession,

@@ -388,7 +388,7 @@ test('real SQL and account IDB owners activate the transition and read ready car
     const read = await library.read();
     assert.deepEqual(read!.charts, [accountChart(1), accountChart(2)]);
     assert.equal(scans,1,'one schema pass migrates numerical metadata and lightweight use together');
-    const raw = deviceDatabase(indexedDB, 7);
+    const raw = deviceDatabase(indexedDB, 8);
     try {
       const after = (await deviceRows(raw))!;
       assert.deepEqual(after.context, before.context);

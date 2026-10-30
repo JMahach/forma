@@ -47,12 +47,14 @@ apiTest('the page loads the complete frontend module graph through public source
   assert.equal(story.status, 200);
   assert.match(story.headers.get('content-type') ?? '', /html/);
   assert.match(story.body, /src="\/src\/stories\/vessel-of-love.ts"/);
+  const imports = JSON.parse(page.body.match(/<script type="importmap">(.*?)<\/script>/)![1]).imports as Record<string, string>;
+  assert.equal(imports.xstate, '/vendor/xstate/xstate.esm.js');
   const pending = [...entryPoints, '/src/stories/vessel-of-love.ts'].map(path => new URL(path, base)), visited = new Set<string>();
   while (pending.length) {
     const url = pending.pop();
     assert.ok(url, 'a queued module has a URL');
     assert.equal(url.origin, new URL(base).origin, 'frontend modules stay on the application origin');
-    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/'), `${url.pathname} uses the public source boundary`);
+    assert.ok(url.pathname.startsWith('/src/') || url.pathname.startsWith('/shared/') || url.pathname.startsWith('/vendor/xstate/'), `${url.pathname} uses the public source boundary`);
     if (visited.has(url.pathname)) continue;
     visited.add(url.pathname);
     const module = await request(url);
@@ -64,7 +66,13 @@ apiTest('the page loads the complete frontend module graph through public source
       /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
     ];
     for (const pattern of patterns) {
-      for (const [, dependency] of module.body.matchAll(pattern)) pending.push(new URL(dependency, url));
+      for (const [, dependency] of module.body.matchAll(pattern)) {
+        if (dependency.startsWith('.') || dependency.startsWith('/')) pending.push(new URL(dependency, url));
+        else {
+          assert.equal(typeof imports[dependency], 'string', `${dependency} has an explicit browser import mapping`);
+          pending.push(new URL(imports[dependency], base));
+        }
+      }
     }
   }
   const sourceModules = (directory = new URL('../src/', import.meta.url), prefix = '/src/'): string[] =>
@@ -86,7 +94,7 @@ apiTest('the page loads the complete frontend module graph through public source
   }
   const pageSources = [...sourceModules(), ...sourceModules(new URL('../shared/', import.meta.url), '/shared/')]
     .filter(file => !privateSources.has(file));
-  assert.deepEqual([...visited].sort(), pageSources.sort(), 'every page module is reachable and publicly loadable');
+  assert.deepEqual([...visited].filter(file => !file.startsWith('/vendor/')).sort(), pageSources.sort(), 'every page module is reachable and publicly loadable');
   t.diagnostic(`${visited.size} page modules loaded over HTTP; ${privateSources.size} server/build/worker sources rejected`);
   const styles = await request('/styles.css');
   assert.equal(styles.status, 200);

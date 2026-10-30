@@ -6,7 +6,7 @@ import {createResourceScope} from '../runtime/resource-scope.ts';
 export function attachChartLink({button, root, boundary, notice = createActionNotice(root),
   writeText = (value: string) => globalThis.navigator.clipboard.writeText(value)}: {
   button: HTMLButtonElement; root: HTMLElement; boundary: HTMLElement;
-  notice?: ReturnType<typeof createActionNotice>; writeText?: (value: string) => Promise<void>;
+  notice?: Pick<ReturnType<typeof createActionNotice>, 'show' | 'close' | 'contains' | 'revision'>; writeText?: (value: string) => Promise<void>;
 }) {
   const scope=createResourceScope();
   let url: string | null = null, operation = 0, message: ActionNoticeHandle | undefined;

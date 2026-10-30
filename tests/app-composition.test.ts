@@ -109,7 +109,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice'> & Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -318,7 +318,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   const memory = {}, natalClient = storedNatalClient??{};
   const copiedLinks: string[] = [];
   // Clipboard is external; the real link view and composition determine its address and availability.
-  const copyNotice = {revision: 0, contains: () => false, close() {this.revision++;},
+  const copyNotice = {dispose() {copyNotice.close();}, revision: 0, contains: () => false, close() {this.revision++;},
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
     createApplication,createChartEditing,createAccountBoundaryWork,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
@@ -331,7 +331,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       if(ms===25){let cancelled=false;queueMicrotask(()=>{if(!cancelled)callback();});return()=>{cancelled=true;};}
       const timer=setTimeout(callback,ms);timer.unref();return()=>clearTimeout(timer);
     }}});},
-    appRoutePath, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
+    appRoutePath, createActionNotice: () => copyNotice, attachChartLink: options => attachChartLink({...options, notice: copyNotice,
       writeText: copyText ?? (async text => {copiedLinks.push(text);})}),
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
     createAccountLibraryStore: () => libraryStorage ?? createAccountLibraryStore({indexedDB: null}),
@@ -2838,10 +2838,13 @@ for(const sample of [{error:{code:'not_found'},replaced:false},{error:{code:'off
  await h.restoration;await tick();h.advanceBackground(50*60000);h.userInput('visibilitychange');await tick();h.userInput('visibilitychange');
  assert.equal(reads,2,'another trigger shares the running refresh');
  if(sample.replaced)store.acceptPublic({...foreign,name:'New source',revision:foreign.revision+1});
+ const beforeProjection={renders:h.renders,captions:h.captionUpdates};
  reject(sample.error);await tick();await tick();
  const removed=sample.error?.code==='not_found'&&!sample.replaced;
  assert.equal(store.publicChart===null,removed);
  assert.equal(h.shown.id,removed?'current-transit':foreign.id);
+ assert.equal(h.renders-beforeProjection.renders,removed?1:0,'one accepted disappearance publishes the graph once');
+ assert.equal(h.captionUpdates-beforeProjection.captions,removed?1:0,'the caption follows the same single publication');
  if(sample.replaced)assert.equal(store.publicChart?.name,'New source');
  await h.stopApplication();
 });

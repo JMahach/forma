@@ -60,6 +60,7 @@ export interface ActionNoticeHandle {
 interface ActionNoticeEntry { anchor: HTMLElement; options: ActionNoticeOptions; token: number }
 interface ActionNotice {
   readonly revision: number;
+  dispose(): void;
   show(anchor: HTMLElement, message: FeedbackMessage, options?: ActionNoticeOptions): ActionNoticeHandle;
   close(): void;
   contains(target: Node | null): boolean;
@@ -70,6 +71,8 @@ export function createActionNotice(root: HTMLElement): ActionNotice {
   const existing = actionNotices.get(root);
   if (existing) return existing;
   const document = root.ownerDocument, view = document.defaultView!;
+  const controller = new AbortController(), signal = controller.signal;
+  let disposed = false, observer: MutationObserver | undefined;
   const container = document.createElement('div'); container.className = 'action-notice';
   const feedback = createFeedback(container, {kind:'action'});
   root.append(container);
@@ -125,7 +128,13 @@ export function createActionNotice(root: HTMLElement): ActionNotice {
   }
   const owner: ActionNotice = {
     get revision() { return revision; },
+    dispose() {
+      if (disposed) return;
+      disposed = true; controller.abort(); close(); observer?.disconnect();
+      feedback.destroy(); container.remove(); actionNotices.delete(root);
+    },
     show(anchor, message, options = {}) {
+      if (disposed) return { active: false, update() {}, close() {} };
       const focused = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).indexOf(document.activeElement as HTMLButtonElement);
       close();
       const entry: ActionNoticeEntry = {anchor,options,token:++revision}; current = entry;
@@ -149,7 +158,7 @@ export function createActionNotice(root: HTMLElement): ActionNotice {
         close(restoreFocus = false) { if (!active()) return; close(); if (restoreFocus) restore(entry); },
       };
     },
-    close,
+    close() { if (!disposed) close(); },
     contains(target) { return container.contains(target); },
   };
   document.addEventListener('keydown', event => {
@@ -157,15 +166,18 @@ export function createActionNotice(root: HTMLElement): ActionNotice {
     const entry = current;
     event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation?.();
     close(); entry.options.onDismiss?.(); restore(entry);
-  }, {capture:true});
-  view.addEventListener('resize', place);
-  view.visualViewport?.addEventListener('resize', place);
-  view.visualViewport?.addEventListener('scroll', place);
-  root.addEventListener('scroll', place, {capture:true});
-  root.addEventListener('transitionend', place);
-  if (view.MutationObserver) new view.MutationObserver(records => {
+  }, {capture:true,signal});
+  view.addEventListener('resize', place, {signal});
+  view.visualViewport?.addEventListener('resize', place, {signal});
+  view.visualViewport?.addEventListener('scroll', place, {signal});
+  root.addEventListener('scroll', place, {capture:true,signal});
+  root.addEventListener('transitionend', place, {signal});
+  if (view.MutationObserver) {
+    observer = new view.MutationObserver(records => {
     if (current && records.some(record => (record.target as Node).contains(current!.anchor))) place();
-  }).observe(root,{subtree:true,attributes:true,attributeFilter:['hidden','inert','aria-hidden','class','data-page-state','data-workspace-screen','data-panels-layout']});
+    });
+    observer.observe(root,{subtree:true,attributes:true,attributeFilter:['hidden','inert','aria-hidden','class','data-page-state','data-workspace-screen','data-panels-layout']});
+  }
   actionNotices.set(root,owner);
   return owner;
 }

@@ -88,6 +88,7 @@ const element = <T extends Element = HTMLElement>(id: string) => document.getEle
 const toast = createToast(element('toast'));
 element('chartLoadingStatus').textContent = 'Загружаем карту…';
 const navigation = createNavigation({location, history, events: window});
+startupResources.own(navigation.destroy);
 const viewStore = createViewStore({ onStorageError: toast,
   onStorageFailure(fact){
     const owner=getViewOwner();

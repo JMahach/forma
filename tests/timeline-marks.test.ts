@@ -110,8 +110,8 @@ test('a skipped calendar date does not introduce an off-grid caption', () => {
 test('timeline marks retire observation and stale methods across thirty lifetimes while a neighbor stays live',()=>{
   const document=dateDom(),container=document.createElement('div');let reads=0,writes=0;
   container.getBoundingClientRect=()=>{reads++;return {width:640} as DOMRect;};
-  const replace=container.replaceChildren.bind(container);
-  container.replaceChildren=(...nodes)=>{writes++;replace(...nodes);};
+  const fixtureContainer:DateNode=container,replace=fixtureContainer.replaceChildren.bind(fixtureContainer);
+  fixtureContainer.replaceChildren=(...nodes)=>{writes++;replace(...nodes);};
   const observers:{active:boolean;callback:ResizeObserverCallback}[]=[];
   class Observer {
     active=false;callback:ResizeObserverCallback;

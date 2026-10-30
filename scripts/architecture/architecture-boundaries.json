@@ -570,7 +570,8 @@
         "geometry",
         "selection",
         "domain",
-        "shared-contracts"
+        "shared-contracts",
+        "resource-lifetime"
       ],
       "allowTypes": [
         "chart-input",
@@ -578,7 +579,8 @@
         "geometry",
         "selection",
         "domain",
-        "shared-contracts"
+        "shared-contracts",
+        "resource-lifetime"
       ]
     },
     {
@@ -596,13 +598,15 @@
         "chart-view-mode",
         "camera",
         "geometry",
-        "ui-styles"
+        "ui-styles",
+        "resource-lifetime"
       ],
       "allowTypes": [
         "chart-view-mode",
         "camera",
         "geometry",
-        "ui-styles"
+        "ui-styles",
+        "resource-lifetime"
       ]
     },
     {

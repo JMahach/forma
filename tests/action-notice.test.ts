@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import * as feedback from '../src/ui/feedback.ts';
 import { dateDom, type DateNode } from './helpers/date-dom.ts';
 
-function harness() {
+function harness(Observer?: typeof MutationObserver) {
   assert.equal(typeof feedback.createActionNotice, 'function', 'anchored actions need one shared presentation owner');
   const document = dateDom();
+  if (Observer) Object.assign(document.defaultView, { MutationObserver: Observer });
   const create = document.createElement;
   document.createElement = tag => {
     const result = create(tag);
@@ -161,4 +162,37 @@ test('updating an active notice preserves other descriptions and restores its ow
   h.add.setAttribute('aria-describedby','offline-explanation'); entry.update({message:'offline'});
   assert.equal(h.add.getAttribute('aria-describedby'),`offline-explanation ${h.panel().id}`);
   entry.close(); assert.equal(h.add.getAttribute('aria-describedby'),'offline-explanation');
+});
+
+
+test('the shell releases its shared notice across 30 lifetimes without retiring a neighbor', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let observed = 0, expired = 0;
+  class Observer implements MutationObserver {
+    active = false;
+    constructor(_callback: MutationCallback) {}
+    observe() { if (!this.active) { this.active = true; observed++; } }
+    disconnect() { if (this.active) { this.active = false; observed--; } }
+    takeRecords(): MutationRecord[] { return []; }
+  }
+  const h = harness(Observer);
+  h.document.addEventListener('keydown', () => {});
+  h.document.defaultView.addEventListener('resize', () => {});
+  for (let cycle = 0; cycle < 30; cycle++) {
+    const notice = cycle ? feedback.createActionNotice(html(h.root)) : h.notice;
+    const message = notice.show(html(h.add), { message: 'pending' }, { durationMs: 100, onExpire: () => expired++ });
+    assert.equal(observed, 1);
+    assert.equal(h.document.listenerCount(), 2);
+    notice.dispose(); notice.dispose();
+    assert.equal(observed, 0);
+    assert.equal(h.document.listenerCount(), 1);
+    assert.equal(h.document.defaultView.listenerCount(), 1);
+    assert.equal(h.root.listenerCount(), 0);
+    assert.equal(message.active, false);
+    message.update({ message: 'late' });
+    assert.equal(notice.show(html(h.add), { message: 'retired' }).active, false);
+    assert.equal(h.root.children.filter(node => node.className.includes('action-notice')).length, 0);
+    t.mock.timers.tick(100);
+    assert.equal(expired, 0);
+  }
 });
