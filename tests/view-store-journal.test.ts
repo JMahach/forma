@@ -52,7 +52,7 @@ test('empty, missing, cleared and compatible old snapshots remain normal outcome
   const old = { ...snapshot, lifetime: { opened: true, mode: 'archive', fromDate: '2020-01-01', toDate: '2021-01-01', requestedUtc: 1590000000000 } };
   const storage = memory(JSON.stringify(old));
   const store = createViewStore({ getStorage: () => storage, onStorageFailure: fact => { facts.push(fact); } });
-  assert.equal(store.read()?.lifetime?.mode, 'lifetime');
+  assert.equal(store.read()?.lifetime?.mode, 'range');
   assert.equal(store.write(snapshot), true); assert.equal(store.write(snapshot), true);
   assert.equal(store.clear(), true); assert.equal(store.read(), null);
   assert.deepEqual(facts, []);

@@ -179,7 +179,7 @@ import { createViewSession, viewForRoute } from '../src/state/view-session.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
 import { createReturnsController } from '../src/state/returns.ts';
 import { createNatalDayExplorer, type NatalExplorerOptions } from '../src/state/natal-day.ts';
-import { createLifetimeExplorer } from '../src/state/lifetime.ts';
+import { createMomentTimeline } from '../src/state/moment-timeline.ts';
 import { eligibleCycleChart, personalTimelineTarget, cycleTimeZone } from '../src/domain/cycles.ts';
 import { attachChartLibrary, createChartLibraryView } from '../src/views/library.ts';
 import { attachKnowledgeEntry } from '../src/views/knowledge-entry.ts';
@@ -300,13 +300,13 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   let natalDay!: ReturnType<typeof createNatalDayExplorer>, returns!: ReturnType<typeof createReturnsController>;
   let editedId: string | null = null;
   let birthDraft: SavedView['birthForm'] = null;
-  let birthOptions!: PortOptions<'attachBirthForm'>, lifetime!: ReturnType<typeof createLifetimeExplorer>;
+  let birthOptions!: PortOptions<'attachBirthForm'>, lifetime!: ReturnType<typeof createMomentTimeline>;
   let lifetimeOptions!: Parameters<typeof attachLifetimeControls>[0];
   let lifetimeDisposals=0;
   let returnsViewOptions!: Parameters<typeof attachReturnsPanel>[0], returnsViewState: ReturnsPanelState | undefined;
   let transitNowRequests = 0, transitStarts = 0, activationHoverClears = 0;
   const clearActivationHover = () => { activationHoverClears++; };
-  let lifetimeStateOptions!: NonNullable<Parameters<typeof createLifetimeExplorer>[0]>;
+  let lifetimeStateOptions!: NonNullable<Parameters<typeof createMomentTimeline>[0]>;
   let transitOptions!: PortOptions<'attachLiveTransit'>;
   let liveTransit: ReturnType<typeof attachRealLiveTransit> | undefined;
   let finishModule!: (value: unknown) => void, failModule!: (error: unknown) => void;
@@ -415,7 +415,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
   for (const name of imports) assert.equal(typeof ports[name as keyof AppPorts], ['chartHighlight', 'UI_MESSAGES'].includes(name) ? 'object' : 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState', 'loadReturnsViewModule',
     `${body.replace("import('./views/lifetime-controls.ts')", 'loadLifetimeView()')
-      .replace("import('./state/lifetime.ts')", 'loadLifetimeState()')
+      .replace("import('./state/moment-timeline.ts')", 'loadLifetimeState()')
       .replace("import('./views/returns-panel.ts')", 'loadReturnsViewModule()')}\nreturn startApp;`)(
     ...imports.map(name => ports[name as keyof AppPorts]), document, class { constructor(callback: () => void) { resizeLayout = callback; } observe() {} }, { search, href: 'https://forma.example.test/chart?obsolete=1#old' },
     Object.assign(new EventTarget(),{ location: { reload() { reloads++; } }, BroadcastChannel: class extends EventTarget {
@@ -424,13 +424,13 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       postMessage() {} close() {}
     } }), () => ({ getPropertyValue: () => '320px' }), () => { loads++; return module; }, async () => {
       stateLoads++;
-      return { createLifetimeExplorer(options: NonNullable<Parameters<typeof createLifetimeExplorer>[0]>) {
+      return { createMomentTimeline(options: NonNullable<Parameters<typeof createMomentTimeline>[0]>) {
         lifetimeStateOptions = options;
-        lifetime = Object.freeze(createLifetimeExplorer({ ...options, client: {
+        lifetime = Object.freeze(createMomentTimeline({ ...options, client: {
           getMeta: async () => { if (metaError) throw metaError; return { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
             stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata; },
           getPoint,
-        } as NonNullable<Parameters<typeof createLifetimeExplorer>[0]>['client'] }));
+        } as NonNullable<Parameters<typeof createMomentTimeline>[0]>['client'] }));
         return lifetime;
       } };
     }, async () => ({ attachReturnsPanel(options: Parameters<typeof attachReturnsPanel>[0]) {
@@ -501,7 +501,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     get lifetimeDisposals(){return lifetimeDisposals;},
     finishModule() { finishModule({ attachLifetimeControls(options: Parameters<typeof attachLifetimeControls>[0]) {
       lifetimeOptions = options;
-      const update = (state: ReturnType<typeof createLifetimeExplorer>['state']) => { options.panel.hidden = !state.opened; };
+      const update = (state: ReturnType<typeof createMomentTimeline>['state']) => { options.panel.hidden = !state.opened; };
       update(options.explorer.state);
       return { dispose(){lifetimeDisposals++;}, update, refreshMoment: noop, setVisibleWindow: noop, refreshTargets: noop };
     } }); },
@@ -711,7 +711,7 @@ test('lifetime planet gestures publish the owner projection once and retain both
         longitudes: Array.from({ length: 11 }, (_, i) => i * 23 + 10) } };
   } });
   await tick(); await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
-  await h.lifetime.restore({ opened: true, mode: 'lifetime' as const, fromDate: '1900-01-01', toDate: '1900-01-03',
+  await h.lifetime.restore({ opened: true, mode: 'range' as const, fromDate: '1900-01-01', toDate: '1900-01-03',
     requestedUtc: Date.parse('1900-01-02T12:00:00Z') });
   const full = h.shown.primary, calls = requests, before = h.renders;
   assert.equal(full, h.lifetime.current);
@@ -814,7 +814,7 @@ test('entering personal Lifetime closes the Day controller only once', async () 
   await h.element('lifetimeToggle').click();
   h.finishModule(); await tick();
   assert.equal(h.lifetime.state.opened, true);
-  assert.equal(h.lifetime.state.mode, 'lifetime');
+  assert.equal(h.lifetime.state.mode, 'range');
   assert.equal(h.natalDay.state.opened, false);
   assert.deepEqual(h.shown.primary, extractChartData(chart));
   assert.equal(closes, 1, 'the command closes Day; a loading notification must not repeat that command');
@@ -946,7 +946,7 @@ test('opening a personal timeline before its file is ready retains a restorable 
   await h.select(chart.id);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
   assert.equal(h.lifetime.state.status, 'preparing');
-  assert.equal(h.lifetime.state.mode, 'lifetime');
+  assert.equal(h.lifetime.state.mode, 'range');
   assert.equal(h.lifetime.state.fromDate, '2026-09-24');
   assert.equal(h.lifetime.state.toDate, '2126-09-24');
   assert.deepEqual(h.shown.primary, extractChartData(chart));
@@ -962,7 +962,7 @@ test('opening chronicle preserves scene presentation while a real resize can cha
   assert.equal(h.layout.showMandalaColumns, false);
   assert.doesNotMatch(h.element('viewport').innerHTML, /class="activation-columns"/);
   await h.element('lifetimeToggle').click(); h.finishModule(); await tick();
-  assert.equal(h.lifetime.state.mode, 'day');
+  assert.equal(h.lifetime.state.mode, 'transit-day');
   assert.equal(h.shown.utc, shown.utc, 'opening preserves the accepted transit moment');
   assert.deepEqual(h.layout.insets(), insets, 'the taller dock must not shrink or recenter the scene');
   assert.equal(h.layout.showMandalaColumns, false);
@@ -1125,7 +1125,7 @@ test('a timeline command during delayed restoration survives the late failed res
 
 for (const screen of ['chart', 'knowledge', 'charts'] as const) test(`closing a restoring chronicle releases the initial screen and retains ${screen} after module arrival`, async () => {
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
-  const lifetime = { opened: true as const, mode: 'lifetime' as const, fromDate: '2026-09-24', toDate: '2126-09-24', personalPreview: false };
+  const lifetime = { opened: true as const, mode: 'range' as const, fromDate: '2026-09-24', toDate: '2126-09-24', personalPreview: false };
   const h = harness({ realViewSession: true, charts: [chart], chartsReady: async () => true,
     savedView: { selectedId: chart.id, lifetime },
     initialPresentation: studioPresentation({ personalAvailable: true, lifetime, returnsEnabled: true }) });
@@ -1157,7 +1157,7 @@ for (const screen of ['chart', 'knowledge', 'charts'] as const) test(`closing a 
 test('clicking a saved enabled chronicle before its controller arrives closes it without starting another load', async () => {
   let finishRestore;
   const moment = { id: 'current-transit', source: 'transit' as const, personality: [1], design: [] };
-  const lifetime = { opened: true as const, mode: 'lifetime' as const };
+  const lifetime = { opened: true as const, mode: 'range' as const };
   const initialPresentation = studioPresentation({ isTransit: true, lifetime, transitEnabled: true });
   const h = harness({ charts: [moment], savedView: { selectedId: moment.id, lifetime }, initialPresentation,
     restore: () => new Promise(done => { finishRestore = done; }) });
@@ -1197,7 +1197,7 @@ test('clicking a saved enabled natal day before restoration closes it and a late
 
 test('the saved timeline layout is retained through lazy restoration before accepting the actual panel', async () => {
   let finish;
-  const initialPresentation = studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'lifetime' as const }, transitEnabled: true });
+  const initialPresentation = studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'range' as const }, transitEnabled: true });
   const h = harness({ initialPresentation, restore: () => new Promise(done => { finish = done; }) });
   await tick();
   assert.equal(h.timelineKinds.at(-1), 'chronicle');
@@ -2028,7 +2028,7 @@ test('peer an input event without key or pointer cannot restore the old email ca
 test('peer a pointer gesture cannot erase a lifetime text draft while its module loads',async()=>{
  const draft={fromDate:'01.',toDate:'31.12.2026',focus:{field:'fromDate' as const,start:1,end:2,direction:'none' as const}};
  const h=harness({realViewSession:true,savedView:{version:1,workspace:'chart',selectedId:'current-transit',
-  lifetime:{opened:true,mode:'lifetime',fromDate:'2026-01-01',toDate:'2026-12-31'},lifetimeDraft:draft}});
+  lifetime:{opened:true,mode:'range',fromDate:'2026-01-01',toDate:'2026-12-31'},lifetimeDraft:draft}});
  await tick();h.flushView();assert.deepEqual(h.savedSnapshot?.lifetimeDraft,draft,'before gesture the draft is still pending');
  h.userInput();h.flushView();assert.deepEqual(h.savedSnapshot?.lifetimeDraft,draft,'a pointer gesture may cancel focus but not text');
 });

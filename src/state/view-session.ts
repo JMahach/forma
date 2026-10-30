@@ -2,12 +2,12 @@ import {chartPresentationHint} from '../domain/chart-presentation.ts';
 import {createViewCheckpoint,type ViewCheckpoint} from './view-checkpoint.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
 import type { ChartStore } from '../data/chart-store.ts';
-import type { SavedView, SavedLifetimeView, ViewStore } from '../data/view-store.ts';
+import type { SavedView, SavedMomentTimelineView, ViewStore } from '../data/view-store.ts';
 import type { Camera } from '../scene/camera.ts';
 import type { ChartSession } from './chart-session.ts';
 import type { LiveTransit } from './live-transit.ts';
 import type { NatalDayExplorer } from './natal-day.ts';
-import type { LifetimeExplorer, LifetimeState, LifetimeTarget } from './lifetime.ts';
+import type { MomentTimeline, MomentTimelineState, MomentTimelineTarget } from './moment-timeline.ts';
 import type { ReturnsController } from './returns.ts';
 import type { PanelState } from './panels.ts';
 import type { WorkspaceState } from './workspace.ts';
@@ -36,14 +36,14 @@ interface ViewSessionOptions {
   planetFilter: TransitPlanetFilter;
   getPersonalPreview?: () => boolean | undefined;
   getReturns?: () => ReturnsController | null;
-  getLifetime?: () => LifetimeExplorer | null;
-  loadLifetime?: () => Promise<LifetimeExplorer | null>;
-  getLifetimeIntent?: () => LifetimeTarget | null;
+  getLifetime?: () => MomentTimeline | null;
+  loadLifetime?: () => Promise<MomentTimeline | null>;
+  getLifetimeIntent?: () => MomentTimelineTarget | null;
   getPersonalLive?: () => boolean | undefined;
   restorePersonalLive?: (value: boolean) => void;
-  restorePersonalPreview?: (value: boolean | undefined, target: SavedLifetimeView) => void;
+  restorePersonalPreview?: (value: boolean | undefined, target: SavedMomentTimelineView) => void;
   openReturnsTimeline?: () => Promise<unknown>;
-  acceptLifetimeMode?: (state: Pick<LifetimeState, 'opened' | 'mode'>) => void;
+  acceptLifetimeMode?: (state: Pick<MomentTimelineState, 'opened' | 'mode'>) => void;
   canRestoreLifetime?: () => boolean;
   eventTarget?: EventTarget | null;
   interactionTarget?: (EventTarget & { hidden: boolean }) | null;
@@ -83,10 +83,10 @@ export function createViewSession({
   const saved = store.read();
   let restoring = true, restoreInitialized = false, interrupted = false, generation = 0;
   let pendingTransit = saved?.transit?.live === false ? saved.transit : null;
-  let pendingLifetime = saved?.lifetime || null, startedLifetime: SavedLifetimeView | null = null;
+  let pendingLifetime = saved?.lifetime || null, startedLifetime: SavedMomentTimelineView | null = null;
   let pendingReturns = saved?.returns || null;
   let pendingNatal = saved?.natalDay?.opened ? saved.natalDay : null;
-  function lifetimeUtc(target: SavedLifetimeView | null, lifetimeState: LifetimeState | undefined) {
+  function lifetimeUtc(target: SavedMomentTimelineView | null, lifetimeState: MomentTimelineState | undefined) {
     if (Number.isFinite(target?.requestedUtc)) return target!.requestedUtc!;
     // A legacy index has meaning only after the lifetime supplies its origin.
     if (Number.isSafeInteger(target?.index) && lifetimeState?.metadata) {
@@ -105,7 +105,7 @@ export function createViewSession({
     // a pre-existing ready range cannot consume a target we have not sent yet.
     if (pendingLifetime && pendingLifetime === startedLifetime && lifetimeState?.opened
         && lifetimeState.status === 'ready' && lifetimeState.mode === pendingLifetime.mode
-        && (lifetimeState.mode === 'day' || (pendingLifetime.openStart ? lifetimeState.openStart : lifetimeState.fromDate === pendingLifetime.fromDate)
+        && (lifetimeState.mode === 'transit-day' || (pendingLifetime.openStart ? lifetimeState.openStart : lifetimeState.fromDate === pendingLifetime.fromDate)
           && (pendingLifetime.openEnded ? lifetimeState.openEnded : lifetimeState.toDate === pendingLifetime.toDate))) pendingLifetime = null;
   }
   function presentationSnapshot() {
@@ -138,7 +138,7 @@ export function createViewSession({
     const lifetimeState = getLifetime()?.state, day = natalDay.state, live = transit.state;
     const pendingUtc = lifetimeUtc(pendingLifetime, lifetimeState);
     const lifetimeTarget = pendingLifetime && Number.isFinite(pendingUtc)
-      ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) as unknown as SavedLifetimeView : pendingLifetime;
+      ? Object.fromEntries(Object.entries({ ...pendingLifetime, requestedUtc: pendingUtc }).filter(([key]) => key !== 'index')) as unknown as SavedMomentTimelineView : pendingLifetime;
     return {
       version: 1, chartHint:chartPresentationHint(session.record), ...(returnView ? { returns: returnView } : {}), selectedId: session.selectedId,
       ...presentationSnapshot(),
@@ -194,15 +194,15 @@ export function createViewSession({
         if (followNow) pendingTransit = null;
         restorePersonalLive(followNow);
       }
-      if (selectedId === 'current-transit' && pendingLifetime?.mode === 'lifetime') {
-        acceptLifetimeMode({ opened: true, mode: 'lifetime' });
+      if (selectedId === 'current-transit' && pendingLifetime?.mode === 'range') {
+        acceptLifetimeMode({ opened: true, mode: 'range' });
       }
       restoreInitialized = true;
       // A hidden workspace restores the transit owner and its pause, but has
       // no first visible minute to wait for. Drawing resumes on visibility.
       const waitForChart = !workspace || workspace.screen === 'chart';
       const firstChart = await transit.start(pendingTransit, { firstChart: waitForChart });
-      const needsTransitMoment = selectedId === 'current-transit' ? pendingLifetime?.mode !== 'lifetime' : getPersonalLive() === true;
+      const needsTransitMoment = selectedId === 'current-transit' ? pendingLifetime?.mode !== 'range' : getPersonalLive() === true;
       const firstMomentReady = !waitForChart || !needsTransitMoment || firstChart !== false;
       // The day controller now owns its accepted pause, including retries.
       pendingTransit = null;
@@ -255,7 +255,7 @@ export function createViewSession({
           await openReturnsTimeline();
           if (!valid() || session.selectedId !== selectedId) return false;
           const lifetimeState = getLifetime()?.state;
-          if (!lifetimeState?.opened || lifetimeState.mode !== 'lifetime') return false;
+          if (!lifetimeState?.opened || lifetimeState.mode !== 'range') return false;
         }
         if (restored && pendingReturns === target) pendingReturns = null;
       }

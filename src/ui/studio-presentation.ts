@@ -1,6 +1,6 @@
 interface StudioPresentationInput {
   isTransit?: boolean; personalAvailable?: boolean; dayOpened?: boolean;
-  lifetime?: { readonly opened: boolean; readonly mode: 'day' | 'lifetime' } | null;
+  lifetime?: { readonly opened: boolean; readonly mode: 'transit-day' | 'range' } | null;
   returnsOpened?: boolean; returnsEnabled?: boolean; transitEnabled?: boolean; loadFailed?: boolean;
 }
 export type StudioPresentation = ReturnType<typeof studioPresentation>;
@@ -9,7 +9,7 @@ export type StudioPresentation = ReturnType<typeof studioPresentation>;
 // Opening intent can highlight a tool before its lazy panel is ready.
 export function studioPresentation({ isTransit = false, personalAvailable = false, dayOpened = false,
   lifetime = null, returnsOpened = false, returnsEnabled = false, transitEnabled = false, loadFailed = false }: StudioPresentationInput) {
-  const personalTimelineVisible = Boolean(personalAvailable && lifetime?.opened && lifetime.mode === 'lifetime' && !dayOpened);
+  const personalTimelineVisible = Boolean(personalAvailable && lifetime?.opened && lifetime.mode === 'range' && !dayOpened);
   return {
     personalTimelineVisible,
     returnsVisible: personalAvailable && returnsOpened,

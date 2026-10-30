@@ -2,14 +2,14 @@ import type { Activation, ChartData } from '../shared/chart-types.ts';
 import type { LifetimeMetadata } from '../shared/lifetime-format.ts';
 import type { TransitDay } from '../shared/day-packets/transit-format.ts';
 import type { LifetimePoint } from '../src/domain/lifetime.ts';
-import type { MomentState, LifetimeState } from '../src/state/lifetime.ts';
+import type { MomentState, MomentTimelineState } from '../src/state/moment-timeline.ts';
 import type { ChartInput } from '../src/domain/chart-composition.ts';
-type ExplorerOptions = NonNullable<Parameters<typeof createLifetimeExplorer>[0]>;
+type ExplorerOptions = NonNullable<Parameters<typeof createMomentTimeline>[0]>;
 type Client = NonNullable<ExplorerOptions['client']>;
 import { lifeTimelineForChart } from '../src/domain/cycles.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLifetimeClient, createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createLifetimeClient, createMomentTimeline } from './fixtures/lifetime.ts';
 import { lifetimeChartAt, validateLifetimeMetadata, validateLifetimeMoment } from '../src/domain/lifetime.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
@@ -42,10 +42,10 @@ function dayChart(utc = '2026-09-30T09:34:56.789Z') {
     timezone: 'Europe/Moscow', utcOffset: 'UTC+03:00', verification: 'Exact current day sample.' };
 }
 function explorerHarness(metadata: LifetimeMetadata = fullMeta, { planetFilter, getMomentState }: Pick<ExplorerOptions, 'planetFilter' | 'getMomentState'> = {}) {
-  const calls: ({ index: number; signal: AbortSignal } & ReturnType<typeof deferred<LifetimePoint>>)[] = [], metaCalls: ({ signal?: AbortSignal; refreshNatalDay?: boolean; }|undefined)[] = [], renders: (ChartInput | null)[] = [], states: LifetimeState[] = [];
+  const calls: ({ index: number; signal: AbortSignal } & ReturnType<typeof deferred<LifetimePoint>>)[] = [], metaCalls: ({ signal?: AbortSignal; refreshNatalDay?: boolean; }|undefined)[] = [], renders: (ChartInput | null)[] = [], states: MomentTimelineState[] = [];
   let day = { current: dayChart(), timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } };
   let time = Date.parse('2026-09-30T09:34:56.789Z');
-  const explorer = createLifetimeExplorer({ client: {
+  const explorer = createMomentTimeline({ client: {
     getMeta: async (options: Parameters<NonNullable<Client['getMeta']>>[0]) => { metaCalls.push(options); return metadata; },
     getPoint(index: number, { signal }: { signal: AbortSignal }) { const waiting = deferred<LifetimePoint>(); calls.push({ index, signal, ...waiting }); return waiting.promise; },
   } as unknown as Client, getDayState: () => day, getMomentState, now: () => time, planetFilter,
@@ -80,7 +80,7 @@ test('opening a lifetime around a live or exact owner uses its existing chart wi
     let owner: (MomentState & { current: ReturnType<typeof dayChart> }) | null = { current: dayChart('2026-09-30T09:37:29.432Z'), status: 'ready', live };
     const h = explorerHarness(fullMeta, { getMomentState: () => owner });
     await h.explorer.open();
-    const restored = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(lifetimeIndex(owner.current.utc)) });
+    const restored = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(lifetimeIndex(owner.current.utc)) });
     await tick();
     assert.equal(h.calls.length, 0, 'position alignment must not calculate an unseen rounded moment');
     assert.equal(await restored, true); assert.equal(h.explorer.current!.utc, owner.current.utc);
@@ -95,7 +95,7 @@ test('a live owner still waiting for its minute packet never falls back to an in
   let owner: MomentState = { current: null, status: 'loading', live: true };
   const h = explorerHarness(fullMeta, { getMomentState: () => owner });
   await h.explorer.open();
-  const restored = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(lifetimeIndex('2026-09-30T09:37:00Z')) });
+  const restored = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1801-01-01', toDate: '2399-12-31', index: Math.round(lifetimeIndex('2026-09-30T09:37:00Z')) });
   await tick(); assert.equal(h.calls.length, 0); assert.equal(await restored, true);
   owner = { current: dayChart('2026-09-30T09:38:00Z'), status: 'ready', live: true };
   h.explorer.alignMoment(owner.current);
@@ -267,7 +267,7 @@ test('default Lifetime client receives the shared day cache through controller o
     return new Response(JSON.stringify({ ...fullMeta, engine: day.engine }));
   });
   const owner = createTransitPlanetFilter(); owner.setAllPlanets(true, 'design');
-  const explorer = createLifetimeExplorer({ planetFilter: owner,
+  const explorer = createMomentTimeline({ planetFilter: owner,
     dayClient: { peekDay(date) { peeks.push(date); return date === day.date ? day : null; } },
     getDayState: () => ({ current: dayChart(), timeline: { date: day.date, timeZone: 'Europe/Moscow' } }),
   });
@@ -298,7 +298,7 @@ test('Lifetime opens seamlessly on the exact current day chart and loads metadat
   assert.equal(h.metaCalls.length, 1); assert.equal(h.calls.length, 0);
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], ['2026-09-30', '2026-09-30']);
   assert.deepEqual([h.explorer.state.minDate, h.explorer.state.maxDate], ['1801-01-01', '2399-12-31']);
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.explorer.state.status, 'ready');
+  assert.equal(h.explorer.state.mode, 'transit-day'); assert.equal(h.explorer.state.status, 'ready');
   for (const key of ['utc', 'localDate', 'localTime', 'timezone', 'utcOffset', 'verification'] as const) assert.equal(h.explorer.current![key], original[key]);
   assert.deepEqual(h.explorer.current!.activations!.personality, original.activations!.personality);
   assert.deepEqual(h.day.current, original);
@@ -321,7 +321,7 @@ test('day sync follows the borrowed exact chart and local date without rendering
 
 test('a custom full lifetime range uses the current shown moment at the ten-minute grid', async () => {
   const h = explorerHarness(); await openLifetime(h);
-  assert.equal(h.calls.length, 1); assert.equal(h.explorer.state.mode, 'lifetime');
+  assert.equal(h.calls.length, 1); assert.equal(h.explorer.state.mode, 'range');
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], ['1801-01-01', '2399-12-31']);
   assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], [Date.parse('1801-01-01T00:00:00Z'), Date.parse('2399-12-31T23:59:59.999Z')]);
   assert.equal(h.explorer.current!.utc, '2026-09-30T09:30:00Z');
@@ -376,7 +376,7 @@ test('invalid, incomplete, out of bounds, reversed and non-leap dates leave the 
   }
   assert.equal(h.explorer.state.current, before.current); assert.equal(h.calls.length, 0);
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], [before.fromDate, before.toDate]);
-  assert.equal(h.explorer.state.mode, 'day');
+  assert.equal(h.explorer.state.mode, 'transit-day');
 });
 
 test('close cancels pending work; reopen borrows the latest day and retains planet choices', async () => {
@@ -388,7 +388,7 @@ test('close cancels pending work; reopen borrows the latest day and retains plan
   stale!.resolve(moment(stale!.index, fullMeta)); await pending;
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate], ['2026-09-30', '2026-09-30']);
   assert.equal(h.explorer.state.selectedPlanets.includes('moon'), false);
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.explorer.current!.utc, h.day.current.utc);
+  assert.equal(h.explorer.state.mode, 'transit-day'); assert.equal(h.explorer.current!.utc, h.day.current.utc);
   assert.equal(h.calls.length, requests, 'reopening needs no lifetime point'); assert.equal(h.metaCalls.length, 1);
 });
 
@@ -396,7 +396,7 @@ test('selecting the current local day returns to day mode and ignores the cancel
   const h = explorerHarness(); await openLifetime(h);
   const pending = h.explorer.scrub(h.utc(0)); await tick(); const stale = h.calls.at(-1);
   assert.equal(h.explorer.setDateRange('2026-09-30', '2026-09-30'), true);
-  assert.equal(stale!.signal.aborted, true); assert.equal(h.explorer.state.mode, 'day');
+  assert.equal(stale!.signal.aborted, true); assert.equal(h.explorer.state.mode, 'transit-day');
   assert.equal(h.explorer.current!.utc, h.day.current.utc);
   const current = h.explorer.current, requests = h.calls.length;
   stale!.resolve(moment(stale!.index, fullMeta)); await pending;
@@ -419,21 +419,21 @@ test('the lifetime marker tracks actual now without moving the chosen chart and 
 
 test('metadata failure retries while retaining the day chart, and closed metadata cannot publish', async () => {
   let attempts = 0, points = 0; const chart = dayChart();
-  const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: {
+  const explorer = createMomentTimeline({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: {
     getMeta: async () => { if (++attempts === 1) throw new Error('offline'); return fullMeta; }, getPoint: async i => { points++; return moment(i, fullMeta); },
   } });
   assert.equal(await explorer.open(), false); assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.retryCount, 1); assert.equal(explorer.current!.utc, chart.utc);
-  assert.equal(await explorer.retry(), true); assert.equal(explorer.state.mode, 'day'); assert.equal(explorer.state.status, 'ready'); assert.equal(points, 0);
+  assert.equal(await explorer.retry(), true); assert.equal(explorer.state.mode, 'transit-day'); assert.equal(explorer.state.status, 'ready'); assert.equal(points, 0);
   const waiting = deferred<LifetimeMetadata>();
-  const closed = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: { getMeta: () => waiting.promise, getPoint: (() => { points++; }) as unknown as NonNullable<Client['getPoint']> } });
+  const closed = createMomentTimeline({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30', timeZone: 'Europe/Moscow' } }), client: { getMeta: () => waiting.promise, getPoint: (() => { points++; }) as unknown as NonNullable<Client['getPoint']> } });
   const pending = closed.open(); await tick(); closed.close(); waiting.resolve(fullMeta); await pending;
   assert.equal(closed.state.metadata, null); assert.equal(points, 0);
 });
 
 test('all/none and individual derived planets reuse full day and lifetime records without API work', async () => {
   const h = explorerHarness(); await h.explorer.open();
-  for (const mode of ['day', 'lifetime'] as const) {
-    if (mode === 'lifetime') await settle(h, h.explorer.setDateRange('1801-01-01', '2399-12-31'));
+  for (const mode of ['transit-day', 'range'] as const) {
+    if (mode === 'range') await settle(h, h.explorer.setDateRange('1801-01-01', '2399-12-31'));
     const calls = h.calls.length, full = h.explorer.current!.activations!.personality;
     h.explorer.toggleAllPlanets(); assert.equal(h.explorer.current!.activations!.personality.length, 0);
     assert.deepEqual(h.explorer.current!.planetFilter!.activations, full);
@@ -568,14 +568,14 @@ test('closing or switching to the day cancels the complete request and its late 
     assert.equal(stale.signal.aborted, true);
     const current = h.explorer.current; stale.resolve(moment(stale.index, fullMeta)); await pending;
     assert.equal(h.explorer.current, current); assert.equal(h.explorer.current!.utc, h.day.current.utc);
-    assert.equal(h.explorer.state.mode, 'day');
+    assert.equal(h.explorer.state.mode, 'transit-day');
   }
 });
 
 test('lifetime restoration fetches the saved index first after loading metadata and clamping the range', async () => {
   for (const [saved, wanted] of [[200, 200], [-99, 144], [999, 287]] as const) {
     const h = explorerHarness(meta);
-    const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-02', index: saved });
+    const pending = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-02', index: saved });
     await tick();
     assert.deepEqual(h.calls.map(c => c.index), [wanted], 'restore must not load the current day or range start before the saved point');
     assert.deepEqual([h.explorer.state.minUtc, h.explorer.state.maxUtc], [Date.parse('1900-01-02T00:00:00Z'), Date.parse('1900-01-02T23:59:59.999Z')]);
@@ -587,7 +587,7 @@ test('lifetime restoration fetches the saved index first after loading metadata 
 });
 
 test('day restoration borrows the live day while malformed or closed snapshots stay unopened', async () => {
-  const valid = { opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 };
+  const valid = { opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 };
   for (const invalid of [null, {}, { ...valid, opened: false }, { ...valid, mode: 'unknown' },
     { ...valid, index: 1.5 }, { ...valid, index: Number.MAX_SAFE_INTEGER + 1 },
     { ...valid, fromDate: '1900-02-30' }, { ...valid, fromDate: '1900-01-03' }] as const) {
@@ -596,23 +596,23 @@ test('day restoration borrows the live day while malformed or closed snapshots s
     assert.equal(h.explorer.state.opened, false); assert.equal(h.calls.length, 0);
   }
   const h = explorerHarness(meta);
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'transit-day' }), true);
   assert.equal(h.explorer.current!.utc, h.day.current.utc);
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.calls.length, 0);
+  assert.equal(h.explorer.state.mode, 'transit-day'); assert.equal(h.calls.length, 0);
   assert.equal(h.renders.length, 1, 'a restored day publishes its borrowed chart');
 });
 
 test('invalid lifetime bounds load no moment and preserve the borrowed day', async () => {
   const h = explorerHarness(meta);
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1800-01-01', toDate: '1900-01-02', index: 200 }), false);
-  assert.equal(h.calls.length, 0); assert.equal(h.explorer.state.mode, 'day');
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'range', fromDate: '1800-01-01', toDate: '1900-01-02', index: 200 }), false);
+  assert.equal(h.calls.length, 0); assert.equal(h.explorer.state.mode, 'transit-day');
   assert.equal(h.explorer.current!.utc, h.day.current.utc);
 });
 
 test('closing during restore metadata prevents stale metadata and lifetime publication', async () => {
   const waiting = deferred<LifetimeMetadata>(), points: unknown[] = [];
-  const explorer = createLifetimeExplorer({ client: { getMeta: () => waiting.promise, getPoint: async i => { points.push(i); return moment(i); } } });
-  const pending = explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 });
+  const explorer = createMomentTimeline({ client: { getMeta: () => waiting.promise, getPoint: async i => { points.push(i); return moment(i); } } });
+  const pending = explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-02', index: 200 });
   await tick(); explorer.close(); waiting.resolve(meta);
   assert.equal(await pending, false); assert.equal(explorer.state.metadata, null);
   assert.equal(explorer.current, null); assert.deepEqual(points, []);
@@ -620,7 +620,7 @@ test('closing during restore metadata prevents stale metadata and lifetime publi
 
 test('later user range cancels a restore point before it can replace the chosen range', async () => {
   const h = explorerHarness(meta);
-  const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-03', index: 200 });
+  const pending = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-03', index: 200 });
   await tick(); const stale = h.calls[0];
   const changed = h.explorer.setDateRange('1900-01-03', '1900-01-03'); await tick();
   assert.equal(stale.signal.aborted, true);
@@ -636,7 +636,7 @@ test('an empty lifetime end keeps the slider active through the final available 
     const pending = h.explorer.setDateRange('1900-01-02', end);
     assert.notEqual(pending, false);
     await tick();
-    assert.equal(h.explorer.state.mode, 'lifetime'); assert.equal(h.explorer.state.openEnded, true);
+    assert.equal(h.explorer.state.mode, 'range'); assert.equal(h.explorer.state.openEnded, true);
     assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.toDate, h.explorer.state.minUtc, h.explorer.state.maxUtc],
       ['1900-01-02', '1900-01-03', Date.parse('1900-01-02T00:00:00Z'), Date.parse('1900-01-03T23:59:59.999Z')]);
     h.calls[0].resolve(moment(h.calls[0].index)); await pending;
@@ -656,23 +656,23 @@ test('the same effective lifetime end switches between open and explicit bounds 
   assert.equal(h.explorer.setDateRange('1900-01-02', null), true);
   assert.equal(h.explorer.state.openEnded, true); assert.equal(h.calls.length, 1);
   h.explorer.close(); await h.explorer.open();
-  assert.equal(h.explorer.state.mode, 'day'); assert.equal(h.explorer.state.openEnded, false);
+  assert.equal(h.explorer.state.mode, 'transit-day'); assert.equal(h.explorer.state.openEnded, false);
 });
 
 test('open-ended lifetime restoration uses current metadata edge rather than the stored old end', async () => {
   const h = explorerHarness(meta);
-  const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-02', openEnded: true, index: 431 });
+  const pending = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-02', openEnded: true, index: 431 });
   await tick();
   assert.deepEqual(h.calls.map(c => c.index), [431]);
   assert.deepEqual([h.explorer.state.toDate, h.explorer.state.maxUtc, h.explorer.state.openEnded], ['1900-01-03', Date.parse('1900-01-03T23:59:59.999Z'), true]);
   h.calls[0].resolve(moment(431)); assert.equal(await pending, true);
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'transit-day' }), true);
   assert.equal(h.explorer.state.openEnded, false);
 });
 
 test('a personal birth boundary clips the lifetime range and clamps restored pre-birth indices to the same endpoint', async () => {
   const h = explorerHarness(meta);
-  const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-03',
+  const pending = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-03',
     minimumUtc: '1900-01-02T12:34:56Z', index: 144 });
   await tick();
   assert.equal(h.explorer.state.minUtc, Date.parse('1900-01-02T12:34:56Z'));
@@ -715,7 +715,7 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
   let attempts = 0;
   const saved = Date.parse('2026-09-30T09:37:00Z'), chart = dayChart();
   const failFirst = () => { if (++attempts <= 3) throw new Error('temporary failure'); };
-  const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
+  const explorer = createMomentTimeline({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
     getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
     getPoint: async index => { failFirst(); return moment(index, fullMeta); },
     readMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
@@ -723,7 +723,7 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
   t.after(() => explorer.close());
   if (source === 'metadata') await explorer.open();
   else if (source === 'point') { await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01'); }
-  else await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved });
+  else await explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved });
   const target = explorer.state.requestedUtc, shown = explorer.current;
   assert.equal(attempts, 1); assert.equal(explorer.state.retryCount, 1);
   assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.error, '');
@@ -744,7 +744,7 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
 
 test('a lifetime retry timer cannot request data while its visibility port is inactive',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});let visible=true,attempts=0;
- const explorer=createLifetimeExplorer({visible:()=>visible,client:{getMeta:async()=>{attempts++;throw Error('Unavailable');}}});
+ const explorer=createMomentTimeline({visible:()=>visible,client:{getMeta:async()=>{attempts++;throw Error('Unavailable');}}});
  t.after(()=>explorer.close());await explorer.open();assert.equal(attempts,1);visible=false;
  t.mock.timers.tick(1000);await tick();assert.equal(attempts,1);
  assert.equal(explorer.state.status,'error');assert.equal(explorer.state.error,'Unavailable');
@@ -774,7 +774,7 @@ test('closing or selecting a new moment cancels a pending retry instead of reviv
 test('day clock updates cannot erase metadata retry feedback or its failure count', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let chart = dayChart(), fail = true;
-  const explorer = createLifetimeExplorer({ getDayState: () => ({ current: chart }), client: {
+  const explorer = createMomentTimeline({ getDayState: () => ({ current: chart }), client: {
     getMeta: async () => { if (fail) throw new Error('offline metadata'); return fullMeta; },
   } });
   t.after(() => explorer.close());
@@ -795,7 +795,7 @@ test('a personal rail stops at the exact calendar centenary instead of the end o
   const span = lifeTimelineForChart({ utc: birth });
   assert.equal(Date.parse(span!.maximumUtc), anniversary);
   const h = explorerHarness(fullMeta, { getMomentState: () => ({ current: dayChart(birth), status: 'ready' }) });
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', ...span, minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'range', ...span, minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
   assert.equal(h.explorer.state.maxUtc, anniversary);
   assert.equal(h.explorer.state.minUtc, Date.parse(birth));
   assert.equal(h.calls.length, 0);
@@ -819,11 +819,11 @@ test('an empty lifetime start uses the first available instant', async () => {
 
 test('open-start restoration uses the available lower bound instead of a stored former start', async () => {
   const h = explorerHarness(meta);
-  const pending = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-02', toDate: '1900-01-03', openStart: true, index: 0 });
+  const pending = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-02', toDate: '1900-01-03', openStart: true, index: 0 });
   await settle(h, pending, meta);
   assert.deepEqual([h.explorer.state.fromDate, h.explorer.state.minUtc, h.explorer.state.openStart],
     ['1900-01-01', Date.parse(meta.startUtc), true]);
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'day' }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'transit-day' }), true);
   assert.equal(h.explorer.state.openStart, false);
 });
 
@@ -832,7 +832,7 @@ test('open-start restoration uses the available lower bound instead of a stored 
 test('offline lifetime reads ready minutes but a missing target keeps the accepted chart without a point request', async () => {
   let mode: 'online' | 'offline' = 'online', points = 0, readyUtc: number | null = null;
   const ready = lifetimeChartAt(meta, moment(150));
-  const explorer = createLifetimeExplorer({connection:()=>mode,now:()=>Date.parse('1900-01-02T00:00:00Z'),
+  const explorer = createMomentTimeline({connection:()=>mode,now:()=>Date.parse('1900-01-02T00:00:00Z'),
     getDayState:()=>({current:ready,timeline:{date:'1900-01-02'}}),client:{
       getMeta:async()=>meta,getPoint:async index=>{points++;return moment(index);},
       readMinute:async utc=>utc===readyUtc?ready:null,

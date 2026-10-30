@@ -5,7 +5,7 @@ import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
 import { createCalculationCache } from '../src/data/calculation-cache.ts';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { createLifetimeClient } from '../src/data/lifetime-client.ts';
-import { createLifetimeExplorer, type MomentState } from '../src/state/lifetime.ts';
+import { createMomentTimeline, type MomentState } from '../src/state/moment-timeline.ts';
 import { createTransitDayClient } from '../src/data/transit-day-client.ts';
 import { transitChartAt } from '../src/domain/transit-day.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
@@ -41,7 +41,7 @@ function harness({ capacity = 1, getMomentState = () => null } = {}) {
     const index = Number(new URL(url, 'http://test').searchParams.get('index'));
     return new Promise((resolve, reject) => requests.push({ index, signal, resolve: () => resolve(response(point(index))), reject }));
   } });
-  const explorer = createLifetimeExplorer({ client, getMomentState, now: () => utc('30T09:37:29'),
+  const explorer = createMomentTimeline({ client, getMomentState, now: () => utc('30T09:37:29'),
     getDayState: () => ({ current: transitChartAt(dayAt('2026-09-30'), 577), timeline: { date: '2026-09-30' } }),
     onRender: () => renders.push(explorer.current) });
   return { client, dayClient, explorer, requests, dayRequests, renders };
@@ -117,20 +117,20 @@ test('cold scrubs preserve intermediate progress and admit one point at a time',
 
 test('explicit UTC restore uses the prepared grid when the minute is absent and legacy index remains readable', async () => {
   const h = harness();
-  const restore = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: utc('30T09:37:00') });
+  const restore = h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: utc('30T09:37:00') });
   await tick(); assert.equal(h.requests.length, 1); assert.equal(h.requests[0].index, 202);
   h.requests[0].resolve(); assert.equal(await restore, true);
   assert.equal(h.explorer.state.displayedUtc, utc('30T09:40:00'));
   assert.equal(h.explorer.state.requestedUtc, utc('30T09:40:00'));
   assert.deepEqual(h.dayRequests, []);
-  const old = harness(); const pending = old.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', index: 6 });
+  const old = harness(); const pending = old.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-10-01', index: 6 });
   await tick(); assert.equal(old.requests[0].index, 6); old.requests[0].resolve(); assert.equal(await pending, true);
   assert.equal(old.explorer.state.displayedUtc, utc('29T01:00:00'));
 });
 
 test('UTC bounds retain exact birth, keyboard neighbors are pure and reach minute/grid boundaries', async () => {
   const h = harness(); await h.dayClient.getDay('2026-09-30');
-  await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-10-01', minimumUtc: '2026-09-30T09:34:56Z', requestedUtc: utc('30T09:37:00') });
+  await h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-30', toDate: '2026-10-01', minimumUtc: '2026-09-30T09:34:56Z', requestedUtc: utc('30T09:37:00') });
   assert.equal(h.explorer.state.minUtc, utc('30T09:34:56')); assert.equal(h.explorer.state.maxUtc, Date.parse('2026-10-01T23:59:59.999Z'));
   const before = h.explorer.state.requestedUtc;
   assert.equal(h.explorer.adjacentUtc(-1), utc('30T09:36:00')); assert.equal(h.explorer.adjacentUtc(1), utc('30T09:38:00'));
@@ -144,7 +144,7 @@ test('a birth in the final seconds keeps its exact endpoint beyond the final who
   const birth = '2026-09-30T23:59:56.789Z';
   const original = { ...transitChartAt(dayAt('2026-09-30'), 1439), utc: birth };
   const h = harness({ getMomentState: () => ({ current: original, status: 'ready' }) });
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30', minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-30', toDate: '2026-09-30', minimumUtc: birth, requestedUtc: Date.parse(birth) }), true);
   assert.equal(h.explorer.state.minUtc, Date.parse(birth));
   assert.equal(h.explorer.state.maxUtc, utc('30T23:59:59.999'));
   assert.equal(h.explorer.state.requestedUtc, Date.parse(birth));
@@ -154,7 +154,7 @@ test('a birth in the final seconds keeps its exact endpoint beyond the final who
 
 test('restoring beyond the chosen range uses its final prepared slot when the day is absent', async () => {
   const h = harness();
-  const restore = h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-09-30', requestedUtc: Date.parse('2026-10-01T09:37:00Z') });
+  const restore = h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-09-30', requestedUtc: Date.parse('2026-10-01T09:37:00Z') });
   await tick(); assert.equal(h.requests.length, 1); assert.equal(h.requests[0].index, 287);
   h.requests[0].resolve(); assert.equal(await restore, true);
   assert.equal(h.explorer.state.requestedUtc, utc('30T23:50:00'));
@@ -183,9 +183,9 @@ test('failed prepared restoration retries the same point and a newer scrub inval
     }
     return response(point(index));
   } });
-  const explorer = createLifetimeExplorer({ client });
+  const explorer = createMomentTimeline({ client });
   const saved = utc('30T09:37:00');
-  assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved }), false);
+  assert.equal(await explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: saved }), false);
   assert.equal(explorer.state.status, 'loading'); assert.equal(explorer.state.retryCount, 1); assert.equal(explorer.state.requestedUtc, utc('30T09:40:00'));
   const retry = explorer.retry(); await tick(); assert.equal(attempts, 2);
   await explorer.scrub(utc('29T01:00:00'));
@@ -234,7 +234,7 @@ for (const personal of [false, true] as const) test(`a persisted day gives minut
   const client = createLifetimeClient({ dayClient, fetch(url) {
     calls.push(url); return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
   } });
-  const explorer = createLifetimeExplorer({ client, getDayState: () => personal ? null : { current: { utc: metadata.startUtc }, timeline: { date: '2026-09-29' } } });
+  const explorer = createMomentTimeline({ client, getDayState: () => personal ? null : { current: { utc: metadata.startUtc }, timeline: { date: '2026-09-29' } } });
   t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
   const before = calls.length;
@@ -259,7 +259,7 @@ test('the first scrub uses an exact day minute committed by another tab after op
     assert.ok(!url.includes('/moment?'), 'a scrub must not calculate an exact moment');
     return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
   } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  const explorer = createMomentTimeline({ client }); t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
   writer.putDay(dayAt('2026-09-30')); await writer.flush();await days.prepare();
   const before = calls.length, preparedScans = scans;
@@ -287,7 +287,7 @@ test('an unknown cold minute probes its day once before reading the grid fallbac
     calls.push(url); assert.ok(!url.includes('/moment?'));
     return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
   } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  const explorer = createMomentTimeline({ client }); t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01');
   const before = reads;
   await explorer.scrub(utc('30T12:31:00'));
@@ -319,7 +319,7 @@ test('a disk-only minute bypasses another network request and rejects its late r
     if (url.endsWith('/meta')) return response(metadata);
     return new Promise(resolve => { const request = { index: Number(new URL(url, 'http://test').searchParams.get('index')), resolve }; requests.push(request); arrivals.get(requests.length - 1)?.(request); });
   } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => { explorer.close(); for (const r of requests) r.resolve(response(point(r.index))); });
+  const explorer = createMomentTimeline({ client }); t.after(() => { explorer.close(); for (const r of requests) r.resolve(response(point(r.index))); });
   await explorer.open(); const opening = explorer.setDateRange('2026-09-29', '2026-10-01'); await arrived(0);
   requests[0].resolve(response(point(requests[0].index))); await opening;
   const cold = explorer.scrub(start + 600000); await arrived(1);
@@ -336,7 +336,7 @@ test('a stale disk minute falls back to the ten-minute file without exact calcul
     calls.push(url); assert.ok(!url.includes('/moment?'), 'a scrub never grants permission to calculate');
     return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
   } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
+  const explorer = createMomentTimeline({ client }); t.after(() => explorer.close());
   await explorer.open(); await explorer.setDateRange('2026-09-29', '2026-10-01'); await explorer.scrub(target);
   assert.equal(explorer.state.displayedUtc, utc('30T12:30:00'));
 });
@@ -346,7 +346,7 @@ function delayedMinute(t: test.TestContext) {
   let finish: (arg0: null) => void, momentState: MomentState|null|undefined = null;
   const day = transitChartAt(dayAt('2026-09-30'), 577);
   const minute = transitChartAt(dayAt('2026-09-30'), 751);
-  const explorer = createLifetimeExplorer({ getMomentState: () => momentState,
+  const explorer = createMomentTimeline({ getMomentState: () => momentState,
     getDayState: () => ({ current: day, timeline: { date: '2026-09-30' } }),
     client: { getMeta: async () => metadata, hasMinute: value => value === target,
       readMinute: value => value === target ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null),
@@ -378,7 +378,7 @@ for (const command of ['close', 'day', 'align', 'owner'] as const) test(`a disk 
   h.points.length = 0;
   // Restoration and scrubbing both use the prepared grid after a disk miss.
   const pending = ['close', 'align'].includes(command)
-    ? h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: h.target })
+    ? h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-10-01', requestedUtc: h.target })
     : h.explorer.scrub(h.target);
   await tick();
   if (command === 'close') h.explorer.close();
@@ -388,7 +388,7 @@ for (const command of ['close', 'day', 'align', 'owner'] as const) test(`a disk 
   h.finish(null); await pending;
   assert.deepEqual(h.points, [], 'the abandoned disk read cannot request its grid fallback');
   if (command === 'close') assert.equal(h.explorer.state.opened, false);
-  else if (command === 'day') assert.equal(h.explorer.state.mode, 'day');
+  else if (command === 'day') assert.equal(h.explorer.state.mode, 'transit-day');
   else { assert.equal(h.explorer.current!.utc, '2026-09-30T12:31:00Z'); assert.equal(h.explorer.state.status, 'ready'); }
 });
 
@@ -420,7 +420,7 @@ test('every metadata consumer waits for the device minute catalogue', async () =
 test('a personal upper bound blocks a cached minute beyond the centenary on restore, drag and keyboard', async () => {
   const h = harness(); await h.dayClient.getDay('2026-09-30');
   const maximumUtc = '2026-09-30T09:37:29Z';
-  const snapshot = { opened: true, mode: 'lifetime', fromDate: '2026-09-29', toDate: '2026-09-30',
+  const snapshot = { opened: true, mode: 'range', fromDate: '2026-09-29', toDate: '2026-09-30',
     maximumUtc, requestedUtc: utc('30T09:38:00') };
   assert.equal(await h.explorer.restore(snapshot), true);
   assert.equal(h.explorer.state.maxUtc, Date.parse(maximumUtc));
@@ -436,7 +436,7 @@ test('a personal upper bound blocks a cached minute beyond the centenary on rest
 
 test('invalid personal upper bounds are rejected before changing the open range', async () => {
   const h = harness(); await h.dayClient.getDay('2026-09-30');
-  const base = { opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30',
+  const base = { opened: true, mode: 'range', fromDate: '2026-09-30', toDate: '2026-09-30',
     minimumUtc: '2026-09-30T09:00:00Z', requestedUtc: utc('30T09:37:00') };
   await h.explorer.restore(base);
   const before = h.explorer.state;
@@ -456,8 +456,8 @@ test('restoration without a prepared point inside its bounds stops without retry
     if (url.endsWith('/meta')) return response(metadata);
     throw new Error('The range contains no prepared grid point');
   } });
-  const explorer = createLifetimeExplorer({ client }); t.after(() => explorer.close());
-  assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30',
+  const explorer = createMomentTimeline({ client }); t.after(() => explorer.close());
+  assert.equal(await explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-30', toDate: '2026-09-30',
     minimumUtc: '2026-09-30T12:31:00Z', maximumUtc: '2026-09-30T12:39:00Z', requestedUtc: utc('30T12:35:00') }), false);
   assert.equal(explorer.state.status, 'idle');
   assert.equal(explorer.state.retryCount, 0);
@@ -471,7 +471,7 @@ test('restoration without a prepared point inside its bounds stops without retry
 test('a ready minute remains available when the restored range contains no ten-minute slot', async t => {
   const h = harness(); t.after(() => h.explorer.close());
   await h.dayClient.getDay('2026-09-30');
-  assert.equal(await h.explorer.restore({ opened: true, mode: 'lifetime', fromDate: '2026-09-30', toDate: '2026-09-30',
+  assert.equal(await h.explorer.restore({ opened: true, mode: 'range', fromDate: '2026-09-30', toDate: '2026-09-30',
     minimumUtc: '2026-09-30T12:31:00Z', maximumUtc: '2026-09-30T12:39:00Z', requestedUtc: utc('30T12:35:00') }), true);
   assert.equal(h.explorer.current!.utc, '2026-09-30T12:35:00Z');
   assert.equal(h.explorer.state.requestedUtc, utc('30T12:35:00'));

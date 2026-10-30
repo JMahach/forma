@@ -1,10 +1,10 @@
 import type { CycleEvent } from '../../shared/cycles-format.ts';
 import type { ChartInput } from '../domain/chart-composition.ts';
-import type { SavedView, SavedLifetimeView, SavedReturnView } from '../data/view-store.ts';
+import type { SavedView, SavedMomentTimelineView, SavedReturnView } from '../data/view-store.ts';
 import type { ChartSession } from './chart-session.ts';
 import type { LiveTransit } from './live-transit.ts';
 import type { NatalDayExplorer } from './natal-day.ts';
-import type { LifetimeExplorer, LifetimeState, LifetimeTarget, MomentState } from './lifetime.ts';
+import type { MomentTimeline, MomentTimelineState, MomentTimelineTarget, MomentState } from './moment-timeline.ts';
 import type { ReturnsController } from './returns.ts';
 export type ChartExploration = ReturnType<typeof createChartExploration>;
 interface ExplorationOptions {
@@ -12,9 +12,9 @@ interface ExplorationOptions {
   session: ChartSession;
   getTransit: () => LiveTransit | null;
   getNatalDay: () => NatalDayExplorer;
-  getLifetime: () => LifetimeExplorer | null;
+  getLifetime: () => MomentTimeline | null;
   getReturns: () => ReturnsController | null;
-  loadLifetime: () => Promise<LifetimeExplorer | null>;
+  loadLifetime: () => Promise<MomentTimeline | null>;
   onTimelineReady?: () => void;
   onModeChange?: () => void;
   onChange?: () => void;
@@ -27,7 +27,7 @@ import { getConnectionMode, type ConnectionMode } from '../data/http-transport.t
 // ranges, jobs and local cancellation; the session accepts their visible result.
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
   loadLifetime, connection = getConnectionMode, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
-  let timelineOpening: { target: LifetimeTarget } | null = null, restoreBirthBoundary: Partial<SavedLifetimeView> | false = false, returnsPreferred = false;
+  let timelineOpening: { target: MomentTimelineTarget } | null = null, restoreBirthBoundary: Partial<SavedMomentTimelineView> | false = false, returnsPreferred = false;
   let selectionRead: AbortController | null = null, disposed = false;
   function cancelSelection() {
     const previous = selectionRead;
@@ -112,7 +112,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     syncTransitWanted();
     getReturns()?.reset(); getNatalDay().reset();
     const lifetime = getLifetime(), lifetimeState = lifetime?.state;
-    if (lifetimeState?.opened && lifetimeState.mode === 'lifetime' && lifetimeState.metadata) lifetime!.alignMoment(session.baseChart);
+    if (lifetimeState?.opened && lifetimeState.mode === 'range' && lifetimeState.metadata) lifetime!.alignMoment(session.baseChart);
     // Birth may already have the same UTC as the preview; still repaint its
     // exact saved chart when child controllers have nothing left to reset.
     session.refresh();
@@ -120,7 +120,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   async function toggleTransit() {
     if (session.selectedId !== 'current-transit') return false;
     if (timelineOpening || getLifetime()?.state.opened) return closeScales();
-    const request: { target: LifetimeTarget } = { target: { opened: true, mode: 'day', fromDate: null, toDate: null } };
+    const request: { target: MomentTimelineTarget } = { target: { opened: true, mode: 'transit-day', fromDate: null, toDate: null } };
     timelineOpening = request; onModeChange();
     try {
       const lifetime = getLifetime() || await loadLifetime();
@@ -178,14 +178,14 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   function publishLifetime() {
     const lifetime = getLifetime();
-    if (lifetime?.state.mode === 'day') publishTransit();
+    if (lifetime?.state.mode === 'transit-day') publishTransit();
     else session.publish('lifetime', lifetime?.current);
   }
   function beforeScrub(value: number) {
     if (!personal()) return;
     invalidateTimeline();
     const lifetime = getLifetime();
-    if (lifetime!.state.mode === 'lifetime' && value <= lifetime!.state.minUtc!) {
+    if (lifetime!.state.mode === 'range' && value <= lifetime!.state.minUtc!) {
       resetMoment(); getReturns()!.close(); return false;
     }
     session.expect('lifetime'); syncTransitWanted();
@@ -193,19 +193,19 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
   }
   // Called by accepted open/close/range commands, and before restoring a saved
   // global range. Ordinary loading/clock/filter notifications never navigate.
-  function acceptLifetimeMode(state: Pick<LifetimeState, 'opened' | 'mode'>) {
+  function acceptLifetimeMode(state: Pick<MomentTimelineState, 'opened' | 'mode'>) {
     if (session.selectedId === 'current-transit') {
-      const kind = state.opened && state.mode === 'lifetime' ? 'lifetime' : 'transit';
+      const kind = state.opened && state.mode === 'range' ? 'lifetime' : 'transit';
       session.expect(kind);
       if (kind === 'transit') publishTransit();
     }
     syncTransitWanted();
   }
-  function lifetimeChanged(state: LifetimeState) {
+  function lifetimeChanged(state: MomentTimelineState) {
     // Old saved views did not distinguish exact birth from a sampled preview.
     // The accepted range supplies that boundary after metadata is available.
     if (session.selectedId !== 'current-transit' && restoreBirthBoundary
-        && state.opened && state.mode === 'lifetime' && state.metadata && state.minUtc !== null) {
+        && state.opened && state.mode === 'range' && state.metadata && state.minUtc !== null) {
       const target = restoreBirthBoundary, birth = Date.parse(session.record!.utc!);
       restoreBirthBoundary = false;
       const atBirth = Number.isSafeInteger(target.index)
@@ -214,7 +214,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       if (state.minUtc === birth && atBirth) session.showOriginal();
     }
   }
-  function restorePreview(value: boolean | undefined, target: Partial<SavedLifetimeView> = {}) {
+  function restorePreview(value: boolean | undefined, target: Partial<SavedMomentTimelineView> = {}) {
     if (session.owner === 'return' || live()) return;
     restoreBirthBoundary = value === undefined ? target : false;
     if (value !== false) session.expect('lifetime');
@@ -237,7 +237,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     if (!target) return false;
     returnsPreferred = true;
     const shown = session.current;
-    const request: { target: LifetimeTarget } = { target: { ...target,
+    const request: { target: MomentTimelineTarget } = { target: { ...target,
       requestedUtc: live() ? Date.now() : Date.parse(shown.kind === 'return' ? shown.utc! : natal!.utc!),
       personalPreview: preview(), personalLive: live() } };
     const valid = () => timelineOpening === request;
@@ -258,11 +258,11 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
       if (valid()) { timelineOpening = null; onModeChange(); }
     }
   }
-  function finishRestore({ saved, pendingLifetime, pendingReturns, interrupted }: { saved: Partial<SavedView> | null; pendingLifetime: SavedLifetimeView | null; pendingReturns: SavedReturnView | null; interrupted: boolean }) {
+  function finishRestore({ saved, pendingLifetime, pendingReturns, interrupted }: { saved: Partial<SavedView> | null; pendingLifetime: SavedMomentTimelineView | null; pendingReturns: SavedReturnView | null; interrupted: boolean }) {
     if (interrupted || !personal()) return;
     const lifetimeState = getLifetime()?.state;
-    returnsPreferred = Boolean(lifetimeState?.opened && lifetimeState.mode === 'lifetime'
-      || pendingLifetime?.opened && pendingLifetime.mode === 'lifetime');
+    returnsPreferred = Boolean(lifetimeState?.opened && lifetimeState.mode === 'range'
+      || pendingLifetime?.opened && pendingLifetime.mode === 'range');
     if (returnsPreferred) {
       const discardedReturn = Boolean(saved?.returns?.eventId && !pendingReturns && !getReturns()!.selectedEvent);
       if (discardedReturn) { session.showOriginal(); getLifetime()?.alignMoment(session.baseChart); }

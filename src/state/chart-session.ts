@@ -3,7 +3,7 @@ import type { ChartInput, CompositionEvent } from '../domain/chart-composition.t
 import type { ChartStore } from '../data/chart-store.ts';
 import type { LiveTransit } from './live-transit.ts';
 import type { NatalDayExplorer } from './natal-day.ts';
-import type { LifetimeExplorer } from './lifetime.ts';
+import type { MomentTimeline } from './moment-timeline.ts';
 import type { ReturnsController } from './returns.ts';
 export type ChartOwner = 'original' | 'natal-day' | 'transit' | 'lifetime' | 'return';
 export type ChartSession = ReturnType<typeof createChartSession>;
@@ -12,7 +12,7 @@ interface ChartSessionOptions {
   initialSelectedId?: string;
   getTransit?: () => Pick<LiveTransit, 'current' | 'setWanted'> | null;
   getNatalDay?: () => (Pick<NatalDayExplorer, 'select' | 'close' | 'updateMetadata'> & { state: Pick<NatalDayExplorer['state'], 'current'> }) | null;
-  getLifetime?: () => Pick<LifetimeExplorer, 'close'> | null;
+  getLifetime?: () => Pick<MomentTimeline, 'close'> | null;
   getReturns?: () => (Pick<ReturnsController, 'select' | 'exit'> & Partial<Pick<ReturnsController,'adopt'>>) | null;
   filterTransit?: (chart: ChartInput) => ChartInput;
   resetTransitFilter?: () => void;

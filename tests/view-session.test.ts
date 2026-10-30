@@ -1,4 +1,4 @@
-import type { LifetimeExplorer } from '../src/state/lifetime.ts';
+import type { MomentTimeline } from '../src/state/moment-timeline.ts';
 import type { LifetimeMetadata } from '../shared/lifetime-format.ts';
 import type { TransitDay } from '../shared/day-packets/transit-format.ts';
 import type { CycleEvent, CycleChartResult, CycleInput } from '../shared/cycles-format.ts';
@@ -44,7 +44,7 @@ import { createChartStore } from '../src/data/chart-store.ts';
 import { createChartSession } from '../src/state/chart-session.ts';
 import { createChartExploration } from '../src/state/chart-exploration.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { createLifetimeClient } from '../src/data/lifetime-client.ts';
 import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
 import { TRANSIT_DAY_VERSION } from '../shared/day-packets/transit-format.ts';
@@ -60,7 +60,7 @@ import { transitChartAt } from '../src/domain/transit-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { dateDom } from './helpers/date-dom.ts';
 
-const lifetimeFixtures: LifetimeExplorer[] = [];
+const lifetimeFixtures: MomentTimeline[] = [];
 test.afterEach(() => { for (const explorer of lifetimeFixtures.splice(0)) explorer.close(); });
 
 const day = (date: string) => ({ date, startUtc: `${date}T00:00:00Z`, samples: 1440, stepSeconds: 60,
@@ -90,7 +90,7 @@ function harness(storage = new Map<string, string>(), { denyWrites = () => false
   const viewStore = createViewStore({ getStorage: () => storagePort });
   const chartStore = createChartStore({initialTemporaryChart:viewStore.read()?.temporaryChart});
   chartStore.projectLibrary(JSON.parse(storage.get('fixture:account-library')!), true);
-  let view: ReturnType<typeof createViewSession>, transit: ReturnType<typeof createLiveTransit>, natalDay: ReturnType<typeof createNatalDayExplorer>, mandala: ReturnType<typeof attachMandalaMode>, lifetime: LifetimeExplorer | null = null, returns: ReturnType<typeof createReturnsController>, exploration: ReturnType<typeof createChartExploration>, summary: ReturnType<typeof attachChartSummary> | null = null;
+  let view: ReturnType<typeof createViewSession>, transit: ReturnType<typeof createLiveTransit>, natalDay: ReturnType<typeof createNatalDayExplorer>, mandala: ReturnType<typeof attachMandalaMode>, lifetime: MomentTimeline | null = null, returns: ReturnType<typeof createReturnsController>, exploration: ReturnType<typeof createChartExploration>, summary: ReturnType<typeof attachChartSummary> | null = null;
   const planets = createTransitPlanetFilter(), panels = createPanelState(), workspace = createWorkspaceState();
   const changed = () => { summary?.setReturnsVisible(Boolean(returns?.opened)); view?.schedule(); };
   const session = createChartSession({ store: chartStore, getTransit: () => transit, getNatalDay: () => natalDay,
@@ -116,9 +116,9 @@ function harness(storage = new Map<string, string>(), { denyWrites = () => false
   const button = events(); button.setAttribute = (name, value) => { attributes[name] = value; };
   mandala = attachMandalaMode({ button: button as unknown as HTMLElement, canvas: { classList: { toggle() {} } } as unknown as Element, gestures: camera, layout: { frame: () => STUDIO_FRAME },
     motion, render() {}, onStateChange: changed });
-  function ensureLifetime(): LifetimeExplorer {
+  function ensureLifetime(): MomentTimeline {
     if (!lifetime) {
-      lifetime = createLifetimeExplorer({ client: lifetimeClient, planetFilter: planets,
+      lifetime = createMomentTimeline({ client: lifetimeClient, planetFilter: planets,
         getDayState: () => transit.state, onRender: exploration.publishLifetime,
         getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
         onStateChange(state) { exploration.lifetimeChanged(state); changed(); } });
@@ -239,7 +239,7 @@ test('reload restores the lifetime range, requested lifetime moment and raw plan
     getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); await second.view.restore();
   const restored = second.ensureLifetime();
-  assert.equal(restored.state.opened, true); assert.equal(restored.state.mode, 'lifetime');
+  assert.equal(restored.state.opened, true); assert.equal(restored.state.mode, 'range');
   assert.equal(restored.state.fromDate, '2020-01-01'); assert.equal(restored.state.toDate, '2020-01-03');
   assert.equal(restored.state.requestedUtc, Date.parse('2020-01-02T09:20:00Z')); assert.deepEqual(calls, [200]);
   assert.equal(second.session.current.utc, '2020-01-02T09:20:00Z');
@@ -257,15 +257,15 @@ test('failed lifetime metadata keeps the saved range and moment so retry resumes
     getPoint: async index => { calls.push(index); return point(index); } } });
   t.after(() => second.transit.stop()); await second.view.restore();
   const saved = JSON.parse(second.storage.get('liniya.view.v1')!);
-  assert.equal(saved.lifetime.mode, 'lifetime'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
+  assert.equal(saved.lifetime.mode, 'range'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
   assert.equal(saved.lifetime.fromDate, '2020-01-01');
   assert.equal(second.ensureLifetime().state.status, 'loading');
   assert.equal(second.ensureLifetime().state.retryCount, 1);
-  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
+  assert.equal(second.ensureLifetime().state.mode, 'range');
   assert.equal(second.transit.state.wanted, false);
   assert.equal(second.session.hasCurrent, false);
   const retained = second.view.pendingLifetime;
-  assert.deepEqual([retained!.mode, retained!.fromDate, retained!.toDate, retained!.requestedUtc], ['lifetime', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
+  assert.deepEqual([retained!.mode, retained!.fromDate, retained!.toDate, retained!.requestedUtc], ['range', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
   retained!.requestedUtc = 1; retained!.fromDate = '2020-01-03';
   assert.deepEqual([second.view.pendingLifetime!.fromDate, second.view.pendingLifetime!.requestedUtc], ['2020-01-01', Date.parse('2020-01-02T09:20:00Z')]);
   fail = false; await second.ensureLifetime().retry();
@@ -288,7 +288,7 @@ test('missing Lifetime module keeps its saved range for another reload', async t
   const lifetime = first.ensureLifetime(); await lifetime.open(); await lifetime.setDateRange('2020-01-01', '2020-01-03'); await lifetime.scrub(Date.parse('2020-01-02T09:20:00Z')); first.view.flush();
   const second = harness(first.storage, { loadLifetime: async () => null }); t.after(() => second.transit.stop()); await second.view.restore();
   const saved = JSON.parse(second.storage.get('liniya.view.v1')!);
-  assert.equal(saved.lifetime.mode, 'lifetime'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
+  assert.equal(saved.lifetime.mode, 'range'); assert.equal(saved.lifetime.requestedUtc, Date.parse('2020-01-02T09:20:00Z'));
 });
 
 
@@ -322,7 +322,7 @@ test('eligible personal Lifetime restores exact saved range and moment ahead of 
   assert.equal(second.view.pendingLifetime, null);
   assert.equal(second.session.selectedId, personalId); assert.equal(second.natalDay.state.opened, false);
   const lifetime = second.ensureLifetime().state;
-  assert.deepEqual([lifetime.mode, lifetime.fromDate, lifetime.toDate, lifetime.requestedUtc], ['lifetime', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
+  assert.deepEqual([lifetime.mode, lifetime.fromDate, lifetime.toDate, lifetime.requestedUtc], ['range', '2020-01-01', '2020-01-03', Date.parse('2020-01-02T09:20:00Z')]);
   assert.deepEqual(calls, [200]); assert.equal(second.session.current.utc, '2020-01-02T09:20:00Z');
   assert.equal(second.session.current.kind, 'transit');
   assert.equal(second.session.current.primary, second.session.baseChart);
@@ -448,7 +448,7 @@ async function saveExactLifetime(t: test.TestContext) {
   assert.equal(await first.returns.selectEvent(event.id), true, 'save an event from the prepared authoritative list');
   await first.returns.setBodies(['moon']); first.returns.close(); first.view.flush();
   const snapshot = JSON.parse(first.storage.get('liniya.view.v1')!);
-  snapshot.lifetime = { opened: true, mode: 'lifetime', fromDate: source.utc.slice(0, 10), toDate: '2126-09-24',
+  snapshot.lifetime = { opened: true, mode: 'range', fromDate: source.utc.slice(0, 10), toDate: '2126-09-24',
     requestedUtc: Date.parse(event.utc), personalPreview: false, personalLive: false };
   first.storage.set('liniya.view.v1', JSON.stringify(snapshot));
   return { storage: first.storage, source, event, target: snapshot.lifetime };
@@ -565,14 +565,14 @@ async function saveColdReturns(t: test.TestContext) {
 test('reload during a cold Returns opening restores its rail even before a Lifetime snapshot exists', async t => {
   const storage = await saveColdReturns(t);
   const second = harness(storage, { canRestoreLifetime: () => true,
-    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
+    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'range',
       fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 }) });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
   assert.equal(second.returns.state.opened, true);
   assert.equal(second.natalDay.state.opened, false);
   assert.equal(second.ensureLifetime().state.opened, true);
-  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
+  assert.equal(second.ensureLifetime().state.mode, 'range');
   assert.equal(JSON.parse(storage.get('liniya.view.v1')!).lifetime.opened, true);
 });
 
@@ -614,7 +614,7 @@ test('an open Returns menu owns restoration ahead of a stale natal Day snapshot'
   const second = harness(storage, { canRestoreLifetime: () => true,
     openReturnsTimeline: async () => {
       if (second.natalDay.state.opened) return false;
-      return second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
+      return second.ensureLifetime().restore({ opened: true, mode: 'range',
         fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 });
     } });
   t.after(() => second.transit.stop());
@@ -631,14 +631,14 @@ test('a selected return with its phone menu closed restores a missing cold rail'
   await first.returns.open(); await first.returns.selectEvent(first.returnEvent.id);
   first.returns.close(); first.view.flush();
   const second = harness(first.storage, { canRestoreLifetime: () => true,
-    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'lifetime',
+    openReturnsTimeline: async () => second.ensureLifetime().restore({ opened: true, mode: 'range',
       fromDate: '2020-01-01', toDate: '2020-01-03', index: 144 }) });
   t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
   assert.equal(second.returns.state.opened, false);
   assert.equal(second.returns.state.selectedEvent!.id, first.returnEvent.id);
   assert.equal(second.ensureLifetime().state.opened, true);
-  assert.equal(second.ensureLifetime().state.mode, 'lifetime');
+  assert.equal(second.ensureLifetime().state.mode, 'range');
   assert.equal(second.view.pendingReturns, null);
 });
 
@@ -796,7 +796,7 @@ test('lifetime reload requests only its saved point and switching back to Day st
   t.after(() => second.transit.stop());
   await second.view.restore();
   assert.deepEqual(requests, []);
-  assert.deepEqual(modes, ['lifetime']);
+  assert.deepEqual(modes, ['range']);
   assert.deepEqual(second.frames, ['2020-01-02T09:20:00Z']);
   second.ensureLifetime().close(); await drain();
   assert.deepEqual(requests, ['2026-10-04']);
@@ -856,7 +856,7 @@ test('an inactive saved Day pause does not hold lifetime restoration pending', a
 test('a legacy lifetime index becomes UTC after metadata loads and never returns to new snapshots', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
-  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const second = harness(first.storage); t.after(() => second.transit.stop());
   assert.equal(await second.view.restore(), true);
@@ -872,7 +872,7 @@ for (const source of ['available day', 'absent day', 'another day'] as const) {
     const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
     const requestedUtc = Date.parse('2020-01-02T09:21:00Z');
     const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
-    saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc };
+    saved.lifetime = { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc };
     first.storage.set('liniya.view.v1', JSON.stringify(saved));
     const meta = { ...metadata, engine: 'Swiss Ephemeris' };
     const storedDay: TransitDay = { ...day(source === 'another day' ? '2020-01-03' : '2020-01-02'), version: TRANSIT_DAY_VERSION, engine: meta.engine,
@@ -927,7 +927,7 @@ for (const personalPreview of [undefined, true] as const) test(`metadata retry c
   first.storage.set('fixture:account-library', JSON.stringify(charts));
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
   saved.selectedId = charts[0].id;
-  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', index: 75,
+  saved.lifetime = { opened: true, mode: 'range', fromDate: '2026-09-24', toDate: '2026-09-26', index: 75,
     personalLive: false, ...(personalPreview === undefined ? {} : { personalPreview }) };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const source = { ...metadata, startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z' };
@@ -981,7 +981,7 @@ test('a ready matching range cannot consume a saved target before the loader ret
 for (const activation of ['pointerdown', 'Enter', ' '] as const) test(`Retry by ${activation === ' ' ? 'Space' : activation} retains a legacy target while metadata is pending and the page hides`, async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
-  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const document = dateDom(), retryButton = document.createElement('button'), retryIcon = document.createElement('svg');
   retryButton.append(retryIcon);
@@ -1012,7 +1012,7 @@ for (const activation of ['pointerdown', 'Enter', ' '] as const) test(`Retry by 
 test('choosing another person during a retried metadata request still supersedes the saved target', async t => {
   const first = harness(); t.after(() => first.transit.stop()); await first.view.restore();
   const saved = JSON.parse(first.storage.get('liniya.view.v1')!);
-  saved.lifetime = { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
+  saved.lifetime = { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', index: 200 };
   first.storage.set('liniya.view.v1', JSON.stringify(saved));
   const document = dateDom(), retryButton = document.createElement('button');
   let attempts = 0, release; const points: unknown[] = [];
@@ -1041,7 +1041,7 @@ for (const phase of ['import', 'metadata'] as const) for (const [id, activation]
 ] as const) test(`passive ${id} activation during lifetime ${phase} preserves the saved UTC through pagehide`, async t => {
   const target = Date.parse('2020-01-02T09:20:00Z');
   const saved = { version: 1, selectedId: 'current-transit', mandala: false,
-    lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: target } };
+    lifetime: { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: target } };
   const storage = new Map([['liniya.view.v1', JSON.stringify(saved)]]);
   const document = dateDom(), control = document.createElement('button'), icon = document.createElement('svg');
   control.id = id; control.append(icon);
@@ -1072,7 +1072,7 @@ for (const phase of ['import', 'metadata'] as const) for (const [id, activation]
 
 for (const action of ['choose-chart', 'lifetime-off'] as const) test(`passive tools do not exempt ${action} from superseding lifetime restoration`, async t => {
   const storage = new Map([['liniya.view.v1', JSON.stringify({ version: 1, selectedId: 'current-transit',
-    lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: Date.parse('2020-01-02T09:20:00Z') } })]]);
+    lifetime: { opened: true, mode: 'range', fromDate: '2020-01-01', toDate: '2020-01-03', requestedUtc: Date.parse('2020-01-02T09:20:00Z') } })]]);
   const document = dateDom(), passive = document.createElement('button'), choice = document.createElement('button');
   passive.id = 'openLibrary'; choice.id = action === 'lifetime-off' ? 'lifetimeToggle' : '';
   if (action === 'choose-chart') choice.dataset.chartId = 'second';
@@ -1347,7 +1347,7 @@ for (const personal of [false, true] as const) for (const flushBy of ['flush', '
     else h.eventTarget.dispatch('pagehide');
     const saved = JSON.parse(h.storage.get('liniya.view.v1')!);
     assert.equal(saved.lifetime?.opened, true, 'the selected tool survives even before its controller exists');
-    assert.equal(saved.lifetime.mode, personal ? 'lifetime' : 'day');
+    assert.equal(saved.lifetime.mode, personal ? 'range' : 'transit-day');
     if (personal) {
       assert.equal(saved.lifetime.fromDate, '2026-09-24');
       assert.equal(saved.lifetime.requestedUtc, Date.parse('2026-09-24T12:34:00Z'));

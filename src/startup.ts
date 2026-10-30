@@ -107,7 +107,7 @@ let loadingInteraction = false;
 // Read the tab once before prefetching. A saved lifetime, natal or exact return
 // owns its own data; only Day and an explicitly live personal view need today.
 const needsDay = (savedView?.selectedId ?? 'current-transit') === 'current-transit'
-  ? savedView?.lifetime?.mode !== 'lifetime'
+  ? savedView?.lifetime?.mode !== 'range'
   : savedView?.lifetime?.personalLive === true && !savedView?.returns?.eventId;
 const storagePressure = createStoragePressure();
 const calculationClients = createCalculationClients({ cacheOptions: {pressure: storagePressure}, transit: {
@@ -158,7 +158,7 @@ function renderLoadingTools() {
   const sameChart = selectedId === pendingView?.selectedId;
   const savedLifetime = sameChart && (isTransit || personalAvailable) && pendingView?.lifetime?.opened ? pendingView.lifetime : null;
   const savedReturns = sameChart && personalAvailable && (pendingView?.returns?.opened || pendingView?.returns?.eventId);
-  const initialLifetime = savedLifetime || (savedReturns ? { opened: true, mode: 'lifetime' } as const : null);
+  const initialLifetime = savedLifetime || (savedReturns ? { opened: true, mode: 'range' } as const : null);
   const dayOpened = !initialLifetime && dayAvailable && sameChart
     && (pendingView?.natalDay?.opened === true || personalAvailable && pendingView?.natalDay?.opened !== false);
   const view = studioPresentation({ isTransit, personalAvailable, dayOpened,
@@ -266,7 +266,7 @@ function changeLoadingTool(kind: 'day' | 'lifetime' | 'mandala') {
     pendingView.lifetime = kind === 'lifetime' && !close
       ? personalAvailable
         ? { ...personalTimelineTarget({utc:sourcePresentation.utc!},Date.parse(sourcePresentation.utc!))!, personalPreview: false }
-        : { opened: true, mode: 'day', fromDate: null, toDate: null }
+        : { opened: true, mode: 'transit-day', fromDate: null, toDate: null }
       : null;
   }
   initialPresentation = renderLoadingTools();

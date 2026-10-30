@@ -269,7 +269,7 @@
       "files": [
         "src/state/chart-exploration.ts",
         "src/state/chart-session.ts",
-        "src/state/lifetime.ts",
+        "src/state/moment-timeline.ts",
         "src/state/live-transit.ts",
         "src/state/natal-day.ts",
         "src/state/returns.ts",
@@ -278,7 +278,7 @@
       "publicEntries": [
         "src/state/chart-exploration.ts",
         "src/state/chart-session.ts",
-        "src/state/lifetime.ts",
+        "src/state/moment-timeline.ts",
         "src/state/live-transit.ts",
         "src/state/natal-day.ts",
         "src/state/returns.ts",

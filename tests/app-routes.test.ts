@@ -71,7 +71,7 @@ test('direct pages serve the same shell; unknown API/private paths never become 
 import { viewForRoute } from '../src/state/view-session.ts';
 test('the address selects the restored screen and chart without borrowing another chart camera or moment', () => {
  const saved = {version: 1 as const, selectedId: 'a'.repeat(32), workspace: 'account' as const,
-   camera: {x: 2, y: 3, scale: 4}, lifetime: {opened:true,mode:'lifetime'}, returns:{eventId:'old'}, pendingChartWrites:[]};
+   camera: {x: 2, y: 3, scale: 4}, lifetime: {opened:true,mode:'range'}, returns:{eventId:'old'}, pendingChartWrites:[]};
  const next = viewForRoute({kind:'chart',id:'b'.repeat(32)},saved as never);
  assert.equal(next?.selectedId,'b'.repeat(32));assert.equal(next?.workspace,'chart');
  assert.equal(next?.camera,null);assert.equal(next?.lifetime,null);assert.equal(next?.returns,null);

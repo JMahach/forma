@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { createNatalDayClient } from '../src/data/natal-day-client.ts';
 import { createLifetimeClient } from '../src/data/lifetime-client.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { encodeNatalDay } from '../server/packets/encode.ts';
 import { chartAtMinute, natalDayMinute } from '../src/domain/natal-day.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
@@ -79,8 +79,8 @@ for (const [name, make, indices] of [['ordinary', () => natalDayFixture(), [700]
 test('personal lifetime scrubs and steps on exact historical samples within the current bounds', async t => {
   const h = harness(historical()); await h.prepare();
   const first = Date.parse(natalDayMinute(h.day, 1).utc), next = first + 60000;
-  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
-  assert.equal(await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1899-12-31', toDate: '1900-01-01', requestedUtc: first }), true);
+  const explorer = createMomentTimeline({ client: h.client }); t.after(() => explorer.close());
+  assert.equal(await explorer.restore({ opened: true, mode: 'range', fromDate: '1899-12-31', toDate: '1900-01-01', requestedUtc: first }), true);
   await explorer.scrub(next + 17000);
   assert.equal(explorer.state.requestedUtc, next); assert.equal(explorer.current!.utc, new Date(next).toISOString().replace('.000Z', 'Z'));
   assert.equal(explorer.adjacentUtc(1), next + 60000); assert.equal(explorer.adjacentUtc(-1), first);
@@ -93,9 +93,9 @@ test('personal lifetime scrubs and steps on exact historical samples within the 
 
 for (const direction of [1, -1] as const) test(`a historical step ${direction} offers the exact prepared sample before selecting it`, async t => {
   const h = harness(historical(), { memoryLimit: 0 }); await h.prepare();
-  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
+  const explorer = createMomentTimeline({ client: h.client }); t.after(() => explorer.close());
   const current = Date.parse('1900-01-01T00:10:39Z');
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1899-12-31', toDate: '1900-01-01', requestedUtc: current });
+  await explorer.restore({ opened: true, mode: 'range', fromDate: '1899-12-31', toDate: '1900-01-01', requestedUtc: current });
   const expected = Date.parse(direction > 0 ? '1900-01-01T00:11:39Z' : '1900-01-01T00:09:39Z'), offered: unknown[] = [];
   await explorer.step(direction, null, utc => offered.push(utc));
   assert.deepEqual(offered, [expected], 'ownership sees the same exact natal sample that is selected');
@@ -107,8 +107,8 @@ for (const direction of [1, -1] as const) test(`a historical step ${direction} o
 test('a backward historical step offers the exact birth boundary to its owner', async t => {
   const h = harness(historical()); await h.prepare();
   const birth = Date.parse('1900-01-01T00:10:39Z'), current = Date.parse('1900-01-01T00:11:39Z');
-  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1900-01-01', toDate: '1900-01-01',
+  const explorer = createMomentTimeline({ client: h.client }); t.after(() => explorer.close());
+  await explorer.restore({ opened: true, mode: 'range', fromDate: '1900-01-01', toDate: '1900-01-01',
     minimumUtc: '1900-01-01T00:10:39Z', requestedUtc: current });
   const offered: unknown[] = []; let resetBirth = false;
   await explorer.step(-1, null, utc => {
@@ -185,10 +185,10 @@ for (const firstMode of ['readDay', 'getDay'] as const) test(`a stale ${firstMod
 
 test('switching the original natal prepares its stored day even when lifetime metadata was already loaded', async t => {
   const h = harness(); await h.prepare();
-  const explorer = createLifetimeExplorer({ client: h.client, getPersonalRecord: h.chart,
+  const explorer = createMomentTimeline({ client: h.client, getPersonalRecord: h.chart,
     getMomentState: () => ({ current: h.chart(), status: 'ready' }) });
   t.after(() => explorer.close());
-  const snapshot = { opened: true, mode: 'lifetime', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
+  const snapshot = { opened: true, mode: 'range', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
   assert.equal(await explorer.restore(snapshot), true);
   const previous = [...h.storage.keys()][0], next = previous.replace('test-city', 'another-city');
   h.storage.set(next, h.storage.get(previous));
@@ -228,8 +228,8 @@ test('a missing historical natal minute still reads the ready transit day for it
   t.after(() => days.close());
   const h = harness(historical(), { days }); await h.prepare();
   days.putDay({ ...h.day, version: '2', date: '1899-12-31', startUtc: '1899-12-31T00:00:00Z' }); await days.flush();
-  const explorer = createLifetimeExplorer({ client: h.client }); t.after(() => explorer.close());
-  await explorer.restore({ opened: true, mode: 'lifetime', fromDate: '1899-12-31', toDate: '1900-01-01',
+  const explorer = createMomentTimeline({ client: h.client }); t.after(() => explorer.close());
+  await explorer.restore({ opened: true, mode: 'range', fromDate: '1899-12-31', toDate: '1900-01-01',
     requestedUtc: Date.parse('1899-12-31T00:00:00Z') });
   h.memory.delete([...h.storage.keys()][0]); h.storage.clear();
   const before = h.requests.length;
@@ -240,10 +240,10 @@ test('a missing historical natal minute still reads the ready transit day for it
 
 for (const command of ['open', 'restore'] as const) test(`explicit ${command} discovers the same natal day saved after an earlier miss`, async t => {
   const h = harness();
-  const explorer = createLifetimeExplorer({ client: h.client, getPersonalRecord: h.chart,
+  const explorer = createMomentTimeline({ client: h.client, getPersonalRecord: h.chart,
     getMomentState: () => ({ current: h.chart(), status: 'ready' }) });
   t.after(() => explorer.close());
-  const snapshot = { opened: true, mode: 'lifetime', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
+  const snapshot = { opened: true, mode: 'range', fromDate: h.day.date, toDate: h.day.date, requestedUtc: Date.parse(h.day.startUtc) };
   const show = () => command === 'open' ? explorer.open() : explorer.restore(snapshot);
   await show(); explorer.close();
   const minute = Date.parse(natalDayMinute(h.day, 1).utc);

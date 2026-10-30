@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { captureResponse } from './helpers/http-response.ts';
-import { createLifetimeClient, createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createLifetimeClient, createMomentTimeline } from './fixtures/lifetime.ts';
 import { createLifetimeMoments, createRequestHandler } from './fixtures/lifetime-service.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 
@@ -31,8 +31,8 @@ function harness(){
  return {moments,handler,client,calculations,reads,requests};
 }
 test('restoring a missing 12:31 minute uses the same prepared 12:30 grid fallback without Python',async t=>{
- const h=harness(),explorer=createLifetimeExplorer({client:h.client});t.after(()=>explorer.close());
- assert.equal(await explorer.restore({opened:true,mode:'lifetime',fromDate:'2026-10-01',toDate:'2026-10-03',requestedUtc:Date.parse('2026-10-02T12:31:00Z')}),true);
+ const h=harness(),explorer=createMomentTimeline({client:h.client});t.after(()=>explorer.close());
+ assert.equal(await explorer.restore({opened:true,mode:'range',fromDate:'2026-10-01',toDate:'2026-10-03',requestedUtc:Date.parse('2026-10-02T12:31:00Z')}),true);
  assert.equal(explorer.current!.utc,'2026-10-02T12:30:00Z');
  assert.equal(explorer.state.requestedUtc,Date.parse('2026-10-02T12:30:00Z'));
  assert.equal(explorer.current!.activations!.personality.length,13);

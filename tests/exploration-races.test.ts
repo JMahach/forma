@@ -1,7 +1,7 @@
 import type { ChartComposition, ChartInput } from '../src/domain/chart-composition.ts';
 import type { ChartData } from '../shared/chart-types.ts';
 import type { ChartExploration } from '../src/state/chart-exploration.ts';
-import type { LifetimeExplorer } from '../src/state/lifetime.ts';
+import type { MomentTimeline } from '../src/state/moment-timeline.ts';
 import type { ReturnsController } from '../src/state/returns.ts';
 import type { NatalDayExplorer } from '../src/state/natal-day.ts';
 import type { LifetimeMetadata } from '../shared/lifetime-format.ts';
@@ -16,7 +16,7 @@ import { createChartSession } from './fixtures/chart-session.ts';
 import { extractChartData } from '../src/domain/chart-data.ts';
 import { createViewSession } from '../src/state/view-session.ts';
 import { createChartExploration } from './fixtures/chart-session.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { createReturnsController } from './fixtures/returns.ts';
 import { createNatalDayExplorer } from '../src/state/natal-day.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
@@ -49,7 +49,7 @@ function harness() {
       personalChartFixture({ id: 'person-b', name: 'Person B', birthDate: '2026-09-25' })),
   ];
   const lifetimeJobs: Job<LifetimePoint, { index: number; signal?: AbortSignal }>[] = [], returnJobs: Job<ReturnResult, { input: CycleInput; signal?: AbortSignal }>[] = [], frames: ChartComposition[] = [];
-  let exploration: ChartExploration, lifetime: LifetimeExplorer, returns: ReturnsController, natalDay: NatalDayExplorer, navigation: ChartExploration;
+  let exploration: ChartExploration, lifetime: MomentTimeline, returns: ReturnsController, natalDay: NatalDayExplorer, navigation: ChartExploration;
   const transit = { state: { wanted: false }, setWanted(value: boolean) { this.state.wanted = value; }, start: async () => true } as { state: { wanted: boolean }; setWanted(value: boolean): void; start(): Promise<boolean>; current?: ChartData; goNow?: () => boolean };
   const session = createChartSession({ store: { get: id => people.find(person => person.id === id), has: id => people.some(person => person.id === id) },
     getLifetime: () => lifetime, getReturns: () => returns, getNatalDay: () => natalDay,
@@ -62,7 +62,7 @@ function harness() {
     events: async input => ({ events: input.body === event.body ? [{ ...event }] : [] }),
     chart: (input, signal) => deferredRequest(returnJobs, { input, signal }),
   }, onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
-  lifetime = createLifetimeExplorer({ client: {
+  lifetime = createMomentTimeline({ client: {
     getMeta: async () => metadata,
     getPoint: (index, options) => { const { signal } = options!; return deferredRequest(lifetimeJobs, { index, signal }); },
   }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
@@ -209,8 +209,8 @@ function lazyPersonalHarness({ phase = 'module' } = {}) {
     ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture({ id })), utc: '2026-09-24T12:34:56.789Z',
   }));
   const metadataJobs: Job<LifetimeMetadata, { signal?: AbortSignal }>[] = [], points: number[] = [], modeChanges: boolean[] = [];
-  let lifetime: LifetimeExplorer | null = null, exploration: ChartExploration, returns: ReturnsController, natalDay: NatalDayExplorer, releaseImport: (value: LifetimeExplorer) => void;
-  const imported = new Promise<LifetimeExplorer>(resolve => { releaseImport = resolve; });
+  let lifetime: MomentTimeline | null = null, exploration: ChartExploration, returns: ReturnsController, natalDay: NatalDayExplorer, releaseImport: (value: MomentTimeline) => void;
+  const imported = new Promise<MomentTimeline>(resolve => { releaseImport = resolve; });
   const transit = { state: { wanted: false }, setWanted(value: boolean) { this.state.wanted = value; } };
   const session = createChartSession({ store: { get: id => people.find(chart => chart.id === id), has: id => people.some(chart => chart.id === id) },
     getLifetime: () => lifetime, getReturns: () => returns, getNatalDay: () => natalDay });
@@ -220,7 +220,7 @@ function lazyPersonalHarness({ phase = 'module' } = {}) {
   natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: exploration.publishDay });
   returns = createReturnsController({ client: { events: async () => ({ events: [] }) },
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
-  const controller = createLifetimeExplorer({ client: {
+  const controller = createMomentTimeline({ client: {
     getMeta: options => { const { signal } = options!; return phase === 'metadata' ? deferredRequest(metadataJobs, { signal }) : Promise.resolve(metadata); },
     getPoint: index => { points.push(index); return Promise.resolve(lifetimeMoment(index)); },
   }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
@@ -271,7 +271,7 @@ for (const phase of ['module', 'metadata'] as const) test(`A to manual to B to A
   assert.equal(await second, false);
   assert.equal(await latest, true);
   assert.equal(h.exploration.returnsEnabled, true);
-  assert.equal(h.controller.state.mode, 'lifetime');
+  assert.equal(h.controller.state.mode, 'range');
   assert.equal(h.controller.state.requestedUtc, Date.parse('2026-09-24T12:34:56.789Z'));
   assert.equal(h.session.record, h.people[0]); assert.equal(h.controller.current, h.session.baseChart);
   assert.deepEqual(h.points, []);
@@ -281,13 +281,13 @@ test('interrupting a pending personal opening retains its accepted range and ori
   const h = lazyPersonalHarness({ phase: 'metadata' });
   await h.exploration.select('person-a');
   const opening = h.exploration.toggleReturns(); await tick();
-  assert.equal(h.controller.state.mode, 'lifetime', 'the requested range already exists before metadata');
+  assert.equal(h.controller.state.mode, 'range', 'the requested range already exists before metadata');
   assert.equal(h.controller.state.fromDate, '2026-09-24');
   h.exploration.invalidateTimeline();
   h.metadataJobs[0].resolve(metadata);
   assert.equal(await opening, false);
   assert.equal(h.controller.state.opened, true);
-  assert.equal(h.controller.state.mode, 'lifetime');
+  assert.equal(h.controller.state.mode, 'range');
   assert.equal(h.controller.state.fromDate, '2026-09-24');
   assert.equal(h.controller.state.toDate, '2050-12-31', 'the file bounds limit the personal range');
   assert.equal(h.controller.state.minUtc, Date.parse(h.people[0].utc));

@@ -4,14 +4,14 @@ import { createChartExploration as createExploration } from '../../src/state/cha
 import type { ChartInput } from '../../src/domain/chart-composition.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type { ReturnsController } from '../../src/state/returns.ts';
-import type { LifetimeExplorer } from '../../src/state/lifetime.ts';
+import type { MomentTimeline } from '../../src/state/moment-timeline.ts';
 import type { LiveTransit } from '../../src/state/live-transit.ts';
 
 type SessionOptions = Parameters<typeof createSession>[0];
 type ExplorationOptions = Parameters<typeof createExploration>[0];
 type StateOwner<T extends { state: object }> = Partial<Omit<T, 'state'>> & { state?: Partial<T['state']> };
 type TestReturns = Omit<StateOwner<ReturnsController>, 'select' | 'close' | 'enableMarkers'> & { enableMarkers?: (...args: Parameters<ReturnsController['enableMarkers']>) => unknown; close?: () => unknown; select?: (...args: Parameters<ReturnsController['select']>) => unknown };
-export type TestLifetime = StateOwner<LifetimeExplorer>;
+export type TestLifetime = StateOwner<MomentTimeline>;
 type TestNatalDay = Omit<StateOwner<NatalDayExplorer>, 'open'> & { open?: () => boolean | Promise<boolean> };
 type TestTransit = Omit<StateOwner<LiveTransit>, 'goNow'> & { goNow?: () => unknown };
 interface TestSessionOptions extends Omit<SessionOptions, 'store' | 'getReturns' | 'getTransit' | 'getNatalDay'> {

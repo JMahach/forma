@@ -40,7 +40,7 @@ import type { createCameraView } from './scene/camera-view.ts';
 import type { Gestures, GestureOptions } from './scene/gestures.ts';
 import type { StudioPresentation } from './ui/studio-presentation.ts';
 import type { ChartLibraryView } from './views/library.ts';
-import type { LifetimeExplorer } from './state/lifetime.ts';
+import type { MomentTimeline } from './state/moment-timeline.ts';
 import type { LifetimeControls } from './views/lifetime-controls.ts';
 import type { ReturnsPanel } from './views/returns-panel.ts';
 type AppJournal=Pick<ReturnType<typeof createJournal>,'begin'|'setAccount'> & Partial<Pick<ReturnType<typeof createJournal>,'discardForSpace'|'close'>> & {leave(ids?:readonly string[]):unknown;wake():unknown};
@@ -187,10 +187,10 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   let transit: ReturnType<typeof attachLiveTransit> | null = null;
   let transitControls: ReturnType<typeof attachTransitControls> | null = null;
   let natalDay: ReturnType<typeof attachNatalDayExplorer> | null = null;
-  let lifetime: LifetimeExplorer | null = null, lifetimeControls: LifetimeControls | null = null;
+  let lifetime: MomentTimeline | null = null, lifetimeControls: LifetimeControls | null = null;
   let viewSession: ReturnType<typeof createViewSession> | null = null;
   let chartPaintPending = false, captionPending = false;
-  let lifetimeLoading: Promise<LifetimeExplorer | null> | null = null, lifetimeLoadFailed = false;
+  let lifetimeLoading: Promise<MomentTimeline | null> | null = null, lifetimeLoadFailed = false;
   let returns: ReturnType<typeof createReturnsController> | null = null, returnsView: ReturnsPanel | null = null;
   let returnsViewLoading: Promise<ReturnsPanel | null> | null = null;
   scope.own(()=>{transit?.stop();natalDay?.select(null);lifetime?.close();returns?.select(null);});
@@ -210,7 +210,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   scope.own(exploration.dispose);
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
-    lifetime?.state.opened && lifetime.state.mode === 'lifetime' || viewSession?.pendingLifetime?.mode === 'lifetime');
+    lifetime?.state.opened && lifetime.state.mode === 'range' || viewSession?.pendingLifetime?.mode === 'range');
   const chartLoading = attachChartLoading({ signal: scope.signal,
     canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
     message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
@@ -1190,7 +1190,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
 
   // Both a toolbar click and page restoration use the same lazy controller.
   // Importing it alone never opens Lifetime or resets a restored date range.
-  async function loadLifetime(): Promise<LifetimeExplorer | null> {
+  async function loadLifetime(): Promise<MomentTimeline | null> {
     if(scope.stopped)return null;
     if (lifetime) return lifetime;
     if (lifetimeLoading) return lifetimeLoading;
@@ -1198,14 +1198,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     $('lifetimeToggle').setAttribute('aria-busy', 'true');
     lifetimeLoading = (async () => {
       try {
-        const [{ createLifetimeExplorer }, { attachLifetimeControls }] = await Promise.all([
-          import('./state/lifetime.ts'), import('./views/lifetime-controls.ts'),
+        const [{ createMomentTimeline }, { attachLifetimeControls }] = await Promise.all([
+          import('./state/moment-timeline.ts'), import('./views/lifetime-controls.ts'),
         ]);
         if(scope.stopped)return null;
         const getDayState = () => session.selectedId === 'current-transit' ? transit!.state : null;
         const getPersonalRecord = () => returns!.available ? returns!.natal : null;
         let controls: LifetimeControls | undefined;
-        const controller = createLifetimeExplorer({
+        const controller = createMomentTimeline({
           connection: connectionMode,
           visible:()=>!document.hidden,
           observe: action => journal?.begin(action),

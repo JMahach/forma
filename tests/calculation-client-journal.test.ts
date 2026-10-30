@@ -4,7 +4,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { createJournal } from '../src/journal.ts';
 import { createCalculationClients } from '../src/data/calculation-clients.ts';
 import { createReturnsController } from './fixtures/returns.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { libraryRecordAtMinute,natalDayFixture,personalChartFixture } from './fixtures/natal-day.ts';
 import { CYCLE_BODIES, DEFAULT_CYCLE_BODIES } from '../src/domain/cycles.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
@@ -39,17 +39,17 @@ test('one return search failure is reported for its bodies, while repeated reads
 
 test('lifetime automatic retries keep one observation and do not report preparation as a failure',async t=>{
  const h=await journalFixture(t);let calls=0;
- const explorer=createLifetimeExplorer({observe:h.observe,client:{getMeta:async()=>{calls++;throw Object.assign(new Error('private response'),{code:'connection_failed'});}}});t.after(()=>explorer.close());
+ const explorer=createMomentTimeline({observe:h.observe,client:{getMeta:async()=>{calls++;throw Object.assign(new Error('private response'),{code:'connection_failed'});}}});t.after(()=>explorer.close());
  await explorer.open();await until(()=>h.reports.length===1);
  await until(()=>calls===2,750);await explorer.retry();await tick();assert.equal(calls,3);assert.equal(h.reports.length,1);
  explorer.close();
- const preparing=createLifetimeExplorer({observe:h.observe,client:{getMeta:async()=>{throw Object.assign(new Error('preparing'),{code:'lifetime_preparing'});}}});t.after(()=>preparing.close());
+ const preparing=createMomentTimeline({observe:h.observe,client:{getMeta:async()=>{throw Object.assign(new Error('preparing'),{code:'lifetime_preparing'});}}});t.after(()=>preparing.close());
  await preparing.open();await tick();assert.equal(h.reports.length,1);assert.equal(preparing.state.status,'preparing');
 });
 
 test('coalesced lifetime movement discards a superseded failure and records only the final target failure',async t=>{
  const h=await journalFixture(t);const pending:{reject:(reason:unknown)=>void}[]=[];
- const explorer=createLifetimeExplorer({observe:h.observe,client:{getMeta:async()=>metadata,
+ const explorer=createMomentTimeline({observe:h.observe,client:{getMeta:async()=>metadata,
   getPoint:()=>new Promise((_resolve,reject)=>pending.push({reject}))}});t.after(()=>explorer.close());
  await explorer.open();const work=explorer.setDateRange('2000-01-01','2001-01-01');await until(()=>pending.length===1);
  void explorer.scrub(Date.parse('2000-07-01T00:00:00Z'));

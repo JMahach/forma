@@ -9,9 +9,9 @@ import { normalizeBirthFormDraft, type SavedBirthForm } from '../domain/birth-fo
 import type { ChartWriteIntent, PublicAccountChart } from '../../shared/chart-record-contract.ts';
 import type { SavedCameraPosition } from '../scene/camera.ts';
 export interface SavedReturnView { opened: boolean; year: number | null; bodies: string[]; eventId: string | null }
-export interface SavedLifetimeView {
+export interface SavedMomentTimelineView {
   opened: true;
-  mode: 'day' | 'lifetime';
+  mode: 'transit-day' | 'range';
   fromDate: string | null;
   toDate: string | null;
   requestedUtc?: number;
@@ -46,7 +46,7 @@ export interface SavedView {
   charts?: { query: string; searchOpen: boolean; focus?: TextSelection | null };
   knowledge?: { query: string; searchOpen: boolean; focus?: TextSelection | null; collection: string; entryId: string; view: 'catalog' | 'article' };
   camera: SavedCameraPosition | null;
-  lifetime: SavedLifetimeView | null;
+  lifetime: SavedMomentTimelineView | null;
   transit: { live: boolean; date: string; timeZone: string; index: number } | null;
   natalDay: { opened: boolean; exactOriginal: boolean; index: number } | null;
   planets: { selectedPlanets: string[]; selectedDesignPlanets: string[] } | null;
@@ -148,7 +148,7 @@ function encodeView(view:SavedView,fields:ReturnType<typeof chartFields>) {
 }
 
 function normalize(input: unknown, fields:ReturnType<typeof chartFields>): SavedView | null {
-  const value = input as Omit<SavedView, 'lifetime'|'workspace'> & { workspace?: SavedView['workspace']|'library'; lifetime: (Omit<SavedLifetimeView, 'mode'> & { mode: 'day' | 'lifetime' | 'archive' }) | null };
+  const value = input as Omit<SavedView, 'lifetime'|'workspace'> & { workspace?: SavedView['workspace']|'library'; lifetime: (Omit<SavedMomentTimelineView, 'mode'> & { mode: SavedMomentTimelineView['mode'] | 'day' | 'lifetime' | 'archive' }) | null };
   if (!object(value) || value.version !== 1) return null;
   const workspace=value.workspace==='library'?'knowledge':value.workspace;
   const temporaryChart=fields.temporaryChart.read(value.temporaryChart);
@@ -158,8 +158,9 @@ function normalize(input: unknown, fields:ReturnType<typeof chartFields>): Saved
   // also meant an open right panel. Explicit shell state always wins.
   const panels = !('panels' in value) && returnView?.opened ? { left: false, right: true } : value.panels;
   const camera = value.camera, lifetime = value.lifetime, transit = value.transit, natalDay = value.natalDay, planets = value.planets;
-  // Read the former saved name once; the application uses only lifetime.
-  const lifetimeMode = lifetime?.mode === 'archive' ? 'lifetime' : lifetime?.mode;
+  // Convert former saved names once; runtime owners use only transit-day/range.
+  const lifetimeMode = lifetime?.mode === 'archive' || lifetime?.mode === 'lifetime' ? 'range'
+    : lifetime?.mode === 'day' ? 'transit-day' : lifetime?.mode;
   const choices = (list: unknown): list is string[] => Array.isArray(list) && list.length <= PLANET_IDS.length
     && list.every(id => PLANET_IDS.includes(id)) && new Set(list).size === list.length;
   return {
@@ -184,11 +185,11 @@ function normalize(input: unknown, fields:ReturnType<typeof chartFields>): Saved
     camera: object(camera) && (['x', 'y', 'k'] as const).every(key => Number.isFinite(camera[key]))
       && Math.abs(camera.x) <= 20000 && Math.abs(camera.y) <= 20000 && camera.k >= 1 && camera.k <= 100
       ? { x: camera.x, y: camera.y, k: camera.k } : null,
-    lifetime: object(lifetime) && lifetime.opened === true && ['day', 'lifetime'].includes(lifetimeMode!)
-      && (lifetimeMode === 'day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
+    lifetime: object(lifetime) && lifetime.opened === true && ['transit-day', 'range'].includes(lifetimeMode!)
+      && (lifetimeMode === 'transit-day' || date(lifetime.fromDate) && date(lifetime.toDate) && lifetime.fromDate <= lifetime.toDate && (utc(lifetime.requestedUtc) || index(lifetime.index)))
       ? { opened: true, mode: lifetimeMode!, fromDate: date(lifetime.fromDate) ? lifetime.fromDate : null,
         toDate: date(lifetime.toDate) ? lifetime.toDate : null,
-        ...(utc(lifetime.requestedUtc) ? { requestedUtc: lifetime.requestedUtc } : lifetimeMode === 'lifetime' ? { index: lifetime.index } : {}), ...(lifetime.openStart === true ? { openStart: true } : {}), ...(lifetime.openEnded === true ? { openEnded: true } : {}), ...(typeof lifetime.personalPreview === 'boolean' ? { personalPreview: lifetime.personalPreview } : {}), ...(typeof lifetime.personalLive === 'boolean' ? { personalLive: lifetime.personalLive } : {}) } : null,
+        ...(utc(lifetime.requestedUtc) ? { requestedUtc: lifetime.requestedUtc } : lifetimeMode === 'range' ? { index: lifetime.index } : {}), ...(lifetime.openStart === true ? { openStart: true } : {}), ...(lifetime.openEnded === true ? { openEnded: true } : {}), ...(typeof lifetime.personalPreview === 'boolean' ? { personalPreview: lifetime.personalPreview } : {}), ...(typeof lifetime.personalLive === 'boolean' ? { personalLive: lifetime.personalLive } : {}) } : null,
     transit: object(transit) && typeof transit.live === 'boolean' && date(transit.date)
       && typeof transit.timeZone === 'string' && transit.timeZone.length <= 80 && index(transit.index)
       ? { live: transit.live, date: transit.date, timeZone: transit.timeZone, index: transit.index } : null,

@@ -3,22 +3,22 @@ import { normalizeLifetimeDraft, type SavedLifetimeDraft } from '../domain/input
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
 import { UI_MESSAGES, failureMessage } from '../ui/messages.ts';
 import type { ChartRecord } from '../../shared/chart-types.ts';
-import type { LifetimeExplorer, LifetimeState, LifetimeBounds, MomentState } from '../state/lifetime.ts';
+import type { MomentTimeline, MomentTimelineState, MomentTimelineBounds, MomentState } from '../state/moment-timeline.ts';
 import type { LiveTransitState } from '../state/live-transit.ts';
 import type { StudioLayout } from '../ui/layout/studio-controller.ts';
 import type { TimelineRangeOptions } from './timeline-range.ts';
 import type { DatePicker } from './date-picker.ts';
-interface VisibleWindow extends LifetimeBounds { calendar?: boolean; timeZone?: string }
+interface VisibleWindow extends MomentTimelineBounds { calendar?: boolean; timeZone?: string }
 interface DateSubmission { from: string | null; to: string | null; fromText: string; toText: string; allowOpenEnd: boolean; allowOpenStart: boolean }
 interface LifetimeControlsOptions {
   onDraftChange?: () => void;
-  explorer: LifetimeExplorer; panel: HTMLElement; range: HTMLInputElement; fromDate: HTMLInputElement; toDate: HTMLInputElement; status: HTMLElement;
+  explorer: MomentTimeline; panel: HTMLElement; range: HTMLInputElement; fromDate: HTMLInputElement; toDate: HTMLInputElement; status: HTMLElement;
   fromError?: HTMLElement | null; toError?: HTMLElement | null; hourMarks?: HTMLElement | null;
   fromCalendar?: HTMLButtonElement | null; toCalendar?: HTMLButtonElement | null; marker?: HTMLButtonElement | null;
   viewportLayout: Pick<StudioLayout, 'readViewport' | 'subscribeViewport'>;
   getDayState?: () => LiveTransitState | null; getMomentState?: () => MomentState | null | undefined; getPersonalRecord?: () => Partial<ChartRecord> | null;
   onDayScrub?: (value: number) => void; onDayNow?: () => void; onLifetimeNow?: () => boolean; beforeScrub?: (utc: number) => boolean | void;
-  formatEndpoints?: (state: LifetimeState) => [string, string] | null; onMomentInput?: () => void; resolveTap?: TimelineRangeOptions['resolveTap'];
+  formatEndpoints?: (state: MomentTimelineState) => [string, string] | null; onMomentInput?: () => void; resolveTap?: TimelineRangeOptions['resolveTap'];
 }
 export type LifetimeControls = ReturnType<typeof attachLifetimeControls>;
 
@@ -60,7 +60,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     if (!explorer.state.opened) return;
     onMomentInput();
     if (beforeScrub(value) === false) return;
-    if (explorer.state.mode === 'day') onDayScrub(value);
+    if (explorer.state.mode === 'transit-day') onDayScrub(value);
     else {
       explorer.scrub(value, visibleWindow);
       // A no-op request between available samples still restores the accepted
@@ -72,7 +72,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     onInteractionChange: active => explorer.setInteracting(active),
     resolveEdge({ min, max, value }) {
       const state = explorer.state;
-      if (range.disabled || state.mode !== 'lifetime' || !state.metadata || value !== state.requestedUtc || value < min || value > max) return null;
+      if (range.disabled || state.mode !== 'range' || !state.metadata || value !== state.requestedUtc || value < min || value > max) return null;
       // Only the existing time owner knows the last available cached/grid point.
       const previous = explorer.adjacentUtc(-1), next = explorer.adjacentUtc(1);
       if (Number.isFinite(previous) && (previous === value || previous! < min)) return 'start';
@@ -80,7 +80,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       return null;
     },
     onStep(direction) {
-      if (explorer.state.mode === 'lifetime') {
+      if (explorer.state.mode === 'range') {
         onMomentInput();
         void explorer.step(direction, visibleWindow, beforeScrub);
         range.value = String(explorer.state.requestedUtc);
@@ -92,10 +92,10 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     onReference() {
       if (!explorer.state.opened) return;
       onMomentInput();
-      if (explorer.state.mode === 'lifetime' && onLifetimeNow() === true) return;
-      const reference = explorer.state.mode === 'day' ? getDayState()?.referenceIndex : explorer.state.referenceUtc;
+      if (explorer.state.mode === 'range' && onLifetimeNow() === true) return;
+      const reference = explorer.state.mode === 'transit-day' ? getDayState()?.referenceIndex : explorer.state.referenceUtc;
       if (beforeScrub(reference!) === false) return;
-      if (explorer.state.mode === 'day') onDayNow();
+      if (explorer.state.mode === 'transit-day') onDayNow();
       else explorer.goNow();
     },
   });
@@ -105,7 +105,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
       && (edited === toDate || pending.toText === toDate.value) ? pending : null;
   }
 
-  function updateDates(state: LifetimeState, preparingDate: string | false | null | undefined = null) {
+  function updateDates(state: MomentTimelineState, preparingDate: string | false | null | undefined = null) {
     if (submitted && state.fromDate === submitted.from && state.toDate === submitted.to) {
       if (fromDate.value === submitted.fromText) dirty.delete(fromDate);
       if (toDate.value === submitted.toText) dirty.delete(toDate);
@@ -121,13 +121,13 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
         if (input.value !== formatted) input.value = formatted;
       }
     }
-    const endpoints = !preparingDate && state.opened && state.mode === 'lifetime' ? formatEndpoints(state)
+    const endpoints = !preparingDate && state.opened && state.mode === 'range' ? formatEndpoints(state)
       ?? [formatDateInput(state.fromDate), formatDateInput(state.toDate)] : ['', ''];
     if (marks[0]) setText(marks[0], endpoints[0]);
     if (marks[1]) setText(marks[1], endpoints[1]);
   }
 
-  function update(state: LifetimeState, momentState:MomentState|null|undefined = undefined) {
+  function update(state: MomentTimelineState, momentState:MomentState|null|undefined = undefined) {
     if(scope.stopped)return;
     if(momentState===undefined)momentState=getMomentState();
     if (wasOpened && !state.opened) {
@@ -139,7 +139,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     panel.hidden = !state.opened;
     const preparing = state.status === 'preparing';
     const transitDay = getDayState();
-    const dayMode = state.mode === 'day' || preparing && Boolean(transitDay);
+    const dayMode = state.mode === 'transit-day' || preparing && Boolean(transitDay);
     if (rangeLabel) setText(rangeLabel, dayMode ? 'Шкала дня: время транзита' : 'Шкала выбранных лет: время UTC');
     if (dayMode || !state.opened) momentState = null;
     momentClockShown = Boolean(momentState);
@@ -379,7 +379,7 @@ export function attachLifetimeControls({ explorer, panel, range, fromDate, toDat
     if(scope.stopped)return;
     const state = explorer.state;
     const momentState = getMomentState();
-    if (state.opened && (state.mode === 'day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
+    if (state.opened && (state.mode === 'transit-day' || state.status === 'preparing' || momentState || momentClockShown)) update(state, momentState);
   }
   for (const [input, button] of [[fromDate, fromCalendar], [toDate, toCalendar]] as const) {
     if (!button) continue;

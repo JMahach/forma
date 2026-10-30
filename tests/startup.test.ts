@@ -245,11 +245,11 @@ test('startup reads the tab once and prefetches only a day that owns the saved v
   for (const [savedView, needsDay] of [
     [null, true],
     [{ selectedId: 'current-transit', transit: { live: false } }, true],
-    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'lifetime' } }, false],
+    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'range' } }, false],
     [{ selectedId: 'personal' }, false],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalPreview: true, personalLive: false } }, false],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalLive: true } }, true],
-    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'lifetime', personalLive: true }, returns: { eventId: 'exact' } }, false],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'range', personalPreview: true, personalLive: false } }, false],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'range', personalLive: true } }, true],
+    [{ selectedId: 'personal', lifetime: { opened: true, mode: 'range', personalLive: true }, returns: { eventId: 'exact' } }, false],
   ] as const) {
     let reads = 0, creates = 0; let options: DayOptions | undefined, received: StartupPorts | undefined;
     const toast = () => {}, layout = layoutStub(), client = {};
@@ -483,14 +483,14 @@ test('saved timeline geometry and tool visibility exist before the application i
 
   for (const [saved, panel, kind, heading] of [
     [{ selectedId: 'current-transit' }, 'transit', 'day', true],
-    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'lifetime' } }, 'lifetime', 'chronicle', true],
-    [{ selectedId: personal.id, lifetime: { opened: true, mode: 'lifetime' } }, 'lifetime', 'day', false],
+    [{ selectedId: 'current-transit', lifetime: { opened: true, mode: 'range' } }, 'lifetime', 'chronicle', true],
+    [{ selectedId: personal.id, lifetime: { opened: true, mode: 'range' } }, 'lifetime', 'day', false],
     [{ selectedId: personal.id, natalDay: { opened: true } }, 'natal-day', 'natal-day', false],
     [{ selectedId: personal.id }, 'natal-day', 'natal-day', false],
     [{ selectedId: personal.id, natalDay: { opened: false } }, 'none', 'day', false],
     [{ selectedId: personal.id, returns: { opened: true } }, 'lifetime', 'day', false],
     [{ selectedId: 'manual' }, 'none', 'day', true],
-    [{ selectedId: 'missing', lifetime: { opened: true, mode: 'lifetime' } }, 'none', 'day', true],
+    [{ selectedId: 'missing', lifetime: { opened: true, mode: 'range' } }, 'none', 'day', true],
   ] as const) {
     const { document, element } = startupDocument();
     let options: Parameters<typeof createStudioLayout>[0]; let received: StartupPorts | undefined, failure: unknown;
@@ -922,7 +922,7 @@ for (const trigger of ['account','panel'] as const) test(`early ${trigger} updat
   const own=accountNatalChart(121),eventId='saturn:2020-02-02T19:27:23.000Z';
   viewStore.write({version:1,selectedId:own.id,workspace:'chart',
     ...(trigger==='account'?{chartHint:{id:own.id,kind:'natal',utc:own.utc,dayAvailable:true}}:{}),returns:{opened:true,bodies:['saturn'],year:null,eventId},
-    lifetime:{opened:true,mode:'lifetime',fromDate:'1990-05-15',toDate:'2090-05-15',requestedUtc:Date.parse('2020-02-02T19:27:23.000Z')}});
+    lifetime:{opened:true,mode:'range',fromDate:'1990-05-15',toDate:'2090-05-15',requestedUtc:Date.parse('2020-02-02T19:27:23.000Z')}});
   const {document}=startupDocument();let changed=()=>{},received:StartupPorts|undefined;
   await run(attachPageGestures,document,class {observe(){}disconnect(){}},()=>({}),layoutStub,
     ()=>()=>{},()=>viewStore,emptyStore,async()=>{
@@ -1029,7 +1029,7 @@ test('an early private timeline command hands off the exact personal boundary',a
   ()=>()=>{},()=>viewStore,emptyStore,async()=>{element('lifetimeToggle').click();return {startApp(value){received=value;}};},
   {href:'http://localhost:3636/chart/'+own.id,pathname:'/chart/'+own.id},storage);
  const target=received?.savedView?.lifetime;
- assert.equal(target?.mode,'lifetime');assert.equal(target?.requestedUtc,Date.parse(own.utc));
+ assert.equal(target?.mode,'range');assert.equal(target?.requestedUtc,Date.parse(own.utc));
  assert.equal(target?.minimumUtc,own.utc,'early intent already has the exact birth boundary');
  assert.equal(target?.openEnded,false);
  assert.equal(received?.store.has(own.id),false,'a presentation hint remains distinct from a ready record');

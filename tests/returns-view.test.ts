@@ -218,7 +218,7 @@ function panelHarness({ rows = false }: { rows?: boolean } = {}) {
   const update = (next: Partial<PanelState>) => {
     current = { ...current, ...next };
     const facts = studioPresentation({ personalAvailable: current.available,
-      lifetime: { opened: current.timelineVisible!, mode: 'lifetime' }, returnsOpened: current.opened });
+      lifetime: { opened: current.timelineVisible!, mode: 'range' }, returnsOpened: current.opened });
     summary.setReturnsVisible(facts.returnsVisible);
     view.update({ ...current, visible: facts.returnsVisible } as ReturnsPanelState);
   };

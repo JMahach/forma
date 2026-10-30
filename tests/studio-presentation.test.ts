@@ -6,11 +6,11 @@ import { createReturnsController } from './fixtures/returns.ts';
 import { createNatalDayExplorer } from '../src/state/natal-day.ts';
 import { libraryRecordAtMinute, natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 
-const personal = { personalAvailable: true, lifetime: { opened: true, mode: 'lifetime' as const }, returnsOpened: true };
+const personal = { personalAvailable: true, lifetime: { opened: true, mode: 'range' as const }, returnsOpened: true };
 test('an open personal Returns list is independent of Lifetime readiness', () => {
   assert.equal(studioPresentation(personal).returnsVisible, true);
   for (const change of [{ lifetime: null },
-    { lifetime: { opened: false, mode: 'lifetime' as const } }, { lifetime: { opened: true, mode: 'day' as const } }] as const) {
+    { lifetime: { opened: false, mode: 'range' as const } }, { lifetime: { opened: true, mode: 'transit-day' as const } }] as const) {
     const view = studioPresentation({ ...personal, ...change });
     assert.equal(view.personalTimelineVisible, false);
     assert.equal(view.returnsVisible, true);
@@ -50,7 +50,7 @@ test('Day and close commands close the Returns owner before presentation is deri
 });
 test('timeline modes are explicit and independent of DOM visibility', () => {
   assert.equal(studioPresentation({ isTransit: true }).timelineKind, 'day');
-  assert.equal(studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'day' } }).timelineKind, 'chronicle');
+  assert.equal(studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'transit-day' } }).timelineKind, 'chronicle');
   assert.equal(studioPresentation(personal).timelineKind, 'day');
   assert.equal(studioPresentation({ ...personal, dayOpened: true }).timelineKind, 'natal-day');
   const unsupported = studioPresentation({});
@@ -64,7 +64,7 @@ test('timeline modes are explicit and independent of DOM visibility', () => {
 
 test('the same presentation identifies the actual timeline panel for initial loading', () => {
   assert.equal(studioPresentation({ isTransit: true }).timelinePanel, 'transit');
-  assert.equal(studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'day' } }).timelinePanel, 'lifetime');
+  assert.equal(studioPresentation({ isTransit: true, lifetime: { opened: true, mode: 'transit-day' } }).timelinePanel, 'lifetime');
   assert.equal(studioPresentation(personal).timelinePanel, 'lifetime');
   assert.equal(studioPresentation({ ...personal, dayOpened: true }).timelinePanel, 'natal-day');
   assert.equal(studioPresentation({}).timelinePanel, null);

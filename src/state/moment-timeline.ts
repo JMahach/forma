@@ -5,18 +5,18 @@ import type { ChartInput } from '../domain/chart-composition.ts';
 import type { LifetimeClient } from '../data/lifetime-client.ts';
 import type { TransitDayClient } from '../data/transit-day-client.ts';
 import type { NatalDayClient } from '../data/natal-day-client.ts';
-import type { SavedLifetimeView } from '../data/view-store.ts';
+import type { SavedMomentTimelineView } from '../data/view-store.ts';
 import type { TransitPlanetFilter } from './transit-planets.ts';
 import { getConnectionMode, type ConnectionMode } from '../data/http-transport.ts';
 interface LifetimeDayState { current: ChartInput | null; timeline?: { date: string } | null }
-export interface LifetimeBounds { minUtc: number; maxUtc: number }
-export type LifetimeTarget = SavedLifetimeView & { minimumUtc?: string; maximumUtc?: string };
-type LifetimeRestoration = Omit<Partial<LifetimeTarget>, 'opened' | 'requestedUtc'> & { mode: 'day' | 'lifetime'; requestedUtc?: number | null };
+export interface MomentTimelineBounds { minUtc: number; maxUtc: number }
+export type MomentTimelineTarget = SavedMomentTimelineView & { minimumUtc?: string; maximumUtc?: string };
+type LifetimeRestoration = Omit<Partial<MomentTimelineTarget>, 'opened' | 'requestedUtc'> & { mode: 'transit-day' | 'range'; requestedUtc?: number | null };
 type LifetimeDataClient = Omit<LifetimeClient, 'readMinute'> & Partial<Pick<LifetimeClient, 'readMinute'>>;
 export interface MomentState { current: ChartInput | null; status: LifetimeStatus; error?: string; errorCode?: string; live?: boolean; retryCount?: number }
 type LifetimeStatus = 'idle' | 'loading' | 'ready' | 'error' | 'preparing';
-export type LifetimeExplorer = ReturnType<typeof createLifetimeExplorer>;
-export type LifetimeState = LifetimeExplorer['state'];
+export type MomentTimeline = ReturnType<typeof createMomentTimeline>;
+export type MomentTimelineState = MomentTimeline['state'];
 interface LifetimeOptions {
   connection?: () => ConnectionMode;
   visible?:()=>boolean;
@@ -29,9 +29,9 @@ interface LifetimeOptions {
   now?: () => number;
   getMomentState?: () => MomentState | null | undefined;
   planetFilter?: TransitPlanetFilter;
-  onStateChange?: (state: LifetimeState) => void;
+  onStateChange?: (state: MomentTimelineState) => void;
   onRender?: () => void;
-  onModeAccepted?: (state: Pick<LifetimeState, 'opened' | 'mode'>) => void;
+  onModeAccepted?: (state: Pick<MomentTimelineState, 'opened' | 'mode'>) => void;
 }
 type PlanetCommand = 'setPlanet' | 'setAllPlanets' | 'togglePlanet' | 'toggleAllPlanets';
 
@@ -48,7 +48,7 @@ function dateStart(value: unknown) {
 
 // Today reuses the existing transit. A custom date range uses the lifetime.
 // Only one point loads at a time; continuous scrubs retain the latest target.
-export function createLifetimeExplorer({
+export function createMomentTimeline({
   observe, connection = getConnectionMode, visible=()=>true, dayClient = null, natalDayClient = null, getPersonalRecord = () => null,
   client = createLifetimeClient({ dayClient, natalDayClient, getPersonalRecord }), getDayState = () => null, now = () => Date.now(),
   getMomentState = () => null,
@@ -59,8 +59,8 @@ export function createLifetimeExplorer({
   let metadata: LifetimeMetadata | null = null, fullChart: ChartInput | null = null, exploredChart: ChartInput | null = null;
   let requestedUtc: number | null = null, restoring = false, pendingRestore: LifetimeRestoration | null = null;
   const current = () => planetFilter.filter(fullChart);
-  let interacting = false, selection = 0, selectionBounds: LifetimeBounds | null = null, selectionRound = Math.round;
-  let opened = false, mode: 'day' | 'lifetime' = 'day', status: LifetimeStatus = 'idle', error = '', errorCode = '', sequence = 0;
+  let interacting = false, selection = 0, selectionBounds: MomentTimelineBounds | null = null, selectionRound = Math.round;
+  let opened = false, mode: 'transit-day' | 'range' = 'transit-day', status: LifetimeStatus = 'idle', error = '', errorCode = '', sequence = 0;
   let active: { controller: AbortController; promise: Promise<boolean> } | null = null, notifiedReference: number | null = null;
   let retryCount = 0, retryTimer: ReturnType<typeof setTimeout> | null = null;
   let openStart = false, openEnded = false;
@@ -70,8 +70,8 @@ export function createLifetimeExplorer({
   const clampUtc = (value: number) => Math.max(minUtc!, Math.min(maxUtc!, value));
   const indexAt = (utc: number) => (utc - Date.parse(metadata!.startUtc)) / (metadata!.stepSeconds * 1000);
   const utcAt = (index: number) => Date.parse(metadata!.startUtc) + index * metadata!.stepSeconds * 1000;
-  const limits = (bounds: LifetimeBounds | null) => ({ min: Math.max(minUtc!, bounds?.minUtc ?? minUtc!), max: Math.min(maxUtc!, bounds?.maxUtc ?? maxUtc!) });
-  function gridUtc(value: number, round = Math.round, bounds: LifetimeBounds | null = null) {
+  const limits = (bounds: MomentTimelineBounds | null) => ({ min: Math.max(minUtc!, bounds?.minUtc ?? minUtc!), max: Math.min(maxUtc!, bounds?.maxUtc ?? maxUtc!) });
+  function gridUtc(value: number, round = Math.round, bounds: MomentTimelineBounds | null = null) {
     const { min, max } = limits(bounds), first = Math.ceil(indexAt(min)), last = Math.floor(indexAt(max));
     if (first > last) return bounds ? null : min;
     const index = Math.max(first, Math.min(last, round(indexAt(value))));
@@ -83,12 +83,12 @@ export function createLifetimeExplorer({
     maxUtc = Math.min(Date.parse(metadata!.endExclusiveUtc) - 1, end - 1, rangeCeiling ? Date.parse(rangeCeiling) : Infinity);
   }
   function referenceUtc() {
-    if (mode !== 'lifetime' || !metadata || minUtc === null) return null;
+    if (mode !== 'range' || !metadata || minUtc === null) return null;
     const value = Math.floor(now() / 60000) * 60000;
     return Number.isFinite(value) && value >= minUtc && value <= maxUtc! ? value : null;
   }
   const offline = () => connection() === 'offline';
-  const canScrub = () => (!offline() || mode === 'day' && Boolean(getDayState()?.current)
+  const canScrub = () => (!offline() || mode === 'transit-day' && Boolean(getDayState()?.current)
     || Boolean(metadata && minUtc !== null && maxUtc !== null && Number.isFinite(client.nearestMinute?.(requestedUtc ?? minUtc, {min: minUtc, max: maxUtc}, Math.round))));
   const state = () => ({ opened, mode, status, error, errorCode, retryCount, metadata, offline: offline(), canScrub: canScrub(), current: opened ? current() : null, requestedUtc, displayedUtc: shownUtc(),
     fromDate, toDate, openStart, openEnded, minDate, maxDate, minUtc, maxUtc, referenceUtc: referenceUtc(),
@@ -109,7 +109,7 @@ export function createLifetimeExplorer({
     return changed;
   }
   function syncDay() {
-    if (!opened || mode !== 'day' || !borrowDay()) return false;
+    if (!opened || mode !== 'transit-day' || !borrowDay()) return false;
     notify(); return true;
   }
   function applySelection<K extends PlanetCommand>(method: K, ...args: Parameters<TransitPlanetFilter[K]>) {
@@ -125,7 +125,7 @@ export function createLifetimeExplorer({
   // to that moment must not calculate a second, rounded lifetime chart.
   function alignMoment(chart: ChartInput | null | undefined) {
     const utc = Date.parse(chart?.utc!);
-    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(utc)) return false;
+    if (!opened || mode !== 'range' || !metadata || !Number.isFinite(utc)) return false;
     const next = clampUtc(utc);
     if (chart === fullChart && next === requestedUtc && !exploredChart && status === 'ready' && !active) return true;
     cancel(); requestedUtc = next; fullChart = chart!; exploredChart = null;
@@ -136,10 +136,10 @@ export function createLifetimeExplorer({
     cancel(); requestedUtc = utc; fullChart = exploredChart = chart;
     status = 'ready'; error = ''; errorCode = '';
     const generation = sequence; notify();
-    if (generation === sequence && opened && mode === 'lifetime') onRender();
+    if (generation === sequence && opened && mode === 'range') onRender();
     return Promise.resolve(true);
   }
-  function chooseTarget(value: number, round = Math.round, bounds: LifetimeBounds | null = null) {
+  function chooseTarget(value: number, round = Math.round, bounds: MomentTimelineBounds | null = null) {
     const { min, max } = limits(bounds);
     if (min > max) return null;
     const clamped = Math.max(min, Math.min(max, value));
@@ -165,27 +165,27 @@ export function createLifetimeExplorer({
     observation??=observe?.({action:'data_read',component:'lifetime'});
     const currentObservation=observation;
     const request = { controller: new AbortController(), promise: null as unknown as Promise<boolean> }, generation = ++sequence;
-    active = request; restoring = Boolean(restoration); status = mode === 'day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = ''; errorCode = '';
+    active = request; restoring = Boolean(restoration); status = mode === 'transit-day' && fullChart && retryCount === 0 ? 'ready' : 'loading'; error = ''; errorCode = '';
     request.promise = Promise.resolve().then(async () => {
       if (generation !== sequence || !opened) return false;
       try {
         let receivedMetadata = false;
         // An explicit opening checks whether the selected natal's day has
         // appeared since the last visit. Scrubs reuse that preparation.
-        if (!metadata || refreshNatalDay || restoration?.mode === 'lifetime' && getPersonalRecord()) {
+        if (!metadata || refreshNatalDay || restoration?.mode === 'range' && getPersonalRecord()) {
           const value = await client.getMeta({ signal: request.controller.signal, refreshNatalDay });
           if (generation !== sequence || !opened) return false;
           metadata = validateLifetimeMetadata(value); receivedMetadata = true;
           minDate = metadata!.startUtc.slice(0, 10);
           maxDate = new Date(Date.parse(metadata!.endExclusiveUtc) - 1).toISOString().slice(0, 10);
         }
-        if (restoration?.mode === 'lifetime') {
+        if (restoration?.mode === 'range') {
           const from = restoration.openStart ? minDate : restoration.fromDate;
           const through = restoration.openEnded || (restoration.minimumUtc && restoration.toDate! > maxDate!)
             ? maxDate : restoration.toDate;
           const start = dateStart(from), end = dateStart(through) + dayMilliseconds;
           if (from! < minDate! || through! > maxDate! || from! > through!) {
-            pendingRestore = null; mode = 'day'; borrowDay();
+            pendingRestore = null; mode = 'transit-day'; borrowDay();
             onModeAccepted({ opened, mode });
             if (generation === sequence && opened) notify();
             return false;
@@ -196,21 +196,21 @@ export function createLifetimeExplorer({
           // their selected minute even when its day must be loaded explicitly.
           if (restoration.requestedUtc === undefined) requestedUtc = gridUtc(requestedUtc);
           else if (restoration.requestedUtc! > maxUtc!) requestedUtc = Math.max(minUtc!, Math.floor(maxUtc! / 60000) * 60000);
-          mode = 'lifetime'; fromDate = from!; toDate = through!; openStart = restoration.openStart!; openEnded = restoration.openEnded!;
+          mode = 'range'; fromDate = from!; toDate = through!; openStart = restoration.openStart!; openEnded = restoration.openEnded!;
           status = 'loading';
         }
         if (restoration) onModeAccepted({ opened, mode });
         if (generation !== sequence || !opened) return false;
         if (receivedMetadata || restoration) notify();
         if (generation !== sequence || !opened) return false;
-        if (mode === 'day') {
+        if (mode === 'transit-day') {
           retryCount = 0; borrowDay(); notify();
           if (generation !== sequence || !opened) return false;
           if (restoration) onRender();
           pendingRestore = null;
           return true;
         }
-        while (generation === sequence && opened && mode === 'lifetime') {
+        while (generation === sequence && opened && mode === 'range') {
           const momentState = getMomentState();
           if (momentState) {
             if (momentState.current) alignMoment(momentState.current);
@@ -231,7 +231,7 @@ export function createLifetimeExplorer({
               // does not inspect the whole-minute transit day.
               if (target % 60000 === 0) checkedDay = { date: new Date(target).toISOString().slice(0, 10) };
             }
-            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
+            if (generation !== sequence || !opened || mode !== 'range') return false;
             // A disk miss has no ready progress to show. Recheck ownership and
             // the selected UTC before starting another request for this target.
             if (!chart && (getMomentState() || target !== requestedUtc)) continue;
@@ -263,12 +263,12 @@ export function createLifetimeExplorer({
               const point = await client.getPoint(requestedIndex, { signal: request.controller.signal, checkedDay });
               chart = lifetimeChartAt(metadata, validateLifetimeMoment(point, metadata, requestedIndex));
             }
-            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
+            if (generation !== sequence || !opened || mode !== 'range') return false;
             // A live/exact owner can take over while this point is pending.
             // Do not publish it or continue a superseded coalesced scrub.
             if (getMomentState()) continue;
           } catch (failure) {
-            if (generation !== sequence || !opened || mode !== 'lifetime') return false;
+            if (generation !== sequence || !opened || mode !== 'range') return false;
             if (getMomentState() || target !== requestedUtc) continue;
             throw failure;
           }
@@ -278,7 +278,7 @@ export function createLifetimeExplorer({
           fullChart = exploredChart = chart;
           retryCount = 0;
           status = target === requestedUtc ? 'ready' : 'loading'; error = ''; errorCode = ''; notify();
-          if (generation !== sequence || !opened || mode !== 'lifetime') return false;
+          if (generation !== sequence || !opened || mode !== 'range') return false;
           onRender();
           if (target === requestedUtc) { pendingRestore = null; return true; }
         }
@@ -320,7 +320,7 @@ export function createLifetimeExplorer({
   }
   function open() {
     if (opened) return active?.promise || Promise.resolve(true);
-    cancel(); opened = true; mode = 'day'; minUtc = maxUtc = rangeCeiling = null;
+    cancel(); opened = true; mode = 'transit-day'; minUtc = maxUtc = rangeCeiling = null;
     planetFilter.setExpanded(true);
     status = 'idle'; error = ''; errorCode = ''; borrowDay();
     const generation = sequence;
@@ -334,12 +334,12 @@ export function createLifetimeExplorer({
   }
 
   function restore(input: unknown) {
-    const snapshot = input as LifetimeTarget | null;
+    const snapshot = input as MomentTimelineTarget | null;
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
-        || snapshot.opened !== true || !['day', 'lifetime'].includes(snapshot.mode)
+        || snapshot.opened !== true || !['transit-day', 'range'].includes(snapshot.mode)
         || snapshot.openEnded !== undefined && typeof snapshot.openEnded !== 'boolean'
         || snapshot.openStart !== undefined && typeof snapshot.openStart !== 'boolean') return Promise.resolve(false);
-    if (snapshot.mode === 'lifetime' && (!(snapshot.requestedUtc === undefined ? Number.isSafeInteger(snapshot.index)
+    if (snapshot.mode === 'range' && (!(snapshot.requestedUtc === undefined ? Number.isSafeInteger(snapshot.index)
         : Number.isSafeInteger(snapshot.requestedUtc) && Number.isFinite(new Date(snapshot.requestedUtc!).getTime()))
         || !Number.isFinite(dateStart(snapshot.fromDate))
         || !snapshot.openEnded && (!Number.isFinite(dateStart(snapshot.toDate)) || snapshot.fromDate! > snapshot.toDate!))) return Promise.resolve(false);
@@ -357,7 +357,7 @@ export function createLifetimeExplorer({
       openStart: snapshot.openStart === true, openEnded: snapshot.openEnded === true, requestedUtc: snapshot.requestedUtc, index: snapshot.index, minimumUtc: snapshot.minimumUtc, maximumUtc: snapshot.maximumUtc };
     cancel(); opened = true; mode = restoration.mode; minUtc = maxUtc = rangeCeiling = null; exploredChart = null;
     planetFilter.setExpanded(true); status = 'idle'; error = ''; errorCode = '';
-    if (mode === 'day') borrowDay();
+    if (mode === 'transit-day') borrowDay();
     else { fullChart = null; requestedUtc = restoration.requestedUtc ?? null; fromDate = restoration.fromDate; toDate = restoration.toDate; openStart = restoration.openStart!; openEnded = restoration.openEnded!; }
     pendingRestore = restoration;
     return load(restoration, Boolean(getPersonalRecord()));
@@ -370,8 +370,8 @@ export function createLifetimeExplorer({
     onModeAccepted({ opened, mode });
     notify(); onRender();
   }
-  function scrub(value: number, bounds: LifetimeBounds | null = null, round = Math.round) {
-    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(value)
+  function scrub(value: number, bounds: MomentTimelineBounds | null = null, round = Math.round) {
+    if (!opened || mode !== 'range' || !metadata || !Number.isFinite(value)
         || bounds && (!Number.isFinite(bounds.minUtc) || !Number.isFinite(bounds.maxUtc))) return;
     const next = chooseTarget(value, round, bounds);
     if (!next) return;
@@ -386,7 +386,7 @@ export function createLifetimeExplorer({
     return load();
   }
   function adjacentUtc(direction: number) {
-    if (!opened || mode !== 'lifetime' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
+    if (!opened || mode !== 'range' || !metadata || !Number.isFinite(requestedUtc) || !direction) return null;
     const forward = direction > 0;
     const minute = (forward ? Math.floor(requestedUtc! / 60000) + 1 : Math.ceil(requestedUtc! / 60000) - 1) * 60000;
     if (!forward && minute <= minUtc!) return minUtc;
@@ -407,7 +407,7 @@ export function createLifetimeExplorer({
 
     setInteracting(value: boolean) { interacting = Boolean(value); },
     adjacentUtc,
-    step(direction: number, bounds: LifetimeBounds | null = null, beforeSelect: (utc: number) => boolean | void = () => {}) {
+    step(direction: number, bounds: MomentTimelineBounds | null = null, beforeSelect: (utc: number) => boolean | void = () => {}) {
       let target = adjacentUtc(direction);
       if (!Number.isFinite(target)) return;
       const forward = direction > 0;
@@ -444,8 +444,8 @@ export function createLifetimeExplorer({
       selectionBounds = null; selectionRound = Math.round;
       const currentDay = dayDate(getDayState());
       if (!nextOpenStart && !nextOpenEnded && from === currentDay && through === currentDay) {
-        if (mode === 'day') return true;
-        cancel(); mode = 'day'; minUtc = maxUtc = rangeCeiling = null;
+        if (mode === 'transit-day') return true;
+        cancel(); mode = 'transit-day'; minUtc = maxUtc = rangeCeiling = null;
         status = 'idle'; error = ''; errorCode = ''; borrowDay();
         const generation = sequence;
         onModeAccepted({ opened, mode });
@@ -453,7 +453,7 @@ export function createLifetimeExplorer({
         notify(); onRender();
         return true;
       }
-      if (mode === 'lifetime' && from === fromDate && through === toDate) {
+      if (mode === 'range' && from === fromDate && through === toDate) {
         if (openStart === nextOpenStart && openEnded === nextOpenEnded) return true;
         if (restoring || pendingRestore || retryTimer !== null) cancel();
         openStart = nextOpenStart; openEnded = nextOpenEnded;
@@ -471,10 +471,10 @@ export function createLifetimeExplorer({
       if (restoring || pendingRestore || retryTimer !== null) cancel();
       retryCount = 0; setBounds(start, end);
       const shown = Date.parse(fullChart?.utc!);
-      const target = chooseTarget(mode === 'lifetime' ? requestedUtc! : Number.isFinite(shown) ? shown : minUtc!, Math.floor)!;
+      const target = chooseTarget(mode === 'range' ? requestedUtc! : Number.isFinite(shown) ? shown : minUtc!, Math.floor)!;
       selectionRound = Math.floor;
       requestedUtc = target.utc;
-      mode = 'lifetime'; fromDate = from!; toDate = through!; openStart = nextOpenStart; openEnded = nextOpenEnded;
+      mode = 'range'; fromDate = from!; toDate = through!; openStart = nextOpenStart; openEnded = nextOpenEnded;
       const generation = sequence;
       onModeAccepted({ opened, mode });
       if (generation !== sequence || !opened) return false;

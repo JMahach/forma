@@ -5,7 +5,7 @@ import type { ChartComposition, ChartInput } from '../src/domain/chart-compositi
 import type { SavedChart, ChartRecord, Activation } from '../shared/chart-types.ts';
 import type { NatalDayExplorer } from '../src/state/natal-day.ts';
 import type { LiveTransit } from '../src/state/live-transit.ts';
-import type { LifetimeExplorer } from '../src/state/lifetime.ts';
+import type { MomentTimeline } from '../src/state/moment-timeline.ts';
 import type { ReturnsController } from '../src/state/returns.ts';
 import type { ChartSession } from '../src/state/chart-session.ts';
 import type { ChartExploration } from '../src/state/chart-exploration.ts';
@@ -22,7 +22,7 @@ import { extractChartData } from '../src/domain/chart-data.ts';
 import { createChartStore } from '../src/data/chart-store.ts';
 import { createNatalDayExplorer } from '../src/state/natal-day.ts';
 import { createReturnsController } from './fixtures/returns.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import { createLiveTransit } from '../src/state/live-transit.ts';
 import { libraryRecordAtMinute } from './fixtures/natal-day.ts';
@@ -147,7 +147,7 @@ function scaleHarness() {
   const natal = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() },
     onRender: () => session.publish('natal-day', natal.current) });
   h.natal = natal;
-  const lifetime = createLifetimeExplorer({ client: {
+  const lifetime = createMomentTimeline({ client: {
     getMeta: async () => ({ startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z', stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata),
     getPoint: () => assert.fail('personal mode entry borrows exact birth, never a rounded lifetime point'),
   }, getMomentState: () => scales.momentState() });
@@ -257,7 +257,7 @@ test('Transit Lifetime never becomes personal Returns when navigating back', asy
   assert.equal(await h.lifetime.setDateRange('2026-09-24', '2026-09-26'), true);
   assert.equal(h.session.selectedId, 'current-transit');
   assert.equal(h.lifetime.state.opened, true, 'precondition: the global lifetime is actually open');
-  assert.equal(h.lifetime.state.mode, 'lifetime');
+  assert.equal(h.lifetime.state.mode, 'range');
   assert.equal(h.lifetime.state.status, 'ready');
   assert.equal(h.session.current.primary, h.lifetime.current);
   assert.equal(h.session.owner, 'lifetime');
@@ -301,7 +301,7 @@ test('a return selected during a cold metadata load becomes the rail target, whi
   finishMetadata!({ startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z',
     stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata);
   assert.equal(await opening, true);
-  assert.equal(h.lifetime.state.mode, 'lifetime'); assert.equal(h.lifetime.state.status, 'ready');
+  assert.equal(h.lifetime.state.mode, 'range'); assert.equal(h.lifetime.state.status, 'ready');
   assert.equal(h.lifetime.state.requestedUtc, Date.parse(event.utc));
   assert.equal(h.lifetime.state.displayedUtc, Date.parse(event.utc));
   assert.equal(h.lifetime.current, h.returns.current);
@@ -343,7 +343,7 @@ function birthLifetimeHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, 
   const metadata = { startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z',
     stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
   const calls: number[] = [], frames: ChartComposition[] = [];
-  let lifetime: LifetimeExplorer, returns: ReturnsController, exploration: ChartExploration, navigation: ChartExploration, natalDay: NatalDayExplorer;
+  let lifetime: MomentTimeline, returns: ReturnsController, exploration: ChartExploration, navigation: ChartExploration, natalDay: NatalDayExplorer;
   const transit = { state: { wanted: false }, setWanted(value: boolean) { this.state.wanted = value; } };
   const session = createChartSession({
     store: { get: id => id === natal.id ? natal : null, has: id => id === natal.id },
@@ -355,7 +355,7 @@ function birthLifetimeHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, 
   natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: exploration.publishDay });
   returns = createReturnsController({ client: returnClient || { events: async () => ({ events: [] }) },
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
-  lifetime = createLifetimeExplorer({ client: {
+  lifetime = createMomentTimeline({ client: {
     getMeta: getMeta || (async () => metadata),
     getPoint: async index => {
       calls.push(index);
@@ -371,7 +371,7 @@ function birthLifetimeHarness({ birthUtc = '2026-09-24T12:34:56.789Z', getMeta, 
   session.select(natal.id); session.showOriginal();
   return { session, lifetime, navigation, exploration, natal, natalDay, returns, calls, frames, get painted() { return frames.at(-1); },
     setPreview: exploration.restorePreview,
-    restore(requestedUtc = Date.parse(natal.utc), overrides = {}) { return lifetime.restore({ opened: true, mode: 'lifetime',
+    restore(requestedUtc = Date.parse(natal.utc), overrides = {}) { return lifetime.restore({ opened: true, mode: 'range',
       fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, requestedUtc, ...overrides }); } };
 }
 
@@ -408,7 +408,7 @@ test('Birth resets from another lifetime slot using its saved chart with no roun
 test('restoring the exact birth boundary borrows its saved chart without a lifetime request', async () => {
   const h = birthLifetimeHarness();
   assert.equal(h.lifetime.state.opened, false);
-  await h.lifetime.open(); assert.equal(h.lifetime.state.mode, 'day');
+  await h.lifetime.open(); assert.equal(h.lifetime.state.mode, 'transit-day');
   assert.equal(await h.restore(), true);
   assert.deepEqual(h.calls, []); assert.equal(h.lifetime.state.requestedUtc, Date.parse(h.natal.utc));
   assert.equal(h.lifetime.current, h.session.baseChart); assert.equal(h.lifetime.state.displayedUtc, Date.parse(h.natal.utc));
@@ -491,12 +491,12 @@ test('switching between Day and Returns is exclusive and switching Returns off l
 
 function lazyTransitScaleHarness({ metadataPending = false } = {}) {
   const chart = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
-  let session: ChartSession, lifetime: LifetimeExplorer | null = null, finishImport: (value: LifetimeExplorer) => void, finishMetadata: (value: LifetimeMetadata) => void;
-  const imported = new Promise<LifetimeExplorer>(resolve => { finishImport = resolve; });
+  let session: ChartSession, lifetime: MomentTimeline | null = null, finishImport: (value: MomentTimeline) => void, finishMetadata: (value: LifetimeMetadata) => void;
+  const imported = new Promise<MomentTimeline>(resolve => { finishImport = resolve; });
   const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
     stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
   const meta = metadataPending ? new Promise<LifetimeMetadata>(resolve => { finishMetadata = resolve; }) : Promise.resolve(metadata);
-  const controller = createLifetimeExplorer({ client: { getMeta: () => meta,
+  const controller = createMomentTimeline({ client: { getMeta: () => meta,
     getPoint: () => assert.fail('opening standalone Lifetime starts in Day and needs no lifetime point') } });
   const natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() }, onRender: () => session.publish('natal-day', natalDay.current) });
   const returns = createReturnsController();
@@ -544,7 +544,7 @@ test('a cancelled standalone Lifetime continuation cannot clear a later click sh
   assert.equal(await latest, true);
   assert.equal(h.scales.transitEnabled, true);
   assert.equal(h.controller.state.opened, true);
-  assert.equal(h.controller.state.mode, 'day');
+  assert.equal(h.controller.state.mode, 'transit-day');
   assert.equal(await h.scales.toggleTransit(), false);
   assert.equal(h.controller.state.opened, false);
   assert.equal(await h.scales.toggleTransit(), true, 'a loaded controller can be reopened normally');

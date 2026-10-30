@@ -12,7 +12,7 @@ function memory(value: unknown = null) {
 }
 const snapshot = { version: 1, selectedId: 'saved-chart', mandala: true,
   camera: { x: -320, y: -410, k: 2 },
-  lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-10-04', toDate: '2027-10-04', requestedUtc: 1604811600000 },
+  lifetime: { opened: true, mode: 'range', fromDate: '2020-10-04', toDate: '2027-10-04', requestedUtc: 1604811600000 },
   transit: { live: false, date: '2026-10-04', timeZone: 'Europe/Moscow', index: 400 },
   natalDay: { opened: false, exactOriginal: true, index: 0 },
   planets: { selectedPlanets: ['sun', 'moon'], selectedDesignPlanets: ['earth'] } };
@@ -23,7 +23,7 @@ test('legacy archive mode alias restores as lifetime without losing the saved mo
   assert.deepEqual(store.read(), snapshot);
   assert.equal(storage.writes.length, 0);
   assert.equal(store.write({ ...snapshot, mandala: false }), true);
-  assert.equal(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)!).lifetime.mode, 'lifetime');
+  assert.equal(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)!).lifetime.mode, 'range');
 });
 
 test('a fresh view store restores presentation without touching chart-library records', () => {
@@ -42,7 +42,7 @@ test('malformed and obsolete stored views fall back safely and cannot inject cha
     storage.records.set(VIEW_STORAGE_KEY, value); assert.equal(store.read(), null);
   }
   storage.records.set(VIEW_STORAGE_KEY, JSON.stringify({ ...snapshot, camera: { x: 'bad', y: 0, k: 0 },
-    selectedId: '../bad', lifetime: { opened: true, mode: 'lifetime', fromDate: '2020-02-31', toDate: '2027-10-04', index: -4 },
+    selectedId: '../bad', lifetime: { opened: true, mode: 'range', fromDate: '2020-02-31', toDate: '2027-10-04', index: -4 },
     arbitrary: { library: 'replace' } }));
   const read = store.read();
   assert.equal(read!.mandala, true); assert.equal(read!.selectedId, 'current-transit');
@@ -552,4 +552,23 @@ test('the old library workspace normalizes to knowledge while preserving the sel
  const store=createViewStore({getStorage:()=>memory({...snapshot,workspace:'library',birthForm})});
  const saved=store.read()!;assert.equal(saved.workspace,'knowledge');assert.equal(saved.selectedId,snapshot.selectedId);
  assert.deepEqual(saved.birthForm?.fields,birthForm.fields);assert.equal(saved.temporaryChart,undefined,'unfinished input is not a ready chart');
+});
+
+test('saved timeline mode names migrate only at the storage boundary without rewriting a read', () => {
+  for (const lifetime of [null, undefined]) {
+    const storage = memory({ ...snapshot, lifetime });
+    const restored = createViewStore({ getStorage: () => storage }).read();
+    assert.deepEqual(restored, { ...snapshot, lifetime: null }, 'a missing timeline must not discard the rest of the saved view');
+    assert.equal(storage.writes.length, 0);
+  }
+  for (const [oldMode, mode] of [['day', 'transit-day'], ['lifetime', 'range'], ['archive', 'range']]) {
+    const storage = memory({ ...snapshot, lifetime: { ...snapshot.lifetime, mode: oldMode } });
+    const store = createViewStore({ getStorage: () => storage });
+    const restored = store.read()!;
+    assert.equal(restored.lifetime!.mode, mode);
+    assert.deepEqual(restored.lifetime, { ...snapshot.lifetime, mode });
+    assert.equal(storage.writes.length, 0);
+    store.write({ ...restored, mandala: !restored.mandala });
+    assert.equal(JSON.parse(storage.records.get(VIEW_STORAGE_KEY)!).lifetime.mode, mode);
+  }
 });

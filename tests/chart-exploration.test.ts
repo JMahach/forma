@@ -1,5 +1,5 @@
 import type { ChartExploration } from '../src/state/chart-exploration.ts';
-import type { LifetimeExplorer } from '../src/state/lifetime.ts';
+import type { MomentTimeline } from '../src/state/moment-timeline.ts';
 import type { ReturnsController } from '../src/state/returns.ts';
 import type { LifetimeMetadata } from '../shared/lifetime-format.ts';
 import type { CycleEvent, CycleChartResult } from '../shared/cycles-format.ts';
@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { createChartSession } from './fixtures/chart-session.ts';
 import { extractChartData } from '../src/domain/chart-data.ts';
 import { createViewSession } from '../src/state/view-session.ts';
-import { createLifetimeExplorer } from './fixtures/lifetime.ts';
+import { createMomentTimeline } from './fixtures/lifetime.ts';
 import { LIFETIME_PLANETS } from '../shared/lifetime-format.ts';
 import { createChartExploration } from './fixtures/chart-session.ts';
 import { createReturnsController } from './fixtures/returns.ts';
@@ -30,7 +30,7 @@ test('real lifetime state follows live time and closes on unsupported navigation
   const records = [natal, manual, legacyTransit];
   const metadata = { startUtc: '1801-01-01T00:00:00Z', endExclusiveUtc: '2400-01-01T00:00:00Z',
     stepSeconds: 600, samples: 31_504_320, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
-  let exploration: ChartExploration, lifetime: LifetimeExplorer;
+  let exploration: ChartExploration, lifetime: MomentTimeline;
   const returns = createReturnsController({ client: { events: async () => ({ events: [] }) } });
   const natalDay = createNatalDayExplorer({ dayClient: { getDay: async () => natalDayFixture() } });
   const current = moment('2026-10-05T12:00:00Z');
@@ -43,7 +43,7 @@ test('real lifetime state follows live time and closes on unsupported navigation
   });
   exploration = createChartExploration({ session, getLifetime: () => lifetime, getReturns: () => returns,
     getNatalDay: () => natalDay, getTransit: () => transit, loadLifetime: async () => lifetime });
-  lifetime = createLifetimeExplorer({ client: { getMeta: async () => metadata,
+  lifetime = createMomentTimeline({ client: { getMeta: async () => metadata,
     getPoint() { assert.fail('the accepted birth/live chart already owns the moment'); } },
     getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
     onRender: exploration.publishLifetime, onStateChange: exploration.lifetimeChanged });
@@ -127,13 +127,13 @@ test('covered global Day keeps its minute owner active and lifetime explicitly s
   const session = createChartSession({ store: { get: () => null, has: () => false } });
   const exploration = createChartExploration({ session, getTransit: () => transit,
     getReturns: () => null, getLifetime: () => null, getNatalDay: () => null });
-  exploration.acceptLifetimeMode({ opened: true, mode: 'day' });
+  exploration.acceptLifetimeMode({ opened: true, mode: 'transit-day' });
   assert.equal(wanted, true);
   assert.equal(session.current.primary, transit.current);
-  exploration.acceptLifetimeMode({ opened: true, mode: 'lifetime' });
+  exploration.acceptLifetimeMode({ opened: true, mode: 'range' });
   assert.equal(wanted, false);
   assert.equal(session.owner, 'lifetime');
-  exploration.acceptLifetimeMode({ opened: false, mode: 'lifetime' });
+  exploration.acceptLifetimeMode({ opened: false, mode: 'range' });
   assert.equal(wanted, true);
   assert.equal(session.owner, 'transit');
 });
@@ -145,7 +145,7 @@ test('an initial closed lazy rail notification cannot override a pending lifetim
   session.expect('lifetime');
   const exploration = createChartExploration({ session, getTransit: () => ({ state: { wanted }, setWanted(value) { wanted = value; } }),
     getReturns: () => null, getLifetime: () => null, getNatalDay: () => null });
-  exploration.lifetimeChanged({ opened: false, mode: 'day' } as Parameters<ChartExploration['lifetimeChanged']>[0]);
+  exploration.lifetimeChanged({ opened: false, mode: 'transit-day' } as Parameters<ChartExploration['lifetimeChanged']>[0]);
   assert.equal(session.owner, 'lifetime');
   assert.equal(wanted, false);
 });
@@ -158,7 +158,7 @@ test('ordinary rail notifications never choose a different source of the visible
   const exploration = createChartExploration({ session, getTransit: () => transit,
     getReturns: () => null, getLifetime: () => null, getNatalDay: () => null });
   const shown = session.current;
-  exploration.lifetimeChanged({ opened: true, mode: 'day' } as Parameters<ChartExploration['lifetimeChanged']>[0]);
+  exploration.lifetimeChanged({ opened: true, mode: 'transit-day' } as Parameters<ChartExploration['lifetimeChanged']>[0]);
   assert.equal(session.owner, 'lifetime');
   assert.equal(wanted, false);
   assert.equal<unknown>(session.current, shown);
@@ -183,10 +183,10 @@ for (const explicitPreview of [undefined, true] as const) test(`real restoration
   const natal = { ...libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture()), utc: '2026-09-24T12:34:56.789Z' };
   const metadata = { startUtc: '2026-09-24T00:00:00Z', endExclusiveUtc: '2026-09-27T00:00:00Z', stepSeconds: 600, samples: 432, planets: [...LIFETIME_PLANETS] } as unknown as LifetimeMetadata;
   const saved = { selectedId: natal.id, natalDay: { opened: false },
-    lifetime: { opened: true, mode: 'lifetime', fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, index: 75,
+    lifetime: { opened: true, mode: 'range', fromDate: '2026-09-24', toDate: '2026-09-26', minimumUtc: natal.utc, index: 75,
       ...(explicitPreview === undefined ? {} : { personalPreview: explicitPreview }) } };
   const points: unknown[] = [], frames: (string|undefined)[] = [];
-  let exploration: ChartExploration, returns: ReturnsController, lifetime: LifetimeExplorer;
+  let exploration: ChartExploration, returns: ReturnsController, lifetime: MomentTimeline;
   const chartStore = { get: (id: string) => id === natal.id ? natal : null, has: (id: string) => id === natal.id };
   const session = createChartSession({ store: chartStore, getReturns: () => returns, getLifetime: () => lifetime,
     onChange: () => frames.push(session.current.utc) });
@@ -196,7 +196,7 @@ for (const explicitPreview of [undefined, true] as const) test(`real restoration
     getTransit: () => transit, getNatalDay: () => natalDay, loadLifetime: async () => lifetime });
   returns = createReturnsController({ client: { events: async () => ({ events: [] }) },
     onRequest: exploration.requestReturn, onRender: exploration.publishReturn });
-  lifetime = createLifetimeExplorer({ client: { getMeta: async () => metadata, getPoint: async index => {
+  lifetime = createMomentTimeline({ client: { getMeta: async () => metadata, getPoint: async index => {
     points.push(index); const utc = new Date(Date.parse(metadata.startUtc) + index * 600000).toISOString();
     return { index, utc, longitudes: Array(11).fill(1), design: { utc, designUtc: '2026-06-28T12:30:00Z', designArcResidualDegrees: 0, longitudes: Array(11).fill(2) } };
   } }, getMomentState: exploration.momentState, onModeAccepted: exploration.acceptLifetimeMode,
@@ -227,10 +227,10 @@ function returnListHarness({ active = false, restoreResult = true } = {}) {
   const natal = libraryRecordAtMinute(natalDayFixture(), 754, personalChartFixture());
   const second = { ...natal, id: 'second-list-chart', name: 'Вторая карта' };
   let returns: ReturnsController, exploration: ChartExploration, lifetime: typeof rail | null = null, finishLoad: (value: typeof rail | null) => void, loads = 0, dayCloses = 0;
-  const restorations: Parameters<LifetimeExplorer['restore']>[0][] = [];
+  const restorations: Parameters<MomentTimeline['restore']>[0][] = [];
   const rail = {
-    state: { opened: false, mode: 'lifetime' as const, requestedUtc: Date.parse('2040-03-02T12:00:00Z'), fromDate: '2039-01-01', toDate: '2041-12-31' } as { opened: boolean; mode: 'lifetime'; requestedUtc: number; fromDate: string; toDate: string; minimumUtc?: string },
-    restore(saved: Parameters<LifetimeExplorer['restore']>[0]) {
+    state: { opened: false, mode: 'range' as const, requestedUtc: Date.parse('2040-03-02T12:00:00Z'), fromDate: '2039-01-01', toDate: '2041-12-31' } as { opened: boolean; mode: 'range'; requestedUtc: number; fromDate: string; toDate: string; minimumUtc?: string },
+    restore(saved: Parameters<MomentTimeline['restore']>[0]) {
       restorations.push(saved);
       if (restoreResult) Object.assign(this.state, saved);
       return Promise.resolve(restoreResult);
@@ -283,7 +283,7 @@ test('return list entry records its opening immediately and opens the existing p
   h.finishLoad(); await opening;
   assert.equal(h.restorations.length, 1);
   assert.equal(h.rail.state.opened, true);
-  assert.equal(h.rail.state.mode, 'lifetime');
+  assert.equal(h.rail.state.mode, 'range');
   assert.equal(h.rail.state.minimumUtc, h.natal.utc);
   assert.equal(h.returns.state.opened, true);
   assert.equal(h.returns.state.year, 2050);
