@@ -302,7 +302,10 @@ export function createLifetimeExplorer({
           const delay = retryCount===1?1000:5000;
           if(retryCount<3)retryTimer = setTimeout(() => {
             if (generation !== sequence || !opened) return;
-            retryTimer = null;if(visible())void load();
+            retryTimer = null;
+            if(visible()){void load();return;}
+            status='error';error=problem.message || 'Данные летописи недоступны.';
+            currentObservation?.finishSuccess();if(observation===currentObservation)observation=undefined;notify();
           }, delay);
         }
         notify();

@@ -873,8 +873,8 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
   const initialRoute=navigation?.snapshot;
   function backgroundTasks():BackgroundTask[] {
     const tasks:BackgroundTask[]=[],access=account.getSession();
-    if(releaseCheck)tasks.push({target:{key:'app',scope:{kind:'app'},instance:'release'},
-      async run(authority){await releaseCheck!.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
+    if(releaseCheck || journal)tasks.push({target:{key:'app',scope:{kind:'app'},instance:'release'},
+      async run(authority){void journal?.wake();await releaseCheck?.check(authority.signal);return {outcome:{kind:'success'},data:{checked:true}};},
       receive(){releaseCheck?.observe();}});
     if(libraryInitialized && startupRestored() && access)tasks.push({
       target:{key:`library:${access.accountId}`,scope:{kind:'library',accountId:access.accountId},sessionId:access.sessionId},
@@ -1169,6 +1169,7 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
         const getPersonalRecord = () => returns!.available ? returns!.natal : null;
         let controls: LifetimeControls | undefined;
         const controller = createLifetimeExplorer({
+          visible:()=>!document.hidden,
           observe: action => journal?.begin(action),
           dayClient, natalDayClient, planetFilter: transitPlanets,
           getDayState, getPersonalRecord, getMomentState: exploration!.momentState,
@@ -1273,6 +1274,6 @@ export function startApp({ journal, storagePressure, navigation, calculationClie
       if(lastJournalAccount!==null)journal.setAccount(lastJournalAccount,lastJournalSession,lastJournalProof);
       if(journalBoundaryPending)journal.leave([...journalBoundaryIds]);
       if(lastJournalAccount===null || current!==lastJournalAccount || journalBoundaryPending)journal.setAccount(current,account.getSession()?.sessionId,account.getSession()?.diagnosticProof);
-      journalBoundaryPending=false;journalBoundaryIds.clear();
+      journalBoundaryPending=false;journalBoundaryIds.clear();application?.send({type:'BackgroundChanged'});
     } };
 }

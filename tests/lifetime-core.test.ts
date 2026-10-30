@@ -747,6 +747,7 @@ test('a lifetime retry timer cannot request data while its visibility port is in
  const explorer=createLifetimeExplorer({visible:()=>visible,client:{getMeta:async()=>{attempts++;throw Error('Unavailable');}}});
  t.after(()=>explorer.close());await explorer.open();assert.equal(attempts,1);visible=false;
  t.mock.timers.tick(1000);await tick();assert.equal(attempts,1);
+ assert.equal(explorer.state.status,'error');assert.equal(explorer.state.error,'Unavailable');
  t.mock.timers.tick(300_000);await tick();assert.equal(attempts,1);
  visible=true;await explorer.retry();assert.equal(attempts,2);
 });
