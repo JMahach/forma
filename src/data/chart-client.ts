@@ -1,7 +1,7 @@
 import { isChartIdentifier as identifier, isOperationIdentifier, MAX_CALCULATION_RECEIPT_LENGTH, canonicalChartId, chartOutcomeTarget } from '../../shared/chart-record-contract.ts';
 import type { AccountChart, PublicAccountChart, AccountChartPage, ChartWriteIntent, ChartWriteOutcome, ChartOutcome } from '../../shared/chart-record-contract.ts';
 import { validateAccountChart, validatePublicAccountChart } from '../domain/account-chart.ts';
-import { ConnectionError, fetchResource, responseError } from './http-transport.ts';
+import { ConnectionError, fetchResource, responseError,retryAfterMilliseconds } from './http-transport.ts';
 import {isLibraryCatalogMarker} from '../../shared/library-catalog-contract.ts';
 import {validateLibraryCatalogReply,validateLibraryCatalogConfirmation,type CatalogQuery} from '../domain/library-catalog.ts';
 
@@ -116,13 +116,13 @@ export function createChartClient({fetch: send = fetchResource, getSession}: Opt
     let value: unknown;
     try { value = await response.json(); } catch (error) {
       active(signal);
-      if (!response.ok && error instanceof SyntaxError) throw responseError(response.status, null, 'chart_unavailable');
+      if (!response.ok && error instanceof SyntaxError) throw responseError(response.status, null, 'chart_unavailable',retryAfterMilliseconds(response.headers.get('Retry-After')));
       if (object(error) && typeof error.code === 'string') throw error;
       if (error instanceof TypeError) throw new ConnectionError('connection_failed');
       throw invalid();
     }
     active(signal);
-    if (!response.ok) throw responseError(response.status, value, 'chart_unavailable');
+    if (!response.ok) throw responseError(response.status, value, 'chart_unavailable',retryAfterMilliseconds(response.headers.get('Retry-After')));
     if (!object(value)) throw invalid();
     return value;
   }

@@ -74,11 +74,16 @@ export function subscribeConnection(listener: (mode: ConnectionMode) => void): (
   };
 }
 
-export interface HttpResponseError extends Error { code?: string; status?: number; choices?: unknown; details?: unknown }
+export interface HttpResponseError extends Error { code?: string; status?: number; choices?: unknown; details?: unknown;retryAfterMs?:number }
+export function retryAfterMilliseconds(value:string|null,now=Date.now()):number|undefined {
+  if(!value)return undefined;
+  const delay=/^\d+$/.test(value.trim())?Number(value)*1000:Date.parse(value)-now;
+  return Number.isFinite(delay)&&delay>=0?delay:undefined;
+}
 /** Retain the server's reason and status. The UI chooses its own short wording. */
-export function responseError(status: number | undefined, payload: unknown, fallback: string): HttpResponseError {
+export function responseError(status: number | undefined, payload: unknown, fallback: string,retryAfterMs?:number): HttpResponseError {
   const data = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload as Record<string, unknown> : null;
   const code = typeof data?.error === 'string' && data.error.trim() ? data.error : (status ?? 0) >= 500 ? 'server_error' : 'request_failed';
   const message = typeof data?.message === 'string' && data.message.trim() ? data.message : fallback;
-  return Object.assign(new Error(message), { code, status, choices: data?.choices, details: payload });
+  return Object.assign(new Error(message), { code, status, choices: data?.choices, details: payload,...(retryAfterMs===undefined?{}:{retryAfterMs}) });
 }

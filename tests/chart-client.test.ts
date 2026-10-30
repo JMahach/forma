@@ -407,3 +407,7 @@ test('client and HTTP save a signed ready chart without recalculation or persist
     birth:{source:'transit',utc},calculationReceipt:proof+'x'}),{code:'invalid_request'});
   assert.equal(f.preparations(),1);
 });
+test('catalog HTTP failures retain Retry-After for the shared background budget',async()=>{
+ const client=createChartClient({getSession:()=>({accountId:'1',sessionId:'s'}),fetch:async()=>new Response('{"error":"busy"}',{status:429,headers:{'Retry-After':'120'}})});
+ await assert.rejects(client.catalog({expectedAccountId:'1'}),error=>(error as {retryAfterMs?:number}).retryAfterMs===120000);
+});
