@@ -7,6 +7,8 @@ import { createMemoryCache, TAB_CACHE_BYTES } from '../src/data/memory-cache.ts'
 import { encodeNatalDay, encodeTransitDay } from '../server/packets/encode.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
 import { deferred } from './helpers/deferred.ts';
+import {accountNatalChart} from './helpers/account-chart.ts';
+import {natalDaySourceKey,returnSourceKey,type PackageRef} from '../shared/library-package-contract.ts';
 
 const chart=personalChartFixture(),tick=()=>new Promise(setImmediate);
 const key=`natal-day:1:${chart.birthDate}:${chart.cityId}`;
@@ -14,6 +16,26 @@ const bytes=()=>encodeNatalDay(natalDayFixture()).buffer;
 const response=()=>({ok:true,arrayBuffer:async()=>bytes()});
 const cycleInput={birthUtc:'2000-01-01T00:00:00Z',body:'saturn',fromAge:0,toAge:100};
 const cycleResult=()=>({range:{fromAge:0,toAge:100},events:[]});
+
+test('shared calculation clients preserve observation-only package reads without storage repair',async t=>{
+ const indexedDB=new IDBFactory(),saved=accountNatalChart();
+ const clients=createCalculationClients({cacheOptions:{indexedDB},natal:{fetch:async()=>assert.fail('observation never requests HTTP')},cycles:{request:async()=>assert.fail('observation never requests HTTP')}});
+ t.after(()=>clients.close());const active=await clients.library.activate(saved.accountId);
+ if(active.status!=='stored')throw Error('owner');await clients.library.put(active.lease,[saved]);
+ const refs:Exclude<PackageRef,{kind:'card'}>[]=[
+  {kind:'day',sourceKey:natalDaySourceKey({date:saved.birthDate,timezone:saved.timezone!})},
+  {kind:'major-returns',sourceKey:returnSourceKey({birthUtc:saved.utc,timezone:saved.timezone!}),family:'saturn'},
+ ];
+ const open=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{open.onsuccess=()=>resolve(open.result);});t.after(()=>db.close());
+ await new Promise<void>((resolve,reject)=>{const tx=db.transaction('packages','readwrite');for(const ref of refs)tx.objectStore('packages').put({id:JSON.stringify(ref),payload:{broken:true}});tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);});
+ const writes:string[]=[],put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){writes.push(this.name);return put.apply(this,args);});
+ t.mock.method(IDBObjectStore.prototype,'delete',function(this:IDBObjectStore,...args:Parameters<typeof remove>){writes.push(this.name);return remove.apply(this,args);});
+ assert.equal(await clients.natal.readStoredDay(saved,{observeOnly:true,opened:true}),null);
+ assert.equal(await clients.cycles.readFamily({birthUtc:saved.utc,timezone:saved.timezone,body:'saturn'},
+  {chartId:saved.id,expectedAccountId:saved.accountId,record:saved},{observeOnly:true,opened:true}),null);
+ assert.deepEqual(writes,[],'availability checks cannot delete broken packages, migrate legacy parts or record use');
+});
 
 test('one early owner shares RAM and IDB while personal reset preserves transit and its retention',async t=>{
   const indexedDB=new IDBFactory(),memory=createMemoryCache({maxBytes:400_000});let natalCalls=0;

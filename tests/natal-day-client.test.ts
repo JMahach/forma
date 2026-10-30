@@ -6,11 +6,57 @@ import { encodeNatalDay as encodePacket, type NatalDay } from '../server/packets
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 import { NATAL_DAY_VERSION } from '../shared/day-packets/natal-format.ts';
 import { natalDayFixture, personalChartFixture } from './fixtures/natal-day.ts';
+import {accountNatalChart} from './helpers/account-chart.ts';
+import {natalDaySourceKey} from '../shared/library-package-contract.ts';
+import {createNatalDayExplorer} from '../src/state/natal-day.ts';
 
 const encodeNatalDay = (day: NatalDay) => encodePacket(day);
 const bytesFor = (date: string) => encodeNatalDay(natalDayFixture({ date })).buffer;
 const response = (date: string) => ({ ok: true, arrayBuffer: async () => bytesFor(date) });
 const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+test('an owned day misses locally into one ready-resource GET and reuses the result without POST',async()=>{
+ const chart=accountNatalChart(),calls:{url:string;options:RequestInit}[]=[];
+ const client=createNatalDayClient({persistentCache:null,fetch:async(url,options)=>{
+  calls.push({url,options});return new Response(bytesFor(chart.birthDate));
+ }});
+ const [first,second]=await Promise.all([client.getDay(chart),client.getDay({...chart})]);
+ assert.equal(first,second);assert.equal(await client.getDay(chart),first);assert.equal(calls.length,1);
+ const target=new URL(calls[0].url,'http://local');
+ assert.equal(target.pathname,`/api/charts/${chart.id}/day`);
+ assert.deepEqual([...target.searchParams],[['accountId',chart.accountId],['sourceKey',natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone!})]]);
+ assert.equal(calls[0].options.method,'GET');assert.equal(calls[0].options.body,undefined);
+});
+
+test('an owned not-ready day waits for explicit retry without a calculation fallback or polling',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const chart=accountNatalChart(),ref={kind:'day',sourceKey:natalDaySourceKey({date:chart.birthDate,timezone:chart.timezone!})};let calls=0;
+ const client=createNatalDayClient({persistentCache:null,fetch:async(_url,options)=>{
+  assert.equal(options.method,'GET');calls++;
+  return calls===1?Response.json({kind:'not-ready',ref},{status:202,headers:{'Retry-After':'1'}}):new Response(bytesFor(chart.birthDate));
+ }});
+ const explorer=createNatalDayExplorer({dayClient:client,connection:()=> 'online'});t.after(()=>explorer.select(null));
+ explorer.select({...chart,createdAt:'',updatedAt:''});
+ assert.equal(await explorer.open(),false);assert.equal(explorer.state.status,'error');assert.equal(calls,1);
+ t.mock.timers.tick(120_000);await settle();assert.equal(calls,1);
+ assert.equal(await explorer.retry(),true);assert.equal(explorer.state.status,'ready');assert.equal(calls,2);
+});
+
+test('owned day responses validate not-ready identity and keep distinct owner requests independent',async()=>{
+ const chart=accountNatalChart();
+ for(const body of [null,{kind:'not-ready',ref:{kind:'day',sourceKey:'different'}}]){
+  const client=createNatalDayClient({persistentCache:null,fetch:async()=>Response.json(body,{status:202})});
+  await assert.rejects(client.getDay(chart),{code:'invalid_response'});
+ }
+ const calls:string[]=[],resolve:((value:Response)=>void)[]=[];
+ const client=createNatalDayClient({persistentCache:null,fetch:(url)=>{calls.push(url);return new Promise<Response>(done=>resolve.push(done));}});
+ const first=client.getDay(chart),second=client.getDay({...chart,id:accountNatalChart(2).id}),completed=Promise.allSettled([first,second]);
+ try {
+  await settle();assert.equal(calls.length,2,'private resource failure must not be shared with another saved card');
+  resolve[0](Response.json({error:'not_found'},{status:404}));resolve[1](new Response(bytesFor(chart.birthDate)));
+  await assert.rejects(first,{code:'not_found'});assert.equal((await second).date,chart.birthDate);
+ }finally{for(const done of resolve)done(new Response(bytesFor(chart.birthDate)));await completed;}
+});
 
 test('personal-day request is explicit POST with minimal birth data and coalesces consumers', async () => {
   const requests: unknown[] = [];

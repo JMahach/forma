@@ -20,6 +20,7 @@ export type NatalDayClient = ReturnType<typeof createNatalDayClient>;
 
 import { NATAL_DAY_VERSION } from '../../shared/day-packets/natal-format.ts';
 import { decodeNatalDay } from '../../shared/day-packets/decode.ts';
+import {natalDaySourceKey} from '../../shared/library-package-contract.ts';
 import {createNatalDayStorage,captureNatalDayStorage,type DayDisk} from './natal-day-storage.ts';
 import { createMemoryCache,estimateBytes } from './memory-cache.ts';
 import { createAbortError, shareRequest } from '../runtime/shared-request.ts';
@@ -102,7 +103,10 @@ export function createNatalDayClient({
   async function getDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
     const input = identity(chart);
     if (!input) throw Object.assign(new Error('Для просмотра дня нужны дата и город рождения.'),{code:'invalid_request'});
-    const { birthDate, cityId, timezone, key } = input,disk=diskFor(chart);
+    const { birthDate, cityId, key } = input,disk=diskFor(chart),timezone=input.timezone||(chart?.accountId?'UTC':undefined);
+    const own=chart?.accountId?{chartId:chart.id,accountId:chart.accountId,sourceKey:natalDaySourceKey({date:birthDate,timezone:timezone!})}:null;
+    if(own && !own.chartId)throw Object.assign(new Error('Не найдена сохранённая карта.'),{code:'invalid_request'});
+    const requestKey=own?JSON.stringify([key,own]):key;
     if (signal?.aborted) throw createAbortError();
     const forChart = (day: NatalDay) => {
       if (!compatibleTimezone(day, timezone)) throw Object.assign(new Error('Часовой пояс расчёта не совпадает с картой.'),{code:'invalid_response'});
@@ -115,7 +119,7 @@ export function createNatalDayClient({
       return remember(key,cached,disk);
     }
     if (skipDisk) forget(key,disk);
-    return forChart(await shareRequest(pending, key, async ({ controller, consumers }) => {
+    return forChart(await shareRequest(pending, requestKey, async ({ controller, consumers }) => {
       let bytes: ArrayBuffer | null | undefined;
       try { if (!skipDisk) bytes = await disk?.get(key,true); } catch { /* Local storage is optional. */ }
       if (controller.signal.aborted) throw createAbortError();
@@ -133,10 +137,19 @@ export function createNatalDayClient({
       let timedOut = false;
       const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
       try {
-        const response = await fetchDay('/api/chart/day', {
+        // Saved cards read an existing resource. Preparation belongs to the
+        // server queue; a not-ready read never falls through into calculation.
+        const response = own ? await fetchDay(`/api/charts/${encodeURIComponent(own.chartId!)}/day?`+
+          new URLSearchParams({accountId:own.accountId,sourceKey:own.sourceKey}),{method:'GET',cache:'no-store',signal:controller.signal}) : await fetchDay('/api/chart/day', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
           body: JSON.stringify({ birthDate, cityId, v: NATAL_DAY_VERSION }), signal: controller.signal,
         });
+        if(own && response.status===202){
+          const reply=await response.json().catch(()=>null);
+          if(reply?.kind!=='not-ready' || reply.ref?.kind!=='day' || reply.ref.sourceKey!==own.sourceKey)
+            throw Object.assign(new Error('Некорректный ответ о готовности дня.'),{code:'invalid_response'});
+          throw Object.assign(new Error('День ещё готовится. Повторите попытку позже.'),{code:'not_ready'});
+        }
         if (!response.ok) {
           let error;
           try { error = await response.json(); } catch { /* Proxies may return empty errors. */ }

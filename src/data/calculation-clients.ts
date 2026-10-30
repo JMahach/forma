@@ -143,7 +143,7 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
   // after durable cleanup never changes the port of an already running call.
   const natal:NatalDayClient={
     readStoredDay(input,options){const value=current,client=value.clients.natal;
-      return run(value,options?.signal,signal=>client.readStoredDay(input,{signal,opened:options?.opened})).then(day=>rememberNatal(day,value,client,options?.signal));},
+      return run(value,options?.signal,signal=>client.readStoredDay(input,{signal,opened:options?.opened,observeOnly:options?.observeOnly})).then(day=>rememberNatal(day,value,client,options?.signal));},
     getDay(input,options){const value=current,client=value.clients.natal;
       return run(value,options?.signal,signal=>client.getDay(input,{signal})).then(day=>{rememberNatal(day,value,client,options?.signal);return day;});},
     readDay(input,options){const value=current,client=value.clients.natal;
@@ -155,7 +155,7 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
     receiveFamily(input,owner,options){const value=current,client=value.clients.cycles;
       return run(value,options?.signal,signal=>client.receiveFamily(input,owner,{signal}));},
     readFamily(input,owner,options){const value=current,client=value.clients.cycles;
-      return run(value,options?.signal,signal=>client.readFamily(input,owner,{signal,opened:options?.opened}));},
+      return run(value,options?.signal,signal=>client.readFamily(input,owner,{signal,opened:options?.opened,observeOnly:options?.observeOnly}));},
     fetchFamily(input,owner,options){const value=current,client=value.clients.cycles;
       return run(value,options?.signal,signal=>client.fetchFamily(input,owner,{signal}));},
     preparedChartInputs(input,options){const value=current,client=value.clients.cycles;
