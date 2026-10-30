@@ -1,7 +1,7 @@
 import { assign, fromPromise, sendTo, setup } from 'xstate';
 import {prepareRoute,chartDestination,showChart,routeForChart,publishRoute} from './route.ts';
 import { createAccountBoundaryMachine } from './account-boundary.ts';
-import { createStartupMachine } from './startup.ts';
+import { createStartupMachine,type StartupRuntime } from './startup.ts';
 import { createPublicRefreshMachine } from './public-refresh.ts';
 import {createWriteContinuationMachine,writeContinuationView} from './write-continuation.ts';
 import {createBackgroundWork} from './background-work.ts';
@@ -16,7 +16,7 @@ function routeChanged(request:RouteRequest|null,event:Event,navigation?:Navigati
     && !!navigation?.isCurrent(event.snapshot) && request?.snapshot!==event.snapshot;
 }
 
-export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void) {
+export function createApplicationMachine(ports: ApplicationPorts, disconnect: () => void,sources:()=>Promise<void>,ready:()=>Promise<void>|void,startup:StartupRuntime) {
   const runtimeId = ports.runtimeId;
   let processId = 0;
   return setup({
@@ -38,7 +38,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       background:createBackgroundWork(ports.background!),
       libraryFill:createLibraryFill(ports.libraryFill!),
       libraryAudit:createLibraryLocalAudit(ports.libraryAudit!),
-      startup: createStartupMachine(ports.startup!),
+      startup: createStartupMachine(ports.startup!,startup,ports.navigation),
       publicRefresh: createPublicRefreshMachine(ports.publicRefresh!),
       account: createAccountBoundaryMachine(ports.account!, runtimeId,sources),
       write: createWriteContinuationMachine(ports.write!),

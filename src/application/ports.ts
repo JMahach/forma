@@ -4,7 +4,6 @@ import type {AccountLibrary} from '../state/account-library.ts';
 import type {SavedBirthForm} from '../domain/birth-form-draft.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
 import type { UpdatePort } from './update.ts';
-import type { StartupPorts, StartupEvent } from './startup.ts';
 import type { PublicRefreshPorts, PublicRefreshEvent } from './public-refresh.ts';
 import type { WriteContinuationPorts, WriteEvent } from './write-continuation.ts';
 import type {BackgroundWorkPorts,BackgroundWorkEvent} from './background-work.ts';
@@ -87,7 +86,24 @@ export interface RoutePort {
     markOpened(id:string):void;publicRead(checkedAt:number,receivedAt:number):void;
   };
 }
-export interface ApplicationPorts { runtimeId: string; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
+export interface LibraryProjectionPort {
+  library:Pick<AccountLibrary,'accountId'|'charts'|'storageAvailable'|'readyIds'|'entries'>;
+  sources:{get(id:string):SavedChart|null|undefined;
+    projectLibrary(records:AccountLibrary['charts'],available:boolean,readyIds:readonly string[],entries:AccountLibrary['entries'],context:{accountId:string|null;source:SavedChart|null}):boolean|void};
+  selection:{readonly selectedId:string;readonly record:SavedChart|null;refreshRecord(reselect:(id:string)=>void):boolean};
+  form:{refresh():void};
+  view:{isChartScreen():boolean;changeChart(id:string):void;library():void;checkpoint():void};
+}
+export interface StartupPorts {
+  library:{get(id:string):unknown;open(id:string,signal:AbortSignal):Promise<unknown>};
+  view:{readonly interrupted:boolean;readonly savedSelection:string|undefined;restore(signal:AbortSignal):Promise<boolean>;
+    resume():Promise<boolean|void>|boolean|void;flush():unknown};
+  form:{readonly pending:SavedBirthForm|null|undefined;readonly opened:boolean;clearPending():void;restore(draft:SavedBirthForm):unknown};
+  report():void;
+  changed():void;
+}
+export type StartupEvent={type:'StartupInterrupted'}|{type:'Stop'};
+export interface ApplicationPorts { runtimeId: string; libraryProjection?:LibraryProjectionPort; navigation?: NavigationPort; route?:RoutePort; account?: AccountPort; write?:WriteContinuationPorts; publicRefresh?:PublicRefreshPorts; startup?:StartupPorts; update?:UpdatePort;background?:BackgroundWorkPorts;libraryFill?:LibraryFillPorts;libraryAudit?:LibraryAuditPorts }
 export type ApplicationEvent =
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}

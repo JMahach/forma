@@ -1,3 +1,4 @@
+import { createWorkspaceView } from './views/workspace.ts';
 import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { createChartToolsView } from './views/chart-tools-view.ts';
 import { createActionNotice } from './ui/feedback.ts';
@@ -82,7 +83,7 @@ import { createGraphController } from './scene/updates.ts';
 import { attachCameraControls, createCameraChangeHandler } from './views/camera-controls.ts';
 import { createChartSession } from './state/chart-session.ts';
 import { createChartExploration } from './state/chart-exploration.ts';
-import { createViewSession, viewForRoute } from './state/view-session.ts';
+import { createViewSession, viewForRoute, prepareSavedView } from './state/view-session.ts';
 import { createTransitPlanetFilter } from './state/transit-planets.ts';
 import { createChartHeadingLayout } from './ui/layout/chart-heading.ts';
 import { attachChartLibrary } from './views/library.ts';
@@ -94,7 +95,7 @@ import { attachNatalDayExplorer } from './views/natal-day-controls.ts';
 import { attachChartSummary } from './views/chart-summary-panel.ts';
 import { attachTelegramGestures } from './ui/telegram-gestures.ts';
 import { attachPerformanceMonitor } from './views/performance-monitor.ts';
-import { attachChartLoading, holdLoadingContent, commitLoadingLayout } from './views/chart-loading.ts';
+import { attachChartLoading } from './views/chart-loading.ts';
 import { createReturnsController } from './state/returns.ts';
 import { createCyclesClient } from './data/cycles-client.ts';
 import { createNatalDayClient } from './data/natal-day-client.ts';
@@ -128,28 +129,23 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const notifyOfflineReady=()=>{for(const listener of offlineListeners)listener();};
   function cancelChartSave(){application?.send({type:'CancelWrite'});}
   savedView = viewForRoute(navigation?.snapshot.route ?? null, savedView);
-  let pendingLifetimeDraft = savedView?.lifetimeDraft ?? null, pendingInputRestore = true;
-  function cancelInputRestore() { pendingInputRestore = false; }
-  function discardPendingInput() {cancelInputRestore();pendingLifetimeDraft=null;}
-  // A delayed startup must not move the caret after a new user gesture.
-  document.addEventListener('pointerdown', cancelInputRestore, {capture:true,signal:scope.signal});
-  document.addEventListener('keydown', cancelInputRestore, {capture:true,signal:scope.signal});
-  document.addEventListener('input', cancelInputRestore, {capture:true,signal:scope.signal});
   const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
   scope.own(attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]));
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
-  // One initial reveal owns the visible screen. Later refreshes stay local to
-  // their tools; a failed first attempt reveals the existing recovery UI.
-  const initialPage = { active: true, attached: false, changingTimeline: false, contentFailed: false,
-    screenPending: false, screenFailed: false, screenRevision: 0 };
   const startupRestored=()=>application?.startup.restored===true;
   const startupFailed=()=>application?.startup.failed===true || initialPage.contentFailed;
-  const releaseInitialContent = releaseLoadingContent || holdLoadingContent(document);
-  shell.dataset.booting = 'true';
-  shell.dataset.pageState = 'loading'; shell.inert = false; shell.setAttribute('aria-busy', 'true');
-  let fontsSettled = false;
-  const fontsReady = Promise.resolve(document.fonts?.ready).catch(() => {});
-  void fontsReady.then(() => { fontsSettled = true; updateInitialPage(); });
+  const workspaceView=createWorkspaceView({document,signal:scope.signal,workspace,studio,shell,saved:savedView,libraryView,account,releaseContent:releaseLoadingContent,
+    get allCharts(){return allCharts;},get knowledge(){return knowledge;},get chartSummary(){return chartSummary;},get chartLibrary(){return chartLibrary;},
+    get activationPopover(){return activationPopover;},get hoverPreview(){return hoverPreview;},get transit(){return transit;},get viewSession(){return viewSession;},
+    get chartTools(){return chartTools;},get session(){return session;},get lifetimeControls(){return lifetimeControls;},get lifetime(){return lifetime;},
+    get natalDay(){return natalDay;},get returns(){return returns;},get lifetimeFailed(){return lifetimeLoadFailed;},
+    get lifetimeLoading(){return !!lifetimeLoading;},get returnsLoading(){return !!returnsViewLoading;},
+    drawing:{get pending(){return chartPaintPending;},render:renderGraph},
+    layout:{beginChange(){panelResizePending=true;},refresh:()=>refreshStudioLayout({preserveScale:true})},
+    restored:startupRestored,failed:startupFailed,loadingChanged:()=>updateLoading()});
+  const initialPage=workspaceView.initial;
+  const {inputSnapshot,discardInput:discardPendingInput,restoreInput:restoreInitialInput}=workspaceView;
+  function updateInitialPage(){workspaceView.update();}
   let panelResizePending = false;
   const headingLayout = createChartHeadingLayout({
     header: $('chartHeader'), title: $('chartTitle'), subtitle: $('chartSubtitle'), canvas: $('canvasWrap'),
@@ -334,7 +330,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   scope.own(actionNotice.dispose);
   const chartLink = attachChartLink({notice: actionNotice, button: $<HTMLButtonElement>('copyChartLink'), root: shell, boundary: $('chartSummary')});
   scope.own(chartLink.dispose);
-  let privateLibraryShown = false;
   const chartActions = createChartActions({client: chartClient, library: accountLibrary,
     getSession: account.getSession, initialPending: savedView?.pendingChartWrites,
     prepareWrite: () => viewSession!.checkpoint('write'),
@@ -385,34 +380,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const canAccessCharts = () => !accountLibrary.accountId || Boolean(account.getSession());
   const canEditCharts = () => canAccessCharts()
     && !actionAvailability({ connection: connectionMode(), requiresConnection: true }).disabled;
-  function projectAccountLibrary() {
-    if (!privateLibraryShown && !accountLibrary.accountId) return;
-    privateLibraryShown = true;
-    const publicId=store.publicChart?.id, priorPublic=publicId?store.charts.find(chart=>chart.id===publicId):null;
-    // Confirmed disappearance within the same account also revokes a prior public view.
-    // Logout/account switching have a different owner and preserve the public tab source.
-    if(priorPublic && 'accountId' in priorPublic && priorPublic.accountId===accountLibrary.accountId
-      && !accountLibrary.has(priorPublic.id))store.clearPublic(priorPublic.id);
-    // Account projection may replace the same ID with a private or not-yet-ready
-    // record. It does not supersede the accepted source of an explicit save.
-    const preserveSaveSource = Boolean(application?.write.source && session.record === application.write.source);
-    if(preserveSaveSource)store.showPublic(application!.write.source);
-    const editedId = birthForm.editedId;
-    store.projectLibrary(accountLibrary.charts, accountLibrary.storageAvailable,
-      accountLibrary.readyIds,accountLibrary.entries);
-    birthForm.refresh();presentLibrary();
-    if (startupRestored() && !preserveSaveSource && editedId && !store.get(editedId)) {
-      selectChart('current-transit', {replace:true});
-      return;
-    } else if (startupRestored() && !preserveSaveSource && session.selectedId !== 'current-transit') {
-      const next = store.get(session.selectedId);
-      if (!next) { selectChart('current-transit', {replace:true}); }
-      else session.refreshRecord(graph.changeChart);
-      // The accepted session already updates every page projection.
-      return;
-    }
-    if (startupRestored()) presentChart();
-  }
   const openLibraryChart=(id:string,options?:{keepMenuOpen:boolean},edit=false)=>application!.openChart(id,{...options,edit});
 
   chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:chartEditing.remove}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
@@ -436,14 +403,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     isCheckingSubmission: () => chartEditing.checking,
     submitChart: chartEditing.submit,
     ...birthClient, getConnectionMode: connectionMode, subscribeConnection: observeConnection, session, toast,
-    onSave: (id, { metadataOnly = false } = {}) => {
-      if (id !== session.selectedId) selectChart(id, {replace: navigation?.snapshot.route?.kind === 'temporary-chart'});
-      else if (metadataOnly) session.refreshRecord(graph.changeChart);
-      else graph.changeChart(id);
-      workspace.setScreen('chart');
-      publishRoute(routeForChart(id), navigation?.snapshot.route?.kind === 'temporary-chart');
-      viewSession?.flush();
-    },
+    onSave:(id,options)=>application!.formSaved(id,options),
     beforeOpen: () => { chartEditing.reset(); returns?.close(); activationPopover.close(); hoverPreview?.clear(); },
   });
   scope.own(birthForm.dispose);
@@ -583,107 +543,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     updateLoading();viewSession?.schedule();
   }
 
-  function updateWorkspaceNavigation() {
-    libraryView.setScreen(workspace.screen);
-  }
-  async function waitForInitialCharts(revision: number) {
-    await fontsReady;
-    while (initialPage.active && revision === initialPage.screenRevision && workspace.screen === 'charts') {
-      const ready = await allCharts.whenReady();
-      if (ready !== null) return ready;
-      // Resize or a changed visible set invalidates only that measurement.
-      // The same screen still needs its currently visible pixels.
-    }
-    return false;
-  }
-  function applyWorkspace() {
-    const screen = workspace.screen, revision = ++initialPage.screenRevision;
-    const switching = studio.dataset.workspaceScreen !== screen;
-    if (switching && studio.dataset.workspaceScreen) discardPendingInput();
-    let knowledgeReady: ReturnType<typeof knowledge.show> | null = null;
-    // A section return restores the existing panel state, not a drawer command.
-    // Commit both the panel and the chart's final width before motion resumes.
-    if (switching) studio.dataset.workspaceSwitching = 'true';
-    try {
-      studio.dataset.workspaceScreen = screen;
-      allCharts.setVisible(screen === 'charts');
-      knowledgeReady = screen === 'knowledge' ? knowledge.show() : (knowledge.hide(), null);
-      $('accountPage').hidden = screen !== 'account';
-      account.setVisible(screen === 'account');
-      chartSummary!.layout(); chartLibrary!.render(); updateWorkspaceNavigation();
-      activationPopover.close(); hoverPreview?.clear();
-      panelResizePending = true;
-      refreshStudioLayout({ preserveScale: true });
-    } finally {
-      if (switching) {
-        studio.getBoundingClientRect();
-        delete studio.dataset.workspaceSwitching;
-      }
-    }
-    if (switching) {
-      transit?.visibilityChanged();
-      if (screen === 'chart') {
-        if (chartTools.captionPending) updateChartCaption();
-        if (chartPaintPending) renderGraph();
-      }
-    }
-    viewSession?.schedule();
-    if (initialPage.active) {
-      initialPage.screenFailed = false;
-      initialPage.screenPending = screen === 'knowledge' || screen === 'charts' || screen === 'account';
-      const ready = screen === 'knowledge' ? knowledgeReady : screen === 'charts'
-        ? waitForInitialCharts(revision) : screen === 'account' ? account.ready : null;
-      if (ready) void Promise.resolve(ready).then(value => {
-        if (revision !== initialPage.screenRevision) return;
-        initialPage.screenPending = false; initialPage.screenFailed = value === false; updateInitialPage();
-      }, () => {
-        if (revision !== initialPage.screenRevision) return;
-        initialPage.screenPending = false; initialPage.screenFailed = true; updateInitialPage();
-      });
-      updateInitialPage();
-    }
-  }
-  function inputSnapshot<T extends {focus?: unknown} | null | undefined>(current: T, previous: T, screen: 'account' | 'charts' | 'knowledge'): T {
-    return pendingInputRestore && workspace.screen === screen && current && previous?.focus
-      ? {...current, focus:previous.focus} : current;
-  }
-  function restoreInitialInput() {
-    if ((!pendingInputRestore && !pendingLifetimeDraft) || initialPage.active || !startupRestored()) return;
-    if (viewSession?.interrupted) {discardPendingInput();return;}
-    if (workspace.screen === 'chart' && pendingLifetimeDraft) {
-      if (!lifetimeControls?.restoreDraft(pendingLifetimeDraft,{restoreFocus:pendingInputRestore})) return;
-    } else if (pendingInputRestore && workspace.screen === 'account' && savedView?.account?.focus) account.restoreInputFocus(savedView.account.focus);
-    else if (pendingInputRestore && workspace.screen === 'charts' && savedView?.charts?.focus) allCharts.restoreInputFocus();
-    else if (pendingInputRestore && workspace.screen === 'knowledge' && savedView?.knowledge?.focus) knowledge.restoreInputFocus();
-    pendingInputRestore = false; pendingLifetimeDraft = null;
-    viewSession?.schedule();
-  }
-  function updateInitialPage() {
-    if(scope.stopped)return;
-    if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending || initialPage.changingTimeline) return;
-    let failed = initialPage.screenFailed;
-    if (workspace.screen === 'chart') {
-      if (!startupRestored()) return;
-      const view = presentation(), cycles = returns!.state, day = natalDay!.state, life = lifetime?.state;
-      const cyclesVisible = view.returnsVisible || view.personalTimelineVisible;
-      failed ||= startupFailed() || lifetimeLoadFailed || day.opened && day.status === 'error'
-        || life?.opened && life.status === 'error' || cyclesVisible && (cycles.errors.length > 0 || Boolean(cycles.chartError));
-      if (lifetimeLoading || view.returnsVisible && returnsViewLoading) return;
-      if (!failed && (!session.hasCurrent || day.opened && day.status === 'loading'
-        || life?.opened && life.status === 'loading' || cyclesVisible && (cycles.pendingBodies.length > 0 || cycles.loadingChart))) return;
-    }
-    initialPage.active = false;
-    refreshStudioLayout({ preserveScale: true });
-    shell.dataset.pageState = failed ? 'error' : 'ready'; shell.inert = false; shell.setAttribute('aria-busy', 'false');
-    releaseInitialContent();
-    updateLoading();
-    studio.dataset.panelsReady = 'true';
-    // Commit final visibility and selected colours with transitions suppressed.
-    commitLoadingLayout(document);
-    restoreInitialInput();
-  }
-  scope.own(workspace.subscribe(applyWorkspace));
-  applyWorkspace();
+
+  scope.own(workspaceView.start());
 
   // Views have subscribed first, so their DOM is ready before measuring.
   scope.own(panels.subscribe(() => {
@@ -703,16 +564,14 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const layoutObserver = createLayoutObserver(() => refreshStudioLayout());
   scope.own(()=>layoutObserver.disconnect());
   layoutObserver.observe($('canvasWrap'));
-  const savedChart=store.get(savedView?.selectedId!);
-  const savedTarget=eligibleCycleChart(savedChart) && savedView?.lifetime?.opened?personalTimelineTarget(savedChart):null;
-  const restoreView=savedTarget?{...savedView,lifetime:{...savedView!.lifetime!,...savedTarget}}:savedView;
+  const restoreView=prepareSavedView(savedView,store);
   viewSession = createViewSession({
-    checkpoint, store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
+    checkpoint, exploration, store: { read: () => restoreView, write: viewStore.write }, chartStore: store, session,
     onInterrupt:()=>application?.send({type:'StartupInterrupted'}),
     mandala: { get enabled() { return mandalaMode.enabled; },
       restore: enabled => mandalaMode.setEnabled(enabled, { animate: false }) }, camera: gestures, cameraRestored: true, panels, workspace, transit, natalDay: natalDay, planetFilter: transitPlanets,
     getBirthForm: () => pendingBirthForm ?? birthForm.snapshot,
-    getLifetimeDraft: () => pendingLifetimeDraft ?? lifetimeControls?.snapshot ?? null, onPersisted:notifyOfflineReady,
+    getLifetimeDraft: () => workspaceView.pendingLifetimeDraft ?? lifetimeControls?.snapshot ?? null, onPersisted:notifyOfflineReady,
     getTemporaryChartSave: () => application ? application.write.binding : savedView?.temporaryChartSave,
     getPendingChartWrites: () => [...chartActions.pending], getAccountView: () => inputSnapshot(account.snapshot,savedView?.account,'account'),
     getKnowledgeView: () => inputSnapshot(knowledge.snapshot,savedView?.knowledge,'knowledge'),
@@ -725,7 +584,6 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     getReturns: () => returns, getLifetime: () => lifetime, getLifetimeIntent: () => exploration!.pendingTimeline, loadLifetime,
     openReturnsTimeline: exploration!.openTimeline, canRestoreLifetime: () => (session.selectedId === 'current-transit' || returns!.available),
   });
-  const initialRoute=navigation?.snapshot;
   function acceptLocalLibraryChange(change:LibraryLocalChange) {
     for(const key of change.keys){
       const ref=readLibraryPackageKey(key);
@@ -786,7 +644,10 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     });
     return tasks;
   }
-  application = createApplication({runtimeId:crypto.randomUUID(),navigation,background:{coordinator:backgroundCoordinator,tasks:backgroundTasks},
+  application = createApplication({runtimeId:crypto.randomUUID(),navigation,libraryProjection:{
+    library:accountLibrary,sources:store,selection:session,form:birthForm,
+    view:{isChartScreen:()=>workspace.screen==='chart',changeChart:graph.changeChart,library:presentLibrary,checkpoint:()=>{viewSession?.flush();}},
+  },background:{coordinator:backgroundCoordinator,tasks:backgroundTasks},
     libraryFill:{...libraryTransfer,scope:libraryWorkScope,entries:()=>accountLibrary.completeCatalog?.entries??null,
       control:libraryStorage.fill,inventory:libraryStorage.maintenance.inventory,
       accepted(_candidate,payload,authority){
@@ -817,26 +678,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
     checkpoint:()=>viewSession!.flush(),
   },startup:{
-    ready:()=>application!.requireAccount(),
-    current:()=>!viewSession!.interrupted && (!initialRoute || navigation!.isCurrent(initialRoute)),
-    async route(){
-      projectAccountLibrary();
-      if(initialRoute)await application!.requestRoute(initialRoute,true);
-    },
-    async restore(signal){
-      if(initialRoute?.route?.kind!=='chart' && accountLibrary.get(savedView?.selectedId??'')) {
-        try{await accountLibrary.open(savedView!.selectedId!,signal);}catch{/* Only accepted downloaded records can be restored. */}
-      }
-      if(signal.aborted || initialRoute && !navigation!.isCurrent(initialRoute))return false;
-      return viewSession!.restore(signal);
-    },
-    resume:()=>exploration!.finishRestore({saved:restoreView,interrupted:viewSession!.interrupted,
-      pendingLifetime:viewSession!.pendingLifetime,pendingReturns:viewSession!.pendingReturns}),
-    commit(){
-      const draft=pendingBirthForm;pendingBirthForm=null;
-      if(draft && !birthForm.opened)birthForm.restore(draft);
-      viewSession!.flush();
-    },
+    library:accountLibrary,view:viewSession,
+    form:{get pending(){return pendingBirthForm;},get opened(){return birthForm.opened;},
+      clearPending(){pendingBirthForm=null;},restore:draft=>birthForm.restore(draft)},
     report(){toast('Не удалось восстановить положение страницы.');},
     changed(){
       if(startupRestored())initialPresentation=null;
@@ -904,7 +748,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     scope.own(()=>application!.stop());
     scope.own(application.subscribe(updateLoading));
     application.start();
-  scope.own(accountLibrary.subscribe(projectAccountLibrary));
+  scope.own(accountLibrary.subscribe(()=>application!.libraryChanged()));
   scope.own(libraryStorage.subscribeLocal(change=>{
     const sessionId=accountLibrary.session?.sessionId;if(!sessionId)return;
     const notice:LibraryLocalNotice={kind:'local-storage',sessionId,...change};
@@ -1082,9 +926,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
     field.addEventListener('input', () => { viewSession?.interrupt(); exploration!.invalidateTimeline(); }, {capture:true,signal:scope.signal});
   }
-  initialPage.attached = true;
-  updateInitialPage();
-  commitLoadingLayout(document);
+  workspaceView.attach();
   // The startup owner keeps its checkpoint if assembly throws before handoff.
   if(viewCheckpoint)scope.own(checkpoint.destroy);
   const offlineRestored = () => application!.isRestored();

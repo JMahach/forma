@@ -1,41 +1,43 @@
 import {fromPromise,setup,type SnapshotFrom} from 'xstate';
 
-export interface StartupPorts {
-  ready():Promise<void>;
-  route():Promise<void>;
-  current():boolean;
-  restore(signal:AbortSignal):Promise<boolean>;
-  resume():Promise<boolean|void>|boolean|void;
-  commit():void;
-  report():void;
-  changed():void;
+import type {NavigationPort,NavigationSnapshot,StartupPorts,StartupEvent} from './ports.ts';
+export interface StartupRuntime {
+  ready():Promise<void>;project():void;route(snapshot:NavigationSnapshot):Promise<void>;
 }
-export type StartupEvent={type:'StartupInterrupted'}|{type:'Stop'};
 type Result='ready'|'failed'|'interrupted';
 
 async function attempt(step:()=>Promise<boolean|void>|boolean|void,ports:StartupPorts,current:()=>boolean) {
   try{return await step()!==false;}
   catch{if(current())ports.report();return false;}
 }
-async function restore(ports:StartupPorts,signal:AbortSignal):Promise<Result> {
-  const current=()=>!signal.aborted && ports.current();
-  await ports.ready();
+async function restore(ports:StartupPorts,runtime:StartupRuntime,navigation:NavigationPort|undefined,initial:NavigationSnapshot|undefined,signal:AbortSignal):Promise<Result> {
+  const current=()=>!signal.aborted && !ports.view.interrupted && (!initial || navigation!.isCurrent(initial));
+  await runtime.ready();
   if(!current())return 'interrupted';
-  await ports.route();
+  runtime.project();
+  if(initial)await runtime.route(initial);
   if(!current())return 'interrupted';
-  const restored=await attempt(()=>ports.restore(signal),ports,current);
+  const selected=ports.view.savedSelection;
+  if(initial?.route?.kind!=='chart' && selected && ports.library.get(selected)){
+    try{await ports.library.open(selected,signal);}catch{/* Only an accepted local record may be restored. */}
+  }
   if(!current())return 'interrupted';
-  const resumed=await attempt(ports.resume,ports,current);
+  const restored=await attempt(()=>ports.view.restore(signal),ports,current);
   if(!current())return 'interrupted';
-  ports.commit();
+  const resumed=await attempt(()=>ports.view.resume(),ports,current);
+  if(!current())return 'interrupted';
+  const draft=ports.form.pending;ports.form.clearPending();
+  if(draft && !ports.form.opened)ports.form.restore(draft);
+  ports.view.flush();
   return restored && resumed?'ready':'failed';
 }
 
 /** The state owns the sequence and its lifetime; existing owners restore values. */
-export function createStartupMachine(ports:StartupPorts) {
+export function createStartupMachine(ports:StartupPorts,runtime:StartupRuntime,navigation?:NavigationPort) {
+  const initial=navigation?.snapshot;
   return setup({
     types:{events:{} as StartupEvent},
-    actors:{restore:fromPromise(({signal})=>restore(ports,signal))},
+    actors:{restore:fromPromise(({signal})=>restore(ports,runtime,navigation,initial,signal))},
   }).createMachine({
     id: 'startup',
     initial: 'restoring',

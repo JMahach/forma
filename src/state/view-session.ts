@@ -1,3 +1,5 @@
+import type {ChartExploration} from './chart-exploration.ts';
+import {eligibleCycleChart,personalTimelineTarget} from '../domain/cycles.ts';
 import {chartPresentationHint} from '../domain/chart-presentation.ts';
 import {createViewCheckpoint,type ViewCheckpoint} from './view-checkpoint.ts';
 import type { AppRoute } from '../../shared/app-routes.ts';
@@ -14,6 +16,7 @@ import type { WorkspaceState } from './workspace.ts';
 import type { TransitPlanetFilter } from './transit-planets.ts';
 export type ViewSession = ReturnType<typeof createViewSession>;
 interface ViewSessionOptions {
+  exploration?:Pick<ChartExploration,'finishRestore'>;
   checkpoint?: ViewCheckpoint;
   store: Pick<ViewStore, 'write'> & { read: () => Partial<SavedView> | null };
   chartStore: ChartStore;
@@ -68,10 +71,16 @@ export function viewForRoute(route: AppRoute | null, saved: Partial<SavedView> |
   return next;
 }
 
+export function prepareSavedView(source:Partial<SavedView>|null,store:Pick<ChartStore,'get'>) {
+  const chart=store.get(source?.selectedId??'');
+  const target=eligibleCycleChart(chart) && source?.lifetime?.opened?personalTimelineTarget(chart):null;
+  return target?{...source,lifetime:{...source!.lifetime!,...target}}:source;
+}
+
 // One restoration transaction connects existing state owners. Initialization
 // cannot overwrite the previous page; explicit moment commands supersede pending work.
 export function createViewSession({
-  store, checkpoint, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
+  store, checkpoint, exploration, chartStore, session, mandala, camera, cameraRestored = false, panels, workspace, transit, natalDay, planetFilter,
   getPersonalPreview = () => undefined, getReturns = () => null, getLifetime = () => null, loadLifetime = async () => null,
   getBirthForm = () => undefined, getLifetimeDraft = () => undefined, getPendingChartWrites = () => undefined, getTemporaryChartSave = () => undefined, getAccountView = () => undefined, getLifetimeIntent = () => null, getKnowledgeView = () => undefined, getChartsView = () => undefined, getLibrarySelection = () => undefined,
   getPersonalLive = () => undefined, restorePersonalLive = () => {}, restorePersonalPreview = () => {},
@@ -80,7 +89,7 @@ export function createViewSession({
   eventTarget = globalThis.window, interactionTarget = globalThis.document,
   schedule: defer = globalThis.setTimeout, cancel = globalThis.clearTimeout, delay = 160, onPersisted = () => {}, onInterrupt = () => {},
 }: ViewSessionOptions) {
-  const saved = store.read();
+  const saved=store.read();
   let restoring = true, restoreInitialized = false, interrupted = false, generation = 0;
   let pendingTransit = saved?.transit?.live === false ? saved.transit : null;
   let pendingLifetime = saved?.lifetime || null, startedLifetime: SavedMomentTimelineView | null = null;
@@ -269,7 +278,10 @@ export function createViewSession({
       }
     }
   }
-  return { restore, interrupt, schedule, flush, checkpoint:writing.checkpoint,
+  return { restore,
+    get savedSelection(){return saved?.selectedId;},
+    resume:()=>exploration?.finishRestore({saved,pendingLifetime,pendingReturns,interrupted}),
+    interrupt, schedule, flush, checkpoint:writing.checkpoint,
     get interrupted() { return interrupted; },
     get pendingReturns() { return pendingReturns ? { ...pendingReturns } : null; },
     get pendingLifetime() { return pendingLifetime ? { ...pendingLifetime } : null; },

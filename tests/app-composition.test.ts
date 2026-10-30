@@ -1,3 +1,4 @@
+import {createWorkspaceView} from '../src/views/workspace.ts';
 import {createChartToolsView} from '../src/views/chart-tools-view.ts';
 import {createChartEditing} from '../src/application/chart-editing.ts';
 import { readLibraryLocalNotice, readLibraryPackageKey } from '../src/domain/library-maintenance.ts';
@@ -109,7 +110,7 @@ interface HarnessOptions {
   getPoint?: (index: number, options?: { signal?: AbortSignal }) => Promise<LifetimePoint>;
 }
 // Real argument contracts for injected browser ports; each test supplies its own result.
-type AppPorts = Pick<typeof import('../src/views/chart-tools-view.ts'),'createChartToolsView'> & Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice'> & Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
+type AppPorts = Pick<typeof import('../src/views/workspace.ts'),'createWorkspaceView'> & Pick<typeof import('../src/views/chart-tools-view.ts'),'createChartToolsView'> & Pick<typeof import('../src/ui/feedback.ts'), 'createActionNotice'> & Pick<typeof import('../src/runtime/resource-scope.ts'), 'createResourceScope'> & Pick<typeof import('../src/domain/chart-presentation.ts'), 'chartPresentation'> & Pick<typeof import('../src/state/view-checkpoint.ts'), 'createViewCheckpoint'> & Pick<typeof import('../src/ui/layout/resize-observer.ts'), 'createLayoutObserver'> & Pick<typeof import('../src/views/chart-link.ts'), 'attachChartLink'>
   & Pick<typeof import('../shared/app-routes.ts'), 'appRoutePath'>
   & Pick<typeof import('../src/domain/day-timeline.ts'), 'createLocalDayTimeline'>
   & Pick<typeof import('../src/data/birth-client.ts'), 'createBirthClient'>
@@ -140,7 +141,7 @@ type AppPorts = Pick<typeof import('../src/views/chart-tools-view.ts'),'createCh
   & Pick<typeof import('../src/data/library-fill-transfer.ts'), 'createLibraryFillTransfer'>
   & Pick<typeof import('../src/state/chart-session.ts'), 'createChartSession'>
   & Pick<typeof import('../src/state/chart-exploration.ts'), 'createChartExploration'>
-  & Pick<typeof import('../src/state/view-session.ts'), 'createViewSession' | 'viewForRoute'>
+  & Pick<typeof import('../src/state/view-session.ts'), 'createViewSession' | 'viewForRoute' | 'prepareSavedView'>
   & Pick<typeof import('../src/state/transit-planets.ts'), 'createTransitPlanetFilter'>
   & Pick<typeof import('../src/views/chart-display.ts'), 'chartCaption'>
   & Pick<typeof import('../src/ui/layout/chart-heading.ts'), 'createChartHeadingLayout'>
@@ -174,7 +175,7 @@ import { createWorkspaceState } from '../src/state/workspace.ts';
 import { attachAllCharts } from '../src/views/all-charts.ts';
 import { createChartSession } from '../src/state/chart-session.ts';
 import { createChartExploration } from '../src/state/chart-exploration.ts';
-import { createViewSession, viewForRoute } from '../src/state/view-session.ts';
+import { createViewSession, viewForRoute, prepareSavedView } from '../src/state/view-session.ts';
 import { createTransitPlanetFilter } from '../src/state/transit-planets.ts';
 import { createReturnsController } from '../src/state/returns.ts';
 import { createNatalDayExplorer, type NatalExplorerOptions } from '../src/state/natal-day.ts';
@@ -283,9 +284,9 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
         getPropertyValue: (name: string) => name === '--timeline-edge-space' ? '8px' : '0px' }) } as unknown as Parameters<typeof createStudioLayout>[0]);
   }
   let publicChart: TestChart | null = null,retainedPublic:PublicAccountChart|null=null;
-  let listed:readonly LibraryListChart[]|null=null;
+  let listed:readonly LibraryListChart[]|null=null,accountProjected=false;
   const fixtureStore = { get publicChart(){return retainedPublic;},acceptPublic(value:PublicAccountChart){retainedPublic=value;publicChart={...value,note:'',createdAt:'',updatedAt:''};},clearPublic(id:string){if(retainedPublic?.id!==id)return false;retainedPublic=null;if(publicChart?.id===id)publicChart=null;return true;}, get displayCharts(){return listed??charts;}, clearTemporary(_id: string) {return false;}, showPublic(value: TestChart | null) {publicChart=value;}, releasePublicSource(source:TestChart){if(publicChart===source)publicChart=null;}, charts, storageAvailable: true, get: (id: string) => charts.find(chart => chart.id === id) ?? (publicChart?.id===id?publicChart:undefined), has: (id: string) => publicChart?.id===id || charts.some(chart => chart.id === id),
-    projectLibrary(next: SavedChart[],_available:boolean,_ready:string[],entries?:readonly LibraryListChart[]) { charts = fixtureStore.charts = next;listed=entries??null; },
+    projectLibrary(next: SavedChart[],_available:boolean,_ready:string[],entries?:readonly LibraryListChart[],context?:{accountId:string|null;source:SavedChart|null}) { if(context){if(!accountProjected && !context.accountId)return false;accountProjected=true;if(context.source)publicChart=context.source;}charts = fixtureStore.charts = next;listed=entries??null;return true; },
     remove(id: string) { charts = fixtureStore.charts = charts.filter(chart => chart.id !== id); } };
   const store=actualStore ?? fixtureStore;
   let loadingOptions: PortOptions<'attachChartLoading'>, loadingState: Record<string,unknown> = {};
@@ -322,7 +323,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     show() {this.revision++; return {active: true, update() {}, close() {}};}};
   const ports: StubPorts = {
     createChartToolsView:options=>{const update=options.heading.updateText;options.heading.updateText=(...args)=>{captionUpdates++;return update(...args);};return createChartToolsView(options);},
-    createApplication,createChartEditing,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
+    createWorkspaceView,createApplication,createChartEditing,createViewCheckpoint,chartPresentation,createPageLifecycle,createLibraryFillTransfer,readLibraryLocalNotice,readLibraryPackageKey,
     createBackgroundCoordinator:options=>{
       let control:BackgroundControl={leader:null,checks:{}};
       const coordination:BackgroundStore={read:async()=>structuredClone(control),update:async change=>{
@@ -337,7 +338,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     createBirthClient, createChartClient: options => chartClient ? testChartClient(chartClient) : createChartClient(options),
     createAccountLibraryStore: () => libraryStorage ?? createAccountLibraryStore({indexedDB: null}),
     createResourceScope, createAccountLibrary, createChartActions, UI_MESSAGES, failureMessage, getConnectionMode, subscribeConnection, actionAvailability,
-    createLocalDayTimeline, viewForRoute, createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent, commitLoadingLayout,
+    createLocalDayTimeline, viewForRoute, prepareSavedView, createChartSession, createChartExploration, createTransitPlanetFilter, studioPresentation, holdLoadingContent, commitLoadingLayout,
     attachAllCharts: (options) => {
       const view = attachAllCharts({ ...options, preview: (_canvas, _chart, { onReady } = {}) => { onReady!(true); return noop; } });
       const traced={...view,update(){catalogUpdates++;return view.update();},restoreInputFocus(){inputRestores.push('charts');return view.restoreInputFocus();}};
@@ -385,7 +386,9 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       assert.equal(options.cameraRestored, true);
       if (realViewSession) return createViewSession({ ...options, eventTarget: null, interactionTarget: null, delay: 0 });
       return {
-      restore, get interrupted() { return restoreInterrupted; },
+      restore,get savedSelection(){return options.store.read()?.selectedId;},
+      resume:()=>options.exploration?.finishRestore({saved:options.store.read(),pendingLifetime:null,pendingReturns:null,interrupted:restoreInterrupted}),
+      get interrupted() { return restoreInterrupted; },
       interrupt() { restoreInterrupted = true; interruptions++; options.onInterrupt?.(); }, schedule: noop, flush: noop,
       checkpoint: async () => ({kind:'memory-only'}),
     }; },
@@ -1533,7 +1536,8 @@ function addressHarness(pathname: string) {
  const history = {pushState(_data:unknown,_title:string,path?:string|URL|null){location.pathname=String(path);writes.push('push:'+path);},
    replaceState(_data:unknown,_title:string,path?:string|URL|null){location.pathname=String(path);writes.push('replace:'+path);}};
  const navigation = createNavigation({location,history,events});
- return {navigation,location,writes,backTo(path:string){location.pathname=path;events.dispatchEvent(new Event('popstate'));}};
+ let publications=0;const navigate=navigation.navigate;navigation.navigate=(...args)=>{publications++;return navigate(...args);};
+ return {navigation,location,writes,get publications(){return publications;},backTo(path:string){location.pathname=path;events.dispatchEvent(new Event('popstate'));}};
 }
 test('direct account address overrides a saved different screen and back/forward applies the same owner', async () => {
  const n=addressHarness('/account'), h=harness({navigation:n.navigation, realViewSession:true,savedView:{workspace:'charts',selectedId:'current-transit'}});
@@ -1549,7 +1553,7 @@ test('accepted server save replaces the temporary address without adding a histo
   async own(){return {chart:record,catalogMarker:'1'};},async catalog(input){return catalogPage([],input.expectedAccountId);}} satisfies Partial<ChartClient>;
  const h=harness({navigation:n.navigation,accountSession:access,chartClient:client});await tick();
  await h.submit({name:record.name,note:'',birth:{source:'calculated',date:'2000-01-01',time:'12:00',cityId:'1'}} as BirthSubmission);
- assert.equal(n.location.pathname,'/chart/'+record.id);assert.deepEqual(n.writes,['replace:/chart/'+record.id]);
+ assert.equal(n.location.pathname,'/chart/'+record.id);assert.deepEqual(n.writes,['replace:/chart/'+record.id]);assert.equal(n.publications,1,'form acceptance publishes its result once');
 });
 
 
@@ -1650,7 +1654,7 @@ function deletionClient(record: ReturnType<typeof accountNatalChart>, overrides:
     async own() {return {chart:record,catalogMarker:'1'};}, ...overrides,
   } satisfies Partial<ChartClient>;
 }
-test('account deletion waits for server confirmation, then removes the library record and replaces its route', async () => {
+for(const leave of [false,true])test(`account deletion waits for confirmation and respects the current screen (left: ${leave})`, async () => {
   const record=accountNatalChart(), n=addressHarness('/'), writes: string[]=[];
   let finish!: (value: unknown) => void;
   const client=deletionClient(record,{remove: input => {writes.push(input.chartId);return new Promise(resolve=>{finish=()=>resolve({...input,catalogMarker:'2',outcome:{kind:'deleted',chartId:input.chartId}});});}});
@@ -1659,8 +1663,10 @@ test('account deletion waits for server confirmation, then removes the library r
   const removing=h.removeChart(record.id);await tick();
   assert.deepEqual(writes,[record.id]);assert.equal(h.cards.length,1);assert.equal(h.element('deleteChartDialog').open,true);
   await h.element('confirmDeleteChart').click();assert.equal(writes.length,1);
+  if(leave)await h.element('openAccount').click();
   finish(null);await removing;await tick();
-  assert.equal(h.cards.length,0);assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,'/');
+  assert.equal(h.cards.length,0);assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,leave?'/account':'/');
+  assert.equal(h.workspace.screen,leave?'account':'chart');
   assert.equal(h.element('deleteChartDialog').open,false);
 });
 test('a lost delete response is recovered by lookup and never by a second delete', async () => {
@@ -1693,7 +1699,7 @@ test('logout closes the delete dialog and a late result cannot change the new ac
   h.changeAccount({accountId:'2',sessionId:'two'});await tick();
   finish();await pending;await tick();assert.equal(h.element('deleteChartDialog').open,false);
 });
-test('a confirmed deletion of the edited record closes its draft and immediately leaves another chart for transit', async () => {
+test('a confirmed deletion closes its edited draft and preserves another selected chart', async () => {
   const record=accountNatalChart(), other=accountNatalChart(2,record.accountId), n=addressHarness('/');
   const client=deletionClient(record,{
     async catalog(input){return catalogPage([record,other].map(c=>({...c})),input.expectedAccountId);},
@@ -1703,7 +1709,7 @@ test('a confirmed deletion of the edited record closes its draft and immediately
   const h=harness({navigation:n.navigation,chartClient:client,accountSession:{accountId:record.accountId,sessionId:'one'}});
   await tick();h.select(other.id);await tick();h.editChart(record.id);
   await h.removeChart(record.id);await tick();
-  assert.equal(h.editedId,null);assert.equal(h.shown.id,'current-transit');assert.equal(n.location.pathname,'/');
+  assert.equal(h.editedId,null);assert.equal(h.shown.id,other.id);assert.equal(n.location.pathname,`/chart/${other.id}`);
 });
 
 test('losing the network during connected server deletion keeps its dialog and shows the accepted offline state',async t=>{

@@ -22,6 +22,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
   let projection: {sources: readonly (SavedChart | AccountChart)[]; charts: SavedChart[]; storageAvailable: boolean; ready: Set<string>} = {sources: [], charts: [], storageAvailable: false, ready: new Set()};
   const working = () => projection.charts;
   const names = new Intl.Collator('ru', {sensitivity: 'base', numeric: true});
+  let accountProjected=false;
   let listCharts:readonly LibraryListChart[]=[];
   let navigationSource: readonly LibraryListChart[] | null = null, navigationCharts: readonly LibraryListChart[] = [];
 
@@ -67,7 +68,17 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
     has(id: string) { if (temporaryChart?.id === id) return true; return working().some(chart => chart.id === id) ? projection.ready.has(id) : publicChart?.id === id; },
     get(id: string) { if (temporaryChart?.id === id) return temporaryChart; return working().find(chart => chart.id === id) ?? (publicChart?.id === id ? publicChart : undefined); },
     // Account-library owns these values. Local persistence must never write them.
-    projectLibrary(records: readonly (SavedChart | AccountChart)[], available: boolean, readyIds: readonly string[] = records.map(chart => chart.id), entries?:readonly LibraryCatalogEntry[]) {
+    projectLibrary(records: readonly (SavedChart | AccountChart)[], available: boolean, readyIds: readonly string[] = records.map(chart => chart.id), entries?:readonly LibraryCatalogEntry[],context?:{accountId:string|null;source:SavedChart|null}) {
+      if(context){
+        if(!accountProjected && !context.accountId)return false;
+        accountProjected=true;
+        const prior=lastPublicChart?projection.charts.find(chart=>chart.id===lastPublicChart!.id):null;
+        const present=(entries??records).some(chart=>chart.id===prior?.id);
+        if(prior && 'accountId' in prior && prior.accountId===context.accountId && !present){
+          lastPublicChart=null;if(publicChart?.id===prior.id)publicChart=null;
+        }
+        if(context.source)publicChart=context.source;
+      }
       const previous = projection;
       const unchanged = records.length === previous.sources.length
         && records.every((record, index) => record === previous.sources[index]);
@@ -86,6 +97,7 @@ export function createChartStore({ initialTemporaryChart = null, initialPublicCh
         return chart && 'revision' in chart && Number(chart.revision)>=row.revision?chart:row;
       }):projection.charts;
       if(next.length!==listCharts.length || next.some((row,index)=>row!==listCharts[index]))listCharts=next;
+      return true;
     },
   };
 }

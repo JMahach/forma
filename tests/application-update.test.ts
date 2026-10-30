@@ -5,7 +5,8 @@ import {createApplication} from '../src/application/application.ts';
 async function fixture() {
   let selected='current-transit',ready=true,durable:boolean|Promise<boolean>=true,stored=true,writes=0,reads=0;
   const app=createApplication({runtimeId:'update',startup:{
-    ready:async()=>{},route:async()=>{},current:()=>true,restore:async()=>true,resume(){},commit(){},report(){},changed(){},
+    library:{get:()=>null,open:async()=>{}},view:{interrupted:false,savedSelection:undefined,restore:async()=>true,resume(){},flush(){}},
+    form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
   },update:{restored:()=>true,ready:()=>ready,selection:()=>selected,
     canRestore(){reads++;return durable;},checkpoint(){writes++;return stored;}}});
   app.start();await app.whenRestored();

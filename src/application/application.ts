@@ -148,6 +148,31 @@ async function destinationSettled(actor:ApplicationActor) {
     || (request?.selection?state.context.request?.selection!==request.selection:state.context.request?.snapshot!==request?.snapshot));
 }
 
+function projectLibrary(actor:ApplicationActor,ports:ApplicationPorts) {
+  if(!actor.getSnapshot().matches('running'))return;
+  const port=ports.libraryProjection;if(!port)return;
+  const {library,sources,selection}=port,write=readWrite(actor);
+  const source=write.source && selection.record===write.source?write.source:null;
+  if(sources.projectLibrary(library.charts,library.storageAvailable,library.readyIds,library.entries,{accountId:library.accountId,source})===false)return;
+  port.form.refresh();port.view.library();
+  if(!readStartup(actor).restored || source || selection.selectedId==='current-transit')return;
+  if(sources.get(selection.selectedId)){selection.refreshRecord(port.view.changeChart);return;}
+  if(port.view.isChartScreen())actor.send({type:'ChartSelected',id:'current-transit',replace:true});
+  else port.view.changeChart('current-transit');
+}
+function presentFormResult(actor:ApplicationActor,ports:ApplicationPorts,id:string,metadataOnly=false) {
+  if(!actor.getSnapshot().matches('running'))return;
+  const port=ports.libraryProjection,route=ports.route;if(!port || !route)return;
+  const replace=ports.navigation?.snapshot.route?.kind==='temporary-chart';
+  if(id!==port.selection.selectedId)actor.send({type:'ChartSelected',id,replace});
+  else {
+    if(metadataOnly)port.selection.refreshRecord(port.view.changeChart);else port.view.changeChart(id);
+    route.view.workspace('chart',true);
+    actor.send({type:'RoutePublished',route:routeForChart(route,id),replace});
+  }
+  port.view.checkpoint();
+}
+
 function applicationRestored(actor:ApplicationActor,ports:ApplicationPorts) {
   const startup=readStartup(actor),view=applicationView(actor.getSnapshot());
   return view.lifecycle==='running' && startup.restored && !startup.failed
@@ -167,7 +192,9 @@ export function createApplication(ports: ApplicationPorts) {
     const account=readAccount(actor);
     if(!ports.account || account.status==='ready' && JSON.stringify(account.access)===JSON.stringify(ports.account.getSession()))return;
     return requireAccount();
-  });
+  },{ready:requireAccount,project:()=>projectLibrary(actor,ports),async route(snapshot){
+    actor.send({type:'RouteRequested',snapshot,initial:true});await destinationSettled(actor);
+  }});
   const actor = createActor(machine);
   const readView = () => applicationView(actor.getSnapshot());
   async function requireAccount(){
@@ -202,6 +229,8 @@ export function createApplication(ports: ApplicationPorts) {
       reconcile(actor,ports,recover,wake);
     },
     requireAccount,
+    libraryChanged(){projectLibrary(actor,ports);},
+    formSaved(id:string,{metadataOnly=false}={}){presentFormResult(actor,ports,id,metadataOnly);},
     routeForChart:(id:string)=>routeForChart(ports.route!,id),
     publishRoute:(route:AppRoute,replace=false)=>actor.send({type:'RoutePublished',route,replace}),
     async openChart(id:string,options:Omit<Extract<ApplicationEvent,{type:'OpenChartRequested'}>,'type'|'id'>={}) {
