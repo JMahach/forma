@@ -1,4 +1,5 @@
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import type { SelectionIdentity } from '../selection/selection-targets.ts';
 import type { SavedView } from '../data/view-store.ts';
 import { attachWorkspaceHeader } from './workspace-header.ts';
@@ -69,7 +70,8 @@ function renderGateDetails(center: KnowledgeEntry, gate: KnowledgeEntry, openRou
 export function attachKnowledge(page: HTMLElement, onSelect: (selection: SelectionIdentity) => void,
   { isPhone = () => page.ownerDocument?.defaultView?.matchMedia(PHONE_LAYOUT_QUERY).matches ?? false, initialView, initialSelection = null, onChange = () => {}
   }: { isPhone?: () => boolean; initialView?: SavedView['knowledge']; initialSelection?: SelectionIdentity | null; onChange?: () => void } = {}) {
-  const header = attachWorkspaceHeader(page, { initialExpanded: initialView?.searchOpen, onChange });
+  const scope=createResourceScope();
+  const header = attachWorkspaceHeader(page, { initialExpanded: initialView?.searchOpen, onChange, signal:scope.signal });
   const index = page.querySelector<HTMLElement>('#knowledgeIndex')!;
   const article = page.querySelector<HTMLElement>('#knowledgeArticle')!;
   const categories = page.querySelector<HTMLElement>('#knowledgeCategories');
@@ -82,9 +84,9 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
   let current = restoredEntry || getKnowledgeEntry('gate.37')!;
   let collection = KNOWLEDGE_COLLECTIONS.find(item => item.id === initialView?.collection)?.id ?? knowledgeCollectionForEntry(current).id;
   if (search && initialView) search.value = initialView.query;
-  if (search) watchTextSelection([search], onChange);
+  if (search) scope.own(watchTextSelection([search], onChange));
   const inputFocus = () => page.hidden ? null : captureTextSelection(search);
-  const restoreInputFocus = () => !page.hidden && restoreTextSelection(search, initialView?.focus);
+  const restoreInputFocus = () => !scope.stopped && !page.hidden && restoreTextSelection(search, initialView?.focus);
   let query = search?.value.trim() ?? '', indexKey = '', renderedId = '';
   // The first diagram projection must not replace an explicitly remembered article.
   let lastSelection = restoredEntry && initialSelection ? `${initialSelection.type}:${initialSelection.id}` : '';
@@ -93,6 +95,7 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
   const centerGates = new Map<string, string>();
   const gateRoutes = new Map<string, Set<string>>();
   const readingPositions = new Map<string, number>();
+  scope.own(()=>{readingTrail.length=0;centerGates.clear();gateRoutes.clear();readingPositions.clear();page.hidden=true;});
   let catalogueScroll = 0, catalogueFocus = '';
   page.dataset.view = restoredEntry && initialView?.view === 'article' ? 'article' : 'catalog';
   // Capture visible desktop reading before a responsive layout can hide it.
@@ -100,7 +103,7 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
     if (!page.hidden && renderedId && (page.dataset.view === 'article' || !isPhone())) {
       readingPositions.set(renderedId, article.scrollTop);
     }
-  }, { passive: true });
+  }, { passive: true, signal:scope.signal });
 
   function setView(view: 'catalog' | 'article', focus = false) {
     if (page.dataset.view === 'article') readingPositions.set(current.id, article.scrollTop);
@@ -215,10 +218,10 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
     query = search.value.trim();
     setView('catalog');
     renderIndex();
-  });
+  }, {signal:scope.signal});
   page.addEventListener('change', event => {
     if (event.target === section && section) changeSection(section.value);
-  });
+  }, {signal:scope.signal});
   page.addEventListener('click', event => {
     const target = event.target as Element;
     const illustratedGate = target.closest<SVGElement>('[data-gate-id]');
@@ -254,21 +257,22 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
     setView('article', true);
     if (fromIndex && !isPhone()) index.querySelector<HTMLElement>(`[data-entry-id="${entry.id}"]`)?.focus({ preventScroll: true });
     else article.querySelector<HTMLElement>('h3')?.focus({ preventScroll: true });
-  });
+  }, {signal:scope.signal});
   page.addEventListener('keydown', event => {
     const gate = (event.target as Element).closest<SVGElement>('.knowledge-center-gate');
     if (!gate || !['Enter', ' '].includes(event.key)) return;
     event.preventDefault();
     if (gate.dataset.entryId) selectCenterGate(gate.dataset.entryId);
-  });
+  }, {signal:scope.signal});
   return {
-    restoreInputFocus,
+    dispose:scope.stop, restoreInputFocus,
     get snapshot(): NonNullable<SavedView['knowledge']> {
       const focus=inputFocus();
       return { query: search?.value ?? query, searchOpen: header?.expanded ?? false, ...(focus ? {focus} : {}), collection, entryId: current.id,
         view: page.dataset.view === 'article' ? 'article' : 'catalog' };
     },
     show(selection?: SelectionIdentity | null) {
+      if(scope.stopped)return;
       page.hidden = false;
       const key = selection ? `${selection.type}:${selection.id}` : '';
       const entry = key && key !== lastSelection ? knowledgeEntryForSelection(selection) : undefined;
@@ -283,7 +287,7 @@ export function attachKnowledge(page: HTMLElement, onSelect: (selection: Selecti
       if (page.dataset.view === 'catalog') index.scrollTop = catalogueScroll;
     },
     hide() {
-      if (page.hidden) return;
+      if (scope.stopped || page.hidden) return;
       if (page.dataset.view === 'article' || !isPhone()) readingPositions.set(current.id, article.scrollTop);
       if (page.dataset.view === 'catalog') catalogueScroll = index.scrollTop;
       page.hidden = true;

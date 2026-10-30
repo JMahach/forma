@@ -1,5 +1,6 @@
 import type { PanelState } from '../state/panels.ts';
 import { createPanelState } from '../state/panels.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 
 interface SummaryOptions {
   panels?: PanelState; initialReturnsVisible?: boolean;
@@ -11,13 +12,15 @@ interface SummaryOptions {
 export type ChartSummaryPanel = ReturnType<typeof attachChartSummary>;
 
 export function attachChartSummary({ panels = createPanelState(), initialReturnsVisible = false, panel, summaryScreen, returnsPanel, switcher, backdrop, returnsButton = null, onReturns = () => {}, onOpen = () => {}, onClose = () => {}, isAvailable = () => true }: SummaryOptions) {
+  const scope=createResourceScope();
   const document = panel.ownerDocument;
   const summaryLabel = panel.getAttribute('aria-labelledby');
   let returnsVisible = initialReturnsVisible;
   let appliedScreen: 'closed' | 'summary' | 'returns' | null = null;
   const summaryFocus = () => returnsButton && !returnsButton.hidden && !returnsButton.disabled ? returnsButton : switcher;
-  const screen = () => isAvailable() && panels.right ? (returnsVisible ? 'returns' : 'summary') : 'closed';
+  const screen = () => !scope.stopped && isAvailable() && panels.right ? (returnsVisible ? 'returns' : 'summary') : 'closed';
   function layout() {
+    if(scope.stopped)return;
     // Camera callbacks read only this cheap projection, never cycle results.
     const next = screen();
     if (appliedScreen === next) return;
@@ -44,6 +47,7 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
     if (next === 'summary' && returnsPanel.contains(document.activeElement)) summaryFocus().focus({ preventScroll: true });
   }
   function open() {
+    if(scope.stopped)return;
     if (screen() !== 'closed') return;
     panels.setRight(true);
     if (!panels.restoring) onOpen();
@@ -60,6 +64,7 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
   }
   const toggle = () => screen() === 'closed' ? open() : close();
   function setReturnsVisible(value: boolean) {
+    if(scope.stopped)return;
     const visible = Boolean(value);
     if (returnsVisible === visible) return;
     // A view projection supplied by app.ts, not another return-opening command.
@@ -68,11 +73,11 @@ export function attachChartSummary({ panels = createPanelState(), initialReturns
   }
   returnsButton?.addEventListener('click', () => {
     if (!returnsButton.hidden && !returnsButton.disabled) onReturns();
-  });
-  switcher.addEventListener('click', toggle);
-  backdrop?.addEventListener('click', () => close());
-  panels.subscribe(layout);
+  }, {signal:scope.signal});
+  switcher.addEventListener('click', toggle, {signal:scope.signal});
+  backdrop?.addEventListener('click', () => close(), {signal:scope.signal});
+  scope.own(panels.subscribe(layout));
   layout();
-  return { layout, open, close, toggle, setReturnsVisible,
+  return { dispose:scope.stop, layout, open, close, toggle, setReturnsVisible,
     get opened() { return screen() !== 'closed'; }, get screen() { return screen(); } };
 }

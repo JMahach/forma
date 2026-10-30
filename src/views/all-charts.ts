@@ -1,4 +1,5 @@
 import { captureTextSelection, restoreTextSelection, watchTextSelection } from './input-selection.ts';
+import {createResourceScope} from '../runtime/resource-scope.ts';
 import type { SavedView } from '../data/view-store.ts';
 import type { SavedChart } from '../../shared/chart-types.ts';
 import type {LibraryListChart} from '../domain/library-catalog.ts';
@@ -33,22 +34,23 @@ export function attachAllCharts({ button, dialog, list, getCharts,
   createObserver = typeof globalThis.IntersectionObserver === 'function'
     ? (callback, options) => new globalThis.IntersectionObserver(callback, options) : null,
 }: AllChartsOptions) {
-  const header = attachWorkspaceHeader(dialog, { initialExpanded: initialView?.searchOpen, onChange });
+  const scope=createResourceScope();
+  const header = attachWorkspaceHeader(dialog, { initialExpanded: initialView?.searchOpen, onChange, signal:scope.signal });
   let rows = new Map<Element, PreviewEntry>();
   const pending = new Set<PreviewEntry>(), readiness = new Set<{ entries: PreviewEntry[]; resolve: (value: boolean | null) => void }>();
   const search = dialog.querySelector?.<HTMLInputElement>('#allChartsSearch');
   const resultCount = dialog.querySelector?.<HTMLElement>('#allChartsCount');
   const empty = dialog.querySelector?.<HTMLElement>('#allChartsEmpty');
   if (search && initialView) search.value = initialView.query;
-  if (search) watchTextSelection([search], onChange);
+  if (search) scope.own(watchTextSelection([search], onChange));
   const inputFocus = () => dialog.hidden ? null : captureTextSelection(search);
-  const restoreInputFocus = () => !dialog.hidden && restoreTextSelection(search, initialView?.focus);
+  const restoreInputFocus = () => !scope.stopped && !dialog.hidden && restoreTextSelection(search, initialView?.focus);
   let query = normalizeSearch(search?.value ?? ''), renderedQuery = '';
   let charts: readonly LibraryListChart[] | null = null, job: ReturnType<typeof setTimeout> | null = null;
   let renderedEditDisabled = false;
   function paint() {
     job = null;
-    if (dialog.hidden) return;
+    if (scope.stopped || dialog.hidden) return;
     let count = 0;
     for (const entry of pending) {
       pending.delete(entry);
@@ -83,14 +85,14 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     }
   }
   const observer = createObserver?.(entries => {
-    if (dialog.hidden) return;
+    if (scope.stopped || dialog.hidden) return;
     for (const item of entries) {
       const entry = rows.get(item.target);
       if (entry) visible(entry, item.isIntersecting);
     }
   }, { root: list, rootMargin: '120px 0px' });
   function measure() {
-    if (observer || dialog.hidden) return;
+    if (scope.stopped || observer || dialog.hidden) return;
     const bounds = list.getBoundingClientRect();
     for (const entry of rows.values()) {
       const rect = entry.row.getBoundingClientRect();
@@ -110,7 +112,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     rows.clear(); list.replaceChildren(); charts = null;
   }
   function update() {
-    if (dialog.hidden) return;
+    if (scope.stopped || dialog.hidden) return;
     const currentCharts = getCharts();
     const editDisabled = !canEdit();
     if (renderedEditDisabled !== editDisabled) for (const entry of rows.values()) {
@@ -188,6 +190,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     }
   }
   function setVisible(value: boolean) {
+    if(scope.stopped)return;
     const shown = Boolean(value);
     if (dialog.hidden === !shown) {
       if (shown) update();
@@ -208,7 +211,7 @@ export function attachAllCharts({ button, dialog, list, getCharts,
   // not wait for observer delivery or paint the rest of a large collection.
   // True means drawn, false means failed, null means this viewport is obsolete.
   function whenReady() {
-    if (dialog.hidden) return Promise.resolve(null);
+    if (scope.stopped || dialog.hidden) return Promise.resolve(null);
     const bounds = list.getBoundingClientRect();
     const entries = [...rows.values()].filter(entry => {
       if(!complete(entry.chart))return false;
@@ -219,11 +222,13 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     return new Promise<boolean | null>(resolve => { readiness.add({ entries, resolve }); settleReadiness(); });
   }
   function show() {
+    if(scope.stopped)return;
     if (onOpen) onOpen();
     else if (dialog.hidden) setVisible(true);
   }
   function close() { setVisible(false); }
-  button.addEventListener('click', show);
+  scope.own(()=>{release();dialog.hidden=true;});
+  button.addEventListener('click', show, {signal:scope.signal});
   search?.addEventListener('input', () => {
     const next = normalizeSearch(search.value);
     onChange();
@@ -231,9 +236,9 @@ export function attachAllCharts({ button, dialog, list, getCharts,
     query = next;
     list.scrollTop = 0;
     update();
-  });
-  list.addEventListener('scroll', measure, { passive: true });
-  document.defaultView?.addEventListener('resize', () => { cancelReadiness(); measure(); });
-  return { setVisible, show, close, update, whenReady, restoreInputFocus,
+  }, {signal:scope.signal});
+  list.addEventListener('scroll', measure, { passive: true, signal:scope.signal });
+  document.defaultView?.addEventListener('resize', () => { cancelReadiness(); measure(); }, {signal:scope.signal});
+  return { dispose:scope.stop, setVisible, show, close, update, whenReady, restoreInputFocus,
     get snapshot(): NonNullable<SavedView['charts']> { const focus=inputFocus(); return { query: search?.value ?? '', searchOpen: header?.expanded ?? false, ...(focus ? {focus} : {}) }; } };
 }

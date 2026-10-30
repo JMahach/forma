@@ -1,7 +1,7 @@
 // CSS owns the responsive layout; this controller only expands search and
 // manages its accessible state and focus. The filter value belongs to the view.
 export function attachWorkspaceHeader(page: HTMLElement,
-  { initialExpanded, onChange = () => {} }: { initialExpanded?: boolean; onChange?: () => void } = {}) {
+  { initialExpanded, onChange = () => {}, signal }: { initialExpanded?: boolean; onChange?: () => void; signal?:AbortSignal } = {}) {
   const button = page.querySelector<HTMLButtonElement>('[data-workspace-search-toggle]');
   if (!button) return;
   const controls = button.getAttribute('aria-controls');
@@ -23,7 +23,7 @@ export function attachWorkspaceHeader(page: HTMLElement,
     setExpanded(expanded);
     (expanded ? input : button).focus({ preventScroll: true });
     onChange();
-  });
+  }, {signal});
   page.addEventListener('keydown', event => {
     if (event.key !== 'Escape' || event.isComposing || page.dataset.searchOpen !== 'true') return;
     // Search inputs can clear themselves on Escape. Collapse the field while
@@ -33,6 +33,6 @@ export function attachWorkspaceHeader(page: HTMLElement,
     setExpanded(false);
     button.focus({ preventScroll: true });
     onChange();
-  });
+  }, {signal});
   return { get expanded() { return page.dataset.searchOpen === 'true'; } };
 }
