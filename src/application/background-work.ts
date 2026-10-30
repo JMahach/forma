@@ -34,7 +34,7 @@ export interface BackgroundRuntime {
  publicTask():BackgroundTask|null;
  changed():void;
  wake(at:number,reason:Extract<LibraryFillEvent,{type:'FillWake'}>['reason']):void;
- reconcile(options:{retryAccount:boolean;recover:boolean;wake:boolean}):void;
+ environmentChanged(facts:{connected:boolean;resumed:boolean}):void;
 }
 export type EnvironmentChange={reason:'lifecycle'|'connection'|'visibility';returned?:boolean};
 export interface ReleaseCheckPort {install?(signal:AbortSignal):Promise<void>;check(signal:AbortSignal):Promise<void>;observe():void;stop():void}
@@ -138,7 +138,7 @@ class BackgroundWork {
   if(resumed && !this.runtime.state().preparingUpdate)void this.ports.journal?.wake();
   if(appeared || returned)this.transit(true);
   if(visible && change.reason==='visibility' && this.runtime.state().accountReady){const work=this.ports.library?.refreshLocal();if(work)void this.track(work).catch(()=>{});}
-  this.runtime.reconcile({retryAccount:change.reason==='connection' && this.ports.environment.connected(),recover:!!resumed,wake:!!resumed});
+  this.runtime.environmentChanged({connected:change.reason==='connection' && this.ports.environment.connected(),resumed:!!resumed});
  }
  private local(value:unknown){
   const notice=readLibraryLocalNotice(value,this.ports.library?.workingLease??null,this.ports.library?.session?.sessionId);

@@ -38,7 +38,6 @@ class AccountCleanup implements AccountBoundaryWork {
     // Fence old readers synchronously, before any asynchronous continuation.
     const clearing=request.logoutIds?ports.library.clear():null;
     this.connecting=request.logoutIds?Promise.resolve():ports.library.connect(request.access);
-    ports.closeDelete();
     const reset=this.reset=resetsPersonal(request,previous,ports);
     const cleanup=reset?ports.calculations?.resetPersonal():ports.calculations?.retryPersonalCleanup();
     if(reset)this.snapshotReady=resetContinuation(ports,request.logoutIds?null:request.access);

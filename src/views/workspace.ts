@@ -24,13 +24,14 @@ interface WorkspacePorts {
  readonly lifetimeControls:LifetimeControls|null;readonly lifetime:MomentTimeline|null;
  readonly natalDay:NatalDayExplorer|null;readonly returns:ReturnsController|null;
  readonly lifetimeFailed:boolean;readonly lifetimeLoading:boolean;readonly returnsLoading:boolean;
- drawing:{readonly pending:boolean;render():void};layout:{beginChange():void;refresh():unknown};
+ drawing:{readonly pending:boolean;render():void};layout:{readonly phone?:boolean;beginChange():void;refresh():unknown};
  restored():boolean;failed():boolean;loadingChanged():void;
 }
 /** Browser screen, first reveal and focus. Application restoration stays in the core. */
 export function createWorkspaceView(ports:WorkspacePorts) {
   const {document,workspace,studio,shell,saved:savedView}=ports;
   const $=<T extends Element=HTMLElement>(id:string)=>document.getElementById(id) as unknown as T;
+  let previewChart:string|null=null;
   let pendingLifetimeDraft=savedView?.lifetimeDraft??null,pendingInputRestore=true;
   function cancelInputRestore(){pendingInputRestore=false;}
   function discardPendingInput(){cancelInputRestore();pendingLifetimeDraft=null;}
@@ -147,5 +148,10 @@ export function createWorkspaceView(ports:WorkspacePorts) {
 
   return {get status(){return ports.signal.aborted?'cancelled':initialPage.active?'preparing':shell.dataset.pageState==='error'?'failed':'ready';},attach(){initialPage.attached=true;updateInitialPage();commitLoadingLayout(document);},initial:initialPage,update:updateInitialPage,restoreInput:restoreInitialInput,inputSnapshot,discardInput:discardPendingInput,
     get pendingLifetimeDraft(){return pendingLifetimeDraft;},
+    prepareSelection(id:string,keepMenuOpen=false){previewChart=keepMenuOpen?id:null;},
+    selectionAccepted(id:string){if(ports.layout.phone && previewChart!==id)ports.chartLibrary?.close();previewChart=null;},
+    selectionSettled(){previewChart=null;},
+    navigation(){previewChart=null;if(ports.layout.phone)ports.chartLibrary?.close();},
+    show(screen:WorkspaceState['screen']){if(screen!=='chart'){previewChart=null;if(ports.layout.phone)ports.chartLibrary?.close();}workspace.setScreen(screen);},
     start(){const unsubscribe=workspace.subscribe(applyWorkspace);applyWorkspace();return unsubscribe;}};
 }

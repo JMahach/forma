@@ -137,7 +137,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     get natalDay(){return natalDay;},get returns(){return returns;},get lifetimeFailed(){return lifetimeLoadFailed;},
     get lifetimeLoading(){return !!lifetimeLoading;},get returnsLoading(){return !!returnsViewLoading;},
     drawing:{get pending(){return chartPaintPending;},render:renderGraph},
-    layout:{beginChange(){panelResizePending=true;},refresh:()=>refreshStudioLayout({preserveScale:true})},
+    layout:{get phone(){return layout.phone;},beginChange(){panelResizePending=true;},refresh:()=>refreshStudioLayout({preserveScale:true})},
     restored:startupRestored,failed:startupFailed,loadingChanged:()=>{updateLoading();activityChanged();}});
   const initialPage=workspaceView.initial;
   const {inputSnapshot,discardInput:discardPendingInput,restoreInput:restoreInitialInput}=workspaceView;
@@ -300,8 +300,8 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   // and restoration do not use this command, so a restored menu stays open.
   const routeForChart=(id:string)=>application!.routeForChart(id);
   const publishRoute=(route:AppRoute,replace=false)=>application!.publishRoute(route,replace);
-  const navigateWorkspace=(screen:WorkspaceScreen,options?:{keepMenuOpen?:boolean;fromRoute?:boolean})=>application!.navigateWorkspace(screen,options);
-  const selectChart=(id:string,options?:{keepMenuOpen?:boolean;fromRoute?:boolean;replace?:boolean})=>application!.selectChart(id,options);
+  const navigateWorkspace=(screen:WorkspaceScreen)=>{workspaceView.navigation();application!.navigateWorkspace(screen);};
+  const selectChart=(id:string,options?:{fromRoute?:boolean;replace?:boolean})=>{workspaceView.prepareSelection(id);application!.selectChart(id,options);};
   const birthClient = createBirthClient();
   const chartClient = createChartClient({getSession: account.getSession});
   let libraryChannel: BroadcastChannel | null = null;
@@ -376,7 +376,9 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const canAccessCharts = () => !accountLibrary.accountId || Boolean(account.getSession());
   const canEditCharts = () => canAccessCharts()
     && !actionAvailability({ connection: connectionMode(), requiresConnection: true }).disabled;
-  const openLibraryChart=(id:string,options?:{keepMenuOpen:boolean},edit=false)=>application!.openChart(id,{...options,edit});
+  const openLibraryChart=(id:string,options?:{keepMenuOpen:boolean},edit=false)=>{
+    workspaceView.prepareSelection(id,!edit && options?.keepMenuOpen);return application!.openChart(id,{edit});
+  };
 
   chartLibrary = attachChartLibrary({ serverDeletion: {handles: id => accountLibrary.has(id), checking: chartActions.isCheckingRemoval, submit:chartEditing.remove}, initialSelection: savedView?.librarySelection, panels, view: libraryView, getSelectedId: () => workspace.screen === 'chart' ? session.selectedId : null,
     document, getCharts: () => store.displayCharts,
@@ -654,23 +656,24 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     form:{get pending(){return pendingBirthForm;},get snapshot(){return birthForm.snapshot;},get opened(){return birthForm.opened;},
       clearPending(){pendingBirthForm=null;},discardInput:discardPendingInput,close:()=>birthForm.close()},
     checkpoint:{clearPersonal:()=>checkpoint.clearPersonal({temporaryChart:store.temporaryChart,publicChart:store.publicChart,selectedId:session.selectedId}),
-      flush:()=>viewSession!.flush()},closeDelete:()=>chartLibrary?.closeDelete(),
-    changed:notifyOfflineReady,
+      flush:()=>viewSession!.flush()},
+    changed(){if(application?.account.status==='preparing')chartLibrary?.closeDelete();notifyOfflineReady();},
     storageUnavailable(){toast('Хранилище браузера недоступно. Изменения не будут сохранены.');},
   },route:{
     library:accountLibrary,sources:store,session,online:()=>connectionMode()!=='offline',now:Date.now,readPublic:chartClient.public,
     observe(stage){const observation=journal?.begin({action:'chart_open',component:'chart'});
       return observation?{failed(error){void observation.reportError(error,{stage});},finish:()=>observation.finishSuccess()}:null;},
     view:{
-      workspace(screen,keepMenuOpen){if(layout.phone && !keepMenuOpen)chartLibrary?.close();workspace.setScreen(screen);},
-      select:graph.changeChart,resetCamera:()=>gestures.reset(),edit:id=>birthForm.open(true,id),
-      interrupt:()=>viewSession?.interrupt(),settled(){initialPresentation=null;updateLoading();},checkpoint:()=>{viewSession?.flush();},
+      workspace:workspaceView.show,
+      select(id){workspaceView.selectionAccepted(id);graph.changeChart(id);},resetCamera:()=>gestures.reset(),edit:id=>birthForm.open(true,id),
+      interrupt:()=>viewSession?.interrupt(),settled(){workspaceView.selectionSettled();initialPresentation=null;updateLoading();},checkpoint:()=>{viewSession?.flush();},
       report(error){toast(failureMessage(error,UI_MESSAGES.chartUnavailable));},
       firstTransit:()=>transit!.start(null,{firstChart:true}),transitReady(ready){initialPage.contentFailed=!ready;updateLoading();},
     },
   }});
     scope.own(()=>application!.stop());
     scope.own(application.subscribe(updateLoading));
+    if(navigation)scope.own(navigation.subscribe((_snapshot,origin)=>{if(origin==='external')workspaceView.navigation();}));
     application.start();
   scope.own(accountLibrary.subscribe(()=>application!.libraryChanged()));
   scope.own(libraryStorage.subscribeLocal(change=>application!.send({type:'LibraryLocalChanged',change})));

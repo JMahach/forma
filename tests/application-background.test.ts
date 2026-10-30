@@ -156,7 +156,7 @@ async function cancelledCatalogFixture(t:TestContext,second:'complete'|'failed'=
   environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},
   release:{async install(){installs++;},async check(){assert.fail('no shared check');},observe(){},stop(){}},journal:null,local:{changed(){},broadcast(){}}},
   {state:()=>({running:true,restored:true,accountReady:true,opening:false,writing:false,preparingUpdate:preparing}),publicTask:()=>null,changed(){},
-   wake(_at,reason){if(reason==='library')wakes++;},reconcile(){}});
+   wake(_at,reason){if(reason==='library')wakes++;},environmentChanged(){}});
  const actor=createActor(work.logic);t.after(()=>{actor.stop();release();library.close();});
  return {library,actor,start(){actor.start();},counts:()=>({reads,installs,wakes}),prepare(value:boolean){preparing=value;actor.send({type:'BackgroundChanged'});},
   notify(){notify();actor.send({type:'BackgroundChanged'});},release(){release();},setLoad(fn:()=>LibraryRefreshResult){library.load=async()=>{reads++;return fn();};}};

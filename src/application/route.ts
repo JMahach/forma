@@ -7,8 +7,8 @@ export function routeForChart(port:RoutePort,id:string):AppRoute {
   return id==='current-transit'?{kind:'transit'}
     :port.library.get(id) || chart && 'revision' in chart?{kind:'chart',id}:{kind:'temporary-chart'};
 }
-export function showChart(port:RoutePort,id:string,keepMenuOpen=false) {
-  port.view.workspace('chart',keepMenuOpen);port.view.select(id);
+export function showChart(port:RoutePort,id:string) {
+  port.view.workspace('chart');port.view.select(id);
   if(port.session.selectedId===id && port.library.get(id))port.view.markOpened(id);
   port.view.resetCamera();
 }
@@ -63,7 +63,7 @@ function applyOpening(ports:ApplicationPorts,request:RouteRequest) {
   const port=ports.route!,selection=request.selection;
   if(selection){
     if(selection.edit)port.view.edit(selection.id);
-    else {showChart(port,selection.id,selection.keepMenuOpen);publishRoute(port,ports.navigation,routeForChart(port,selection.id));}
+    else {showChart(port,selection.id);publishRoute(port,ports.navigation,routeForChart(port,selection.id));}
     return;
   }
   const route=request.snapshot.route!;

@@ -54,7 +54,7 @@ function fixture(withInitialSession=true,ready:Promise<unknown>=Promise.resolve(
 function operations(){return {
  writes:{pending:[],clear(){}},binding:{accountId:null,clear(){}},
  form:{pending:null,snapshot:null,opened:false,clearPending(){},discardInput(){},close(){}},
- editing:{reset(){}},checkpoint:{clearPersonal:()=>true,flush:()=>true},closeDelete(){},
+ editing:{reset(){}},checkpoint:{clearPersonal:()=>true,flush:()=>true},
 };}
 
 test('account boundaries handle early logout, preserve A to B to A and reject old completion',async()=>{

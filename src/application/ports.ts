@@ -33,7 +33,6 @@ export interface AccountBoundaryOperations {
     clearPending():void;discardInput():void;close():void};
   editing:{reset():void};
   checkpoint:{clearPersonal():boolean;flush():boolean};
-  closeDelete():void;
 }
 export interface AccountJournal {
   setAccount(accountId:string|null,sessionId?:string|null,proof?:string):unknown;
@@ -65,7 +64,7 @@ export interface NavigationPort {
 }
 export interface RouteRequest {
   readonly snapshot: NavigationSnapshot;
-  readonly selection?:{id:string;edit?:boolean;keepMenuOpen?:boolean};
+  readonly selection?:{id:string;edit?:boolean};
   readonly initial: boolean;
   readonly runtimeId: string;
   readonly processId: number;
@@ -79,7 +78,7 @@ export interface RoutePort {
   readPublic(id:string,signal?:AbortSignal):Promise<PublicAccountChart>;
   observe(stage:'request'|'storage_read'):{failed(error:unknown):void;finish():void}|null;
   view:{
-    workspace(screen:'chart'|'account'|'charts'|'knowledge',keepMenuOpen?:boolean):void;
+    workspace(screen:'chart'|'account'|'charts'|'knowledge'):void;
     select(id:string):void;resetCamera():void;edit(id:string):void;
     interrupt():void;settled():void;checkpoint():void;report(error:unknown):void;
     firstTransit():Promise<boolean|void>;transitReady(ready:boolean):void;
@@ -111,11 +110,12 @@ export type ApplicationPorts=Omit<ApplicationRuntimePorts,'route'|'write'|'publi
  publicRefresh?:Omit<PublicRefreshPorts,'view'> & {view:Omit<PublicRefreshPorts['view'],'selectTransit'>};
 };
 export type ApplicationEvent =
+  | {type:'LibraryChanged'} | {type:'FormSaved';id:string;metadataOnly?:boolean}
   | {type: 'RouteRequested'; snapshot: NavigationSnapshot; initial?: boolean}
   | {type: 'RoutePublished'; route: AppRoute; replace?: boolean}
-  | {type:'OpenChartRequested';id:string;edit?:boolean;keepMenuOpen?:boolean}
-  | {type:'ChartSelected';id:string;keepMenuOpen?:boolean;fromRoute?:boolean;replace?:boolean}
-  | {type:'WorkspaceRequested';screen:'chart'|'account'|'charts'|'knowledge';keepMenuOpen?:boolean;fromRoute?:boolean}
+  | {type:'OpenChartRequested';id:string;edit?:boolean}
+  | {type:'ChartSelected';id:string;fromRoute?:boolean;replace?:boolean}
+  | {type:'WorkspaceRequested';screen:'chart'|'account'|'charts'|'knowledge';fromRoute?:boolean}
   | {type: 'RetryRoute'}
   | AccountEvent | Exclude<StartupEvent,{type:'Stop'}> | PublicRefreshEvent | BackgroundWorkEvent | LibraryFillEvent | LibraryAuditEvent | Exclude<WriteEvent,{type:'Stop'|'SourcesReconciled'}>;
 export interface ApplicationView {
