@@ -1,13 +1,13 @@
 import { UI_MESSAGES } from '../ui/messages.ts';
-interface ChartLoadingOptions { canvas: HTMLElement; drawing: SVGSVGElement & { inert?: boolean }; art: Element; message: HTMLElement; status: HTMLElement; retry: HTMLButtonElement; heading: HTMLElement; onRetry: () => void }
+interface ChartLoadingOptions { signal?: AbortSignal; canvas: HTMLElement; drawing: SVGSVGElement & { inert?: boolean }; art: Element; message: HTMLElement; status: HTMLElement; retry: HTMLButtonElement; heading: HTMLElement; onRetry: () => void }
 export interface ChartLoadingState { hasChart: boolean; failed?: boolean; loading?: boolean; holdLoading?: boolean }
 export type ChartLoading = ReturnType<typeof attachChartLoading>;
 
 // Presentation only: the session owns whether a chart exists; its active
 // moment source owns loading/errors. A ready chart must never wait for the rest of the day packet.
-export function attachChartLoading({ canvas, drawing, art, message, status, retry, heading, onRetry }: ChartLoadingOptions) {
+export function attachChartLoading({ canvas, drawing, art, message, status, retry, heading, onRetry, signal }: ChartLoadingOptions) {
   let previous: 'ready' | 'error' | 'loading' | null = null;
-  retry.addEventListener('click', onRetry);
+  retry.addEventListener('click', onRetry, { signal });
   return {
     update({ hasChart, failed = false, loading = false, holdLoading = false }: ChartLoadingState) {
       const state = hasChart && !holdLoading ? 'ready' : failed && !loading ? 'error' : 'loading';

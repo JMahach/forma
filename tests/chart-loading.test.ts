@@ -161,3 +161,20 @@ test('an interactive shell is never put back into boot mode by a layout commit',
   commitLoadingLayout(document as unknown as Document);
   assert.equal(shell.dataset.booting, 'false');
 });
+
+test('retired loading views release their retry action across 30 runtime replacements', () => {
+  const retry = Object.assign(new EventTarget(), { hidden: false });
+  let retries = 0;
+  for (let cycle = 0; cycle < 30; cycle++) {
+    const controller = new AbortController();
+    const elements = Object.fromEntries(['canvas', 'drawing', 'art', 'message', 'status', 'heading'].map(name => [name, element()]));
+    const loading = attachChartLoading({ ...elements, retry, signal: controller.signal,
+      onRetry: () => { retries++; } } as unknown as Parameters<typeof attachChartLoading>[0]);
+    loading.update({ hasChart: false, failed: true });
+    retry.dispatchEvent(new Event('click'));
+    assert.equal(retries, cycle + 1);
+    controller.abort();
+    retry.dispatchEvent(new Event('click'));
+    assert.equal(retries, cycle + 1, 'retired runtime cannot retry a calculation');
+  }
+});

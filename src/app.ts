@@ -211,7 +211,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const currentChart = () => session.current;
   const lifetimeOwnsLoading = () => session.selectedId === 'current-transit' && Boolean(
     lifetime?.state.opened && lifetime.state.mode === 'lifetime' || viewSession?.pendingLifetime?.mode === 'lifetime');
-  const chartLoading = attachChartLoading({
+  const chartLoading = attachChartLoading({ signal: scope.signal,
     canvas: $('canvasWrap'), drawing: $('bodygraph'), art: $('chartLoadingArt'),
     message: $('chartLoadingMessage'), status: $('chartLoadingStatus'), retry: $('chartLoadingRetry'), heading: $('chartHeader'),
     onRetry: () => {
@@ -555,6 +555,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   returnMarkers = attachReturnMarkers({ container: $('lifetimeTime').parentElement!,
     onTargetsChange: () => lifetimeControls?.refreshTargets(),
     onSelect: event => { viewSession?.interrupt(); return returns!.selectEvent(event.id); } });
+  scope.own(returnMarkers.dispose);
   const cyclesClient=calculationClients?.cycles ?? createCyclesClient({memory:dayClient.memory,library:libraryStorage});
   returns = createReturnsController({
     connection: connectionMode,
@@ -1125,6 +1126,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         onRetry: () => returns!.retry(),
         onLayout: refreshStudioLayout,
       });
+      scope.own(returnsView.dispose);
       // Loading only supplies the view. The controller still owns whether its
       // drawer is open, including another click or navigation during the import.
       updateTimelineTools();

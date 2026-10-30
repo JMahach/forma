@@ -410,7 +410,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
     attachNatalDayExplorer: (options: NatalExplorerOptions|undefined) => natalDay = createNatalDayExplorer({ ...options, dayClient: storedNatalClient??{ getDay: async () => { dayRequests++; return natalDayFixture(); } } }),
     attachChartSummary: options => realSummary ? attachChartSummary(options) : ({ dispose:async()=>{},close: noop, setReturnsVisible: noop, update: noop, layout() { options.panel.hidden = !options.isAvailable!(); } }), attachTelegramGestures: () => noop, attachPerformanceMonitor: options => { if(failAtMonitor)throw failAtMonitor;performanceOptions = options; return {destroy:noop}; },
     attachChartLoading: options => {loadingOptions=options;return {update: (value: Record<string,unknown>) => {loadingState=value;}};}, createCyclesClient: (options) => { assert.equal(options!.memory, memory); return { events: async (input: CycleInput) => ({ events: returnEvents.filter(event => event.body === input.body) }), chart: getReturn }; }, ageText, completedAge,
-    attachReturnMarkers: () => ({ update: noop }),
+    attachReturnMarkers: () => ({ update: noop, dispose: async () => {} }),
   };
   for (const name of imports) assert.equal(typeof ports[name as keyof AppPorts], ['chartHighlight', 'UI_MESSAGES'].includes(name) ? 'object' : 'function', `provide the explicit browser port ${name}`);
   const startApp = new Function(...imports, 'document', 'ResizeObserver', 'location', 'window', 'getComputedStyle', 'loadLifetimeView', 'loadLifetimeState', 'loadReturnsViewModule',
@@ -435,7 +435,7 @@ function harness({failAtMonitor,onRelease=noop,storedNatalClient, connection, co
       } };
     }, async () => ({ attachReturnsPanel(options: Parameters<typeof attachReturnsPanel>[0]) {
       returnsViewOptions = options;
-      return { update(state: ReturnsPanelState) { returnsViewState = state; } };
+      return { dispose: async () => {}, update(state: ReturnsPanelState) { returnsViewState = state; } };
     } }));
   element('shell').dataset.booting = 'true';
   panels = createPanelState(); workspace = createWorkspaceState();
