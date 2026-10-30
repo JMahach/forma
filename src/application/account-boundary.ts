@@ -135,7 +135,7 @@ export function createAccountBoundaryMachine(port:AccountPort,runtimeId:string,s
     },
   }).createMachine({
     initial: 'unconnected',
-    context: {access: undefined, lastAccess: null, request: null, work: null,journal:port.journal??null,departedIds:null},
+    context: {access: undefined, lastAccess: null, request: null, work: null,journal:port?.journal??null,departedIds:null},
     on: {
       JournalAttached:{actions:'attach'},
       SessionChanged: {
