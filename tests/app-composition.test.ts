@@ -1983,10 +1983,10 @@ test('quota eviction cannot approve a reload from a RAM-only account chart, and 
  await h.restoration;await tick();h.select(record.id);await tick();
  assert.equal(await h.prepareOfflineUpdate(),true,'the actual local copy initially supports reload');
  useTime=100;const incoming=accountNatalChart(71),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete;
- const removed=new WeakSet<IDBTransaction>();
- IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')removed.add(this.transaction);return remove.call(this,key);};
+ const tracker={removed:false};
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')this.transaction.addEventListener('complete',()=>{tracker.removed=true;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value:unknown,key?:IDBValidKey){
-  if(this.name==='charts' && (value as {id?:string}).id===incoming.id && !removed.has(this.transaction))
+  if(this.name==='charts' && (value as {id?:string}).id===incoming.id && !tracker.removed)
    throw new DOMException('full','QuotaExceededError');
   return key===undefined?put.call(this,value):put.call(this,value,key);
  };

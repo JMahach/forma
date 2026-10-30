@@ -59,9 +59,9 @@ test('audit discards confirmed corruption while keeping intentional eviction and
 
 test('quota eviction retains an explicit card marker and successful acquisition clears it without inventing use',async t=>{
  const f=await fixture(t),incoming=accountNatalChart(3);await f.store.touch(f.lease,accountNatalChart(2).id);
- const originalPut=IDBObjectStore.prototype.put,originalDelete=IDBObjectStore.prototype.delete,freed=new WeakSet<IDBTransaction>();
- IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')freed.add(this.transaction);return originalDelete.call(this,key);};
- IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !freed.has(this.transaction))throw new DOMException('full','QuotaExceededError');return originalPut.call(this,value,...args);};
+ const originalPut=IDBObjectStore.prototype.put,originalDelete=IDBObjectStore.prototype.delete,tracker={freed:false};
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return originalDelete.call(this,key);};
+ IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return originalPut.call(this,value,...args);};
  try{assert.equal(await f.store.touch(f.lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=originalPut;IDBObjectStore.prototype.delete=originalDelete;}
  const evicted=await f.store.maintenance.inventory(f.lease);assert.ok(evicted);assert.equal(evicted.cards.some(row=>row.id===card.id),false);
  assert.deepEqual(evicted.usage.find(row=>row.id===card.id),{id:card.id,openedAt:0,evicted:true});

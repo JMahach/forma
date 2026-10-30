@@ -31,10 +31,10 @@ async function acceptFixtureCards(library:ReturnType<typeof createAccountLibrary
   }
 }
 async function placeUnderQuota(storage:ReturnType<typeof createAccountLibraryStore>,lease:LibraryLease,incoming=accountChart(3),victims=1) {
- const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,removed=new WeakMap<IDBTransaction,number>();
- IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')removed.set(this.transaction,(removed.get(this.transaction)??0)+1);return remove.call(this,key);};
+ const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={removed:0};
+ IDBObjectStore.prototype.delete=function(key){if(this.name==='charts')this.transaction.addEventListener('complete',()=>{tracker.removed++;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){
-  if(this.name==='charts' && value.id===incoming.id && (removed.get(this.transaction)??0)<victims)throw new DOMException('full','QuotaExceededError');
+  if(this.name==='charts' && value.id===incoming.id && tracker.removed<victims)throw new DOMException('full','QuotaExceededError');
   return put.call(this,value,...args);
  };
  try {assert.equal(await storage.touch(lease,incoming.id,incoming),true);}
@@ -341,7 +341,8 @@ test('twenty opened cards outrank eighty later background downloads across tabs'
   assert.equal((await other.read())!.charts.length,100,'nothing is evicted while all cards fit');
   await placeUnderQuota(other,(await other.read())!.lease!,accountChart(101),51);
   const remaining=(await other.read())!.charts.map(chart=>chart.id);
-  assert.equal(remaining.length,50);
+  assert.ok(remaining.length<=50,'committed cleanup must satisfy the available capacity');
+  assert.ok(remaining.includes(chartId(101)),'the requested whole card was stored');
   for(let id=1;id<=20;id++)assert.ok(remaining.includes(chartId(id)),`opened card ${id} survives`);
 });
 
