@@ -981,7 +981,8 @@
         "deploy/prepare-accounts.ts",
         "server/accounts.ts",
         "server/charts.ts",
-        "server/server.ts"
+        "server/server.ts",
+        "server/journal-service.ts"
       ],
       "publicEntries": [],
       "allowRuntime": [
@@ -1001,7 +1002,8 @@
         "journal-policy",
         "telegram-provider",
         "local-mailbox-http",
-        "journal-reporter"
+        "journal-reporter",
+        "journal-transport"
       ],
       "allowTypes": [
         "mail-contracts",
@@ -1021,12 +1023,14 @@
         "journal-policy",
         "telegram-provider",
         "local-mailbox-http",
-        "journal-reporter"
+        "journal-reporter",
+        "journal-transport"
       ],
       "executionEntries": [
         "deploy/check-release.ts",
         "deploy/prepare-accounts.ts",
-        "server/server.ts"
+        "server/server.ts",
+        "server/journal-service.ts"
       ]
     },
     {
@@ -1510,12 +1514,10 @@
       "id": "journal-reporter",
       "responsibility": "Single server reporting facade: bound and validate facts, isolate reporting failures. No queue, persistence, business state or delivery ownership.",
       "files": [
-        "server/journal/report.ts",
-        "server/journal/service-input.ts"
+        "server/journal/report.ts"
       ],
       "publicEntries": [
-        "server/journal/report.ts",
-        "server/journal/service-input.ts"
+        "server/journal/report.ts"
       ],
       "allowRuntime": [
         "journal-events"
@@ -1538,7 +1540,8 @@
         "server/journal/writer.ts"
       ],
       "publicEntries": [
-        "server/journal/runtime.ts"
+        "server/journal/runtime.ts",
+        "server/journal/writer.ts"
       ],
       "executionEntries": [
         "server/journal/mail-buffer-worker.ts",
@@ -1555,7 +1558,8 @@
         "journal-events",
         "journal-policy",
         "shared-contracts",
-        "journal-reporter"
+        "journal-reporter",
+        "journal-transport"
       ]
     },
     {
@@ -1808,6 +1812,32 @@
         "src/application/startup.ts": "Coordinate initial restore with the application lifetime, existing route and snapshot owners.",
         "src/application/update.ts": "Release preparation joins storage durability with the current application intent; browser worker remains outside."
       }
+    },
+    {
+      "id": "journal-transport",
+      "responsibility": "Bound private Unix delivery of journal facts and durable receipts. Own finite in-flight transport buffers only, with one attempt and no archive, retry loop or durable queue.",
+      "files": [
+        "server/journal/service-input.ts",
+        "server/journal/writer-client.ts",
+        "server/journal/writer-protocol.ts",
+        "server/journal/system-source.ts"
+      ],
+      "publicEntries": [
+        "server/journal/service-input.ts",
+        "server/journal/writer-client.ts",
+        "server/journal/writer-protocol.ts",
+        "server/journal/system-source.ts"
+      ],
+      "allowRuntime": [
+        "journal-transport",
+        "journal-policy",
+        "journal-events"
+      ],
+      "allowTypes": [
+        "journal-transport",
+        "journal-policy",
+        "journal-events"
+      ]
     }
   ],
   "cyclePolicy": {
@@ -1850,6 +1880,17 @@
         "public-entry"
       ],
       "reason": "The isolated journal storage adapter uses the common IndexedDB connection mechanism; this does not expose diagnostic records or grant product code direct queue access."
+    },
+    {
+      "from": "server/journal-service.ts",
+      "to": "server/journal/mail-buffer.ts",
+      "modes": [
+        "runtime"
+      ],
+      "bypass": [
+        "public-entry"
+      ],
+      "reason": "The journal service composition reads the existing terminal-mail reservation constant to charge the one archive budget; it never opens or owns the application mail buffer."
     }
   ],
   "assets": [],
@@ -1869,7 +1910,8 @@
       "journal-events",
       "server-chart-preparation",
       "local-mailbox-http",
-      "journal-reporter"
+      "journal-reporter",
+      "journal-transport"
     ],
     "otherExternal": "report-unclassified-as-error",
     "packages": [
@@ -2109,6 +2151,23 @@
         ],
         "allowTypes": [
           "linux-storage-setup"
+        ]
+      },
+      {
+        "id": "system-journal-source",
+        "responsibility": "Fixed systemd stop facts and status-only nginx Unix datagrams into the sole journal writer. Own bounded local transport only, no raw logs, retry queue, archive or product state.",
+        "files": [
+          "server/python/system_journal.py"
+        ],
+        "publicEntries": [],
+        "executionEntries": [
+          "server/python/system_journal.py"
+        ],
+        "allowRuntime": [
+          "system-journal-source"
+        ],
+        "allowTypes": [
+          "system-journal-source"
         ]
       }
     ]
