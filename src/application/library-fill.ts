@@ -106,7 +106,7 @@ class LibraryFill {
   const incoming={key:scopeKey(scope,event),wake:event};
   if('next' in state){this.state={...state,next:nextWake(state.next,incoming,scope)};return;}
   const pending=state.mode==='paused'?nextWake(state.resume,incoming,scope):incoming;
-  if(!canReceive(scope)){
+  if(!canReceive(scope) || pending.wake.reason==='space' && !this.ports.entries()){
    if(pending.wake.reason==='space')this.state={mode:'paused',resume:pending};return;
   }
   const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:pending.wake,controller:new AbortController()};

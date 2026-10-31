@@ -140,7 +140,7 @@ class LibraryPackageOwner {
    if(input.needsPayload)tx.objectStore('packages').put({id,payload});
    if(!linked)tx.objectStore('packageMetadata').put({id,ref,chartIds});
    if(openedAt!==undefined)tx.objectStore('usage').put({id,openedAt});
-   if(input.needsPayload)trackLibraryChanges(tx,this.changed?.(input.seen))(id);
+   if(input.needsPayload)trackLibraryChanges(tx,this.changed?.(input.seen),input.authority?undefined:true)(id);
    done(linked && !input.needsPayload?'no-op':'stored');
   }catch(error){fail(error);}
  }

@@ -1,4 +1,4 @@
-import {createLibraryLocalChanges} from './library-local-changes.ts';
+import {createLibraryLocalChanges,trackLibraryChanges} from './library-local-changes.ts';
 import {createStoragePressure,type StoragePressure} from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createRandomId } from '../domain/chart-record.ts';
@@ -28,7 +28,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
   const database = createIndexedDatabase({databaseName, version: 8, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
-  const catalog=createLibraryCatalogStore(database,now),local=createLibraryLocalChanges();
+  const catalog=createLibraryCatalogStore(database,now),local=createLibraryLocalChanges(now);
   return {
     subscribeLocal:local.subscribeLocal,
     background:createBackgroundCheckStore(database),
@@ -90,6 +90,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       const charts=values.map(value=>validateAccountChart(value,seen.accountId));
       if(authority && (charts.length!==1 || authority.permit.kind!=='card' || charts[0].id!==authority.permit.chartId || charts[0].revision<authority.permit.revision))return {status:'stale'};
       const write=(batch:readonly AccountChart[])=>database.transactionResult<LibraryStoreResult>('readwrite',(tx,result,fail)=>{
+        const changed=trackLibraryChanges(tx,local.changed(seen),authority?undefined:true);
         admitFillTransaction(tx,authority,seen,now,allowed=>{
         if(!allowed){result({status:'stale'});return;}
         const request=tx.objectStore('context').get('owner');request.onsuccess=()=>{
@@ -104,6 +105,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
                 // Acquisition never creates or changes a real-use mark.
                 if(current)unlinkLibraryPackages(tx,chart.id,chart);
                 rows.put(chart);
+                changed(chart.id);
                 if(!current)restoreCardUsage(tx,chart.id);
                 linkLibraryPackages(tx,chart);
                 outcome.changed=true;

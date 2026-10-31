@@ -29,6 +29,7 @@ test('the real clients, account store and fill owner restore two cards, one shar
  const entries=cards.map(card=>({id:card.id,revision:card.revision,name:card.name,birthDate:card.birthDate,birthTime:card.birthTime,source:card.source,
   packages:{card:{kind:'card' as const,sourceKey:cardSourceKey(card)},day:{ref,ready:true},majorReturns:{sourceKey:familyRef.sourceKey,readyFamilies:['saturn' as const]}}}));
  const transfer=createLibraryFillTransfer({store,charts,cycles,lease:()=>lease});let numericPuts=0,controlPuts=0;
+ const local:{payloadStoredAt?:number}[]=[];store.subscribeLocal(change=>local.push(change));
  const original=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,...args){if(['charts','packages'].includes(this.name))numericPuts++;if(this.name==='context' && value.key==='library-fill')controlPuts++;return original.call(this,value,...args);};
  t.after(()=>{IDBObjectStore.prototype.put=original;});
  const actor=createActor(createLibraryFill({...transfer,clock:{now:Date.now,after(ms,run){const t=setTimeout(run,ms);return()=>clearTimeout(t);}},id:()=>crypto.randomUUID(),scope:()=>({lease,sessionId:'s',catalogMarker:'1',visible:true,foreground:false,online:true}),entries:()=>entries,
@@ -37,6 +38,7 @@ test('the real clients, account store and fill owner restore two cards, one shar
  for(let i=0;notices.length<4 && i<500;i++)await flush();assert.equal(notices.length,4);
  for(let i=0;i<20;i++)await flush();
  assert.equal(requests.length,4);assert.equal(numericPuts,4);assert.equal(controlPuts,8);
+ assert.ok(local.every(change=>change.payloadStoredAt===undefined),'background placement must not wake itself after quota');
  const inventory=await store.maintenance.inventory(lease);assert.equal(inventory?.cards.length,2);assert.equal(inventory?.packages.length,2);
  assert.deepEqual(await store.readPackage(lease,ref),day);assert.deepEqual(await store.readPackage(lease,familyRef),packet);
  actor.send({type:'FillWake',at:Date.now()+1,reason:'hourly'});for(let i=0;i<30;i++)await flush();assert.equal(requests.length,4);assert.equal(numericPuts,4);assert.equal(controlPuts,8);

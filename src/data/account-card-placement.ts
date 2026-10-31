@@ -1,4 +1,4 @@
-import type {ChangedLibraryKeys} from './library-local-changes.ts';
+import {trackLibraryChanges,type ChangedLibraryKeys} from './library-local-changes.ts';
 import {LibrarySpaceRelease,releaseLibrarySpace,restoreCardUsage,type PlacementProgress} from './library-package-placement.ts';
 import {unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
 import {markLibraryMutation} from './library-catalog-store.ts';
@@ -24,6 +24,7 @@ function replaceWithinTransaction(tx:IDBTransaction,input:Placement,
   }
   try {
     if(state.needsPayload){rows.put(chart);unlinkLibraryPackages(tx,chart.id,chart);linkLibraryPackages(tx,chart);
+      trackLibraryChanges(tx,input.changed,true)(chart.id);
       if(openedAt===undefined)restoreCardUsage(tx,chart.id);markLibraryMutation(tx,owner,input.marker);}
     if(openedAt!==undefined)usage.put({id:chart.id,openedAt});
     done(true);

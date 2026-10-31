@@ -54,7 +54,7 @@ for(const required of [1,2,Infinity])test(`commit-time day quota preserves cards
 
 test('only a complete validated family becomes durable and exact numbers survive reopening',async t=>{
  const {store,lease,indexedDB}=await setup(t),{ref,value}=family();
- const notices:unknown[]=[];store.subscribeLocal(()=>{throw Error('observer');});const stop=store.subscribeLocal(change=>notices.push(change));
+ const notices:{lease:typeof lease;keys:string[];payloadStoredAt?:number}[]=[];store.subscribeLocal(()=>{throw Error('observer');});const stop=store.subscribeLocal(change=>notices.push(change));
  assert.equal(await store.putPackage(lease,chart,ref,{...value,charts:value.charts.slice(0,2)}),'invalid');
  assert.equal(await store.readPackage(lease,ref),null);
  assert.equal(await store.putPackage(lease,chart,ref,value),'stored');
@@ -68,7 +68,8 @@ test('only a complete validated family becomes durable and exact numbers survive
   assert.equal(await store.readPackage({...lease,generation:'retired'},ref,{observeOnly:true}),null);
  }finally{IDBObjectStore.prototype.put=put;}
  assert.equal(writes,0,'observation ignores an accidental opened flag');
- assert.deepEqual(notices,[{lease,keys:[JSON.stringify(ref)]}],'only committed content, not invalid data or duplicate acceptance, is announced');
+ assert.ok(Number.isFinite(notices[0]?.payloadStoredAt),'only a confirmed payload write can resume quota-paused fill');
+ assert.deepEqual(notices.map(({payloadStoredAt,...change})=>change),[{lease,keys:[JSON.stringify(ref)]}],'only committed content, not invalid data or duplicate acceptance, is announced');
  stop();stop();await store.putPackage(lease,chart,dayRef,dayBytes());assert.equal(notices.length,1);
 });
 
@@ -273,7 +274,7 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  let {store,lease,indexedDB}=await setup(t);const second=accountNatalChart(2),incoming=accountNatalChart(3);
  const {ref,value}=kind==='day'?{ref:dayRef,value:dayBytes()}:family();
  await store.put(lease,[second]);await store.putPackage(lease,chart,ref,value,{opened:true});
- const notices:{keys:string[]}[]=[];store.subscribeLocal(change=>notices.push(change));
+ const notices:{keys:string[];payloadStoredAt?:number}[]=[];store.subscribeLocal(change=>notices.push(change));
  const put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={freed:false};
  IDBObjectStore.prototype.put=function(value,...args){
   if(this.name==='charts' && value.id===incoming.id || this.name==='packageMetadata' && value.evicted)throw new DOMException('full','QuotaExceededError');
@@ -281,14 +282,15 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  };
  try{assert.equal(await store.touch(lease,incoming.id,incoming),false);}finally{IDBObjectStore.prototype.put=put;}
  assert.deepEqual(await store.readPackage(lease,ref),value,'failed ownership mark rolls back payload eviction');
- assert.deepEqual(notices,[],'rolled-back eviction publishes nothing');
+ assert.equal(notices.length,0,'rolled-back eviction publishes nothing');
  store.close();store=createAccountLibraryStore({indexedDB});t.after(()=>store.close());
  store.subscribeLocal(change=>notices.push(change));await store.read();
  IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(await store.readPackage(lease,ref),null);
- assert.deepEqual(notices,[{lease,keys:[JSON.stringify(ref)]}],'card placement publishes its committed numeric eviction');
+ assert.deepEqual(notices.filter(change=>change.payloadStoredAt===undefined),[{lease,keys:[JSON.stringify(ref)]}],'card placement publishes its committed numeric eviction');
+ assert.ok(notices.some(change=>change.keys.includes(incoming.id) && Number.isFinite(change.payloadStoredAt)),'the committed replacement can resume fill');
  const later=accountNatalChart(4);let packageDeletes=0;
  IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')packageDeletes++;return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
@@ -313,13 +315,18 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
 test('background acquisition places a higher-tier card without opening it or deleting an existing card',async t=>{
  const {store,lease}=await setup(t),bytes=dayBytes();await store.putPackage(lease,chart,dayRef,bytes);
  const incoming=accountNatalChart(2),put=IDBObjectStore.prototype.put,remove=IDBObjectStore.prototype.delete,tracker={freed:false};
- const deleted:string[]=[],uses:string[]=[];
+ const deleted:string[]=[],uses:string[]=[],notices:{keys:string[];payloadStoredAt?:number}[]=[];
+ store.subscribeLocal(change=>notices.push(change));
  IDBObjectStore.prototype.delete=function(key){deleted.push(this.name);if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='usage')uses.push(value.id);if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  let result;
  try{result=await store.put(lease,[incoming]);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
  assert.equal(result.status,'stored');assert.deepEqual(uses,[]);assert.equal(deleted.includes('charts'),false);
  assert.equal((await store.read())!.charts.length,2);assert.equal(await store.readPackage(lease,dayRef),null);
+ assert.ok(notices.some(change=>change.keys.includes(incoming.id) && Number.isFinite(change.payloadStoredAt)));
+ assert.equal(notices.find(change=>change.keys.includes(JSON.stringify(dayRef)))?.payloadStoredAt,undefined,'eviction is not a successful payload write');
+ await store.put(lease,[incoming]);await store.touch(lease,incoming.id);
+ assert.equal(notices.filter(change=>change.payloadStoredAt!==undefined).length,1,'no-op and use marks do not resume fill');
 });
 
 test('a failed use mark does not hide a complete stored package or evict numerical data',async t=>{

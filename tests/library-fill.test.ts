@@ -69,8 +69,9 @@ test('a completed timeout enforces sixty seconds even on a new occasion; the quo
  assert.equal(finishFill(state,grant.permit,{kind:'failed'},40000),true);
  assert.equal(reserveFill(state,request({now:99999,occasion:99999})).kind,'blocked');
  const next=reserveFill(state,request({now:100000,occasion:100000,token:'two'}));if(next.kind!=='acquired')throw Error();
- assert.equal(finishFill(state,next.permit,{kind:'quota'},100001),true);
+ assert.equal(finishFill(state,next.permit,{kind:'quota'},100020),true);
  assert.equal(reserveFill(state,request({now:200000,occasion:100000,spaceRelief:true})).kind,'blocked');
+ assert.equal(reserveFill(state,request({now:200000,occasion:100010,spaceRelief:true})).kind,'blocked','a delayed payload notice predating the actual quota cannot reopen fill');
  assert.equal(reserveFill(state,request({now:200000,occasion:200000,spaceRelief:true})).kind,'acquired');
  const auth=control(),authorized=reserveFill(auth,request());if(authorized.kind!=='acquired')throw Error();
  assert.equal(finishFill(auth,authorized.permit,{kind:'unauthorized'},10001),true);

@@ -81,7 +81,7 @@ export function finishFill(control:FillControl,permit:FillPermit,outcome:FillOut
 }
 function applyOutcome(control:FillControl,permit:FillPermit,budget:FillBudget,outcome:FillOutcome,now:number){
  if(outcome.kind==='success'){delete control.budgets[permit.key];return true;}
- if(outcome.kind==='quota'){control.quota={occasion:budget.occasion};delete control.budgets[permit.key];return true;}
+ if(outcome.kind==='quota'){control.quota={occasion:Math.max(budget.occasion,now)};delete control.budgets[permit.key];return true;}
  if(outcome.kind==='unauthorized'){control.blockedSessionId=permit.sessionId;budget.blockedSessionId=permit.sessionId;return true;}
  const delay=budget.attempts>=3?60000:budget.attempts===1?1000:5000;
  const retryAfter=outcome.kind==='failed'?outcome.retryAfterMs:0;
