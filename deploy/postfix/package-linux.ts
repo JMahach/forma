@@ -28,9 +28,6 @@ for (const entry of ['deploy/prepare-accounts', 'deploy/postfix/prepare']) {
 for (const name of ['install.py', 'control.py', 'receipt.py']) {
   await save(`deploy/postfix/${name}`, await readFile(new URL(name, import.meta.url)));
 }
-for (const name of ['README.md', 'docs/operations.md', 'docs/architecture.md', 'docs/data.md',
-  'docs/history/README.md', 'docs/history/2026-10-31/README-before-docs.md']) {
-  await save(name, await readFile(path.join(root, name)));
-}
+await save('README.md', await readFile(path.join(root, 'README.md')));
 await writeFile(path.join(output, 'SHA256SUMS'), manifest.join('\n') + '\n', { mode: 0o600, flag: 'wx' });
 console.log(`Prepared mail-only installation package: ${output}. No services, DNS or emails changed.`);
