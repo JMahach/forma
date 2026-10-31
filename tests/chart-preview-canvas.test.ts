@@ -5,14 +5,13 @@ import { createChartPreview } from '../src/views/chart-preview-canvas.ts';
 import type { ChartView } from '../src/domain/chart-composition.ts';
 
 function harness({ pixelRatio = 2, context = true, failPaint = false } = {}) {
-  const images: { src: string; onload: null; onerror: null; removeAttribute(name: unknown): void; }[] = [], paints = [];
+  const images: { src: string; onload: null; onerror: null; }[] = [], paints = [];
   const drawing = { drawImage(...args) { if (failPaint) throw new Error('Paint failed'); paints.push(args); } };
   const canvas = { style: {} as unknown as CSSStyleDeclaration, width: 300, height: 150,
     ownerDocument: { defaultView: { devicePixelRatio: pixelRatio } },
     getContext: (kind: unknown) => { assert.equal(kind, '2d'); return context ? drawing : null; } };
   const createImage = () => {
-    const image = { src: '', onload: null, onerror: null,
-      removeAttribute(name: unknown) { assert.equal(name, 'src'); this.src = ''; } };
+    const image = { src: '', onload: null, onerror: null };
     images.push(image);
     return image;
   };
@@ -43,7 +42,6 @@ test('preview paints the saved chart at the actual screen density without clippi
   assert.equal(paints.length, 0, 'raster painting waits for image readiness');
   image.onload!();
   assert.deepEqual(paints[0], [image, 0, 0, 230, 300]);
-  assert.equal(image.src, '', 'decoded SVG source is released after painting');
   assert.equal(image.onload, null);
   assert.equal(image.onerror, null);
   assert.equal(canvas.width, 230, 'pixels remain available while visible');
@@ -57,7 +55,6 @@ test('disposing an image in flight releases its memory and prevents a late load 
   const dispose = start(chart), image = images[0], lateLoad = image.onload;
   dispose();
   dispose();
-  assert.equal(image.src, '');
   assert.equal(image.onload, null);
   assert.equal(image.onerror, null);
   assert.equal(canvas.width, 0);
@@ -66,12 +63,11 @@ test('disposing an image in flight releases its memory and prevents a late load 
   assert.equal(paints.length, 0);
 });
 
-test('a failed SVG load releases both source and canvas storage', () => {
+test('a failed SVG load detaches callbacks and releases canvas storage', () => {
   const { canvas, images, paints, start } = harness();
   start(chart);
   const image = images[0], lateLoad = image.onload;
   image.onerror!(new Error('decode failed'));
-  assert.equal(image.src, '');
   assert.equal(canvas.width, 0);
   assert.equal(canvas.height, 0);
   lateLoad!();

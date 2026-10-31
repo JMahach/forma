@@ -33,7 +33,7 @@ function harness({ observe = true, onOpen, raster = false, searchControls = fals
       : selector === '[data-chart-action="delete"]' ? remove : query(selector);
     return row;
   };
-  const handlers = new Map(), jobs = new Map(), active = new Set(), painted = [], watched = new Set(), images: { src: string; onload: null; onerror: null; removeAttribute(): void; }[] = [];
+  const handlers = new Map(), jobs = new Map(), active = new Set(), painted = [], watched = new Set(), images: { src: string; onload: null; onerror: null; }[] = [];
   const list = dom.chartList;
   list.addEventListener = (type, listener) => handlers.set(type, listener);
   list.replaceChildren = () => { for (const row of [...dom.children] as const) row.remove(); };
@@ -52,7 +52,7 @@ function harness({ observe = true, onOpen, raster = false, searchControls = fals
       canvas.style = {};
       canvas.getContext = () => ({ drawImage() { painted.push(chart.id); } });
       const dispose = createChartPreview(canvas, chart, { onReady, createImage() {
-        const image = { src: '', onload: null, onerror: null, removeAttribute() { this.src = ''; } };
+        const image = { src: '', onload: null, onerror: null };
         images.push(image); return image;
       } });
       return () => { dispose(); active.delete(drawing); };

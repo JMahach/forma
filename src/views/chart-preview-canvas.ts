@@ -41,7 +41,8 @@ export function createChartPreview(canvas: HTMLCanvasElement, chart: ChartView, 
   function releaseImage() {
     if (!image) return;
     image.onload = image.onerror = null;
-    image.removeAttribute('src');
+    // Resetting src creates a broken-image fallback retained by Chrome's
+    // viewport listeners. Drop this detached image and its data URL together.
     image = null;
   }
   function dispose() {
