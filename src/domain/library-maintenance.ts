@@ -2,11 +2,12 @@ import type {PackageRef} from '../../shared/library-package-contract.ts';
 import {isMainReturnBody} from '../../shared/chart-return-contract.ts';
 
 export interface LibraryLease {accountId:string;generation:string}
-export interface LibraryLocalChange {lease:LibraryLease;keys:string[]}
+export interface LibraryLocalChange {lease:LibraryLease;keys:string[];payloadStoredAt?:number}
 export type LibraryLocalNotice=LibraryLocalChange & {kind:'local-storage';sessionId:string};
 
 function matchesLocalScope(row:Partial<LibraryLocalNotice>,lease:LibraryLease,sessionId:string) {
- return row.kind==='local-storage' && row.sessionId===sessionId && row.lease?.accountId===lease.accountId && row.lease.generation===lease.generation;
+ return row.kind==='local-storage' && row.sessionId===sessionId && row.lease?.accountId===lease.accountId && row.lease.generation===lease.generation
+  && (row.payloadStoredAt===undefined || Number.isFinite(row.payloadStoredAt));
 }
 function validChangeKeys(keys:unknown):keys is string[] {
  return Array.isArray(keys) && keys.length>0 && keys.length<=10000 && keys.every(key=>typeof key==='string' && key.length>0 && key.length<=1024);
@@ -16,7 +17,7 @@ export function readLibraryLocalNotice(value:unknown,lease:LibraryLease|null,ses
  if(!lease || !sessionId || !value || typeof value!=='object')return null;
  const row=value as Partial<LibraryLocalNotice>;
  if(!matchesLocalScope(row,lease,sessionId) || !validChangeKeys(row.keys))return null;
- return {lease:{...lease},keys:[...new Set(row.keys)]};
+ return {lease:{...lease},keys:[...new Set(row.keys)],...(row.payloadStoredAt===undefined?{}:{payloadStoredAt:row.payloadStoredAt})};
 }
 
 export function readLibraryPackageKey(key:string):Exclude<PackageRef,{kind:'card'}>|null {

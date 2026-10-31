@@ -8,6 +8,9 @@ import type {BackgroundRequest} from '../src/application/background-work.ts';
 import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
 import {createAccountLibraryStore} from '../src/data/account-library-store.ts';
 import {IDBFactory} from 'fake-indexeddb';
+import {createIndexedDatabase} from '../src/data/indexed-db.ts';
+import {createLibraryLocalChanges,trackLibraryChanges} from '../src/data/library-local-changes.ts';
+import type {LibraryLocalNotice} from '../src/domain/library-maintenance.ts';
 import {accountChart} from './helpers/account-chart.ts';
 import {libraryRecordEntry} from '../src/state/library-reconciliation.ts';
 import type {FillReceipt} from '../src/application/library-fill.ts';
@@ -183,4 +186,27 @@ for(const outcome of ['failed','superseded'])test(`a completed ${outcome} first 
  await tick();assert.equal(f.counts().reads,1);f.prepare(true);f.prepare(false);
  for(let i=0;i<6;i++){f.notify();await tick();}
  assert.deepEqual(f.counts(),{reads:1,installs:1,wakes:0});
+});
+
+test('only committed payload notices wake space locally and across the current library scope',async t=>{
+ let now=10000;const times:number[]=[];
+ const lease={accountId:'1',generation:'current'},wakes:string[]=[],sent:LibraryLocalNotice[]=[],accepted:unknown[]=[];
+ const work=createBackgroundWork({...defaults,clock:{now:()=>now},coordinator:idleCoordinator,library:{...libraryDefaults,session:{accountId:'1',sessionId:'login'},workingLease:lease},
+  local:{changed(change){accepted.push(change);},broadcast(notice){sent.push(notice);}}},
+  {state:()=>({running:true,restored:true,accountReady:true,opening:false,writing:false,preparingUpdate:false}),publicTask:()=>null,changed(){},wake(at,reason){wakes.push(reason);times.push(at);},environmentChanged(){}});
+ const actor=createActor(work.logic).start(),local=createLibraryLocalChanges(()=>now);
+ const db=createIndexedDatabase({databaseName:'committed-payload-notices',version:1,stores:['records'],upgrade(db){db.createObjectStore('records',{keyPath:'id'});},indexedDB:new IDBFactory()});
+ local.subscribeLocal(change=>actor.send({type:'LibraryLocalChanged',change}));t.after(()=>{actor.stop();local.close();db.close();});
+ const write=async(payloadStored?:true,abort=false)=>db.transactionResult('readwrite',(tx,done,fail)=>{
+  const mark=trackLibraryChanges(tx,local.changed(lease),payloadStored);tx.objectStore('records').put({id:'card',payload:'actual data'});
+  mark('card');mark('card');assert.equal(wakes.length,0,'uncommitted data must not resume fill');
+  if(abort)fail(Error('rollback'));else done(true);
+ });
+ await write(true,true);assert.deepEqual(wakes,[]);assert.equal(sent.length,0);
+ await write();assert.deepEqual(wakes,[]);assert.equal(sent.length,1);assert.equal(sent[0].payloadStoredAt,undefined);
+ await write(true);assert.deepEqual(wakes,['space']);assert.equal(sent.length,2);assert.equal(sent[1].payloadStoredAt,10000);assert.deepEqual(sent[1].keys,['card']);
+ now=20000;actor.send({type:'LibraryReceived',data:sent[1]});await tick();assert.deepEqual(wakes,['space','space']);assert.deepEqual(times,[10000,10000],'a delayed peer delivery is the same storage occasion');assert.equal(sent.length,2,'a peer notice is not rebroadcast');
+ const before=accepted.length;
+ for(const data of [{...sent[1],sessionId:'previous'},{...sent[1],lease:{...lease,generation:'previous'}},{...sent[1],payloadStoredAt:'true'}])actor.send({type:'LibraryReceived',data});
+ await tick();assert.equal(accepted.length,before);assert.deepEqual(wakes,['space','space']);
 });

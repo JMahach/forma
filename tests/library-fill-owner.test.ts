@@ -50,6 +50,7 @@ test('failures stop after three attempts and handoff cannot reset the durable bu
 test('quota suspends fill across ordinary wakes; real space relief allows a bounded new attempt',async()=>{
  const f=fixture();f.quota();f.wake();await f.advance(0);assert.equal(f.received.length,1);assert.ok(f.state.quota);
  await f.advance(3600000);f.wake('hourly');await f.advance(0);assert.equal(f.received.length,1);
+ f.wake('use');await f.advance(0);assert.equal(f.received.length,1,'use alone does not prove storage recovered');
  f.space();f.wake('space');await f.advance(0);assert.equal(f.placed.length,3);assert.equal(f.state.quota,undefined);f.actor.stop();
 });
 
@@ -192,4 +193,31 @@ test('cancelling a placement cannot report idle or start a queued pass before th
  let idle=0;f.actor.send({type:'FillIdle',complete(){idle++;}});await f.advance(0);assert.equal(idle,0);
  f.change({foreground:false});f.wake();await f.advance(0);assert.equal(f.inventoryReads,1);assert.equal(idle,0);
  f.releasePlacement();await f.advance(0);assert.equal(idle,1);assert.equal(f.inventoryReads,2);f.actor.stop();
+});
+
+test('payload space relief waits for foreground completion and survives a later use notice',async()=>{
+ const f=fixture();f.quota();f.wake();await f.advance(1);f.space();f.change({foreground:true});
+ f.wake('space');await f.advance(1);const occasion=f.now;f.wake('space');await f.advance(1);f.wake('use');await f.advance(1);
+ assert.equal(f.received.length,1);assert.equal(f.timers,0);
+ f.change({catalogMarker:'2'});f.hold();f.change({foreground:false});await f.advance(0);
+ assert.equal(f.received.length,2);assert.equal(f.state.budgets[f.state.flight!.key].occasion,occasion);
+ f.release({kind:'ready',payload:{}});await f.advance(0);
+ assert.equal(f.received.length,3);assert.equal(f.state.quota,undefined);f.actor.stop();
+});
+test('a deferred payload notice cannot release quota for a replacement login',async()=>{
+ const f=fixture();f.quota();f.wake();await f.advance(1);f.space();f.change({foreground:true});f.wake('space');
+ f.change({sessionId:'new',foreground:false});await f.advance(100000);
+ assert.equal(f.received.length,1);assert.ok(f.state.quota);f.actor.stop();
+});
+
+for(const owner of ['same','previous','replacement'] as const)
+test(`queued payload relief belongs to its scope after cancellation cleanup: ${owner}`,async()=>{
+ const f=fixture();f.quota();f.holdCleanup();f.wake();await f.advance(1);assert.ok(f.state.quota);
+ f.change({foreground:true});f.space();
+ if(owner==='replacement')f.change({sessionId:'new'});
+ f.wake('space');await f.advance(1);f.wake('use');
+ if(owner==='previous')f.change({sessionId:'new'});else f.change({catalogMarker:'2'});
+ f.releaseCleanup();await f.advance(0);assert.equal(f.received.length,1);
+ f.change({foreground:false});await f.advance(0);
+ assert.equal(f.received.length,owner==='previous'?1:3);assert.equal(!!f.state.quota,owner==='previous');f.actor.stop();
 });

@@ -22,12 +22,21 @@ interface FillRun {scope:LibraryFillScope;key:string;wake:Wake;controller:AbortC
 type WorkMode='planning'|'waiting'|'receiving'|'placing';
 interface Continuation {key:string;wake:Wake}
 type FillState={mode:'idle'|'stopped'}|{mode:'paused';resume:Continuation}
- | {mode:WorkMode;run:FillRun;next:Wake|null}
- | {mode:'cleanup';run:FillRun;next:Wake|null;origin:'network'|'local'}
- | {mode:'cancelling';run:FillRun;next:Wake|null;resume:Continuation|null}
+ | {mode:WorkMode;run:FillRun;next:Continuation|null}
+ | {mode:'cleanup';run:FillRun;next:Continuation|null;origin:'network'|'local'}
+ | {mode:'cancelling';run:FillRun;next:Continuation|null;resume:Continuation|null}
  | {mode:'stopping';run:FillRun};
-const scopeKey=(scope:LibraryFillScope)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,scope.catalogMarker]);
+function nextWake(previous:Continuation|null,incoming:Continuation,scope:LibraryFillScope):Continuation {
+ if(!previous || !continuationCurrent(scope,previous))return incoming;
+ if(previous.wake.reason==='space' && incoming.wake.reason!=='space')return previous;
+ if(incoming.wake.reason==='space' && previous.wake.reason!=='space')return incoming;
+ return previous.wake.at>incoming.wake.at?previous:incoming;
+}
+// A payload commit remains evidence across catalogue updates within its login and library owner.
+const scopeKey=(scope:LibraryFillScope,wake?:Wake)=>JSON.stringify([scope.lease.accountId,scope.lease.generation,scope.sessionId,...(wake?.reason==='space'?[]:[scope.catalogMarker])]);
+const continuationCurrent=(scope:LibraryFillScope|null,next:Continuation|null)=>!!scope && !!next && next.key===scopeKey(scope,next.wake);
 const eligible=(scope:LibraryFillScope|null):scope is LibraryFillScope=>!!scope && scope.visible && !scope.foreground;
+const canReceive=(scope:LibraryFillScope|null):scope is LibraryFillScope=>eligible(scope) && scope.online;
 function aborted(){return new DOMException('Fill cancelled','AbortError');}
 function cancellable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
  return new Promise((resolve,reject)=>{
@@ -68,21 +77,22 @@ class LibraryFill {
   this.state=mode==='cleanup'?{mode,run,next:state.next,origin}:{mode,run,next:state.next};
  }
  private checkScope(){
-  const state=this.state,scope=this.ports.scope(),key=scope?scopeKey(scope):null;
-  if(state.mode==='paused'){if(state.resume.key!==key)this.state={mode:'idle'};return;}
+  const state=this.state,scope=this.ports.scope();
+  if(state.mode==='paused'){if(!continuationCurrent(scope,state.resume))this.state={mode:'idle'};return;}
   if(!('run' in state) || state.mode==='stopping')return;
-  if(state.mode==='cancelling'){if(state.resume?.key!==key)this.state={...state,resume:null};return;}
+  if(state.mode==='cancelling'){if(!continuationCurrent(scope,state.resume))this.state={...state,resume:null};return;}
   const {run,next}=state;
   const local=state.mode==='placing' || state.mode==='cleanup' && state.origin==='local';
   if(local?this.current(run):this.online(run))return;
-  this.state={mode:'cancelling',run,next,resume:key===run.key?{key:run.key,wake:run.wake}:null};
+  const resume={key:scopeKey(run.scope,run.wake),wake:run.wake};
+  this.state={mode:'cancelling',run,next,resume:continuationCurrent(scope,resume)?resume:null};
   run.controller.abort();
  }
  changed(){this.checkScope();this.resume();}
  private resume(){
   const state=this.state;if(state.mode!=='paused')return;
-  const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
-  this.state={mode:'idle'};if(scopeKey(scope)===state.resume.key)this.wake(state.resume.wake);
+  const scope=this.ports.scope();if(!canReceive(scope))return;
+  this.state={mode:'idle'};if(continuationCurrent(scope,state.resume))this.wake(state.resume.wake);
  }
  stop(){
   const state=this.state;
@@ -92,9 +102,14 @@ class LibraryFill {
  wake(event:Wake){
   if(this.state.mode==='stopped' || this.state.mode==='stopping' || !Number.isFinite(event.at))return;
   this.checkScope();const state=this.state;
-  if('next' in state){if(!state.next || state.next.at<=event.at)this.state={...state,next:event};return;}
-  const scope=this.ports.scope();if(!eligible(scope) || !scope.online)return;
-  const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:event,controller:new AbortController()};
+  const scope=this.ports.scope();if(!scope)return;
+  const incoming={key:scopeKey(scope,event),wake:event};
+  if('next' in state){this.state={...state,next:nextWake(state.next,incoming,scope)};return;}
+  const pending=state.mode==='paused'?nextWake(state.resume,incoming,scope):incoming;
+  if(!canReceive(scope)){
+   if(pending.wake.reason==='space')this.state={mode:'paused',resume:pending};return;
+  }
+  const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:pending.wake,controller:new AbortController()};
   this.state={mode:'planning',run,next:null};void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
  }
  private finished(run:FillRun){
@@ -102,7 +117,8 @@ class LibraryFill {
   if(state.mode==='stopping')this.state={mode:'stopped'};
   else {
    this.state=state.mode==='cancelling' && state.resume?{mode:'paused',resume:state.resume}:{mode:'idle'};
-   if(state.next)this.wake(state.next);else this.resume();
+   const scope=this.ports.scope();
+   if(state.next && continuationCurrent(scope,state.next))this.wake(state.next.wake);else this.resume();
   }
   this.settled();
  }
@@ -116,7 +132,7 @@ class LibraryFill {
  private reserve(run:FillRun,candidate:FillCandidate){
   const token=this.ports.id();
   return this.ports.control.update(run.scope.lease,control=>reserveFill(control,{candidate,lease:run.scope.lease,sessionId:run.scope.sessionId,
-   owner:this.owner,token,now:this.clock.now(),occasion:run.wake.at,spaceRelief:run.wake.reason==='space' || run.wake.reason==='use'}));
+   owner:this.owner,token,now:this.clock.now(),occasion:run.wake.at,spaceRelief:run.wake.reason==='space'}));
  }
  private async place(run:FillRun,candidate:FillCandidate,receipt:FillReceipt,authority:FillAuthority):Promise<FillOutcome>{
   if(receipt.kind==='not-ready')return {kind:'failed',retryAfterMs:receipt.retryAfterMs};

@@ -96,7 +96,7 @@ class BackgroundWork {
   return {lease,sessionId:access.sessionId,catalogMarker:library.completeCatalog?.marker??'',visible:this.ports.environment.visible(),
    foreground:state.preparingUpdate || this.pendingUses>0 || this.ports.environment.busy() || state.opening || state.writing,online:this.ports.environment.online()};
  };
- private wake(reason:Extract<LibraryFillEvent,{type:'FillWake'}>['reason']){if(!this.stopped)this.runtime.wake(this.ports.clock.now(),reason);};
+ private wake(reason:Extract<LibraryFillEvent,{type:'FillWake'}>['reason'],at=this.ports.clock.now()){if(!this.stopped)this.runtime.wake(at,reason);};
  private changed(){if(!this.stopped)this.runtime.changed();};
  private appTask(release:ReleaseCheckPort|null):BackgroundTask {
   return {target:{key:'app',scope:{kind:'app'},instance:'release'},
@@ -142,7 +142,8 @@ class BackgroundWork {
  }
  private local(value:unknown){
   const notice=readLibraryLocalNotice(value,this.ports.library?.workingLease??null,this.ports.library?.session?.sessionId);
-  if(!notice)return false;this.ports.local.changed(notice);return true;
+  if(!notice)return false;this.ports.local.changed(notice);
+  if(notice.payloadStoredAt!==undefined)this.wake('space',notice.payloadStoredAt);return true;
  }
  private async received(data:unknown){
   if(this.local(data) || !this.runtime.state().accountReady || !this.ports.library)return;
