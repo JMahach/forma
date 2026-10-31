@@ -35,6 +35,7 @@ function privateMemory(memory:MemoryCache) {
   let open=true;
   const port:MemoryCache={
     get<T>(key:PropertyKey){return open?memory.get<T>(key):null;},
+    peek<T>(key:PropertyKey){return open?memory.peek<T>(key):null;},
     put<T>(key:PropertyKey,value:T,size?:number){return open?memory.put(key,value,size):value;},
     delete(key:PropertyKey){if(open)memory.delete(key);},
     keys(prefix:string){return open?memory.keys(prefix):[];},
@@ -55,14 +56,27 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
   let closed=false,nextGeneration=0,cleanupTail:Promise<unknown>=Promise.resolve();
 
   let today:ReturnType<typeof createLocalDayTimeline>|null=null;
+  let preparingToday:{target:ReturnType<typeof createLocalDayTimeline>;work:Promise<TransitWindowUpdate>}|null=null;
   function syncTodayTransitWindow(timeZone:string,now:number,refresh=false) {
     if(closed)return;
-    if(!refresh && today && now<today.endUtc && now>=today.startUtc && today.timeZone===timeZone)return;
-    today=createLocalDayTimeline(now,timeZone);
-    return syncTransitWindow({dates:today.packetDates,expiresAt:today.endUtc});
+    const sameDay=(value:typeof today)=>value && now<value.endUtc && now>=value.startUtc && value.timeZone===timeZone;
+    if(!refresh && sameDay(preparingToday?.target??null))return preparingToday!.work;
+    if(!refresh && !preparingToday && sameDay(today))return;
+    const target=createLocalDayTimeline(now,timeZone);
+    const request={target,work:syncTransitWindow({dates:target.packetDates,expiresAt:target.endUtc}).then(result=>{
+      if(preparingToday===request){
+        preparingToday=null;
+        if(result.status==='applied')today=target;
+      }
+      return result;
+    })};
+    preparingToday=request;
+    return request.work;
   }
   let windowSequence=0,windowTail:Promise<unknown>=Promise.resolve();
   function syncTransitWindow(window:TransitWindow):Promise<TransitWindowUpdate> {
+    // Only a completed daily preparation may suppress a later ordinary call.
+    today=null;
     const target={dates:[...window.dates],expiresAt:window.expiresAt},sequence=++windowSequence;
     const observation=observe?.({action:'data_read',component:'storage'});
     const stopped=():TransitWindowUpdate|null=>closed?{status:'cancelled'}:sequence!==windowSequence?{status:'stale'}:null;
@@ -146,10 +160,11 @@ export function createCalculationClients({cacheOptions,libraryOptions,memory=cre
       return run(value,options?.signal,signal=>client.readStoredDay(input,{signal,opened:options?.opened,observeOnly:options?.observeOnly})).then(day=>rememberNatal(day,value,client,options?.signal));},
     getDay(input,options){const value=current,client=value.clients.natal;
       return run(value,options?.signal,signal=>client.getDay(input,{signal})).then(day=>{rememberNatal(day,value,client,options?.signal);return day;});},
-    readDay(input,options){const value=current,client=value.clients.natal;
-      return run(value,options?.signal,signal=>client.readDay(input,{signal})).then(day=>rememberNatal(day,value,client,options?.signal));},
+    readLocalDay(input,options){const value=current,client=value.clients.natal;
+      return run(value,options?.signal,signal=>client.readLocalDay(input,{signal})).then(day=>rememberNatal(day,value,client,options?.signal));},
     peekDay(input){if(closed)return null;const value=current,client=value.clients.natal;return rememberNatal(client.peekDay(input),value,client);},
     retainDay(day){const owner=natalOwners.get(day);return owner && !owner.generation.closed?owner.client.retainDay(day):()=>{};},
+    markDayUsed(input,day){const owner=natalOwners.get(day);if(owner && !owner.generation.closed)owner.client.markDayUsed(input,day);},
   };
   const cycles:CyclesClient={
     receiveFamily(input,owner,options){const value=current,client=value.clients.cycles;

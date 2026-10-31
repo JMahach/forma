@@ -12,7 +12,7 @@ async function fixture() {
     form:{pending:null,opened:false,clearPending(){},restore(){}},report(){},changed(){},
   },update:{restored:()=>true,ready:()=>ready,selection:()=>selected,
     sources:{temporaryId:null,publicId:null,hasOwn:()=>true,canRestore(){reads++;return durable;}},checkpoint(){writes++;return stored;}}});
-  app.start();await app.whenRestored();
+  app.start();await app.whenStartupSettled();
   return {app,setSelected(value:string){selected=value;},setReady(value:boolean){ready=value;},
     setDurable(value:boolean|Promise<boolean>){durable=value;},setStored(value:boolean){stored=value;},
     get writes(){return writes;},get reads(){return reads;}};
@@ -26,7 +26,7 @@ test('release preparation requires a durable selection and one accepted checkpoi
   h.setDurable(true);h.setStored(false);
   assert.equal(h.app.prepareUpdate(),false);assert.equal(h.writes,1);
   h.setStored(true);assert.equal(h.app.prepareUpdate(),true);assert.equal(h.writes,2);
-  await h.app.stop();assert.equal(h.app.prepareUpdate(),false);assert.equal(h.writes,2);
+  h.app.requestStop();assert.equal(h.app.prepareUpdate(),false);assert.equal(h.writes,2);
 });
 
 for(const boundary of ['selection','input','stop','failure'] as const)test(`release revalidates after the durable read: ${boundary}`,async()=>{
@@ -35,10 +35,10 @@ for(const boundary of ['selection','input','stop','failure'] as const)test(`rele
   const preparing=h.app.prepareUpdate();
   if(boundary==='selection')h.setSelected('another');
   if(boundary==='input')h.setReady(false);
-  if(boundary==='stop')await h.app.stop();
+  if(boundary==='stop')h.app.requestStop();
   if(boundary==='failure')reject(new Error('storage unavailable'));else resolve(true);
   assert.equal(await preparing,false);assert.equal(h.writes,0);
-  await h.app.stop();
+  h.app.requestStop();
 });
 
 test('preparation waits for the active write, then holds its own permission until cancellation',async()=>{
@@ -79,10 +79,10 @@ test('update waits for real recovery acceptance, then blocks new recovery withou
   temporary:()=>null,hasOwn:()=>false,retire(){},public:async()=>assert.fail('no public read'),acceptPublic(){},clearPublic:()=>false,
   view:{isChartScreen:()=>true,showChart(){},changeChart(){},refresh(){},changed(){},checkpoint(){},report(){}},
  },update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint(){checkpoints++;return true;}}});
- t.after(async()=>{restore();release();control.abort();await app.stop();});app.start();
+ t.after(()=>{restore();release();control.abort();app.requestStop();});app.start();
  for(let turn=0;turn<20 && !restoring;turn++)await new Promise(resolve=>setImmediate(resolve));
  assert.equal(restoring,true);assert.equal(reads,0,'account readiness alone must not recover before the tab restores');
- restore();await app.whenRestored();
+ restore();await app.whenStartupSettled();
  await new Promise(resolve=>setImmediate(resolve));assert.equal(placements,1);
  const preparing=Promise.resolve(app.prepareUpdate(control.signal)).then(value=>{prepared=true;return value;});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(prepared,false);assert.equal(checkpoints,0);

@@ -62,6 +62,7 @@ export function createStartupMachine(ports:StartupPorts,runtime:StartupRuntime,n
   });
 }
 export function startupView(snapshot:SnapshotFrom<ReturnType<typeof createStartupMachine>>) {
-  return {restored:snapshot.matches('ready') || snapshot.matches('failed') || snapshot.matches('interrupted'),
+  // Settled means the attempt ended, not that every value was restored.
+  return {settled:snapshot.matches('ready') || snapshot.matches('failed') || snapshot.matches('interrupted'),
     failed:snapshot.matches('failed')};
 }

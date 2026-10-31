@@ -36,27 +36,43 @@ export function createNatalDayClient({
   const reads = new Map<string, SharedRequest<NatalDay | null>>(), dayKeys = new WeakMap<NatalDay, string>();
   const touches = new Map<string, Promise<unknown>>();
   const packets=new WeakMap<NatalDay,ArrayBuffer>();
-  const memorySize=(day:NatalDay)=>estimateBytes(day)+(packets.get(day)?.byteLength??0);
-  const diskFor=(chart:BirthDayIdentity|null|undefined,observeOnly=false)=>captureNatalDayStorage(chart,library,persistentCache,observeOnly);
+  const memorySize = (day: NatalDay) => estimateBytes(day) + (packets.get(day)?.byteLength ?? 0);
+  const diskFor = (chart: BirthDayIdentity | null | undefined, observeOnly = false) =>
+    captureNatalDayStorage(chart, library, persistentCache, observeOnly);
+
+  // Actual opening records use; if an owned hot packet was evicted, it may also
+  // restore that packet. Readiness and minute observations never enter here.
   function touch(key:string,disk:DayDisk|null=persistentCache,bytes?:ArrayBuffer) {
-    if(!disk?.touch || disk.owned && !bytes)return;
-    const useKey=disk.useKey??key;if(touches.has(useKey))return;
-    const work=Promise.resolve().then(async()=>{
-      const present=await disk.touch!(key);
-      if(disk.owned && bytes && !present)await disk.put(key,bytes);
-    }).catch(()=>{}).finally(()=>{if(touches.get(useKey)===work)touches.delete(useKey);});
-    touches.set(useKey,work);
+    if (!disk?.touch || disk.owned && !bytes) return;
+    const useKey = disk.useKey ?? key;
+    if (touches.has(useKey)) return;
+    const work = Promise.resolve().then(async () => {
+      const present = await disk.touch!(key);
+      if (disk.owned && bytes && !present) await disk.put(key, bytes);
+    }).catch(() => {}).finally(() => {
+      if (touches.get(useKey) === work) touches.delete(useKey);
+    });
+    touches.set(useKey, work);
   }
   function remember(key: string, day: NatalDay, disk:DayDisk|null=persistentCache, bytes?:ArrayBuffer) {
     dayKeys.set(day, key);
     if(disk?.owned && bytes)packets.set(day,bytes);
-    memory.put(key,day,memorySize(day));touch(key,disk);
+    memory.put(key,day,memorySize(day));
     return day;
   }
   function retainDay(day: NatalDay) {
     const key = dayKeys.get(day);
     if (key === undefined) return () => {};
     return memory.retain(key,day,memorySize(day));
+  }
+  // Consumers of a prepared minute explicitly record real use. Merely finding
+  // a day or enumerating its available minutes must not keep it young forever.
+  function markDayUsed(chart:BirthDayIdentity,day:NatalDay) {
+    const input=identity(chart);
+    if(input && dayKeys.get(day)===input.key){
+      memory.get(input.key);
+      touch(input.key,diskFor(chart),packets.get(day));
+    }
   }
   function forget(key: string,disk:DayDisk|null=persistentCache) {
     memory.delete(key);
@@ -77,32 +93,39 @@ export function createNatalDayClient({
     if (day.date !== birthDate) throw Object.assign(new Error('Сервер вернул расчёт другого дня.'),{code:'invalid_response'});
     return day;
   }
+  /** RAM only: no disk access, use mark, migration or network. */
   function peekDay(chart: BirthDayIdentity | null | undefined) {
     const input = identity(chart);
-    const day = input ? memory.get<NatalDay>(input.key) : null;
-    if(day && compatibleTimezone(day,input!.timezone)){touch(input!.key,diskFor(chart));return day;}
+    const day = input ? memory.peek<NatalDay>(input.key) : null;
+    if(day && compatibleTimezone(day,input!.timezone))return day;
     return null;
   }
-  // Reading prepared birth-day numbers never joins a calculation request.
-  // A lifetime view may reuse these bytes without opening the natal-day tool.
-  async function readDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
+  // Observe existing numbers without network, use marks or package placement.
+  // Actual opening owns migration and persistence in getDay/readStoredDay(opened).
+  async function readLocalDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
     if (signal?.aborted) throw createAbortError();
-    const input = identity(chart),disk=diskFor(chart);
+    const input = identity(chart);
+    const disk:DayDisk|null=diskFor(chart,true)??persistentCache;
     if (!input) return null;
     const hot = peekDay(chart); if (hot) return hot;
     const day = await shareRequest(reads, input.key, async ({ controller }) => {
       let bytes: ArrayBuffer | null | undefined;
-      try { bytes = await disk?.get(input.key); } catch { return null; }
+      try {
+        bytes = await disk?.get(input.key,{observeOnly:true});
+        if (!bytes && disk?.owned) bytes = await persistentCache?.get(input.key,{observeOnly:true});
+      } catch { return null; }
       if (controller.signal.aborted) throw createAbortError();
       if (!bytes) return null;
       try {const day=validate(bytes,input.birthDate);if(disk?.owned)packets.set(day,bytes);return day;}catch{return null;}
     }, { signal });
     if (signal?.aborted) throw createAbortError();
-    const ready = memory.get<NatalDay>(input.key);
-    if (ready && compatibleTimezone(ready, input.timezone)) return remember(input.key, ready,disk);
+    const ready = memory.peek<NatalDay>(input.key);
+    if (ready && compatibleTimezone(ready, input.timezone)) return ready;
     return day && compatibleTimezone(day, input!.timezone) ? remember(input.key, day,disk) : null;
   }
 
+  /** Open a day: local data first, HTTP if missing, then optional persistence.
+   * Records actual use and may migrate/restore a complete local package. */
   async function getDay(chart: BirthDayIdentity | null | undefined, { signal }: { signal?: AbortSignal } = {}) {
     const input = identity(chart);
     if (!input) throw Object.assign(new Error('Для просмотра дня нужны дата и город рождения.'),{code:'invalid_request'});
@@ -123,16 +146,22 @@ export function createNatalDayClient({
     if (skipDisk) forget(key,disk);
     return forChart(await shareRequest(pending, requestKey, async ({ controller, consumers }) => {
       let bytes: ArrayBuffer | null | undefined;
-      try { if (!skipDisk) bytes = await disk?.get(key,true); } catch { /* Local storage is optional. */ }
+      try { if (!skipDisk) bytes = await disk?.get(key,{opened:true}); } catch { /* Local storage is optional. */ }
       if (controller.signal.aborted) throw createAbortError();
       const ready = memory.get<NatalDay>(key);
-      if (ready && [...consumers].every(consumer => compatibleTimezone(ready, consumer.timezone))) return remember(key, ready,disk);
+      if (ready && [...consumers].every(consumer => compatibleTimezone(ready, consumer.timezone))) {
+        touch(key,disk,packets.get(ready));
+        return remember(key, ready,disk);
+      }
       if (bytes) {
         try {
           const day = validate(bytes, birthDate);
           // A cached packet must suit every current consumer. Otherwise only
           // the server can resolve which saved timezone still matches this city.
-          if ([...consumers].every(consumer => compatibleTimezone(day, consumer.timezone))) return remember(key, day,disk,bytes);
+          if ([...consumers].every(consumer => compatibleTimezone(day, consumer.timezone))) {
+            // The storage read has already recorded this actual opening.
+            return remember(key, day,disk,bytes);
+          }
         } catch { /* Invalid cached bytes can be replaced by a fresh response. */ }
         forget(key,disk);
       }
@@ -176,16 +205,27 @@ export function createNatalDayClient({
       } finally { clearTimeout(deadline); }
     }, { signal, consumer: { timezone } }));
   }
-  async function readStoredDay(chart:BirthDayIdentity|null|undefined,{signal,opened=false,observeOnly=false}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={}) {
+  // A readiness read is observational by default. Explicit opening may mark use
+  // and migrate a legacy package; observeOnly always overrides opening.
+  async function readStoredDay(chart:BirthDayIdentity|null|undefined,{signal,opened=false,observeOnly=!opened}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={}) {
     if(signal?.aborted)throw createAbortError();
     const input=identity(chart),disk=diskFor(chart,observeOnly);if(!input || !disk)return null;
     // A lightweight miss may still be admitting the hot packet. Observe that
     // completed placement, never join a network or calculation request.
     await touches.get(disk.useKey??input.key);
     if(signal?.aborted)throw createAbortError();
-    const bytes=await disk.get(input.key,opened);if(signal?.aborted)throw createAbortError();
+    const bytes=await disk.get(input.key,{opened,observeOnly});if(signal?.aborted)throw createAbortError();
     if(!bytes)return null;
-    try {const day=validate(bytes,input.birthDate);return compatibleTimezone(day,input.timezone)?remember(input.key,day,disk,bytes):null;}catch{return null;}
+    try {
+      const day=validate(bytes,input.birthDate);
+      if(!compatibleTimezone(day,input.timezone))return null;
+      if(!observeOnly)return remember(input.key,day,disk,bytes);
+      // A durable readiness probe must not promote a cached packet either.
+      // Retaining or using this result later is an explicit consumer action.
+      dayKeys.set(day,input.key);
+      if(disk.owned)packets.set(day,bytes);
+      return day;
+    } catch{return null;}
   }
-  return { getDay, peekDay, readDay, readStoredDay, retainDay };
+  return { getDay, peekDay, readLocalDay, readStoredDay, retainDay, markDayUsed };
 }

@@ -34,6 +34,11 @@ export function createMemoryCache({ maxBytes = TAB_CACHE_BYTES } = {}) {
     }
   }
   const api = {
+    // Observing availability must not promote an unused entry in the LRU.
+    peek<T = unknown>(key: PropertyKey): T | null {
+      const entry = entries.get(key);
+      return entry ? entry.value as T : null;
+    },
     get<T = unknown>(key: PropertyKey): T | null {
       const entry = entries.get(key);
       if (!entry) return null;
@@ -55,9 +60,12 @@ export function createMemoryCache({ maxBytes = TAB_CACHE_BYTES } = {}) {
       for(const key of retained.keys())if(!keep(key))retained.delete(key);
     },
     retain<T>(key: PropertyKey, value: T, size?: number) {
+      const entry=entries.get(key);
+      // Reuse accounting only for the same value with no explicit size override.
+      const accountedSize=size===undefined && entry && entry.value===value ? entry.bytes : size;
       const ownership=retained.get(key)??{count:0};ownership.count++;
       retained.set(key,ownership);
-      api.put(key, value, size);
+      api.put(key, value, accountedSize);
       let released = false;
       return () => {
         if (released) return;

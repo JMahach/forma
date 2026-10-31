@@ -25,8 +25,8 @@ const folded = () => natalDayFixture({ date: '2024-11-03', timezone: 'America/Ne
 function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = null } = {}) {
   const day = { ...raw }, storage = new Map(), memory = createMemoryCache(memoryLimit === undefined ? {} : { maxBytes: memoryLimit });
   let chart = personalChartFixture({ birthDate: day.date, timezone: day.timezone, utc: day.startUtc });
-  const natalCalls: string[] = [], requests: string[] = []; let reads = 0;
-  const persistentCache = { get: async key => { reads++; return storage.get(key); }, put: async (key, bytes) => storage.set(key, bytes), remove: async key => storage.delete(key) };
+  const natalCalls: string[] = [], requests: string[] = [], uses:string[]=[]; let reads = 0;
+  const persistentCache = { touch:async (key:string)=>{uses.push(key);return true;}, get: async (key:string) => { reads++; return storage.get(key); }, put: async (key:string, bytes:ArrayBuffer) => {storage.set(key, bytes);return true;}, remove: async (key:string) => storage.delete(key), close(){} };
   const makeNatal = () => createNatalDayClient({ memory, persistentCache,
     fetch: async (url, options) => { natalCalls.push(url); return { ok: true, arrayBuffer: async () => encodeNatalDay(day).buffer }; } });
   const natal = makeNatal();
@@ -35,7 +35,7 @@ function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = nu
     endExclusiveUtc: new Date(end).toISOString().replace('.000Z', 'Z'), samples: 432, stepSeconds: 600,
     planets: LIFETIME_PLANETS, engine: day.engine, nodeModel: day.nodeModel, zodiac: day.zodiac };
   const client = createLifetimeClient({ natalDayClient: natal, getPersonalRecord: () => chart,
-    days: days || { prepare: async () => {}, peekDay: () => null, getDay: async () => null, hasMinute: () => false },
+    days: days || { prepare: async () => {}, peekDay: () => null, readLocalDay: async () => null, hasMinute: () => false },
     fetch: async url => {
       if (url.endsWith('/meta')) return { ok: true, json: async () => meta };
       requests.push(url);
@@ -46,19 +46,25 @@ function harness(raw = natalDayFixture(), { cold = false, memoryLimit, days = nu
         longitudes: Array(11).fill(12), design: { utc, longitudes: Array(11).fill(34),
           designUtc: new Date(Date.parse(utc) - 88 * 86400000).toISOString().replace('.000Z', 'Z'), designArcResidualDegrees: 1e-12 } }) };
     } });
-  return { natal, client, day, memory, storage, natalCalls, requests, meta, get reads() { return reads; }, chart: () => chart,
+  return { natal, client, day, memory, storage, natalCalls, requests, uses, meta, get reads() { return reads; }, chart: () => chart,
     setChart: (value: Omit<SavedChart,"utc"|"birthDate"|"timezone">&{ birthDate: string; timezone: string; utc: string; }) => { chart = value; },
     async prepare() { await natal.getDay(chart); await tick(); if (cold) { memory.delete(`natal-day:1:${chart.birthDate}:${chart.cityId}`); } } };
 }
 
 test('cache-only natal day reads share prepared numbers without starting a day request', async () => {
   const h = harness();
-  assert.equal(await h.natal.readDay(h.chart()), null); assert.deepEqual(h.natalCalls, []);
+  assert.equal(await h.natal.readLocalDay(h.chart()), null); assert.deepEqual(h.natalCalls, []);
   await h.prepare();
-  assert.equal(h.natal.peekDay(h.chart()), await h.natal.readDay(h.chart()));
+  assert.equal(h.natal.peekDay(h.chart()), await h.natal.readLocalDay(h.chart()));
   assert.equal(h.natal.peekDay({ ...h.chart(), birthDate: '2026-09-25' }), null);
-  assert.equal(await h.natal.readDay({ ...h.chart(), timezone: 'Europe/Moscow' }), null);
+  assert.equal(await h.natal.readLocalDay({ ...h.chart(), timezone: 'Europe/Moscow' }), null);
   assert.equal(h.natalCalls.length, 1);
+  await h.client.getMeta();
+  const utc=Date.parse(natalDayMinute(h.day,700).utc);
+  assert.equal(h.client.hasMinute(utc),true);
+  await tick();assert.deepEqual(h.uses,[],'availability does not protect unused data from eviction');
+  assert.ok(await h.client.getLocalMinute(utc));
+  await tick();assert.equal(h.uses.length,1,'using a prepared minute still records real day use');
 });
 
 for (const [name, make, indices] of [['ordinary', () => natalDayFixture(), [700]], ['historical seconds', historical, [1, 100]], ['repeated local hour', folded, [90, 150]]] as const) {
@@ -67,7 +73,7 @@ for (const [name, make, indices] of [['ordinary', () => natalDayFixture(), [700]
     for (const index of indices) {
       const utc = Date.parse(natalDayMinute(h.day, index).utc), expected = chartAtMinute(h.day, index, h.chart());
       assert.equal(h.client.hasMinute(utc), true);
-      const actual = await h.client.readMinute(utc);
+      const actual = await h.client.getLocalMinute(utc);
       assert.equal(actual.utc, expected.utc);
       assert.deepEqual(actual.activations, expected.activations);
       assert.equal(actual.designUtc, expected.designUtc);
@@ -126,10 +132,10 @@ test('a backward historical step offers the exact birth boundary to its owner', 
 test('natal reuse does not lend a rounded instant, another original chart', async () => {
   const h = harness(historical()); await h.prepare(); await h.client.getMeta();
   const exact = Date.parse(natalDayMinute(h.day, 1).utc);
-  assert.equal(h.client.peekMinute(Math.floor(exact / 60000) * 60000), null);
+  assert.equal(h.client.getCachedMinute(Math.floor(exact / 60000) * 60000), null);
   h.setChart({ ...h.chart(), birthDate: '1900-01-02' });
-  assert.equal(h.client.peekMinute(exact), null);
-  assert.equal(await h.client.readMinute(exact), null); assert.deepEqual(h.requests, []);
+  assert.equal(h.client.getCachedMinute(exact), null);
+  assert.equal(await h.client.getLocalMinute(exact), null); assert.deepEqual(h.requests, []);
 });
 
 test('a missing prepared natal day falls back to lifetime without calculating the whole natal day', async () => {
@@ -150,7 +156,7 @@ test('two cache-only natal readers cancel independently and do not wait for pend
   const calculation = client.getDay(chart); await tick(); assert.equal(calls, 1);
   persistentCache.get = () => new Promise(resolve => { resolveDisk = resolve; });
   const cancelled = new AbortController();
-  const abandoned = client.readDay(chart, { signal: cancelled.signal }), surviving = client.readDay(chart);
+  const abandoned = client.readLocalDay(chart, { signal: cancelled.signal }), surviving = client.readLocalDay(chart);
   const rejected = assert.rejects(abandoned, { name: 'AbortError' });
   cancelled.abort(); resolveDisk!(encodeNatalDay(raw).buffer);
   await rejected;
@@ -164,23 +170,23 @@ test('a ready natal packet from disk is used even when the shared reuse budget c
   const h = harness(historical(), { memoryLimit: 0 }); await h.prepare();
   const expected = natalDayMinute(h.day, 1).utc;
   await h.client.getMeta();
-  const chart = await h.client.readMinute(Date.parse(expected));
+  const chart = await h.client.getLocalMinute(Date.parse(expected));
   assert.equal(chart.utc, expected);
   assert.deepEqual(h.requests, []);
   assert.equal(h.memory.size, 0);
 });
 
-for (const firstMode of ['readDay', 'getDay'] as const) test(`a stale ${firstMode} disk miss rechecks numbers published to shared RAM`, async () => {
+for (const firstMode of ['readLocalDay', 'getDay'] as const) test(`a stale ${firstMode} disk miss rechecks numbers published to shared RAM`, async () => {
   let resolveFirst, reads = 0, calls = 0;
   const raw = { ...natalDayFixture() }, bytes = encodeNatalDay(raw).buffer;
   const chart = personalChartFixture();
   const client = createNatalDayClient({     persistentCache: { get() { return ++reads === 1 ? new Promise(resolve => { resolveFirst = resolve; }) : firstMode === 'getDay' ? bytes : null; }, put() {} },
     fetch: async () => { calls++; return { ok: true, arrayBuffer: async () => bytes }; } });
   const first = client[firstMode](chart); await tick();
-  const ready = await client[firstMode === 'readDay' ? 'getDay' : 'readDay'](chart);
+  const ready = await client[firstMode === 'readLocalDay' ? 'getDay' : 'readLocalDay'](chart);
   resolveFirst!(null);
   assert.ok(await first === ready, 'the exact ready packet must win over a stale disk miss');
-  assert.equal(calls, firstMode === 'readDay' ? 1 : 0);
+  assert.equal(calls, firstMode === 'readLocalDay' ? 1 : 0);
 });
 
 test('switching the original natal prepares its stored day even when lifetime metadata was already loaded', async t => {
@@ -215,8 +221,8 @@ test('evicting natal numbers retains only the active timeline and preserves the 
   const utc = Date.parse(natalDayMinute(h.day, 1).utc);
   assert.equal(h.client.nearestMinute(utc + 17000), utc);
   assert.equal(h.client.hasMinute(utc), true);
-  assert.equal(h.client.peekMinute(utc), null);
-  const chart = await h.client.readMinute(utc);
+  assert.equal(h.client.getCachedMinute(utc), null);
+  const chart = await h.client.getLocalMinute(utc);
   assert.equal(chart!.utc, natalDayMinute(h.day, 1).utc);
   assert.deepEqual(h.requests, []);
 });
@@ -254,7 +260,7 @@ for (const command of ['open', 'restore'] as const) test(`explicit ${command} di
   await show();
   assert.equal(h.reads, before + 1, 'one cache-only lookup belongs to the explicit opening');
   assert.equal(h.client.hasMinute(minute), true);
-  assert.equal((await h.client.readMinute(minute)).utc, natalDayMinute(h.day, 1).utc);
+  assert.equal((await h.client.getLocalMinute(minute)).utc, natalDayMinute(h.day, 1).utc);
   assert.deepEqual(h.requests, []);
   for (const index of [150, 151, 152] as const) await h.client.getPoint(index);
   assert.equal(h.reads, before + 1, 'scrubbing does not repeat the opening lookup');

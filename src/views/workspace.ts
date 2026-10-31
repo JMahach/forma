@@ -25,7 +25,7 @@ interface WorkspacePorts {
  readonly natalDay:NatalDayExplorer|null;readonly returns:ReturnsController|null;
  readonly lifetimeFailed:boolean;readonly lifetimeLoading:boolean;readonly returnsLoading:boolean;
  drawing:{readonly pending:boolean;render():void};layout:{readonly phone?:boolean;beginChange():void;refresh():unknown};
- restored():boolean;failed():boolean;loadingChanged():void;
+ startupSettled():boolean;failed():boolean;loadingChanged():void;
 }
 /** Browser screen, first reveal and focus. Application restoration stays in the core. */
 export function createWorkspaceView(ports:WorkspacePorts) {
@@ -110,7 +110,7 @@ export function createWorkspaceView(ports:WorkspacePorts) {
   }
   function restoreInitialInput() {
     const {viewSession,lifetimeControls,account,allCharts,knowledge}=ports;
-    if ((!pendingInputRestore && !pendingLifetimeDraft) || initialPage.active || !ports.restored()) return;
+    if ((!pendingInputRestore && !pendingLifetimeDraft) || initialPage.active || !ports.startupSettled()) return;
     if (viewSession?.interrupted) {discardPendingInput();return;}
     if (workspace.screen === 'chart' && pendingLifetimeDraft) {
       if (!lifetimeControls?.restoreDraft(pendingLifetimeDraft,{restoreFocus:pendingInputRestore})) return;
@@ -125,7 +125,7 @@ export function createWorkspaceView(ports:WorkspacePorts) {
     if (!initialPage.active || !initialPage.attached || !fontsSettled || initialPage.screenPending || initialPage.changingTimeline) return;
     let failed = initialPage.screenFailed;
     if (workspace.screen === 'chart') {
-      if (!ports.restored()) return;
+      if (!ports.startupSettled()) return;
       const view = ports.chartTools.presentation(), cycles = ports.returns!.state, day = ports.natalDay!.state, life = ports.lifetime?.state;
       const cyclesVisible = view.returnsVisible || view.personalTimelineVisible;
       failed ||= ports.failed() || ports.lifetimeFailed || day.opened && day.status === 'error'

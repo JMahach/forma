@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import { createMemoryCache, estimateBytes, TAB_CACHE_BYTES } from '../src/data/memory-cache.ts';
 
 test('one byte budget evicts the least recently used data across kinds', () => {
-  const cache = createMemoryCache({ maxBytes: 10 });
-  cache.put('transit:a', 'a', 4); cache.put('natal:b', 'b', 4);
-  assert.equal(cache.get('transit:a'), 'a');
-  cache.put('return:c', 'c', 4);
-  assert.equal(cache.get('natal:b'), null); assert.equal(cache.get('transit:a'), 'a');
-  assert.equal(cache.bytes, 8); assert.equal(TAB_CACHE_BYTES, 64 * 1024 * 1024);
+  for(const access of ['peek','get','retain'] as const){
+    const cache = createMemoryCache({ maxBytes: 10 });
+    cache.put('transit:a', 'a', 4); cache.put('natal:b', 'b', 4);
+    if(access==='retain')cache.retain('transit:a','a')();
+    else assert.equal(cache[access]('transit:a'), 'a');
+    cache.put('return:c', 'c', 4);
+    if(access==='peek'){
+      assert.equal(cache.get('transit:a'),null,'observation must not protect the oldest entry');
+      assert.equal(cache.get('natal:b'),'b');
+    }else{
+      assert.equal(cache.get('natal:b'), null); assert.equal(cache.get('transit:a'), 'a');
+    }
+    assert.equal(cache.bytes, 8); assert.equal(cache.peek('missing'),null);
+  }
+  assert.equal(TAB_CACHE_BYTES, 64 * 1024 * 1024);
 });
 
 test('active data survives pressure and becomes evictable after every owner releases it', () => {
@@ -27,6 +36,20 @@ test('replacement, deletion and shared buffers preserve correct byte accounting'
   const buffer = new ArrayBuffer(100);
   assert.equal(estimateBytes([new Uint8Array(buffer), new Uint8Array(buffer)]), 216);
   cache.put('too large', 'value', 13); assert.equal(cache.size, 0);
+  const measured=createMemoryCache();let scans=0;
+  const value={get payload(){scans++;return 'day';}};
+  measured.put('day',value);const initialBytes=measured.bytes;
+  assert.equal(scans,1);
+  const release=measured.retain('day',value);
+  assert.equal(scans,1,'retaining the same object must reuse its accounted size');
+  assert.equal(measured.bytes,initialBytes);
+  const resized=measured.retain('day',value,7),again=measured.retain('day',value);
+  assert.equal(scans,1);assert.equal(measured.bytes,7,'explicit size replaces the old accounting');
+  const replacement={payload:'different'};
+  const replace=measured.retain('day',replacement);
+  assert.equal(measured.bytes,estimateBytes(replacement),'a different object needs its own estimate');
+  release();resized();again();replace();
+
 });
 
 test('clearExcept preserves only matching string entries and their active ownership',()=>{

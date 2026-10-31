@@ -1,7 +1,7 @@
 import type {ChartSession} from '../state/chart-session.ts';
 import type {ChartExploration} from '../state/chart-exploration.ts';
 import type {ReturnsController} from '../state/returns.ts';
-import type {MomentTimeline} from '../state/moment-timeline.ts';
+import type {MomentTimeline,MomentTimelineState} from '../state/moment-timeline.ts';
 import type {NatalDayExplorer} from '../state/natal-day.ts';
 import type {LiveTransit} from '../state/live-transit.ts';
 import type {WorkspaceState} from '../state/workspace.ts';
@@ -14,7 +14,8 @@ import {chartCaption} from './chart-display.ts';
 import {chartPresentation} from '../domain/chart-presentation.ts';
 import {studioPresentation,type StudioPresentation} from '../ui/studio-presentation.ts';
 import {returnsVisibleWindow} from '../domain/returns-window.ts';
-import {cycleTimeZone} from '../domain/cycles.ts';
+import {cycleTimeZone,eligibleCycleChart} from '../domain/cycles.ts';
+import {ageText,completedAge} from '../domain/personal-age.ts';
 interface ChartToolsPorts {
  document:Document;signal:AbortSignal;session:ChartSession;workspace:Pick<WorkspaceState,'screen'>;heading:ChartHeadingLayout;
  readonly returns:ReturnsController|null;readonly lifetime:MomentTimeline|null;readonly natalDay:NatalDayExplorer|null;
@@ -22,7 +23,7 @@ interface ChartToolsPorts {
  readonly returnsView:ReturnsPanel|null;readonly lifetimeControls:LifetimeControls|null;
  readonly returnMarkers:ReturnType<typeof attachReturnMarkers>|null;
  initialPage:{active:boolean};readonly initialPresentation:StudioPresentation|null;readonly loadFailed:boolean;
- restored():boolean;connection():string;nowUtc():string;
+ startupSettled():boolean;connection():string;nowUtc():string;
  loadReturnsView():unknown;layout(view:StudioPresentation):boolean|void;updated():void;
 }
 /** Projects the accepted chart and tool owners; it never starts an application scenario. */
@@ -45,7 +46,7 @@ export function createChartToolsView(ports:ChartToolsPorts) {
 
   function presentation() {
     const {initialPage,initialPresentation,exploration,lifetime,session,returns,natalDay}=ports;
-    if (initialPage.active && !ports.restored() && initialPresentation) return initialPresentation;
+    if (initialPage.active && !ports.startupSettled() && initialPresentation) return initialPresentation;
     const timeline = exploration!.pendingTimeline || lifetime?.state;
     const source=chartPresentation(session.selectedId,session.record);
     return studioPresentation({ isTransit: source.isTransit,
@@ -53,6 +54,22 @@ export function createChartToolsView(ports:ChartToolsPorts) {
       lifetime: timeline ? { opened: timeline.opened, mode: timeline.mode } : null, returnsOpened: Boolean(returns?.opened),
       returnsEnabled: exploration!.returnsEnabled, transitEnabled: exploration!.transitEnabled,
       loadFailed: ports.loadFailed });
+  }
+
+  function formatLifetimeEndpoints(state:MomentTimelineState):[string,string]|null {
+    const natal=ports.session.record;
+    if(!eligibleCycleChart(natal) || ports.natalDay!.state.opened)return null;
+    const year=ports.returns!.year;
+    if(Number.isInteger(year)) {
+      const visible=returnsVisibleWindow(natal,year,state);
+      if(visible) {
+        const label=new Intl.DateTimeFormat('ru',{
+          timeZone:cycleTimeZone(natal!.timezone),month:'short',year:'numeric',
+        });
+        return [label.format(visible.minUtc),label.format(visible.maxUtc)];
+      }
+    }
+    return ['Рождение',ageText(completedAge(`${state.toDate}T23:59:59Z`,natal)!)];
   }
 
   function update() {
@@ -105,5 +122,13 @@ export function createChartToolsView(ports:ChartToolsPorts) {
     return changed;
   }
 
-  return {caption,presentation,update,get captionPending(){return captionPending;}};
+  return {
+    caption,presentation,update,formatLifetimeEndpoints,
+    get pendingTimeline():'day'|'lifetime'|null {
+      const pending=ports.initialPresentation;
+      if(pending?.timelinePanel==='natal-day')return 'day';
+      return pending?.toggleEnabled ? 'lifetime' : null;
+    },
+    get captionPending(){return captionPending;},
+  };
 }

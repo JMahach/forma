@@ -112,6 +112,7 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
   if(!this.active || this.stopped)return;
   this.present();this.wake('changed');
  }
+ /** Detaches scheduling now; pending checks and durable permit release settle asynchronously. */
  stop(){
   if(this.stopped)return;this.active=false;this.withdraw();this.stopped=true;this.disconnect();
   this.options.channel?.removeEventListener('message',this.message);this.options.channel?.close();this.peers.clear();

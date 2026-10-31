@@ -138,14 +138,16 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       return result;
     };
     const reuse=(data:ClientCycleResult)=>{
-      if(saveIndividual)Promise.resolve().then(()=>device!.touchChart?.(key)).catch(()=>{});
+      if(saveIndividual && opened)Promise.resolve().then(()=>device!.touchChart(key)).catch(()=>{});
       return accept(data,{remember:false});
     };
-    const remembered = memory.get<ClientCycleResult>(memoryKey);
+    const readMemory=()=>cacheOnly && !opened
+      ? memory.peek<ClientCycleResult>(memoryKey) : memory.get<ClientCycleResult>(memoryKey);
+    const remembered = readMemory();
     if(cacheOnly && library && owner && !isMainReturnBody(input.body))return null;
     if (usable(remembered) && !(cacheOnly && library && owner)) return reuse(remembered);
     if(library && own && isMainReturnBody(input.body)) {
-      const packet=await families.read({...input,timezone:sourceTimezone},own,{signal,durable:cacheOnly,opened});
+      const packet=await families.read({...input,timezone:sourceTimezone},own,{signal,durable:cacheOnly,opened,observeOnly:cacheOnly && !opened});
       if(packet) {
         if(action==='events' && validCycleResult('events',packet.dates,input))return packet.dates;
         const index=packet.dates.events.findIndex(event=>event.utc===input.eventUtc);
@@ -159,18 +161,19 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
       const read = action === 'events' ? 'getEvents' : 'getChart';
       const remove = action === 'events' ? 'removeEvents' : 'removeChart';
       const preceding = pending.get(requestKey);
-      const data = await shareRequest(reads, key, async () => {
-        try { return await device![read](key); } catch { return null; }
+      const observeOnly=cacheOnly && !opened;
+      const data = await shareRequest(reads, JSON.stringify([key,observeOnly]), async () => {
+        try { return await device![read](key,{observeOnly}); } catch { return null; }
       }, { signal });
       if (signal?.aborted) throw createAbortError();
       if (data) {
         if (validCycleResult(action, data, input)) {
           if (usable(data)) return accept(data);
-        } else Promise.resolve().then(() => device![remove](key)).catch(() => {});
+        } else if(!cacheOnly || opened) Promise.resolve().then(() => device![remove](key)).catch(() => {});
       }
       // Another owner may have filled common RAM while this device snapshot
       // was still pending. A late miss never overrides ready shared data.
-      const latest = memory.get<ClientCycleResult>(memoryKey);
+      const latest = readMemory();
       if (usable(latest)) return reuse(latest);
       // Keep the preceding request until this read settles even when its result
       // was too large to stay in the idle memory budget.
@@ -200,7 +203,9 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
   return {
     receiveFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
       families.receive(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
-    readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false,observeOnly=false}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={})=>
+    // Read-only by default. opened marks use; observeOnly:false also permits
+    // repairing storage and migrating a complete legacy family, without HTTP.
+    readFamily:(input:CycleInput,owner:CycleOwner,{signal,opened=false,observeOnly=!opened}:{signal?:AbortSignal;opened?:boolean;observeOnly?:boolean}={})=>
       families.read(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal,opened,durable:true,observeOnly}),
     fetchFamily:(input:CycleInput,owner:CycleOwner,{signal}:{signal?:AbortSignal}={})=>
       families.fetch(input,owner,{signal:signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal}),
@@ -208,7 +213,8 @@ export function createCyclesClient({ request = requestJSON, memory = createMemor
     readEvents: (input: CycleInput, { signal,owner }: { signal?: AbortSignal;owner?:CycleOwner|null } = {}) => get('events', input, signal, { cacheOnly: true,owner }) as Promise<CycleEventsResult | null>,
     chart: (input: CycleInput, signal?: AbortSignal, options?: Omit<CycleOptions, 'cacheOnly'>) => get('chart', input, signal, options) as Promise<CachedCycleChart>,
     // A confirmed cached chart carries its own exact event label.
-    // This never joins numerical requests or asks for the body's dates.
+    // No HTTP or disk mutation by default. opened:true marks actual use and
+    // permits legacy migration; it never joins numerical requests.
     readChart: (input: CycleInput, { signal,owner,opened=false }: { signal?: AbortSignal;owner?:CycleOwner|null;opened?:boolean } = {}) => get('chart', input, signal, { cacheOnly: true,owner,opened }) as Promise<CachedCycleChart | null>,
     retainChart: (input: CycleInput, data: CachedCycleChart) => memory.retain(`return-chart:${identity('chart', input)}`, data),
     retainEvents: (input: CycleInput, data: CycleEventsResult) => memory.retain(`return-events:${identity('events', input)}`, data),

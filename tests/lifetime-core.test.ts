@@ -164,9 +164,9 @@ test('independent visits never accumulate intermediate points in RAM or IndexedD
   } });
   for (const index of [0, 1, 2, 1, 0] as const) await client.getPoint(index);
   assert.deepEqual(calls, [0, 1, 2, 1, 0]);
-  assert.equal(client.peekMinute(Date.parse(meta.startUtc)), null);
+  assert.equal(client.getCachedMinute(Date.parse(meta.startUtc)), null);
   assert.equal(client.hasMinute(Date.parse(meta.startUtc)), false);
-  assert.equal(await client.readMinute(Date.parse(meta.startUtc)), null);
+  assert.equal(await client.getLocalMinute(Date.parse(meta.startUtc)), null);
   let attempts = 0;
   const invalid = createLifetimeClient({ fetch(url) { return response(url.endsWith('/meta') ? meta : ++attempts === 1 ? moment(2) : moment(1)); } });
   await assert.rejects(invalid.getPoint(1), /Некорректные/); assert.equal((await invalid.getPoint(1)).index, 1);
@@ -718,7 +718,7 @@ for (const source of ['metadata', 'point', 'minute'] as const) test(`${source} f
   const explorer = createMomentTimeline({ getDayState: () => ({ current: chart, timeline: { date: '2026-09-30' } }), client: {
     getMeta: async () => { if (source === 'metadata') failFirst(); return fullMeta; },
     getPoint: async index => { failFirst(); return moment(index, fullMeta); },
-    readMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
+    getLocalMinute: async utc => { failFirst(); return dayChart(new Date(utc).toISOString()); },
   } });
   t.after(() => explorer.close());
   if (source === 'metadata') await explorer.open();
@@ -835,7 +835,7 @@ test('offline lifetime reads ready minutes but a missing target keeps the accept
   const explorer = createMomentTimeline({connection:()=>mode,now:()=>Date.parse('1900-01-02T00:00:00Z'),
     getDayState:()=>({current:ready,timeline:{date:'1900-01-02'}}),client:{
       getMeta:async()=>meta,getPoint:async index=>{points++;return moment(index);},
-      readMinute:async utc=>utc===readyUtc?ready:null,
+      getLocalMinute:async utc=>utc===readyUtc?ready:null,
     }});
   await explorer.open(); await explorer.setDateRange('1900-01-01','1900-01-03');
   const before = explorer.current, count = points;

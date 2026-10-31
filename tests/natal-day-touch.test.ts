@@ -27,7 +27,7 @@ function readyClient(touch: NatalDayStorage['touch'], memory = createMemoryCache
     fetch() { throw new Error('ready day must not fetch'); } });
 }
 
-test('ready natal reads share pending LRU work per key and later use touches again', async t => {
+test('natal observations do not write and actual opening shares one pending use mark', async t => {
   const owner = createCalculationCache({ indexedDB: new IDBFactory(), legacySources: [] });
   const persistent = createNatalDayStorage({ cache: owner });
   t.after(() => { persistent.close(); owner.close(); });
@@ -46,14 +46,16 @@ test('ready natal reads share pending LRU work per key and later use touches aga
       pending.push(work); return work;
     } }, fetch() { throw new Error('ready day must not fetch'); } });
   for (let i = 0; i < 100; i++) assert.equal(client.peekDay(chart), day);
-  assert.equal(await client.readDay(chart), day);
+  assert.equal(await client.readLocalDay(chart), day);
+  await tick();
+  assert.deepEqual(calls, [], 'readiness and prepared-minute observation never mark persistent use');
   assert.equal(await client.getDay(chart), day);
   await tick();
   assert.deepEqual(calls, [key], 'one unfinished storage touch serves all ready-day reads');
-  assert.equal(client.peekDay(otherChart), day); await tick();
+  assert.equal(await client.getDay(otherChart), day); await tick();
   assert.deepEqual(calls, [key, otherKey], 'another day has independent storage work');
   held.resolve(); await Promise.all(pending); await tick();
-  assert.equal(client.peekDay(chart), day); await tick();
+  assert.equal(await client.getDay(chart), day); await tick();
   assert.deepEqual(calls, [key, otherKey, key], 'completion permits the next access-time update');
   await Promise.all(pending);
   assert.deepEqual(await persistent.get(key), bytes, 'touches preserve the full day packet');
@@ -68,7 +70,7 @@ for (const failure of ['reject', 'throw'] as const) test(`a ${failure}ing natal 
     }
     return Promise.resolve(true);
   });
-  assert.equal(client.peekDay(chart), day); await tick();
+  assert.equal(await client.getDay(chart), day); await tick();
   failed.reject(new Error('storage unavailable'));
   // In the synchronous case no code consumes this deferred promise.
   if (failure === 'throw') await failed.promise.catch(() => {});
@@ -81,15 +83,15 @@ test('a late touch from a replaced natal client cannot block or release the new 
   const memory = createMemoryCache(), oldWork = deferred<boolean | null>(), freshWork = deferred<boolean | null>();
   let oldCalls = 0, freshCalls = 0;
   const old = readyClient(() => { oldCalls++; return oldWork.promise; }, memory);
-  assert.equal(old.peekDay(chart), day); await tick();
+  assert.equal(await old.getDay(chart), day); await tick();
   memory.clearExcept('transit-day:');
   const fresh = readyClient(() => { freshCalls++; return freshCalls === 1 ? freshWork.promise : Promise.resolve(true); }, memory);
-  assert.equal(fresh.peekDay(chart), day); await tick();
+  assert.equal(await fresh.getDay(chart), day); await tick();
   assert.equal(oldCalls, 1); assert.equal(freshCalls, 1, 'old unfinished work cannot suppress the replacement');
   oldWork.resolve(true); await tick();
-  assert.equal(fresh.peekDay(chart), day); await tick();
+  assert.equal(await fresh.getDay(chart), day); await tick();
   assert.equal(freshCalls, 1, 'old completion cannot release the replacement touch');
   freshWork.resolve(true); await tick();
-  assert.equal(fresh.peekDay(chart), day); await tick();
+  assert.equal(await fresh.getDay(chart), day); await tick();
   assert.equal(freshCalls, 2);
 });

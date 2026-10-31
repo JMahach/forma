@@ -12,7 +12,7 @@ interface LifetimeDayState { current: ChartInput | null; timeline?: { date: stri
 export interface MomentTimelineBounds { minUtc: number; maxUtc: number }
 export type MomentTimelineTarget = SavedMomentTimelineView & { minimumUtc?: string; maximumUtc?: string };
 type LifetimeRestoration = Omit<Partial<MomentTimelineTarget>, 'opened' | 'requestedUtc'> & { mode: 'transit-day' | 'range'; requestedUtc?: number | null };
-type LifetimeDataClient = Omit<LifetimeClient, 'readMinute'> & Partial<Pick<LifetimeClient, 'readMinute'>>;
+type LifetimeDataClient = Omit<LifetimeClient, 'getLocalMinute'> & Partial<Pick<LifetimeClient, 'getLocalMinute'>>;
 export interface MomentState { current: ChartInput | null; status: LifetimeStatus; error?: string; errorCode?: string; live?: boolean; retryCount?: number }
 type LifetimeStatus = 'idle' | 'loading' | 'ready' | 'error' | 'preparing';
 export type MomentTimeline = ReturnType<typeof createMomentTimeline>;
@@ -147,16 +147,16 @@ export function createMomentTimeline({
     // chart never becomes an exploration result merely by sharing its UTC.
     if (exploredChart && shownUtc() === clamped) return { utc: clamped, chart: exploredChart };
     const prepared = client.nearestMinute?.(clamped, { min, max }, round);
-    if (Number.isFinite(prepared)) return { utc: prepared!, chart: client.peekMinute(prepared!) };
+    if (Number.isFinite(prepared)) return { utc: prepared!, chart: client.getCachedMinute(prepared!) };
     const minute = Math.max(Math.ceil(min / 60000) * 60000,
       Math.min(Math.floor(max / 60000) * 60000, Math.round(clamped / 60000) * 60000));
-    const chart = minute <= max ? client.peekMinute?.(minute) : null;
+    const chart = minute <= max ? client.getCachedMinute?.(minute) : null;
     if (chart || minute <= max && client.hasMinute?.(minute)) return { utc: minute, chart };
     // Another tab may have saved this day after the catalogue was prepared.
     // Keep the minute until a cache-only lookup can confirm it or miss.
-    if (minute <= max && client.readMinute && !Number.isInteger(indexAt(minute))) return { utc: minute, chart: null };
+    if (minute <= max && client.getLocalMinute && !Number.isInteger(indexAt(minute))) return { utc: minute, chart: null };
     const utc = gridUtc(clamped, round, bounds);
-    return utc === null ? null : { utc, chart: client.peekMinute?.(utc) || null };
+    return utc === null ? null : { utc, chart: client.getCachedMinute?.(utc) || null };
   }
   function load(restoration = pendingRestore, refreshNatalDay = false) {
     if (!opened) return Promise.resolve(false);
@@ -224,9 +224,9 @@ export function createMomentTimeline({
           const selected = selection, bounds = selectionBounds, round = selectionRound;
           let chart: ChartInput | null | undefined, checkedDay: { date: string } | null = null;
           try {
-            chart = client.peekMinute?.(target);
-            if (!chart && client.readMinute && (offline() || client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
-              chart = await client.readMinute(target, { signal: request.controller.signal });
+            chart = client.getCachedMinute?.(target);
+            if (!chart && client.getLocalMinute && (offline() || client.hasMinute?.(target) || !Number.isInteger(indexAt(target)))) {
+              chart = await client.getLocalMinute(target, { signal: request.controller.signal });
               // Historical natal minutes can have UTC seconds; their miss
               // does not inspect the whole-minute transit day.
               if (target % 60000 === 0) checkedDay = { date: new Date(target).toISOString().slice(0, 10) };
@@ -390,7 +390,7 @@ export function createMomentTimeline({
     const forward = direction > 0;
     const minute = (forward ? Math.floor(requestedUtc! / 60000) + 1 : Math.ceil(requestedUtc! / 60000) - 1) * 60000;
     if (!forward && minute <= minUtc!) return minUtc;
-    const ready = minute <= maxUtc! && (client.hasMinute?.(minute) || client.peekMinute?.(minute));
+    const ready = minute <= maxUtc! && (client.hasMinute?.(minute) || client.getCachedMinute?.(minute));
     const grid = utcAt(forward ? Math.floor(indexAt(requestedUtc!)) + 1 : Math.ceil(indexAt(requestedUtc!)) - 1);
     const fallback = ready ? minute : forward && grid > maxUtc! ? requestedUtc : clampUtc(grid);
     const prepared = client.adjacentMinute?.(requestedUtc!, direction);
@@ -414,8 +414,8 @@ export function createMomentTimeline({
       const minute = (forward ? Math.floor(requestedUtc! / 60000) + 1 : Math.ceil(requestedUtc! / 60000) - 1) * 60000;
       // Preserve the exact birth endpoint and prepared natal samples, including
       // historical UTC seconds. Only an unknown neighbour needs a disk probe.
-      const ready = target === minUtc || client.hasMinute?.(target!) || client.peekMinute?.(target!);
-      if (!ready && client.readMinute && minute >= minUtc! && minute <= maxUtc!)
+      const ready = target === minUtc || client.hasMinute?.(target!) || client.getCachedMinute?.(target!);
+      if (!ready && client.getLocalMinute && minute >= minUtc! && minute <= maxUtc!)
         target = target === requestedUtc ? minute : forward ? Math.min(target!, minute) : Math.max(target!, minute);
       const { min, max } = limits(bounds);
       if (min > max) return;

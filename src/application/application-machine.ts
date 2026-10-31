@@ -44,7 +44,7 @@ interface CoreActor {
  send(event:Event):void;
 }
 function readWrite(actor:CoreActor){const child=actor.getSnapshot().children.write;return child?writeContinuationView(child.getSnapshot()):{source:null,busy:false,recovering:false,waitingForLogin:false};}
-function readStartup(actor:CoreActor){const child=actor.getSnapshot().children.startup;return child?startupView(child.getSnapshot()):{restored:false,failed:false};}
+function readStartup(actor:CoreActor){const child=actor.getSnapshot().children.startup;return child?startupView(child.getSnapshot()):{settled:false,failed:false};}
 function projectLibrary(actor:CoreActor,ports:ApplicationPorts) {
   if(!actor.getSnapshot().matches('running'))return;
   const port=ports.libraryProjection;if(!port)return;
@@ -52,7 +52,7 @@ function projectLibrary(actor:CoreActor,ports:ApplicationPorts) {
   const source=write.source && selection.record===write.source?write.source:null;
   if(sources.projectLibrary(library.charts,library.storageAvailable,library.readyIds,library.entries,{accountId:library.accountId,source})===false)return;
   port.form.refresh();port.view.library();
-  if(!readStartup(actor).restored || source || selection.selectedId==='current-transit')return;
+  if(!readStartup(actor).settled || source || selection.selectedId==='current-transit')return;
   if(sources.get(selection.selectedId)){selection.refreshRecord(port.view.changeChart);return;}
   if(port.view.isChartScreen())actor.send({type:'ChartSelected',id:'current-transit',replace:true});
   else port.view.changeChart('current-transit');
@@ -71,8 +71,8 @@ function presentFormResult(actor:CoreActor,ports:ApplicationPorts,id:string,meta
 }
 
 export function applicationRestored(snapshot:CoreSnapshot,ports:ApplicationPorts) {
-  const child=snapshot.children.startup,startup=child?startupView(child.getSnapshot()):{restored:false,failed:false};
-  return snapshot.matches('running') && startup.restored && !startup.failed
+  const child=snapshot.children.startup,startup=child?startupView(child.getSnapshot()):{settled:false,failed:false};
+  return snapshot.matches('running') && startup.settled && !startup.failed
     && (!ports.account || snapshot.children.account?.getSnapshot().matches('ready')===true)
     && !snapshot.matches({running:{destination:'preparing'}}) && (!snapshot.matches({running:{destination:'failed'}}) || !!snapshot.context.request?.selection) && ports.update?.restored()===true;
 }
@@ -95,7 +95,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
   // Actions use self; only callback owners need this runtime connection.
   const accountReady=()=>!ports.account || runtime().getSnapshot().children.account?.getSnapshot().matches('ready')===true;
   const background=ports.background?createBackgroundWork(ports.background,{
-    state(){const actor=runtime(),snapshot=actor.getSnapshot(),write=readWrite(actor);return {running:snapshot.matches('running'),restored:!ports.startup || readStartup(actor).restored,
+    state(){const actor=runtime(),snapshot=actor.getSnapshot(),write=readWrite(actor);return {running:snapshot.matches('running'),startupSettled:!ports.startup || readStartup(actor).settled,
       accountReady:accountReady(),opening:snapshot.matches({running:{destination:'preparing'}}),writing:write.busy && !write.waitingForLogin,preparingUpdate:preparingUpdate()};},
     publicTask():BackgroundTask|null {
       const child=runtime().getSnapshot().children.publicRefresh;if(!child)return null;
@@ -107,7 +107,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
     wake(at,reason){runtime().send({type:'FillWake',at,reason});if(reason!=='use' && reason!=='space')runtime().send({type:'AuditWake',at});},
     environmentChanged(facts){runtime().send({type:'EnvironmentObserved',...facts});},
   }):undefined;
-  const publicRefreshAllowed=()=>!preparingUpdate() && !readWrite(runtime()).source && (!ports.startup || readStartup(runtime()).restored)
+  const publicRefreshAllowed=()=>!preparingUpdate() && !readWrite(runtime()).source && (!ports.startup || readStartup(runtime()).settled)
     && (ports.background?.environment.online()??true);
   return setup({
     types: {
@@ -159,14 +159,14 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       }),
       recoverReadyWrites:enqueueActions(({self,event,enqueue})=>{
         const account=self.getSnapshot().children.account?.getSnapshot();
-        if(ports.write && account?.matches('ready') && account.context.access && readStartup(self).restored
+        if(ports.write && account?.matches('ready') && account.context.access && readStartup(self).settled
           && (event.type!=='EnvironmentObserved' || event.resumed) && !preparingUpdate())
           enqueue.sendTo('write',{type:'RecoverWrites'});
       }),
       wakeLibrary:enqueueActions(({self,event,enqueue})=>{
         const clock=ports.background?.clock??ports.libraryFill?.clock??ports.libraryAudit?.clock;
         const account=self.getSnapshot().children.account?.getSnapshot();
-        if(clock && readStartup(self).restored && account?.matches('ready') && (event.type!=='EnvironmentObserved' || event.resumed)){
+        if(clock && readStartup(self).settled && account?.matches('ready') && (event.type!=='EnvironmentObserved' || event.resumed)){
           const at=clock.now();
           if(ports.libraryFill)enqueue.sendTo('libraryFill',{type:'FillWake',at,reason:'lifecycle'});
           if(ports.libraryAudit)enqueue.sendTo('libraryAudit',{type:'AuditWake',at});
@@ -183,7 +183,7 @@ export function createApplicationMachine(ports: ApplicationPorts, disconnect: ()
       startupChanged:enqueueActions(({context,event,enqueue})=>{
         if(event.type!=='xstate.snapshot.startup' || event.snapshot.matches('stopped'))return;
         const next=startupView(event.snapshot),previous=context.observedStartup;
-        if(next.restored===previous?.restored && next.failed===previous?.failed)return;
+        if(next.settled===previous?.settled && next.failed===previous?.failed)return;
         enqueue.assign({observedStartup:next});
         if(!previous)return;
         ports.startup!.changed();enqueue('coordinate');

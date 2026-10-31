@@ -882,9 +882,9 @@ for (const source of ['available day', 'absent day', 'another day'] as const) {
     let releaseDay!: (day: TransitDay | null) => void;
     const readingDay = new Promise<TransitDay | null>(resolve => { releaseDay = resolve; });
     // Supply a delayed stored packet; the real client checks its date and full numeric snapshot
-    // and chooses between readMinute and the prepared file without a scalar API.
+    // and chooses between getLocalMinute and the prepared file without a scalar API.
     const client = createLifetimeClient({ days: { ...days,
-      getDay(date) { reads.push(date); return readingDay; },
+      readLocalDay(date) { reads.push(date); return readingDay; },
     }, fetch: async url => {
       requests.push(url);
       if (url === '/api/lifetime/meta') return { ok: true, json: async () => meta };

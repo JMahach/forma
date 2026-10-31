@@ -476,7 +476,7 @@ test('birth reference tooltip describes the saved chart time', async () => {
 test('offline day availability reads existing device data and never starts a missing calculation', async () => {
   let mode: 'offline' | 'online' = 'offline', ready: NatalDay | null = null, requests = 0;
   const explorer = createNatalDayExplorer({ connection: () => mode, dayClient: {
-    getDay: async () => { if (ready) return ready; requests++; return natalDayFixture(); }, readDay: async () => ready,
+    getDay: async () => { if (ready) return ready; requests++; return natalDayFixture(); }, readLocalDay: async () => ready,
   } });
   explorer.select(personalChartFixture()); await explorer.refreshAvailability();
   assert.equal(explorer.state.canOpen, false);
@@ -499,7 +499,7 @@ test('a late offline day readiness lookup cannot enable a different selected cha
   const pending = new Promise<NatalDay | null>(resolve => { release = resolve; });
   const explorer = createNatalDayExplorer({ connection: () => 'offline', dayClient: {
     getDay: async () => { throw new Error('must not calculate'); },
-    readDay: async chart => chart?.cityId === 'first' ? pending : null,
+    readLocalDay: async chart => chart?.cityId === 'first' ? pending : null,
   } });
   explorer.select(personalChartFixture({ cityId: 'first' }));
   const first = explorer.refreshAvailability();

@@ -17,6 +17,7 @@ export type BackgroundRequest={kind:'check';target:CheckTarget;authority:CheckAu
 export interface BackgroundCoordinator {
  start(listener:(request:BackgroundRequest)=>void):void;
  update(targets:readonly CheckTarget[]):void;
+ /** Withdraws scheduling and requests cancellation; does not await task completion. */
  stop():void;
 }
 export interface BackgroundWorkPorts {
@@ -30,7 +31,7 @@ export interface BackgroundWorkPorts {
  local:{changed(change:LibraryLocalChange):void;broadcast(notice:LibraryLocalNotice):void};
 }
 export interface BackgroundRuntime {
- state():{running:boolean;restored:boolean;accountReady:boolean;opening:boolean;writing:boolean;preparingUpdate:boolean};
+ state():{running:boolean;startupSettled:boolean;accountReady:boolean;opening:boolean;writing:boolean;preparingUpdate:boolean};
  publicTask():BackgroundTask|null;
  changed():void;
  wake(at:number,reason:Extract<LibraryFillEvent,{type:'FillWake'}>['reason']):void;
@@ -92,7 +93,7 @@ class BackgroundWork {
  private track<T>(work:Promise<T>):Promise<T>{this.active++;return work.finally(()=>{if(--this.active===0){for(const complete of this.idle)complete();this.idle.clear();}});}
  scope():LibraryFillScope|null {
   const state=this.runtime.state(),library=this.ports.library,lease=library?.workingLease,access=library?.session;
-  if(this.stopped || !state.running || !state.restored || !state.accountReady || !lease || !access)return null;
+  if(this.stopped || !state.running || !state.startupSettled || !state.accountReady || !lease || !access)return null;
   return {lease,sessionId:access.sessionId,catalogMarker:library.completeCatalog?.marker??'',visible:this.ports.environment.visible(),
    foreground:state.preparingUpdate || this.pendingUses>0 || this.ports.environment.busy() || state.opening || state.writing,online:this.ports.environment.online()};
  };
@@ -117,8 +118,8 @@ class BackgroundWork {
   const result:BackgroundTask[]=[],state=this.runtime.state(),access=this.ports.library?.session;
   if(state.preparingUpdate)return result;
   if(this.ports.release || this.ports.journal)result.push(this.appTask(this.ports.release));
-  if(state.accountReady && state.restored && access)result.push(this.libraryTask(access));
-  if(state.restored){const task=this.runtime.publicTask();if(task)result.push(task);}
+  if(state.accountReady && state.startupSettled && access)result.push(this.libraryTask(access));
+  if(state.startupSettled){const task=this.runtime.publicTask();if(task)result.push(task);}
   return result;
  }
  private used(id:string){

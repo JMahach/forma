@@ -16,13 +16,13 @@ test('session readiness reports failure, replacement and stop instead of grantin
  const replaced=h.requestSession(b),current=h.requestSession(a);
  assert.equal((await replaced)?.status,'superseded');
  h.releases[2]();assert.equal((await current)?.status,'ready');
- const stopped=h.requestSession(b);await h.app.stop();
+ const stopped=h.requestSession(b);h.app.requestStop();
  assert.equal((await stopped)?.status,'stopped');
  h.releases[1]();h.releases[3]();
 });
 test('stopping during initial account restoration releases the waiting action',async()=>{
  const h=fixture(false,new Promise(()=>{}));h.app.start();
- const waiting=h.app.requireAccount();await h.app.stop();
+ const waiting=h.app.requireAccount();h.app.requestStop();
  await assert.rejects(waiting,{code:'account_changed'});
 });
 function fixture(withInitialSession=true,ready:Promise<unknown>=Promise.resolve()){
@@ -67,7 +67,7 @@ test('account boundaries handle early logout, preserve A to B to A and reject ol
  assert.equal(new Set(h.requests.map(request=>request.generation)).size,4);
  await h.app.requestRoute(h.navigation.snapshot);h.session({...a});
  assert.equal(h.requests.length,4,'routing must preserve the account boundary actor');
- await h.app.stop();assert.equal(h.subscriptions,0);assert.equal(h.stops,1);
+ h.app.requestStop();assert.equal(h.subscriptions,0);assert.equal(h.stops,1);
 });
 
 test('failed logout cleanup retries its existing work and cannot complete after stop',async()=>{
@@ -80,7 +80,7 @@ test('failed logout cleanup retries its existing work and cannot complete after 
  assert.equal(h.requests.length,3,'retry must not repeat the boundary resets');
  assert.equal(h.retries,3);assert.deepEqual(h.completed,['guest','A','logout']);
  h.logout(['a']);assert.equal(h.requests.length,3,'completed logout is idempotent');
- h.session(b);await h.app.stop();await h.app.stop();h.releases[3]();await turn();
+ h.session(b);h.app.requestStop();h.app.requestStop();h.releases[3]();await turn();
  assert.deepEqual(h.completed,['guest','A','logout']);assert.equal(h.stops,1);
 });
 

@@ -1,5 +1,4 @@
 import { createWorkspaceView } from './views/workspace.ts';
-import { returnsVisibleWindow } from './domain/returns-window.ts';
 import { createChartToolsView } from './views/chart-tools-view.ts';
 import { createActionNotice } from './ui/feedback.ts';
 import { createChartEditing } from './application/chart-editing.ts';
@@ -96,8 +95,7 @@ import { attachChartLoading } from './views/chart-loading.ts';
 import { createReturnsController } from './state/returns.ts';
 import { createCyclesClient } from './data/cycles-client.ts';
 import { createNatalDayClient } from './data/natal-day-client.ts';
-import { ageText, completedAge } from './domain/personal-age.ts';
-import { eligibleCycleChart, personalTimelineTarget, cycleTimeZone } from './domain/cycles.ts';
+import { personalTimelineTarget } from './domain/cycles.ts';
 import { attachReturnMarkers } from './views/returns-markers.ts';
 
 // Composition root: each feature owns its state; these callbacks connect them.
@@ -128,7 +126,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
   scope.own(attachTelegramGestures([$('canvasWrap'), $('transitTime'), $('natalDayTime'), $('lifetimeTime')]));
   const studio = $('canvasWrap').parentElement!, shell = document.querySelector<HTMLElement>('.app-shell')!;
-  const startupRestored=()=>application?.startup.restored===true;
+  const startupSettled=()=>application?.startup.settled===true;
   const startupFailed=()=>application?.startup.failed===true || initialPage.contentFailed;
   const workspaceView=createWorkspaceView({document,signal:scope.signal,workspace,studio,shell,saved:savedView,libraryView,account,releaseContent:releaseLoadingContent,
     get allCharts(){return allCharts;},get knowledge(){return knowledge;},get chartSummary(){return chartSummary;},get chartLibrary(){return chartLibrary;},
@@ -138,7 +136,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     get lifetimeLoading(){return !!lifetimeLoading;},get returnsLoading(){return !!returnsViewLoading;},
     drawing:{get pending(){return chartPaintPending;},render:renderGraph},
     layout:{get phone(){return layout.phone;},beginChange(){panelResizePending=true;},refresh:()=>refreshStudioLayout({preserveScale:true})},
-    restored:startupRestored,failed:startupFailed,loadingChanged:()=>{updateLoading();activityChanged();}});
+    startupSettled,failed:startupFailed,loadingChanged:()=>{updateLoading();activityChanged();}});
   const initialPage=workspaceView.initial;
   const {inputSnapshot,discardInput:discardPendingInput,restoreInput:restoreInitialInput}=workspaceView;
   function updateInitialPage(){workspaceView.update();}
@@ -179,6 +177,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     onSelect: () => exploration?.selected(), onChange: presentChart });
   exploration = createChartExploration({ connection: connectionMode, session, getTransit: () => transit, getNatalDay: () => natalDay!,
     getLifetime: () => lifetime, getReturns: () => returns, loadLifetime,
+    interruptRestoration:()=>viewSession?.interrupt(),
     onTimelineReady: () => { updateTimelineTools(); refreshStudioLayout(); },
     onModeChange: updateTimelineTools, onChange: () => { syncLifetimeTransit(); viewSession?.schedule(); } });
   scope.own(exploration.dispose);
@@ -187,7 +186,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     get transit(){return transit;},get chartSummary(){return chartSummary;},get returnsView(){return returnsView;},
     get lifetimeControls(){return lifetimeControls;},get returnMarkers(){return returnMarkers;},
     get initialPresentation(){return initialPresentation;},get loadFailed(){return lifetimeLoadFailed;},
-    restored:startupRestored,connection:connectionMode,nowUtc:()=>new Date().toISOString(),loadReturnsView,
+    startupSettled,connection:connectionMode,nowUtc:()=>new Date().toISOString(),loadReturnsView,
     layout:refreshTimelineLayout,updated:updateInitialPage});
   function updateChartCaption(){chartTools.caption();}
   function updateTimelineTools(){return chartTools.update();}
@@ -210,7 +209,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const updateLoading = () => {
     if(scope.stopped)return;
     const lifetimeLoading = lifetimeOwnsLoading(), state = lifetimeLoading ? lifetime?.state : transit?.state;
-    const firstFailed = startupRestored() && startupFailed() && !session.hasCurrent;
+    const firstFailed = startupSettled() && startupFailed() && !session.hasCurrent;
     chartLoading.update({ hasChart: !routePending() && !routeFailed() && session.hasCurrent, holdLoading: initialPage.active,
       failed: routeFailed() || firstFailed || (lifetimeLoading ? lifetimeLoadFailed || state?.status === 'error' : transit?.state.unavailable),
       loading: routePending() || !firstFailed && (lifetimeLoading ? !lifetimeLoadFailed && (!state || state.status === 'loading') : transit?.state.loading) });
@@ -314,7 +313,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
   const pageLifecycle=createPageLifecycle({events:window,visibility:document,online:()=>connectionMode()==='online',subscribeConnection:observeConnection});
   const backgroundCoordinator=createBackgroundCoordinator({owner:crypto.randomUUID(),store:libraryStorage.background,channel:backgroundChannel,lifecycle:pageLifecycle});
   storagePressure?.setSources({
-    diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('unavailable'),
+    diagnostics: guard => journal?.discardForSpace?.(guard) ?? Promise.resolve('empty'),
     natalDays: (keep, exclude, guard) => calculationClients?.evictForSpace?.('natal', keep, exclude, guard) ?? Promise.resolve('unavailable'),
     returnCharts: (keep, exclude, guard) => calculationClients?.evictForSpace?.('return-charts', keep, exclude, guard) ?? Promise.resolve('unavailable'),
   });
@@ -435,7 +434,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     },
   });
   $('summaryBreakComparison').addEventListener('click', () => { viewSession?.interrupt(); exploration!.resetMoment(); }, {signal:scope.signal});
-  $('natalDayToggle').addEventListener('click', () => changeTimeline('day', () => exploration!.toggleDay()), {signal:scope.signal});
+  $('natalDayToggle').addEventListener('click', () => changeTimeline('day'), {signal:scope.signal});
   transit = attachLiveTransit({ signal:scope.signal,
     document, button: $('nowButton'), dayClient, isFormOpen: () => birthForm.opened,
     isChartVisible: () => workspace.screen === 'chart',
@@ -627,7 +626,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       clearPending(){pendingBirthForm=null;},restore:draft=>birthForm.restore(draft)},
     report(){toast('Не удалось восстановить положение страницы.');},
     changed(){
-      if(startupRestored())initialPresentation=null;
+      if(startupSettled())initialPresentation=null;
       updateTimelineTools();updateLoading();restoreInitialInput();notifyOfflineReady();
     },
   },publicRefresh:{
@@ -671,7 +670,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
       firstTransit:()=>transit!.start(null,{firstChart:true}),transitReady(ready){initialPage.contentFailed=!ready;updateLoading();},
     },
   }});
-    scope.own(()=>application!.stop());
+    scope.own(()=>application!.requestStop());
     scope.own(application.subscribe(updateLoading));
     if(navigation)scope.own(navigation.subscribe((_snapshot,origin)=>{if(origin==='external')workspaceView.navigation();}));
     application.start();
@@ -684,7 +683,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     updateChartSaveControl();void natalDay?.refreshAvailability();void returns?.refreshAvailability();
     lifetime?.refreshAvailability();updateTimelineTools();application!.environmentChanged({reason:'connection'});
   }));
-  const restoration = application.whenRestored();
+  const restoration = application.whenStartupSettled();
   studio.dataset.panelsReady = 'true';
 
   function loadReturnsView(): Promise<ReturnsPanel | null> {
@@ -753,18 +752,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
         });
         controls = attachLifetimeControls({
           explorer: controller, viewportLayout: layout, getDayState, getPersonalRecord,
-          formatEndpoints: state => {
-            const natal = session.record;
-            if (eligibleCycleChart(natal) && !natalDay!.state.opened && Number.isInteger(returns!.year)) {
-              const visible = returnsVisibleWindow(natal, returns!.year, state);
-              if (visible) {
-                const label = new Intl.DateTimeFormat('ru', { timeZone: cycleTimeZone(natal!.timezone), month: 'short', year: 'numeric' });
-                return [label.format(visible.minUtc), label.format(visible.maxUtc)];
-              }
-            }
-            return eligibleCycleChart(natal) && !natalDay!.state.opened
-              ? ['Рождение', ageText(completedAge(`${state.toDate}T23:59:59Z`, natal)!)] : null;
-          },
+          formatEndpoints: chartTools.formatLifetimeEndpoints,
           getMomentState: exploration!.momentState,
           onDayScrub: transit!.scrub, onDayNow: transit!.goNow,
           onLifetimeNow: () => {
@@ -798,17 +786,15 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     })();
     activityChanged();return lifetimeLoading;
   }
-  function changeTimeline(kind: 'day' | 'lifetime', command: () => unknown) {
+  function changeTimeline(kind: 'day' | 'lifetime') {
     discardPendingInput();
-    const pending = initialPresentation;
+    const pending = chartTools.pendingTimeline;
     const loading = initialPage.active;
     if (loading) { initialPage.changingTimeline = true; initialPage.contentFailed = false; }
     initialPresentation = null;
-    viewSession?.interrupt();
     let result;
     try {
-      const closePending = kind === 'day' ? pending?.timelinePanel === 'natal-day' : pending?.toggleEnabled;
-      result = closePending ? exploration!.closeScales() : command();
+      result = exploration!.toggleTimeline(kind,pending);
     }
     finally {
       if (loading) initialPage.changingTimeline = false;
@@ -820,9 +806,7 @@ export function startApp({ connection, journal, storagePressure, navigation, cal
     if (session.selectedId !== 'current-transit' && !returns!.available) return;
     activationPopover.close(); hoverPreview?.clear();
     if (lifetimeLoadFailed) { window.location.reload(); return; }
-    if (session.selectedId === 'current-transit') {
-      changeTimeline('lifetime', () => exploration!.toggleTransit());
-    } else changeTimeline('lifetime', () => exploration!.toggleReturns());
+    changeTimeline('lifetime');
   }, {signal:scope.signal});
   for (const field of [$('lifetimeFromDate'), $('lifetimeToDate')]) {
     field.addEventListener('input', () => { viewSession?.interrupt(); exploration!.invalidateTimeline(); }, {capture:true,signal:scope.signal});

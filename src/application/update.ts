@@ -55,5 +55,6 @@ export function createUpdatePreparation(port:UpdatePort,runtime:UpdateRuntime) {
       return typeof result==='boolean'?finish(result):cancellable(result,preparation.control.signal).then(finish);
     }catch{release(preparation);return false;}
   }
+  // Cancels this preparation permission, not the resource work awaited by idle().
   return {prepare,get active(){return current!==null;},stop(){if(current)release(current);}};
 }

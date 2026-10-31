@@ -75,7 +75,7 @@ function readWrite(actor:ApplicationActor,initialBinding:TemporaryWriteBinding|n
 }
 function readStartup(actor:ApplicationActor) {
   const startup=actor.getSnapshot().children.startup;
-  return startup?startupView(startup.getSnapshot()):{restored:false,failed:false};
+  return startup?startupView(startup.getSnapshot()):{settled:false,failed:false};
 }
 function connectInputs(actor:ApplicationActor,ports:ApplicationPorts) {
   const subscriptions:(()=>void)[]=[];
@@ -179,7 +179,8 @@ export function createApplication(input: ApplicationOptions) {
       return new Promise(resolve=>actor.send({type:'RefreshPublicSource',authority,completed:resolve}));
     },
     subscribe(listener:(view:ApplicationView)=>void) {return subscribeView(actor,listener);},
-    async whenRestored() {
+    // Completion of the startup attempt also includes failure or interruption.
+    async whenStartupSettled() {
       const startup=actor.getSnapshot().children.startup;
       if(startup)await waitFor(startup,state=>!state.matches('restoring'));
     },
@@ -194,7 +195,8 @@ export function createApplication(input: ApplicationOptions) {
       const write=actor.getSnapshot().children.write;
       if(write)await waitFor(write,state=>!writeContinuationView(state).busy);
     },
-    async stop() {stopRuntime(actor);updating?.stop();},
+    // Stops coordination immediately; resource owners drain through the outer scope.
+    requestStop() {stopRuntime(actor);updating?.stop();},
   };
 }
 

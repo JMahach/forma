@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { IDBFactory, IDBIndex, IDBObjectStore } from 'fake-indexeddb';
 import { createTransitDayCache } from '../src/data/transit-day-cache.ts';
-import { createCalculationCache } from '../src/data/calculation-cache.ts';
+import { createTransitDayClient } from '../src/data/transit-day-client.ts';
+import { createCalculationCache,type CalculationCache } from '../src/data/calculation-cache.ts';
 import { LEGACY_CALCULATION_SOURCES } from '../src/data/calculation-migration.ts';
 import { createMemoryCache } from '../src/data/memory-cache.ts';
 const version='a'.repeat(64),start=Date.parse('2026-10-09T00:00:00Z');
@@ -35,7 +36,7 @@ test('a current full day survives reload and coverage precedes reading its numbe
   assert.equal(first.peekDay(value.date),value);
   const second=cache(t,{cache:owner(t,indexedDB)});await second.prepare();
   assert.equal(second.hasMinute(start+751*60000),true);assert.equal(second.peekDay(value.date),null);
-  const loaded=await second.getDay(value.date);assert.deepEqual(loaded,value);
+  const loaded=await second.readLocalDay(value.date);assert.deepEqual(loaded,value);
   assert.equal(loaded.columns[0].buffer,loaded.columns[23].buffer);
   assert.equal(second.hasMinute(start+1000),false);
   await first.close();assert.ok(await shared.get('transit',value.date),'closing an adapter keeps its shared owner alive');
@@ -46,7 +47,7 @@ test('without a confirmed window full days are RAM only',async t=>{
   const first=cache(t,{indexedDB,cache:shared,memory});await first.prepare();first.putDay(value);await first.flush();
   assert.equal(first.peekDay(value.date),value);
   memory.put('other',new Uint8Array(300000));assert.equal(first.hasMinute(start),false);
-  assert.equal(await first.getDay(value.date),null);assert.deepEqual(await shared.catalogue('transit'),[]);
+  assert.equal(await first.readLocalDay(value.date),null);assert.deepEqual(await shared.catalogue('transit'),[]);
 });
 
 test('the confirmed one or two dates replace the disk window at local midnight',async t=>{
@@ -61,16 +62,28 @@ test('the confirmed one or two dates replace the disk window at local midnight',
   writer.putDay(day(2));await writer.flush();await reader.prepare();
   assert.equal(reader.hasMinute(start),false);assert.equal(reader.hasMinute(start+86400000),true);
   assert.equal(reader.hasMinute(start+2*86400000),true);
-  assert.equal(await reader.getDay(day().date),null);
+  assert.equal(await reader.readLocalDay(day().date),null);
   assert.equal(writer.peekDay(day().date)?.date,day().date,'older days may remain in bounded RAM');
 });
 
 test('deleting a day in another tab invalidates saved coverage without reloading',async t=>{
-  const indexedDB=new IDBFactory(),shared=owner(t,indexedDB),otherOwner=owner(t,indexedDB);await shared.setTransitWindow(windowFor());
+  let now=start;
+  const indexedDB=new IDBFactory(),shared=owner(t,indexedDB,{now:()=>now}),otherOwner=owner(t,indexedDB,{now:()=>now});await shared.setTransitWindow(windowFor());
   const writer=cache(t,{cache:shared}),reader=cache(t,{cache:otherOwner});writer.putDay(day());await writer.flush();
   await reader.prepare();assert.equal(reader.hasMinute(start),true);
+  const catalogue=otherOwner.catalogue;let transitReads=0;
+  t.mock.method(otherOwner,'catalogue',async (kind:Parameters<CalculationCache['catalogue']>[0])=>{if(kind==='transit')transitReads++;return catalogue(kind);});
+  for(let i=0;i<3;i++){await shared.put('natal',`birth-${i}`,new ArrayBuffer(100));await reader.prepare();}
+  assert.equal(transitReads,0,'three private writes must not rescan unchanged transit coverage');
+  await shared.put('return-charts','return',new ArrayBuffer(100));await reader.prepare();
+  assert.equal(transitReads,0);assert.equal(reader.hasMinute(start),true);
   await shared.remove('transit',day().date);
   assert.equal(reader.hasMinute(start),false);await reader.prepare();
+  assert.equal(reader.hasMinute(start),false);
+  writer.putDay(day());await writer.flush();await reader.prepare();assert.equal(reader.hasMinute(start),true);
+  const beforeExpiry=transitReads;now+=86400000;
+  await shared.put('natal','after-midnight',new ArrayBuffer(100));await reader.prepare();
+  assert.ok(transitReads>beforeExpiry,'a natal write that prunes an expired transit must invalidate coverage');
   assert.equal(reader.hasMinute(start),false);
 });
 
@@ -90,9 +103,11 @@ test('custom legacy storage migrates full days and discards obsolete sparse pack
   const legacySources=LEGACY_CALCULATION_SOURCES.map(source=>source.family==='transit'?{...source,legacyDatabaseName:databaseName}:source);
   const shared=owner(t,indexedDB,{legacySources});await shared.setTransitWindow({...windowFor([0,1]),expiresAt:Date.now()+86400000});
   // Exercise the adapter's own owner and custom legacy-name mapping.
-  const first=cache(t,{indexedDB,legacyDatabaseName:databaseName});await first.prepare();
-  assert.equal(first.hasMinute(start),true);assert.deepEqual(await first.getDay(day().date),day());
-  assert.equal(await first.getDay(day(1).date),null);
+  const first=cache(t,{indexedDB,legacyDatabaseName:databaseName});
+  const client=createTransitDayClient({days:first,fetch:async()=>assert.fail('a usable legacy day must not require HTTP')});
+  assert.deepEqual(await client.getDay(day().date),day());
+  assert.equal(first.hasMinute(start),true);assert.deepEqual(await first.readLocalDay(day().date),day());
+  assert.equal(await first.readLocalDay(day(1).date),null);
   assert.equal((await shared.status()).legacyBytes,0);
 });
 
@@ -103,7 +118,7 @@ test('quota failure retains usable RAM but does not advertise disk coverage afte
   t.mock.method(IDBObjectStore.prototype,'put',function(...args){if(args[0]?.value?.day instanceof Float64Array)throw new DOMException('Full','QuotaExceededError');return original.apply(this,args);});
   first.putDay(day());await first.flush();assert.equal(first.hasMinute(start),true);
   memory.put('other',new Uint8Array(300000));assert.equal(first.hasMinute(start),false);
-  assert.equal(await first.getDay(day().date),null);
+  assert.equal(await first.readLocalDay(day().date),null);
 });
 
 test('active days retain shared RAM ownership and release under pressure',async t=>{
@@ -135,7 +150,7 @@ test('fresh overlapping data wins an older disk read even with no spare RAM',asy
   let release;const gate=new Promise(resolve=>release=resolve),original=shared.get.bind(shared);
   t.mock.method(shared,'get',async(...args)=>{const snapshot=await original(...args);await gate;return snapshot;});
   const first=cache(t,{cache:shared,memory:createMemoryCache({maxBytes:0})}),value=day();
-  await first.prepare();const pending=first.getDay(value.date);first.putDay(value);await first.flush();release();
+  await first.prepare();const pending=first.readLocalDay(value.date);first.putDay(value);await first.flush();release();
   assert.equal(await pending,value);
 });
 

@@ -90,10 +90,22 @@ class LibraryFill {
  }
  changed(){this.checkScope();this.resume();}
  private resume(){
-  const state=this.state;if(state.mode!=='paused')return;
-  const scope=this.ports.scope();if(!canReceive(scope))return;
-  this.state={mode:'idle'};if(continuationCurrent(scope,state.resume))this.wake(state.resume.wake);
+  const state=this.state;
+  if(state.mode!=='paused')return;
+  if(!continuationCurrent(this.ports.scope(),state.resume)){
+   this.state={mode:'idle'};
+   return;
+  }
+  // Resume the original occasion through the same admission as a new wake.
+  // Waiting for foreground/network/catalogue does not consume that occasion.
+  this.wake(state.resume.wake);
  }
+ private canStart(scope:LibraryFillScope,wake:Wake){
+  if(!canReceive(scope))return false;
+  // Quota relief must survive an incomplete catalogue, not disappear in plan().
+  return wake.reason!=='space' || this.ports.entries()!==null;
+ }
+ /** Requests cancellation. Existing idle observers wait for the run and permit cleanup. */
  stop(){
   const state=this.state;
   if('run' in state){this.state={mode:'stopping',run:state.run};state.run.controller.abort();}
@@ -101,16 +113,24 @@ class LibraryFill {
  }
  wake(event:Wake){
   if(this.state.mode==='stopped' || this.state.mode==='stopping' || !Number.isFinite(event.at))return;
-  this.checkScope();const state=this.state;
-  const scope=this.ports.scope();if(!scope)return;
+  this.checkScope();
+  const state=this.state,scope=this.ports.scope();
+  if(!scope)return;
   const incoming={key:scopeKey(scope,event),wake:event};
-  if('next' in state){this.state={...state,next:nextWake(state.next,incoming,scope)};return;}
+  if('next' in state){
+   this.state={...state,next:nextWake(state.next,incoming,scope)};
+   return;
+  }
   const pending=state.mode==='paused'?nextWake(state.resume,incoming,scope):incoming;
-  if(!canReceive(scope) || pending.wake.reason==='space' && !this.ports.entries()){
-   if(pending.wake.reason==='space')this.state={mode:'paused',resume:pending};return;
+  if(!this.canStart(scope,pending.wake)){
+   // Keep a committed payload as evidence. Ordinary occasions have no new
+   // retry allowance; an already paused run keeps its existing continuation.
+   if(pending.wake.reason==='space')this.state={mode:'paused',resume:pending};
+   return;
   }
   const run:FillRun={scope:{...scope,lease:{...scope.lease}},key:scopeKey(scope),wake:pending.wake,controller:new AbortController()};
-  this.state={mode:'planning',run,next:null};void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
+  this.state={mode:'planning',run,next:null};
+  void this.run(run).catch(()=>{}).finally(()=>this.finished(run));
  }
  private finished(run:FillRun){
   const state=this.state;if(!('run' in state) || state.run!==run)return;

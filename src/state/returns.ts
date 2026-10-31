@@ -132,8 +132,10 @@ export function createReturnsController({ observe, connection = getConnectionMod
     finally{if(record.probe===options.probe)record.probe=null;}
     return {body,input,packet,record,version};
   }
-  async function refreshOwnedFamilies(owner:ChartRecord,destination:CycleOwner,signal:AbortSignal,owns:()=>boolean) {
-    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(body=>readStoredFamily(owner,destination,body,{signal})));
+  // Initial offline preparation may migrate complete legacy families.
+  // Subsequent package notices only observe; they cannot repair or mark use.
+  async function prepareOwnedFamilies(owner:ChartRecord,destination:CycleOwner,signal:AbortSignal,owns:()=>boolean) {
+    const parts=await Promise.all(DEFAULT_CYCLE_BODIES.map(body=>readStoredFamily(owner,destination,body,{signal,observeOnly:false})));
     if(!owns() || !sameOwner(destination,ownerSnapshot(natal)))return;
     availabilityJob=null;const changed=parts.map(acceptStoredFamily);if(changed.some(Boolean))publishStoredFamilies();
   }
@@ -151,7 +153,7 @@ export function createReturnsController({ observe, connection = getConnectionMod
     const controller = new AbortController(), version = generation, owner = natal!;
     availabilityJob = controller;
     const destination=getOwner(owner);
-    if(destination)return refreshOwnedFamilies(owner,destination,controller.signal,()=>!controller.signal.aborted && version===generation && offline());
+    if(destination)return prepareOwnedFamilies(owner,destination,controller.signal,()=>!controller.signal.aborted && version===generation && offline());
     const events = visibleEvents(), visible = new Map(events.map(event => [event.id,event]));
     readyEvents = new Set([...readyEvents].filter(id => visible.has(id)));
     if (current && selectedEvent) readyEvents.add(selectedEvent.id);

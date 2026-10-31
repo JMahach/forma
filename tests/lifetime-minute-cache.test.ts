@@ -53,10 +53,10 @@ async function openLifetime(h) {
 
 test('compatible minute lookup is synchronous, matches day values, validates UTC and never fetches a day', async () => {
   const h = harness(); const day = await h.dayClient.getDay('2026-09-30'); await h.client.getMeta();
-  const chart = h.client.peekMinute(utc('30T09:37:00'));
+  const chart = h.client.getCachedMinute(utc('30T09:37:00'));
   assert.deepEqual(chart, transitChartAt(day, 577));
-  assert.deepEqual(h.client.peekMinute(utc('30T09:37:00')), chart);
-  for (const value of [NaN, Infinity, Number.MAX_SAFE_INTEGER, utc('30T09:37:01'), utc('29T09:37:00')] as const) assert.equal(h.client.peekMinute(value), null);
+  assert.deepEqual(h.client.getCachedMinute(utc('30T09:37:00')), chart);
+  for (const value of [NaN, Infinity, Number.MAX_SAFE_INTEGER, utc('30T09:37:01'), utc('29T09:37:00')] as const) assert.equal(h.client.getCachedMinute(value), null);
   assert.deepEqual(h.dayRequests, ['2026-09-30']); assert.equal(h.requests.length, 0);
 });
 
@@ -64,10 +64,10 @@ test('minute lookup rejects incompatible day contracts and days outside lifetime
   const raw = dayAt('2026-09-30');
   for (const patch of [{ version: 'old' }, { stepSeconds: 600 }, { nodeModel: 'mean' }, { zodiac: 'other' }, { startUtc: '2026-10-01T00:00:00Z' }] as const) {
     const client = createLifetimeClient({ dayClient: { peekDay: () => ({ ...raw, ...patch }) }, fetch: () => response(metadata) });
-    await client.getMeta(); assert.equal(client.peekMinute(utc('30T09:37:00')), null);
+    await client.getMeta(); assert.equal(client.getCachedMinute(utc('30T09:37:00')), null);
   }
   const client = createLifetimeClient({ dayClient: { peekDay: () => dayAt('2026-09-28') }, fetch: () => response(metadata) });
-  await client.getMeta(); assert.equal(client.peekMinute(utc('28T09:37:00')), null);
+  await client.getMeta(); assert.equal(client.getCachedMinute(utc('28T09:37:00')), null);
 });
 
 test('cached scrub synchronously replaces and aborts cold work; late completion cannot replace the minute', async () => {
@@ -85,7 +85,7 @@ test('cache growth never moves target and manual minute survives day eviction wi
   const h = harness(); await openLifetime(h); const before = h.explorer.state.requestedUtc;
   await h.dayClient.getDay('2026-09-30'); assert.equal(h.explorer.state.requestedUtc, before);
   const minute = utc('30T09:37:00'); await h.explorer.scrub(minute); const chart = h.explorer.current;
-  await h.dayClient.getDay('2026-10-01'); assert.equal(h.client.peekMinute(minute), null);
+  await h.dayClient.getDay('2026-10-01'); assert.equal(h.client.getCachedMinute(minute), null);
   await h.explorer.scrub(minute);
   assert.equal(h.explorer.current, chart); assert.equal(h.explorer.state.requestedUtc, minute);
   assert.equal(h.requests.length, 1); assert.equal(h.dayRequests.length, 2);
@@ -331,7 +331,7 @@ test('a disk-only minute bypasses another network request and rejects its late r
 
 test('a stale disk minute falls back to the ten-minute file without exact calculation', async t => {
   const calls = [], target = utc('30T12:31:00');
-  const days = { prepare: async () => {}, hasMinute: () => true, peekDay: () => null, getDay: async () => null };
+  const days = { prepare: async () => {}, hasMinute: () => true, peekDay: () => null, readLocalDay: async () => null };
   const client = createLifetimeClient({ days, fetch(url) {
     calls.push(url); assert.ok(!url.includes('/moment?'), 'a scrub never grants permission to calculate');
     return response(url.endsWith('/meta') ? metadata : point(Number(new URL(url, 'http://test').searchParams.get('index'))));
@@ -349,7 +349,7 @@ function delayedMinute(t: test.TestContext) {
   const explorer = createMomentTimeline({ getMomentState: () => momentState,
     getDayState: () => ({ current: day, timeline: { date: '2026-09-30' } }),
     client: { getMeta: async () => metadata, hasMinute: value => value === target,
-      readMinute: value => value === target ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null),
+      getLocalMinute: value => value === target ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(null),
       getPoint: async index => { points.push(index); return point(index); } },
     onRender: () => { if (explorer.current) renders.push(explorer.current.utc); },
   });

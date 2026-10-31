@@ -15,6 +15,7 @@ interface ExplorationOptions {
   getLifetime: () => MomentTimeline | null;
   getReturns: () => ReturnsController | null;
   loadLifetime: () => Promise<MomentTimeline | null>;
+  interruptRestoration?: () => void;
   onTimelineReady?: () => void;
   onModeChange?: () => void;
   onChange?: () => void;
@@ -26,7 +27,8 @@ import { getConnectionMode, type ConnectionMode } from '../data/http-transport.t
 // One owner for chart navigation and moment commands. Tools retain their
 // ranges, jobs and local cancellation; the session accepts their visible result.
 export function createChartExploration({ session, getTransit, getNatalDay, getLifetime, getReturns,
-  loadLifetime, connection = getConnectionMode, onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
+  loadLifetime, interruptRestoration = () => {}, connection = getConnectionMode,
+  onTimelineReady = () => {}, onModeChange = () => {}, onChange = () => {} }: ExplorationOptions) {
   let timelineOpening: { target: MomentTimelineTarget } | null = null, restoreBirthBoundary: Partial<SavedMomentTimelineView> | false = false, returnsPreferred = false;
   function dispose() {invalidateTimeline();}
   const personal = () => Boolean(getReturns()?.available);
@@ -76,6 +78,17 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     getNatalDay().close();
     session.refresh(); onModeChange();
     return false;
+  }
+  function toggleDay() {
+    return getNatalDay().state.opened ? closeScales() : openDay();
+  }
+  // A click supersedes restoration even while the saved tool is only projected
+  // and its controller is still loading. A second click closes that same intent.
+  function toggleTimeline(kind:'day'|'lifetime', pending:'day'|'lifetime'|null=null) {
+    interruptRestoration();
+    if(pending===kind)return closeScales();
+    if(kind==='day')return toggleDay();
+    return session.selectedId==='current-transit' ? toggleTransit() : toggleReturns();
   }
   function resetMoment() {
     invalidateTimeline();
@@ -253,7 +266,7 @@ export function createChartExploration({ session, getTransit, getNatalDay, getLi
     syncTransitWanted();
   }
   return { select, selected,dispose, openDay, closeScales, resetMoment, toggleTransit, toggleReturns, openReturnsList,
-    toggleDay: () => getNatalDay().state.opened ? closeScales() : openDay(),
+    toggleDay, toggleTimeline,
     // The accepted opening exists before the lazy controller. Once its state
     // opens, that controller owns the actual range and moment for persistence.
     get pendingTimeline() { return timelineOpening?.target && !getLifetime()?.state.opened ? { ...timelineOpening.target } : null; },

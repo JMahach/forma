@@ -32,13 +32,13 @@ test('application children pause fill and local audit and discard their late res
   place:async()=>assert.fail('a retired child cannot place its late packet'),
  },libraryAudit:{clock,id:defaults.id,store:{...store.maintenance,
   auditPage:async(_lease,_cursor,_limit,signal)=>{pages++;auditSignal=signal;return new Promise<LibraryAuditPage>(resolve=>{finishAudit=resolve;});},
- }}});t.after(()=>app.stop());app.start();
+ }}});t.after(()=>app.requestStop());app.start();
  app.send({type:'FillWake',at:Date.now(),reason:'library'});app.send({type:'AuditWake',at:Date.now()});
  for(let i=0;i<50 && (!fillSignal || !auditSignal);i++)await tick();
  assert.equal(receives,1);assert.equal(pages,1);
  scope.foreground=true;app.send({type:'FillChanged'});app.send({type:'AuditChanged'});
  assert.equal(fillSignal?.aborted,true);assert.equal(auditSignal?.aborted,true);
- await app.stop();scope.foreground=false;finishFill({kind:'ready',payload:chart});finishAudit({checked:0,removed:0,next:null});
+ app.requestStop();scope.foreground=false;finishFill({kind:'ready',payload:chart});finishAudit({checked:0,removed:0,next:null});
  app.send({type:'FillChanged'});app.send({type:'AuditWake',at:Date.now()});await tick();await tick();
  assert.equal(receives,1);assert.equal(pages,1);assert.deepEqual((await store.read())?.charts,[]);
 });
@@ -53,7 +53,7 @@ test('the application owns background lifetime and dispatches only a current adm
  application.start();receive({kind:'check',target,authority,finish(result){answer=result;}});await tick();
  assert.equal(calls,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});
  application.send({type:'BackgroundChanged'});assert.equal(updates,2);
- await application.stop();await application.stop();assert.equal(stops,1);
+ application.requestStop();application.requestStop();assert.equal(stops,1);
  receive({kind:'check',target,authority,finish(){}});await tick();assert.equal(calls,1);
 });
 test('unavailable coordination admits one initial library read per confirmed session and no retry on resume',async()=>{
@@ -66,7 +66,7 @@ test('unavailable coordination admits one initial library read per confirmed ses
  application.start();await tick();assert.equal(reads,1);
  application.send({type:'BackgroundChanged'});receive({kind:'unavailable',signal});await tick();assert.equal(reads,1);
  sessionId='second';application.send({type:'BackgroundChanged'});await tick();assert.equal(reads,2);
- await application.stop();
+ application.requestStop();
 });
 
 test('without BroadcastChannel initial offline installation waits for visibility and never repeats on return',async()=>{
@@ -81,7 +81,7 @@ test('without BroadcastChannel initial offline installation waits for visibility
  application.start();await tick();assert.equal(installs,0);
  active=true;notify();await tick();assert.equal(installs,1);
  active=false;notify();active=true;notify();await tick();assert.equal(installs,1);
- await application.stop();notify();await tick();assert.equal(installs,1);
+ application.requestStop();notify();await tick();assert.equal(installs,1);
 });
 
 test('a pending first install excludes a simultaneous shared release check',async()=>{
@@ -97,7 +97,7 @@ test('a pending first install excludes a simultaneous shared release check',asyn
  assert.equal(updates,0);assert.deepEqual(answer,{outcome:{kind:'cancelled'}});
  finishInstall();await tick();
  receive({kind:'check',target,authority,finish(result){answer=result;}});await tick();
- assert.equal(updates,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});await application.stop();
+ assert.equal(updates,1);assert.deepEqual(answer,{outcome:{kind:'success'},data:{checked:true}});application.requestStop();
 });
 
 test('update preparation blocks new background work and waits for actual usage writes',async t=>{
@@ -112,8 +112,8 @@ test('update preparation blocks new background work and waits for actual usage w
   coordinator:{start(fn){receive=fn;},update(){},stop(){}},release:{async check(){checks++;},observe(){},stop(){}}},
   update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',
    sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint(){checkpoints++;return true;}}});
- t.after(async()=>{finish?.();control.abort();await app.stop();});
- app.start();await app.whenRestored();app.send({type:'LibraryUsed',id:'one'});assert.equal(uses,1);
+ t.after(()=>{finish?.();control.abort();app.requestStop();});
+ app.start();await app.whenStartupSettled();app.send({type:'LibraryUsed',id:'one'});assert.equal(uses,1);
  const preparation=Promise.resolve(app.prepareUpdate(control.signal)).then(value=>{prepared=true;return value;});
  app.send({type:'LibraryUsed',id:'two'});assert.equal(uses,1);await tick();assert.equal(prepared,false);assert.equal(checkpoints,0);
  const authority={permit:{key:'app',owner:'A',token:'p',startedAt:1,expiresAt:30000},signal:new AbortController().signal,current:async()=>true};
@@ -135,8 +135,8 @@ test('cancelling update preparation preserves the consumed first-install allowan
   release:{async install(){installs++;},async check(){},observe(){},stop(){}}},
   update:{restored:()=>true,ready:()=>true,selection:()=> 'current-transit',
    sources:{temporaryId:null,publicId:null,hasOwn:()=>false,canRestore:()=>false},checkpoint:()=>true}});
- t.after(async()=>{control.abort();await app.stop();});
- app.start();await app.whenRestored();await tick();assert.equal(installs,1);
+ t.after(()=>{control.abort();app.requestStop();});
+ app.start();await app.whenStartupSettled();await tick();assert.equal(installs,1);
  assert.equal(await app.prepareUpdate(control.signal),true);
  receive({kind:'foreground',signal});await tick();assert.equal(installs,1);
  const before=updates;control.abort();await tick();assert.ok(updates>before);assert.equal(installs,1);
@@ -158,7 +158,7 @@ async function cancelledCatalogFixture(t:TestContext,second:'complete'|'failed'=
  const work=createBackgroundWork({library,coordinator,clock:{now:Date.now},
   environment:{visible:()=>true,online:()=>true,connected:()=>true,busy:()=>false,transitTimeZone:()=>undefined},
   release:{async install(){installs++;},async check(){assert.fail('no shared check');},observe(){},stop(){}},journal:null,local:{changed(){},broadcast(){}}},
-  {state:()=>({running:true,restored:true,accountReady:true,opening:false,writing:false,preparingUpdate:preparing}),publicTask:()=>null,changed(){},
+  {state:()=>({running:true,startupSettled:true,accountReady:true,opening:false,writing:false,preparingUpdate:preparing}),publicTask:()=>null,changed(){},
    wake(_at,reason){if(reason==='library')wakes++;},environmentChanged(){}});
  const actor=createActor(work.logic);t.after(()=>{actor.stop();release();library.close();});
  return {library,actor,start(){actor.start();},counts:()=>({reads,installs,wakes}),prepare(value:boolean){preparing=value;actor.send({type:'BackgroundChanged'});},
@@ -193,7 +193,7 @@ test('only committed payload notices wake space locally and across the current l
  const lease={accountId:'1',generation:'current'},wakes:string[]=[],sent:LibraryLocalNotice[]=[],accepted:unknown[]=[];
  const work=createBackgroundWork({...defaults,clock:{now:()=>now},coordinator:idleCoordinator,library:{...libraryDefaults,session:{accountId:'1',sessionId:'login'},workingLease:lease},
   local:{changed(change){accepted.push(change);},broadcast(notice){sent.push(notice);}}},
-  {state:()=>({running:true,restored:true,accountReady:true,opening:false,writing:false,preparingUpdate:false}),publicTask:()=>null,changed(){},wake(at,reason){wakes.push(reason);times.push(at);},environmentChanged(){}});
+  {state:()=>({running:true,startupSettled:true,accountReady:true,opening:false,writing:false,preparingUpdate:false}),publicTask:()=>null,changed(){},wake(at,reason){wakes.push(reason);times.push(at);},environmentChanged(){}});
  const actor=createActor(work.logic).start(),local=createLibraryLocalChanges(()=>now);
  const db=createIndexedDatabase({databaseName:'committed-payload-notices',version:1,stores:['records'],upgrade(db){db.createObjectStore('records',{keyPath:'id'});},indexedDB:new IDBFactory()});
  local.subscribeLocal(change=>actor.send({type:'LibraryLocalChanged',change}));t.after(()=>{actor.stop();local.close();db.close();});

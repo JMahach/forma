@@ -10,7 +10,7 @@ export interface NatalExplorerState {
   status: 'idle' | 'loading' | 'ready' | 'error'; error: string; exactOriginal: boolean; available: boolean; canOpen: boolean;
 }
 export interface NatalExplorerOptions {
-  dayClient?: Pick<NatalDayClient, 'getDay'> & Partial<Pick<NatalDayClient, 'retainDay' | 'readDay' | 'peekDay' | 'readStoredDay'>>;
+  dayClient?: Pick<NatalDayClient, 'getDay'> & Partial<Pick<NatalDayClient, 'retainDay' | 'readLocalDay' | 'peekDay' | 'readStoredDay'>>;
   connection?: () => ConnectionMode;
   onStateChange?: (state: NatalExplorerState) => void;
   onRender?: () => void;
@@ -51,7 +51,13 @@ export function createNatalDayExplorer({
     notify();
     if (connection() !== 'offline' || readyOnDevice || !canExploreNatalDay(chart)) return;
     let ready = false;
-    try { ready = Boolean(await (owned(chart)?dayClient.readStoredDay?.(chart):dayClient.readDay?.(chart))); } catch { /* Optional device lookup. */ }
+    // Offline selection may migrate an old complete day before enabling Open.
+    // Package notices below only observe: no migration or use mark.
+    try {
+      ready = Boolean(await (owned(chart)
+        ? dayClient.readStoredDay?.(chart,{observeOnly:false})
+        : dayClient.readLocalDay?.(chart)));
+    } catch { /* Optional device lookup. */ }
     if (version !== availabilitySequence || chart !== original) return;
     readyOnDevice = ready; notify();
   }

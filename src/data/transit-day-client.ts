@@ -27,14 +27,20 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
 }: TransitClientOptions = {}) {
   const pending = new Map<string, SharedRequest<TransitDay>>();
   const peekDay = (date: string) => days.peekDay(date);
+  /** Local first; a miss downloads and optionally stores the complete day. */
   async function getDay(date: string, { signal }: { signal?: AbortSignal } = {}) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Некорректная дата транзита.');
     if (signal?.aborted) throw createAbortError();
-    const remembered = peekDay(date); if (remembered) return remembered;
+    const remembered = peekDay(date);
+    if (remembered) {days.markDayUsed(remembered);return remembered;}
     return shareRequest(pending, date, async ({ controller }) => {
-      const saved = await days.getDay(date);
+      // Actual opening prepares supported legacy data before deciding it is
+      // absent. Passive reads never trigger that migration themselves.
+      await days.prepare();
+      if(controller.signal.aborted)throw createAbortError();
+      const saved = await days.readLocalDay(date);
       if (controller.signal.aborted) throw createAbortError();
-      if (saved) return saved;
+      if (saved) {days.markDayUsed(saved);return saved;}
       let timedOut = false;
       const deadline = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
       try {
@@ -42,9 +48,9 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
         try {
           response = await fetchDay(`/api/transit/day?date=${encodeURIComponent(date)}&v=${TRANSIT_DAY_VERSION}`, { signal: controller.signal, cache: 'no-store' });
         } catch (error) {
-          if (controller.signal.aborted && !timedOut) throw createAbortError();
+          if (controller.signal.aborted) throw createAbortError();
           if ((error as Error).name === 'ConnectionError') throw error;
-          throw Object.assign(new Error(timedOut ? 'Транзит дня не успел загрузиться. Повторите попытку.' : 'Не удалось загрузить транзит дня. Проверьте соединение.'), {code: timedOut ? 'server_unavailable' : 'connection_failed'});
+          throw Object.assign(new Error('Не удалось загрузить транзит дня. Проверьте соединение.'), {code:'connection_failed'});
         }
         if (!response.ok) {
           let failure; try { failure = await response.json(); } catch {}
@@ -55,6 +61,11 @@ export function createTransitDayClient({ fetch: fetchDay = fetchResource, decode
         if (day.date !== date) throw new Error('Сервер вернул транзит другого дня.');
         days.putDay(day);
         return days.peekDay(date) || day;
+      } catch(error) {
+        // One deadline covers both the response headers and its complete body.
+        if(timedOut)throw Object.assign(new Error('Транзит дня не успел загрузиться. Повторите попытку.'),{code:'server_unavailable'});
+        if(controller.signal.aborted)throw createAbortError();
+        throw error;
       } finally { clearTimeout(deadline); }
     }, { signal });
   }

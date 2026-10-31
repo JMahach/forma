@@ -72,9 +72,11 @@ class ReturnFamilyClient {
  private save(target:Destination,packet:MajorReturnsPackage,opened:boolean) {
   return this.options.library!.putPackage(target.lease,target.card,target.ref,packet,{opened});
  }
- private async use(target:Destination,packet:MajorReturnsPackage,signal:AbortSignal) {
+ private async markUsedAndRestoreCopy(target:Destination,packet:MajorReturnsPackage,signal:AbortSignal) {
   if(signal.aborted)return;
-  if(!await this.options.library!.touchPackage(target.lease,target.ref) && !signal.aborted)await this.save(target,packet,true);
+  const marked=await this.options.library!.touchPackage(target.lease,target.ref);
+  // Actual use may re-admit an evicted copy. Readiness checks never enter here.
+  if(!marked && !signal.aborted)await this.save(target,packet,true);
  }
  private async migrate(target:Destination,signal:AbortSignal,opened:boolean) {
   const {legacy}=this.options;if(!legacy)return null;
@@ -84,12 +86,13 @@ class ReturnFamilyClient {
   if(placed!=='stored' && placed!=='no-op')return null;
   await discardLegacy(legacy,data.keys,data.key,signal);return data.packet;
  }
- private async load(target:Destination,signal:AbortSignal,opened:boolean,observeOnly:boolean) {
+ private async readStoredOrMigrate(target:Destination,signal:AbortSignal,opened:boolean,observeOnly:boolean) {
   const options=observeOnly?{opened:false,observeOnly:true}:{opened};
   const stored=await this.options.library!.readPackage(target.lease,target.ref,options);
   const packet=stored??(observeOnly?null:await this.migrate(target,signal,opened));
   if(signal.aborted)throw createAbortError();
-  return packet && !(packet instanceof ArrayBuffer)?this.remember(target,packet):null;
+  if(!packet || packet instanceof ArrayBuffer)return null;
+  return observeOnly ? packet : this.remember(target,packet);
  }
  async read(input:CycleInput,owner:CycleOwner,{signal,opened=false,durable=false,observeOnly=false}:ReadOptions) {
   if(signal.aborted)throw createAbortError();
@@ -98,7 +101,7 @@ class ReturnFamilyClient {
   if(!durable && !observeOnly) {
    const ready=this.options.memory.get<MajorReturnsPackage>(target.key);
    if(ready){
-    if(opened)void shareRequest(this.uses,useKey,({controller})=>this.use(target,ready,controller.signal),{signal}).catch(()=>{});
+    if(opened)void shareRequest(this.uses,useKey,({controller})=>this.markUsedAndRestoreCopy(target,ready,controller.signal),{signal}).catch(()=>{});
     return ready;
    }
   }
@@ -107,7 +110,7 @@ class ReturnFamilyClient {
   await this.uses.get(useKey)?.promise.catch(()=>{});
   if(signal.aborted)throw createAbortError();
   const key=JSON.stringify([target.key,target.lease,opened,observeOnly]);
-  return shareRequest(this.reads,key,({controller})=>this.load(target,controller.signal,opened,observeOnly),{signal});
+  return shareRequest(this.reads,key,({controller})=>this.readStoredOrMigrate(target,controller.signal,opened,observeOnly),{signal});
  }
  private async download(target:Destination,signal:AbortSignal):Promise<MajorReturnsPackage|null> {
   const query=new URLSearchParams({accountId:target.lease.accountId,sourceKey:target.ref.sourceKey});

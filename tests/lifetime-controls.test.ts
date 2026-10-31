@@ -998,7 +998,7 @@ test('endpoint labels have one owner for personal and standalone ranges and unch
 test('lifetime UTC keeps cached minute keyboard steps, exact boundaries and the birth owner reachable', async () => {
   const targets: number[] = [], minimumUtc = Date.parse('1998-08-11T12:34:56Z');
   let ready: ChartData | null = null;
-  const h = harness({ client: { peekMinute: (utc: number) => ready && Math.floor(utc / 60000) * 60000 === Date.parse(ready.utc!) ? ready : null },
+  const h = harness({ client: { getCachedMinute: (utc: number) => ready && Math.floor(utc / 60000) * 60000 === Date.parse(ready.utc!) ? ready : null },
     beforeScrub: (utc: number) => { targets.push(utc); return utc !== minimumUtc; } });
   await open(h);
   const restoring = h.explorer.restore({ opened: true, mode: 'range', fromDate: '1998-08-11', toDate: '1998-08-12',
@@ -1195,7 +1195,7 @@ test('preparing previews the current transit day without overwriting a saved lif
 test('the last selectable lifetime sample rounds the right edge for both grid and cached minute data', async () => {
   for (const cached of [false, true] as const) {
     const finalMinute = Date.parse('2000-01-02T23:59:00Z');
-    const h = harness({ client: { peekMinute(utc: number) {
+    const h = harness({ client: { getCachedMinute(utc: number) {
       return cached && utc >= Date.parse('2000-01-02T00:00:00Z') && utc <= finalMinute ? { ...lifetimeChartAt(metadata, point(0)), utc: new Date(utc).toISOString() } : null;
     } } });
     await open(h); await dates(h, '01012000', '02012000');
@@ -1248,9 +1248,9 @@ for (const cache of ['cold', 'memory', 'missing-disk'] as const) test(`a clipped
   const cached = { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(finalMinute).toISOString() };
   let diskCataloguePresent = true;
   const h = harness({ client: {
-    peekMinute: (value: number) => cache === 'memory' && [finalMinute, outsideMinute].includes(value) ? { ...cached, utc: new Date(value).toISOString() } : null,
+    getCachedMinute: (value: number) => cache === 'memory' && [finalMinute, outsideMinute].includes(value) ? { ...cached, utc: new Date(value).toISOString() } : null,
     hasMinute: (value: number) => diskCataloguePresent && cache === 'missing-disk' && [finalMinute, outsideMinute].includes(value),
-    readMinute: async () => { diskCataloguePresent = false; return null; },
+    getLocalMinute: async () => { diskCataloguePresent = false; return null; },
   } });
   await open(h); await dates(h, '18081998', '18082098'); await complete(h);
   const full = { minUtc: h.explorer.state.minUtc, maxUtc: h.explorer.state.maxUtc };
@@ -1328,7 +1328,7 @@ for (const failureSource of ['metadata-network', 'point', 'minute'] as const) te
   const h = harness({ client: {
     async getMeta() { if (failureSource === 'metadata-network') failOnce(); return metadata; },
     async getPoint(index) { if (failureSource === 'point') failOnce(); return moment(index); },
-    async readMinute(value: number) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
+    async getLocalMinute(value: number) { failOnce(); return { ...lifetimeChartAt(metadata, moment(0)), utc: new Date(value).toISOString() }; },
   } });
   assert.equal(await h.explorer.restore({ opened: true, mode: 'range', fromDate: '2000-01-01', toDate: '2000-01-02', requestedUtc: selected }), false);
   assert.equal(h.explorer.state.status, 'loading'); assert.equal(h.explorer.state.retryCount, 1);

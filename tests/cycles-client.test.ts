@@ -28,8 +28,11 @@ test('basic return RAM reuse touches persistent LRU without rewriting the payloa
     touchEvents(){touches.push('events');},touchChart(){touches.push('chart');}};
   const client=createCyclesClient({returnStorage:storage,
     request:async url=>{calls++;return url.endsWith('/events')?events():chartResult();}});
-  const dates=await client.events(input),chart=await client.chart(chartInput);
+  const dates=await client.events(input),chart=await client.chart(chartInput,undefined,{event});
   await new Promise(setImmediate);assert.deepEqual(touches,[]);
+  assert.equal(await client.readChart(chartInput),chart);
+  await new Promise(setImmediate);
+  assert.deepEqual(touches,[],'checking a ready chart does not mark it as opened');
   assert.equal(await client.events(input),dates);assert.equal(await client.chart(chartInput),chart);
   await new Promise(setImmediate);
   assert.deepEqual(touches,['chart']);assert.deepEqual(writes,['chart']);assert.equal(calls,2);

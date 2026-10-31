@@ -33,10 +33,10 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
   const owner=cache??createCalculationCache({indexedDB:factory,timeoutMs});
   let closed=false;
   return {
-    async getEvents(key: string):Promise<PreparedReturn<CycleEventsResult>|null> {
+    async getEvents(key: string,{observeOnly=false}:{observeOnly?:boolean}={}):Promise<PreparedReturn<CycleEventsResult>|null> {
       if(closed)return null;
       const record=await owner.get<{body:string;birthUtc:string;range:CycleEventsResult['range'];
-        events:Pick<CycleEvent,'utc'|'cycle'|'pass'|'direction'>[];proof?:unknown}>('return-events',key);
+        events:Pick<CycleEvent,'utc'|'cycle'|'pass'|'direction'>[];proof?:unknown}>('return-events',key,{observeOnly});
       if(!record || !DEFAULT_CYCLE_BODIES.includes(record.body) || !Array.isArray(record.events))return null;
       try {
         return {range:record.range,...proofField(record.proof),events:record.events.map(({utc,cycle,pass,direction})=>({
@@ -46,9 +46,9 @@ export function createReturnStorage({ indexedDB: factory, timeoutMs = 500, cache
       } catch{return null;}
     },
     removeEvents(key: string) { return closed?Promise.resolve(null):owner.remove('return-events',key); },
-    async getChart(key: string):Promise<unknown|null> {
+    async getChart(key: string,{observeOnly=false}:{observeOnly?:boolean}={}):Promise<unknown|null> {
       if(closed)return null;
-      const data=await owner.get<unknown>('return-charts',key);
+      const data=await owner.get<unknown>('return-charts',key,{observeOnly});
       return storedChart(key,data);
     },
     async chartKeys():Promise<string[]|null> {

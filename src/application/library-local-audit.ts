@@ -61,6 +61,7 @@ class LocalAudit {
   const scope=this.ports.scope();if(!eligible(scope))return;
   const paused=this.paused;this.paused=null;if(scopeKey(scope)===paused.key)this.wake(paused.occasion,paused);
  }
+ /** Requests cancellation; idle observers still wait for the page and lease release. */
  stop(){this.stopped=true;this.pending=null;this.paused=null;this.active?.control.abort();}
  wake(at:number,paused?:AuditRun){
   if(this.stopped || !Number.isFinite(at))return;

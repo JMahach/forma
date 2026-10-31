@@ -35,7 +35,15 @@ function encodedKey(key:IDBValidKey):unknown {
   const bytes=key instanceof ArrayBuffer?new Uint8Array(key):new Uint8Array(key.buffer,key.byteOffset,key.byteLength);
   return ['bytes',Array.from(bytes)];
 }
-const localChanges=new WeakMap<IDBFactory,Map<string,Set<()=>void>>>();
+interface CacheChange {transitUnchanged:true}
+type ChangeListener=(change?:CacheChange)=>void;
+function readChange(value:unknown):CacheChange|undefined {
+  if(value && typeof value==='object' && !Array.isArray(value)
+    && 'changed' in value && value.changed===true
+    && 'transitUnchanged' in value && value.transitUnchanged===true)return {transitUnchanged:true};
+  return undefined;
+}
+const localChanges=new WeakMap<IDBFactory,Map<string,Set<ChangeListener>>>();
 
 /** One physical transaction owns payload, LRU, byte accounting and eviction across every tab. */
 export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxBytes=CALCULATION_CACHE_BYTES,
@@ -52,18 +60,19 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     }});
   const sources=new Map(legacySources.map(source=>[source.id,createLegacyCalculationSource(source,{indexedDB:factory,timeoutMs})]));
   let closed=false,epoch:number|undefined,working:Promise<boolean>|null=null,setupWork:Promise<boolean|null>|null=null,expiration:ReturnType<typeof setTimeout>|undefined;
-  const listeners=new Set<()=>void>(),actualFactory=factory===undefined?globalThis.indexedDB:factory;
-  let peers:Set<()=>void>|undefined;
+  const listeners=new Set<ChangeListener>(),actualFactory=factory===undefined?globalThis.indexedDB:factory;
+  let peers:Set<ChangeListener>|undefined;
   if(actualFactory){
     if(!localChanges.has(actualFactory))localChanges.set(actualFactory,new Map());
     const names=localChanges.get(actualFactory)!;
     if(!names.has(databaseName))names.set(databaseName,new Set());peers=names.get(databaseName)!;
   }
   const channel=typeof window!=='undefined' && typeof BroadcastChannel!=='undefined'?new BroadcastChannel(databaseName):null;
-  const notify=()=>{void atomic(async tx=>(await state(tx))?.window??null,'readonly').then(schedule);
-    for(const listener of listeners)try{listener();}catch{}};peers?.add(notify);
-  if(channel)channel.onmessage=notify;
-  const publish=()=>{for(const notifyPeer of peers??[])notifyPeer();channel?.postMessage({changed:true});};
+  const notify:ChangeListener=change=>{
+    if(!change?.transitUnchanged)void atomic(async tx=>(await state(tx))?.window??null,'readonly').then(schedule);
+    for(const listener of listeners)try{listener(change);}catch{}};peers?.add(notify);
+  if(channel)channel.onmessage=event=>notify(readChange(event.data));
+  const publish=(change?:CacheChange)=>{for(const notifyPeer of peers??[])notifyPeer(change);channel?.postMessage({changed:true,...change});};
   function atomicResult<T>(action:(tx:IDBTransaction)=>Promise<T>,mode:IDBTransactionMode='readwrite') {
     return database.transactionResult<T>(mode,(tx,result,fail)=>{
       if(closed){fail();return;}
@@ -262,8 +271,10 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     }
     return retired;
   }
-  async function read<T>(kind:CalculationKind,key:string,touchOnly=false):Promise<T|boolean|null> {
-    if(!await ready())return null;
+  async function read<T>(kind:CalculationKind,key:string,{touchOnly=false,observeOnly=false}={}):Promise<T|boolean|null> {
+    // Construction establishes the owner's epoch. Observation never advances
+    // migration or refreshes recency; genuine use still enters through ready().
+    if(!await (observeOnly?setup():ready()))return null;
     const lookup=async(tx:IDBTransaction,updateAccess:boolean)=>{
       const value=(await state(tx))!;if(value.phase==='scanning' || !allowed(kind,value))return null;
       const meta=await find(tx,kind,key,value);
@@ -276,7 +287,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
       const data=await request(tx.objectStore('payloads').get(meta.id));return {value:data?.value as T??null};
     };
     // Transit retention is determined by the current window, never by recency.
-    const updateAccess=kind!=='transit';
+    const updateAccess=!observeOnly && kind!=='transit';
     const accessed=await atomicResult(tx=>lookup(tx,updateAccess),updateAccess?'readwrite':'readonly');
     // Failed bookkeeping must not hide a saved calculation. Re-read the live
     // window and owner in the fallback transaction; never reuse a stale value.
@@ -308,8 +319,8 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
     (expiration as unknown as {unref?():void}|undefined)?.unref?.();
   }
   return {
-    async get<T=unknown>(kind:CalculationKind,key:string):Promise<T|null>{return await read<T>(kind,key) as T|null;},
-    async touch(kind:CalculationKind,key:string){return await read(kind,key,true) as boolean|null;},
+    async get<T=unknown>(kind:CalculationKind,key:string,options:{observeOnly?:boolean}={}):Promise<T|null>{return await read<T>(kind,key,options) as T|null;},
+    async touch(kind:CalculationKind,key:string){return await read(kind,key,{touchOnly:true}) as boolean|null;},
     // Admission probes do not consume a payload or update its LRU. The current
     // epoch and transit window are rechecked in this transaction.
     async has(kind:CalculationKind,key:string) {
@@ -326,20 +337,25 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
         const value=(await state(tx))!;if(value.phase==='scanning' || !allowed(kind,value))return null;
         const meta=storedMeta(kind,key,snapshot,info,value);if(!eligible(meta,value) || meta.bytes+CONTROL_BYTES>maxBytes)return null;
         const old=await request(tx.objectStore('catalogue').get(meta.id)) as Catalogue|undefined;
-        if(value.window && value.window.expiresAt<=now())await prune(tx,value);
-        const space=await fit(tx,value,meta.bytes-(old?.bytes??0),meta.id);save(tx,value);
+        const expired=!!value.window && value.window.expiresAt<=now(),extra=meta.bytes-(old?.bytes??0);
+        // Certify only ordinary private writes with no pruning or eviction.
+        // Migration, pressure and elapsed windows keep the broad notification.
+        const transitUnchanged=kind!=='transit' && value.phase==='ready'
+          && !expired && value.accountedBytes+extra<=maxBytes;
+        if(expired)await prune(tx,value);
+        const space=await fit(tx,value,extra,meta.id);save(tx,value);
         if(space!==true)return space?{discard:space}:null;
         if(old)remove(tx,old,value);
         const retired=await retireLegacy(tx,kind,key,value);
         tx.objectStore('payloads').put({id:meta.id,value:snapshot});tx.objectStore('catalogue').put(meta);
-        value.accountedBytes+=meta.bytes;value.clock=meta.lru;value.revision++;save(tx,value);return {saved:true,retired};
+        value.accountedBytes+=meta.bytes;value.clock=meta.lru;value.revision++;save(tx,value);return {saved:true,retired,transitUnchanged};
       });
         const result=pressure?await pressure.write(write,{calculation:{kind,key}}):await write();
         const committed=result.status==='complete'?result.value:null;
         if(committed?.discard){try{await dropLegacy(committed.discard);}catch{return null;}continue;}
         if(committed?.saved){
           for(const meta of committed.retired??[])try{await dropLegacy(meta);}catch{/* Counted, invisible cleanup remains resumable. */}
-          publish();return true;
+          publish(committed.transitUnchanged?{transitUnchanged:true}:undefined);return true;
         }return null;
       }
     },
@@ -423,7 +439,7 @@ export function createCalculationCache({indexedDB:factory,timeoutMs=1000,maxByte
       return await atomic(async tx=>{const value=(await state(tx))!;return {...value,maxBytes};},'readonly')
         ??{phase:'unavailable' as const,accountedBytes:null,legacyBytes:null};
     },
-    subscribe(listener:()=>void){listeners.add(listener);return()=>listeners.delete(listener);},
+    subscribe(listener:ChangeListener){listeners.add(listener);return()=>listeners.delete(listener);},
     close(){if(closed)return;closed=true;clearTimeout(expiration);peers?.delete(notify);channel?.close();listeners.clear();
       for(const source of sources.values())source.close();database.close();},
   };

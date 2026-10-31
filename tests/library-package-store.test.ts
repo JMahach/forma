@@ -345,7 +345,15 @@ test('an existing legacy whole day moves into the account owner without HTTP and
  const legacy=createNatalDayStorage({cache}),key=`natal-day:1:${chart.birthDate}:${chart.cityId}`;
  await legacy.put(key,bytes);
  const client=createNatalDayClient({library:store,persistentCache:legacy,fetch:async()=>assert.fail('legacy complete day should not refetch')});
- assert.deepEqual(await client.readStoredDay(chart),decodeNatalDay(bytes));
+ assert.equal(Boolean(await client.readStoredDay(chart)),false,'readiness must not migrate an old package');
+ assert.deepEqual(await legacy.get(key),bytes,'observation preserves the old copy');
+ assert.equal(await store.readPackage(lease,dayRef),null);
+ const {createNatalDayExplorer}=await import('../src/state/natal-day.ts');
+ const explorer=createNatalDayExplorer({connection:()=> 'offline',dayClient:client});
+ explorer.select({...chart,createdAt:'2026-10-31T00:00:00Z',updatedAt:'2026-10-31T00:00:00Z'});await explorer.refreshAvailability();
+ assert.equal(explorer.state.canOpen,true,'offline selection prepares a legacy copy before enabling its button');
+ assert.equal(await explorer.open(),true);
+ assert.deepEqual(explorer.state.day,decodeNatalDay(bytes));
  assert.deepEqual(await store.readPackage(lease,dayRef),bytes);assert.equal(await legacy.get(key),null);
 });
 
@@ -389,22 +397,22 @@ test('legacy return parts authorize an owned offline family only after complete 
  const owner={chartId:chart.id,expectedAccountId:chart.accountId,record:chart};
  const datesKey=JSON.stringify(['events',input.birthUtc,input.body,input.fromAge,input.toAge]);
  await legacy.putEvents(datesKey,input,{...value.dates,range:{...value.dates.range,toAge:value.dates.range.toAge+1}});
- assert.equal(await client.readFamily(input,owner),null,'a wrong legacy manifest cannot describe this whole family');
+ assert.equal(await client.readFamily(input,owner,{observeOnly:false}),null,'a wrong legacy manifest cannot describe this whole family');
  await legacy.putEvents(datesKey,input,value.dates);
  for(let i=0;i<2;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
- assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null);
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner,opened:true}),null);
  assert.deepEqual((await client.chart({...input,eventUtc:event.utc},undefined,{owner,event})).chart,value.charts[0].chart,'a legacy partial result remains reusable online');
- assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null,'online RAM reuse still cannot grant offline permission');
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner,opened:true}),null,'online RAM reuse still cannot grant offline permission');
  for(let i=2;i<value.charts.length;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
  const last=value.charts.length-1,lastKey=JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[last].utc,input.timezone]);
  await legacy.putChart(lastKey,{chart:{...value.charts[last].chart,utc:'1990-01-01T00:00:00Z'},event:value.dates.events[last]});
- assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null,'a present but invalid part is not a whole family');
+ assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner,opened:true}),null,'a present but invalid part is not a whole family');
  await legacy.putChart(lastKey,{...value.charts[last],event:value.dates.events[last]});
  const put=IDBObjectStore.prototype.put;
  IDBObjectStore.prototype.put=function(...args){if(this.name==='packages')throw new DOMException('full','QuotaExceededError');return put.apply(this,args);};
- try{assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner}),null);}finally{IDBObjectStore.prototype.put=put;}
+ try{assert.equal(await client.readChart({...input,eventUtc:event.utc},{owner,opened:true}),null);}finally{IDBObjectStore.prototype.put=put;}
  assert.equal((await legacy.chartKeys())?.length,5,'failed migration preserves every old numerical part');
- assert.deepEqual((await client.readChart({...input,eventUtc:event.utc},{owner}))?.chart,value.charts[0].chart);
+ assert.deepEqual((await client.readChart({...input,eventUtc:event.utc},{owner,opened:true}))?.chart,value.charts[0].chart);
  assert.deepEqual(await legacy.chartKeys(),[],'the copied numerical parts are released after the whole packet commits');
 });
 
@@ -495,6 +503,7 @@ test('observing a return family never reads or migrates legacy individual result
  for(let i=0;i<value.charts.length;i++)await legacy.putChart(JSON.stringify(['chart',input.birthUtc,input.body,value.dates.events[i].utc,input.timezone]),{...value.charts[i],event:value.dates.events[i]});
  const client=createCyclesClient({library:store,returnStorage:legacy,request:async()=>assert.fail('no HTTP')});t.after(()=>client.close());
  t.mock.method(legacy,'getEvents',()=>assert.fail('no legacy reads'));
+ assert.equal(await client.readFamily(input,owner),null,'a default read never migrates old parts');
  assert.equal(await client.readFamily(input,owner,{observeOnly:true,opened:true}),null);
  await store.putPackage(lease,chart,ref,value);let reads=0;const read=store.readPackage;
  t.mock.method(store,'readPackage',(...args:Parameters<typeof read>)=>{reads++;assert.deepEqual(args[2],{opened:false,observeOnly:true});return read(...args);});

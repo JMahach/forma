@@ -70,7 +70,7 @@ test(`${adapter}: route replacement aborts its reader, remains responsive, and i
   assert.deepEqual(h.applied, []);
   h.reads[1].release(); await h.application.requestRoute(h.navigation.snapshot);
   assert.deepEqual(h.applied, ['2345678901']);assert.equal(h.store.publicChart?.id,'2345678901');
-  await h.application.stop(); h.navigation.destroy();
+  h.application.requestStop(); h.navigation.destroy();
 });
 
 test(`${adapter}: repeated intent and publishing an already accepted address do not read again`, async () => {
@@ -85,14 +85,14 @@ test(`${adapter}: repeated intent and publishing an already accepted address do 
   assert.equal(h.location.pathname, '/chart/3456789012');
   h.reads[0].release(); await Promise.resolve();
   assert.deepEqual(h.applied, []);
-  await h.application.stop(); h.navigation.destroy();
+  h.application.requestStop(); h.navigation.destroy();
 });
 
 test(`${adapter}: stop releases the navigation subscription and prevents an old runtime from applying`, async () => {
   const h = fixture(adapter); h.application.start();
   const first = h.application.requestRoute(h.navigation.snapshot);
   await tick();assert.equal(h.reads.length, 1);
-  await h.application.stop(); await h.application.stop(); await first;
+  h.application.requestStop(); h.application.requestStop(); await first;
   assert.equal(h.reads[0].signal.aborted, true);
   h.reads[0].release(); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(h.applied, []);
@@ -105,7 +105,7 @@ test(`${adapter}: stop releases the navigation subscription and prevents an old 
   await tick();assert.equal(h.reads.length, 2);
   h.reads[1].release(); await restored;
   assert.deepEqual(h.applied, ['2345678901']);assert.equal(h.store.publicChart?.id,'2345678901');
-  await replacement.stop();
+  replacement.requestStop();
   assert.equal(h.disposals, 2);
   h.navigation.destroy();
 });
@@ -119,7 +119,7 @@ test(`${adapter}: the same core chooses an owned card or the exact offline publi
  h.navigation.navigate({kind:'chart',id:'2345678901'});await h.application.requestRoute(h.navigation.snapshot);
  assert.equal(h.reads.length,0);assert.deepEqual(h.applied,[own.id,'2345678901']);
  const completed=h.settled;await h.application.openChart(own.id);assert.equal(h.settled-completed,1,'one completion per library opening');
- await h.application.stop();h.navigation.destroy();
+ h.application.requestStop();h.navigation.destroy();
 });
 
 test(`${adapter}: library opening and edit preparation share cancellation with address navigation`,async()=>{
@@ -135,7 +135,7 @@ test(`${adapter}: library opening and edit preparation share cancellation with a
  assert.deepEqual(h.applied,['current-transit']);
  const failed=h.application.openChart(a.id,{edit:true});await tick();h.reads[3].fail(new Error('read failed'));await failed;
  assert.equal(h.failures.length,1);assert.deepEqual(h.edited,[b.id]);assert.deepEqual(h.applied,['current-transit']);
- await h.application.stop();await h.application.openChart(a.id);assert.equal(h.reads.length,4);h.navigation.destroy();
+ h.application.requestStop();await h.application.openChart(a.id);assert.equal(h.reads.length,4);h.navigation.destroy();
 });
 
 }
@@ -144,5 +144,5 @@ test('a non-DOM assembly can open its library without an address adapter',async(
  const h=fixture('memory','/account',false),chart={...accountChart(),id:'1234567890'};
  h.own.set(chart.id,chart);h.application.start();await h.application.openChart(chart.id);
  assert.deepEqual(h.applied,[chart.id]);assert.equal(h.ownReads,1);assert.equal(h.reads.length,0);
- await h.application.stop();h.navigation.destroy();
+ h.application.requestStop();h.navigation.destroy();
 });

@@ -199,8 +199,8 @@ async function runtime(t:TestContext,w:World,path='/chart'){
    sources:{get temporaryId(){return chartStore.temporaryChart?.id??null;},get publicId(){return chartStore.publicChart?.id??null;},hasOwn:id=>!!library.get(id),canRestore:library.canRestore},checkpoint:view.flush},
  });
  const application=app,unsubscribe=library.subscribe(()=>application.libraryChanged());let stopped=false;
- async function stop(){if(stopped)return;stopped=true;view.flush();await application.stop();unsubscribe();checkpoint.destroy();transit.stop();natalDay.select(null);account.destroy();library.close();navigation.destroy();}
- t.after(stop);application.start();await application.whenRestored();assert.deepEqual(application.startup,{restored:true,failed:false});
+ async function stop(){if(stopped)return;stopped=true;view.flush();application.requestStop();unsubscribe();checkpoint.destroy();transit.stop();natalDay.select(null);account.destroy();library.close();navigation.destroy();}
+ t.after(stop);application.start();await application.whenStartupSettled();assert.deepEqual(application.startup,{settled:true,failed:false});
  return {app:application,coordination:w.coordination,database,protocolErrors:w.protocolErrors,get shown(){return shown;},library,chartStore,session,account,actions,view,viewStore,workspace,navigation,counts,notices,stop,
   back(){assert.ok(index>0);location.pathname=history[--index];events.dispatchEvent(new Event('popstate'));},
   async settled(){

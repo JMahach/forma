@@ -99,7 +99,7 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     if (!record || !natalDayClient) { natalPreparation = null; return; }
     const context = !refresh && activeNatalPreparation(meta) || (natalPreparation = { record, meta, ready: false, timeline: null });
     if (context.ready) return;
-    const day = await natalDayClient.readDay(record, { signal });
+    const day = await natalDayClient.readLocalDay(record, { signal });
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     if (activeNatalPreparation(meta) === context) {
       context.ready = true;
@@ -124,9 +124,17 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     return Date.parse(natalDayMinute(day, index).utc) === milliseconds ? { day, index, natal: true as const } : null;
   }
   const sampleAt = (sample: DaySample) => sample.natal ? natalDaySampleAt(sample.day, sample.index) : transitSampleAt(sample.day, sample.index);
-  const chartAt = (sample: DaySample, meta = metadata) => sample.natal
-    ? lifetimeExactChartAt({ ...sampleAt(sample), version: LIFETIME_EXACT_VERSION }, meta!, Date.parse(natalDayMinute(sample.day, sample.index).utc))
-    : transitChartAt(sample.day, sample.index);
+  function markSampleUsed(sample:DaySample) {
+    const record=getPersonalRecord();
+    if(sample.natal && record)natalDayClient?.markDayUsed(record,sample.day);
+    if(!sample.natal)days.markDayUsed(sample.day);
+  }
+  function chartAt(sample:DaySample,meta=metadata) {
+    markSampleUsed(sample);
+    return sample.natal
+      ? lifetimeExactChartAt({ ...sampleAt(sample), version: LIFETIME_EXACT_VERSION }, meta!, Date.parse(natalDayMinute(sample.day, sample.index).utc))
+      : transitChartAt(sample.day, sample.index);
+  }
   function nearestMinute(milliseconds: number, bounds: { min?: number; max?: number } = {}, round = Math.round) {
     const day = natalTimeline(); if (!day || !validMoment(milliseconds)) return null;
     const index = natalDayNearestIndex(day, milliseconds, { ...bounds, round });
@@ -151,7 +159,7 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     const hot = cachedMinute(milliseconds, meta); if (hot) return hot;
     const record = getPersonalRecord();
     if (record && natalDayClient && hasNatalMinute(milliseconds, meta)) {
-      const day = await natalDayClient.readDay(record, { signal });
+      const day = await natalDayClient.readLocalDay(record, { signal });
       if (metadata !== meta || signal?.aborted) throw createAbortError();
       const natal = record === getPersonalRecord() ? natalSample(milliseconds, meta, day) : null;
       if (natal) return natal;
@@ -161,11 +169,13 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     if (!validMinute(milliseconds, meta)) return null;
     // This owner reads existing RAM/IDB only. Never call dayClient.getDay here:
     // one selected minute must not trigger calculation of an entire day.
-    const day = await days.getDay(dateAt(milliseconds));
+    const day = await days.readLocalDay(dateAt(milliseconds));
     if (metadata !== meta || signal?.aborted) throw createAbortError();
     return minuteAt(milliseconds, day, meta);
   }
-  function peekMinute(milliseconds: number) {
+  // Obtaining a chart for display records use of its prepared natal day.
+  // Availability and snapping helpers above only observe the same data.
+  function getCachedMinute(milliseconds: number) {
     const sample = cachedMinute(milliseconds);
     return sample ? chartAt(sample) : null;
   }
@@ -173,7 +183,7 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     return Boolean(hasNatalMinute(milliseconds) || cachedMinute(milliseconds) || validMinute(milliseconds)
       && days.hasMinute(milliseconds));
   }
-  async function readMinute(milliseconds: number, { signal }: { signal?: AbortSignal } = {}) {
+  async function getLocalMinute(milliseconds: number, { signal }: { signal?: AbortSignal } = {}) {
     if (signal?.aborted) throw createAbortError();
     const sample = await readSample(milliseconds, metadata, signal);
     return sample ? chartAt(sample) : null;
@@ -188,11 +198,14 @@ export function createLifetimeClient({ fetch: fetchPoint = fetchResource, timeou
     const alreadyRead = checkedDay?.date === dateAt(milliseconds);
     const sample = alreadyRead ? cachedMinute(milliseconds, meta) : await readSample(milliseconds, meta, signal);
     if (metadata !== meta || signal?.aborted) throw createAbortError();
-    if (sample) return validateLifetimeMoment({ ...sampleAt(sample), index }, meta, index);
+    if (sample) {
+      markSampleUsed(sample);
+      return validateLifetimeMoment({ ...sampleAt(sample), index }, meta, index);
+    }
     return shared(index, `/api/lifetime?index=${index}`, value => {
       if (metadata !== meta) throw createAbortError();
       return validateLifetimeMoment(value, meta, index);
     }, signal);
   }
-  return { getMeta, getPoint, peekMinute, hasMinute, nearestMinute, adjacentMinute, readMinute };
+  return { getMeta, getPoint, getCachedMinute, hasMinute, nearestMinute, adjacentMinute, getLocalMinute };
 }

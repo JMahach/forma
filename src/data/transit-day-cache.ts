@@ -49,7 +49,8 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     preparing = work;
     return work;
   }
-  const unsubscribe=owner.subscribe(()=>{
+  const unsubscribe=owner.subscribe(change=>{
+    if(change?.transitUnchanged)return;
     generation++;coverage.fill(0);prepared=false;
     if(observed && !closed)void prepare();
   });
@@ -70,9 +71,10 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
   }
   function peekDay(date: string) {
     if(closed)return null;
-    return memory.get<TransitDay>(memoryKey(date));
+    return memory.peek<TransitDay>(memoryKey(date));
   }
-  async function getDay(date: string) {
+  /** RAM/IndexedDB only. Reading never downloads a day or rewrites its payload. */
+  async function readLocalDay(date: string) {
     if(closed)return null;
     const hot = peekDay(date); if (hot) return hot;
     const key = date;
@@ -80,7 +82,7 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     if (!reads.has(key)) {
       const entry: { latest: TransitDay | null; promise: Promise<TransitDay | null> } = { latest: null, promise: null as unknown as Promise<TransitDay | null> };
       const snapshot=generation;
-      entry.promise = owner.get<StoredTransitDay>('transit',key).then(packet=>fromPacket(packet,date)).catch(()=>null).then(day => {
+      entry.promise = owner.get<StoredTransitDay>('transit',key,{observeOnly:true}).then(packet=>fromPacket(packet,date)).catch(()=>null).then(day => {
         if(closed)return null;
         const current = peekDay(date) || entry.latest; if (current) return current;
         if(snapshot===generation)mark(date, Boolean(day));
@@ -109,7 +111,8 @@ export function createTransitDayCache({ indexedDB, legacyDatabaseName = 'forma-m
     return true;
   }
   return {
-    memory, prepare, putDay, peekDay, getDay,
+    memory, prepare, putDay, peekDay, readLocalDay,
+    markDayUsed(day:TransitDay){if(!closed)memory.get(memoryKey(day.date));},
     hasMinute(milliseconds: number) {
       if (!Number.isSafeInteger(milliseconds) || milliseconds % 60000 || milliseconds < SUPPORTED_START || milliseconds >= SUPPORTED_END_EXCLUSIVE) return false;
       const date = new Date(milliseconds).toISOString().slice(0, 10);

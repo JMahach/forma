@@ -71,14 +71,19 @@ test('day client rejects mismatched packets and bounds its decoded-day memory', 
   await assert.rejects(mismatch.getDay('2026-09-24'), /другого дня/);
 });
 
-test('day requests have a deadline instead of accumulating indefinitely', async t => {
+for(const phase of ['headers','body'] as const)test(`day request deadline covers ${phase}`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let signal: AbortSignal|null|undefined;
   const client = createTransitDayClient({ timeoutMs: 100, fetch: async (_url, options) => {
     signal = options!.signal;
-    return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+    const waiting=new Promise<ArrayBuffer>((_resolve, reject) => signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+    if(phase==='body')return {ok:true,arrayBuffer:()=>waiting,json:async()=>assert.fail('binary response')};
+    await waiting;throw Error('unreachable');
   } });
-  const pending = assert.rejects(client.getDay('2026-09-24'), /не успел загрузиться/);
+  const pending = assert.rejects(client.getDay('2026-09-24'), error=>{
+    assert.equal((error as {code?:string}).code,'server_unavailable');
+    assert.match((error as Error).message,/не успел загрузиться/);return true;
+  });
   await new Promise(setImmediate);
   t.mock.timers.tick(100);
   await pending;
@@ -165,7 +170,7 @@ test('the active local day stays visible to shared lookup while unrelated days r
       stepSeconds: 600, samples: 30 * 144, planets: LIFETIME_PLANETS, engine: 'Swiss Ephemeris' }) };
   } });
   await lifetime.getMeta();
-  assert.ok(lifetime.peekMinute(Date.parse('2026-09-24T12:31:00Z')));
+  assert.ok(lifetime.getCachedMinute(Date.parse('2026-09-24T12:31:00Z')));
   assert.equal((await lifetime.getPoint(23 * 144 + 72)).utc, '2026-09-24T12:00:00Z');
   live.setWanted(true);
   assert.equal(client.peekDay('2026-09-24'), active, 'resuming exposes the already-held packet without fetching it again');

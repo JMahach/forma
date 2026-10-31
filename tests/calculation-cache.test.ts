@@ -22,16 +22,21 @@ async function records(factory:IDBFactory,name:string,version:number,store:strin
 }
 
 test('one atomic LRU budget spans calculation kinds and connections',async t=>{
-  const indexedDB=new IDBFactory();
-  const a=createCalculationCache({indexedDB,maxBytes:9000}),b=createCalculationCache({indexedDB,maxBytes:9000});
-  t.after(()=>{a.close();b.close();});
-  assert.equal(await a.put('natal','first',new ArrayBuffer(1500)),true);
-  assert.equal(await b.put('return-charts','second',new ArrayBuffer(1500)),true);
-  assert.ok(await b.get('natal','first'));
-  assert.equal(await a.put('return-events','third',new ArrayBuffer(1500)),true);
-  assert.ok(await a.get('natal','first'));assert.equal(await b.get('return-charts','second'),null);
-  assert.ok(await b.get('return-events','third'));
-  assert.ok((await a.status()).accountedBytes<=9000);
+  for(const access of ['observe','get','touch'] as const){
+    const indexedDB=new IDBFactory();
+    const a=createCalculationCache({indexedDB,maxBytes:9000}),b=createCalculationCache({indexedDB,maxBytes:9000});
+    t.after(()=>{a.close();b.close();});
+    assert.equal(await a.put('natal','first',new ArrayBuffer(1500)),true);
+    assert.equal(await b.put('return-charts','second',new ArrayBuffer(1500)),true);
+    if(access==='touch')assert.equal(await b.touch('natal','first'),true);
+    else assert.ok(await b.get('natal','first',{observeOnly:access==='observe'}));
+    assert.equal(await a.put('return-events','third',new ArrayBuffer(1500)),true);
+    const first=await a.get('natal','first',{observeOnly:true}),second=await b.get('return-charts','second',{observeOnly:true});
+    if(access==='observe'){assert.equal(first,null,'observation must not save the oldest entry');assert.ok(second);}
+    else {assert.ok(first,'actual use must save the oldest entry');assert.equal(second,null);}
+    assert.ok(await b.get('return-events','third'));
+    assert.ok((await a.status()).accountedBytes<=9000);
+  }
 });
 
 test('simultaneous tabs cannot each spend the same remaining capacity',async t=>{
@@ -64,8 +69,19 @@ test('ready personal results survive owner replacement without calculation-versi
   const indexedDB=new IDBFactory(),value=Uint8Array.of(1,3,7).buffer;
   const first=createCalculationCache({indexedDB,legacySources:[]});
   await first.put('natal','ready',value);first.close();
+  // Count actual write calls from construction onward, including a cold owner.
+  const put=t.mock.method(IDBObjectStore.prototype,'put');
+  const add=t.mock.method(IDBObjectStore.prototype,'add');
+  const remove=t.mock.method(IDBObjectStore.prototype,'delete');
+  const clear=t.mock.method(IDBObjectStore.prototype,'clear');
+  const updateCursor=t.mock.method(IDBCursor.prototype,'update');
+  const deleteCursor=t.mock.method(IDBCursor.prototype,'delete');
   const next=createCalculationCache({indexedDB,legacySources:[]});t.after(()=>next.close());
+  assert.deepEqual(await next.get('natal','ready',{observeOnly:true}),value);
+  assert.equal(await next.get('natal','missing',{observeOnly:true}),null);
+  for(const write of [put,add,remove,clear,updateCursor,deleteCursor])assert.equal(write.mock.callCount(),0);
   assert.deepEqual(await next.get('natal','ready'),value);
+  assert.equal(put.mock.callCount(),2,'actual use updates catalogue LRU and control');
   assert.equal(Object.hasOwn(await next.status(),'versions'),false);
   assert.equal('confirmVersions' in next,false);
 });
@@ -87,7 +103,10 @@ test('migration preserves usable legacy packets, counts copies until removal, an
   const bytes=encodeNatalDay(natalDayFixture({date:'2000-01-01'})).buffer;
   await seed(indexedDB,'bodygraph-chart-days',2,{packets:[{key,bytes}],metadata:[]});
   const cache=createCalculationCache({indexedDB});t.after(()=>cache.close());
-  assert.equal((await cache.status()).phase,'scanning');
+  const before=await cache.status();assert.equal(before.phase,'scanning');
+  assert.equal(await cache.get('natal','natal-day:1:2000-01-01:city',{observeOnly:true}),null);
+  assert.deepEqual(await cache.status(),before,'observation must not start migration');
+  assert.equal((await records(indexedDB,'bodygraph-chart-days',2,'packets')).length,1);
   assert.deepEqual(new Uint8Array((await cache.get<ArrayBuffer>('natal','natal-day:1:2000-01-01:city'))!),new Uint8Array(bytes));
   assert.deepEqual(await records(indexedDB,'bodygraph-chart-days',3,'packets'),[]);
   await assert.rejects(open(indexedDB,'bodygraph-chart-days',2),{name:'VersionError'});
@@ -138,7 +157,9 @@ test('migration keeps a usable legacy packet when only its temporary duplicate w
   assert.equal(payloads.length+moved.length,1,'a fitting final payload must not be discarded for temporary copy space');
   const status=await cache.status();assert.ok(status.accountedBytes!<=9000);
   assert.equal(status.phase,'migrating');assert.ok(status.legacyBytes!>0);
+  const changes:unknown[]=[];cache.subscribe(change=>changes.push(change));
   assert.equal(await cache.put('return-charts','new',new ArrayBuffer(3000)),true,'a deferred copy cannot block subsequent writes');
+  assert.deepEqual(changes,[undefined],'an admission during migration keeps the broad notification');
   assert.equal(await cache.get('natal','large'),null,'ordinary legacy records remain subject to the common LRU');
   assert.ok(await cache.get('return-charts','new'));
   assert.equal((await cache.status()).phase,'ready');
@@ -172,6 +193,8 @@ test('the personal epoch also fences catalogue metadata',async t=>{
   const fresh=createCalculationCache({indexedDB});t.after(()=>fresh.close());
   await fresh.put('natal','new-personal-day',new ArrayBuffer(100));
   assert.equal(await old.catalogue('natal'),null);
+  assert.equal(await old.get('natal','new-personal-day',{observeOnly:true}),null);
+  assert.ok(await fresh.get('natal','new-personal-day',{observeOnly:true}));
 });
 
 test('clearPersonal reports pending physical cleanup when legacy deletion fails',async t=>{
@@ -358,4 +381,44 @@ test('a saved birth day opens through the real client without network when acces
     const day=await client.getDay(chart);
     assert.equal(Object.hasOwn(day,'calculationVersion'),false);assert.equal(day.date,chart.birthDate);assert.equal(networkCalls,0);
   }finally{IDBObjectStore.prototype.put=original;}
+});
+
+
+test('cross-tab changes certify only safe private writes and unknown notices remain broad',async t=>{
+  const channels:any[]=[];
+  const windowDescriptor=Object.getOwnPropertyDescriptor(globalThis,'window');
+  Object.defineProperty(globalThis,'window',{value:{},configurable:true});
+  t.after(()=>{if(windowDescriptor)Object.defineProperty(globalThis,'window',windowDescriptor);else delete (globalThis as any).window;});
+  const channelDescriptor=Object.getOwnPropertyDescriptor(globalThis,'BroadcastChannel')!;
+  t.after(()=>Object.defineProperty(globalThis,'BroadcastChannel',channelDescriptor));
+  Object.defineProperty(globalThis,'BroadcastChannel',{configurable:true,value:class {
+    onmessage:((event:{data:unknown})=>void)|null=null;
+    constructor(){channels.push(this);}
+    postMessage(data:unknown){for(const channel of channels)if(channel!==this)channel.onmessage?.({data:structuredClone(data)});}
+    close(){channels.splice(channels.indexOf(this),1);}
+  }});
+  const indexedDB=new IDBFactory();
+  // Distinct factory objects disable same-page delivery: this exercises the channel.
+  const peerFactory={open:indexedDB.open.bind(indexedDB),cmp:indexedDB.cmp.bind(indexedDB)} as IDBFactory;
+  const a=createCalculationCache({indexedDB,legacySources:[],maxBytes:9000});
+  const b=createCalculationCache({indexedDB:peerFactory,legacySources:[],maxBytes:9000});
+  t.after(()=>{a.close();b.close();});
+  await a.get('natal','missing');await b.status();
+  const changes:unknown[]=[];b.subscribe(change=>changes.push(change));
+  await a.put('natal','first',new ArrayBuffer(1500));
+  assert.deepEqual(changes,[{transitUnchanged:true}]);changes.length=0;
+  await a.put('return-charts','second',new ArrayBuffer(1500));
+  assert.deepEqual(changes,[{transitUnchanged:true}]);changes.length=0;
+  await a.put('natal','third',new ArrayBuffer(1500));
+  assert.deepEqual(changes,[undefined],'a write needing eviction keeps the conservative notification');changes.length=0;
+  const exact=createCalculationCache({indexedDB,legacySources:[],maxBytes:(await a.status()).accountedBytes!});
+  t.after(()=>exact.close());
+  await exact.put('natal','third',new ArrayBuffer(1500));
+  assert.deepEqual(changes,[{transitUnchanged:true}],'equal-size replacement at full capacity needs no eviction');changes.length=0;
+  await a.setTransitWindow({dates:['2026-10-31'],expiresAt:Date.now()+86400000});
+  assert.deepEqual(changes,[undefined]);changes.length=0;
+  for(const data of [{changed:true},{changed:true,transitUnchanged:false},{changed:false,transitUnchanged:true},null,'unknown']){
+    channels[1].onmessage({data});
+  }
+  assert.deepEqual(changes,Array(5).fill(undefined),'old and malformed notices still request a full recheck');
 });

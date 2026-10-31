@@ -61,14 +61,25 @@ function admittedBudget(control:FillControl,request:FillRequest):FillBudget|null
  control.budgets[candidate.key]=budget;return budget;
 }
 export function reserveFill(control:FillControl,request:FillRequest):FillReservation {
- const {now,occasion,spaceRelief}=request;expireFlight(control,now);
+ const {now,occasion,spaceRelief}=request;
+ expireFlight(control,now);
+ // A rejected login stays blocked until a different confirmed session arrives.
  if(control.blockedSessionId===request.sessionId)return {kind:'blocked'};
  if(control.blockedSessionId)delete control.blockedSessionId;
+ // Another live permit is not a retry deadline for this tab. A later external
+ // occasion may compete again; this branch never schedules its own polling.
  if(control.flight)return {kind:'blocked'};
- if(control.quota){if(!spaceRelief || occasion<=control.quota.occasion)return {kind:'blocked'};delete control.quota;}
- const budget=admittedBudget(control,request);if(!budget)return {kind:'blocked'};
+ if(control.quota){
+  // Only a payload committed after the quota failure can reopen placement.
+  if(!spaceRelief || occasion<=control.quota.occasion)return {kind:'blocked'};
+  delete control.quota;
+ }
+ const budget=admittedBudget(control,request);
+ if(!budget)return {kind:'blocked'};
+ // This admitted candidate alone owns a finite retry deadline.
  if(now<budget.notBefore)return {kind:'wait',at:budget.notBefore};
- budget.attempts++;budget.occasion=Math.max(budget.occasion,occasion);
+ budget.attempts++;
+ budget.occasion=Math.max(budget.occasion,occasion);
  const permit:FillPermit={key:request.candidate.key,kind:request.candidate.ref.kind,chartId:request.candidate.chartId,revision:request.candidate.revision,token:request.token,owner:request.owner,lease:{...request.lease},sessionId:request.sessionId,startedAt:now,expiresAt:now+30000};
  control.flight=permit;return {kind:'acquired',permit};
 }

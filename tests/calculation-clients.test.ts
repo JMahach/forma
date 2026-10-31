@@ -284,7 +284,19 @@ test('superseded and closed transit window work cannot commit later',async t=>{
 test('today transit window belongs to the client owner and skips repeated UI updates',async t=>{
  const now=Date.parse('2026-10-26T12:00:00Z'),indexedDB=new IDBFactory();let observations=0;
  const owner=createCalculationClients({cacheOptions:{indexedDB,now:()=>now},observe:()=>{observations++;return undefined;}});t.after(()=>owner.close());
- await owner.syncTodayTransitWindow('Europe/Moscow',now);const before=observations;
+ await owner.status();
+ const put=IDBObjectStore.prototype.put;let unavailable=true;
+ t.mock.method(IDBObjectStore.prototype,'put',function(this:IDBObjectStore,...args:Parameters<typeof put>){
+  if(unavailable && this.name==='control' && args[0].key==='budget' && args[0].window)
+   throw new DOMException('temporary storage failure','UnknownError');
+  return put.apply(this,args);
+ });
+ assert.equal((await owner.syncTodayTransitWindow('Europe/Moscow',now))?.status,'unavailable');
+ unavailable=false;
+ const retry=owner.syncTodayTransitWindow('Europe/Moscow',now);
+ assert.ok(retry,'a failed attempt cannot suppress the next ordinary call');
+ assert.equal(owner.syncTodayTransitWindow('Europe/Moscow',now),retry,'concurrent calls share the actual attempt');
+ assert.equal((await retry)?.status,'applied');const before=observations;
  for(let i=0;i<100;i++)assert.equal(owner.syncTodayTransitWindow('Europe/Moscow',now+i),undefined);
  assert.equal(observations,before);const snapshot=await owner.status();
  assert.ok('window' in snapshot);assert.deepEqual(snapshot.window?.dates,['2026-10-25','2026-10-26']);

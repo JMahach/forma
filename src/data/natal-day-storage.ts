@@ -16,9 +16,9 @@ export function createNatalDayStorage({ legacyDatabaseName = 'bodygraph-chart-da
   const owner=cache??createCalculationCache({indexedDB:databaseFactory,timeoutMs,legacySources:sources});
   let closed=false;
   return {
-    async get(key: string):Promise<ArrayBuffer|null> {
+    async get(key: string,{observeOnly=false}:{opened?:boolean;observeOnly?:boolean}={}):Promise<ArrayBuffer|null> {
       if(closed)return null;
-      const bytes=await owner.get<unknown>('natal',key);
+      const bytes=await owner.get<unknown>('natal',key,{observeOnly});
       return bytes instanceof ArrayBuffer?bytes:null;
     },
     put(key: string, bytes: ArrayBuffer) {
@@ -40,7 +40,7 @@ export function createNatalDayStorage({ legacyDatabaseName = 'bodygraph-chart-da
 export interface DayDisk {
  owned?:true;
  useKey?:string;
- get(key:string,opened?:boolean):Promise<ArrayBuffer|null>;
+ get(key:string,options?:{opened?:boolean;observeOnly?:boolean}):Promise<ArrayBuffer|null>;
  put(key:string,bytes:ArrayBuffer):Promise<unknown>;
  remove(key:string):Promise<unknown>;
  touch?:(key:string)=>Promise<unknown>;
@@ -68,7 +68,7 @@ export function captureNatalDayStorage(chart:Identity|null|undefined,library:Lib
  const card={...chart} as AccountChart,ref={kind:'day' as const,sourceKey:natalDaySourceKey({date:card.birthDate,timezone:card.timezone||'UTC'})};
  return {owned:true,
   useKey:JSON.stringify([owner,card.id,card.revision,ref]),
-  get:(key,opened)=>readOwnedDay(library,{owner,card,ref},legacy,key,opened,observeOnly),
+  get:(key,{opened}={})=>readOwnedDay(library,{owner,card,ref},legacy,key,opened,observeOnly),
   put:(_key,bytes)=>library.putPackage(owner,card,ref,bytes,{opened:true}),
   touch:()=>library.touchPackage(owner,ref),
   remove:()=>Promise.resolve(null),

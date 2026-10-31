@@ -201,10 +201,16 @@ test('payload space relief waits for foreground completion and survives a later 
  assert.equal(f.received.length,1);assert.equal(f.timers,0);
  f.change({catalogMarker:'2',catalogComplete:false});f.hold();f.change({foreground:false});await f.advance(0);
  assert.equal(f.received.length,1);assert.equal(f.timers,0,'the incomplete catalogue does not start polling');
+ assert.equal(f.writes,2,'waiting preserves the quota without changing durable control');
  f.change({catalogComplete:true});f.wake('library');await f.advance(0);
  assert.equal(f.received.length,2);assert.equal(f.state.budgets[f.state.flight!.key].occasion,occasion);
  f.release({kind:'ready',payload:{}});await f.advance(0);
- assert.equal(f.received.length,3);assert.equal(f.state.quota,undefined);f.actor.stop();
+ assert.equal(f.received.length,3);assert.equal(f.state.quota,undefined);
+ assert.equal(f.notices,2,'only the card and day were stored successfully');
+ assert.equal(f.writes,6,'quota plus two accepted packages each reserve and finish once');
+ f.wake('space');f.wake('library');await f.advance(0);
+ assert.equal(f.received.length,3);assert.equal(f.placed.length,3);assert.equal(f.writes,6);
+ f.actor.stop();
 });
 test('a deferred payload notice cannot release quota for a replacement login',async()=>{
  const f=fixture();f.quota();f.wake();await f.advance(1);f.space();f.change({foreground:true});f.wake('space');
