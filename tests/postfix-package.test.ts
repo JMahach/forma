@@ -7,14 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-test('mail-only Linux package carries the canonical README and verifies each private artifact',async t=>{
+test('mail-only Linux package carries the project guides and verifies each private artifact',async t=>{
  const temporary=await mkdtemp(path.join(tmpdir(),'forma-mail-package-'));
  t.after(()=>rm(temporary,{recursive:true,force:true}));
  const root=fileURLToPath(new URL('../',import.meta.url)),output=path.join(temporary,'bundle');
  const run=spawnSync(process.execPath,['deploy/postfix/package-linux.ts','--output',output],{cwd:root,encoding:'utf8'});
  assert.equal(run.status,0,run.stderr);
  const expected=['README.md','deploy/postfix/control.py','deploy/postfix/install.py','deploy/postfix/prepare.mjs',
-  'deploy/postfix/receipt.py','deploy/prepare-accounts.mjs'];
+  'deploy/postfix/receipt.py','deploy/prepare-accounts.mjs','docs/architecture.md','docs/data.md',
+  'docs/history/2026-10-31/README-before-docs.md','docs/history/README.md','docs/operations.md'];
  const sums=(await readFile(path.join(output,'SHA256SUMS'),'utf8')).trim().split('\n');
  assert.deepEqual(sums.map(line=>line.slice(66)).sort(),expected);
  for(const line of sums){
@@ -22,7 +23,9 @@ test('mail-only Linux package carries the canonical README and verifies each pri
   assert.equal(createHash('sha256').update(await readFile(file)).digest('hex'),digest,name);
   assert.equal((await stat(file)).mode&0o077,0,name);
  }
- assert.deepEqual(await readFile(path.join(output,'README.md')),await readFile(path.join(root,'README.md')));
+ for(const name of expected.filter(name=>name.endsWith('.md'))) {
+  assert.deepEqual(await readFile(path.join(output,name)),await readFile(path.join(root,name)),name);
+ }
  const files=await readdir(output,{recursive:true});
  assert.ok(files.every(file=>!/(?:\.env|node_modules|forma\.sqlite|account-hmac|linux\.md)/.test(String(file))));
  assert.equal((await stat(output)).mode&0o077,0);
