@@ -1,6 +1,6 @@
 import type {BackgroundCoordinator,BackgroundRequest,CheckResult} from '../../application/background-work.ts';
-import type {BackgroundControl,BackgroundLeader,BackgroundStore,CheckAuthority,CheckPermit,CheckReason,CheckTarget} from '../../domain/background-check.ts';
-import {claimCheck,claimLeader,finishCheck,nextCheckAt,sameLeader,samePermit,HOUR,CHECK_TIMEOUT} from '../../domain/background-policy.ts';
+import type {BackgroundControl,BackgroundLeader,BackgroundStore,CheckAuthority,CheckPermit,CheckReason,CheckRecord,CheckTarget} from '../../domain/background-check.ts';
+import {claimCheck,claimLeader,finishCheck,nextCheckAt,sameLeader,samePermit,HOUR,CHECK_TIMEOUT,MIN_RETRY_PAUSE} from '../../domain/background-policy.ts';
 import type {PageLifecycle} from './lifecycle.ts';
 import {isChartIdentifier} from '../../../shared/chart-record-contract.ts';
 
@@ -15,6 +15,7 @@ interface Assignment {executor:string;epoch:string;target:CheckTarget;permit:Che
 interface Flight {assignment:Assignment;controller:AbortController;cancel:()=>void}
 type Choice=Pick<Assignment,'executor'|'epoch'|'target'>;
 interface ScheduledCheck {at:number;target:CheckTarget}
+interface InitialRecovery extends ScheduledCheck {permit:CheckPermit}
 const clock:BackgroundClock={now:Date.now,after(ms,callback){const timer=setTimeout(callback,ms);return()=>clearTimeout(timer);}};
 const object=(value:unknown):value is Record<string,unknown>=>!!value && typeof value==='object' && !Array.isArray(value);
 function target(value:unknown):value is CheckTarget {
@@ -43,6 +44,11 @@ function planningDeadline(due:ScheduledCheck[],now:number){
 function permitEnvelope(value:Record<string,unknown>,key:string,owner:string){
  return typeof value.token==='string' && value.owner===owner && value.key===key && Number.isFinite(value.expiresAt) && Number.isFinite(value.startedAt);
 }
+const sameInitialRead=(record:CheckRecord|undefined,permit:CheckPermit)=>record?.lastSuccessAt===null && samePermit(record.permit,permit);
+function interruptedInitial(record:CheckRecord,owner:string){
+ if(record.lastSuccessAt!==null || record.permit?.owner===owner)return null;
+ return record.permit??null;
+}
 const sameTarget=(a:CheckTarget,b:CheckTarget)=>a.key===b.key && a.sessionId===b.sessionId && a.instance===b.instance;
 
 /** One origin scheduler; each admitted contour belongs to one suitable live participant. */
@@ -54,6 +60,9 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
  private cancelTimer=()=>{};private round:CheckReason|null=null;private elapsed:Record<string,number>={};
  private operations=Promise.resolve();private flights=new Map<string,Flight>();
  private eligibility=new AbortController();
+ // A new page may finish one interrupted initial read. Null consumes that
+ // opportunity, so a failed recovery never turns into a retry loop.
+ private initialChecks=new Map<string,CheckPermit|null>();
  constructor(options:Options){this.options=options;this.clock=options.clock??clock;this.id=options.id??(()=>crypto.randomUUID());this.message=this.message.bind(this);}
  private enqueue(work:()=>Promise<void>){this.operations=this.operations.then(async()=>{if(!this.stopped && !this.paused)await work();}).catch(()=>this.pause());}
  private post(message:object){
@@ -184,8 +193,47 @@ class BrowserBackgroundCoordinator implements BackgroundCoordinator {
  private announceLeader(previous:BackgroundLeader|null,current:BackgroundLeader){
   if(!previous || !sameLeader(previous,current) || previous.expiresAt!==current.expiresAt)this.post({kind:'changed'});
  }
+ private initialRecoveries(control:BackgroundControl):InitialRecovery[]{
+  return this.targets.flatMap(target=>{
+   if(target.scope.kind==='public')return [];
+   const key=`${target.key}/${target.sessionId??''}`,record=control.checks[target.key];
+   if(!record || record.target.sessionId!==target.sessionId){this.initialChecks.set(key,null);return [];}
+   if(!this.initialChecks.has(key))this.initialChecks.set(key,interruptedInitial(record,this.options.owner));
+   const permit=this.initialChecks.get(key);
+   if(!permit)return [];
+   if(!sameInitialRead(record,permit)){this.initialChecks.set(key,null);return [];}
+   return [{target,permit,at:Math.max(permit.expiresAt+MIN_RETRY_PAUSE,record.retryNotBefore)}];
+  });
+ }
+ private recoveryEligible(epoch:string){return this.active && !this.stopped && !this.paused && this.epoch===epoch;}
+ private async recoverInitial(recoveries:InitialRecovery[],epoch:string){
+  if(!this.recoveryEligible(epoch))return;
+  const now=this.clock.now();
+  const due=recoveries.filter(value=>value.at<=now);
+  const assignments=await this.options.store.update(control=>{
+   if(!this.recoveryEligible(epoch))return [];
+   return due.flatMap(value=>this.reserveInitial(control,value,epoch));
+  });
+  if(!assignments){this.pause();return;}
+  for(const assignment of assignments)this.execute(assignment);
+  if(assignments.length)this.post({kind:'changed'});
+  await this.plan();
+ }
+ private reserveInitial(control:BackgroundControl,{target,permit:previous}:InitialRecovery,epoch:string):Assignment[]{
+  if(!this.targets.some(value=>sameTarget(value,target)) || !sameInitialRead(control.checks[target.key],previous))return [];
+  const permit=claimCheck(control,target,this.options.owner,this.clock.now(),'lifecycle',this.id());
+  if(!permit)return [];
+  this.initialChecks.set(`${target.key}/${target.sessionId??''}`,null);
+  return [{executor:this.options.owner,epoch,target,permit,recipients:this.recipients(target.key)}];
+ }
  private arm(current:BackgroundLeader,snapshot:BackgroundControl,due:ScheduledCheck[],next:number|null,now:number){
   this.cancelTimer();
+  const recoveries=this.initialRecoveries(snapshot),recoveryAt=Math.min(...recoveries.map(value=>value.at));
+  const scheduledAt=this.leader?next??Infinity:current.expiresAt;
+  if(recoveryAt!==Infinity && recoveryAt<=scheduledAt){
+   const epoch=this.epoch;
+   this.setTimer(recoveryAt-now,()=>this.enqueue(()=>this.recoverInitial(recoveries,epoch)));return;
+  }
   if(next===null)return;
   if(!this.leader){this.setTimer(current.expiresAt-now,()=>this.enqueue(async()=>{await this.plan(current);if(this.leader)this.beginRound('hourly');}));return;}
   const elapsed=elapsedChecks(snapshot,due,next);

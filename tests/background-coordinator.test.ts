@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createBackgroundCoordinator} from '../src/platform/browser/background-coordinator.ts';
 import type {BackgroundControl,BackgroundStore,CheckTarget,CheckOutcome} from '../src/domain/background-check.ts';
-import {HOUR} from '../src/domain/background-policy.ts';
+import {HOUR,CHECK_TIMEOUT,MIN_RETRY_PAUSE} from '../src/domain/background-policy.ts';
 const flush=()=>new Promise<void>(resolve=>setImmediate(resolve));
 const app:CheckTarget={key:'app',scope:{kind:'app'}},library:CheckTarget={key:'library:1',scope:{kind:'library',accountId:'1'},sessionId:'s'};
 function fixture(unavailable=false){
@@ -20,31 +20,34 @@ function fixture(unavailable=false){
   const deliver=()=>target.dispatchEvent(new MessageEvent('message',{data:structuredClone(data)}));
   if(holdResults && (data as {kind:string}).kind==='result')messages.push(deliver);else queueMicrotask(deliver);
  }},close(){channels.delete(events);}};};
+ let heldUpdateOwner='',releaseUpdate=()=>{};
  let heldOwner='',releasePlan=()=>{};const foreignReleases:string[]=[];
  const counts:Record<string,number>={app:0,'library:1':0},running=new Map<string,unknown>();
  const tab=(owner:string,targets:CheckTarget[]=[app,library])=>{
   let active=true,frozen=false,notify:(returned:boolean)=>void=()=>{};const received:unknown[]=[];
   const lifecycle={get active(){return active;},subscribe(listener:(returned:boolean)=>void){notify=listener;return()=>{notify=()=>{};};}};
   const ownerStore:BackgroundStore={read:storage.read,async update<T>(change:(control:BackgroundControl)=>T){
+   if(heldUpdateOwner===owner){heldUpdateOwner='';await new Promise<void>(resolve=>{releaseUpdate=resolve;});}
    const result=await storage.update(control=>{const previous=control.leader?.owner,result=change(control);
     if(previous && previous!==owner && !control.leader)foreignReleases.push(owner);return result;});
    if(heldOwner===owner && result && typeof result==='object' && 'current' in result){heldOwner='';await new Promise<void>(resolve=>{releasePlan=resolve;});}
    return result;
   }};
-  const coordinator=createBackgroundCoordinator({owner,store:ownerStore,lifecycle,channel:channel(),clock:{...clock,after(ms,fn){return clock.after(ms,()=>{if(!frozen)fn();});}},id:()=>`${owner}-${++id}`});
+  const connection=channel();
+  const coordinator=createBackgroundCoordinator({owner,store:ownerStore,lifecycle,channel:connection,clock:{...clock,after(ms,fn){return clock.after(ms,()=>{if(!frozen)fn();});}},id:()=>`${owner}-${++id}`});
   coordinator.start(request=>{if(request.kind==='foreground')return;if(request.kind!=='check'){received.push(request);return;}counts[request.target.key]=(counts[request.target.key]??0)+1;
    if(running.has(request.target.key)){running.set(request.target.key,request);return;}
    request.finish({outcome:{kind:'success'}});
   });
   coordinator.update(targets);
-  return {coordinator,received,freeze(){frozen=true;},hide(){active=false;notify(false);},show(){active=true;notify(true);},return(){notify(true);}};
+  return {coordinator,received,crash(){frozen=true;connection.close();},freeze(){frozen=true;},hide(){active=false;notify(false);},show(){active=true;notify(true);},return(){notify(true);}};
  };
  async function advance(ms:number){const end=now+ms;for(let n=0;n<200;n++){
   await flush();const entry=[...timers].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];
   if(!entry){now=end;await flush();return;}
   timers.delete(entry[0]);now=entry[1].at;entry[1].fn();
  }throw new Error('timer loop');}
- return {tab,advance,counts,running,foreignReleases,holdPlan(owner:string){heldOwner=owner;},releasePlan(){releasePlan();},broadcast(value:unknown){const sender=channel();sender.postMessage(value);sender.close();},restoreStorage(){unavailable=false;},holdResults(){holdResults=true;},releaseResults(){holdResults=false;for(const deliver of messages.splice(0))queueMicrotask(deliver);},get state(){return state;},get writes(){return writes;},get timerCount(){return timers.size;}};
+ return {tab,advance,counts,running,foreignReleases,holdUpdate(owner:string){heldUpdateOwner=owner;},releaseUpdate(){releaseUpdate();},holdPlan(owner:string){heldOwner=owner;},releasePlan(){releasePlan();},broadcast(value:unknown){const sender=channel();sender.postMessage(value);sender.close();},failStorage(){unavailable=true;},restoreStorage(){unavailable=false;},holdResults(){holdResults=true;},releaseResults(){holdResults=false;for(const deliver of messages.splice(0))queueMicrotask(deliver);},get state(){return state;},get writes(){return writes;},get timerCount(){return timers.size;}};
 }
 test('two tabs make one pass at startup and at the hour, with no work during 59 idle minutes',async()=>{
  const f=fixture(),a=f.tab('A'),b=f.tab('B');await f.advance(100);
@@ -137,4 +140,95 @@ test('a hidden candidate cannot release the current leader while its planning re
  const f=fixture(),a=f.tab('A',[app]);await f.advance(100);assert.equal(f.state.leader?.owner,'A');
  f.holdPlan('B');const b=f.tab('B',[app]);await flush();b.hide();await flush();f.releasePlan();await flush();await flush();
  assert.deepEqual(f.foreignReleases,[]);assert.equal(f.state.leader?.owner,'A');a.coordinator.stop();b.coordinator.stop();
+});
+
+for(const recovered of [true,false])
+test(`a new page recovers an interrupted initial library read once, recovery succeeds: ${recovered}`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);
+ const abandoned=f.running.get(library.key) as {authority:{current():Promise<boolean>};finish(value:unknown):void};
+ const original=f.state.checks[library.key].permit!,leader=structuredClone(f.state.leader);
+ a.crash();const b=f.tab('B'),c=f.tab('C');await f.advance(100);
+ if(recovered)f.running.delete(library.key);
+ await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE-201);
+ assert.deepEqual(f.counts,{app:1,'library:1':1});
+ await f.advance(101);assert.deepEqual(f.counts,{app:1,'library:1':2});
+ assert.deepEqual(f.state.leader,leader);assert.equal(await abandoned.authority.current(),false);
+ abandoned.finish({outcome:{kind:'success'}});await flush();
+ assert.equal(f.state.checks[library.key].lastSuccessAt!==null,recovered);
+ assert.notEqual(f.state.checks[library.key].permit?.token,original.token);
+ const writes=f.writes;await f.advance(3*(CHECK_TIMEOUT+MIN_RETRY_PAUSE));
+ assert.deepEqual(f.counts,{app:1,'library:1':2});assert.equal(f.writes,writes);
+ b.coordinator.stop();c.coordinator.stop();
+});
+test('a new page drops initial recovery when the original library read completes',async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);
+ const request=f.running.get(library.key) as {finish(value:unknown):void};
+ const b=f.tab('B');await f.advance(100);request.finish({outcome:{kind:'success'}});await f.advance(100);
+ const writes=f.writes;await f.advance(59*60000);
+ assert.deepEqual(f.counts,{app:1,'library:1':1});assert.equal(f.writes,writes);
+ f.running.delete(library.key);await f.advance(60000);assert.deepEqual(f.counts,{app:2,'library:1':2});
+ a.coordinator.stop();b.coordinator.stop();
+});
+test('simultaneous first pages do not turn a timed out first read into an automatic retry',async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A'),b=f.tab('B');await f.advance(100);
+ const writes=f.writes;await f.advance(3*(CHECK_TIMEOUT+MIN_RETRY_PAUSE));
+ assert.deepEqual(f.counts,{app:1,'library:1':1});assert.equal(f.writes,writes);
+ a.coordinator.stop();b.coordinator.stop();
+});
+for(const departure of ['hide','remove','stop'] as const)
+test(`initial recovery cannot load a departed page or target: ${departure}`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);a.crash();
+ const b=f.tab('B');await f.advance(100);
+ if(departure==='hide')b.hide();else if(departure==='remove')b.coordinator.update([app]);else b.coordinator.stop();
+ await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE+100);
+ assert.deepEqual(f.counts,{app:1,'library:1':1});b.coordinator.stop();
+});
+for(const outcome of [{kind:'failed',retryAfterMs:600000},{kind:'unauthorized'}] as CheckOutcome[])
+test(`initial recovery is discarded after an original ${outcome.kind} result`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);
+ const request=f.running.get(library.key) as {finish(value:unknown):void},b=f.tab('B');await f.advance(100);
+ request.finish({outcome});await f.advance(100);const writes=f.writes;
+ await f.advance(3*(CHECK_TIMEOUT+MIN_RETRY_PAUSE));assert.deepEqual(f.counts,{app:1,'library:1':1});assert.equal(f.writes,writes);
+ a.coordinator.stop();b.coordinator.stop();
+});
+
+test('failed initial recovery admission pauses shared work without starting HTTP',async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);a.crash();
+ const b=f.tab('B');await f.advance(100);f.failStorage();
+ await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE+100);
+ assert.deepEqual(f.counts,{app:1,'library:1':1});assert.ok(b.received.some(value=>(value as {kind:string}).kind==='unavailable'));
+ assert.equal(f.timerCount,1);b.coordinator.stop();
+});
+
+for(const changed of ['hide','remove','replace'] as const)
+test(`initial recovery rechecks admission after awaiting storage: ${changed}`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A');await f.advance(100);a.crash();
+ const b=f.tab('B');await f.advance(100);f.holdUpdate('B');
+ await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE);let c:ReturnType<typeof f.tab>|undefined;
+ if(changed==='hide')b.hide();else if(changed==='remove')b.coordinator.update([app]);else{c=f.tab('C');await f.advance(100);}
+ f.releaseUpdate();await f.advance(100);
+ assert.deepEqual(f.counts,{app:1,'library:1':changed==='replace'?2:1});
+ const writes=f.writes;await f.advance(3*(CHECK_TIMEOUT+MIN_RETRY_PAUSE));
+ assert.deepEqual(f.counts,{app:1,'library:1':changed==='replace'?2:1});assert.equal(f.writes,writes);
+ if(changed==='hide')b.show();else if(changed==='remove')b.coordinator.update([app,library]);
+ await f.advance(100);assert.deepEqual(f.counts,{app:1,'library:1':2});
+ b.coordinator.stop();c?.coordinator.stop();
+});
+test('a successful previous login cannot suppress recovery of the first read after a new login',async()=>{
+ const f=fixture(),a=f.tab('A');await f.advance(100);assert.notEqual(f.state.checks[library.key].lastSuccessAt,null);
+ const renewed={...library,sessionId:'new-login'};f.running.set(library.key,null);a.coordinator.update([app,renewed]);await f.advance(100);
+ assert.deepEqual(f.counts,{app:1,'library:1':2});a.crash();
+ const b=f.tab('B',[app,renewed]);await f.advance(100);f.running.delete(library.key);
+ await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE+100);
+ assert.deepEqual(f.counts,{app:1,'library:1':3});assert.notEqual(f.state.checks[library.key].lastSuccessAt,null);
+ b.coordinator.stop();
+});
+for(const outcome of [{kind:'failed'},{kind:'unauthorized'}] as CheckOutcome[])
+test(`a new page respects an already completed ${outcome.kind} first attempt`,async()=>{
+ const f=fixture();f.running.set(library.key,null);const a=f.tab('A',[library]);await f.advance(100);
+ (f.running.get(library.key) as {finish(value:unknown):void}).finish({outcome});await f.advance(100);
+ const b=f.tab('B',[library]);await f.advance(CHECK_TIMEOUT+MIN_RETRY_PAUSE+100);
+ assert.deepEqual(f.counts,{app:0,'library:1':1});assert.deepEqual(b.received,[]);
+ if(outcome.kind==='unauthorized')assert.equal(f.timerCount,0);
+ a.coordinator.stop();b.coordinator.stop();
 });

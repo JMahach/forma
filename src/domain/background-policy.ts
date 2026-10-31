@@ -37,7 +37,7 @@ export function claimCheck(control:BackgroundControl,target:CheckTarget,owner:st
  const previous=control.checks[target.key];
  if(!checkAllowed(previous,target,now,reason,elapsedAttempt))return null;
  const permit:CheckPermit={key:target.key,token,owner,startedAt:now,expiresAt:now+CHECK_TIMEOUT,...(target.sessionId?{sessionId:target.sessionId}:{})};
- control.checks[target.key]={target,lastAttemptAt:now,lastSuccessAt:previous?.lastSuccessAt??null,
+ control.checks[target.key]={target,lastAttemptAt:now,lastSuccessAt:previous && !newSession(previous,target)?previous.lastSuccessAt:null,
   nextDueAt:now+HOUR,retryNotBefore:0,permit};
  return permit;
 }
