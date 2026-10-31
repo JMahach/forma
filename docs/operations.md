@@ -157,12 +157,14 @@ shasum -a 256 "/tmp/forma-$REVISION.tar"
 Передайте архив в закрытый временный каталог сервера и сравните `sha256sum` с полученной суммой. Распакуйте в новый, прежде не существовавший `/opt/forma/releases/<SHA>`, владелец `forma:forma`; не меняйте `current`. В новом каталоге от `forma`, с `/opt/forma/node/bin` в начале PATH:
 
 ```sh
-npm ci
+build_cache="$(mktemp -d)"
+npm ci --cache "$build_cache/npm" --no-audit --no-fund
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install --no-cache-dir -r requirements.txt
 .venv/bin/python -c 'import swisseph'
 npm run build
 test ! -e .env
+rm -r -- "$build_cache"
 ```
 
 Зависимости собираются на Linux, не переносятся с Mac. Проверьте наличие `data/ephe`. В дальнейшей root-сессии задайте `REVISION`, `NEW_RELEASE=/opt/forma/releases/$REVISION` и, при обновлении, `OLD_RELEASE` по `readlink -f /opt/forma/current`; работайте из `NEW_RELEASE`. Это проверенные абсолютные пути. Не перезаписывайте существующий каталог выпуска.
