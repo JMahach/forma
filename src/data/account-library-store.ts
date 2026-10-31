@@ -1,5 +1,5 @@
 import {createLibraryLocalChanges} from './library-local-changes.ts';
-import type { StoragePressure } from './storage-pressure.ts';
+import {createStoragePressure,type StoragePressure} from './storage-pressure.ts';
 import type { AccountChart } from '../../shared/chart-record-contract.ts';
 import { createRandomId } from '../domain/chart-record.ts';
 import { validateAccountChart } from '../domain/account-chart.ts';
@@ -8,7 +8,7 @@ import {upgradeAccountLibrary,validLibraryAccountId as ownerId,readLibraryLease 
 export type {LibraryLease} from './account-library-schema.ts';
 export type {LibraryCatalogBase} from './library-catalog-store.ts';
 import {createLibraryPackageStore,unlinkLibraryPackages,linkLibraryPackages} from './library-package-store.ts';
-import { placeOpenedCard,replaceCardAfterQuota } from './account-card-placement.ts';
+import {placeOpenedCard,releaseCardForSpace} from './account-card-placement.ts';
 import {createLibraryCatalogStore,markLibraryMutation,readStoredLibraryCatalog,libraryMarker,newerLibraryMarker,type LibraryCatalogBase} from './library-catalog-store.ts';
 import type {LibraryCatalogSnapshot} from '../../shared/library-catalog-contract.ts';
 import {createBackgroundCheckStore} from './background-check-store.ts';
@@ -24,7 +24,7 @@ interface Options { indexedDB?: IDBFactory | null; databaseName?: string;now?:()
 const unavailable = (): LibraryStoreResult => ({status: 'unavailable'});
 
 /** Account library only: no calculation-cache quota, legacy migration, command queue or tombstones. */
-export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure}: Options = {}) {
+export function createAccountLibraryStore({indexedDB, databaseName = 'forma-account-library',now=Date.now,pressure=createStoragePressure()}: Options = {}) {
   const database = createIndexedDatabase({databaseName, version: 8, stores: ['charts', 'context', 'usage', 'packages', 'packageMetadata'], indexedDB,
     upgrade:upgradeAccountLibrary});
   let admitted:LibraryLease|null|undefined;
@@ -86,7 +86,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
     },
     async put(seen:LibraryLease,values:readonly AccountChart[],marker?:string,authority?:FillAuthority):Promise<LibraryStoreResult> {
       // A late quota must not acquire cleanup permission from a new account.
-      const isCurrent=pressure?.capture();
+      const isCurrent=pressure.capture();
       const charts=values.map(value=>validateAccountChart(value,seen.accountId));
       if(authority && (charts.length!==1 || authority.permit.kind!=='card' || charts[0].id!==authority.permit.chartId || charts[0].revision<authority.permit.revision))return {status:'stale'};
       const write=(batch:readonly AccountChart[])=>database.transactionResult<LibraryStoreResult>('readwrite',(tx,result,fail)=>{
@@ -115,25 +115,25 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
         };
         });
       });
-      const first=await write(charts);
+      let recovered=false;
+      const place=(chart:AccountChart)=>pressure.write(async()=>{
+        const result=await write([chart]);recovered ||= result.status==='quota';return result;
+      },{accountLibrary:true},()=>releaseCardForSpace({database,chart,pressure,
+        isOwner:owner=>same(owner,seen),isCurrent,marker,changed:local.changed(seen)}));
+      const first=!authority && charts.length===1?await place(charts[0]):await write(charts);
       if(authority && first.status==='quota')return {status:'quota'};
-      if(first.status!=='quota')return first.status==='complete'?first.value??unavailable():unavailable();
-      if(isCurrent && !isCurrent())return {status:'stale'};
+      if(first.status==='quota' && !isCurrent())return {status:'stale'};
+      if(first.status!=='quota' || charts.length===1){
+        const result=first.status==='complete'?first.value??unavailable():unavailable();
+        return result.status==='stored' && recovered?{...result,pressure:true}:result;
+      }
       // One hundred cards need not fit atomically to preserve one usable card.
       // Keep the leading saved subset; never cycle through the whole library
       // evicting cards that this same background page just downloaded.
       let stored=0,changed=false;
       for(const chart of charts){
-        let result=await write([chart]),recovered=false;
-        if(result.status==='quota'){
-          if(isCurrent && !isCurrent())return {status:'stale'};
-          if(stored)return {status:'partial',lease:{...seen},changed};
-          if(pressure){result=await pressure.write(()=>write([chart]),{accountLibrary:true});recovered=true;}
-          if(result.status==='quota') {
-            const replacement=await replaceCardAfterQuota({database,chart,isOwner:owner=>same(owner,seen),isCurrent:isCurrent??(()=>true),marker,changed:local.changed(seen)});
-            if(replacement.saved){result={status:'complete',value:{status:'stored',lease:{...seen},changed:replacement.changed}};recovered=true;}
-          }
-        }
+        if(!isCurrent())return {status:'stale'};
+        const result=stored?await write([chart]):await place(chart);
         if(result.status!=='complete'||!result.value)return stored?{status:'partial',lease:{...seen},changed}:unavailable();
         if(result.value.status!=='stored')return result.value;
         changed ||= result.value.changed!==false;
@@ -157,7 +157,7 @@ export function createAccountLibraryStore({indexedDB, databaseName = 'forma-acco
       })===true;
     },
     async touch(seen:LibraryLease,chartId:string,openedChart?:AccountChart,marker?:string):Promise<boolean> {
-      const isCurrent=pressure?.capture()??(()=>true);
+      const isCurrent=pressure.capture();
       const chart=openedChart?validateAccountChart(openedChart,seen.accountId):null,openedAt=Math.max(1,now());
       if(chart && chart.id!==chartId)throw new TypeError('invalid_chart');
       const present=await database.transaction<'stored'|'missing'|'stale'>('readwrite',(tx,result,fail)=>{

@@ -2,21 +2,15 @@ import {trackLibraryChanges,type ChangedLibraryKeys} from './library-local-chang
 import type {PackageRef} from '../../shared/library-package-contract.ts';
 import type {LibraryPackageMetadata} from './account-library-schema.ts';
 import type {IndexedResult} from './indexed-db.ts';
+import type {StorageRelief} from './storage-pressure.ts';
 
-export interface PlacementProgress {released:number;remaining:boolean;ready:boolean}
-/** Commit cleanup before trying the whole new write. Growing batches avoid
- * a full scan per victim; retries do not delete the same rolled-back prefix. */
-export async function replaceAfterQuota<T>(release:(limit:number,progress:PlacementProgress)=>Promise<IndexedResult<T>>,
- write:()=>Promise<IndexedResult<T>>) {
- let limit=1;
- for(;;) {
-  const progress:PlacementProgress={released:0,remaining:false,ready:false};
-  const freed=await release(limit,progress);
-  if(freed.status!=='complete' || !progress.ready)return freed;
-  const result=await write();
-  if(result.status!=='quota' || !progress.remaining)return result;
-  limit*=2;
- }
+export interface PlacementProgress {released:boolean}
+/** The pressure owner alone decides whether cleanup may run and retries the write. */
+export async function releaseLibrarySpace<T>(release:(progress:PlacementProgress)=>Promise<IndexedResult<T>>):Promise<StorageRelief> {
+ const progress:PlacementProgress={released:false};
+ const freed=await release(progress);
+ if(freed.status!=='complete')return freed.status==='quota'?'empty':'unavailable';
+ return progress.released?'released':'empty';
 }
 
 interface Candidate {id:string;kind:PackageRef['kind'];chartIds:string[];openedAt?:number}
@@ -47,44 +41,31 @@ function selectVictims(keys:IDBValidKey[],packages:LibraryPackageMetadata[],mark
  * Failure rolls back this batch; a later failed payload write cannot restore it. */
 export class LibrarySpaceRelease {
  private changed:(key:string)=>void;
- private victims:Victim[]|undefined;
- private next=0;
- private tx:IDBTransaction;private incoming:Candidate;private limit:number;private progress:PlacementProgress;
+ private tx:IDBTransaction;private incoming:Candidate;private progress:PlacementProgress;
  private isCurrent:()=>boolean;private fail:(cause?:unknown)=>void;
- constructor(tx:IDBTransaction,incoming:Candidate,limit:number,isCurrent:()=>boolean,fail:(cause?:unknown)=>void,
-  progress:PlacementProgress={released:0,remaining:false,ready:false},changed?:ChangedLibraryKeys) {
+ constructor(tx:IDBTransaction,incoming:Candidate,isCurrent:()=>boolean,fail:(cause?:unknown)=>void,
+  progress:PlacementProgress,changed?:ChangedLibraryKeys) {
   this.changed=trackLibraryChanges(tx,changed);
-  this.tx=tx;this.incoming=incoming;this.limit=limit;this.isCurrent=isCurrent;this.fail=fail;this.progress=progress;
+  this.tx=tx;this.incoming=incoming;this.isCurrent=isCurrent;this.fail=fail;this.progress=progress;
  }
- private release(retry:()=>void) {
+ private release(victim:Victim|undefined,done:()=>void) {
   if(!this.isCurrent()){this.fail();return;}
-  if(!this.limit){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
-  if(!this.victims) {
-   const keys=this.tx.objectStore('charts').getAllKeys(),metadata=this.tx.objectStore('packageMetadata').getAll();
-   const marks=this.tx.objectStore('usage').getAll();marks.onsuccess=()=>{
-    this.victims=selectVictims(keys.result,metadata.result,marks.result,this.incoming);this.release(retry);
-   };return;
-  }
-  const victim=this.victims[this.next++];
-  this.progress.remaining=this.next<this.victims.length;
-  if(!victim){this.fail(new DOMException('No admissible replacement','QuotaExceededError'));return;}
+  if(!victim){done();return;}
   // Keep real-use ownership after payload eviction. Explicit removal of the
   // final card can then release the mark; an evicted row is never a new victim.
   const removed=this.tx.objectStore(victim.kind==='card'?'charts':'packages').delete(victim.id);
   removed.onsuccess=()=>{
-   this.progress.released++;this.changed(victim.id);
+   this.progress.released=true;this.changed(victim.id);
    try {
-    if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=retry;
-    else this.tx.objectStore('usage').put({id:victim.id,openedAt:victim.used,evicted:true}).onsuccess=retry;
+    if(victim.metadata)this.tx.objectStore('packageMetadata').put({...victim.metadata,evicted:true}).onsuccess=done;
+    else this.tx.objectStore('usage').put({id:victim.id,openedAt:victim.used,evicted:true}).onsuccess=done;
    }catch(error){this.fail(error);}
   };
  }
  start(done:()=>void) {
-  const finish=()=>{this.progress.ready=true;done();};
-  if(!this.limit){finish();return;}
-  const reserve=()=>this.release(()=>{
-   if(this.progress.released<this.limit && this.progress.remaining)reserve();else finish();
-  });
-  reserve();
+  const keys=this.tx.objectStore('charts').getAllKeys(),metadata=this.tx.objectStore('packageMetadata').getAll();
+  const marks=this.tx.objectStore('usage').getAll();marks.onsuccess=()=>{
+   this.release(selectVictims(keys.result,metadata.result,marks.result,this.incoming)[0],done);
+  };
  }
 }

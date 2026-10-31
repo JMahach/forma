@@ -9,7 +9,7 @@ import {createJournal} from '../src/journal.ts';
 import {accountChart,chartId} from './helpers/account-chart.ts';
 import {commitQuota} from './helpers/commit-quota.ts';
 
-for(const required of [2,Infinity])test(`commit-time card quota releases copies before attempting a whole new write: ${required}`,async t=>{
+for(const required of [1,2,Infinity])test(`commit-time card quota stops after one replacement attempt: ${required}`,async t=>{
  const store=createAccountLibraryStore({indexedDB:new IDBFactory(),now:()=>1000});t.after(()=>store.close());
  const active=await store.activate('1');assert.equal(active.status,'stored');if(active.status!=='stored')return;
  const cards=Array.from({length:5},(_,i)=>accountChart(i+1));await store.put(active.lease,cards);
@@ -19,11 +19,26 @@ for(const required of [2,Infinity])test(`commit-time card quota releases copies 
   if(this.name==='usage' && args[0]?.id===incoming.id)touches++;
   return put.apply(this,args);
  });
- assert.equal(await store.touch(active.lease,incoming.id,incoming),Number.isFinite(required));
- assert.deepEqual(attempts.map(rows=>rows.length),required===2?[0,1,3]:[0,1,3,5]);
+ assert.equal(await store.touch(active.lease,incoming.id,incoming),required===1);
+ assert.deepEqual(attempts.map(rows=>rows.length),[0,0,1]);
  const saved=(await store.read())!.charts;
- assert.deepEqual(saved,required===2?[...cards.slice(3),incoming]:[],'failed placement does not restore intentionally evicted copies');
+ assert.deepEqual(saved,required===1?[...cards.slice(1),incoming]:cards.slice(1),'failed placement does not restore intentionally evicted copies');
  assert.equal(touches,attempts.length,'successful placement must not start another cleanup or rewrite its use mark');
+ if(required!==1){
+  assert.equal(await store.touch(active.lease,incoming.id,incoming),false);
+  assert.deepEqual((await store.read())!.charts,cards.slice(1),'another opening must not restart destructive cleanup');
+ }
+});
+
+test('single-card acquisition uses one recovery path and one later ordinary attempt',async t=>{
+ const store=createAccountLibraryStore({indexedDB:new IDBFactory()});t.after(()=>store.close());
+ const active=await store.activate('1');if(active.status!=='stored')throw Error('owner');
+ await store.put(active.lease,[accountChart(1),accountChart(2)]);
+ const incoming=accountChart(3),attempts=commitQuota(t,{store:'charts',id:incoming.id},Infinity);
+ assert.equal((await store.put(active.lease,[incoming])).status,'unavailable');
+ assert.deepEqual(attempts.map(rows=>rows.length),[0,0,1]);
+ await store.put(active.lease,[incoming]);
+ assert.deepEqual(attempts.map(rows=>rows.length),[0,0,1,1]);
 });
 
 test('failed cleanup commit preserves its victims and does not retry the new payload',async t=>{
@@ -32,18 +47,20 @@ test('failed cleanup commit preserves its victims and does not retry the new pay
  const cards=[accountChart(1),accountChart(2)];await store.put(active.lease,cards);
  const incoming=accountChart(3),attempts=commitQuota(t,{store:'charts',id:incoming.id},1,{rejectCleanup:true});
  assert.equal(await store.touch(active.lease,incoming.id,incoming),false);
- assert.deepEqual(attempts,[[]],'no candidate write follows an uncommitted cleanup');
+ assert.deepEqual(attempts,[[],[]],'no candidate write follows an uncommitted cleanup');
  assert.deepEqual((await store.read())!.charts,cards);
 });
 
-test('pressure retries after one release and stops as soon as the original write fits',async()=>{
+test('pressure stops destructive recovery after a failed retry but still allows ordinary writes',async()=>{
  const pressure=createStoragePressure({locks:null}),removed:string[]=[];let days=12,returns=12;
  pressure.setSources({diagnostics:async()=>{if(removed.includes('diagnostics'))return 'empty';removed.push('diagnostics');return 'released';},
   natalDays:async keep=>{if(days<=keep)return 'empty';days--;removed.push('day');return 'released';},
   returnCharts:async keep=>{if(returns<=keep)return 'empty';returns--;removed.push('return');return 'released';}});
- const result=await pressure.write(async()=>removed.length===4?{status:'complete',value:'written'}:{status:'quota'});
- assert.deepEqual(result,{status:'complete',value:'written'});
- assert.deepEqual(removed,['diagnostics','day','day','return']);assert.equal(returns,11);
+ assert.deepEqual(await pressure.write(async()=>({status:'quota'})),{status:'quota'});
+ assert.deepEqual(await pressure.write(async()=>({status:'quota'})),{status:'quota'});
+ assert.deepEqual(removed,['diagnostics']);assert.equal(returns,12);
+ assert.deepEqual(await pressure.write(async()=>({status:'complete',value:'written'})),{status:'complete',value:'written'});
+ assert.deepEqual(removed,['diagnostics'],'recovery needs no extra cleanup');
 });
 test('an exhausted calculation cache cannot release account cards outside atomic placement',async()=>{
  const pressure=createStoragePressure({locks:null});let discarded=0;
@@ -53,17 +70,18 @@ test('an exhausted calculation cache cannot release account cards outside atomic
  assert.deepEqual(result,{status:'quota'});assert.equal(discarded,0);
 });
 test('ordinary refusal, success and blocked storage never remove unrelated data',async()=>{
- const pressure=createStoragePressure({locks:null});let calls=0;
+ const pressure=createStoragePressure({locks:null});let calls=0,writes=0;
  pressure.setSources({diagnostics:async()=>{calls++;return 'released';}});
  for(const value of [{status:'complete' as const,value:null},{status:'complete' as const,value:true},{status:'unavailable' as const}])
-  assert.deepEqual(await pressure.write(async()=>value),value);
- assert.equal(calls,0);
+  assert.deepEqual(await pressure.write(async()=>{writes++;return value;}),value);
+ assert.equal(calls,0);assert.equal(writes,3,'ordinary results need one write each');
 });
-test('two failing writers recheck after serialization instead of evicting twice for the same released room',async()=>{
+for(const fits of [true,false])test(`two failing writers share one recovery and do not evict twice: fits=${fits}`,async()=>{
  const pressure=createStoragePressure({locks:null});let room=false,removed=0;
  pressure.setSources({diagnostics:async()=>{removed++;await new Promise(r=>setImmediate(r));room=true;return 'released';}});
- const attempt=async()=>room?{status:'complete' as const,value:true}:{status:'quota' as const};
- assert.deepEqual(await Promise.all([pressure.write(attempt),pressure.write(attempt)]),[{status:'complete',value:true},{status:'complete',value:true}]);
+ const attempt=async()=>room && fits?{status:'complete' as const,value:true}:{status:'quota' as const};
+ const expected=fits?{status:'complete',value:true}:{status:'quota'};
+ assert.deepEqual(await Promise.all([pressure.write(attempt),pressure.write(attempt)]),[expected,expected]);
  assert.equal(removed,1);
 });
 test('calculation relief is atomic across owners, uses last access, keeps ten and never removes transit or event lists',async t=>{
@@ -89,7 +107,7 @@ test('indexed adapter reports quota only after rollback and separates arbitrary 
  assert.deepEqual(await db.transactionResult('readwrite',()=>{throw new Error('other');}),{status:'unavailable'});
 });
 
-test('a real failed calculation write releases diagnostics then one day, retries atomically, and preserves other categories',async t=>{
+test('a failed calculation retry preserves cached days and later succeeds without more cleanup',async t=>{
  const indexedDB=new IDBFactory(),pressure=createStoragePressure({locks:null}),cache=createCalculationCache({indexedDB,legacySources:[],pressure});
  const journal=createJournal({indexedDB,appVersion:'0.2',environment:'stand',connection:()=> 'offline'});
  t.after(async()=>{cache.close();await journal.close();});await journal.wake();
@@ -103,8 +121,12 @@ test('a real failed calculation write releases diagnostics then one day, retries
   if(full && this.name==='payloads' && (value as {id?:string}).id==='["natal","new"]')throw new DOMException('full','QuotaExceededError');
   return key===undefined?original.call(this,value):original.call(this,value,key);
  };
- try{assert.equal(await cache.put('natal','new',new Uint8Array([99])),true);}finally{IDBObjectStore.prototype.put=original;}
- assert.deepEqual(await cache.get('natal','new'),new Uint8Array([99]));assert.equal(await cache.get('natal','0'),null);
+ try{
+  assert.equal(await cache.put('natal','new',new Uint8Array([99])),null);
+  assert.equal(await cache.put('natal','new',new Uint8Array([99])),null);
+  full=false;assert.equal(await cache.put('natal','new',new Uint8Array([99])),true);
+ }finally{IDBObjectStore.prototype.put=original;}
+ assert.deepEqual(await cache.get('natal','new'),new Uint8Array([99]));assert.deepEqual(await cache.get('natal','0'),new Uint8Array([0]));
  assert.equal((await cache.catalogue('return-charts'))!.length,11);assert.equal(await journal.discardForSpace(),'empty');
 });
 test('a library page that cannot fit still preserves a leading usable card and stops before evicting it again',async t=>{
@@ -227,15 +249,15 @@ for(const [total,fitsAfterDeletion,failureMode] of [[50,true,'call'],[50,false,'
   try {assert.equal(await store.touch(active.lease,incoming.id,incoming),fitsAfterDeletion);}
   finally {IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
   const saved=(await store.read())!.charts;
-  assert.equal(saved.length,fitsAfterDeletion || failureMode==='unavailable'?total:0);
-  assert.ok(deleteRequests<=total,'one failed placement must not repeatedly revisit the same victims');
+  assert.equal(saved.length,fitsAfterDeletion || failureMode==='unavailable'?total:total-1);
+  assert.ok(deleteRequests<=1,'one failed placement must not start another cleanup batch');
   if(failureMode==='unavailable')assert.deepEqual(order,[],'ordinary storage refusal never starts deletion');
   else assert.ok(order.indexOf('diagnostics')>=0 && order.indexOf('diagnostics')<order.indexOf('victim'),'disposable service data is considered before library victims');
   if(fitsAfterDeletion){
     assert.ok(saved.some(chart=>chart.id===incoming.id));
     assert.equal(saved.some(chart=>chart.id===chartId(opened+1)),false);
     for(let n=1;n<=opened;n++)assert.ok(saved.some(chart=>chart.id===chartId(n)));
-  }else assert.deepEqual(saved,failureMode==='unavailable'?cards:[],'only intentional lower-priority eviction survives a failed placement');
+  }else assert.deepEqual(saved,failureMode==='unavailable'?cards:cards.filter(card=>card.id!==chartId(opened+1)),'only intentional lower-priority eviction survives a failed placement');
 });
 
 

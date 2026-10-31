@@ -35,18 +35,17 @@ async function setup(t:TestContext,indexedDB=new IDBFactory()){
  await store.put(active.lease,[chart]);return {store,lease:active.lease,indexedDB};
 }
 
-for(const required of [2,Infinity])test(`commit-time day quota preserves cards and releases families before placement: ${required}`,async t=>{
+for(const required of [1,2,Infinity])test(`commit-time day quota preserves cards and stops after one family replacement: ${required}`,async t=>{
  const {store,lease}=await setup(t),families=[family('saturn'),family('chiron'),family('uranus')];
  for(const {ref,value} of families)assert.equal(await store.putPackage(lease,chart,ref,value),'stored');
  const notices:{lease:typeof lease;keys:string[]}[]=[];store.subscribeLocal(change=>notices.push(change));
  const attempts=commitQuota(t,{store:'packages',id:JSON.stringify(dayRef)},required),bytes=dayBytes();
- assert.equal(await store.putPackage(lease,chart,dayRef,bytes),required===2?'stored':'quota');
- assert.deepEqual(attempts.map(rows=>rows.length),[0,1,3]);
- assert.deepEqual(notices.flatMap(value=>value.keys).sort(),[...families.map(({ref})=>JSON.stringify(ref)),...(required===2?[JSON.stringify(dayRef)]:[])].sort(),'committed relief is announced even when the incoming packet fails');
+ assert.equal(await store.putPackage(lease,chart,dayRef,bytes),required===1?'stored':'quota');
+ assert.deepEqual(attempts.map(rows=>rows.length),[0,0,1]);
+ assert.deepEqual(notices.flatMap(value=>value.keys).sort(),[...attempts.at(-1)!,...(required===1?[JSON.stringify(dayRef)]:[])].sort(),'committed relief is announced even when the incoming packet fails');
  assert.ok(notices.every(value=>JSON.stringify(value.lease)===JSON.stringify(lease)));
- assert.equal(notices.length,required===2?3:2,'one notification per committed batch, no rolled-back writes');
  assert.deepEqual((await store.read())!.charts,[chart]);
- assert.deepEqual(await store.readPackage(lease,dayRef),required===2?bytes:null);
+ assert.deepEqual(await store.readPackage(lease,dayRef),required===1?bytes:null);
  for(const {ref,value} of families) {
    const evicted=attempts.at(-1)!.includes(JSON.stringify(ref));
    assert.deepEqual(await store.readPackage(lease,ref),evicted?null:value);
@@ -220,11 +219,13 @@ test('an owned RAM-only day never enables a new offline action or starts HTTP wh
  const {createNatalDayClient}=await import('../src/data/natal-day-client.ts');
  const {createNatalDayExplorer}=await import('../src/state/natal-day.ts');
  const {store}=await setup(t),bytes=dayBytes();let calls=0,mode:'online'|'offline'='online';
+ const putPackage=store.putPackage;let placement:ReturnType<typeof putPackage>|undefined;
+ t.mock.method(store,'putPackage',(...args:Parameters<typeof putPackage>)=>placement=putPackage(...args));
  const client=createNatalDayClient({library:store,persistentCache:null,fetch:async()=>{calls++;return new Response(bytes);}});
  const explorer=createNatalDayExplorer({dayClient:client,connection:()=>mode});explorer.select({...chart,createdAt:'2026-10-30T00:00:00Z',updatedAt:'2026-10-30T00:00:00Z'});
  const put=IDBObjectStore.prototype.put;
  IDBObjectStore.prototype.put=function(...args){if(this.name==='packages')throw new DOMException('full','QuotaExceededError');return put.apply(this,args);};
- try {assert.equal(await explorer.open(),true);await client.readStoredDay(chart);}finally{IDBObjectStore.prototype.put=put;}
+ try {assert.equal(await explorer.open(),true);await placement;await client.readStoredDay(chart);}finally{IDBObjectStore.prototype.put=put;}
  explorer.close();mode='offline';await explorer.refreshAvailability();
  assert.equal(explorer.state.canOpen,false);
  assert.equal(await explorer.open(),false);assert.equal(calls,1);
@@ -269,7 +270,7 @@ test('an opened card releases a lower-tier day before any existing card',async t
 });
 
 for(const kind of ['day','family'])test(`evicted ${kind} use belongs to surviving cards and disappears with the last owner`,async t=>{
- const {store,lease,indexedDB}=await setup(t),second=accountNatalChart(2),incoming=accountNatalChart(3);
+ let {store,lease,indexedDB}=await setup(t);const second=accountNatalChart(2),incoming=accountNatalChart(3);
  const {ref,value}=kind==='day'?{ref:dayRef,value:dayBytes()}:family();
  await store.put(lease,[second]);await store.putPackage(lease,chart,ref,value,{opened:true});
  const notices:{keys:string[]}[]=[];store.subscribeLocal(change=>notices.push(change));
@@ -281,6 +282,8 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  try{assert.equal(await store.touch(lease,incoming.id,incoming),false);}finally{IDBObjectStore.prototype.put=put;}
  assert.deepEqual(await store.readPackage(lease,ref),value,'failed ownership mark rolls back payload eviction');
  assert.deepEqual(notices,[],'rolled-back eviction publishes nothing');
+ store.close();store=createAccountLibraryStore({indexedDB});t.after(()=>store.close());
+ store.subscribeLocal(change=>notices.push(change));await store.read();
  IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===incoming.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
  try{assert.equal(await store.touch(lease,incoming.id,incoming),true);}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
@@ -295,8 +298,8 @@ for(const kind of ['day','family'])test(`evicted ${kind} use belongs to survivin
  assert.equal(await store.putPackage(lease,second,ref,value),'stored');tracker.freed=false;
  IDBObjectStore.prototype.delete=function(key){if(this.name==='packages')this.transaction.addEventListener('complete',()=>{tracker.freed=true;});return remove.call(this,key);};
  IDBObjectStore.prototype.put=function(value,...args){if(this.name==='charts' && value.id===later.id && !tracker.freed)throw new DOMException('full','QuotaExceededError');return put.call(this,value,...args);};
- try{assert.equal(await store.touch(lease,later.id,later),true,'a restored whole packet returns to normal placement');}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
- assert.equal(await store.readPackage(lease,ref),null);
+ try{assert.equal(await store.touch(lease,later.id,later),false,'a small successful write does not reopen destructive cleanup');}finally{IDBObjectStore.prototype.put=put;IDBObjectStore.prototype.delete=remove;}
+ assert.deepEqual(await store.readPackage(lease,ref),value);
  const open=indexedDB.open('forma-account-library'),db=await new Promise<IDBDatabase>(resolve=>{open.onsuccess=()=>resolve(open.result);});t.after(()=>db.close());
  const marks=()=>new Promise<{id:string}[]>(resolve=>{const tx=db.transaction('usage'),read=tx.objectStore('usage').getAll();tx.oncomplete=()=>resolve(read.result);});
  let current=lease;
