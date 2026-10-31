@@ -11,8 +11,8 @@ interface IndexRow { id:string;hash:string;segment:string;offset:number;received
 interface RecordLine { event:JournalEvent;receivedAt:number;hash:string;bytes:Buffer;offset:number }
 export interface JournalStoreOptions {directory:string;policy?:Partial<JournalPolicy>;externalReservedBytes?:number}
 const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
-const eventJSON=(event:JournalEvent)=>canonicalJSON({...event});
-const eventHash=(event:JournalEvent)=>{
+const eventJSON=(event:JournalEvent|Record<string,unknown>)=>canonicalJSON({...event});
+const eventHash=(event:JournalEvent|Record<string,unknown>)=>{
   if(event.source!=='browser')return digest(eventJSON(event));
   const {deliveryIp,...report}=event;
   return digest(canonicalJSON(report));
@@ -22,6 +22,29 @@ const retentionStart=(event:JournalEvent,receivedAt:number)=>event.source==='bro
   ?receivedAt:Math.min(event.occurredAt,receivedAt);
 const eventKey=(event:JournalEvent)=>`${event.source}:${event.eventId}`;
 const corrupt=()=>new Error('Journal archive is corrupt');
+
+function archivedContextStep(step:unknown) {
+  if(!step || typeof step!=='object' || Array.isArray(step))return step;
+  return 'reason' in step && step.reason==='versions_unavailable'?{...step,reason:'server_error'}:step;
+}
+
+// Read compatibility only: retired metadata remains covered by the original
+// checksum and stays in the immutable archive, never in new incoming events.
+function archivedEvent(content:Record<string,unknown>) {
+  if(content.source==='browser') {
+    const {calculationVersion,...current}=content;
+    if(Object.hasOwn(content,'calculationVersion')
+      && (typeof calculationVersion!=='string' || !/^[a-f0-9]{64}$/.test(calculationVersion)))return null;
+    // Validate retired failure labels against today's shape without changing
+    // the stored fact, its checksum or its identity hash.
+    if(current.reason==='versions_unavailable')current.reason='server_error';
+    if(Array.isArray(current.context))current.context=current.context.map(archivedContextStep);
+    return parseJournalEvent(current);
+  }
+  if(content.source==='runtime' && content.event==='startup_failed' && content.component==='versions')
+    return parseJournalEvent({...content,component:'configuration'});
+  return parseJournalEvent(content);
+}
 
 /** Synchronous physical storage. Production calls it only from the dedicated journal worker. */
 export function openJournalStore(options: JournalStoreOptions) {
@@ -53,12 +76,13 @@ export function openJournalStore(options: JournalStoreOptions) {
     try { value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)); } catch { throw corrupt(); }
     if (!value || typeof value!=='object' || Array.isArray(value)) throw corrupt();
     const {receivedAt,checksum,...content}=value as Record<string,unknown>;
-    const event=parseJournalEvent(content);
-    if (!event || typeof receivedAt!=='number' || !Number.isSafeInteger(receivedAt) || receivedAt<0 || receivedAt>8.64e15
-      || typeof checksum!=='string' || checksum!==digest(canonicalJSON({...event,receivedAt}))) throw corrupt();
-    const payload=eventJSON(event);
+    if (typeof receivedAt!=='number' || !Number.isSafeInteger(receivedAt) || receivedAt<0 || receivedAt>8.64e15
+      || typeof checksum!=='string' || checksum!==digest(canonicalJSON({...content,receivedAt}))) throw corrupt();
+    const event=archivedEvent(content);
+    if(!event)throw corrupt();
+    const payload=eventJSON(content);
     if(Buffer.byteLength(payload)>policy.maxEventBytes)throw corrupt();
-    return {event,receivedAt,hash:eventHash(event),bytes,offset};
+    return {event,receivedAt,hash:eventHash(content),bytes,offset};
   }
   function* readSegment(name:string,truncateTail=false):Generator<RecordLine> {
     const fd=fs.openSync(path.join(directory,name),truncateTail?'r+':'r');

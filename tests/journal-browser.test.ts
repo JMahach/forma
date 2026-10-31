@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { canonicalJSON } from '../server/journal/policy.ts';
 import * as events from '../server/journal/events.ts';
 import type { ClientReport } from '../shared/client-report-contract.ts';
 import { parseClientReport } from '../shared/client-report-contract.ts';
@@ -27,6 +29,33 @@ function lines(directory:string):Record<string,unknown>[] {
   return fs.readdirSync(directory).filter(name=>name.endsWith('.jsonl')).sort()
     .flatMap(name=>fs.readFileSync(path.join(directory,name),'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)));
 }
+
+test('archived retired metadata stays readable and checksummed without widening new reports',t=>{
+  const startup={schemaVersion:1,eventId:'startup:legacy',occurredAt:NOW,environment:'stand',source:'runtime',
+    event:'startup_failed',level:'error',outcome:'failed',component:'configuration',reason:'unexpected'};
+  for(const [current,legacy] of [
+    [browser(),{...browser(),calculationVersion:'a'.repeat(64)}],
+    [browser(),{...browser(),reason:'versions_unavailable',
+      context:[{stage:'request',reason:'versions_unavailable'}]}],
+    [startup,{...startup,component:'versions'}],
+  ]) {
+    const directory=fixture(t),filename=path.join(directory,'0000000000000001.jsonl');
+    const stored={...legacy,receivedAt:NOW};
+    const checksum=createHash('sha256').update(canonicalJSON(stored)).digest('hex');
+    const bytes=canonicalJSON({...stored,checksum})+'\n';
+    fs.writeFileSync(filename,bytes);
+    assert.equal(events.parseJournalEvent(legacy),null,'live input stays strict');
+    const store=openJournalStore({directory});
+    try {
+      assert.deepEqual(store.append(current,NOW+1,0),{status:'conflict',reason:'event_id_conflict'},
+        'the original immutable payload hash survives reopening');
+      assert.equal(fs.readFileSync(filename,'utf8'),bytes,'opening does not rewrite archived facts');
+    } finally {store.close();}
+    fs.writeFileSync(filename,bytes.replace('a'.repeat(64),'b'.repeat(64))
+      .replaceAll('versions_unavailable','server_error').replace('"versions"','"configuration"'));
+    assert.throws(()=>openJournalStore({directory}),/corrupt/i,'retired metadata is still covered by the checksum');
+  }
+});
 
 test('browser facts use the strict client owner and a separately validated delivery IP',()=>{
   const input=report();assert.ok(parseClientReport(input));
